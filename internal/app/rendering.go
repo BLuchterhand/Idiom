@@ -112,8 +112,11 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 			history = history[:len(history)-1]
 		}
 	}
-	// Fix 5 (context compaction) — fold the oldest messages into a session
-	// digest before the hard-truncation below kicks in.
+	history = modelPayloadHistory(history)
+	// Fix 5 (context compaction) — fold the oldest model-visible messages into
+	// a session digest before the hard-truncation below kicks in. Operator
+	// messages are intentionally filtered first so human-only status surfaces
+	// cannot be summarized back into model context.
 	history = m.MaybeCompactHistory(context.Background(), history)
 	history = modelPayloadHistory(history)
 
@@ -144,7 +147,7 @@ func modelPayloadHistory(history []llama.ChatMessage) []llama.ChatMessage {
 	if len(history) == 0 {
 		return history
 	}
-	out := history[:0]
+	out := make([]llama.ChatMessage, 0, len(history))
 	for _, msg := range history {
 		if msg.Role == "operator" {
 			continue

@@ -47,6 +47,7 @@ func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
 		filepath.Base(effortRoot),
 		productworkflow.BuildProductOperatorStatusView(statusView, workflowState),
 	), "\n")
+	expected += "\n  tui_command_hint=/recover-status --packet test-effort/references/recovery_packet.json"
 	if body != expected {
 		t.Fatalf("slash product status must render the shared operator formatter.\nwant:\n%s\n\ngot:\n%s", expected, body)
 	}
@@ -57,6 +58,7 @@ func TestSlashProductStatusIncludesRecoveryPacketState(t *testing.T) {
 		"[audit_not_passing] product status audit_status \"fail\" blocks continuation dispatch",
 		"dispatchable=false",
 		"command_hint=idiom recover status --packet references/recovery_packet.json",
+		"tui_command_hint=/recover-status --packet test-effort/references/recovery_packet.json",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected slash product status output to contain %q, got:\n%s", want, body)
@@ -95,6 +97,21 @@ func TestSlashProductStatusRequiresEffortRootOutsideEffortDirectory(t *testing.T
 	}
 	if !strings.Contains(model.status, "Usage: /product-status --effort-root <path>") {
 		t.Fatalf("expected explicit usage guidance outside an effort root, got %q", model.status)
+	}
+}
+
+func TestProductStatusTUIRecoveryHintSuppressesUnsafeRedactedPacketPath(t *testing.T) {
+	root := t.TempDir()
+	effortRoot := filepath.Join(root, "test-effort")
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+
+	hint := model.productStatusTUIRecoveryHint(effortRoot, productworkflow.ProductOperatorStatusView{
+		Recovery: &productworkflow.ProductRecoveryStatus{PacketPath: "outside_effort_root"},
+	})
+	if hint != "" {
+		t.Fatalf("unsafe redacted recovery packet path must not become a TUI handoff hint, got %q", hint)
 	}
 }
 

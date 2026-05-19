@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/comprehension"
 	"idiom/internal/planexecute"
+	"idiom/internal/recoverstatus"
 	"idiom/internal/recovery"
 )
 
@@ -227,6 +228,13 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 		!strings.Contains(statusOut.String(), "required_test:go test ./...") {
 		t.Fatalf("expected residual evidence refs in status text, got %s", statusOut.String())
 	}
+	sharedStatusReport, err := recoverstatus.Build(root, "packet.json")
+	if err != nil {
+		t.Fatalf("shared recover status build: %v", err)
+	}
+	if statusOut.String() != recoverstatus.FormatText(sharedStatusReport) {
+		t.Fatalf("CLI recover status text must match shared presenter.\nwant:\n%s\n\ngot:\n%s", recoverstatus.FormatText(sharedStatusReport), statusOut.String())
+	}
 
 	var promoteOut, promoteErr bytes.Buffer
 	code = runRecoverMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &promoteOut, &promoteErr)
@@ -336,6 +344,25 @@ func TestRecoverStatusScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
 	}
 	if !recoveryEvidenceRefsContain(report.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "legacy_failure", Path: "allowed.go"}) {
 		t.Fatalf("expected sanitized legacy evidence ref in %#v", report.ResidualWork)
+	}
+}
+
+func TestRecoverStatusRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	outsideRoot := t.TempDir()
+	writeRecoverTestPacket(t, outsideRoot, "recover-session-outside-packet", "packet.json")
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"status", "--config", configPath, "--packet", filepath.Join(outsideRoot, "packet.json"), "--json"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("recover status should reject outside packet, code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverStatusReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode report: %v\n%s", err, stdout.String())
+	}
+	if !strings.Contains(report.Error, "workspace root") || report.NextAction != recovery.NextActionInspectFailure {
+		t.Fatalf("unexpected outside packet status report: %#v", report)
 	}
 }
 

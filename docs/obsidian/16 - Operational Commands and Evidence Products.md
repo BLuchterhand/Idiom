@@ -95,6 +95,15 @@ idiom recover promote --packet .idiom/recovery/<failure-id>/packet.json --atom r
 idiom recover reconcile --packet .idiom/recovery/<failure-id>/packet.json --completed recovery-001 --json
 ```
 
+The TUI exposes the same packet status presenter through
+`/recover-status [--packet <path>|<path>]`. It is read-only, resolves relative
+packet paths from the current workspace directory, and inserts an
+operator-authored transcript entry that is not replayed into later model
+context. CLI and TUI packet-status reads require packet paths under the
+workspace root and reject symlinked parents or symlinked packet files.
+Reconciliation artifacts discovered for status are loaded only through the same
+workspace and symlink boundary.
+
 Read-only recovery state is also sidecar-visible:
 
 ```bash
@@ -114,11 +123,14 @@ Product workflow status can surface recovery packets when durable
 `workflow_state.json` includes `artifact_paths.recovery_packet`. The shared
 operator status view exposes recovery packet status, gates, required tests,
 product links, blockers, reconciliation counts, and a runnable
-`idiom recover status --packet ...` hint. While a recovery packet is open,
-normal workflow continuation actions are not dispatchable. A reconciliation
-artifact closes the blocker only when its packet digest, completed/remaining
-atom manifest, and required-test command results validate against the current
-packet.
+`idiom recover status --packet ...` hint. The TUI `/product-status` command
+renders that shared product operator view, and `/recover-status` renders the
+packet-level recovery status view; `/product-status` also appends a TUI-local
+`/recover-status --packet ...` handoff hint for the referenced packet. While a
+recovery packet is open, normal workflow continuation actions are not
+dispatchable. A reconciliation artifact closes the blocker only when its packet
+digest, completed/remaining atom manifest, and required-test command results
+validate against the current packet.
 
 After `idiom recover reconcile` validates and writes the reconciliation
 artifact, it also appends an evidence-only ranker-learning event under

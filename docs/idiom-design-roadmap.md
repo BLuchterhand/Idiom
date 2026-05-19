@@ -59,16 +59,17 @@ The executable implementation plan is
   covering the operator loop and read-only `recovery_inspect`/`recovery_status`
   exposed through the sidecar/MCP tool surface. Product/operator status and
   audit-watch, product-evidence, release-evidence, and the TUI
-  `/product-status` presenter now project recovery packet state through bounded
-  summaries. The recovery classifier covers the documented `scope_too_large`
-  and `verification_failed` classes, and reconciliation artifacts close packets
-  only after packet-digest, atom manifest, and required-test evidence
-  validation. Successful reconciliation also records sanitized evidence-only
-  ranker-learning events under `source:"recovery_reconciliation"` without
-  mutating learned weights. Residual-work records now carry scoped
-  required-path, changed-path, failure, and required-test evidence refs without
-  raw prompt/transcript/file-body content. Broader TUI continuation/handoff
-  actions and non-plan-execute failure sources remain follow-up work.
+  `/product-status` and `/recover-status` presenters now project recovery
+  packet state through bounded summaries. The recovery classifier covers the
+  documented `scope_too_large` and `verification_failed` classes, and
+  reconciliation artifacts close packets only after packet-digest, atom
+  manifest, and required-test evidence validation. Successful reconciliation
+  also records sanitized evidence-only ranker-learning events under
+  `source:"recovery_reconciliation"` without mutating learned weights.
+  Residual-work records now carry scoped required-path, changed-path, failure,
+  and required-test evidence refs without raw prompt/transcript/file-body
+  content. Write-capable TUI continuation actions and non-plan-execute failure
+  sources remain follow-up work.
 
 ## System Shape
 

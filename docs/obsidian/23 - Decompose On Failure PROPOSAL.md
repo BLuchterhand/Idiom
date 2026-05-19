@@ -16,13 +16,13 @@ tags:
 > `idiom recover inspect`, `status`, `decompose`, `promote`, and `reconcile`
 > provide the operator-facing loop. Read-only `recovery_inspect` and
 > `recovery_status` are also exposed through `idiom tool`/MCP with the normal
-> sidecar envelope. Product/operator status, the TUI `/product-status`
-> presenter, audit-watch, product-evidence, and release-evidence now project
-> bounded recovery state. Promotion writes a normal gated brief; reconciliation
-> closes the packet only after packet-digest, atom-manifest, and required-test
-> evidence validation. Residual-work records cite scoped required-path,
-> changed-path, failure, and required-test evidence refs. Valid reconciliation
-> also records sanitized,
+> sidecar envelope. Product/operator status, the TUI `/product-status` and
+> `/recover-status` presenters, audit-watch, product-evidence, and
+> release-evidence now project bounded recovery state. Promotion writes a
+> normal gated brief; reconciliation closes the packet only after
+> packet-digest, atom-manifest, and required-test evidence validation.
+> Residual-work records cite scoped required-path, changed-path, failure, and
+> required-test evidence refs. Valid reconciliation also records sanitized,
 > evidence-only ranker-learning events under
 > `source:"recovery_reconciliation"` without mutating learned weights.
 >
@@ -60,6 +60,10 @@ failed run -> failure record -> failure class -> decomposition packet
   commands without raw transcripts or file bodies.
 - [x] `idiom recover promote` writes a candidate atom brief only after brief
   lint, atom intake, and scope gates pass.
+- [x] `idiom recover status --packet` and TUI `/recover-status` require packet
+  paths to stay under the workspace root and reject symlinked parents or
+  symlinked packet files; reconciliation artifacts discovered for status use
+  the same symlink boundary.
 - [x] `idiom tool --profile discovery recovery_inspect` and `recovery_status`
   expose the read-only recovery state; `recovery_decompose` stays out of the
   discovery profile because it writes artifacts.
@@ -83,12 +87,17 @@ failed run -> failure record -> failure class -> decomposition packet
   reason classes, and bounded host evidence text.
 - [x] TUI `/product-status` renders the shared product operator view, including
   recovery packet blockers, dispatchability, and the non-dispatchable recovery
-  inspection command hint.
+  inspection command hint, plus a TUI-local `/recover-status --packet ...`
+  handoff hint.
+- [x] TUI `/recover-status [--packet <path>|<path>]` renders the shared packet
+  status presenter used by `idiom recover status`; it is read-only,
+  CWD-relative for packet paths, workspace-contained, operator-authored,
+  filtered before compaction, and not replayed to the model.
 - [x] Valid `recover reconcile` runs append evidence-only ranker-learning events
   with packet-quality, localization, atom-count, and verification-count metrics;
   the adapter rejects ranker state paths and never mutates weights.
-- [ ] Broader TUI continuation/handoff actions and non-plan-execute adapters
-  are not yet complete.
+- [ ] Write-capable TUI continuation/handoff actions and non-plan-execute
+  adapters are not yet complete.
 
 ## Target Lifecycle
 

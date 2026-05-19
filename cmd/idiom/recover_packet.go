@@ -17,6 +17,7 @@ import (
 
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/recoverstatus"
 	"idiom/internal/recovery"
 )
 
@@ -63,22 +64,7 @@ type recoverDecomposeReport struct {
 	Error          string                        `json:"error,omitempty"`
 }
 
-type recoverStatusReport struct {
-	Type               string                   `json:"type"`
-	Status             string                   `json:"status"`
-	PacketPath         string                   `json:"packet_path,omitempty"`
-	ReconciliationPath string                   `json:"reconciliation_path,omitempty"`
-	FailureID          string                   `json:"failure_id,omitempty"`
-	PacketID           string                   `json:"packet_id,omitempty"`
-	PartialState       recovery.PartialState    `json:"partial_state"`
-	ProductLinks       recovery.ProductLinks    `json:"product_links,omitempty"`
-	Blockers           []string                 `json:"blockers,omitempty"`
-	ResidualWork       []recovery.ResidualWork  `json:"residual_work,omitempty"`
-	CandidateAtoms     []recovery.CandidateAtom `json:"candidate_atoms,omitempty"`
-	Reconciliation     *recovery.Reconciliation `json:"reconciliation,omitempty"`
-	NextAction         string                   `json:"next_valid_action"`
-	Error              string                   `json:"error,omitempty"`
-}
+type recoverStatusReport = recoverstatus.Report
 
 type recoverPromoteReport struct {
 	Type       string              `json:"type"`
@@ -181,7 +167,7 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 	}
 	return recoverDecomposeReport{
 		Type:           "idiom.recover.decompose.v1",
-		Status:         recoverPacketStatus(packet),
+		Status:         recoverstatus.PacketStatus(packet),
 		SessionID:      inspectReport.SessionID,
 		FailureID:      packet.FailureID,
 		PacketID:       packet.PacketID,
@@ -220,54 +206,7 @@ func runRecoverStatusMain(args []string, stdout io.Writer, stderr io.Writer) int
 }
 
 func buildRecoverStatusReport(root string, packetPath string) (recoverStatusReport, error) {
-	packetPath = resolveRecoveryPath(root, packetPath)
-	packet, relPath, found, err := recovery.TryLoadDecompositionPacket(packetPath)
-	if err != nil {
-		return recoverStatusReport{}, err
-	}
-	if !found {
-		return recoverStatusReport{}, fmt.Errorf("recovery decomposition packet not found: %s", packetPath)
-	}
-	reconciliation, reconciliationPath, reconciliationFound, err := tryLoadRecoveryReconciliationForStatus(root, packetPath, packet)
-	if err != nil {
-		return recoverStatusReport{}, err
-	}
-	status := recoverPacketStatus(packet)
-	nextAction := packet.NextAction
-	residualWork := sanitizeRecoverResidualWork(packet.ResidualWork)
-	candidateAtoms := packet.CandidateAtoms
-	var reconciliationRef *recovery.Reconciliation
-	var reconciliationFindings []recovery.ReconciliationValidationFinding
-	reconciliationDisplayPath := ""
-	if reconciliationFound {
-		reconciliationRef = &reconciliation
-		reconciliationDisplayPath = relDisplayPath(root, reconciliationPath)
-		reconciliationFindings = recovery.ValidateReconciliation(packet, reconciliation)
-		if len(reconciliationFindings) == 0 {
-			status = recoverPacketStatusWithReconciliation(packet, reconciliation)
-			nextAction = reconciliation.NextAction
-			candidateAtoms = recoverRemainingCandidateAtoms(packet, reconciliation)
-			residualWork = sanitizeRecoverResidualWork(recoverRemainingResidualWork(packet, candidateAtoms))
-		} else {
-			status = "blocked"
-			nextAction = recovery.NextActionInspectFailure
-		}
-	}
-	return recoverStatusReport{
-		Type:               "idiom.recover.status.v1",
-		Status:             status,
-		PacketPath:         relDisplayPath(root, relPath),
-		ReconciliationPath: reconciliationDisplayPath,
-		FailureID:          packet.FailureID,
-		PacketID:           packet.PacketID,
-		PartialState:       packet.PartialState,
-		ProductLinks:       packet.ProductLinks,
-		Blockers:           recoverPacketBlockersWithReconciliation(packet, reconciliationRef, reconciliationFindings),
-		ResidualWork:       residualWork,
-		CandidateAtoms:     candidateAtoms,
-		Reconciliation:     reconciliationRef,
-		NextAction:         nextAction,
-	}, nil
+	return recoverstatus.Build(root, packetPath)
 }
 
 func runRecoverPromoteMain(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -749,130 +688,6 @@ func pathSet(paths []string) map[string]bool {
 	return set
 }
 
-func recoverPacketStatus(packet recovery.DecompositionPacket) string {
-	if packet.NextAction != recovery.NextActionReviewDecomposition {
-		return "blocked"
-	}
-	if len(packet.CandidateAtoms) == 0 {
-		return "needs_inspection"
-	}
-	return "ready"
-}
-
-func recoverPacketStatusWithReconciliation(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) string {
-	if reconciliation.Status == recovery.ReconciliationStatusRecovered && reconciliation.NextAction == recovery.NextActionNone {
-		return "recovered"
-	}
-	if reconciliation.Status == recovery.ReconciliationStatusPartial {
-		return "partial"
-	}
-	return recoverPacketStatus(packet)
-}
-
-func recoverPacketBlockers(packet recovery.DecompositionPacket) []string {
-	var blockers []string
-	if packet.NextAction != recovery.NextActionReviewDecomposition {
-		blockers = append(blockers, "packet next action is "+packet.NextAction)
-	}
-	if len(packet.CandidateAtoms) == 0 {
-		blockers = append(blockers, "packet has no candidate recovery atoms")
-	}
-	if packet.PartialState.DirtyStatus == recovery.DirtyStatusDirtyOutScope {
-		blockers = append(blockers, "workspace has out-of-scope dirty state")
-	}
-	return blockers
-}
-
-func recoverPacketBlockersWithReconciliation(packet recovery.DecompositionPacket, reconciliation *recovery.Reconciliation, findings []recovery.ReconciliationValidationFinding) []string {
-	if reconciliation != nil && len(findings) == 0 && reconciliation.Status == recovery.ReconciliationStatusRecovered {
-		return nil
-	}
-	blockers := recoverPacketBlockers(packet)
-	for _, finding := range findings {
-		blockers = append(blockers, finding.Code+": "+finding.Message)
-	}
-	if reconciliation != nil {
-		blockers = append(blockers, reconciliation.Blockers...)
-	}
-	return blockers
-}
-
-func recoverRemainingCandidateAtoms(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) []recovery.CandidateAtom {
-	if len(reconciliation.CompletedAtoms) == 0 {
-		return packet.CandidateAtoms
-	}
-	completed := map[string]bool{}
-	for _, atom := range reconciliation.CompletedAtoms {
-		completed[atom.ID] = true
-	}
-	remaining := make([]recovery.CandidateAtom, 0, len(packet.CandidateAtoms))
-	for _, atom := range packet.CandidateAtoms {
-		if !completed[atom.ID] {
-			remaining = append(remaining, atom)
-		}
-	}
-	return remaining
-}
-
-func recoverRemainingResidualWork(packet recovery.DecompositionPacket, atoms []recovery.CandidateAtom) []recovery.ResidualWork {
-	if len(atoms) == 0 {
-		return nil
-	}
-	needed := map[string]bool{}
-	for _, atom := range atoms {
-		for _, id := range atom.ResidualWorkIDs {
-			if id = strings.TrimSpace(id); id != "" {
-				needed[id] = true
-			}
-		}
-	}
-	if len(needed) == 0 {
-		return nil
-	}
-	remaining := make([]recovery.ResidualWork, 0, len(packet.ResidualWork))
-	for _, residual := range packet.ResidualWork {
-		if needed[residual.ID] {
-			remaining = append(remaining, residual)
-		}
-	}
-	return remaining
-}
-
-func sanitizeRecoverResidualWork(residuals []recovery.ResidualWork) []recovery.ResidualWork {
-	if len(residuals) == 0 {
-		return nil
-	}
-	out := make([]recovery.ResidualWork, 0, len(residuals))
-	for _, residual := range residuals {
-		residual.EvidenceRefs = sanitizeRecoverEvidenceRefs(residual.EvidenceRefs)
-		out = append(out, residual)
-	}
-	return out
-}
-
-func sanitizeRecoverEvidenceRefs(refs []recovery.EvidenceRef) []recovery.EvidenceRef {
-	if len(refs) == 0 {
-		return nil
-	}
-	out := make([]recovery.EvidenceRef, 0, len(refs))
-	seen := map[recovery.EvidenceRef]bool{}
-	for _, ref := range refs {
-		ref.Kind = strings.TrimSpace(ref.Kind)
-		ref.Path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(ref.Path)))
-		if ref.Path == "." {
-			ref.Path = ""
-		}
-		ref.ID = strings.TrimSpace(ref.ID)
-		ref.Summary = ""
-		if ref.Kind == "" || seen[ref] {
-			continue
-		}
-		seen[ref] = true
-		out = append(out, ref)
-	}
-	return out
-}
-
 func recoverCompletedAtomIDs(value string) []string {
 	parts := strings.Split(value, ",")
 	out := make([]string, 0, len(parts))
@@ -1030,16 +845,6 @@ func resolveRecoveryDecompositionOutputPath(root string, failureID string, outpu
 		return "", "", fmt.Errorf("recovery decomposition output path must not traverse symlinked directories")
 	}
 	return absPath, rel, nil
-}
-
-func tryLoadRecoveryReconciliationForStatus(root string, packetPath string, packet recovery.DecompositionPacket) (recovery.Reconciliation, string, bool, error) {
-	if siblingPath, siblingRel, ok := defaultRecoveryReconciliationSiblingPath(root, packetPath); ok {
-		reconciliation, _, found, err := recovery.TryLoadReconciliation(siblingPath)
-		if err != nil || found {
-			return reconciliation, siblingRel, found, err
-		}
-	}
-	return recovery.TryLoadReconciliationForPacket(root, packet)
 }
 
 func resolveRecoveryPromotionOutputPath(root string, path string) (string, string, error) {
@@ -1261,13 +1066,7 @@ func emitRecoverDecomposeError(stdout io.Writer, stderr io.Writer, jsonOut bool,
 }
 
 func emitRecoverStatusError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
-	report := recoverStatusReport{
-		Type:       "idiom.recover.status.v1",
-		Status:     "error",
-		NextAction: recovery.NextActionInspectFailure,
-		Error:      message,
-	}
-	return writeRecoverStatusReport(stdout, stderr, jsonOut, report, code)
+	return writeRecoverStatusReport(stdout, stderr, jsonOut, recoverstatus.ErrorReport(message), code)
 }
 
 func emitRecoverPromoteError(stdout io.Writer, stderr io.Writer, jsonOut bool, code int, message string) int {
@@ -1313,62 +1112,11 @@ func writeRecoverStatusReport(stdout io.Writer, stderr io.Writer, jsonOut bool, 
 		return encodeRecoverJSON(stdout, stderr, report, code)
 	}
 	if report.Error != "" {
-		fmt.Fprintln(stderr, report.Error)
-		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
+		recoverstatus.WriteText(stderr, report)
 		return code
 	}
-	fmt.Fprintf(stdout, "recover status: %s\n", report.Status)
-	fmt.Fprintf(stdout, "packet: %s\n", report.PacketPath)
-	if report.ReconciliationPath != "" {
-		fmt.Fprintf(stdout, "reconciliation: %s\n", report.ReconciliationPath)
-	}
-	fmt.Fprintf(stdout, "failure_id: %s\n", report.FailureID)
-	fmt.Fprintf(stdout, "dirty_status: %s\n", report.PartialState.DirtyStatus)
-	for _, blocker := range report.Blockers {
-		fmt.Fprintf(stdout, "blocker: %s\n", blocker)
-	}
-	printRecoverProductLinks(stdout, report.ProductLinks)
-	fmt.Fprintf(stdout, "next_valid_action: %s\n", report.NextAction)
-	for _, residual := range report.ResidualWork {
-		fmt.Fprintf(stdout, "- %s: %s\n", residual.ID, residual.Title)
-		if residual.Reason != "" {
-			fmt.Fprintf(stdout, "  reason: %s\n", residual.Reason)
-		}
-		if len(residual.Paths) > 0 {
-			fmt.Fprintf(stdout, "  paths: %s\n", strings.Join(residual.Paths, ", "))
-		}
-		if len(residual.EvidenceRefs) > 0 {
-			fmt.Fprintf(stdout, "  evidence_refs: %s\n", strings.Join(recoverEvidenceRefLabels(residual.EvidenceRefs), "; "))
-		}
-	}
-	for _, atom := range report.CandidateAtoms {
-		fmt.Fprintf(stdout, "- %s: %s\n", atom.ID, atom.Title)
-		if len(atom.Gates) > 0 {
-			fmt.Fprintf(stdout, "  gates: %s\n", strings.Join(atom.Gates, ", "))
-		}
-		if len(atom.RequiredTests) > 0 {
-			fmt.Fprintf(stdout, "  required_tests: %s\n", strings.Join(atom.RequiredTests, "; "))
-		}
-	}
+	recoverstatus.WriteText(stdout, report)
 	return code
-}
-
-func recoverEvidenceRefLabels(refs []recovery.EvidenceRef) []string {
-	labels := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		kind := strings.TrimSpace(ref.Kind)
-		if kind == "" {
-			continue
-		}
-		label := kind
-		if path := strings.TrimSpace(ref.Path); path != "" {
-			label += ":" + path
-		} else if id := strings.TrimSpace(ref.ID); id != "" {
-			label += ":" + id
-		}
-		labels = append(labels, label)
-	}
-	return labels
 }
 
 func writeRecoverPromoteReport(stdout io.Writer, stderr io.Writer, jsonOut bool, report recoverPromoteReport, code int) int {
@@ -1423,19 +1171,6 @@ func writeRecoverReconcileReport(stdout io.Writer, stderr io.Writer, jsonOut boo
 	}
 	fmt.Fprintf(stdout, "next_valid_action: %s\n", report.NextAction)
 	return code
-}
-
-func printRecoverProductLinks(w io.Writer, links recovery.ProductLinks) {
-	printRecoverProductLinkList(w, "prd", links.PRDPaths)
-	printRecoverProductLinkList(w, "adr", links.ADRPaths)
-	printRecoverProductLinkList(w, "tdd", links.TDDPaths)
-	printRecoverProductLinkList(w, "ledger", links.LedgerPaths)
-}
-
-func printRecoverProductLinkList(w io.Writer, label string, paths []string) {
-	for _, path := range paths {
-		fmt.Fprintf(w, "%s: %s\n", label, path)
-	}
 }
 
 func encodeRecoverJSON(stdout io.Writer, stderr io.Writer, report any, code int) int {

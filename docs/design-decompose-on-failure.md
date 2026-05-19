@@ -7,7 +7,7 @@ memory, freshness, contracts, audit, and evals.**
 Status: cross-pillar target design, drafted 2026-05-18; reviewed for
 north-star/tool parity 2026-05-18
 
-Implementation state as of 2026-05-18: the plan-execute recovery loop is now
+Implementation state as of 2026-05-19: the plan-execute recovery loop is now
 shipped for the first supported failure source. Failed `plan-execute` runs
 automatically persist a privacy-safe failure record and a decomposition packet.
 Operators can inspect the failed session, inspect packet status, rebuild the
@@ -15,13 +15,16 @@ packet, promote one candidate recovery atom into a normal brief after brief
 lint, atom intake, and recovery scope gates pass, and reconcile completed atoms
 back to the original packet. Promotion is deliberately not dispatch authority;
 the promoted brief still enters the usual lane workflow. Product/operator
-status, the TUI `/product-status` presenter, audit-watch, product-evidence, and
-release-evidence now project recovery state from bounded artifacts and
-telemetry events. Successful `recover reconcile` runs also write sanitized,
-evidence-only ranker-learning events without mutating learned weights.
+status, the TUI `/product-status` and `/recover-status` presenters,
+audit-watch, product-evidence, and release-evidence now project recovery state
+from bounded artifacts and telemetry events. Successful `recover reconcile`
+runs also write sanitized, evidence-only ranker-learning events without
+mutating learned weights.
 Residual-work records now cite deterministic, privacy-safe evidence refs for
 required paths, changed paths, applicable failure evidence, and required-test
-commands. Remaining extensions are broader TUI continuation/handoff actions and
+commands. The TUI now also exposes a read-only `/recover-status` handoff
+surface backed by the same status presenter as `idiom recover status`.
+Remaining extensions are write-capable TUI continuation actions and
 non-plan-execute adapters.
 
 Verified adjacent implementation:
@@ -54,7 +57,10 @@ Verified adjacent implementation:
   Reconciliation runs the completed atoms' required tests, records completed
   atom IDs, validates a packet digest plus the atom manifest, merges sequential
   completions, and closes the packet only when every candidate atom is covered
-  by passing required-test evidence.
+  by passing required-test evidence. Status packet paths are workspace-contained
+  and reject symlinked parents or symlinked packet files; status reconciliation
+  discovery applies the same symlink boundary before loading sibling or default
+  reconciliation artifacts.
 - `internal/workspace/recovery_tools.go` exposes `recovery_inspect` and
   `recovery_status` through `idiom tool --profile discovery` and MCP with the
   normal sidecar envelope. `recovery_decompose` is available only through the
@@ -70,9 +76,17 @@ Verified adjacent implementation:
   <path>]` in the TUI. It renders the same shared operator status text as
   `idiom product status --operator-view` from the same lint, metrics, workflow
   state, and recovery inputs, including open recovery packet blockers and the
-  non-dispatchable recovery command hint. The rendered transcript entry is
-  harness/operator-authored and is not replayed as an assistant message in
-  later model context.
+  non-dispatchable recovery command hint. When a packet path is present, the
+  TUI appends a local `/recover-status --packet ...` handoff hint. The rendered
+  transcript entry is harness/operator-authored and is filtered before
+  compaction or request payload assembly, so it is not replayed as an assistant
+  message in later model context.
+- `internal/app/recover_status.go` exposes `/recover-status [--packet
+  <path>|<path>]` in the TUI. It resolves relative packet paths from the
+  current workspace directory, renders the shared `internal/recoverstatus`
+  presenter used by `idiom recover status`, rejects packet paths outside the
+  workspace or through symlinks, and records only an operator transcript entry
+  that is not replayed into later model context.
 - `cmd/idiom/audit.go` treats recovery failure-record and decomposition-packet
   events as audit-watch triggers, summarizes failure classes, candidate atom
   counts, next valid actions, and artifact paths, and keeps the packet
@@ -96,10 +110,10 @@ Verified adjacent implementation:
   file-body storage.
 
 Those pieces now cover the operator-facing plan-execute loop across CLI,
-sidecar, product workflow, evidence exports, and the first TUI product-status
-projection. The remaining design work is to broaden adapters and handoff
-surfaces while keeping the original failure visible without letting the model
-loop.
+sidecar, product workflow, evidence exports, and read-only TUI recovery status
+surfaces. The remaining design work is to broaden failure-source adapters and
+write-capable TUI continuation surfaces while keeping the original failure
+visible without letting the model loop.
 
 ## Problem
 
@@ -363,7 +377,7 @@ not-applicable for a given failure class.
 | Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. Landed for local `.idiom/recovery` artifacts with metadata-only rollups. |
 | `idiom ranker` | Accept only deterministic, verified recovery outcomes as learning input. Landed for `recover reconcile`: validated recovery outcomes append sanitized `source:"recovery_reconciliation"` no-op learning-log events with packet-quality and localization metrics, without mutating weights. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
-| TUI/prompt dispatch | `/product-status` renders the same operator recovery status and next-action model as CLI; broader continuation/handoff actions should keep using durable workflow state and must not infer recovery state from transcript prose. |
+| TUI/prompt dispatch | `/product-status` renders the shared product operator view, and `/recover-status` renders the same recovery packet status text as the CLI. Broader write-capable continuation/handoff actions should keep using durable workflow state and must not infer recovery state from transcript prose. |
 | `idiom tool` and MCP | Expose read-only recovery inspection with the same sidecar envelope and profile rules as other tools; keep write/promote actions outside discovery profile. |
 
 The initial sidecar/tool shape should be:
@@ -505,6 +519,10 @@ it moved into a recovery state, not like it vanished into a separate tool.
 - Status: the TUI `/product-status` slash command renders the shared product
   operator view, including recovery packet blockers, dispatchability, and the
   non-dispatchable recovery inspection command hint.
+- Status: the TUI `/recover-status [--packet <path>|<path>]` slash command
+  renders the same shared packet status presenter as `idiom recover status`.
+  It is read-only, CWD-relative for packet paths, operator-authored, and not
+  replayed into model context.
 - Status: sidecar read-only parity landed for `recovery_inspect` and
   `recovery_status`; artifact-writing `recovery_decompose` is intentionally
   default-profile only, and `recovery_promote`/`recovery_reconcile` remain

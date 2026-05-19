@@ -44,8 +44,13 @@ unblocks only after a validated reconciliation artifact covers the current
 packet's candidate atom manifest with passing required-test evidence. The TUI
 `/product-status [--effort-root <path>]` command renders that same shared
 operator status text from the same lint, metrics, workflow-state, and recovery
-inputs; it does not dispatch recovery writes or replay the rendered status as a
-model-authored assistant message.
+inputs. The TUI `/recover-status [--packet <path>|<path>]` command renders the
+same packet-level presenter as `idiom recover status` and resolves relative
+packet paths from the current workspace directory while keeping packet reads
+inside the workspace boundary. `/product-status` appends a TUI-local
+`/recover-status --packet ...` handoff hint when recovery packet state is
+present. Both status commands are read-only, operator-authored, filtered before
+compaction, and not replayed as model messages.
 
 ## Operator Surface Map
 
@@ -104,6 +109,11 @@ Common controls include:
 - `/product-status [--effort-root <path>]`: render the shared product operator
   status view for an explicit effort root, or for the current workspace
   directory only when that directory contains `workflow_state.json`.
+- `/recover-status [--packet <path>|<path>]`: render the shared recovery packet
+  status view without granting recovery write authority. Packet paths must stay
+  under the workspace root and must not traverse symlinked directories or
+  symlinked packet files; reconciliation artifacts discovered for status use
+  the same boundary.
 - `/resume [id]`: resume a prior session by ID or open the session picker.
 
 The default debug mode is redacted. Full mode is for local deep debugging and
@@ -141,11 +151,12 @@ For the partially implemented PRD/ADR/TDD product workflow, the TUI is still a
 target presenter over the same application use cases as the CLI. The CLI has a
 shared operator status view model, effort browsing, and status migration; the
 TUI now has a read-only `/product-status` projection over that operator view,
-including recovery packet state. TUI continuation/handoff fixtures remain open
-delivery work. A TUI action such as capture, start, continue, promote,
-dispatch, or close should resolve a stable effort ID, render the shared status
-view model, advance exactly one valid action, reconcile state from artifacts and
-evidence, and then render the next valid action.
+including recovery packet state, plus a read-only `/recover-status` projection
+over decomposition packets. Write-capable TUI continuation/handoff fixtures
+remain open delivery work. A TUI action such as capture, start, continue,
+promote, dispatch, or close should resolve a stable effort ID, render the
+shared status view model, advance exactly one valid action, reconcile state
+from artifacts and evidence, and then render the next valid action.
 
 Efforts should be browsable by coarse status folders:
 

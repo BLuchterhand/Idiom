@@ -21,6 +21,9 @@ func (m *Model) slashProductStatus(_ string, fields []string) bool {
 	statusView, workflowState, statusErr := productworkflow.LoadCheckedProductStatus(absRoot)
 	operatorStatus := productworkflow.BuildProductOperatorStatusView(statusView, workflowState)
 	body := productworkflow.FormatProductOperatorStatusText(filepath.Base(absRoot), operatorStatus)
+	if hint := m.productStatusTUIRecoveryHint(absRoot, operatorStatus); hint != "" {
+		body = strings.TrimRight(body, "\n") + "\n  tui_command_hint=" + hint + "\n"
+	}
 	m.insertBeforePendingAssistant(llama.ChatMessage{
 		Role:    "operator",
 		Content: strings.TrimRight(body, "\n"),
@@ -84,4 +87,34 @@ func (m *Model) productStatusAbsPath(path string) (string, error) {
 		return "", fmt.Errorf("product status: resolve effort root: %w", err)
 	}
 	return filepath.Clean(absRoot), nil
+}
+
+func (m *Model) productStatusTUIRecoveryHint(effortRoot string, view productworkflow.ProductOperatorStatusView) string {
+	if view.Recovery == nil {
+		return ""
+	}
+	packetPath := strings.TrimSpace(view.Recovery.PacketPath)
+	if packetPath == "" || packetPath == "outside_effort_root" {
+		return ""
+	}
+	if !filepath.IsAbs(packetPath) {
+		packetPath = filepath.Join(effortRoot, filepath.FromSlash(packetPath))
+	}
+	if m != nil && m.workspace != nil && strings.TrimSpace(m.workspace.Root()) != "" {
+		root := filepath.Clean(m.workspace.Root())
+		candidate := filepath.Clean(packetPath)
+		if resolvedRoot, err := filepath.EvalSymlinks(root); err == nil {
+			root = resolvedRoot
+		}
+		if resolvedCandidate, err := filepath.EvalSymlinks(candidate); err == nil {
+			candidate = resolvedCandidate
+		}
+		if rel, err := filepath.Rel(root, candidate); err == nil &&
+			rel != "." &&
+			rel != ".." &&
+			!strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return "/recover-status --packet " + filepath.ToSlash(rel)
+		}
+	}
+	return "/recover-status --packet " + m.displayPath(packetPath)
 }

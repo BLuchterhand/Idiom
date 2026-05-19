@@ -1,0 +1,223 @@
+package app
+
+import (
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/charmbracelet/bubbles/viewport"
+
+	"idiom/internal/config"
+	"idiom/internal/recoverstatus"
+	"idiom/internal/recovery"
+	"idiom/internal/workspace"
+)
+
+func TestSlashRecoverStatusPacketFlagAppendsOperatorStatusWithoutReplay(t *testing.T) {
+	root := t.TempDir()
+	packet := appRecoverStatusTestPacket()
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	model := &Model{
+		ready:     true,
+		viewport:  viewport.New(80, 20),
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+
+	quit := model.handleSlashCommand("/recover-status --packet packet.json")
+	if quit {
+		t.Fatal("recover status command must not quit the TUI")
+	}
+	if len(model.messages) != 1 {
+		t.Fatalf("expected one recovery status transcript message, got %#v", model.messages)
+	}
+	if model.messages[0].Role != "operator" {
+		t.Fatalf("recovery status output must be operator-authored, got role %q", model.messages[0].Role)
+	}
+	report, err := recoverstatus.Build(root, "packet.json")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	expected := strings.TrimRight(recoverstatus.FormatText(report), "\n")
+	if model.messages[0].Content != expected {
+		t.Fatalf("slash recover status must render the shared formatter.\nwant:\n%s\n\ngot:\n%s", expected, model.messages[0].Content)
+	}
+	for _, want := range []string{
+		"recover status: ready",
+		"packet: packet.json",
+		"failure_id: failure-app-recover-status",
+		"next_valid_action: review_decomposition",
+		"- recovery-001: App recover status",
+	} {
+		if !strings.Contains(model.messages[0].Content, want) {
+			t.Fatalf("expected recover status output to contain %q, got:\n%s", want, model.messages[0].Content)
+		}
+	}
+	for _, forbidden := range []string{
+		"recover promote",
+		"recover reconcile",
+		"recovery_decompose",
+	} {
+		if strings.Contains(model.messages[0].Content, forbidden) {
+			t.Fatalf("slash recover status must not advertise write-capable recovery action %q:\n%s", forbidden, model.messages[0].Content)
+		}
+	}
+	for _, msg := range model.requestMessages() {
+		if strings.Contains(msg.Content, "recover status:") {
+			t.Fatalf("operator recovery status output must not be replayed into model context: %#v", model.requestMessages())
+		}
+	}
+	if !strings.Contains(model.status, "Recovery status loaded") {
+		t.Fatalf("expected status line to report loaded status, got %q", model.status)
+	}
+}
+
+func TestSlashRecoverStatusBarePacketPath(t *testing.T) {
+	root := t.TempDir()
+	if _, _, err := recovery.WriteDecompositionPacket(root, appRecoverStatusTestPacket(), "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+
+	model.handleSlashCommand("/recover-status packet.json")
+	if len(model.messages) != 1 {
+		t.Fatalf("expected one operator message for bare packet path, got %#v", model.messages)
+	}
+	if !strings.Contains(model.messages[0].Content, "recover status: ready") {
+		t.Fatalf("expected recovery status text, got:\n%s", model.messages[0].Content)
+	}
+}
+
+func TestSlashRecoverStatusResolvesRelativePacketFromWorkspaceCWD(t *testing.T) {
+	root := t.TempDir()
+	subdir := filepath.Join(root, "nested")
+	if _, _, err := recovery.WriteDecompositionPacket(root, appRecoverStatusTestPacket(), "nested/packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: subdir}),
+	}
+
+	model.handleSlashCommand("/recover-status packet.json")
+	if len(model.messages) != 1 {
+		t.Fatalf("expected one operator message for CWD-relative packet path, got %#v", model.messages)
+	}
+	if !strings.Contains(model.messages[0].Content, "packet: nested/packet.json") {
+		t.Fatalf("expected CWD-relative packet to display as workspace-relative path, got:\n%s", model.messages[0].Content)
+	}
+}
+
+func TestSlashRecoverStatusUsageErrorIsOperatorAuthored(t *testing.T) {
+	root := t.TempDir()
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+
+	quit := model.handleSlashCommand("/recover-status --packet")
+	if quit {
+		t.Fatal("recover status usage error must not quit the TUI")
+	}
+	if len(model.messages) != 1 {
+		t.Fatalf("expected one operator usage message, got %#v", model.messages)
+	}
+	if model.messages[0].Role != "operator" {
+		t.Fatalf("usage error must be operator-authored, got %q", model.messages[0].Role)
+	}
+	if model.messages[0].Content != recoverStatusUsage {
+		t.Fatalf("expected concise usage, got %q", model.messages[0].Content)
+	}
+	for _, msg := range model.requestMessages() {
+		if strings.Contains(msg.Content, "/recover-status") {
+			t.Fatalf("operator usage output must not be replayed into model context: %#v", model.requestMessages())
+		}
+	}
+}
+
+func TestSlashHelpDocumentsRecoverStatusBarePacketPath(t *testing.T) {
+	model := &Model{}
+
+	model.slashHelp("/help", []string{"/help"})
+	if !strings.Contains(model.status, "/recover-status [--packet <path>|<path>]") {
+		t.Fatalf("help must document both recover status path forms, got %q", model.status)
+	}
+}
+
+func TestSlashRecoverStatusLoadErrorUsesSharedPresenter(t *testing.T) {
+	root := t.TempDir()
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+
+	model.handleSlashCommand("/recover-status missing.json")
+	if len(model.messages) != 1 {
+		t.Fatalf("expected one operator error message, got %#v", model.messages)
+	}
+	for _, want := range []string{
+		"recovery decomposition packet not found:",
+		"next_valid_action: inspect_failure",
+	} {
+		if !strings.Contains(model.messages[0].Content, want) {
+			t.Fatalf("expected shared error presenter to contain %q, got:\n%s", want, model.messages[0].Content)
+		}
+	}
+}
+
+func TestSlashRecoverStatusRejectsOutsidePacketPath(t *testing.T) {
+	root := t.TempDir()
+	outsideRoot := t.TempDir()
+	outsidePacket := filepath.Join(outsideRoot, "packet.json")
+	if _, _, err := recovery.WriteDecompositionPacket(outsideRoot, appRecoverStatusTestPacket(), "packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+	}
+
+	model.handleSlashCommand("/recover-status --packet " + outsidePacket)
+	if len(model.messages) != 1 {
+		t.Fatalf("expected one operator error message, got %#v", model.messages)
+	}
+	if !strings.Contains(model.messages[0].Content, "workspace root") ||
+		!strings.Contains(model.messages[0].Content, "next_valid_action: inspect_failure") {
+		t.Fatalf("expected outside packet rejection through shared presenter, got:\n%s", model.messages[0].Content)
+	}
+}
+
+func appRecoverStatusTestPacket() recovery.DecompositionPacket {
+	stamp := time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC).Format(time.RFC3339Nano)
+	return recovery.DecompositionPacket{
+		SchemaVersion: recovery.DecompositionPacketSchemaVersion,
+		PacketID:      "packet-failure-app-recover-status",
+		FailureID:     "failure-app-recover-status",
+		CreatedAt:     stamp,
+		UpdatedAt:     stamp,
+		PartialState: recovery.PartialState{
+			DirtyStatus: recovery.DirtyStatusClean,
+			ScopeStatus: recovery.ScopeStatusInScope,
+		},
+		Failure: recovery.Failure{Class: recovery.FailureClassExecutorEdit},
+		ResidualWork: []recovery.ResidualWork{{
+			ID:     "residual-001",
+			Title:  "App recover status",
+			Reason: recovery.FailureClassExecutorEdit,
+			Paths:  []string{"internal/app/recover_status.go"},
+			EvidenceRefs: []recovery.EvidenceRef{
+				{Kind: "required_path", Path: "internal/app/recover_status.go"},
+				{Kind: "required_test", ID: "go test ./internal/app"},
+			},
+		}},
+		CandidateAtoms: []recovery.CandidateAtom{{
+			ID:              "recovery-001",
+			Title:           "App recover status",
+			RequiredPaths:   []string{"internal/app/recover_status.go"},
+			RequiredTests:   []string{"go test ./internal/app"},
+			Gates:           []string{recovery.GateWorkspaceState, recovery.GateBriefLint},
+			ResidualWorkIDs: []string{"residual-001"},
+		}},
+		NextAction: recovery.NextActionReviewDecomposition,
+	}
+}

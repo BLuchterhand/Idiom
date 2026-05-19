@@ -39,6 +39,7 @@ var slashCommands = map[string]slashCommandFunc{
 	"/server":         (*Model).slashServer,
 	"/profile":        (*Model).slashProfile,
 	"/product-status": (*Model).slashProductStatus,
+	"/recover-status": (*Model).slashRecoverStatus,
 }
 
 func (m *Model) slashQuit(_ string, _ []string) bool {
@@ -46,7 +47,7 @@ func (m *Model) slashQuit(_ string, _ []string) bool {
 }
 
 func (m *Model) slashHelp(_ string, _ []string) bool {
-	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
+	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
 	return false
 }
 

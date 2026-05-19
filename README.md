@@ -156,7 +156,13 @@ Other useful subcommands:
   session.
 - `idiom recover status --packet <packet.json> [--json]` — inspect candidate
   recovery atoms, residual-work evidence refs, product links, gates, and the
-  next valid action from a decomposition packet.
+  next valid action from a decomposition packet. Packet paths must stay under
+  the workspace root and must not traverse symlinked directories or symlinked
+  packet files; reconciliation artifacts discovered for status use the same
+  symlink boundary. The interactive TUI exposes the same read-only presenter as
+  `/recover-status [--packet <path>|<path>]`; relative packet paths resolve
+  from the current workspace directory, and the rendered operator message is
+  not replayed into later model context.
 - `idiom recover decompose --session <id> [--output <packet.json>] [--json]`
   — rebuild a recovery packet from a failed plan-execute session. Custom
   output paths must stay under the workspace root, avoid protected paths such
@@ -195,7 +201,10 @@ Other useful subcommands:
   operator status and the TUI `/product-status` presenter also surface recovery
   packets referenced from `workflow_state.artifact_paths`, validate recovery
   reconciliation artifacts before closing packets, and block normal workflow
-  dispatch while a recovery packet is open.
+  dispatch while a recovery packet is open. The TUI `/recover-status` command
+  gives the same packet-level status view without granting promote/reconcile
+  write authority; `/product-status` also includes a TUI-local
+  `/recover-status --packet ...` command hint for the referenced packet.
   Product and release evidence exports also include metadata-only recovery
   rollups from `.idiom/recovery`, including failure-class, next-action,
   reconciliation, open/recovered/blocked, blocker, and release-impact counts
@@ -401,6 +410,7 @@ integration proof lives in
 - `/profile add <name>`
 - `/profile remove <name>`
 - `/product-status [--effort-root <path>]`
+- `/recover-status [--packet <path>|<path>]`
 - `/server start`
 - `/server stop`
 - `/server restart`

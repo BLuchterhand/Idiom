@@ -50,6 +50,29 @@ func TestRequestMessagesOmitsStaticWorkspaceOverview(t *testing.T) {
 	}
 }
 
+func TestRequestMessagesDoesNotCompactOperatorMessages(t *testing.T) {
+	m := &Model{
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "original implementation goal"},
+			{Role: "operator", Content: "recover status: ready\npacket: .idiom/recovery/secret/packet.json"},
+		},
+	}
+	for i := 0; i < defaultCompactionThreshold+1; i++ {
+		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: "assistant turn"})
+	}
+
+	msgs := m.requestMessages()
+	for _, msg := range msgs {
+		if strings.Contains(msg.Content, "recover status:") ||
+			strings.Contains(msg.Content, ".idiom/recovery/secret/packet.json") {
+			t.Fatalf("operator status content must not be compacted or replayed: %#v", msgs)
+		}
+	}
+	if len(m.messages) < 2 || m.messages[1].Role != "operator" {
+		t.Fatalf("request payload filtering must not mutate transcript messages: %#v", m.messages)
+	}
+}
+
 func TestRenderedMessageBodyCacheInvalidatesWhenMessagesChange(t *testing.T) {
 	m := &Model{
 		ready:    true,
