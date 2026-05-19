@@ -103,6 +103,18 @@ func TestProductEffortsBrowserRejectsUnsafeRootAndUnknownStatus(t *testing.T) {
 	}
 }
 
+func TestHasPathTraversalTreatsBackslashAsSeparator(t *testing.T) {
+	if !hasPathTraversal(`..\efforts`) {
+		t.Fatal("expected leading backslash traversal to be rejected")
+	}
+	if !hasPathTraversal(`started\..\closed`) {
+		t.Fatal("expected nested backslash traversal to be rejected")
+	}
+	if hasPathTraversal(`started\test-effort`) {
+		t.Fatal("expected ordinary backslash-separated effort path to be accepted")
+	}
+}
+
 func TestProductEffortsBrowserJSONRoundTripOnFindings(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "started", "missing"), 0o755); err != nil {

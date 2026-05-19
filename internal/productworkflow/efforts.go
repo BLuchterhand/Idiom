@@ -187,7 +187,8 @@ func resolveProductEffortsRoot(root string) (string, error) {
 }
 
 func hasPathTraversal(path string) bool {
-	for _, part := range strings.FieldsFunc(filepath.ToSlash(path), func(r rune) bool { return r == '/' }) {
+	normalized := strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+	for _, part := range strings.FieldsFunc(normalized, func(r rune) bool { return r == '/' }) {
 		if part == ".." {
 			return true
 		}
