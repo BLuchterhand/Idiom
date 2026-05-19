@@ -188,7 +188,23 @@ func renderImplementationBriefMarkdown(result BriefGenerationResult) string {
 
 func briefLooksLikeCommand(line string) bool {
 	command := strings.TrimSpace(line)
-	for _, prefix := range []string{"go ", "git ", "idiom ", "npm ", "yarn ", "pnpm ", "node "} {
+	for _, prefix := range []string{
+		"go ",
+		"git ",
+		"idiom ",
+		"make ",
+		"npm ",
+		"yarn ",
+		"pnpm ",
+		"node ",
+		"python ",
+		"python3 ",
+		"pytest",
+		"cargo ",
+		"mvn ",
+		"gradle ",
+		"./",
+	} {
 		if strings.HasPrefix(command, prefix) {
 			return true
 		}
@@ -259,7 +275,18 @@ func looksLikeWorkspaceFile(path string) bool {
 		return false
 	}
 	clean := filepath.ToSlash(filepath.Clean(path))
-	return clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return false
+	}
+	if strings.Contains(clean, "/") || filepath.Ext(clean) != "" {
+		return true
+	}
+	switch clean {
+	case "Makefile", "Dockerfile", "Containerfile", "Brewfile", "Rakefile", "Gemfile":
+		return true
+	default:
+		return false
+	}
 }
 
 func collectPlannedScopeFiles(records []ImplementationLedgerRecord, taskID string) []string {
