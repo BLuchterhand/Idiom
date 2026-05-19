@@ -2222,10 +2222,15 @@ func refineWorkspaceRel(projectRoot, p string) string {
 		return p
 	}
 	rel, err := filepath.Rel(projectRoot, p)
-	if err != nil || strings.HasPrefix(rel, "..") {
+	if err != nil || refineRelEscapesWorkspace(rel) {
 		return p
 	}
 	return rel
+}
+
+func refineRelEscapesWorkspace(rel string) bool {
+	rel = filepath.ToSlash(strings.TrimSpace(rel))
+	return rel == ".." || strings.HasPrefix(rel, "../")
 }
 
 // refineProjectRootFromIterDir derives the project root from a

@@ -264,6 +264,7 @@ func TestRefineWorkspaceRelConvertsAbsoluteToRelative(t *testing.T) {
 	}{
 		{"/Users/ben/proj", "/Users/ben/proj/.idiom/refine/atom/iter-1/draft.md", ".idiom/refine/atom/iter-1/draft.md"},
 		{"/Users/ben/proj", "/Users/ben/proj/cmd/idiom/lane.go", "cmd/idiom/lane.go"},
+		{"/Users/ben/proj", "/Users/ben/proj/..data/scratch.md", "..data/scratch.md"},
 		// Different ancestor — refuse to coerce, return input.
 		{"/Users/ben/proj", "/elsewhere/file.md", "/elsewhere/file.md"},
 		// Empty projectRoot — pass through.
