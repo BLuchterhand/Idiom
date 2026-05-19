@@ -162,7 +162,7 @@ Example:
 ```
 
 Collectors are not run unless `--run-collectors` is provided. Without that flag,
-the packet records them as pending evidence so the planner can see what the
+the packet records them as optional evidence so the planner can see what the
 profile would collect without executing project commands.
 
 ## Built-In Gates

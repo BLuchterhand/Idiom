@@ -115,7 +115,7 @@ changes should also run `make build` or `go build ./cmd/harness`.
 - Whether the result is proof, warning, or blocker.
 - What remains unverified.
 
-Current `source_sanity` should be understood as diagnostics or syntax sanity,
+Target `source_sanity` should be understood as diagnostics or syntax sanity,
 with generic checks as fallback. Focused tests and builds remain separate
 verification evidence.
 
@@ -144,13 +144,13 @@ An atom can be marked `completed` only when:
 - Required verification commands are proven successful.
 - Required design-doc test obligations have matching source or test evidence.
 
-An atom can be marked `source-satisfied - do not dispatch` only when current
-source already satisfies the target path and required test evidence is present.
+An atom can be marked `source-satisfied - do not dispatch` only when active
+source satisfies the target path and required test evidence is present.
 The harness should not create whitespace or placeholder edits merely to satisfy
 a write-shaped contract.
 
 If verification commands remain unproven, the closeout should be a typed
-`<<QUESTION>>` naming the pending commands. The atom doc should remain pending
+`<<QUESTION>>` naming the optional commands. The atom doc should remain optional
 so a later rerun can continue from the correct state.
 
 ## Documentation And Diagrams As Verification Aids

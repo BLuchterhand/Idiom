@@ -13,7 +13,7 @@ authority outside the model.
 
 The product claim is:
 
-> AI coding agents are becoming common, but teams do not yet trust their
+> AI coding agents are becoming common, but teams do not trust their
 > context, decisions, or outputs. Agent Harness sells the missing substrate: repo
 > memory, freshness, contracts, audit, and evals.
 
@@ -58,7 +58,7 @@ auditable conditions.
 | Verification/readiness | `internal/workspace/source_sanity.go`, `internal/agent`, [[09 - Verification Readiness and Completion]] | Post-write proof, changed-path evidence, readiness closure |
 | Telemetry/audit/eval | `internal/telemetry`, `internal/eval`, `harness_audit`, [[10 - Telemetry Audit Eval and Learning]] | Conversation logs, command telemetry, behavior audit, eval and ranker feedback* |
 | Local model operations | `internal/backends`, `internal/llama`, [[11 - Local Model Operations]] | Backend profiles, route models, queueing, degraded mode, readiness checks |
-| Sidecar/integrations | `internal/mcp`, `harness tool`, [[12 - Sidecar and External Integrations]] | External agent access to evidence, tools, recovery status, and schemas |
+| Sidecar/integrations | `internal/mcp`, `harness tool`, [[12 - Sidecar and LLM Agent Integrations]] | LLM agent access to evidence, tools, recovery status, and schemas |
 | Product workflow | `internal/productworkflow`, `cmd/harness/product_workflow.go`, [[20 - Product Workflow and Behavioral Coverage]] | Research evidence, PRD, ADR, TDD obligations, coverage gate, dispatch briefs |
 | Recovery | `internal/recovery`, `cmd/harness/recover.go`, [[21 - Recovery and Decomposition]] | Failure records, decomposition packets, recovery atoms, reconciliation |
 
@@ -103,7 +103,7 @@ The same components appear in different surface modes:
   dispatch is enabled it can resolve a referenced design doc, preflight or
   atomize it, and dispatch atoms through plan-execute.
 - `harness tool` exposes the same repository memory and diagnostic surfaces to
-  external agents without running Agent Harness's model loop.
+  LLM agents without running Agent Harness's model loop.
 
 ## Authority Model
 

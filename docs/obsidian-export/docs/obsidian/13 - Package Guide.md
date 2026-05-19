@@ -7,7 +7,7 @@ tags:
 
 # Package Guide
 
-This note gives a package-level map of the repo. Use it as an orientation aid,
+This note gives a package-level map of the target codebase. Use it as an orientation aid,
 not as a substitute for `context_pack` or source inspection.
 
 ## Commands
@@ -34,7 +34,7 @@ serve.
 | `internal/app` | Interactive TUI and session lifecycle |
 | `internal/runner` | Process/runtime helpers around command execution |
 | `internal/promptstack` | Prompt assembly and layering |
-| `internal/frontier/workerruntime` | Worker runtime catalog, profiles, and capability surface |
+| `internal/runtime/workerruntime` | Worker runtime catalog, profiles, and capability surface |
 | `internal/autonomy` | Autonomy contract structures and sidecar-facing behavior |
 
 ## Workspace And Tools
@@ -44,8 +44,8 @@ serve.
 | `internal/workspace` | Tool manager, dispatch, file operations, source sanity, context/audit tool entrypoints |
 | `internal/semantic` | Semantic/language-aware support |
 | `internal/discovery` | Discovery helpers and query orchestration |
-| `internal/frontier` | Frontier/runtime helper functionality |
-| `internal/frontier/pathparse` | Path parsing helpers |
+| `internal/runtime` | Runtime helper functionality |
+| `internal/runtime/pathparse` | Path parsing helpers |
 
 ## Repository Memory
 
@@ -91,7 +91,7 @@ serve.
 | `harness lane postflight` | QC pipeline for returned diffs |
 | `harness local-ops benchmark` | Local readiness, activation, smoke, capacity, and privacy-safe benchmark evidence |
 | `harness product-evidence export` | Metadata-only go/no-go evidence export for product decisions |
-| `harness release evidence` | Release evidence bundle comparing baseline/current command artifacts |
+| `harness release evidence` | Release evidence bundle comparing baseline/active command artifacts |
 | `harness ranker` | Manual ranker learning inspection, boost/penalize controls, and rollback |
 
 ## Prompt And Docs Areas
@@ -100,8 +100,8 @@ serve.
 | --- | --- |
 | `prompts/` | Baseline prompt layers |
 | `prompts/profiles/` | Mode/profile-specific prompt layers |
-| `docs/` | Design, roadmap, operations, architecture, audit, and workflow docs |
-| `.agent-config/` | external coding agent-specific repo context and traps |
+| `docs/` | Design, design map, operations, architecture, audit, and workflow docs |
+| `.agent-config/` | LLM-agent-specific project context and traps |
 
 ## Key Source Anchors
 

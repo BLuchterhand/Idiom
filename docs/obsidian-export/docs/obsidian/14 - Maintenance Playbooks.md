@@ -112,7 +112,7 @@ plan-execute.
    accepted brief before dispatching it.
 6. Treat `Decision: source-satisfied` as valid only with per-path evidence and
    any required test evidence.
-7. Treat listed verification commands as pending obligations until a successful
+7. Treat listed verification commands as optional obligations until a successful
    command result is cited.
 8. Keep `<<QUESTION>>` answers and planner-blocked answers as blockers. Do not
    mark the atom complete.

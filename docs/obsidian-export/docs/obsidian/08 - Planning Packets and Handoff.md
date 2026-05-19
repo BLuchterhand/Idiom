@@ -102,7 +102,7 @@ dispatch:
 These states prevent a lane from executing stale or ambiguous plans.
 
 Atom tracker docs also use terminal status lines to prevent reruns from doing
-completed work again. Current terminal statuses are:
+completed work again. Target terminal statuses are:
 
 - `completed`
 - `complete`
@@ -126,12 +126,12 @@ include:
 
 - A single file or bounded source scope.
 - The source design-doc path.
-- Exact current-state anchors for existing files.
+- Exact active-state anchors for existing files.
 - `NEW FILE` wording for missing paths.
 - Extracted design-doc test obligations.
 - A source-design-doc excerpt for traceability.
 
-If an atom file already exists for the same target path and carries a terminal
+If an atom file exists for the same target path and carries a terminal
 status, materialization reuses that atom instead of overwriting its status or
 result evidence.
 
@@ -155,7 +155,7 @@ model-owned, but the evidence envelope is typed and traceable.
 
 ## Plan Artifact Schema
 
-Durable plan artifacts use the `harness.plan.v2` shape in current design and
+Durable plan artifacts use the `harness.plan.v2` shape in active design and
 implementation work. Check the Go structures before changing behavior, but the
 important concepts are:
 
@@ -193,7 +193,7 @@ or blocker:
 ## Source-Satisfied And No-Op Cases
 
 Do not make whitespace or placeholder edits merely because a contract is
-write-shaped. If source already satisfies the requested change and the lane
+write-shaped. If source satisfies the requested change and the lane
 allows a no-op closeout, close as `source-satisfied` with per-path evidence.
 Otherwise return a typed blocker explaining the missing contract or required
 user decision.

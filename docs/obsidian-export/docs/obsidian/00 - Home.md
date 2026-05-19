@@ -16,17 +16,16 @@ The important split is simple:
 - The model owns strategy.
 - The harness owns contracts.
 
-That split drives every major system in the repo. The model can choose how to
+That split drives every major target subsystem. The model can choose how to
 approach a task, but the harness constrains what counts as valid work: scoped
 paths, permissions, typed artifacts, source evidence, verification, readiness,
 loop limits, and auditability.
 
-## Roadmap Marker
+## Guidance Scope
 
-Across these notes, `*` marks roadmapped or not-yet-implemented behavior. When
+Across these notes, `*` marks target guidance. When
 an element in a table, diagram, command list, or prose sentence carries `*`,
-treat it as target direction rather than shipped capability unless source,
-tests, or operator commands prove otherwise.
+treat it as greenfield guidance to adapt during implementation.
 
 ## What To Read First
 
@@ -60,7 +59,7 @@ tests, or operator commands prove otherwise.
 - [[18 - Prompt Stack and Profiles]]
 
 Read [[02 - Deterministic Evidence-Based Development]] first if you need to
-understand how Agent Harness is meant to be worked on. It describes the repo's most
+understand how Agent Harness is meant to be worked on. It describes the most
 important engineering pattern: localize with evidence, change only after tests
 or probes define behavior, verify after mutation, and feed outcomes back into
 audit and eval loops.
@@ -71,7 +70,7 @@ Read [[14 - Maintenance Playbooks]] before changing prompts, runner behavior,
 lane contracts, workspace tools, context memory, audit logic, or eval fixtures.
 
 Read [[16 - Operational Commands and Evidence Products]] if you need to explain
-the repo's operator-facing command surfaces. Read [[17 - Security Privacy and Data Boundaries]]
+the operator-facing command surfaces. Read [[17 - Security Privacy and Data Boundaries]]
 before discussing enterprise or regulated use.
 
 ## Full Note Index
@@ -87,7 +86,7 @@ before discussing enterprise or regulated use.
 - [[09 - Verification Readiness and Completion]]
 - [[10 - Telemetry Audit Eval and Learning]]
 - [[11 - Local Model Operations]]
-- [[12 - Sidecar and External Integrations]]
+- [[12 - Sidecar and LLM Agent Integrations]]
 - [[13 - Package Guide]]
 - [[14 - Maintenance Playbooks]]
 - [[15 - Glossary]]
@@ -101,14 +100,13 @@ before discussing enterprise or regulated use.
 
 ## Product Workflow and Recovery
 
-These notes replace the older proposal/roadmap split. All seven architectural
-pillars have substantial implementation. The product workflow has deterministic
-headless CLI surfaces and durable fixtures, while full behavioral coverage*,
-write-capable TUI continuation*, and some sidecar exposure* remain open work.
+These notes are the product workflow and recovery entry points. They describe
+the target CLI, TUI, sidecar, evidence, and behavioral coverage surfaces as
+greenfield design guidance.
 
 - [[20 - Product Workflow and Behavioral Coverage]] — upstream artifact
-  pipeline from research evidence to dispatch-ready briefs, current shipped
-  commands, behavioral coverage target*, and remaining work*
+  pipeline from research evidence to dispatch-ready briefs, specified commands,
+  behavioral coverage target*, and design questions*
 - [[21 - Recovery and Decomposition]] — recovery layer for converting failed
   plan-execute runs into classified evidence, decomposition packets, and gated
   follow-up atoms

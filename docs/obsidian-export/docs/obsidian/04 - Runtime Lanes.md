@@ -64,7 +64,7 @@ Typical flow:
 6. Require verification according to risk.
 7. Close readiness before final response.
 
-Use `--no-context-pack` only when the caller already supplied equivalent
+Use `--no-context-pack` only when the caller supplied equivalent
 context. Keep the same task string across related context calls so packet cache
 reuse remains possible.
 
@@ -85,7 +85,7 @@ git, task ledger, source sanity, or write tools.
 
 Like `implement`, `plan-execute` preloads a compact `context_pack` by default
 unless `--no-context-pack` is supplied. Refine scratchpad meta-prompts are the
-notable exclusion because refine already preloads phase-specific source and
+notable exclusion because refine preloads phase-specific source and
 lint evidence.
 
 The executor phase receives the structured plan and dispatches edits through
@@ -139,7 +139,7 @@ that design doc into plan-execute work:
   tokens are spent.
 - Broad design docs can be materialized into atom briefs under
   `.harness/atoms/<title>/atom-NNN.md`.
-- Materialized atoms carry exact current-state anchors for existing files and a
+- Materialized atoms carry exact active-state anchors for existing files and a
   `NEW FILE` marker for missing paths.
 - Existing terminal atoms are preserved during materialization and skipped on
   rerun.
@@ -163,7 +163,7 @@ Lanes should make these properties observable:
 - Which obligations are still open.
 - Which verification command or source sanity check was run.
 - Which result is terminal.
-- Which generated atom docs remain pending, terminal, blocked, or
+- Which generated atom docs remain optional, terminal, blocked, or
   source-satisfied.
 
 ## Auxiliary Lane Commands And Status

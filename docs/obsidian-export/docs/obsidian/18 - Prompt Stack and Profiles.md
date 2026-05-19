@@ -31,7 +31,7 @@ default.
 | `prompts/base.md` | Baseline behavior shared across sessions |
 | `prompts/plan-mode.md` | Plan-mode expectations |
 | `prompts/profiles/coding.md` | Code-quality profile expectations |
-| `prompts/profiles/external-agent-worker.md` | Executor-model profile for external coding agent/local model worker-style runs |
+| `prompts/profiles/LLM-agent-worker.md` | Executor-model profile for LLM agent/local model worker-style runs |
 
 Project-local profiles can also be loaded through configured profile dirs.
 
@@ -59,7 +59,7 @@ flowchart TD
 ```
 
 Static prompts teach behavior. Runtime briefs and tool manifests describe the
-current lane, task, tools, obligations, paths, and verification expectations.
+active lane, task, tools, obligations, paths, and verification expectations.
 Host gates enforce the invariants.
 
 ## Authority Rules
@@ -123,8 +123,8 @@ Prompt-stack changes should usually check:
 | --- | --- |
 | `internal/promptstack` | Prompt composition and profile loading |
 | `internal/app/lifecycle.go` | TUI prompt stack loading and debug prompt source records |
-| `internal/frontier/workerruntime/runtime.go` | Runtime brief fields |
-| `internal/frontier/workerruntime/catalog.go` | Tool profiles and role contracts |
+| `internal/runtime/workerruntime/runtime.go` | Runtime brief fields |
+| `internal/runtime/workerruntime/catalog.go` | Tool profiles and role contracts |
 | `prompts/` | Baseline prompt files |
 | `prompts/profiles/` | Profile prompt files |
 

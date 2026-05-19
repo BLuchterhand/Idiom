@@ -1,9 +1,10 @@
 # Capability Registry
 
-review milestone introduced a read-only capability vocabulary for callers that want a
-stable contract instead of binding directly to tool names. review milestone routes the
-first read-only discovery slice through the `read_only_capability` tool while
-leaving direct tool names available as fallback.
+The capability registry defines a read-only capability vocabulary for callers
+that want a stable contract instead of binding directly to tool names. The
+first read-only discovery slice should route through the
+`read_only_capability` tool while leaving direct tool names available as
+fallback.
 
 Initial capability IDs:
 
@@ -15,8 +16,8 @@ Initial capability IDs:
 
 The model or caller asks for a capability. The harness registry resolves that
 ID to existing read-only adapters such as `code_navigate`, language-specific
-symbol tools, and other read-only discovery adapters. Runtime execution now
-routes these five IDs through `code_navigate` first, preserving the adapter's
+symbol tools, and other read-only discovery adapters. Runtime execution should
+route these five IDs through `code_navigate` first, preserving the adapter's
 language routing, generic fallback, uncertainty, and result evidence. The
 response is a thin wrapper with capability metadata, the selected adapter, any
 fallback reason, and the underlying tool result.

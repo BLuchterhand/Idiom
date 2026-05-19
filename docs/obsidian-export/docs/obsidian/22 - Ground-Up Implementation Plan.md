@@ -30,7 +30,7 @@ a real repository and receive:
 
 - A fresh repository context packet with ranked files, symbols, tests, and
   uncertainty.
-- A tool schema and permission manifest that external agents can consume.
+- A tool schema and permission manifest that LLM agents can consume.
 - A read-only audit/status report showing graph freshness, tool availability,
   and privacy-safe evidence.
 - One write-capable lane that can edit scoped files, verify the result, and
@@ -58,7 +58,7 @@ Required proof:
 - Retained-use signal: repeated use across multiple repositories or multiple
   sessions with privacy-safe validation records.
 - Value proof: time saved, unsafe edit avoided, failed run recovered, audit
-  finding converted into a fix, or external agent made safer through the
+  finding converted into a fix, or LLM agent made safer through the
   sidecar.
 - No-go criteria: unsupported compliance claim, raw-content export,
   unreproducible install, unverifiable release evidence, or missing evidence
@@ -160,12 +160,12 @@ and audit signals rather than repeated prompt reminders.
 | --- | --- | --- |
 | Writes require approved path role and lane phase | Workspace and contracts | Permission denial tests |
 | Final success requires readiness closure | Runner and readiness | Unsupported-final tests |
-| Freshness claims require current fingerprints | Repository memory | Stale-cache tests |
+| Freshness claims require active fingerprints | Repository memory | Stale-cache tests |
 | Shareable durable evidence excludes raw private content | Evidence pipeline | Forbidden-marker tests |
 | Compaction preserves obligations but creates no source proof | Session and runner | Compaction state tests |
 | Prompt text cannot grant permissions, freshness, or completion | Runtime contracts | Prompt/change regression tests |
 | Adapters cannot leak vendor types into core contracts | Architecture boundary | Import-boundary checks or review gate |
-| External integrations reuse first-party tool contracts | Sidecar/MCP adapters | CLI/MCP parity tests |
+| LLM agent integrations reuse first-party tool contracts | Sidecar/MCP adapters | CLI/MCP parity tests |
 
 ## Suggested Package Shape
 
@@ -234,9 +234,9 @@ operator command before moving on.
 | E17 | Audit and eval | Harness audit, behavior classifiers, replay fixtures, regression evals | Eval fixture tests, audit correlation tests |
 | E17a | Operational evidence commands | Lane history/explain/post-analyze/postflight, audit watch, product evidence, release evidence, local-ops benchmark | Command contract tests, metadata-only export tests |
 | E18 | Ranker learning | Evidence-only learning log, manual boost/penalize, rollback, audit summary | Ranker update tests, no-op evidence tests |
-| E19 | Sidecar CLI | `tool list/help/schemas/<name>` with stable envelope and profile permissions | CLI contract tests, external-agent smoke |
+| E19 | Sidecar CLI | `tool list/help/schemas/<name>` with stable envelope and profile permissions | CLI contract tests, LLM-agent smoke |
 | E20 | Inbound MCP* | Discovery-profile MCP server sharing schemas, permissions, telemetry, and freshness | Protocol tests, profile denial tests |
-| E20a | External orchestration templates* | Installable skill templates and project overlays for external coding agent/external coding agent-style orchestrators | Template list/install tests, overwrite and path-safety tests |
+| E20a | LLM-agent orchestration templates* | Installable skill templates and project overlays for LLM-agent orchestrators | Template list/install tests, overwrite and path-safety tests |
 | E21 | Local model ops | Doctor, backend start/stop/status, route roles, queue admission, degraded mode | Doctor fixture tests, queue admission tests |
 | E21a | Operational reliability | Runbooks, incident classes, capacity budgets, degraded-mode policy, cleanup/retention, backup/restore for local artifacts | Runbook smoke tests, capacity/queue saturation tests, retention cleanup tests, restore fixture tests |
 | E22 | Product workflow* | Evidence to PRD, ADR, TDD obligations, coverage gate, dispatch-ready briefs | Workflow transition tests, coverage-gate tests |
@@ -244,12 +244,12 @@ operator command before moving on.
 | E24 | Packaging and bootstrap | `init`, installer, version stamping, release evidence, product-evidence export, docs, support boundary | Init/version tests, release smoke, metadata-only evidence tests |
 | E24a | Release engineering | Reproducible builds, checksums/signing, SBOM, installer rollback, compatibility matrix, release notes, staged/canary smoke | Install/upgrade/rollback smoke, checksum/signature verification, SBOM generation, matrix smoke, release evidence gate |
 
-`*` marks efforts that can be roadmapped after the first CLI sidecar and
+`*` marks efforts that can be design mapped after the first CLI sidecar and
 write-capable lane prove the substrate.
 
 ## Deliverables By Effort
 
-Each effort should ship more than code. It should publish a contract that other
+Each effort should define more than code. It should publish a contract that other
 efforts can consume, plus a small operator-visible proof that the contract
 works. Without those deliverables, features tend to become isolated demos.
 
@@ -401,7 +401,7 @@ upstream inputs, downstream consumers, and composition proof are named.
 | Local model ops | Config, backend probes, queue state | Runner admission, doctor, degraded mode | Doctor explains backend readiness before a lane starts |
 
 Review rule: if the composition proof requires manual transcript reading, the
-feature interaction is not yet engineered. Add a typed event, artifact field, or
+feature interaction is not engineered. Add a typed event, artifact field, or
 test fixture before treating the feature as complete.
 
 ## Interaction Flows
@@ -412,7 +412,7 @@ These flows are the minimum cross-feature interactions a rebuild should prove.
 
 ```mermaid
 flowchart LR
-    Caller["External agent or script"] --> Tool["harness tool / MCP"]
+    Caller["LLM agent or script"] --> Tool["harness tool / MCP"]
     Tool --> Registry["Tool schema and profile filter"]
     Registry --> Workspace["Workspace manager"]
     Workspace --> Memory["Repository memory"]
@@ -589,7 +589,7 @@ An effort is done when:
 - Positive, negative, degraded, and privacy tests pass.
 - Telemetry can identify the run, contract version, decision, and failure
   reason without raw private content.
-- Docs include current behavior, not only target behavior.
+- Docs include target behavior, not only target behavior.
 - A downstream consumer has exercised the contract in at least one integration
   test or smoke command.
 - The effort has an explicit non-goal list for tempting adjacent work.
@@ -598,9 +598,9 @@ Do not accept "the model handled it in a live run" as a done signal. Live runs
 are product evidence only after the typed contract and regression protection
 exist.
 
-## Coverage Against Current Agent Harness Surfaces
+## Coverage Against Target Harness Surfaces
 
-The effort list is meant to cover these current repository surfaces:
+The effort list is meant to cover these greenfield implementation surfaces:
 
 - Core CLI and interactive entrypoints: `prompt`, `turns-file`, `resume`,
   `list-sessions`, TUI launch, `init`, `version`, and `doctor`.
@@ -629,7 +629,7 @@ rebuild plan.
 
 ### Phase 0: Foundation
 
-Ship E00 through E04 first. This creates the repo, contract vocabulary,
+Define E00 through E04 first. This creates the project skeleton, contract vocabulary,
 redacted telemetry, tool schemas, and workspace permission boundary.
 
 Done when:
@@ -644,7 +644,7 @@ Done when:
 
 ### Phase 1: Model Loop
 
-Ship E05 through E08. Use fake model adapters before real model backends so the
+Define E05 through E08. Use fake model adapters before real model backends so the
 runner loop can be tested deterministically.
 
 Done when:
@@ -659,7 +659,7 @@ Done when:
 
 ### Phase 2: Repository Memory
 
-Ship E09 through E12. Start with Go and generic collectors, but keep the graph
+Define E09 through E12. Start with Go and generic collectors, but keep the graph
 and capability contracts language-neutral.
 
 Done when:
@@ -672,7 +672,7 @@ Done when:
 
 ### Phase 3: Lanes
 
-Ship E13 through E16. Prefer one robust `implement` lane before `plan-execute`;
+Define E13 through E16. Prefer one robust `implement` lane before `plan-execute`;
 then add typed plan artifacts and executor validation.
 
 Done when:
@@ -687,7 +687,7 @@ Done when:
 
 ### Phase 4: Audit, Eval, And Sidecar
 
-Ship E17 through E20. Make the sidecar reuse the same workspace manager and
+Define E17 through E20. Make the sidecar reuse the same workspace manager and
 schemas; do not build a second tool system for integrations.
 
 Done when:
@@ -703,7 +703,7 @@ Done when:
 
 ### Phase 5: Operations And Product Workflow
 
-Ship E21 through E24 after the substrate is useful from the CLI.
+Define E21 through E24 after the substrate is useful from the CLI.
 
 Done when:
 
@@ -711,7 +711,7 @@ Done when:
 - Queue admission prevents local-model capacity failures from becoming
   confusing lane failures.
 - Product evidence and release evidence are metadata-only by default.
-- Docs explain current behavior separately from roadmapped behavior.
+- Docs explain target behavior separately from design mapped behavior.
 
 ## Development Workflow For A Seamless Rebuild
 
@@ -783,7 +783,7 @@ degraded.
 ## Risk Register
 
 Track these risks from the beginning. Each one should have a detector, a
-fallback, and at least one regression test once implemented.
+fallback, and at least one regression test once defined.
 
 | Risk | Detector | Fallback or response |
 | --- | --- | --- |
@@ -796,7 +796,7 @@ fallback, and at least one regression test once implemented.
 | Queue/backend failure looks like model failure | Doctor and queue admission events | Degraded-mode blocker before lane dispatch |
 | Recovery packets become stale work queues | Reconcile freshness and required-test checks | Rebase or close packet as obsolete |
 | Golden fixtures grow unreadable | Fixture size check | Split fixture or assert typed fields instead |
-| External integrations fork tool behavior | Sidecar/MCP parity test | Route through the shared workspace manager |
+| LLM agent integrations fork tool behavior | Sidecar/MCP parity test | Route through the shared workspace manager |
 
 ## Consistency, Concurrency, And Idempotency
 
@@ -819,7 +819,7 @@ Rules:
 - Queue leases have owner, deadline, heartbeat, and expired-lease recovery
   semantics.
 - Recovery promotion is idempotent: promoting the same atom twice should return
-  the existing dispatch record or a typed already-promoted state.
+  the existing dispatch record or a typed promoted state.
 - Migrations use journaled or temporary output and publish the new version only
   after validation succeeds.
 
@@ -845,7 +845,7 @@ happened, which contract decided, and what the operator should do next.
 
 ## Adoption Readiness
 
-Ship the rebuild with enough ergonomic proof that another person can succeed
+Define the rebuild with enough ergonomic proof that another person can succeed
 without the original implementer nearby.
 
 Required assets:
@@ -854,7 +854,7 @@ Required assets:
 - `doctor --explain` output that maps every blocker to a remedy.
 - Privacy-safe support bundle command with redaction preview.
 - Upgrade guide and known-incompatibilities page.
-- External-agent integration examples for CLI sidecar and MCP.
+- LLM-agent integration examples for CLI sidecar and MCP.
 - Success checklist for design partners: install, first packet, first verified
   edit, first evidence export, first recovery.
 
@@ -968,7 +968,7 @@ Testing philosophy:
   matrices, readiness transitions, context compaction, and schema validation.
 - Keep fixtures small, named, and purpose-built. Large fixture repos hide the
   behavior under noise unless the test is explicitly about scale or ranking.
-- Treat flaky tests as product bugs. Local agent harnesses cannot be trusted if
+- Treat flaky tests as product bugs. LLM-agent harnesses cannot be trusted if
   their own verification is timing-sensitive or order-dependent.
 - Do not mock what you can model with a simple fake. Fakes should expose the
   contract clearly; mocks that assert implementation choreography often make
@@ -985,7 +985,7 @@ Testing philosophy:
 | CLI smoke tests | Operator command behavior and exit codes | `go test` around command helpers |
 | Security/privacy tests | Protected paths, redaction, raw-content exclusion | Forbidden-marker fixtures |
 | Eval tests | Behavioral regressions and audit classification | JSONL fixtures and replay harness |
-| Docs checks | Obsidian links, roadmap markers, whitespace | `git diff --check`, focused link scripts* |
+| Docs checks | Obsidian links, design map markers, whitespace | `git diff --check`, focused link scripts* |
 
 ## Fixture Taxonomy
 
@@ -1002,7 +1002,7 @@ Create fixtures before feature work depends on them:
 - `testdata/sidecar`: stable tool envelope request and response examples.
 - `testdata/lanes`: fake-model scripts for implement, blocker, loop, and
   verification cases.
-- `testdata/migrations`: old, current, malformed, partial-write, and
+- `testdata/migrations`: old, active, malformed, partial-write, and
   interrupted artifact states.
 
 Every fixture needs a README naming the contract it protects, the expected
@@ -1016,7 +1016,7 @@ Before implementing any effort, write a short test plan with these fields:
 | Field | Question |
 | --- | --- |
 | Contract owner | Which package owns the rule? |
-| Behavior claim | What should an operator, external agent, or lane observe? |
+| Behavior claim | What should an operator, LLM agent, or lane observe? |
 | Trust boundary | Is the input from a user, model, filesystem, process, network, or durable artifact? |
 | Success case | What is the smallest valid example? |
 | Rejection case | What invalid, stale, forbidden, or unsupported example must fail closed? |
@@ -1058,7 +1058,7 @@ Use this as the agent-priming instruction set when asking an implementation
 agent to build a slice of the harness.
 
 ```markdown
-You are implementing an Harness-style local agent harness. Work test-first around
+You are implementing a Harness-style LLM-agent harness. Work test-first around
 contracts, not coverage theater.
 
 Before editing implementation code:
@@ -1248,7 +1248,7 @@ Migration requirements:
 - Backup, journal, or temporary output before destructive mutation.
 - Dry-run and apply modes for operator commands.
 - Rollback support or an explicit irreversible-migration blocker.
-- Tests for old-to-new, already-new, malformed-old, partial-write, interrupted,
+- Tests for old-to-new, new, malformed-old, partial-write, interrupted,
   and unsupported-future-version states.
 
 Artifacts that need migration plans include config, graph stores, graph views,
@@ -1256,13 +1256,13 @@ telemetry events, session summaries, plan artifacts, recovery packets, workflow
 state, ranker state, tool schemas, and product/release evidence exports.
 
 Sidecar and MCP consumers need version negotiation or explicit unsupported
-version errors. They must not silently reinterpret older artifacts as current
+version errors. They must not silently reinterpret older artifacts as active
 authority.
 
 ## Feature Acceptance Gates
 
-A feature is not complete because a model can do it once. It is complete when
-the harness can explain, test, and replay the behavior.
+A feature is complete only when the harness can explain, test, and replay the
+behavior.
 
 | Feature family | Acceptance gate |
 | --- | --- |
@@ -1290,7 +1290,7 @@ the harness can explain, test, and replay the behavior.
   required edit authority.
 - Treating context packet paths as write authority.
 - Treating patch hygiene as source verification.
-- Allowing external integrations to bypass the first-party workspace manager.
+- Allowing LLM agent integrations to bypass the first-party workspace manager.
 - Logging raw prompts, transcript excerpts, or file bodies into durable
   shareable artifacts.
 - Creating generic `helpers` or `common` packages for rules that have a real
@@ -1312,8 +1312,8 @@ Use these notes as the implementation map:
 - [[10 - Telemetry Audit Eval and Learning]] for improvement loops.
 - [[11 - Local Model Operations]] for backend, queue, route-role, and context
   budget operations.
-- [[12 - Sidecar and External Integrations]] for reusable substrate surfaces.
-- [[13 - Package Guide]] for the current package and command inventory.
+- [[12 - Sidecar and LLM Agent Integrations]] for reusable substrate surfaces.
+- [[13 - Package Guide]] for the active package and command inventory.
 - [[16 - Operational Commands and Evidence Products]] for evidence-producing
   command surfaces.
 - [[17 - Security Privacy and Data Boundaries]] for export and redaction rules.

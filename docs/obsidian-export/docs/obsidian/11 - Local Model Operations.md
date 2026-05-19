@@ -48,7 +48,7 @@ Local model operations include:
 - Reporting readiness and degraded modes.
 - Managing context budgets.
 - Gating concurrent work through the local queue daemon.
-- Keeping model weights, caches, and logs out of the target repo.
+- Keeping model weights, caches, and logs out of the target repository.
 - Preserving privacy by default through local execution.
 - Capturing enough telemetry for debugging without leaking sensitive content.
 
@@ -70,11 +70,11 @@ differences should be surfaced as capability or readiness differences:
 such as discovery, plan, implement, eval, and sidecar. Profiles report
 `pass`, `degraded`, or `blocked` status, plus remedies.
 
-Current readiness gates are partly report-only in the quickstart path. Treat a
+Target readiness gates are partly report-only in the quickstart path. Treat a
 doctor report as operator evidence and lane-start guidance, not as proof that a
 later model run will succeed.
 
-`*` marks roadmapped model roles.
+`*` marks design mapped model roles.
 
 Backend commands:
 

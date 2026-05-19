@@ -1,135 +1,62 @@
 # Decompose On Failure
 
-**North Star: AI coding agents are becoming common, but teams do not yet trust
+**North Star: AI coding agents are becoming common, but teams do not trust
 their context, decisions, or outputs. Agent Harness sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
 Status: design guidance
-north-star/tool parity YYYY-MM-DD
 
-Implementation state in the current target state: the plan-execute recovery loop and the
-first generic lane-implement adapter are now shipped. Failed `plan-execute`
-runs and failed `harness lane implement` subprocesses automatically persist a
-privacy-safe failure record and a decomposition packet. Operators can inspect
-the failed session, inspect packet status, rebuild the packet, promote one
-candidate recovery atom into a normal brief after brief lint, atom intake, and
-recovery scope gates pass, and reconcile completed atoms back to the original
-packet. Promotion is deliberately not dispatch authority; the promoted brief
-still enters the usual lane workflow. Product/operator status, the TUI
-`/product-status` and `/recover-status` presenters,
-audit-watch, product-evidence, and release-evidence now project recovery state
-from bounded artifacts and telemetry events. Successful `recover reconcile`
-runs also write sanitized, evidence-only ranker-learning events without
-mutating learned weights.
-Residual-work records now cite deterministic, privacy-safe evidence refs for
-required paths, changed paths, applicable failure evidence, and required-test
-commands. The TUI now also exposes a read-only `/recover-status` handoff
-surface backed by the same status presenter as `harness recover status`.
-Remaining extensions are write-capable TUI continuation actions and additional
-non-plan-execute adapters.
+This document defines the target recovery loop. Failed lanes persist
+privacy-safe failure records and decomposition packets; operators can inspect,
+rebuild, promote scoped recovery atoms, and reconcile completed work without
+treating recovery as direct dispatch authority.
 
-Verified adjacent implementation:
+The recovery subsystem should provide these capabilities:
 
-- `internal/app/implementation_dispatch.go` can pre-atomize design docs when
-  they have many atom candidates or when brief lint reports single-purpose
-  decomposition blockers.
-- `internal/app/implementation_dispatch.go` can refine non-dispatchable plan
-  documents before running `plan-execute`.
-- `internal/app/implementation_dispatch.go` can make a one-shot
-  planner-blocked recovery decision: retry once with an addendum or surface the
-  blocker.
-- `cmd/harness/plan_execute.go` records planner failures such as
-  `planner_blocked`, `planner_failed`, and `plan_artifact_missing` into durable
-  progress state.
-- `internal/recovery/record.go` classifies the documented plan-execute failure
-  classes deterministically, including `scope_too_large` and
-  `verification_failed`, from explicit failure kinds, review-repair reason
-  classes, and bounded host evidence text.
-- `cmd/harness/plan_execute.go` and `internal/planexecute/run.go` now write
-  `.harness/recovery/<failure-id>/failure.json` and
-  `.harness/recovery/<failure-id>/packet.json` automatically whenever a
-  `plan-execute` progress state is saved with `status:"failed"`.
-- `cmd/harness/lane.go` and `cmd/harness/lane_recovery.go` now write the same
-  recovery artifacts when an `harness lane implement` subcommand exits non-zero.
-  The adapter records the original workspace-relative brief path, extracts
-  required edit paths from that original brief, uses bounded lane/session
-  metadata as evidence, and classifies the failed run into a decomposable
-  generic execution failure unless a narrower budget, stale-context,
-  verification, or scope signal is present.
-- `cmd/harness/recover.go` exposes read-only inspection for those records, with a
-  legacy fallback that can derive the same report from failed progress state
-  without mutating the workspace.
-- `cmd/harness/recover_packet.go` implements `recover decompose`, packet-based
-  `recover status`, `recover promote`, and `recover reconcile`. Promotion
-  writes a brief only after brief lint, atom intake, and scope gates pass.
-  Reconciliation runs the completed atoms' required tests, records completed
-  atom IDs, validates a packet digest plus the atom manifest, merges sequential
-  completions, and closes the packet only when every candidate atom is covered
-  by passing required-test evidence. Status packet paths are workspace-contained
-  and reject symlinked parents or symlinked packet files; status reconciliation
-  discovery applies the same symlink boundary before loading sibling or default
-  reconciliation artifacts.
-- `internal/workspace/recovery_tools.go` exposes `recovery_inspect` and
-  `recovery_status` through `harness tool --profile discovery` and MCP with the
-  normal sidecar envelope for both plan-execute and lane-implement records.
-  `recovery_decompose` is available only through the default tool profile
-  because it writes `.harness/recovery` artifacts.
-- `internal/productworkflow/status.go` projects `workflow_state.artifact_paths`
-  recovery packets into `harness product status` and the shared operator status
-  view. Open recovery packets block normal workflow dispatch and add a runnable
-  recovery inspection action without making the packet itself dispatch
-  authority. Valid reconciliation artifacts close the recovery blocker only when
-  their packet digest, completed/remaining atom manifest, and passing
-  required-test evidence match the current packet.
-- `internal/app/product_status.go` exposes `/product-status [--effort-root
-  <path>]` in the TUI. It renders the same shared operator status text as
-  `harness product status --operator-view` from the same lint, metrics, workflow
-  state, and recovery inputs, including open recovery packet blockers and the
-  non-dispatchable recovery command hint. When a packet path is present, the
-  TUI appends a local `/recover-status --packet ...` handoff hint. The rendered
-  transcript entry is harness/operator-authored and is filtered before
-  compaction or request payload assembly, so it is not replayed as an assistant
-  message in later model context.
-- `internal/app/recover_status.go` exposes `/recover-status [--packet
-  <path>|<path>]` in the TUI. It resolves relative packet paths from the
-  current workspace directory, renders the shared `internal/recoverstatus`
-  presenter used by `harness recover status`, rejects packet paths outside the
-  workspace or through symlinks, and records only an operator transcript entry
-  that is not replayed into later model context.
-- `cmd/harness/audit.go` treats recovery failure-record and decomposition-packet
-  events as audit-watch triggers, summarizes failure classes, candidate atom
-  counts, next valid actions, and artifact paths, and keeps the packet
-  metadata-only.
-- `cmd/harness/product_evidence.go` and `cmd/harness/release_evidence.go`
-  summarize local `.harness/recovery` artifacts with metadata-only counts,
-  failure classes, next actions, reconciliation counts, release impact, and
-  blockers. Open packets downgrade release readiness to partial evidence;
-  malformed, missing, or stale recovery artifacts block the export without
-  storing prompt, transcript, or file-body content.
-- `cmd/harness/recover_packet.go` records a sanitized evidence-only
-  `.harness/ranker/learning_log.jsonl` event under
-  `source:"recovery_reconciliation"` after a validated reconciliation artifact
-  is written. The event uses action `no_op`, records packet quality,
-  localization-improvement, completed/remaining atom counts, and verification
-  counts, and does not create or update `.harness/ranker/weights.json`.
-- `internal/recovery/packet.go` enriches each residual-work record with
-  scoped evidence refs for its required paths, changed paths, inherited failure
-  evidence, and generated required-test commands. This keeps packet evidence
-  bounded to metadata and command IDs while avoiding raw transcript, prompt, or
-  file-body storage.
+- Record planner and executor failures such as `planner_blocked`,
+  `planner_failed`, `plan_artifact_missing`, `scope_too_large`, and
+  `verification_failed` into durable progress state.
+- Classify failure records deterministically from explicit failure kinds,
+  review-repair reason classes, and bounded host evidence.
+- Write `.harness/recovery/<failure-id>/failure.json` and
+  `.harness/recovery/<failure-id>/packet.json` when a lane or plan-execute run
+  reaches a failed terminal state.
+- Preserve the workspace-relative brief path, required edit paths, bounded
+  lane/session evidence, changed-path evidence, and stop reason.
+- Expose read-only inspection and packet status commands separately from
+  artifact-writing recovery commands.
+- Promote a recovery brief only after brief lint, atom intake, and scope gates
+  pass.
+- Reconcile completed recovery atoms by validating packet digest, atom manifest,
+  completed atom IDs, and passing required-test evidence.
+- Reject packet paths outside the workspace or through symlinked parents/files.
+- Expose `recovery_inspect` and `recovery_status` through `harness tool` and MCP
+  with the normal sidecar envelope.
+- Keep artifact-writing recovery actions under a write-capable profile or CLI
+  command, not the read-only sidecar profile.
+- Project open recovery packets into product/operator status as dispatch
+  blockers with one valid inspection or reconciliation action.
+- Render TUI recovery and product-status views from the same presenter models as
+  CLI status commands, and keep those operator-authored transcript entries out
+  of later model context.
+- Summarize recovery artifacts in audit, product-evidence, release-evidence,
+  and ranker-learning outputs using metadata-only counts, failure classes,
+  next actions, reconciliation counts, artifact IDs, and privacy-safe blockers.
+- Enrich residual-work records with scoped evidence refs, required paths,
+  changed paths, inherited failure evidence, and generated required-test
+  commands without storing raw transcript, prompt, or file-body content.
 
-Those pieces now cover the operator-facing plan-execute loop across CLI,
-sidecar, product workflow, evidence exports, and read-only TUI recovery status
-surfaces. The remaining design work is to broaden failure-source adapters and
-write-capable TUI continuation surfaces while keeping the original failure
-visible without letting the model loop.
+Together these capabilities define the operator-facing recovery loop across
+CLI, sidecar, product workflow, evidence exports, and read-only TUI status
+surfaces while keeping the original failure visible without letting the model
+loop.
 
 ## Problem
 
-When an implementation lane fails, the current safe outcomes are mostly:
+When an implementation lane fails, the active safe outcomes are mostly:
 
 - retry the same brief once with a tightened instruction
-- run pre-dispatch refine/atomization if the brief was already known to be too
+- run pre-dispatch refine/atomization if the brief was known to be too
   broad
 - report a typed blocker to the user
 - leave the human to manually split the work into smaller atoms
@@ -331,7 +258,7 @@ Required behavior:
   decomposition packet. Failed `harness lane implement` subprocesses write the
   same artifact pair from bounded lane/session evidence. `decompose` rebuilds
   that packet explicitly when an operator wants a different output path or
-  current partial-state evidence.
+  active partial-state evidence.
   Custom CLI output paths are workspace-contained, protected-path checked, and
   symlink-ancestor checked before any packet write occurs; packet writes cannot
   target recovery control artifacts such as `failure.json` or
@@ -348,7 +275,7 @@ Required behavior:
   `reconciliation.json` artifact next to the packet when possible, stores the
   packet digest, completed/remaining atom manifest, and required-test command
   results, and refuses to close the packet when the artifact no longer matches
-  the current decomposition packet or the required tests are not recorded as
+  the active decomposition packet or the required tests are not recorded as
   passing. After the reconciliation artifact is validated and written, it
   records a recovery reconciliation learning-log event for audit/ranker
   summaries. This event is evidence-only and never changes learned ranker
@@ -369,7 +296,7 @@ not-applicable for a given failure class.
 | Surface | Parity requirement |
 | --- | --- |
 | `harness plan-execute` | Read progress state, plan artifacts, required/allowed paths, changed paths, source-sanity evidence, review-repair status, and failure kinds such as `planner_blocked` or `plan_artifact_missing`. |
-| `harness implement` and `harness lane` | Capture lane history, command lifecycle, queue/backend readiness, stdout JSONL events, changed-path evidence, and stop reasons. Failed `harness lane implement` runs now write recovery records and decomposition packets from bounded lane/session evidence. |
+| `harness implement` and `harness lane` | Capture lane history, command lifecycle, queue/backend readiness, stdout JSONL events, changed-path evidence, and stop reasons. Failed lane runs should write recovery records and decomposition packets from bounded lane/session evidence. |
 | `harness architect` | Reuse packet, budget, plan-audit, prompt, and brief artifacts when a failure came from planning/handoff quality rather than execution. |
 | `harness artifact` | Use only as an optional schema-bound drafting mechanism for candidate recovery prose; artifact output is not authority until recovery gates promote it. |
 | `harness atom intake` | Reuse dispatchability, terminal, source-satisfied, stale, dirty, invalid-scope, and missing-scope classifications for promoted recovery atoms. |
@@ -385,8 +312,8 @@ not-applicable for a given failure class.
 | `harness_audit` and `harness_feedback` | Report recovery coverage, repeated failure classes, malformed recovery packets, loop risk, and gaps in tool/event correlation. |
 | `harness audit watch` | Treat recovery failure-record and decomposition-packet events as first-class triggers; summarize failure classes, candidate atom counts, next valid actions, and artifact paths without raw transcripts. |
 | Product workflow commands | Link recovery packets through `workflow_state.artifact_paths.recovery_packet`; product status and operator status expose packet status, gates, required tests, product links, blockers, reconciliation counts, and a non-dispatchable recovery action while normal dispatch remains blocked until the packet is closed by a valid reconciliation artifact with passing required-test evidence. |
-| Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. Landed for local `.harness/recovery` artifacts with metadata-only rollups. |
-| `harness ranker` | Accept only deterministic, verified recovery outcomes as learning input. Landed for `recover reconcile`: validated recovery outcomes append sanitized `source:"recovery_reconciliation"` no-op learning-log events with packet-quality and localization metrics, without mutating weights. |
+| Product-evidence and release-evidence | Summarize recovery counts, failure classes, redaction status, unresolved blockers, and release-impact evidence without file bodies or prompts. Recovery artifact rollups stay metadata-only. |
+| `harness ranker` | Accept only deterministic, verified recovery outcomes as learning input. Validated recovery outcomes should append sanitized `source:"recovery_reconciliation"` no-op learning-log events with packet-quality and localization metrics, without mutating weights. |
 | Queue/backend/local-ops/doctor | Classify readiness, queue, backend, timeout, or capacity failures separately from implementation failures so decomposition does not hide environment problems. |
 | TUI/prompt dispatch | `/product-status` renders the shared product operator view, and `/recover-status` renders the same recovery packet status text as the CLI. Broader write-capable continuation/handoff actions should keep using durable workflow state and must not infer recovery state from transcript prose. |
 | `harness tool` and MCP | Expose read-only recovery inspection with the same sidecar envelope and profile rules as other tools; keep write/promote actions outside discovery profile. |
@@ -403,7 +330,7 @@ The initial sidecar/tool shape should be:
 - `recovery_promote` and `recovery_reconcile`: CLI-only until a
   write-authorization contract exists for sidecar/MCP callers.
 
-This mirrors the current sidecar rule: read-only evidence is available through
+This mirrors the active sidecar rule: read-only evidence is available through
 the discovery profile, while artifact-writing and promotion stay behind a
 stronger local contract.
 
@@ -478,30 +405,30 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 0: Evidence Inventory
 
-- Status: landed for `plan-execute` and the first `harness lane implement`
-  failure records, with read-only inspection across both record sources.
+- Specify `plan-execute` and `harness lane implement` failure records, with
+  read-only inspection across both record sources.
 - Inventory plan-execute progress state, lane postflight reports, debug logs,
   telemetry events, plan artifacts, brief lint output, atom intake output, and
   product workflow reports.
-- Define a privacy-safe `FailureRecord` struct. Landed for
+- Define a privacy-safe `FailureRecord` struct using
   `harness.recovery.failure_record.v1`.
 - Add tests for redaction of prompts, raw transcripts, secrets, and file bodies.
 
 ### Phase 1: Deterministic Failure Classifier
 
-- Status: landed for plan-execute failure kinds and bounded lane-implement
-  process failures; additional lane adapters should reuse the same failure
-  class contract instead of adding source-specific packet semantics.
+- Specify plan-execute failure kinds and bounded lane-implement process
+  failures; additional lane adapters should reuse the same failure class
+  contract instead of adding source-specific packet semantics.
 - Classify `planner_blocked`, `plan_missing`, `executor_edit_failed`,
   `verification_failed`, `review_repair_failed`, `scope_too_large`,
   `stale_context`, `budget_exhausted`, and `needs_human_answer`.
 - Emit one root failure class plus secondary evidence tags.
-- Add JSON and human-readable output tests. Landed for `recover inspect`.
+- Add JSON and human-readable output tests for `recover inspect`.
 
 ### Phase 2: Decomposition Packet Builder
 
-- Status: landed for plan-execute required/changed-path residuals with scoped
-  evidence refs and generated required-test command refs.
+- Specify plan-execute required/changed-path residuals with scoped evidence
+  refs and generated required-test command refs.
 - Build residual-work records from required paths, changed paths, failed edits,
   failing tests, and context graph impact.
 - Generate candidate atom boundaries from file ownership, test affinity,
@@ -517,11 +444,11 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 4: Execution And Reconciliation
 
-- Status: CLI and product/operator reconciliation projections landed for
+- Specify CLI and product/operator reconciliation projections for
   packet-backed plan-execute recovery.
 - Run recovery atoms sequentially by default.
 - Reconcile completed recovery atoms against the original failure and residual
-  work. Landed through `harness recover reconcile`, the
+  work through `harness recover reconcile`, the
   `harness.recovery.reconciliation.v1` artifact, required-test execution,
   packet-digest validation, sequential completion merge, and product/operator
   closeout projection.
@@ -529,26 +456,25 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 5: TUI, Sidecar, And Learning
 
-- Status: the TUI `/product-status` slash command renders the shared product
-  operator view, including recovery packet blockers, dispatchability, and the
+- The TUI `/product-status` slash command renders the shared product operator
+  view, including recovery packet blockers, dispatchability, and the
   non-dispatchable recovery inspection command hint.
-- Status: the TUI `/recover-status [--packet <path>|<path>]` slash command
-  renders the same shared packet status presenter as `harness recover status`.
+- The TUI `/recover-status [--packet <path>|<path>]` slash command renders the
+  same shared packet status presenter as `harness recover status`.
   It is read-only, CWD-relative for packet paths, operator-authored, and not
   replayed into model context.
-- Status: sidecar read-only parity landed for `recovery_inspect` and
+- Specify sidecar read-only parity for `recovery_inspect` and
   `recovery_status` across plan-execute and lane-implement recovery records;
   artifact-writing `recovery_decompose` is intentionally default-profile only,
   and `recovery_promote`/`recovery_reconcile` remain CLI-only.
-- Status: product/operator status now projects recovery packets referenced from
-  durable workflow state, and audit-watch packets now include a bounded
-  `recovery` summary plus `failure_recovery` findings.
-- Status: product-evidence and release-evidence now include metadata-only
-  recovery rollups with open/recovered/blocked counts, failure classes,
-  next-action counts, reconciliation counts, release impact, and privacy-safe
-  artifact IDs.
-- Status: validated `recover reconcile` runs now feed ranker/audit learning
-  summaries through evidence-only learning-log events under
+- Product/operator status projects recovery packets referenced from durable
+  workflow state, and audit-watch packets include a bounded `recovery` summary
+  plus `failure_recovery` findings.
+- Product-evidence and release-evidence include metadata-only recovery rollups
+  with open/recovered/blocked counts, failure classes, next-action counts,
+  reconciliation counts, release impact, and privacy-safe artifact IDs.
+- Validated `recover reconcile` runs feed ranker/audit learning summaries
+  through evidence-only learning-log events under
   `source:"recovery_reconciliation"`; the adapter rejects ranker state paths
   and does not mutate `.harness/ranker/weights.json`.
 - Expose read-only failure records and packets through `harness tool` and MCP.

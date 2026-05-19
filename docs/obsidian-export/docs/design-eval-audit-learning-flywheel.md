@@ -1,10 +1,9 @@
 # Eval, Audit, Feedback, And Ranker-Learning Flywheel
 
-Status: design draft
-Date: YYYY-MM-DD
+Status: design guidance
 
-This is one pillar in the coordinated roadmap:
-[harness-design-roadmap.md](harness-design-roadmap.md). It consumes the traces from
+This is one pillar in the coordinated design map:
+[harness-design-map.md](harness-design-map.md). It consumes the traces from
 contracts, memory, capabilities, handoff, local-model operations, and sidecar
 calls, then turns failures into measurable improvements.
 
@@ -39,7 +38,7 @@ same evidence trail:
 - Did a new failure become a regression, an audit rule, a feedback item, or an
   explicit non-goal?
 
-## External Evidence
+## Third-Party Evaluation Evidence
 
 SWE-bench established the basic external shape for coding-agent evaluation:
 agents are evaluated against real GitHub issues, repository state, generated
@@ -57,30 +56,26 @@ trajectories as first-class artifacts for debugging runs
 trajectory quality, control-rail behavior, tool-loop failures, and auditability
 alongside task outcome.
 
-API provider's agent-evaluation guidance uses traces first for debugging and then
+Agent platform agent-evaluation guidance uses traces first for debugging and then
 datasets plus graders for repeatable eval runs. Traces capture model calls,
 tool calls, guardrails, handoffs, and custom spans; evals then use datasets and
-graders to score behavior at scale
-(https://vendor.example/agent-docs).
+graders to score behavior at scale.
 This maps directly to Agent Harness's JSONL logs, scenario graders, SWE suites, and
 audit-watch packets.
 
-external coding agent exposes operational hooks and telemetry surfaces that reinforce the same
+LLM agent exposes operational hooks and telemetry surfaces that reinforce the same
 pattern. Its configuration includes local log directories, history settings,
 OpenTelemetry exporters, sandbox and approval policies, and feature flags for
-hooks and memories (https://vendor.example/agent-docs).
-external coding agent hooks can observe or influence lifecycle events such as `SessionStart`,
+hooks and memories.
+LLM agent hooks can observe or influence lifecycle events such as `SessionStart`,
 `UserPromptSubmit`, `PreToolUse`, `PermissionRequest`, `PostToolUse`, and
-`Stop`, with a `transcript_path` available to hook handlers
-(https://vendor.example/agent-docs). Agent Harness's equivalent should remain
+`Stop`, with a `transcript_path` available to hook handlers. Agent Harness's equivalent should remain
 local-first and deterministic, but the event boundaries are useful external
 confirmation.
 
-external coding agent exposes a similar hook model with JSON input, transcript paths,
-tool hooks, stop hooks, compact hooks, and session lifecycle hooks
-(https://code.agent-config.com/docs/en/hooks). external coding agent exposes per-agent
-permissions and event-capable plugins
-(https://external-agent.ai/docs/agents/, https://external-agent.ai/docs/plugins/). These
+LLM agent exposes a similar hook model with JSON input, transcript paths,
+tool hooks, stop hooks, compact hooks, session lifecycle hooks, per-agent
+permissions, and event-capable plugins. These
 systems converge on the same harness design: durable transcripts, typed
 lifecycle events, permission policy, and extension points for validation or
 logging.
@@ -93,10 +88,9 @@ whether tasks pass, but whether `context_pack`, graph cache, freshness policy,
 and learned ranking reduce unnecessary reads and tool calls while keeping edit
 targets in the top-ranked context.
 
-## Current Agent Harness Capabilities
+## Target Harness Capabilities
 
-This section is based on the current repository docs and code inspection on
-YYYY-MM-DD.
+This section defines the target harness capabilities.
 
 ### Conversation Logs
 
@@ -119,7 +113,7 @@ events such as `session_start`, `process_start`, arbitrary harness events, and
 `process_exit`. The telemetry recorder redacts prompt-like fields and does not
 store raw tool output by default.
 
-Current telemetry streams include TUI, prompt, server, artifact, implement,
+Telemetry streams should include TUI, prompt, server, artifact, implement,
 architect, and `harness tool` records. Fields cover timing, output sizes,
 discovery metadata, errors, context fields, feedback fields, and process
 lifecycle. Telemetry can be redirected with `HARNESS_TELEMETRY_DIR` and disabled
@@ -153,14 +147,13 @@ maximum tool requests, duration and error budgets, minimum turns, no approval,
 no shell, no summary rejection, groundedness, and generic phrase forbids. The
 suite linter verifies coverage and catches inconsistent task definitions.
 
-On YYYY-MM-DD, the representative suite check:
+Representative suite validation should run through:
 
 ```sh
 go run ./cmd/harness-swe-eval -suite testdata/swe/representative-suite.json -suite-only -json
 ```
 
-passed suite validation for 44 tasks. That run validates suite structure and
-coverage, not live task success.
+The run validates suite structure and coverage, not live task success.
 
 ### Performance Eval
 
@@ -175,12 +168,12 @@ unstructured behavioral smell into measurable trend lines.
 ### Harness Audit
 
 `harness_audit` is a read-only workspace tool with purposes such as
-`tool_surface`, `behavior`, and `planning_quality`. The current report includes
+`tool_surface`, `behavior`, and `planning_quality`. The active report includes
 findings, tool surface summaries, language tooling, backend availability, log
 behavior, planning quality, ranker learning, context cache health, freshness
 health, improvement questions, and consolidation candidates.
 
-A behavior audit run on YYYY-MM-DD scanned 71 selected logs and reported:
+A behavior audit should report:
 
 - 8 findings.
 - Medium findings for redirect storms and zero-hit searches.
@@ -190,13 +183,12 @@ A behavior audit run on YYYY-MM-DD scanned 71 selected logs and reported:
 - An info finding that ranker learning is idle.
 - An info finding that most `graph_views` cache rows are stale.
 
-The same audit reported no existing `.harness/ranker/weights.json` or ranker
-learning log and listed `eval`, `cli`, `verified_edit`, `harness_feedback`, and
-`audit_watch` as currently dormant learning sources.
+Ranker learning should distinguish missing weights, empty learning logs, active
+learning sources, dormant sources, and blocked sources.
 
 ### Harness Feedback
 
-`harness_feedback` records structured observations about harness gaps. Current
+`harness_feedback` records structured observations about harness gaps. Core
 categories include tool gaps, prompt gaps, workflow gaps, context gaps, stale
 context, language support, routing gaps, verification gaps, telemetry gaps,
 audit gaps, planning quality, packet quality, impact ranking, plan audit gaps,
@@ -207,7 +199,7 @@ gaps.
 
 Feedback records include expected behavior, observed behavior, workaround,
 impact, evidence, confidence, severity, suggested fix, path, and task id. They
-are already structured enough to become both audit inputs and ranker-learning
+are structured enough to become both audit inputs and ranker-learning
 candidate inputs, provided the promotion step remains guarded.
 
 ### Audit Watch
@@ -217,7 +209,7 @@ completed implement sessions and high-value trigger events, runs behavior
 audits for triggered paths, and writes review packets under
 `.harness/audits/watch`.
 
-Current triggers include implement process exit, `harness_feedback`,
+Core triggers include implement process exit, `harness_feedback`,
 completion-gate records, high-risk stop reasons, malformed tool input, blocked
 completion statuses, and stale context events. High-risk stop reasons include
 repeated completion-gate rejection, required paths remaining, retry blocked,
@@ -234,11 +226,12 @@ task, mode, path, scope, limit, token budget, required tests, forbidden paths,
 and intent. The cache is bypassed when freshness checks say the working tree is
 not fresh.
 
-Current known limitations are documented in the repo: graph ids include build
-time, ranker weight changes and runtime trace changes are not part of the cache
-key, and edited-but-unrefreshed working trees recompute instead of trusting the
-cache. `harness_audit` exposes cache rows, fresh/stale rows, hit/miss counts,
-stale preventions, and freshness telemetry.
+Known cache limitations should be documented with the cache contract:
+content-addressed graph IDs define reuse boundaries, ranker and runtime-trace
+fingerprints must participate in cache keys when they can reshape output, and
+edited-but-unrefreshed working trees should recompute or refresh rather than
+trust stale rows. `harness_audit` should expose cache rows, fresh/stale rows,
+hit/miss counts, stale preventions, and freshness telemetry.
 
 ### Ranker Learning
 
@@ -248,7 +241,8 @@ weight, applies bounded boosts or penalties, decays existing weights, clamps to
 minimum and maximum weights, and appends learning events to
 `.harness/ranker/learning_log.jsonl`.
 
-Current wired learning paths include SWE groundedness and manual CLI commands:
+Learning paths should include SWE groundedness, manual CLI commands, and
+validated recovery reconciliation:
 
 - SWE groundedness score `>= 0.75` boosts oracle context files.
 - Score `< 0.40` penalizes oracle context files.
@@ -256,7 +250,7 @@ Current wired learning paths include SWE groundedness and manual CLI commands:
 - `harness ranker boost`, `harness ranker penalize`, `harness ranker reset`, and
   `harness ranker show` provide manual control.
 
-The implementation already defines dormant or future source labels for
+The implementation should define dormant or future source labels for
 `verified_edit`, `harness_feedback`, and `audit_watch`. The flywheel should
 activate those sources only through deterministic adapters with evidence and
 rollback visibility.
@@ -293,7 +287,7 @@ intent.
 
 ## Data Schema And Events
 
-The current schemas are spread across conversation logs, telemetry, replay
+The active schemas are spread across conversation logs, telemetry, replay
 scenarios, SWE suites, audit reports, feedback records, and ranker logs. The
 flywheel does not need one mega-schema. It needs stable IDs and event fields
 that let these records join cleanly.
@@ -305,7 +299,7 @@ New or revised events should use this shared envelope where practical:
 ```json
 {
   "schema": "harness.event.v1",
-  "timestamp": "YYYY-MM-DDT00:00:00Z",
+  "timestamp": "<iso-timestamp>",
   "workspace_root": "/workspace/harness",
   "session_id": "local-session-id",
   "task_id": "optional-suite-or-regression-id",
@@ -324,7 +318,7 @@ for future records and summaries.
 
 ### Tool And Trajectory Events
 
-Tool events should preserve the current fields and normalize these keys:
+Tool events should preserve the active fields and normalize these keys:
 
 ```json
 {
@@ -390,12 +384,12 @@ audit from a report into a work queue.
 
 ### Ranker Learning Events
 
-The current learning log is close to the target. The event should remain small
+The active learning log is close to the target. The event should remain small
 and append-only:
 
 ```json
 {
-  "timestamp": "YYYY-MM-DDT00:00:00Z",
+  "timestamp": "<iso-timestamp>",
   "source": "eval|cli|verified_edit|harness_feedback|audit_watch",
   "action": "boost|penalize|no_op|reset",
   "score": 0.82,
@@ -443,7 +437,7 @@ contracts stay outside the ranker.
 
 ### Existing Mechanics
 
-Current learned weights are local to the workspace:
+Learned weights are local to the workspace:
 
 - Storage: `.harness/ranker/weights.json`.
 - Log: `.harness/ranker/learning_log.jsonl`.
@@ -453,7 +447,7 @@ Current learned weights are local to the workspace:
 - Clamp: minimum and maximum weights prevent runaway drift.
 - Invalid paths: ignored if absolute or outside the repository.
 
-The current SWE groundedness adapter is intentionally conservative: high
+The active SWE groundedness adapter is intentionally conservative: high
 groundedness boosts, low groundedness penalizes, and the middle band records no
 change.
 
@@ -461,22 +455,22 @@ change.
 
 The target source list is:
 
-- `eval`: already wired through SWE groundedness. This remains the most
+- `eval`: driven by SWE groundedness. This remains the most
   trustworthy automatic source because it is tied to an oracle.
-- `cli`: already wired for explicit human operations.
-- `verified_edit`: proposed. Boost files that were present in the packet and
+- `cli`: driven by explicit human operations.
+- `verified_edit`: boost files that were present in the packet and
   then edited or cited in a passing verification run. Penalize surfaced files
   only when a deterministic check proves they were misleading, stale, or
   unrelated.
-- `harness_feedback`: proposed. Promote feedback categories such as
+- `harness_feedback`: promote feedback categories such as
   `packet_quality`, `impact_ranking`, `bad_scope_rank`, `stale_context`, and
   `packet_bloat` into candidate ranker events only when severity and evidence
   are present.
-- `audit_watch`: proposed. Convert repeated audit findings about context
+- `audit_watch`: convert repeated audit findings about context
   misses, stale packet use, bad rank order, or low groundedness into candidate
   learning events. Audit watch should generate candidates; a deterministic
   adapter decides whether to apply them.
-- `recovery_reconciliation`: wired as evidence-only input. Validated
+- `recovery_reconciliation`: record validated
   `harness recover reconcile` outcomes append no-op learning-log events with
   packet-quality, localization-improvement, completed/remaining atom, and
   verification metrics, but do not mutate learned weights.
@@ -499,7 +493,7 @@ Updates should be skipped when:
 - The evidence names only directories or generated files.
 - The files are outside the repository or protected by policy.
 - The source is model prose without deterministic support.
-- The same source and task id already produced an equivalent event.
+- The same source and task id produced an equivalent event.
 
 ### Ranker Metrics
 
@@ -530,7 +524,7 @@ Target packet fields:
 ```json
 {
   "schema": "harness.audit_watch_packet.v1",
-  "generated_at": "YYYY-MM-DDT00:00:00Z",
+  "generated_at": "<iso-timestamp>",
   "workspace_root": "/workspace/harness",
   "trigger_files": ["logs/telemetry/implement.jsonl"],
   "trigger_reasons": ["completion_gate", "harness_feedback"],
@@ -653,7 +647,7 @@ while the patch is wrong.
 - Tool error streak count.
 - Duration.
 - Prompt and context token estimates where available.
-- Repeated read rate for already-known files.
+- Repeated read rate for known files.
 
 ### Context And Ranker Metrics
 
@@ -699,12 +693,10 @@ while the patch is wrong.
 
 ### Phase 0: Baseline Inventory
 
-Status: already started.
-
 - Keep this design doc as the shared target.
-- Preserve the current representative suite-only check as the baseline.
-- Record the current behavior-audit snapshot: 71 logs scanned, 8 findings,
-  ranker learning idle, and most graph-view cache rows stale.
+- Preserve the active representative suite-only check as the baseline.
+- Record a target behavior-audit snapshot covering log count, finding count,
+  ranker-learning state, and graph-view cache freshness.
 
 ### Phase 1: Stable Event Joins
 
@@ -736,7 +728,7 @@ Status: already started.
 
 ### Phase 4: Ranker Learning Sources
 
-- Keep `eval` and `cli` as the first-class wired sources.
+- Keep `eval` and `cli` as first-class sources.
 - Add `verified_edit` learning only after passing verification and changed-file
   evidence are available.
 - Add `harness_feedback` candidate learning for packet quality and impact
@@ -822,7 +814,7 @@ The flywheel is working when these criteria are true:
   context/ranker, audit/feedback, and suite/corpus metrics.
 - Ranker learning events always include source, action, files, task or session
   id, reason or score, applied/skipped state, and evidence.
-- `harness_audit` can distinguish wired, dormant, healthy, skipped, and blocked
+- `harness_audit` can distinguish active, dormant, healthy, skipped, and blocked
   ranker-learning sources.
 - Context metrics report edit-target recall, evidence-file recall, first
   relevant rank, stale candidate rate, cache hit/miss/stale counts, and

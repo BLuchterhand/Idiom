@@ -1,6 +1,6 @@
 # Decisioning North Star
 
-**North Star: AI coding agents are becoming common, but teams do not yet trust
+**North Star: AI coding agents are becoming common, but teams do not trust
 their context, decisions, or outputs. Agent Harness sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
@@ -114,12 +114,12 @@ The generic pattern is:
 - Execution lanes refuse terminal, stale, dirty, or unscoped artifacts before
   spending model tokens.
 - Review and acceptance lanes write explicit source-satisfied or complete
-  outcomes instead of rewriting already-satisfied work.
+  outcomes instead of rewriting satisfied work.
 - Queue producers consume the same state report instead of duplicating
   project-specific status parsing.
 
 This belongs in harness core when the invariant is generic: do not ask an agent
-to mutate stale, already-complete, or ambiguous work. Project policies can
+to mutate stale, complete, or ambiguous work. Project policies can
 choose what artifact format to feed the gate, but the bounded transition and
 audit behavior are harness responsibilities.
 
@@ -185,12 +185,12 @@ Do not use prompt text for:
 - compensating for unknown config keys or unmodeled runtime settings
 - scenario-specific recovery scripts after a generic contract failed
 
-## Frontier Harness Simplicity
+## LLM-Agent Harness Simplicity
 
-When comparing harness to frontier coding harnesses, prefer the simplest
+When comparing harness behavior to LLM-agent harnesses, prefer the simplest
 equivalent contract over another prompt layer or phase machine.
 
-Frontier-style does not mean fewer capabilities. It means:
+LLM-agent style does not mean fewer capabilities. It means:
 
 - small, typed tool surfaces where possible
 - permissions, writes, verification, and loop breaks enforced by the host
@@ -206,7 +206,7 @@ ask whether the issue is really one of these simpler contract gaps:
 - the route brief failed to declare the contract
 - the completion gate accepted weaker evidence than the changed artifact
   requires
-- the loop fuse allowed repeated low-value work after the evidence was already
+- the loop fuse allowed repeated low-value work after the evidence was
   sufficient
 - telemetry cannot show the failure shape clearly enough for the next audit
 
@@ -245,7 +245,7 @@ signals before adding more instructions:
 - agents enter read/search loops after a bounded implementation brief because
   the edit scope, exact anchor, or verification owner was only prose
 - deterministic backstops fire frequently for behavior the model should be able
-  to infer from the runtime brief and current evidence
+  to infer from the runtime brief and target evidence
 - behavior audits show `prompt_surface_overlap`, repeated rejections, broad-read
   loops, or structured `harness_feedback` against prompt/tool/context contracts
 
@@ -294,12 +294,12 @@ Good:
 - “After readiness, ask the model to name one exact missing claim and one exact probe that would resolve it; do not hard-pick the probe for the model.”
 - “Later recovery and failure prompts should stay closure-biased too: after readiness, prefer ‘answer now or one exact probe,’ not broad fallback menus like repo-wide filename search.”
 - “Use the structured tool instead; if it returns nothing, retry the original request.”
-- “You have already used many read calls. Pause, summarize, and commit to the minimal next step.”
+- “You have used many read calls. Pause, summarize, and commit to the minimal next step.”
 
 Bad:
 
 - “You must delegate a child task before any other read is allowed.”
-- “You already have enough evidence, so the harness will synthesize the final answer for you.”
+- “You have enough evidence, so the harness will synthesize the final answer for you.”
 - “Only tool X remains available” when the model could still safely answer or use a narrow follow-up.
 
 ## Repo Policy
@@ -323,10 +323,10 @@ Prompt layers should agree on the same shape:
 - strategy guidance belongs in runtime briefs and control rails, not in evidence summaries or result payloads
 - do not hardcode strategy around one recurring scenario or question class; if a rule is real, express it in generic evidence/contract terms rather than domain-specific terms
 - answer composition must be evidence-shaped, not topic-template-shaped; repeated live-test topics should become generic contracts or eval fixtures, not special final-answer branches
-- before adding prompt text, check whether the same obligation is already owned by the base prompt, a profile, runtime brief, control rail, tool schema, wrapper doc, or recovery packet
+- before adding prompt text, check whether the same obligation is owned by the base prompt, a profile, runtime brief, control rail, tool schema, wrapper doc, or recovery packet
 - model-facing guidance and harness enforcement should describe the same
   contract from different sides: prompts explain how to recognize readiness,
   while gates enforce the invariant when readiness is ignored
 - prompt-surface drift should produce audit-visible evidence (`prompt_surface_overlap` or `harness_feedback`) and a consolidation plan, not another overlapping instruction
 
-The goal is frontier-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.
+The goal is LLM-agent-style behavior: open-ended model decisioning constrained by explicit, observable harness contracts.

@@ -1,6 +1,6 @@
 # Product Evidence Export
 
-`harness product-evidence export` writes a local review milestone product-evidence report for
+`harness product-evidence export` writes a local product-evidence report for
 go/no-go review. The export is evidence-only: it reports contracts, IDs,
 hashes, counts, statuses, class coverage, redaction status, limitations, and
 release review linkage. It also includes a metadata-only recovery rollup from
@@ -28,7 +28,7 @@ harness product-evidence export \
 Validate the export behavior:
 
 ```bash
-go test ./cmd/harness -run 'Testreview milestone|TestRunProductEvidence' -count=1
+go test ./cmd/harness -run 'TestProductEvidence|TestRunProductEvidence' -count=1
 ```
 
 Privacy defaults:
@@ -46,10 +46,10 @@ Privacy defaults:
   unredacted log or telemetry paths, forbidden capture flags, or absolute paths
   embedded after separators such as `repo=/...` or `path:/...` is blocked before
   records are counted.
-- MCP stdio integration is represented through the review milestone integration proof
-  records when the review milestone replay fixture is present and executable. The export
-  includes proof IDs, counts, statuses, release review linkage, and metadata-only
-  limitations, not raw protocol output or file bodies.
+- MCP stdio integration is represented through integration proof records when
+  replay fixtures are present and executable. The export includes proof IDs,
+  counts, statuses, release review linkage, and metadata-only limitations, not
+  raw protocol output or file bodies.
 - Recovery evidence is represented by counts, failure classes, next actions,
   reconciliation counts, release-impact text, blockers, artifact IDs, and
   aggregate hashes. Open packets downgrade the export to partial when it would

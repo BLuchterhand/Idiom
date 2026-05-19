@@ -1,31 +1,31 @@
 # Agent Harness Strategic Thesis
 
-**North Star: AI coding agents are becoming common, but teams do not yet trust
+**North Star: AI coding agents are becoming common, but teams do not trust
 their context, decisions, or outputs. Agent Harness sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
 Status: design guidance
 
-This document answers one question: if Agent Harness resembles external coding agent on the surface,
-what is the reason to keep building it?
+This document answers one question: if Agent Harness resembles an LLM agent on
+the surface, what is the reason to keep building it?
 
 The answer is not that Agent Harness should become another terminal pair programmer.
-external coding agent already owns much of that shape. Agent Harness should continue only as a more
-specific thing: a local, inspectable agent harness for bounded autonomous
-software work, where repository context, permissions, verification, completion,
-and improvement loops are host-owned contracts rather than prompt hopes.
+Many LLM agents already own that shape. Agent Harness should continue as a more
+specific thing: an inspectable harness for bounded autonomous software work,
+where repository context, permissions, verification, completion, and
+improvement loops are host-owned contracts rather than prompt hopes.
 
 ## One-Sentence Thesis
 
-Agent Harness is the local, evidence-first coding-agent harness for smaller and local
-models: the model owns strategy, while the harness owns contracts, repository
-memory, verification, auditability, and the learning loop that makes each run
-more reliable than the last.
+Agent Harness is an evidence-first harness for LLM agents: the agent owns
+strategy, while the harness owns contracts, repository memory, verification,
+auditability, and the learning loop that makes each run more reliable than the
+last.
 
 ## Design Pillar Documents
 
 The project-defining design set is indexed in
-[harness-design-roadmap.md](harness-design-roadmap.md). The seven pillar docs are:
+[harness-design-map.md](harness-design-map.md). The seven pillar docs are:
 
 - [design-contract-first-local-autonomy.md](design-contract-first-local-autonomy.md)
 - [design-persistent-repository-memory.md](design-persistent-repository-memory.md)
@@ -37,8 +37,8 @@ The project-defining design set is indexed in
 
 ## The Competitive Reality
 
-external coding agent is not a weak baseline. It already provides the obvious terminal coding
-surface:
+LLM agents are not a weak baseline. They already provide the obvious terminal
+coding surface:
 
 - conversational code editing in a local git repository
 - a repository map built from tree-sitter symbols and graph ranking
@@ -48,48 +48,31 @@ surface:
 - ask/code/architect modes
 - IDE comment workflows, images, web pages, and voice
 
-External sources:
+LLM-agent products already cover terminal pair programming, repository maps,
+git workflows, IDE workflows, multimodal context, chat modes, and lint/test
+repair. A greenfield Agent Harness should assume those surfaces exist and build
+below them.
 
-- external coding agent describes itself as terminal pair programming with cloud and local
-  model support, repo mapping, git commits, IDE workflows, visual context, voice,
-  and lint/test repair: <https://external-agent.chat/>
-- external coding agent's repo map article explains that it uses tree-sitter to extract code
-  structure and graph ranking to fit the most useful map content into a token
-  budget: <https://vendor.example/external-agent-docs>
-- external coding agent's chat modes include ask, code, and architect/editor workflows:
-  <https://vendor.example/external-agent-docs>
-- external coding agent's lint/test docs describe test commands and automatic repair after
-  failing checks: <https://vendor.example/external-agent-docs>
-- external coding agent's supported-language docs show broad linter and repo-map coverage:
-  <https://vendor.example/external-agent-docs>
-
-The conclusion is blunt: "external coding agent, but local local model" is not enough. external coding agent can already
-use local models. "external coding agent, but with a repo map" is not enough. external coding agent's repo map is
-the mature reference point. "external coding agent, but with a few more tools" is not enough.
+The conclusion is blunt: "another LLM agent wrapper" is not enough. "An LLM
+agent, but with a repo map" is not enough. Repo maps are a mature baseline. "An
+LLM agent, but with a few more tools" is not enough.
 Tool count creates surface area, not differentiation.
 
 Agent Harness's differential must be below the visible chat surface.
 
-## Adjacent Frontier Signals
+## Adjacent LLM-Agent Signals
 
 The larger coding-agent ecosystem is moving toward host-owned structure around
 the model loop:
 
-- external coding agent subagents preserve context, enforce tool restrictions, and split
-  exploration from implementation. Its built-in Explore and Plan agents are
-  read-only, while general-purpose agents can perform multi-step modification:
-  <https://code.agent-config.com/docs/en/sub-agents>
-- external coding agent hooks expose lifecycle events such as pre-tool, post-tool,
-  subagent start/stop, task creation, and stop control. Agent hooks can inspect
-  files and tool output before returning a structured decision:
-  <https://code.agent-config.com/docs/en/hooks>
-- external coding agent agents expose explicit permissions with ask/allow/deny semantics,
-  per-agent permission overrides, subagent modes, and task permissions:
-  <https://external-agent.ai/docs/agents/>
-- external coding agent CLI is a local terminal coding agent that can read, change, and run code
-  in a selected directory and exposes approvals, subagents, review, MCP, web
-  search, scripting, and cloud task integration in its current documentation:
-  <https://vendor.example/agent-docs>
+- LLM-agent subagents preserve context, enforce tool restrictions, and
+  split exploration from implementation.
+- LLM-agent hooks expose lifecycle events such as pre-tool, post-tool,
+  subagent start/stop, task creation, and stop control.
+- LLM-agent permission systems expose ask/allow/deny semantics,
+  per-agent overrides, modes, and task permissions.
+- LLM-agent CLIs expose approvals, subagents, review, MCP, web search,
+  scripting, and cloud task integration.
 - SWE-agent's 2024 arXiv preprint argues that the agent-computer interface
   itself materially affects software-agent performance, including editing,
   repository navigation, tests, and command execution:
@@ -113,8 +96,8 @@ state, and evaluation loop are performance levers.
 
 ## Agent Harness's Claim
 
-Agent Harness should not try to beat external coding agent as a polished terminal pair programmer in the
-near term. Agent Harness should beat generic pair-programming harnesses on five sharper
+Agent Harness should not try to beat LLM agents as polished terminal pair
+programmers. It should beat generic pair-programming harnesses on five sharper
 claims.
 
 ### 1. Contract-First Local Autonomy
@@ -126,7 +109,7 @@ The core doctrine remains:
 - The model owns strategy.
 - The harness owns contracts.
 
-That is already the canonical standard in
+That is the canonical standard in
 [decisioning-north-star.md](decisioning-north-star.md). The strategic step is to
 turn that doctrine into the product boundary.
 
@@ -153,7 +136,7 @@ make contracts task-shaped, inspectable, and replayable in local logs.
 
 Detailed design: [design-persistent-repository-memory.md](design-persistent-repository-memory.md).
 
-external coding agent's repo map is an efficient prompt context mechanism. Agent Harness's target should
+An LLM agent's repo map is an efficient prompt context mechanism. Agent Harness's target should
 be a persistent, evidence-linked repository memory:
 
 - an index of files, packages, symbols, tests, imports, calls, diagnostics,
@@ -173,14 +156,14 @@ The strategic aim is to make `context_pack`, `context_query`, `context_zoom`,
 orients itself without flooding the prompt.
 
 Differential: Agent Harness's repository memory should be queryable, fresh, source-linked,
-and usable by external agents through `harness tool`, not merely injected into one
+and usable by LLM agents through `harness tool`, not merely injected into one
 chat prompt.
 
 ### 3. Auditable Planning And Handoff
 
 Detailed design: [design-auditable-planning-handoff.md](design-auditable-planning-handoff.md).
 
-Architect packets already point in the right direction:
+Architect packets point in the right direction:
 
 - deterministic context impact and context pack steps
 - planning packets with contracts, candidate scope, freshness, language
@@ -202,9 +185,9 @@ only discover mistakes after a bad patch.
 
 Detailed design: [design-local-model-operations.md](design-local-model-operations.md).
 
-Agent Harness exists because local and smaller models need more harness help than
-frontier cloud models. The project should embrace that instead of treating it as
-a handicap.
+Agent Harness exists because smaller or constrained models need more harness
+help than highly capable hosted models. The project should embrace that instead
+of treating it as a handicap.
 
 Local-model constraints include:
 
@@ -226,7 +209,7 @@ Agent Harness-specific capabilities that matter here:
 - `harness_audit` and `harness_feedback` for self-diagnosis
 
 Differential: Agent Harness should be the harness that lets a capable local model act
-more like a frontier coding agent because the host supplies missing structure.
+more like a LLM agent because the host supplies missing structure.
 
 ### 5. The Eval, Audit, And Learning Flywheel
 
@@ -253,11 +236,11 @@ Existing pieces:
 - `context_pack` cache and ranker scores
 - ranker learning from SWE groundedness and manual CLI nudges
 
-The flywheel is not complete enough yet. The current behavior audit on
-YYYY-MM-DD still reports redirect storms, zero-hit searches, truncated searches,
-same-tool repeats, malformed edit arguments, incomplete implement session
-summaries, mostly stale context-cache rows, and idle/dormant ranker trigger
-sites. Those are not just bugs; they are the project backlog.
+The target flywheel should diagnose redirect storms, zero-hit searches,
+truncated searches, same-tool repeats, malformed edit arguments, incomplete
+session summaries, stale context-cache rows, and idle ranker trigger sites.
+Those findings become regression fixtures, audit rules, ranker evidence, or
+contract changes.
 
 Differential: Agent Harness should become the coding harness that can explain why it
 failed and turn that explanation into a measurable improvement.
@@ -266,7 +249,7 @@ failed and turn that explanation into a measurable improvement.
 
 Agent Harness should not compete on these axes:
 
-- general-purpose polish versus external coding agent
+- general-purpose polish versus LLM agent
 - number of supported chat niceties
 - broad language count as a headline
 - automatic git commits as the core identity
@@ -274,7 +257,7 @@ Agent Harness should not compete on these axes:
 - "more tools" as a proxy for intelligence
 - hidden orchestration that cannot be replayed from logs
 
-When external coding agent already solves a user need well, Agent Harness should either integrate with
+When an LLM agent solves a user need well, Agent Harness should either integrate with
 it, learn from it, or ignore that lane. Agent Harness should not chase surface parity
 without a contract, memory, eval, or local-model reason.
 
@@ -299,9 +282,9 @@ Agent Harness is a local agent runtime with these user-facing promises:
 
 If these promises are not visible to users, the project has not differentiated.
 
-## Roadmap
+## Design Map
 
-The roadmap is organized around making the thesis true in observable behavior.
+The design map is organized around making the thesis true in observable behavior.
 Each phase should land with a doc update, focused tests, and at least one eval or
 audit signal that proves the phase mattered.
 
@@ -319,8 +302,8 @@ Tasks:
   - Which contract does this clarify or enforce?
   - Which evidence source proves it?
   - Which eval/audit signal should improve?
-  - What external coding agent/frontier feature are we intentionally not copying?
-- Triage existing backlog items into thesis-aligned and parity-chasing buckets.
+  - What LLM-agent feature are we intentionally not copying?
+- Triage candidate backlog items into thesis-aligned and parity-chasing buckets.
 - Stop adding prompt reminders when the failure should be represented as route
   metadata, tool schema, runtime brief, gate logic, or audit output.
 
@@ -366,7 +349,7 @@ for localizing changes.
 
 Tasks:
 
-- Build a context-localization benchmark from existing logs:
+- Build a context-localization benchmark from representative logs:
   - prompt
   - actual changed paths
   - context_pack top-k candidates
@@ -463,8 +446,8 @@ Metrics:
 
 ### Phase 5: Make Local-Model Operation A Product Strength
 
-Goal: make Agent Harness the reliable way to run local coding agents, not just a local
-demo.
+Goal: make Agent Harness the reliable way to run constrained LLM agents, not
+just a local demo.
 
 Tasks:
 
@@ -495,14 +478,14 @@ Metrics:
 
 Detailed design: [design-agent-substrate-sidecar.md](design-agent-substrate-sidecar.md).
 
-Goal: make Agent Harness useful even when another agent is the front end.
+Goal: make Agent Harness useful even when another LLM agent is the front end.
 
 Tasks:
 
-- Treat `harness tool` as a stable external-agent API.
+- Treat `harness tool` as a stable LLM-agent API.
 - Document contracts and JSON schemas for context, audit, verification, and
   plan-packet tools.
-- Add examples for external coding agent, external coding agent, external coding agent, and external coding agent users invoking Agent Harness
+- Add examples for LLM-agent users invoking Agent Harness
   as a local context/audit/verifier sidecar.
 - Expose machine-readable capability discovery:
   - available languages
@@ -515,7 +498,7 @@ Tasks:
 
 Metrics:
 
-- An external agent can call `harness tool context_pack`, inspect the resulting
+- An LLM agent can call `harness tool context_pack`, inspect the resulting
   candidate paths, run `context_zoom`, and then call `harness_audit` without
   starting an Agent Harness model session.
 - Public docs show at least three sidecar workflows:
@@ -534,13 +517,13 @@ the surface area.
 3. Create a `context_pack` localization eval from 20 recent successful and
    failed implementation logs.
 4. Wire the next non-manual weight-mutating ranker-learning trigger from
-   verified edits or `harness_feedback`; recovery reconciliation is already
+   verified edits or `harness_feedback`; recovery reconciliation is
    evidence-only.
 5. Fix incomplete implement session lifecycle logging.
 6. Turn the top redirect-storm and same-tool-repeat patterns into regression
    tests.
-7. Add a docs page for "Agent Harness as sidecar tools for other coding agents."
-8. Add an audit-watch review packet example to the repo so the improvement loop
+7. Add a docs page for "Agent Harness as sidecar tools for other LLM agents."
+8. Add an audit-watch review packet example to the project so the improvement loop
    has a concrete artifact shape.
 9. Define the capability vocabulary and map it to existing language and graph
    tools.
@@ -556,17 +539,17 @@ true:
 - `context_pack` increasingly predicts the files that actually change
 - completion gates reject bad endings without causing retry storms
 - evals and audits catch recurring failures before hand inspection
-- external agents can benefit from Agent Harness's context and audit tools
+- LLM agents can benefit from Agent Harness's context and audit tools
 - setup and local-model operation become more reproducible
 
 The project should reconsider or narrow scope if:
 
-- most effort goes into matching external coding agent's UI or chat features
+- most effort goes into matching an LLM agent's UI or chat features
 - repository memory does not outperform ordinary search in localization evals
 - harness audit findings stay flat after targeted fixes
 - prompt layers keep growing instead of contracts becoming clearer
 - local-model support remains operationally fragile
-- external agents cannot use Agent Harness tools without understanding Agent Harness internals
+- LLM agents cannot use Agent Harness tools without understanding Agent Harness internals
 
 The pivot path is not failure. If Agent Harness cannot justify itself as a complete
 agent harness, the most valuable subset is still a local context, audit,
@@ -574,7 +557,7 @@ verification, and eval sidecar for other agents.
 
 ## Strategic Slogan
 
-Do not build a better external coding agent clone.
+Do not build a better LLM agent clone.
 
 Build the local harness that makes smaller agents trustworthy: evidence in,
 contracts enforced, verification recorded, failures audited, learning retained.

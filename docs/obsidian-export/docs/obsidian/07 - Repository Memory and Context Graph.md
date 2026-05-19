@@ -8,7 +8,7 @@ tags:
 # Repository Memory and Context Graph
 
 Repository memory is one of Agent Harness's main differentiators. It exists so agents
-do not rediscover the repo from scratch on every task and do not flood prompts
+do not rediscover the repository from scratch on every task and do not flood prompts
 with raw files when a bounded evidence packet would be better.
 
 The canonical design is in
@@ -29,7 +29,7 @@ flowchart TD
     Graph[".harness/comprehension/graph.sqlite"]
     Views["graph_views / exported views"]
     Packet["context_pack result"]
-    Model["Runtime brief or external agent"]
+    Model["Runtime brief or LLM agent"]
 
     Source --> Collectors --> Graph --> Views --> Packet --> Model
 ```
@@ -85,9 +85,9 @@ flowchart TD
     Result --> Agent --> Runner --> Executor
 ```
 
-## Current Graph Shape
+## Target Graph Shape
 
-The exact schema belongs in `internal/comprehension`, but the graph currently
+The exact schema belongs in `internal/comprehension`, but the graph
 centers on these concepts:
 
 | Concept | Examples |
@@ -110,7 +110,7 @@ fingerprints, and ranker/runtime fingerprints.
 
 Cached packets are validated against:
 
-- Current graph index.
+- Active graph index.
 - Referenced source fingerprints.
 - Scoped freshness.
 - Runtime trace manifest state.
@@ -149,7 +149,7 @@ Freshness checks are especially important when:
 
 ## Discovery Hierarchy
 
-For this repo, the expected discovery order is:
+For a harness project, the expected discovery order is:
 
 1. `context_pack` with a stable task string.
 2. Language-aware tools for symbol-shaped questions.

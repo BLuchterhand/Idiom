@@ -15,11 +15,11 @@ Prefer executable contracts over prompt reminders.
 - Classify artifacts before dispatch: `dispatchable`, `source-satisfied`,
   `stale-needs-rebase`, `blocked-dirty-files`, `invalid-scope`,
   `missing-scope`, `complete`, or `failed-refine-draft`.
-- Do not send already-complete, source-satisfied, stale, dirty, or invalid
+- Do not send complete, source-satisfied, stale, dirty, or invalid
   atoms to local model just to let the model discover that fact.
 - Treat stale or partially-applied atom specs as tracker/spec maintenance work.
   Rebase the atom before live dispatch.
-- Use stale/already-shipped atoms as deterministic regression fixtures, not
+- Use stale/specified atoms as deterministic regression fixtures, not
   throughput tests for the implementation pipeline.
 - If a phase outcome is mechanically knowable, encode it in intake/preflight or
   the phase state machine. Prompt wording is secondary.

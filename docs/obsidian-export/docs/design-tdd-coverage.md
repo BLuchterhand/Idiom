@@ -1,19 +1,14 @@
 # Behavioral TDD Coverage
 
-**North Star: AI coding agents are becoming common, but teams do not yet trust
+**North Star: AI coding agents are becoming common, but teams do not trust
 their context, decisions, or outputs. Agent Harness sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
 Status: design guidance
-YYYY-MM-DD; reviewed YYYY-MM-DD
 
-Implementation state in the current target state: the full behavioral coverage pipeline is
-still a target design. The PRD/ADR/brief workflow effort has shipped a
-deterministic tiered coverage evaluator and brief-render dependency, but that
-gate is not yet the complete nine-stage coverage pipeline described here and it
-still needs to reuse product lint/audit authority or run those validations as
-blocking preconditions before it can be treated as the canonical dispatch
-coverage gate.
+This document defines the complete target behavioral coverage pipeline. Build it
+as the dispatch-quality contract between approved ADRs, test obligations, and
+implementation briefs.
 
 This document defines how Agent Harness achieves exhaustive behavioral coverage between
 a human-approved ADR and a dispatch-ready implementation brief. It is the
@@ -67,7 +62,7 @@ and rules, but it does not specify how to ensure the obligation set is
   boundary conditions.
 - Regression tests catch known failures, but not failures that have not
   occurred yet.
-- Mutation testing measures test quality, but current Agent Harness workflows do not
+- Mutation testing measures test quality, but target harness workflows do not
   require it.
 - No gate blocks dispatch when behavioral coverage is incomplete.
 
@@ -327,7 +322,7 @@ coverage.
 
 ### Stage 6: State Machine Model
 
-The dispatch readiness state machine (already defined in the PRD-to-brief
+The dispatch readiness state machine (defined in the PRD-to-brief
 workflow) is a protocol that must be verified:
 
 ```text
@@ -355,7 +350,7 @@ persistent state machines), consider lightweight formal verification:
 - **Alloy** for component-level contract algebra (first-order relational logic,
   bounded exhaustive search with counterexample visualization)
 
-Reserve formal methods for contracts where informal reasoning has already
+Reserve formal methods for contracts where informal reasoning has
 failed or where the blast radius of a protocol bug is high.
 
 ### Stage 7: Test Suite Generation
@@ -371,7 +366,7 @@ From the accumulated analysis, generate the test suite:
 | HAZOP deviation tests | Guide-word analysis | Deviation-from-nominal coverage |
 | Decision table tests | Combinatorial conditions | Exhaustive boolean condition coverage |
 | Boundary value tests | Numeric bounds in contracts | Edge cases at partition boundaries |
-| Characterization tests | Current codebase behavior | Legacy safety net before changes |
+| Characterization tests | Existing behavior | Legacy safety net before changes |
 | Approval tests | Reference transcripts | Behavioral regression detection |
 
 #### Property-Based Testing for Session Invariants
@@ -399,7 +394,7 @@ Obligation schema:
   "transitions": ["tool_call", "phase_change", "write", "verify"],
   "min_cases": 1000,
   "shrink_on_failure": true,
-  "status": "pending"
+  "status": "optional"
 }
 ```
 
@@ -436,7 +431,7 @@ Obligation schema:
     {"conditions": [true, true, null, null], "expected": "reject_protected"},
     {"conditions": [false, null, null, null], "expected": "halt_budget"}
   ],
-  "status": "pending"
+  "status": "optional"
 }
 ```
 
@@ -485,7 +480,7 @@ Mutation testing obligation:
   "target_contract": "write.required_path_scope",
   "operators": ["negate_invariant", "widen_scope", "escalate_permission"],
   "min_score": 80,
-  "status": "pending"
+  "status": "optional"
 }
 ```
 
@@ -521,7 +516,7 @@ Execution outcomes feed back into coverage:
 | Test passes but spec violated | Add spec-compliance eval obligation, strengthen mutation testing |
 | Test fails unexpectedly | Add characterization test, check if FMEA missed this failure mode |
 | Agent enters unexpected state | Add state machine test, check HAZOP coverage for this deviation |
-| Recovery triggered | Add FMEA failure mode if not already enumerated |
+| Recovery triggered | Add FMEA failure mode if not enumerated |
 | Budget exhausted before completion | Add boundary value test at budget limits |
 | Post-mortem identifies incident | Create one new obligation per incident. Every incident must produce at least one test that would have caught it. |
 
@@ -537,7 +532,7 @@ Post-mortem obligation template:
   "invariant_violated": "loop.same_tool_repeat",
   "invariant_already_in_contract": false,
   "action": "add_invariant",
-  "status": "pending"
+  "status": "optional"
 }
 ```
 
@@ -555,7 +550,7 @@ These techniques are chosen so their blind spots do not overlap:
 | Approval Testing | BDD Scenarios | Approval captures complex output; BDD specifies behavioral expectations |
 | FMEA | FTA | FMEA is bottom-up (what can go wrong?); FTA is top-down (how could this bad thing happen?) |
 | Decision Tables | Boundary Values | Decision tables enumerate logic combinations; boundary values test numeric edges |
-| Characterization Testing | Behavioral Tests | Characterization captures current; behavioral asserts desired; together they measure the gap |
+| Characterization Testing | Behavioral Tests | Characterization captures active; behavioral asserts desired; together they measure the gap |
 
 Redundant pairs (pick one):
 
@@ -704,7 +699,7 @@ Spec-compliance eval obligation:
     "no prompt-magic contract triggers in output"
   ],
   "independent_of": "functional_correctness",
-  "status": "pending"
+  "status": "optional"
 }
 ```
 

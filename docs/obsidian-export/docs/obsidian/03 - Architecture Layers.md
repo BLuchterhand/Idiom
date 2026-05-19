@@ -21,7 +21,7 @@ flowchart TB
         TUI["TUI sessions"]
         Sidecar["CLI sidecar"]
         InboundMCP["Inbound MCP server"]
-        Agents["External agents"]
+        Agents["LLM agents"]
     end
 
     subgraph Orchestration["Orchestration Layer"]
@@ -90,14 +90,14 @@ Examples:
 | --- | --- | --- |
 | Surface | `cmd/harness`, `internal/app`, inbound MCP in `cmd/harness/mcp.go` | User commands, TUI lifecycle, external protocol surfaces |
 | Orchestration | `cmd/harness/lane.go`, `cmd/harness/plan_execute.go`, `internal/promptstack`, `internal/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
-| Contract | `internal/agent`, `internal/autonomy`, `internal/frontier/workerruntime` | Runtime contracts, role profiles, tool profile rules |
+| Contract | `internal/agent`, `internal/autonomy`, `internal/runtime/workerruntime` | Runtime contracts, role profiles, tool profile rules |
 | Execution | `internal/agent`, `internal/workspace`, `internal/runner` | Model loop, tool dispatch, process execution |
 | Evidence | `internal/comprehension`, `internal/discovery`, `internal/telemetry`, `internal/eval`, `internal/transcript` | Context graph, discovery, logs, audit, evaluation |
-| Adapters | `internal/backends`, `internal/autodetect`, `internal/llama`, `internal/semantic`, outbound MCP in `internal/mcp`, shell/git adapters in workspace | Local inference, host discovery, external clients, and environment-specific tool execution |
+| Adapters | `internal/backends`, `internal/autodetect`, `internal/llama`, `internal/semantic`, outbound MCP in `internal/mcp`, shell/git adapters in workspace | Local inference, host discovery, LLM-agent clients, and environment-specific tool execution |
 
 ## Clean Boundary Expectations
 
-The repo's architecture docs emphasize these constraints:
+The architecture docs emphasize these constraints:
 
 - Contract changes must state the invariant and the audit or eval proof.
 - Memory changes must expose freshness, provenance, confidence, and uncertainty.
@@ -158,6 +158,6 @@ test that owns the invariant.
 
 - [[01 - System Map]]
 - [[04 - Runtime Lanes]]
-- [[12 - Sidecar and External Integrations]]
+- [[12 - Sidecar and LLM Agent Integrations]]
 - [[18 - Prompt Stack and Profiles]]
 - [[22 - Ground-Up Implementation Plan]]

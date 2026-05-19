@@ -9,7 +9,7 @@ tags:
 # Operational Commands and Evidence Products
 
 Agent Harness has several operator-facing command surfaces in addition to the main TUI
-and lane commands. They exist to make local agent work dispatchable,
+and lane commands. They exist to make LLM-agent work dispatchable,
 inspectable, reproducible, and reviewable.
 
 ## Command Surface Map
@@ -85,7 +85,7 @@ source-sanity checks, and review-repair status.
 When a saved progress state is `failed`, plan-execute writes recovery artifacts
 under `.harness/recovery/<failure-id>/`: `failure.json` for the classified
 failure record and `packet.json` for candidate recovery atoms. Failed
-`harness lane implement` subprocesses now write the same artifact pair from
+`harness lane implement` subprocesses should write the same artifact pair from
 bounded lane history, session summary, original-brief path, required edit
 paths, and stop-reason evidence. Operators inspect or promote these artifacts
 through:
@@ -100,7 +100,7 @@ harness recover reconcile --packet .harness/recovery/<failure-id>/packet.json --
 
 The TUI exposes the same packet status presenter through
 `/recover-status [--packet <path>|<path>]`. It is read-only, resolves relative
-packet paths from the current workspace directory, and inserts an
+packet paths from the active workspace directory, and inserts an
 operator-authored transcript entry that is not replayed into later model
 context. CLI and TUI packet-status reads require packet paths under the
 workspace root and reject symlinked parents or symlinked packet files.
@@ -135,7 +135,7 @@ packet-level recovery status view; `/product-status` also appends a TUI-local
 recovery packet is open, normal workflow continuation actions are not
 dispatchable. A reconciliation artifact closes the blocker only when its packet
 digest, completed/remaining atom manifest, and required-test command results
-validate against the current packet.
+validate against the active packet.
 
 After `harness recover reconcile` validates and writes the reconciliation
 artifact, it also appends an evidence-only ranker-learning event under
@@ -176,7 +176,7 @@ implementation briefs. It catches:
 - Multi-purpose or under-scoped briefs.
 - Prompt-magic contract triggers.
 - Unsafe content fences.
-- Missing verified-current-state sections.
+- Missing verified-active-state sections.
 - Missing exact anchors for required edit paths.
 - Plan-execute edit-shape gaps.
 
@@ -230,7 +230,7 @@ It should not include:
 ## Release Evidence
 
 `harness release evidence` creates a release evidence bundle. It compares
-baseline/current command artifacts and summarizes validation, audit/security,
+baseline/active command artifacts and summarizes validation, audit/security,
 local-ops, benchmark, sidecar integration, product-evidence export, and client
 classification coverage.
 
@@ -279,16 +279,13 @@ materialized atom docs it writes. Important evidence paths include:
 
 The local persisted atom status is the operator-facing state for "what remains
 to do" when the same design doc is run again. Closed atoms should be skipped;
-pending atoms should be refined, preflighted, and dispatched; blockers should
+optional atoms should be refined, preflighted, and dispatched; blockers should
 remain visible instead of being marked complete.
 
 ## Product Workflow Effort Evidence
 
 The product workflow stores each design doc or product effort as one effort
-folder under a status bucket. The current durable PRD/ADR/brief workflow effort
-is under `docs/product-workflows/efforts/closed/prd-adr-brief-workflow/`, while
-its workflow state and effort index preserve the prior `started` path as
-history:
+folder under a status bucket:
 
 - `.harness/product/efforts/unstarted/<effort-id>/...`
 - `.harness/product/efforts/started/<effort-id>/...`
@@ -296,9 +293,9 @@ history:
 
 Accepted artifacts can be promoted to matching durable folders under
 `docs/product-workflows/efforts/<status>/<effort-id>/...`. Effort indexes should
-map stable effort IDs to their current status folder and prior paths. Evidence
+map stable effort IDs to their active status folder and prior paths. Evidence
 products should cite effort IDs, status buckets, relative paths, hashes, and
-promotion status rather than relying on the current folder path as identity.
+promotion status rather than relying on the active folder path as identity.
 
 ## Related Notes
 

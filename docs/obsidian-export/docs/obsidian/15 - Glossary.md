@@ -75,7 +75,7 @@ without granting additional authority by itself.
 
 ## Freshness
 
-The relationship between evidence and the current workspace state. Freshness
+The relationship between evidence and the active workspace state. Freshness
 answers whether a packet, graph view, or runtime trace still reflects the files
 and context being used.
 
@@ -112,7 +112,7 @@ final claims.
 
 ## Sidecar
 
-The integration surface that lets external agents use Agent Harness's repository-aware
+The integration surface that lets LLM agents use Agent Harness's repository-aware
 tools, schemas, memory, verification, and audit systems.
 
 ## Source Sanity
@@ -122,14 +122,14 @@ beyond patch hygiene. It is separate from focused tests and builds.
 
 ## Source-Satisfied
 
-A valid no-op closeout state when current source already contains the requested
+A valid no-op closeout state when active source should contain the requested
 behavior. It requires per-path evidence and any required test evidence; it must
 not be simulated with placeholder edits.
 
 ## Terminal Atom
 
 An atom tracker doc whose status says the work should not be dispatched again.
-Current terminal statuses include completed, complete, accepted, closed,
+Target terminal statuses include completed, complete, accepted, closed,
 source-satisfied, source satisfied, and statuses containing `do not dispatch`.
 
 ## Tool Profile

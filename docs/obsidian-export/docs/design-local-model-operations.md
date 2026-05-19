@@ -2,8 +2,8 @@
 
 Status: design guidance
 
-This is one pillar in the coordinated roadmap:
-[harness-design-roadmap.md](harness-design-roadmap.md). It supplies the runtime
+This is one pillar in the coordinated design map:
+[harness-design-map.md](harness-design-map.md). It supplies the runtime
 capacity, readiness, role routing, queue, and context-budget constraints that
 all other pillars rely on when local or smaller models are in the loop.
 
@@ -19,7 +19,7 @@ The thesis-level rule remains unchanged:
 
 Local-model operations is the pillar that makes that rule practical on machines
 where inference is memory-bound, context is expensive, helper models can fail,
-and small/local models need more structure than frontier cloud models.
+and small/local models need more structure than highly capable hosted models.
 
 ## Executive Summary
 
@@ -31,14 +31,14 @@ resources, and which readiness checks prove that a lane can run now.
 
 The desired product promise:
 
-> A developer can run bounded coding-agent work on local local model models with
+> A developer can run bounded coding-agent work on local model models with
 > predictable setup, explicit role routing, bounded concurrency, visible
 > context budgets, actionable health checks, and logs that explain failures
 > without hand-reconstructing every run.
 
 Near-term design choices:
 
-- Keep the current `llama.cpp`, MLX-LM, and Ollama-compatible posture, but
+- Keep the active `llama.cpp`, MLX-LM, and Ollama-compatible posture, but
   normalize them behind a role-aware backend contract.
 - Make queue admission a first-class readiness signal, not an optional footnote.
 - Separate model roles: planner, executor/coder, route classifier, summarizer,
@@ -54,14 +54,15 @@ Near-term design choices:
 Primary user:
 
 - A developer running Agent Harness locally against one or more real repositories.
-- The developer may also use external coding agent, external coding agent, external coding agent, external coding agent, or another
-  agent, with Agent Harness acting as a local context/audit/verification sidecar.
+- The developer may also use LLM agents, custom scripts, or another
+  agent loop, with Agent Harness acting as a local context/audit/verification
+  sidecar.
 - The developer values privacy, inspectability, offline or low-cloud operation,
-  and reproducibility more than maximal frontier-model reasoning.
+  and reproducibility more than maximal hosted-model reasoning.
 
 Primary machine shape:
 
-- Apple Silicon with MLX-LM for the main local local model stack.
+- Apple Silicon with MLX-LM for the main local model stack.
 - Linux or macOS with `llama.cpp` / `llama-server` and GGUF models.
 - Ollama-compatible environments used either directly or as a familiar local
   model manager.
@@ -71,7 +72,7 @@ Primary task shape:
 
 - Bounded software-engineering work: plan, implement, verify, audit, explain,
   and debug failures.
-- Multi-file tasks should already be decomposed into reasonable atoms. Current
+- Multi-file tasks should be decomposed into reasonable atoms. Current
   local model workflow notes identify small, single-purpose atoms as the dominant
   predictor of success; large briefs with many files or hundreds of lines are
   operationally different work, not just "more of the same."
@@ -80,17 +81,17 @@ System success is not "a local model always behaves like Opus." Success is that
 Agent Harness makes local models safe and useful by owning setup, contracts, memory,
 queues, routing, telemetry, and readiness.
 
-## Current Agent Harness Baseline
+## Target Harness Baseline
 
-Verified from the current repo docs and code:
+Verified from the target ecosystem docs and code:
 
 - `README.md` documents three inference backend blocks:
   `llama_server`, `implementer`, and `route_classifier`.
 - `internal/config.Config` models those as `LlamaServer`, optional
   `Implementer`, and `RouteClassifier`.
-- `.harness/backends.json` declares role-aware backend profiles. The current
+- `.harness/backends.json` declares role-aware backend profiles. The active
   self-hosted profile uses a local model 35B/27B planner-classifier plus
-  `local-model3-coder-30b` executor, with a proxy on port `47680`.
+  `coder-model` executor, with a proxy on port `47680`.
 - `internal/backends` owns `.harness/backends.json`, role alias resolution,
   backend launch/stop/status, and an alias-routing proxy.
 - `cmd/harness/backend.go` exposes `harness backend start|stop|status|list|proxy`.
@@ -105,14 +106,14 @@ Verified from the current repo docs and code:
   classifier is disabled, unhealthy, times out, or returns invalid JSON.
 - `internal/app/history.go` also uses the route-classifier client for history
   summarization and can lazily launch the configured helper server.
-- `cmd/harness/doctor.go` currently checks for backend binaries, model caches,
+- `cmd/harness/doctor.go` checks for backend binaries, model caches,
   project config, writable workspace, `python3`, and `git`.
 - `internal/telemetry` writes local JSONL process telemetry under
   `logs/telemetry` by default and supports `HARNESS_TELEMETRY=0`.
 - Conversation debug logs and `harness_audit` provide the richer behavior trail.
 
-That baseline is already close to the target shape. The gap is making it
-coherent enough that users and external agents can reason about local readiness
+That baseline is close to the target shape. The gap is making it
+coherent enough that users and LLM agents can reason about local readiness
 before they burn a 20-minute local run.
 
 ## External Basis
@@ -136,7 +137,7 @@ operational truth: context, concurrency, and KV cache are scarce resources.
   `--max-kv-size` values use less memory with worse quality; larger values use
   more memory with better quality. See
   <https://github.com/ml-explore/mlx-lm#long-prompts-and-generations>.
-- `mlx_lm.server` intentionally offers an API provider-like HTTP API, but its docs
+- `mlx_lm.server` intentionally offers an OpenAI-compatible HTTP API, but its docs
   say it is not recommended for production because it only implements basic
   security checks. Agent Harness must therefore provide the operational wrapper, not
   treat the server as a complete production boundary. See
@@ -165,35 +166,27 @@ operational truth: context, concurrency, and KV cache are scarce resources.
   test execution. See
   <https://proceedings.neurips.cc/paper_files/paper/2024/hash/5a7c947568c1b1328ccc5230172e1e7c-Abstract-Conference.html>.
 
-Frontier coding tools also converge on host-owned operational contracts:
+LLM-agent tools also converge on host-owned operational contracts:
 
-- external coding agent documents sandbox mode and approval policy as separate layers:
-  technical access boundaries plus approval decisions. external coding agent CLI defaults
-  include workspace-limited writes and no network access, with approvals for
-  leaving the sandbox or using networked commands. See
-  <https://vendor.example/agent-docs>.
-- external coding agent `config.toml` exposes `model_context_window`,
-  `model_auto_compact_token_limit`, `tool_output_token_limit`,
-  `background_terminal_max_timeout`, agent thread limits, sandbox settings,
-  approval policies, and local provider support. See
-  <https://vendor.example/agent-docs>.
-- external coding agent slash commands include `/compact`, `/status`, `/permissions`,
-  `/plan`, `/review`, and `/ps`, which is a useful reference shape for making
-  budgets, permissions, and background work visible. See
-  <https://vendor.example/agent-docs>.
-- external coding agent documents deny/ask/allow permission rules, deny-first
-  precedence, hooks, working-directory access, and sandboxing as a complementary
-  OS-level layer for Bash commands. See
-  <https://code.agent-config.com/docs/en/permissions>.
-- external coding agent cost guidance explicitly treats context size, compaction,
-  subagent isolation, model choice, hooks, skills, and thinking-token budgets
-  as operational cost controls. See <https://code.agent-config.com/docs/en/costs>.
-- external coding agent's context-window docs show startup instructions, file reads,
-  hooks, subagent summaries, and compaction as context lifecycle events. See
-  <https://code.agent-config.com/docs/en/context-window>.
-- external coding agent agents expose per-agent permissions with `ask`, `allow`, and `deny`
-  for read, edit, grep, bash, task, external-directory, LSP, skills, web, and
-  stuck-loop recovery. See <https://external-agent.ai/docs/agents/>.
+- Sandbox mode and approval policy are separate layers: one defines technical
+  access boundaries, the other defines when the agent must ask before acting.
+- Runtime configuration should expose model context windows, auto-compaction
+  thresholds, tool-output token limits, background terminal timeouts, thread
+  limits, sandbox settings, approval policies, and local provider support.
+- Operator commands such as `/compact`, `/status`, `/permissions`, `/plan`,
+  `/review`, and `/ps` are useful reference shapes for making budgets,
+  permissions, and background work visible.
+- Permission systems should support deny/ask/allow rules, deny-first
+  precedence, hooks, working-directory access, and OS-level sandboxing for
+  shell commands.
+- Cost guidance should treat context size, compaction, subagent isolation,
+  model choice, hooks, skills, and thinking-token budgets as operational cost
+  controls.
+- Context-window controls should treat startup instructions, file reads, hooks,
+  subagent summaries, and compaction as context lifecycle events.
+- Agent profiles should expose per-agent permissions for read, edit, grep,
+  shell, task delegation, external directories, LSP, skills, web, and
+  stuck-loop recovery.
 
 The design implication for Agent Harness: local operations needs a typed contract that
 combines backend capacity, model role, queue admission, context budget,
@@ -201,7 +194,7 @@ permissions, and evidence readiness. Prompt reminders cannot replace that.
 
 ## Local And Smaller Model Constraints
 
-Local models fail differently from frontier cloud agents. The harness should
+Local models fail differently from highly capable hosted agents. The harness should
 assume these constraints and design for them directly.
 
 ### Model Behavior Constraints
@@ -276,7 +269,7 @@ assume these constraints and design for them directly.
 
 ## Backend Architecture
 
-### Current Components
+### Target Components
 
 ```text
 .harness/backends.json
@@ -313,10 +306,10 @@ roles. Each model entry should remain small and inspectable:
 
 ```json
 {
-  "alias": "local-model3-coder-30b",
+  "alias": "coder-model",
   "kind": "mlx",
   "binary": "/home/user/.venv/mlx-lm/bin/mlx_lm.server",
-  "model_path": "/home/user/models/local-model3-coder-30b-a3b-mlx-4bit-dwq",
+  "model_path": "/home/user/models/coder-model",
   "host": "127.0.0.1",
   "port": 47781,
   "cache_size": 4,
@@ -334,7 +327,7 @@ roles. Each model entry should remain small and inspectable:
 }
 ```
 
-New fields are intentionally descriptive. The current implementation can keep
+New fields are intentionally descriptive. The greenfield guidance can keep
 using the existing fields first, but doctor/readiness should eventually report:
 
 - alias
@@ -358,7 +351,7 @@ callers while preserving them for operators.
 
 | Backend kind | Operational strengths | Harness responsibilities |
 | --- | --- | --- |
-| `mlx` | Apple Silicon throughput, MLX quantized models, prompt cache, request-level chat-template args in current Agent Harness usage. | Guard memory, expose cache budgets, report MLX server's non-production security note, validate model directory, detect unsupported flags. |
+| `mlx` | Apple Silicon throughput, MLX quantized models, prompt cache, request-level chat-template args in target harness usage. | Guard memory, expose cache budgets, report MLX server's non-production security note, validate model directory, detect unsupported flags. |
 | `llama` | GGUF portability, explicit context size, broad hardware backends, KV cache quantization, reasoning/chat-template flags. | Normalize `--ctx-size`, KV cache type, reasoning parser, Jinja/tool-call support, PID/log lifecycle. |
 | `ollama` | Familiar local model management, model preload/keepalive, app settings, server env knobs. | Treat context/concurrency/env settings as readiness inputs, detect overload/503, avoid hidden parallel-context multiplication. |
 | `api_compatible` | Any local or LAN endpoint implementing `/v1/chat/completions`. | Mark as externally managed; doctor can probe but should not start/stop. Require explicit permissions for non-loopback. |
@@ -375,7 +368,7 @@ capability facts; the operator needs backend knobs.
   duplicate port in one profile.
 - Start every declared model and report every failure, not first failure only.
 - Write per-alias PID files under `.harness/run`.
-- Treat "port already in use" as a warning with enough data to identify the
+- Treat "port in use" as a warning with enough data to identify the
   process, not as silent success.
 - Probe both TCP readiness and a minimal model endpoint when the backend speaks
   an API-compatible API.
@@ -414,7 +407,7 @@ Role defaults should be resolved in this order:
 4. Executor-only legacy `coder` alias heuristic.
 5. Fallback to `config.json` server block.
 
-This matches the current `Profile.AliasForRole` direction while making the
+This matches the active `Profile.AliasForRole` direction while making the
 operator-facing contract clearer.
 
 ## Queue And OOM Controls
@@ -441,7 +434,7 @@ model work:
 - A lease is held by an open connection. Disconnect releases it.
 - Waiting jobs can be canceled. In-flight jobs are not killed by the daemon;
   the holder process owns cancellation.
-- Nested acquires are skipped when an ancestor already holds any pool, avoiding
+- Nested acquires are skipped when an ancestor holds any pool, avoiding
   same-pool self-deadlock and cross-pool dining-philosopher deadlocks.
 
 ### Required Enhancements
@@ -490,7 +483,7 @@ CI, eval, and multi-agent scripts should use required gating.
 - Executor and planner pools should be separate only when they do not contend
   for the same physical memory pressure.
 - If a nested command needs a different pool, wrap the outermost command in the
-  pool used by the inner inference path or skip nested acquisition as current
+  pool used by the inner inference path or skip nested acquisition as active
   code does.
 - Queue status should flag in-flight jobs older than the idle threshold because
   local-model wedges are often "still running" from the process table's point
@@ -501,7 +494,7 @@ CI, eval, and multi-agent scripts should use required gating.
 The route classifier is useful, but it must never become the hidden source of
 truth for permissions or strategy.
 
-Current behavior is aligned:
+Target behavior:
 
 - Deterministic routing runs first.
 - Decisive deterministic routes skip the classifier.
@@ -516,14 +509,14 @@ Required health model:
   "route_classifier": {
     "enabled": true,
     "always_on": true,
-    "role_alias": "local-model3.6-35b",
+    "role_alias": "planner-model",
     "base_url": "http://127.0.0.1:47780",
     "timeout_seconds": 20,
     "last_probe": "pass",
     "last_degraded_reason": "",
     "json_valid_rate_1h": 0.98,
     "fallback_rate_1h": 0.04,
-    "review milestone_latency_ms_1h": 1800
+    "p95_latency_ms_1h": 1800
   }
 }
 ```
@@ -550,7 +543,7 @@ Classifier telemetry events:
 
 Health policy:
 
-- One failure: degrade for the current turn and log.
+- One failure: degrade for the active turn and log.
 - Repeated failures in a session: suppress further classifier calls for that
   session and log `route_classifier_disabled_for_session`.
 - Doctor failure: warn, not fail, unless a lane declares classifier-required.
@@ -582,7 +575,7 @@ Expose the ledger in telemetry and optionally in `/context` or lane status:
 ```json
 {
   "context_budget": {
-    "model_alias": "local-model3.6-35b",
+    "model_alias": "planner-model",
     "model_context_tokens": 262144,
     "configured_context_tokens": 65536,
     "estimated_input_tokens": 42000,
@@ -606,7 +599,7 @@ Expose the ledger in telemetry and optionally in `/context` or lane status:
   (<https://docs.ollama.com/context-length>) while avoiding casual 256k dumps.
 - Use `planning_v2` packet tiers: `brief`, `standard`, `deep`, `max-local`.
 - Reserve output first. A plan that cannot emit `submit_plan` or an executor
-  that cannot emit the final patch has already failed.
+  that cannot emit the final patch has failed.
 - For thinking models, make thinking preservation role-specific:
   - Planner: enable/preserve thinking when the task is complex and budget
     permits.
@@ -626,7 +619,7 @@ Expose the ledger in telemetry and optionally in `/context` or lane status:
 
 Compaction should be typed, not a prose-only summary:
 
-- Keep current task, required paths, protected paths, verification obligations,
+- Keep active task, required paths, protected paths, verification obligations,
   changed files, open blockers, and final-answer contract.
 - Keep source evidence as handles plus exact excerpts only where needed.
 - Drop duplicate broad reads and stale search output.
@@ -634,9 +627,9 @@ Compaction should be typed, not a prose-only summary:
   fingerprint.
 - Mark claims as `verified`, `inferred`, `stale`, or `unknown`.
 
-external coding agent and external coding agent both expose compaction/status controls as user-visible
-operational surfaces (<https://code.agent-config.com/docs/en/context-window>,
-<https://vendor.example/agent-docs>).
+LLM agents expose compaction and status controls as user-visible
+operational surfaces.
+
 Agent Harness should do the same for local context pressure.
 
 ## Telemetry And Audit
@@ -735,7 +728,7 @@ The audit should produce findings and evidence, not strategy prescriptions.
 `harness doctor` should grow from generic host checks into a lane-readiness
 profile.
 
-### Current Checks To Keep
+### Required Checks
 
 - Supported backend runner on `PATH`.
 - Local model files in known caches.
@@ -808,14 +801,14 @@ Language/workspace readiness:
   "lanes": {
     "plan-execute": {
       "status": "pass",
-      "planner": "local-model3.6-35b",
-      "executor": "local-model3-coder-30b",
+      "planner": "planner-model",
+      "executor": "coder-model",
       "queue": "gated",
       "classifier": "degraded"
     },
     "implement": {
       "status": "pass",
-      "executor": "local-model3-coder-30b",
+      "executor": "coder-model",
       "queue": "gated"
     },
     "audit": {
@@ -839,7 +832,7 @@ Language/workspace readiness:
 }
 ```
 
-review milestone readiness gates are explicit policy decisions over the underlying
+Readiness gates are explicit policy decisions over the underlying
 readiness facts. The profile report distinguishes `pass`, `degraded`, and
 `blocked` with machine-readable reasons and remedies:
 
@@ -894,7 +887,7 @@ Policy is profile-shaped, not client-shaped:
   `sidecar`, and soft for `discovery`.
 - `queue_admission_known` is hard for `eval` because repeatable evaluation
   should not silently saturate local inference, and soft for `discovery`,
-  `plan`, `implement`, and `sidecar` while current lane-start queue plumbing is
+  `plan`, `implement`, and `sidecar` while active lane-start queue plumbing is
   opportunistic.
 - `context_budget_valid` is hard for `plan`, `implement`, and `eval`, and soft
   for `discovery` and `sidecar`.
@@ -902,11 +895,10 @@ Policy is profile-shaped, not client-shaped:
   deterministic routing fallback remains visible instead of becoming a hidden
   strategy choice.
 
-Until later review milestone wire equivalent lane-start enforcement and parity tests, the
-doctor policy stays `enforcement:"report_only"`. The harness reports unsafe or
-degraded starts before launch, but review milestone does not claim broad runtime blocking
-that the lane runner cannot yet prove. Gate telemetry and exported evidence
-must remain metadata-only: profile name, status, counts, queue/context/backend
+The target doctor policy should distinguish report-only readiness from blocking
+lane-start enforcement. Claim broad runtime blocking only when lane-start
+enforcement and parity tests prove it. Gate telemetry and exported evidence must
+remain metadata-only: profile name, status, counts, queue/context/backend
 states, and remedies, with no raw prompts, file bodies, secrets, or
 deployment-identifying payloads.
 
@@ -984,7 +976,7 @@ Replay should compare:
 - ungated vs gated
 - no packet vs `context_pack`
 - preserved thinking vs non-thinking role defaults
-- current packet budget vs compacted packet budget
+- active packet budget vs compacted packet budget
 - classifier on vs deterministic fallback
 
 Success is a measurable reduction in:
@@ -1003,7 +995,7 @@ Success is a measurable reduction in:
 ### Phase 0: Document And Align
 
 - Land this design doc.
-- Tag local-model operations as a thesis pillar in future work briefs.
+- Tag local-model operations as a thesis pillar in feature briefs.
 - Keep existing behavior unchanged.
 
 Exit criteria:
@@ -1100,7 +1092,7 @@ Exit criteria:
 
 ## Non-Goals
 
-- Do not guarantee that local models match frontier cloud models on arbitrary
+- Do not guarantee that local models match highly capable hosted models on arbitrary
   reasoning.
 - Do not build a hidden planner that chooses the model's implementation
   strategy.

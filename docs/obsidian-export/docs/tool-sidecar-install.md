@@ -1,6 +1,6 @@
 # Tool Sidecar Install
 
-Use this path when an external caller wants Agent Harness's repository evidence tools
+Use this path when an LLM-agent caller wants Agent Harness's repository evidence tools
 without installing the local model harness, queue daemon, or chat UI workflow.
 
 macOS and Linux:

@@ -171,7 +171,7 @@ state so operators can see whether ranking is live, idle, or missing evidence.
 Recovery reconciliation events are evidence-only and do not create or mutate
 `.harness/ranker/weights.json`.
 
-`*` marks learning sources that are roadmapped rather than current weight
+`*` marks learning sources that are design mapped rather than active weight
 mutation paths.
 
 Ranker learning is not a hidden strategy override. It changes evidence ordering

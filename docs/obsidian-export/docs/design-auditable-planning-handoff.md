@@ -1,9 +1,9 @@
 # Auditable Planning And Handoff
 
-Status: design draft, YYYY-MM-DD
+Status: design guidance
 
-This is one pillar in the coordinated roadmap:
-[harness-design-roadmap.md](harness-design-roadmap.md). It turns contract,
+This is one pillar in the coordinated design map:
+[harness-design-map.md](harness-design-map.md). It turns contract,
 repository-memory, capability, local-model, and verification evidence into a
 durable handoff between planning and execution.
 
@@ -23,7 +23,7 @@ executor preflight, telemetry, and acceptance gates.
 
 ## Summary
 
-Agent Harness already has the pieces of this pillar:
+Agent Harness should provide the pieces of this pillar:
 
 - `context_pack` and graph-backed views localize task evidence and persist a
   `pack_id`.
@@ -35,8 +35,8 @@ Agent Harness already has the pieces of this pillar:
 - `plan-execute` separates a planner phase from a deterministic executor phase.
   The planner emits `submit_plan`; the executor loads a `PlanArtifact`, checks
   `required_edit_paths`, preflights edit anchors, and emits per-edit events.
-- Durable plan approval scope and typed workflow state are already tracked in
-  the autonomy roadmap and eval parsing.
+- Durable plan approval scope and typed workflow state are tracked in
+  the autonomy design map and eval parsing.
 
 The missing product shape is a single auditable lifecycle that connects those
 pieces:
@@ -81,7 +81,7 @@ during execution, and measurable after execution.
 
 ## External Patterns
 
-The current ecosystem points in the same direction: effective coding agents are
+The active ecosystem points in the same direction: effective coding agents are
 increasingly shaped by host-owned workflow state, permissions, repository
 memory, and audit surfaces.
 
@@ -104,48 +104,34 @@ memory, and audit surfaces.
   calls while preserving most answer quality:
   https://arxiv.org/abs/2603.27277
 - The 2026 arXiv preprint on agentic-tool configuration reports that
-  repository-level artifacts such as Markdown and JSON files are now a standard
+  repository-level artifacts such as Markdown and JSON files are a standard
   way developers configure coding agents, with `AGENTS.md` emerging as an
   interoperable starting point:
   https://arxiv.org/abs/2602.14690
 
-The product tools show similar workflow patterns:
+LLM-agent products show similar workflow patterns:
 
-- external coding agent plan mode is a read-first mode: external coding agent researches and proposes
-  changes, but does not edit source until a plan is approved. The approval can
-  transition to auto, accept-edits, or manual review modes:
-  https://code.agent-config.com/docs/en/permission-modes
-- external coding agent subagents separate exploration, planning, and general-purpose
-  work. Its built-in Plan subagent is read-only and cannot spawn nested
-  subagents, which keeps planning research bounded:
-	  https://code.agent-config.com/docs/en/sub-agents
-- external coding agent hooks expose deterministic lifecycle control. `PreToolUse` can
-  block tool calls, `Stop` and `SubagentStop` hooks can prevent stopping with a
-  required reason, and agent hooks can inspect real files or test output before
-  returning a structured decision:
-  https://code.agent-config.com/docs/en/hooks
-- external coding agent has primary Build and Plan agents plus subagents. Its permissions are
-  explicit `ask`, `allow`, or `deny` controls over read, edit, bash, task,
-  web, LSP, and other tool classes, with per-agent overrides:
-  https://external-agent.ai/docs/agents/
-- external coding agent exposes `/plan`, `/review`, `/status`, `/permissions`, subagent thread
-  switching, MCP inspection, and context compaction as first-class CLI
-  workflows:
-  https://vendor.example/agent-docs external coding agent sandboxing and approvals are configured with durable settings such as
-  `sandbox_mode`, `approval_policy`, writable roots, permission profiles, and
-  command rules:
-  https://vendor.example/agent-docs external coding agent customization recommends moving from repository instructions to
-  plugins, MCP, and subagents as workflows become reusable:
-  https://vendor.example/agent-docs API provider's Agents SDK documentation treats agent definitions, runtime loop and
-  state, sandboxing, handoffs, guardrails/human review, results/state, tools,
-  observability, and evals as separate design surfaces:
-  https://vendor.example/agent-docs Harness's differentiator should not be copying any one UI. The differential is
-that the local harness can produce and enforce a task-specific planning
-envelope, then replay it from local logs.
+- read-first planning modes that research and propose changes before source
+  edits are authorized
+- subagents that separate exploration, planning, and implementation contexts
+- lifecycle hooks that can block tool calls, add context, or require a reason
+  before stop
+- explicit ask/allow/deny permissions over read, edit, shell, task, web, LSP,
+  and MCP tool classes
+- CLI workflows for planning, review, status, permissions, context compaction,
+  and MCP inspection
+- durable sandbox and approval settings such as writable roots, permission
+  profiles, and command rules
+- agent-platform APIs that treat agent definitions, runtime state, sandboxing,
+  handoffs, guardrails, tools, observability, and evals as separate surfaces
 
-## Current Agent Harness Lanes And Packets
+Agent Harness's differentiator should not be copying any one UI. The
+differential is that the local harness can produce and enforce a task-specific
+planning envelope, then replay it from local logs.
 
-Verified current state from the requested docs and code:
+## Target Lanes And Packets
+
+Verified active state from the requested docs and code:
 
 - `implement` is a write-capable lane where the model interleaves reads and
   edits. It is appropriate for narrow work where one trajectory is enough.
@@ -172,7 +158,7 @@ Verified current state from the requested docs and code:
 - `architect budget` estimates packet budget tiers and placement probes.
 - `architect packet-compare` and `architect replay-compare` compare packet and
   model-plan variants.
-- `submit_plan` currently persists `harness.plan.v1` with `schema_version`,
+- `submit_plan` persists `harness.plan.v1` with `schema_version`,
   `created`, `rationale`, optional `pack_id`, optional `session_id`, and
   ordered `edits`.
 - The executor preflights `required_edit_paths` and substring anchors before
@@ -180,7 +166,7 @@ Verified current state from the requested docs and code:
   preflight, executor start, each edit, and completion.
 - The autonomy tracker marks durable plan approval scope, plan exit semantics,
   build-switch reminders, typed workflow state, target-role packets, and
-  workflow-state eval parsing as implemented capabilities or tracked
+  workflow-state eval parsing as defined capabilities or tracked
   requirements.
 
 This design builds on those facts. It does not require a new model loop before
@@ -208,14 +194,14 @@ it becomes useful.
 ### 1. Task Intake
 
 Input can arrive from a user prompt, a brief file, a workflow resume, an eval
-scenario, or an external agent calling `harness tool`.
+scenario, or an LLM agent calling `harness tool`.
 
 The harness assigns:
 
 - `task_id`
 - `session_id`
 - workspace root and cwd
-- current git head and dirty fingerprint
+- active git head and dirty fingerprint
 - requested lane or mode
 - explicit user constraints
 - initial target roles, if any
@@ -241,7 +227,7 @@ the next tool call.
 
 ### 3. Planning Packet
 
-The harness builds a planning packet, currently through:
+The harness builds a planning packet, through:
 
 ```bash
 harness architect packet \
@@ -354,8 +340,9 @@ The handoff projects the approved durable plan into the lane-specific contract:
 - `implement`: the runtime brief and implementation target packet expose
   editable primary paths, read-only evidence, forbidden paths, allowed new
   destinations, and verification intent.
-- external sidecar: `harness tool` returns the packet, plan, audit, and approval
-  scope for another agent to consume, while Agent Harness remains the verifier/auditor.
+- LLM-agent sidecar: `harness tool` returns the packet, plan, audit, and
+  approval scope for another LLM agent to consume, while Agent Harness remains
+  the verifier/auditor.
 
 The executor must re-check the handoff immediately before writing. If the
 workspace fingerprint, target file fingerprint, or packet freshness has expired,
@@ -410,7 +397,7 @@ schema version: `harness.durable_plan.v1`.
   "schema_version": "harness.durable_plan.v1",
   "plan_id": "plan_EXAMPLE_abcd1234",
   "task_id": "task_abcd1234",
-  "created_at": "YYYY-MM-DDT23:59:59Z",
+  "created_at": "<iso-timestamp>",
   "source": {
     "packet_id": "packet_...",
     "packet_schema": "harness.architect.planning_packet.v2",
@@ -419,7 +406,7 @@ schema version: `harness.durable_plan.v1`.
     "git_head": "abc123",
     "dirty_fingerprint": "sha256:...",
     "prompt_hash": "sha256:...",
-    "model": "local-model3-coder-30b"
+    "model": "coder-model"
   },
   "objective": "Implement the approved refactor without changing prompt semantics.",
   "constraints": [
@@ -604,7 +591,7 @@ Post-execution replay:
 - Did verification match the plan's verification section?
 - Would the old packet have failed earlier or produced a broader plan?
 
-Current `architect replay-compare` already compares two packets and two plan
+`architect replay-compare` compares two packets and two plan
 texts through deterministic plan audit. Extend it with durable plan and
 execution fields:
 
@@ -651,7 +638,7 @@ Replay compare should be allowed to say "not comparable" when these differ.
 
 The executor handoff is the bridge from approved plan to write-capable lane.
 
-Current `PlanArtifact` is edit-list oriented:
+`PlanArtifact` should carry edit-list-oriented fields:
 
 ```json
 {
@@ -734,7 +721,7 @@ simplest safe lane:
 Use existing commands first, then add convenience wrappers after the artifact
 shape settles.
 
-Current explicit flow:
+Explicit flow:
 
 ```bash
 harness context pack --task-file task.md --mode plan --output context-view.json
@@ -790,7 +777,7 @@ harness lane plan-execute \
 
 Interactive UX:
 
-- `/plan` opens or drafts the current session plan.
+- `/plan` opens or drafts the active session plan.
 - The Plan panel shows packet ID, plan ID, audit status, approval status,
   editable targets, read-only evidence, validation commands, and replay status.
 - Approval prompts show only the scope delta: editable targets, new
@@ -800,14 +787,14 @@ Interactive UX:
 - If execution is blocked by stale fingerprints, the UI should offer "refresh
   packet and re-audit" rather than continuing with stale scope.
 
-External-agent UX:
+LLM-agent UX:
 
 - `harness tool context_pack` remains the first sidecar entry point.
 - `harness tool harness_audit` reports planning-quality feedback clusters.
 - Add `harness tool plan_audit` or expose `architect plan-audit` through the tool
   surface once the durable schema is stable.
-- Return machine-readable paths and IDs so external coding agent, external coding agent, external coding agent, or
-  external coding agent can use Agent Harness as a local planning/audit sidecar.
+- Return machine-readable paths and IDs so LLM agents and scripts
+  can use Agent Harness as a local planning/audit sidecar.
 
 ## Telemetry
 
@@ -955,7 +942,7 @@ Local-model operating metrics:
 ### Phase 1: Document And Align Existing Surfaces
 
 - Land this design doc.
-- Update current planning docs to point at the lifecycle terminology.
+- Update active planning docs to point at the lifecycle terminology.
 - Keep existing commands unchanged.
 - Add examples that use `context_pack`, `architect packet --schema
   planning_v2`, `architect plan-audit`, and `replay-compare`.
@@ -963,7 +950,7 @@ Local-model operating metrics:
 Exit criteria:
 
 - The design language matches `lane-architecture.md`,
-  `architect-packets.md`, and the target implementation's autonomy tracker.
+  `architect-packets.md`, and the autonomy tracker.
 - No command behavior changes are required.
 
 ### Phase 2: Durable Plan Artifact
@@ -1027,12 +1014,12 @@ Exit criteria:
 
 - Add top-level `harness plan` wrappers once schemas are stable.
 - Expose plan audit through `harness tool`.
-- Document sidecar workflows for external coding agent, external coding agent, external coding agent, and external coding agent.
+- Document sidecar workflows for LLM agents.
 - Add retention and cleanup controls for plan artifacts.
 
 Exit criteria:
 
-- External agents can call Agent Harness for packet, audit, handoff, and replay without
+- LLM agents can call Agent Harness for packet, audit, handoff, and replay without
   starting an Agent Harness model session.
 
 ## Risks
@@ -1056,7 +1043,7 @@ Exit criteria:
 - Privacy and log volume: durable artifacts may contain sensitive paths or
   command output. Mitigation: local storage by default, redaction, and hashes
   for large raw content.
-- External-agent mismatch: another agent may treat Agent Harness's packet as advice
+- LLM-agent mismatch: another LLM agent may treat Agent Harness's packet as advice
   rather than a contract. Mitigation: expose explicit `ok`, `errors`, and
   `allowed_scope` fields through `harness tool`.
 
@@ -1098,7 +1085,7 @@ The auditable planning and handoff pillar is successful when:
   audit findings, handoff status, and verification outcome.
 - `harness_audit` can summarize planning-quality failures without manual JSONL
   reconstruction.
-- External agents can use Agent Harness as a context/audit/handoff sidecar through
+- LLM agents can use Agent Harness as a context/audit/handoff sidecar through
   stable CLI or `harness tool` outputs.
 
 ## Open Questions

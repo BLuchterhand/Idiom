@@ -10,7 +10,7 @@ tags:
 
 Agent Harness's security and privacy posture is local, contract-first, and
 evidence-based. It is not a compliance certification. It is a set of reviewable
-controls and bounded evidence products for local agent work.
+controls and bounded evidence products for LLM-agent work in a local workspace.
 
 The canonical posture artifact is
 [docs/security-privacy-posture.md](../security-privacy-posture.md).
@@ -100,7 +100,7 @@ flowchart TD
 
 ## Regulated And Enterprise Claims
 
-The repo distinguishes proof from certification:
+The posture distinguishes proof from certification:
 
 - Finance rows are regulated proof-only, not FINRA or banking compliance claims.
 - Healthcare rows are regulated proof-only, not HIPAA compliance or PHI
@@ -147,5 +147,5 @@ When changing security, privacy, telemetry, audit, sidecar, or evidence export:
 
 - [[06 - Workspace Tools and Capability Routing]]
 - [[10 - Telemetry Audit Eval and Learning]]
-- [[12 - Sidecar and External Integrations]]
+- [[12 - Sidecar and LLM Agent Integrations]]
 - [[16 - Operational Commands and Evidence Products]]

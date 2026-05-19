@@ -2,8 +2,8 @@
 
 Status: design guidance
 
-This is one pillar in the coordinated roadmap:
-[harness-design-roadmap.md](harness-design-roadmap.md). It supplies the evidence
+This is one pillar in the coordinated design map:
+[harness-design-map.md](harness-design-map.md). It supplies the evidence
 substrate for contract-first autonomy, capability routing, auditable planning,
 local-model context budgets, eval/ranker learning, and sidecar APIs.
 
@@ -41,28 +41,26 @@ The same graph facts should be usable by:
 - `context_trace_pack` after a failing command or runtime trace
 - architect packets and deterministic plan audit
 - `harness_audit`, evals, and ranker learning after the run
-- external agents through `harness tool`
+- LLM agents through `harness tool`
 
-The differentiator is not "Agent Harness also parses symbols." external coding agent already does that
+The differentiator is not "Agent Harness also parses symbols." LLM agent does that
 well. The differentiator is that repository knowledge becomes a durable local
 contract surface: source-linked, freshness-aware, confidence-labeled,
 ranker-improvable, trace-integrated, and replayable from logs.
 
 ## Competitive Baseline
 
-### external coding agent
+### LLM Agent Repo Maps
 
-external coding agent is the baseline Agent Harness must respect. Its repository map is concise, useful,
-and mature: it sends the model important classes, functions, types, signatures,
-and critical definition lines from the whole git repository, then uses graph
-ranking to select the most relevant map content inside the active token budget
-(<https://vendor.example/external-agent-docs>). The implementation moved from ctags
-to tree-sitter so it can extract definitions and references across many
-languages and build a richer map (<https://vendor.example/external-agent-docs>).
-external coding agent also has practical product features around ask/code/architect modes
-(<https://vendor.example/external-agent-docs>), lint/test repair loops
-(<https://vendor.example/external-agent-docs>), and broad language support
-(<https://vendor.example/external-agent-docs>).
+LLM-agent repo maps are the baseline Agent Harness must respect. Mature
+repo maps send the model important classes, functions, types, signatures, and
+critical definition lines from the whole git repository, then use graph ranking
+to select the most relevant map content inside the active token budget. Modern
+implementations use syntax-aware indexing so they can extract definitions and
+references across many languages.
+
+LLM agents also have practical product features around ask/code/architect
+modes, lint/test repair loops, and broad language support.
 
 Implication for Agent Harness: a token-budgeted repo map is table stakes. Agent Harness should
 not claim differentiation merely because it can list symbols or rank files.
@@ -95,8 +93,8 @@ persistent tree-sitter knowledge graph over 66 languages, served through MCP,
 evaluated across 31 repositories with 83% answer quality versus 92% for a
 file-exploration agent, at 10x fewer tokens and 2.1x fewer tool calls
 (<https://arxiv.org/abs/2603.27277>). The linked GitHub project documentation is
-mutable and must be re-checked in the review milestone release-evidence bundle before any
-release claim uses it; this draft treats it only as provisional product evidence
+mutable and must be re-checked in the release-evidence bundle before any
+product claim should treat it only as provisional evidence
 for operational claims about a SQLite-backed graph, auto-sync, CLI invocation of
 every MCP tool, graph schema introspection, call-path tracing, change-impact
 mapping, runtime trace ingestion, and a 99.2% token-reduction benchmark for five
@@ -147,9 +145,9 @@ precise indexes are unavailable
 fallback story is important: Agent Harness should use exact language indexes when
 available and make lower-confidence fallback explicit when they are not.
 
-Implication for Agent Harness: use a graph vocabulary that can absorb richer CPG, Kythe,
-SCIP, LSP, and compiler facts later without pretending all relationships are
-equally exact today.
+Implication for Agent Harness: use a graph vocabulary that can absorb richer
+CPG, Kythe, SCIP, LSP, and compiler facts without pretending all relationships
+are equally exact.
 
 ## Research Findings To Carry Forward
 
@@ -157,9 +155,9 @@ equally exact today.
   argues that the
   agent-computer interface materially affects agents' ability to navigate repos,
   edit files, and run tests (<https://arxiv.org/abs/2405.15793>).
-- Compact repo maps are already expected. external coding agent's default `--map-tokens` value
+- Compact repo maps are expected. An LLM agent's default `--map-tokens` value
   is 1k tokens, with dynamic expansion when no files are in chat
-  (<https://vendor.example/external-agent-docs>).
+ .
 - Graph context improves localization and resolve rates, but can increase token
   use if agents over-call it. RepoGraph's arXiv-preprint table reports higher
   average token use after adding graph context for all four tested baselines,
@@ -197,7 +195,7 @@ source workspace
   -> repository graph store
   -> view builders
   -> packets and tools
-  -> lanes, audits, evals, and external agents
+  -> lanes, audits, evals, and LLM agents
   -> ranker and feedback loop
 ```
 
@@ -225,7 +223,7 @@ show up as explicit gaps, not as silent empty results.
 
 ### 2. Repository Graph Store
 
-The store is the durable local index under `.harness/comprehension/`, currently
+The store is the durable local index under `.harness/comprehension/`,
 centered on `graph.sqlite` with `graph.json` as an inspectable export. It owns:
 
 - graph metadata and schema compatibility
@@ -236,8 +234,8 @@ centered on `graph.sqlite` with `graph.json` as an inspectable export. It owns:
 - materialized `graph_views` cache rows
 - stale markers for nodes, edges, summaries, views, and traces
 
-SQLite is the right default. It is local, inspectable, easy to ship, and good
-enough for the graph queries Agent Harness needs now. The schema should remain
+SQLite is the right default. It is local, inspectable, easy to define, and good
+enough for Agent Harness graph queries. The schema should remain
 migration-friendly rather than optimize prematurely for a graph database.
 
 ### 3. View Builders
@@ -478,7 +476,7 @@ View outputs should avoid strategy:
 ## Freshness Model
 
 Freshness is a first-class contract. The graph is useful only if callers can
-tell whether it matches the current workspace.
+tell whether it matches the active workspace.
 
 Invalidate or mark stale when any of these change:
 
@@ -502,7 +500,7 @@ Freshness policies:
 - `require_fresh`: fail if the graph or referenced view cannot be made fresh.
   Required for gated architect packets and high-confidence verification claims.
 
-The current `graph_views` cache contract should remain content-addressed over
+The active `graph_views` cache contract should remain content-addressed over
 the active graph ID, canonical query inputs, mode, budget, scope, required tests,
 forbidden paths, intent, ranker workspace-state fingerprint, and trace state.
 The exported `views/<pack_id>.json` file is an inspection artifact; SQLite is
@@ -628,9 +626,9 @@ harness context trace-pack --command "go test ./internal/comprehension/..." --pa
 harness architect packet --task-file /tmp/task.md --schema planning_v2 --context-view /tmp/context-view.json --output /tmp/packet.json
 ```
 
-### External Agent API
+### LLM Agent API
 
-External agents should be able to call the same functions through `harness tool`:
+LLM agents should be able to call the same functions through `harness tool`:
 
 ```bash
 harness tool context_pack --input '{"task":"localize graph view cache invalidation","mode":"plan","limit":8}'
@@ -774,11 +772,11 @@ Auditability:
 
 ### Acceptance Thresholds For Promotion
 
-Before persistent memory is treated as a default pillar rather than an
-experimental helper, it should meet these thresholds on a fixed benchmark slice:
+Before persistent memory is treated as a default pillar, it should meet these
+thresholds on a fixed benchmark slice:
 
 - Top-5 changed-path localization improves by at least 15 percentage points over
-  raw search/read and does not regress versus current `discovery_query`.
+  raw search/read and does not regress versus active `discovery_query`.
 - Broad raw file reads before first edit drop by at least 30%.
 - Tool-observation token volume drops by at least 40% for orientation tasks.
 - Required-test top-5 hit rate reaches at least 80% on tasks with known tests.
@@ -796,12 +794,12 @@ should remain quantitative. "Feels better" is not a pillar acceptance criterion.
 
 ### Phase 0: Reality Baseline
 
-- Record current `context_pack`, `context_query`, `context_zoom`,
+- Record active `context_pack`, `context_query`, `context_zoom`,
   `context_trace_pack`, `harness_audit`, and ranker behavior.
 - Build a 30 to 50 task localization slice from recent logs.
 - Add a `memory_benchmark` report that can compare raw tools, discovery, packs,
   and trace-backed packs.
-- Document current gaps as facts, not roadmap optimism.
+- Document active gaps as facts, not design map optimism.
 
 Exit criteria:
 
@@ -871,18 +869,18 @@ Exit criteria:
 - Behavior-debugging packets can cite conversation and telemetry evidence
   without hand-reconstructing raw JSONL.
 
-### Phase 5: External Agent Sidecar
+### Phase 5: LLM Agent Sidecar
 
 - Stabilize `harness tool` JSON schemas for context, trace, audit, and packet
   commands.
-- Add examples for external coding agent, external coding agent, external coding agent, and external coding agent workflows.
+- Add examples for LLM-agent workflows.
 - Expose machine-readable capability discovery: languages, collectors, graph
   freshness, contracts, supported trace parsers, and recommended verification.
 - Keep sidecar behavior local-first and inspectable.
 
 Exit criteria:
 
-- An external agent can call `context_pack`, zoom a handle, run trace pack, and
+- An LLM agent can call `context_pack`, zoom a handle, run trace pack, and
   run `harness_audit` without starting an Agent Harness model session.
 - The sidecar workflow preserves Agent Harness contracts instead of becoming a generic
   graph search daemon.
@@ -909,7 +907,7 @@ Exit criteria:
   integrity-checked.
 - CPG overreach. Mitigation: use Joern/CPG-style depth as optional enrichment,
   not as a baseline dependency.
-- Competitive drift. Mitigation: benchmark against external coding agent-style maps,
+- Competitive drift. Mitigation: benchmark against LLM-agent-style maps,
   graph-memory MCP tools, and direct exploration instead of comparing against a
   stale mental model.
 
@@ -949,7 +947,7 @@ The persistent repository memory pillar is accepted when all of these are true:
   verification, and auditability metrics.
 - A fixed benchmark slice shows lower raw exploration cost and better
   localization without increasing unsafe writes or unverified final answers.
-- External agents can use `harness tool` to call context, trace, and audit
+- LLM agents can use `harness tool` to call context, trace, and audit
   commands without starting an Agent Harness inference session.
 
 If these criteria are met, persistent repository memory becomes more than a repo

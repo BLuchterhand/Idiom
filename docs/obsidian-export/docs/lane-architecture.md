@@ -4,13 +4,10 @@ This document describes the implementation lane shape harness provides
 and how project repos overlay it. It is the canonical reference for
 "what does harness give me, and what do I bring."
 
-For the migration plan that lifts more of today's project-side
-plumbing into harness, see `docs/reusability-design.md`.
-
 ## What is a lane?
 
 A **lane** is one round-trip from a brief to a set of completed
-edits, optionally with a verification pass. Agent Harness currently provides
+edits, optionally with a verification pass. Agent Harness provides
 three lane shapes:
 
 - **`implement`** — write-capable lane where the model interleaves
@@ -31,9 +28,8 @@ three lane shapes:
   (a planner target packet) without touching the workspace, then
   exits. Used when the orchestrator needs a clean spec to feed into
   a downstream `implement` or `plan-execute` lane. Driven by
-  `harness artifact --no-tools --mechanical-repair --json-out ... --report-out ...`
-  today; will be `harness atom-spec draft` after Phase 2 of the
-  reusability migration.
+  `harness atom-spec draft` or the equivalent artifact-generation
+  command in the CLI package.
 
 Every lane consumes a **brief** (markdown describing the work) and
 produces some combination of: changed files, a plan artifact, a
@@ -136,7 +132,7 @@ Minimum for a fresh project:
     "kind": "mlx",
     "host": "127.0.0.1",
     "port": 47680,
-    "model": "local-model3-coder-30b"
+    "model": "coder-model"
   },
   "workspace": {
     "root": "/abs/path/to/project",
@@ -171,10 +167,10 @@ addition for the per-file pattern:
 }
 ```
 
-This is how original implementation exposes `lookup`, `trace_code`, `ast_grep`,
-`fixture_inventory`, `id_ranges`, `state_machine`, etc. — they all
-shell out to project-side scripts but appear to the model as
-first-class workspace tools.
+This is how a project should expose domain-specific tools such as
+`lookup`, `trace_code`, `fixture_inventory`, `id_ranges`, or
+`state_machine`: they can shell out to project-side scripts while appearing to
+the model as first-class workspace tools with typed schemas.
 
 The on-disk JSON schema mirrors `config.ExternalToolDef`
 (`internal/config/config.go`); harness maps it to `workspace.ExternalTool`
@@ -229,50 +225,35 @@ the same files.
 fresh/stale split, bytes stored, oldest/newest timestamps, plus
 session-local hit/miss/write counters).
 
-### `.harness/prompts/` (mixed — chat side project-owned; lane wrapper has canonical + overlay)
+### `.harness/prompts/` (canonical lane resources plus project overlays)
 
-The chat-side base prompt is fully project-owned today; lane
-preambles/postambles and the generic rules block ship as
-canonical-in-harness (embedded), with project overlay at well-known
-paths. See the seam table at the end of this doc.
+The chat-side base prompt and profiles are project-owned. The lane
+framing, generic rules, recovery language, readiness criteria, and
+completion criteria are canonical harness resources embedded in the
+binary. Projects customize them through overlays at well-known paths
+rather than by editing canonical prompt files.
 
-Today the chat-side prompt stack is fully config-driven via two
-`chat`-section keys (`internal/config/config.go`):
+The chat-side prompt stack is configured through two `chat` keys:
 
-- `chat.system_prompt_files` — ordered list of files concatenated
-  into the system prompt at runtime. Resolved relative to the config
-  file's directory. original implementation's config sets this to
-  `["prompts/base.md", "prompts/profiles/coding.md",
-  "prompts/profiles/external-agent-worker.md"]`, which expands to files
-  under `.harness/prompts/`.
-- `chat.profiles_dir` — directory of named profile files; the runtime
-  loads the matching one when it selects a profile.
+- `chat.system_prompt_files` — ordered list of project prompt files
+  concatenated into the system prompt at runtime, resolved relative to
+  the config file's directory.
+- `chat.profiles_dir` — directory of named project profile files; the
+  runtime loads the matching one when it selects a profile.
 
-The lane runner concatenates only what `system_prompt_files` lists
-for the chat-side system prompt; that part still has no embedded
-canonical base. Projects own the full text via
-`.harness/prompts/base.md`.
+`harness lane <mode>` wraps the brief with canonical mode-specific text
+from the harness binary. Projects extend that wrapper via
+`<repo>/.harness/prompts/lanes/<mode>/{preamble,postamble}.md`, inserted
+between canonical text and the brief body.
 
-Lane preambles/postambles are different. As of Phase 3 of the
-reusability migration, `harness lane <mode>` wraps the brief with
-canonical-in-harness mode-specific text loaded via `go:embed` from
-`cmd/harness/lanes/<mode>/{preamble,postamble}.md`. A binary-only
-deployment carries the canonical lane wrapper without needing a
-co-located prompts directory. Projects extend (never replace) that
-wrapper via `<repo>/.harness/prompts/lanes/<mode>/{preamble,postamble}.md`,
-inserted between the canonical text and the brief body.
-
-The lane wrapper also prepends a **canonical generic rules** block to
-every composed prompt, loaded via `go:embed` from
-`cmd/harness/lanes/rules/{loop-protocol, brief-skeleton,
-known-traps-generic}.md` (Phase 3 backfill, YYYY-MM-DD). Project
+The lane wrapper also prepends a canonical generic rules block. Project
 overrides at `<repo>/.harness/prompts/rules/<name>.md` use same-name
 semantics: a project file matching a canonical name **replaces** that
-entry in place; project files with names NOT in the canonical set
-**append** after the canonical block in alphabetical order. This lets
-a project drop in `cpp-safety.md`, `gdscript-patterns.md`, etc. as
-extras without editing the canonical files. The full layer order in
-the composed prompt is:
+entry in place; project files with names not in the canonical set
+**append** after the canonical block in alphabetical order. This lets a
+project add `cpp-safety.md`, `ui-accessibility.md`, or other local
+rules without editing canonical files. The full layer order in the
+composed prompt is:
 
 1. canonical generic rules + project rule replacements/extras
 2. canonical lane preamble (mode-specific)
@@ -301,120 +282,34 @@ The actual atom briefs. Agent Harness doesn't care where they live; the
 lane subcommand reads via `--prompt-file <path>`. Convention:
 `<repo>/.planning/<atom-id>.md`.
 
-## What's coming after the reusability migration
+## Portability Bootstrap Features
 
-Phases shipped (`docs/reusability-design.md`):
+The lane system should include these reusable project-onboarding
+features:
 
-- Phase 1-2 — `harness lane <mode>` wrapper with overlay seam
-- Phase 3 — canonical lane preambles/postambles via `go:embed`,
-  project overlay at `.harness/prompts/lanes/<mode>/{preamble,postamble}.md`
-- Phase 4 — `.harness/backends.json` schema with `default_profile` /
-  `default_coder` resolution, plus the `harness backend list`
-  introspection command. The lane
-  wrapper's `--coder` shortcut and plan-execute auto-route both pull
-  the alias from this file when present, falling back to the legacy
-  hardcoded `local-model3-coder-30b` so existing setups keep working.
-- Phase 4b — `harness backend start|stop|status` launcher port. Argv
-  is constructed from the schema (`binary` + `--model` + `--port` +
-  optional cache/token flags + `extra_args`), so any local-LLM
-  launcher whose CLI matches the MLX shape works without project
-  scripts. Detached spawn (Setpgid) so backends survive harness exit;
-  ready-check is a TCP connect to the listening port; stop sends
-  SIGTERM with a configurable grace window before SIGKILL.
-- Phase 4c — `harness backend proxy` alias-routing port. Listens on
-  `profile.proxy.listen`, picks a backend by the request's `model`
-  field (falling back to `default_alias`), rewrites that field to
-  the absolute model path mlx_lm.server expects, merges multiple
-  system messages into one leading entry for chat-completion
-  compatibility, and streams responses chunk-by-chunk to preserve
-  SSE for `stream: true`. `--listen` and `--default` flags override
-  the schema for ad-hoc runs; SIGINT/SIGTERM trigger graceful
-  shutdown. Replaces original implementation's `mlx_alias_proxy.py`.
+- `harness lane <mode>` composes canonical lane framing, project
+  overlays, backend routing, JSON event forwarding, and telemetry.
+- `.harness/backends.json` defines role-based profiles such as planner,
+  coder, reviewer, verifier, summarizer, and sidecar-discovery.
+- `harness backend start|stop|status|list` manages configured local
+  inference backends and reports health, ports, queues, and degraded
+  mode.
+- `harness backend proxy` provides alias-routing for OpenAI-compatible
+  local servers when a project needs stable model names over changing
+  local model paths.
+- `harness lane postflight` runs generic and project-specific quality
+  checks against the unified diff and evidence bundle.
+- `harness probe lane [--mode implement|plan-execute|all]` exercises
+  synthetic briefs and verifies route shape, contract selection, and
+  allowed-tool surfaces.
+- `harness brief preload --kind <name>` emits canonical brief-authoring
+  guidance with project overlays for domain-specific brief types.
+- `harness skills install <name>` installs optional orchestrator-side
+  templates without making those templates part of the core harness
+  contract.
 
-- Phase 5 — `harness lane postflight` runs a configurable QC pipeline
-  against a unified diff. Three always-on generic checks
-  (unresolved `<<QUESTION>>:` markers in modified files, write
-  outside `required_edit_paths`, narrating comments in newly-added
-  test code) plus project rules under
-  `.harness/postflight/checks/<name>.json` (`kind: shell` runner;
-  `kind: ast_grep` reserved). Exit codes: `0` pass, `1` IO/setup,
-  `2` flag error, `3` checks fired — separate so callers can tell
-  "ran and found bugs" apart from "couldn't run."
-- Phase 6 — three project-onboarding helpers:
-  - `harness probe lane [--mode implement|plan-execute|all]` runs a
-    synthetic-brief route probe in-process and asserts route shape
-    (initial=implement, contract=implementation_result,
-    reason=explicit_task_family) and a non-empty allowed-tools
-    surface. Replaces `harness_route_probe.sh`.
-  - `harness audit enum-mirrors --enum <Name> [--language cpp|go|rust|ts|any]`
-    walks the workspace, lists files referencing the symbol, and
-    scans each for high-signal mirror patterns (count assertions,
-    name tables, switch cases). Each --language profile bundles a
-    pattern set + extension filter; `--pattern <regex with {ENUM}>`
-    and `--ext <extension>` are escape hatches.
-
-    **Implementation note:** the audit uses token-bounded regex grep,
-    not the LSP-aware `*_references` tools the design doc imagined.
-    Trade-off: grep is language-agnostic and runs without an LSP
-    setup (cpp_references requires clangd) but produces lower-
-    precision results — string literals and comments containing
-    the symbol show up as references. Operators should treat the
-    file list as a starting point for a brief, not a precise
-    references query. A future `--lsp` mode could call into the
-    language-aware tools when the workspace has them wired.
-  - `harness brief preload --kind <name>` (or `--list`) emits the
-    canonical atom-spec drafting guidance, with project overrides
-    at `<repo>/.harness/prompts/brief/preload/<kind>.md`. Agent Harness ships
-    only `generic`; project-specific kinds live as overlays.
-
-- Phase 3 rules-embed backfill (YYYY-MM-DD) — canonical generic
-  rules `loop-protocol.md`, `brief-skeleton.md`, and
-  `known-traps-generic.md` are embedded under `cmd/harness/lanes/rules/`
-  and prepended to every composed lane prompt. Project overlay at
-  `<repo>/.harness/prompts/rules/<name>.md` uses same-name semantics:
-  matching project files **replace** the canonical entry in place;
-  files with names NOT in the canonical set **append** alphabetically
-  after the canonical block as project-specific extras (e.g.
-  `cpp-safety.md`, `gdscript-patterns.md`).
-
-- Phase 6.5 (YYYY-MM-DD) — `harness lane <mode>` absorbs the wrapper-
-  side scaffolding original implementation's `run_harness_impl.sh` carried so the
-  shell wrapper can shrink from ~419 lines to ~15:
-  - **Brief lint preflight** runs by default; `--no-lint` opt-out
-    for callers that already lint upstream. Lint exit code
-    propagates to the lane wrapper and aborts dispatch on failure.
-  - **`--slot <key>`** opt-in concurrency mutex via mkdir on
-    `$TMPDIR/harness-lane-<key>`. Empty default = no mutex. Caller
-    chooses the granularity (per-model, per-workspace, per-brief).
-    Held slot exits 3 with a clear "already held" message.
-  - **Post-analyze** scans the subcommand's stdout after dispatch
-    for two regression classes: write-capable brief routed to a
-    read-only contract (`read_only_lane`), and clean-exit run
-    that never attempted an edit / blocker (`no_edit_attempt`).
-    Each emits a structured `harness.lane.degraded` JSONL event;
-    wrapper exit code is 4 when any degradation fires (and the
-    subcommand exited 0). The `no_edit_attempt` check is
-    suppressed when the subcommand exits non-zero — the failure
-    code already carries that signal.
-  - **Audit-feedback dispatch stays project-side.** Agent Harness emits
-    the `harness.lane.degraded` event; projects subscribe (e.g.
-    original implementation's wrapper pipes the event into `harness_feedback`).
-    This keeps harness from carrying any single project's audit-
-    ledger schema.
-
-Phase 7 adds these project-side hooks (not yet present today;
-placeholder paths shown so projects can plan ahead):
-
-- canonical profile templates copied during `harness init` (e.g.
-  `prompts/profiles/coding.md`, `prompts/profiles/external-agent-worker.md`)
-- `harness skills install <name>` for orchestrator-side skill
-  templates (including `orchestrator-workflow`, deferred from
-  Phase 3 per the design's own recommendation)
-
-Until those phases ship, projects use today's overlay points
-(`.harness/prompts/base.md` + the lane overlay seam + the rules
-overlay seam + project-side scripts wrapping the existing
-`harness plan-execute` / `harness implement`).
+These features are specified in more detail in
+[portability-bootstrap-design.md](portability-bootstrap-design.md).
 
 ## Always-on language support
 
@@ -423,7 +318,7 @@ Every language tool family in harness is loaded unconditionally:
 workspace auto-detects which families are *active* for a given
 repo by walking the workspace root and matching against language-
 specific markers in `internal/workspace/language_registry.go`. The
-exact rules differ per language; representative ones today:
+exact rules differ per language; representative examples:
 
 - Go — `go.mod` at any depth, or `*.go` source files
 - C/C++ — `compile_commands.json`, or `.c`/`.cc`/`.cpp`/`.h`/`.hpp`
@@ -451,7 +346,7 @@ binary picks it up automatically.
 | Tool dispatch + workspace operations | ✓ | |
 | Lane preambles/postambles | ✓ (embedded) | overlay at `.harness/prompts/lanes/<mode>/{preamble,postamble}.md` |
 | Generic rules (loop-protocol, brief-skeleton, known-traps-generic) | ✓ (embedded) | overlay at `.harness/prompts/rules/<name>.md` (replace by name; extras append) |
-| Chat-side base prompt + profiles | (not yet — open question) | ✓ (project-owned at `.harness/prompts/base.md` + `prompts/profiles/`) |
+| Chat-side base prompt + profiles | (not — open question) | ✓ (project-owned at `.harness/prompts/base.md` + `prompts/profiles/`) |
 | Language tool families | ✓ | (auto-detect) |
 | Endpoint + workspace config | | ✓ |
 | Project-specific tool adapters | | ✓ |
@@ -460,12 +355,11 @@ binary picks it up automatically.
 | Brief files | | ✓ |
 | Project-specific rules + skills (e.g. cpp-safety, ears-specs) | | ✓ |
 
-## Lane invocation, today
+## Lane Invocation
 
-The `harness lane` subcommand (Phase 1 of the reusability migration)
-is the recommended entry point. It composes the prompt overlay,
-auto-routes plan-execute to the configured coder, forwards JSON
-events, and emits a `lane.start` telemetry record:
+The `harness lane` subcommand is the recommended entry point. It
+composes the prompt overlay, routes plan-execute to the configured
+coder, forwards JSON events, and emits a `lane.start` telemetry record:
 
 ```bash
 # Plan-execute — multi-file atoms with atomic preflight
@@ -475,7 +369,7 @@ harness lane plan-execute --title atom-001 .planning/atom-001.md
 harness lane implement --title atom-001 .planning/atom-001.md
 
 # Force a non-default model (overrides plan-execute's coder auto-route)
-harness lane plan-execute --model local-model3.6-35b .planning/atom-001.md
+harness lane plan-execute --model planner-model .planning/atom-001.md
 ```
 
 The same effect can still be reached by invoking the lower-level
@@ -485,7 +379,7 @@ subcommands directly when finer control is needed:
 # Plan-execute — multi-file atoms with atomic preflight
 harness plan-execute \
   --config .harness/config.json \
-  --model local-model3-coder-30b \
+  --model coder-model \
   --prompt-file .planning/atom-001.md \
   --planner-owned-verification \
   --json
@@ -493,7 +387,7 @@ harness plan-execute \
 # Implement — small / single-file atoms
 harness implement \
   --config .harness/config.json \
-  --model local-model3.6-35b \
+  --model planner-model \
   --prompt-file .planning/atom-001.md \
   --planner-owned-verification \
   --json
@@ -501,21 +395,18 @@ harness implement \
 # Atom-spec drafting (no tools, just a brief artifact)
 harness artifact \
   --config .harness/config.json \
-  --model local-model3.6-35b \
+  --model planner-model \
   --prompt-file <planner-context.md> \
   --no-tools
 ```
 
-Phase 3 of the reusability migration is shipped: canonical lane
-preambles/postambles ship in the binary via `go:embed`, with a
+Canonical lane preambles/postambles are defined in the binary, with a
 project overlay seam at
 `<repo>/.harness/prompts/lanes/<mode>/{preamble,postamble}.md`.
-Atom-spec drafting will gain its own subcommand
-(`harness atom-spec draft`) in a later phase.
 
-The lane subcommand absorbs prompt composition, default model
-selection, JSON event capture, and post-run telemetry — what
-`scripts/run_harness_impl.sh` does today in original implementation.
+The lane subcommand owns prompt composition, default model selection,
+JSON event capture, post-run telemetry, and postflight hooks so a
+greenfield project does not need repository-specific wrapper scripts.
 
 ## When to use which lane
 
@@ -630,11 +521,9 @@ writes directly to the conversation log.
 
 ## Where to learn more
 
-- `docs/reusability-design.md` — phased plan to lift original implementation-side
-  plumbing into harness.
-- `docs/planner-executor-usage.md` — user guide for the three options
-  (intercept, delegate_edit, plan-execute).
-- `docs/planner-executor-delegation-design.md` — original design
-  doc for the three options.
-- `docs/original implementation-extraction-plan.md` — raw inventory of original implementation's
-  scripts/rules and migration targets.
+- `docs/portability-bootstrap-design.md` — greenfield initialization,
+  doctor, backend, lane, sidecar, and packaging expectations.
+- `docs/design-auditable-planning-handoff.md` — typed plan artifacts,
+  packet-backed handoff, and executor obligations.
+- `docs/codebase-comprehension-memory-design.md` — context packets,
+  cached views, freshness, and trace-backed evidence.

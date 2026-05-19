@@ -1,16 +1,15 @@
 # Agent Harness Obsidian Vault
 
-This directory is an Obsidian-ready documentation base for the Agent Harness repo.
+This directory is an Obsidian-ready documentation base for Agent Harness.
 
 Open `docs/obsidian` as a vault in Obsidian, then start with [[00 - Home]].
 The notes use wiki links and Mermaid diagrams, but they remain plain Markdown
 and can be read directly in any editor.
 
-## Roadmap Marker
+## Guidance Scope
 
-Across this vault, `*` marks roadmapped or not-yet-implemented behavior in
-tables, diagrams, command lists, and prose. Unmarked items should still be
-checked against source or command output before being treated as release claims.
+Across this vault, `*` marks target guidance in
+tables, diagrams, command lists, and prose. Treat every note as guidance until the consuming project creates its own evidence.
 
 ## Reading Order
 
@@ -26,7 +25,7 @@ checked against source or command output before being treated as release claims.
 10. [[09 - Verification Readiness and Completion]]
 11. [[10 - Telemetry Audit Eval and Learning]]
 12. [[11 - Local Model Operations]]
-13. [[12 - Sidecar and External Integrations]]
+13. [[12 - Sidecar and LLM Agent Integrations]]
 14. [[13 - Package Guide]]
 15. [[14 - Maintenance Playbooks]]
 16. [[15 - Glossary]]
@@ -40,10 +39,10 @@ checked against source or command output before being treated as release claims.
 
 ## Source Documents
 
-This vault summarizes and connects the repository's canonical documents:
+This vault summarizes and connects the canonical design documents:
 
 - [docs/harness-strategic-thesis.md](../harness-strategic-thesis.md)
-- [docs/harness-design-roadmap.md](../harness-design-roadmap.md)
+- [docs/harness-design-map.md](../harness-design-map.md)
 - [docs/decisioning-north-star.md](../decisioning-north-star.md)
 - [docs/harness-maintenance-best-practices.md](../harness-maintenance-best-practices.md)
 - [docs/lane-architecture.md](../lane-architecture.md)
@@ -58,5 +57,5 @@ This vault summarizes and connects the repository's canonical documents:
 - [docs/security-privacy-posture.md](../security-privacy-posture.md)
 - [docs/product-evidence-export.md](../product-evidence-export.md)
 
-The source repository's local working-context files are deliberately not
-included in this export bundle.
+Local working-context files are deliberately not included in this export
+bundle.

@@ -1,5 +1,5 @@
 ---
-status: current-with-open-work
+status: design-guidance
 tags:
   - harness
   - failure-recovery
@@ -15,11 +15,11 @@ work instead of unbounded retries or manual splitting.
 
 Long-form source: [design-decompose-on-failure.md](../design-decompose-on-failure.md)
 
-## Current State
+## Target State
 
-The plan-execute loop and the first lane-implement adapter are landed.
+The plan-execute loop and the first lane-implement adapter are is specified.
 
-Implemented surfaces include:
+Target surfaces include:
 
 - failed `plan-execute` recovery records
 - failed `harness lane implement` recovery records
@@ -36,7 +36,7 @@ Implemented surfaces include:
 - product-evidence and release-evidence recovery rollups
 - sanitized ranker-learning evidence from valid reconciliation
 
-Open work remains for write-capable TUI continuation/handoff actions and
+Future extensions include write-capable TUI continuation/handoff actions and
 additional non-plan-execute failure sources.
 
 ## Recovery Loop

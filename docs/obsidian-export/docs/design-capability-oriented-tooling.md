@@ -2,8 +2,8 @@
 
 Status: design guidance
 
-This is one pillar in the coordinated roadmap:
-[harness-design-roadmap.md](harness-design-roadmap.md). It is the interface layer
+This is one pillar in the coordinated design map:
+[harness-design-map.md](harness-design-map.md). It is the interface layer
 between model intent, contract enforcement, repository memory, language
 backends, verification, audit, and sidecar clients.
 
@@ -16,53 +16,45 @@ The design extends the existing direction in
 [decisioning-north-star.md](decisioning-north-star.md): the model owns strategy;
 the harness owns contracts. It also builds on
 [codebase-comprehension-memory-design.md](codebase-comprehension-memory-design.md),
-which already gives Agent Harness a persistent graph, context views, freshness, and
+which gives Agent Harness a persistent graph, context views, freshness, and
 confidence tiers. The goal is not fewer precise tools. The goal is less
 model-visible tool-menu complexity while preserving precise backend evidence.
 
 ## External Signals
 
-Current agent systems point toward the same split:
+Agent systems point toward the same split:
 
 - MCP tools are model-controlled schema-backed operations with `inputSchema`,
   optional `outputSchema`, structured results, tool annotations, error
-  semantics, and audit/security expectations. The MCP YYYY-MM-DD tools spec
-  cited here was selected as the latest version when checked on YYYY-MM-DD;
-  review milestone must re-check that selector before release claims. It also distinguishes
+  semantics, and audit/security expectations. Release review must re-check
+  that selector before product claims. It also distinguishes
   structured `Tool Execution Errors` that can help a model self-correct from
   protocol errors that are less likely to be repairable:
-  https://modelcontextprotocol.io/specification/YYYY-MM-DD/server/tools.
+  https://modelcontextprotocol.io/specification/.
 - MCP annotations are useful as risk and UX hints, not as hard guarantees.
   The MCP tool-annotations post is explicit that annotations should feed policy
   engines while enforcement belongs in authorization, transport, or runtime
-  controls: https://blog.modelcontextprotocol.io/posts/YYYY-MM-DD-tool-annotations/.
-- external coding agent exposes permissions as `ask`, `allow`, and `deny`, supports
-  per-agent permission overrides, applies wildcard rules to built-ins, custom
-  tools, and MCP tools, and has `primary`, `subagent`, and `all` agent modes:
-  https://external-agent.ai/docs/agents/ and https://external-agent.ai/docs/tools/.
-- external coding agent hooks expose lifecycle events around prompt submission, tool use,
-  permissions, subagents, compaction, and stop conditions. `PreToolUse` hooks
-  can allow, deny, ask, or defer a tool call; agent hooks can inspect files and
-  tool output before returning a structured decision:
-  https://code.agent-config.com/docs/en/hooks. external coding agent subagents run in separate
-  context windows with custom prompts, specific tool access, and independent
-	  permissions: https://code.agent-config.com/docs/en/sub-agents.
-- external coding agent's repo map sends a ranked, token-budgeted map of repository files and
-  symbols with each change request, then lets the model request specific files
-  when it needs more code: https://vendor.example/external-agent-docs external coding agent also
-  automatically pulls related file content into the chat and can infer files to
-  edit when no files are added explicitly: https://vendor.example/external-agent-docs  Its IDE watch mode can add a file to chat from an in-file `AI` comment:
-  https://vendor.example/external-agent-docs external coding agent's lint/test loop is capability-shaped rather than language-menu-shaped:
-  after edits it can run language linters, user-provided lint commands, tests,
-  or compiled-language build checks based on the changed files and configured
-  commands: https://vendor.example/external-agent-docs SWE-agent frames the agent-computer interface itself as a performance lever:
+  controls: https://blog.modelcontextprotocol.io/.
+- LLM-agent permission systems expose `ask`, `allow`, and `deny`, support
+  per-agent permission overrides, and apply rules to built-ins, custom tools,
+  and MCP tools.
+- LLM-agent hooks expose lifecycle events around prompt submission, tool
+  use, permissions, subagents, compaction, and stop conditions. These hooks can
+  allow, deny, ask, or defer a tool call, and can inspect files or tool output
+  before returning a structured decision.
+- LLM-agent repo maps send ranked, token-budgeted file and symbol context
+  with each change request, then let the model request specific files when it
+  needs more code. Mature agents can also infer related files, watch IDE
+  annotations, and run changed-file lint/test repair loops from configured
+  commands. SWE-agent frames the agent-computer interface itself as a
+  performance lever:
   its 2024 arXiv preprint says a custom ACI improves an agent's ability to edit
   code, navigate repositories, execute tests, and repair software tasks:
   https://arxiv.org/abs/2405.15793. Its ACI docs call out bounded file viewing,
   concise repository search, edit-time syntax checks, and explicit empty-output
   handling as interface choices that help agents:
   https://github.com/SWE-agent/SWE-agent/blob/main/docs/background/aci.md.
-- The Language Server Protocol already standardizes a capability vocabulary for
+- The Language Server Protocol standardizes a capability vocabulary for
   code navigation: definition, implementation, references, call hierarchy,
   document symbols, workspace symbols, diagnostics, and related features are
   exchanged behind capability flags:
@@ -82,7 +74,7 @@ to smaller local models without taking strategy away from them.
 
 ## Problem
 
-Agent Harness already has useful high-precision tools, but the model-visible surface is
+A greenfield implementation should provide useful high-precision tools, but the model-visible surface is
 too language-shaped:
 
 - `go_definition`, `cpp_definition`, `python_definition`, `ts_definition`,
@@ -90,7 +82,7 @@ too language-shaped:
   same strategic need.
 - Similar duplication exists for references, implementations, callers, callees,
   file outlines, read-symbol operations, diagnostics, and related-file probes.
-- `code_navigate` and `source_sanity` already provide generic routes, but they
+- `code_navigate` and `source_sanity` provide generic routes, but they
   coexist with the full language-prefixed menu rather than serving as the
   canonical contract surface.
 - Prompt and recovery text can accidentally teach the model to reason about
@@ -104,7 +96,7 @@ too language-shaped:
 The practical failure modes are visible:
 
 - broad `read_file` and `search_content` loops after enough repository evidence
-  is already available
+  is available
 - repeated failed symbol probes because the model guesses the wrong
   language-prefixed tool or calls read-symbol without an anchor
 - source verification that silently downgrades to weak checks instead of
@@ -132,7 +124,7 @@ acceptable if the result reports what actually happened.
    unproven.
 5. Make audit and eval possible: every capability request should emit telemetry
    that connects intent, route, precision, fallback, and task outcome.
-6. Keep external-agent compatibility through `harness tool` and existing
+6. Keep LLM-agent compatibility through `harness tool` and existing
    language-prefixed tools during rollout.
 
 ## Non-Goals
@@ -311,8 +303,8 @@ facade for most read-only capabilities:
   "fallback": "bounded",
   "freshness": "refresh_if_stale",
   "limit": 50,
-  "named_gap": "which callers depend on the current tool schema shape",
-  "why_not_answering": "the schema impact is not yet localized"
+  "named_gap": "which callers depend on the active tool schema shape",
+  "why_not_answering": "the schema impact is not localized"
 }
 ```
 
@@ -354,10 +346,10 @@ call a capability next.
 
 ## Schema And Tool-Result Changes
 
-The current `ToolDefinition` has `Name`, `Description`, and `ParametersJSON`.
-That is enough for API provider-style function calling but not enough for
+The active `ToolDefinition` has `Name`, `Description`, and `ParametersJSON`.
+That is enough for Agent platformtyle function calling but not enough for
 capability-level audit, MCP export, or structured result validation. Add
-optional fields without breaking current consumers:
+optional fields without breaking active consumers:
 
 ```go
 type ToolDefinition struct {
@@ -378,7 +370,7 @@ tool menus, validate structured results, and emit audit metadata.
 Normalized capability results should include both human-readable text and
 structured JSON. The MCP spec recommends structured content with an output
 schema while retaining serialized text for compatibility:
-https://modelcontextprotocol.io/specification/YYYY-MM-DD/server/tools.
+https://modelcontextprotocol.io/specification/.
 
 ```json
 {
@@ -430,7 +422,7 @@ https://modelcontextprotocol.io/specification/YYYY-MM-DD/server/tools.
 
 `available_followups` is a capability menu for the same target, not a
 prescribed next step. Recovery packets may surface it only when the model has
-not already reached answer/write/verify readiness.
+not reached answer/write/verify readiness.
 
 ### Error Taxonomy
 
@@ -551,8 +543,8 @@ Subagents should receive capability profiles instead of raw full tool menus:
 - `executor`: exact requested write tools, `source_sanity`, focused
   verification, narrow inspect capability for edit-safety gaps.
 
-This follows the same shape as external coding agent's subagent-specific tool access and
-external coding agent's per-agent permissions, while preserving Agent Harness's target-role and
+This follows the same shape as an LLM agent's subagent-specific tool access and
+An LLM agent's per-agent permissions, while preserving Agent Harness's target-role and
 verification contracts.
 
 ## Audit Metrics
@@ -608,7 +600,7 @@ Add capability-routing fields to conversation logs, telemetry, and
 - silent fallback: result evidence downgraded without structured `fallback_used`
 - false verification: source edits accepted with only prose/config checks
 - fallback loops: repeated text searches after semantic/graph evidence was
-  already enough or had clearly failed
+  sufficient or had clearly failed
 - unavailable ambiguity: empty result returned without `backend_missing`,
   `target_not_found`, or `not_proven_absent`
 
@@ -619,7 +611,7 @@ Compatibility is mandatory.
 - Keep `go_*`, `cpp_*`, `python_*`, `ts_*`, `rust_*`, and `java_*` tools
   callable through `harness tool` and internal tests.
 - Treat language-prefixed tools as adapter-level APIs. They remain useful for
-  direct debugging, CLI workflows, and external agents that know exactly which
+  direct debugging, CLI workflows, and LLM agents that know exactly which
   backend they want.
 - Add capability metadata to every language-prefixed tool so audits can detect
   unmapped adapters.
@@ -641,7 +633,7 @@ The deprecation target is prompt visibility, not implementation existence.
 
 - Inventory all existing tools and map them to capability IDs.
 - Add a static audit that fails on language tools with no capability metadata.
-- Document which capabilities already have generic routes:
+- Document which capabilities have generic routes:
   `code_navigate`, `source_sanity`, `context_*`, and `harness_audit`.
 - Decide the initial precision labels and error taxonomy.
 
@@ -660,7 +652,7 @@ Acceptance:
 - Add `OutputSchemaJSON` where useful and validate structured output in tests.
 - Emit per-request telemetry with capability, adapter, precision, fallback, and
   freshness fields.
-- Preserve current human-readable summaries.
+- Preserve active human-readable summaries.
 
 Acceptance:
 
@@ -710,11 +702,11 @@ Acceptance:
   read-only `capability_request`.
 - Export capability schemas through `harness tool list` and MCP-compatible
   metadata where available.
-- Add docs for external agents using Agent Harness as a sidecar capability provider.
+- Add docs for LLM agents using Agent Harness as a sidecar capability provider.
 
 Acceptance:
 
-- An external agent can inspect available capabilities, request localization,
+- An LLM agent can inspect available capabilities, request localization,
   zoom to a symbol, run source sanity, and audit behavior without knowing the
   language-prefixed tools.
 - Existing direct `harness tool go_*` calls still work.
@@ -744,7 +736,7 @@ Acceptance:
 | Precision silently degrades. | The model overtrusts text fallback. | Mandatory `precision`, `fallback_used`, and `absence_confidence` fields. |
 | Resolver chooses strategy. | Harness violates the north star. | Resolver only maps declared capability to adapter; recovery offers capability menus, not forced next steps. |
 | Language adapters diverge. | Generic results become inconsistent by language. | Shared result envelope, per-language fixtures, adapter coverage audit. |
-| Tool menu hides useful direct tools. | Expert users and external agents lose control. | Keep direct tools callable through `harness tool`; hide only from normal prompt-visible menus. |
+| Tool menu hides useful direct tools. | Expert users and LLM agents lose control. | Keep direct tools callable through `harness tool`; hide only from normal prompt-visible menus. |
 | More schemas increase maintenance. | Tool definitions drift from implementations. | Generate capability audits from the registry and fail tests on unmapped adapters. |
 | Fallback costs grow. | Local models waste time and context. | Bounded fallback, result limits, truncation markers, and telemetry on fallback duration. |
 | Stale graph evidence looks authoritative. | Plans use old repository facts. | Freshness policies, stale markers, refresh-if-stale for packets/verification, and `not_proven_absent`. |
@@ -768,12 +760,12 @@ This pillar is complete enough for default use when all of the following hold:
    rates, language-prefixed call share, broad-search-after-capability patterns,
    and verification gaps.
 6. Existing language-prefixed tools remain callable through `harness tool` and
-   their current focused tests continue to pass.
+   their active focused tests continue to pass.
 7. Fixture tests prove that generic requests reach the same precise adapters as
    direct language tools for Go and at least two non-Go languages.
 8. A localization/eval suite shows fewer broad reads/searches before first edit
    without reducing verified task completion.
-9. External agents can inspect capability status and call the generic routes
+9. LLM agents can inspect capability status and call the generic routes
    without starting an Agent Harness model session.
 10. Recovery packets describe violated contracts and available capability
     choices without prescribing one exact next tool unless a hard invariant is
@@ -781,7 +773,7 @@ This pillar is complete enough for default use when all of the following hold:
 
 ## Open Questions
 
-- Should `capability_request` ship, or should Agent Harness keep a small set of
+- Should `capability_request` define, or should Agent Harness keep a small set of
   capability-specific generic tools (`code_navigate`, `source_sanity`,
   `context_*`, `harness_audit`) and rely on better metadata?
 - How much adapter detail should be visible in the prompt-visible tool menu
@@ -789,7 +781,7 @@ This pillar is complete enough for default use when all of the following hold:
 - Should `precision_min` be model-controlled, harness-derived from task phase,
   or both with harness-enforced floors for verification?
 - Should capability status be a new tool or an extension of `context_status`?
-- Which external-agent compatibility shape should be first: native
+- Which LLM-agent compatibility shape should be first: native
   `harness tool` JSON, MCP export, or both?
 
 ## North-Star Check
