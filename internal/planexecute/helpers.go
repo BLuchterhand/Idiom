@@ -2458,7 +2458,18 @@ func verificationClaimContext(line string, phrase string) bool {
 
 func normalizePlanExecutePath(path string) string {
 	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "./")
+	path = strings.ReplaceAll(path, "\\", "/")
+	for strings.HasPrefix(path, "./") {
+		path = strings.TrimPrefix(path, "./")
+	}
+	if path == "" || path == "." || path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, "../") {
+		return ""
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return ""
+		}
+	}
 	return path
 }
 
@@ -2469,13 +2480,18 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 		if oldText == "" {
 			continue
 		}
-		path := strings.TrimSpace(edit.Path)
+		rawPath := strings.TrimSpace(edit.Path)
+		path := normalizePlanExecutePath(rawPath)
 		if path == "" {
-			return &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
+			reason := "edit has no path"
+			if rawPath != "" {
+				reason = "edit has invalid path"
+			}
+			return &PlanEditPreflightMismatch{Index: i, Path: rawPath, Reason: reason}
 		}
 		abs := path
 		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(strings.TrimSpace(workspaceRoot), path)
+			abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
 		}
 		body, ok := cache[abs]
 		if !ok {
@@ -2512,13 +2528,18 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
 	cache := make(map[string][]byte)
 	for i, edit := range plan.Edits {
-		path := strings.TrimSpace(edit.Path)
+		rawPath := strings.TrimSpace(edit.Path)
+		path := normalizePlanExecutePath(rawPath)
 		if path == "" {
-			return &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
+			reason := "edit has no path"
+			if rawPath != "" {
+				reason = "edit has invalid path"
+			}
+			return &PlanEditPreflightMismatch{Index: i, Path: rawPath, Reason: reason}
 		}
 		abs := path
 		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(strings.TrimSpace(workspaceRoot), path)
+			abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
 		}
 		body, ok := cache[abs]
 		if !ok {

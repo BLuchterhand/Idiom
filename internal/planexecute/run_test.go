@@ -50,6 +50,25 @@ func TestRunEmitsQueueAdmissionBeforePlanner(t *testing.T) {
 	}
 }
 
+func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(filepath.Dir(root), "outside.txt")
+	if err := os.WriteFile(outside, []byte("secret\n"), 0o644); err != nil {
+		t.Fatalf("seed outside file: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "../outside.txt", OldText: "secret", NewText: "redacted"},
+		},
+	}
+
+	got := preflightPlanEdits(root, plan)
+	if got == nil || got.Reason != "edit has invalid path" {
+		t.Fatalf("expected invalid path preflight mismatch, got %#v", got)
+	}
+}
+
 func TestRunAutoExactPlanSourceSatisfiedSkipsPlanner(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("new a\n"), 0o644); err != nil {
