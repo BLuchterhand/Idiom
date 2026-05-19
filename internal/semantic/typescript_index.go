@@ -338,28 +338,10 @@ func (idx *TsIndex) FileByPath(path string) *TsFile {
 }
 
 func (idx *TsIndex) findFiles(pattern string) []string {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
-	if idx == nil || pattern == "" {
+	if idx == nil {
 		return nil
 	}
-	exact := make([]string, 0)
-	partial := make([]string, 0)
-	for _, file := range idx.Files {
-		base := strings.ToLower(filepath.Base(file.Path))
-		full := strings.ToLower(file.Path)
-		switch {
-		case base == pattern || full == pattern:
-			exact = append(exact, file.Path)
-		case strings.Contains(base, pattern) || strings.Contains(full, pattern):
-			partial = append(partial, file.Path)
-		}
-	}
-	if len(exact) > 0 {
-		slices.Sort(exact)
-		return exact
-	}
-	slices.Sort(partial)
-	return partial
+	return FindFilesExactPartial(idx.Files, pattern)
 }
 
 func (idx *TsIndex) rankFiles(scoreFn func(TsFile) int, limit int) []TsFile {
