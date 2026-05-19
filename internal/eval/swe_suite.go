@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -1136,7 +1137,7 @@ func normalizedFixturePath(value string) string {
 	if value == "" {
 		return ""
 	}
-	return filepath.ToSlash(filepath.Clean(value))
+	return path.Clean(strings.ReplaceAll(filepath.ToSlash(value), "\\", "/"))
 }
 
 func validateFixturePathSyntax(fixture string) error {
@@ -1144,11 +1145,12 @@ func validateFixturePathSyntax(fixture string) error {
 	if fixture == "" {
 		return nil
 	}
-	if filepath.IsAbs(fixture) {
+	normalized := strings.ReplaceAll(filepath.ToSlash(fixture), "\\", "/")
+	if filepath.IsAbs(fixture) || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
 		return fmt.Errorf("must be relative")
 	}
-	clean := filepath.Clean(fixture)
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+	clean := path.Clean(normalized)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return fmt.Errorf("must stay under the suite directory")
 	}
 	return nil

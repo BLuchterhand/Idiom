@@ -416,6 +416,10 @@ func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T)
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
 		t.Fatal("expected absolute fixture validation failure")
 	}
+	suite.Tasks[0].Fixture = `..\outside`
+	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
+		t.Fatal("expected backslash traversal fixture validation failure")
+	}
 }
 
 func TestEvaluateSWETaskAppliesOracle(t *testing.T) {
@@ -690,6 +694,15 @@ func TestLintSWESuiteFlagsGroundednessConfigErrors(t *testing.T) {
 					Groundedness: &SWEGroundednessOracle{MinScore: 0.5, ContextFiles: []string{"/absolute"}},
 				},
 			},
+			{
+				ID:       "backslash-traversal",
+				Family:   "direct_question",
+				Prompt:   "explain.",
+				Scenario: Scenario{Name: "backslash-traversal", PromptContains: []string{"explain"}},
+				Oracle: SWEOracle{
+					Groundedness: &SWEGroundednessOracle{MinScore: 0.5, ContextFiles: []string{`..\outside.md`}},
+				},
+			},
 		},
 	}
 	findings := LintSWESuite(suite)
@@ -702,6 +715,9 @@ func TestLintSWESuiteFlagsGroundednessConfigErrors(t *testing.T) {
 	}
 	if !strings.Contains(joined, "absolute-path") {
 		t.Fatalf("expected absolute-path lint finding, got %v", findings)
+	}
+	if !strings.Contains(joined, "backslash-traversal") {
+		t.Fatalf("expected backslash-traversal lint finding, got %v", findings)
 	}
 }
 
