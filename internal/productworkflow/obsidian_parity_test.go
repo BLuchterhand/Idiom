@@ -84,6 +84,29 @@ func TestObsidianParityDoesNotReadAncestorDocs(t *testing.T) {
 	}
 }
 
+func TestObsidianParityRejectsSymlinkedDocs(t *testing.T) {
+	root := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "product.md")
+	mustWrite(t, outside, "> **Status: NOT STARTED**")
+	mustWrite(t, filepath.Join(root, ObsidianRecoveryPath), "# Recovery and Decomposition")
+	if err := os.MkdirAll(filepath.Dir(filepath.Join(root, ObsidianProductWorkflowPath)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ObsidianProductWorkflowPath)); err != nil {
+		t.Fatal(err)
+	}
+	ws := &WorkflowState{
+		EffortID:     "prd-adr-brief-workflow",
+		TaskID:       "impl-0032-phase-5-obsidian-parity-check",
+		CurrentPhase: "phase-5-execution-feedback",
+	}
+
+	got := EvaluateObsidianParity(root, ws, nil, nil)
+	if len(got.Findings) != 1 || got.Findings[0].Code != "obsidian_read_error" || got.Findings[0].Path != ObsidianProductWorkflowPath {
+		t.Fatalf("expected symlinked Obsidian doc read error, got %#v", got.Findings)
+	}
+}
+
 func mustWrite(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

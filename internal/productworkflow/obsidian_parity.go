@@ -138,5 +138,11 @@ func fileReadFindingMessage(err error) string {
 }
 
 func readObsidian(root string, relPath string) ([]byte, error) {
-	return os.ReadFile(filepath.Join(root, relPath))
+	fullPath := filepath.Join(root, filepath.FromSlash(relPath))
+	if info, err := os.Lstat(fullPath); err != nil {
+		return nil, err
+	} else if info.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("required file must not be a symlink")
+	}
+	return os.ReadFile(fullPath)
 }
