@@ -21,6 +21,41 @@ func TestParseToolRequestExtractsFirstJSONObjectFromToolFence(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestAcceptsPlainToolPrefixJSONObject(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{name: "newline", text: "tool\n{\"tool\":\"context_pack\",\"task\":\"explain debug logs\",\"mode\":\"plan\",\"limit\":8}"},
+		{name: "adjacent", text: "tool{\"tool\":\"context_pack\",\"task\":\"explain subagents\",\"mode\":\"plan\",\"limit\":10}"},
+		{name: "colon", text: "tool: {\"tool\":\"read_file\",\"path\":\"README.md\"}"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, raw, ok, err := ParseToolRequest(tc.text)
+			if err != nil {
+				t.Fatalf("ParseToolRequest: %v", err)
+			}
+			if !ok {
+				t.Fatal("expected tool request")
+			}
+			if req.Tool == "" {
+				t.Fatalf("missing parsed tool: %#v raw=%q", req, raw)
+			}
+			if !strings.HasPrefix(raw, `{"tool":`) {
+				t.Fatalf("expected JSON object payload, got %q", raw)
+			}
+		})
+	}
+}
+
+func TestParseToolRequestDoesNotTreatToolProseAsRequest(t *testing.T) {
+	_, _, ok, err := ParseToolRequest("tool usage should stay prose unless followed by a JSON object")
+	if err != nil || ok {
+		t.Fatalf("expected prose to remain a final answer, ok=%t err=%v", ok, err)
+	}
+}
+
 func TestParseToolRequestPreservesPostReadinessGapFields(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"search_content\",\"pattern\":\"runner\",\"path\":\"internal\",\"named_gap\":\"find the exact stop-condition branch\",\"why_not_answering\":\"I still need the deciding condition\"}\n```")
 	if err != nil {

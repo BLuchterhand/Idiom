@@ -1,0 +1,133 @@
+{
+  "name": "cli-tui-parity-regression-suite",
+  "version": 1,
+  "tasks": [
+    {
+      "id": "architecture-feature-question",
+      "family": "architecture",
+      "prompt": "What does the debug log redacted mode do?",
+      "tags": [
+        "read-only",
+        "architecture",
+        "cli-parity"
+      ],
+      "scenario": {
+        "name": "architecture-feature-question",
+        "prompt_contains": [
+          "debug log redacted mode"
+        ],
+        "require_route_plan": {
+          "initial_lane": "architecture",
+          "reason": "architecture_request",
+          "contract": "architecture_assessment"
+        },
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "max_tool_requests": 5
+      }
+    },
+    {
+      "id": "architecture-suggestion-question",
+      "family": "architecture",
+      "prompt": "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+      "tags": [
+        "read-only",
+        "architecture",
+        "discovery",
+        "cli-parity"
+      ],
+      "scenario": {
+        "name": "architecture-suggestion-question",
+        "prompt_contains": [
+          "discovery tools",
+          "overall usefulness"
+        ],
+        "require_route_plan": {
+          "initial_lane": "architecture",
+          "reason": "architecture_request",
+          "contract": "architecture_assessment"
+        },
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "max_tool_requests": 6
+      }
+    },
+    {
+      "id": "verification-no-edit-constraint",
+      "family": "verification_only",
+      "prompt": "Run the tests in the seeded failing fixture and report the failure without editing files.",
+      "tags": [
+        "read-only",
+        "verification",
+        "failure-report",
+        "cli-parity"
+      ],
+      "fixture": "fixtures/go-compile-failure",
+      "scenario": {
+        "name": "verification-no-edit-constraint",
+        "prompt_contains": [
+          "report the failure",
+          "without editing files"
+        ],
+        "require_route_plan": {
+          "initial_lane": "main",
+          "reason": "verification_request",
+          "contract": "direct_answer"
+        },
+        "require_tools": [
+          "shell"
+        ],
+        "require_verification": "failed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "max_errors": 2,
+        "max_tool_requests": 6
+      }
+    },
+    {
+      "id": "locate-negative-no-edit-constraint",
+      "family": "locate",
+      "prompt": "Find where the nonexistent \"HyperCrystalLaunchBanner\" component is rendered. If it is not present, say that clearly and do not edit files.",
+      "tags": [
+        "read-only",
+        "locate",
+        "negative-evidence",
+        "no-match",
+        "cli-parity"
+      ],
+      "scenario": {
+        "name": "locate-negative-no-edit-constraint",
+        "prompt_contains": [
+          "HyperCrystalLaunchBanner",
+          "do not edit files"
+        ],
+        "require_route_plan": {
+          "initial_lane": "locate",
+          "reason": "locate_request",
+          "contract": "locate_targets"
+        },
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "max_tool_requests": 8
+      }
+    }
+  ]
+}

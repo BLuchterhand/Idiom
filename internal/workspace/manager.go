@@ -1691,6 +1691,10 @@ func extractToolPayload(text string) (string, bool) {
 		return extractToolPayload(trimmed[start:])
 	}
 
+	if payload, ok := extractPlainToolPrefixPayload(trimmed); ok {
+		return payload, true
+	}
+
 	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"tool"`) {
 		if object, ok := extractFirstJSONObject(trimmed); ok {
 			return object, true
@@ -1699,6 +1703,27 @@ func extractToolPayload(text string) (string, bool) {
 	}
 
 	return "", false
+}
+
+func extractPlainToolPrefixPayload(text string) (string, bool) {
+	const prefix = "tool"
+	if len(text) <= len(prefix) || !strings.HasPrefix(text, prefix) {
+		return "", false
+	}
+	rest := text[len(prefix):]
+	if rest == "" {
+		return "", false
+	}
+	first := rest[0]
+	if first != '{' && first != '\n' && first != '\r' && first != '\t' && first != ' ' && first != ':' {
+		return "", false
+	}
+	rest = strings.TrimLeft(rest, " \t\r\n:")
+	if !strings.HasPrefix(rest, "{") || !strings.Contains(rest, `"tool"`) {
+		return "", false
+	}
+	object, ok := extractFirstJSONObject(rest)
+	return object, ok
 }
 
 var (

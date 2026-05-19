@@ -851,6 +851,7 @@ make swe-live
 ```
 
 The live runner executes each task's prompt or multi-turn sequence in an isolated temporary workspace, then scores the produced debug log with the same deterministic SWE oracles.
+By default `make swe-live` continues after individual task failures or timeouts so one broken route does not hide the rest of the corpus; failed tasks still make the final report exit nonzero.
 The SWE report prints per-task discovery-class counts from typed tool request records, which makes broad delegation, text search, file reads, language-symbol tools, AST search, dependency graphs, history, and security scans visible as separate balance buckets.
 
 For faster iteration against a small checked-in subset, including the subagent explanation benchmark, run:

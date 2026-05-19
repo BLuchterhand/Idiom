@@ -50,6 +50,7 @@ make swe-live
 ```
 
 `scripts/swe-live-runner.sh` runs `idiom -turns-file` for each suite task, writes the task's turns into one real debug log, and hands that log back to `idiom-swe-eval` for scoring. It uses the suite fixture as the workspace root when a task defines one, and writes logs/transcripts into a temporary directory before copying the produced JSONL to the requested task log path.
+The Makefile target passes `-run-live-continue-on-error`, so a timeout or malformed task log is converted into a loadable JSONL error record and the remaining tasks still run. The final SWE report remains failing when any task fails; this mode is for complete failure inventory, not success masking.
 
 For local model setups that already have a built binary, override the binary and output directory:
 

@@ -20,14 +20,16 @@ type liveSuiteRunner struct {
 	outputDir       string
 	commandTemplate string
 	progress        io.Writer
+	continueOnError bool
 }
 
-func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, commandTemplate string, stderr io.Writer) (map[string]string, error) {
+func runLiveSuiteTasks(suite eval.SWESuite, suitePath string, outputDir string, commandTemplate string, stderr io.Writer, continueOnError bool) (map[string]string, error) {
 	runner := liveSuiteRunner{
 		suitePath:       suitePath,
 		outputDir:       outputDir,
 		commandTemplate: strings.TrimSpace(commandTemplate),
 		progress:        stderr,
+		continueOnError: continueOnError,
 	}
 	return runner.run(suite)
 }
@@ -53,6 +55,13 @@ func (r liveSuiteRunner) run(suite eval.SWESuite) (map[string]string, error) {
 		}
 		logPaths[task.ID] = logPath
 		if err := r.runTask(i, len(suite.Tasks), task, logPath); err != nil {
+			if r.continueOnError {
+				if writeErr := r.ensureRunnerErrorLog(task, logPath, err); writeErr != nil {
+					return nil, writeErr
+				}
+				fmt.Fprintf(r.progress, "[%d/%d] failed %s: %v\n", i+1, len(suite.Tasks), strings.TrimSpace(task.ID), err)
+				continue
+			}
 			return nil, err
 		}
 	}
@@ -120,6 +129,29 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		return fmt.Errorf("run live task %s: %w: %s", task.ID, err, strings.TrimSpace(string(output)))
 	}
 	fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
+	return nil
+}
+
+func (r liveSuiteRunner) ensureRunnerErrorLog(task eval.SWETask, logPath string, runErr error) error {
+	if strings.TrimSpace(logPath) == "" {
+		return nil
+	}
+	if _, err := eval.LoadRecords(logPath); err == nil && !fileMissingOrEmpty(logPath) {
+		return nil
+	}
+	record := map[string]any{
+		"type":    "error",
+		"message": fmt.Sprintf("live runner task failed: %v", runErr),
+		"task_id": strings.TrimSpace(task.ID),
+		"source":  "idiom-swe-eval",
+	}
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("encode runner error for %s: %w", task.ID, err)
+	}
+	if err := os.WriteFile(logPath, append(data, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write runner error log for %s: %w", task.ID, err)
+	}
 	return nil
 }
 

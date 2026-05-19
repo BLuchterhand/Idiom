@@ -776,6 +776,46 @@ func TestFallbackTurnRouteRecognizesCodeExplanationAsArchitecture(t *testing.T) 
 	}
 }
 
+func TestFallbackTurnRouteRecognizesVerificationOnlyWithNoEditConstraint(t *testing.T) {
+	plan := fallbackTurnRoute("Run the tests in the seeded failing fixture and report the failure without editing files.", agent.BuildMode())
+	if plan.Family != "verification_only" {
+		t.Fatalf("family = %q, want verification_only", plan.Family)
+	}
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestFallbackTurnRouteRecognizesSuggestionQuestionAsArchitecture(t *testing.T) {
+	plan := fallbackTurnRoute("What can we add to our discovery tools in an effort at increasing their overall usefulness?", agent.BuildMode())
+	if plan.Family != "architecture" {
+		t.Fatalf("family = %q, want architecture", plan.Family)
+	}
+	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestFallbackTurnRouteKeepsNoEditLocateReadOnly(t *testing.T) {
+	plan := fallbackTurnRoute("Find where the nonexistent banner text is rendered. If it is not present, say that clearly and do not edit files.", agent.BuildMode())
+	if plan.Family != "locate" {
+		t.Fatalf("family = %q, want locate", plan.Family)
+	}
+	if plan.InitialLane != "locate" || plan.FollowupLane != "" || plan.Contract != "locate_targets" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestFallbackTurnRouteKeepsLocateThenRemoveAsImplementation(t *testing.T) {
+	plan := fallbackTurnRoute("Find where the banner text is rendered, then remove it.", agent.BuildMode())
+	if plan.Family != "locate_then_implement" {
+		t.Fatalf("family = %q, want locate_then_implement", plan.Family)
+	}
+	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestFallbackTurnRouteRecognizesGDScriptEdits(t *testing.T) {
 	plan := fallbackTurnRoute("Update the panel script in ui/status_panel.gd.", agent.BuildMode())
 	if plan.Family != "gdscript_edit" {

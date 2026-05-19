@@ -32,6 +32,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	var jsonOut bool
 	var suiteOnly bool
 	var runLive bool
+	var runLiveContinueOnError bool
 	var runnerCommand string
 	var generatedLogsDir string
 	var writeFailingScenarios string
@@ -43,6 +44,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.BoolVar(&jsonOut, "json", false, "emit JSON instead of human-readable text")
 	fs.BoolVar(&suiteOnly, "suite-only", false, "validate suite coverage and lint without loading task logs")
 	fs.BoolVar(&runLive, "run-live", false, "run each suite task through a live command before scoring")
+	fs.BoolVar(&runLiveContinueOnError, "run-live-continue-on-error", false, "continue running live suite tasks after a task command fails or times out")
 	fs.StringVar(&runnerCommand, "runner-command", "", "shell command used by -run-live; supports {prompt}, {task_id}, {log_path}, and {fixture}")
 	fs.StringVar(&generatedLogsDir, "generated-logs", "", "directory where -run-live should write generated task logs")
 	fs.StringVar(&writeFailingScenarios, "write-failing-scenarios", "", "write a SWE suite skeleton for failed task logs")
@@ -75,7 +77,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	if runLive {
 		liveLogsDir := firstNonEmpty(generatedLogsDir, logsDir, filepath.Join(filepath.Dir(suitePath), "generated-logs"))
 		var err error
-		liveLogPaths, err = runLiveSuiteTasks(suite, suitePath, liveLogsDir, runnerCommand, stderr)
+		liveLogPaths, err = runLiveSuiteTasks(suite, suitePath, liveLogsDir, runnerCommand, stderr, runLiveContinueOnError)
 		if err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1

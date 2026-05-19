@@ -272,7 +272,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	words := plannerWordText(prompt)
-	if plan.Family == "verification_only" && hasEditIntent(words) {
+	if plan.Family == "verification_only" && hasEffectiveEditIntent(words) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family: "implementation",
 			Reason: "edit_intent_overrides_verification",
@@ -332,19 +332,22 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	lower := " " + strings.ToLower(strings.TrimSpace(prompt)) + " "
 	words := plannerWordText(prompt)
 	mentionedPaths := pathparse.MentionedWorkspacePaths(prompt)
-	namedPathWorkIntent := len(mentionedPaths) > 0 && hasNamedWorkspaceTargetWorkIntent(words)
-	namedPathOrEditIntent := namedPathWorkIntent || hasEditIntent(words)
+	editIntent := hasEffectiveEditIntent(words)
+	namedPathWorkIntent := len(mentionedPaths) > 0 && !explicitlyForbidsEdits(words) && hasNamedWorkspaceTargetWorkIntent(words)
+	namedPathOrEditIntent := namedPathWorkIntent || editIntent
 	switch {
 	case util.ContainsAny(words, " log ", " logs ", " jsonl ", " trace ") && util.ContainsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
-	case !hasEditIntent(words) && util.ContainsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
+	case !editIntent && util.ContainsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
-	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the ") && util.ContainsAny(words, " remove ", " fix ", " update ", " edit ", " change ", " add "):
+	case isSuggestionOnlyArchitectureQuestion(words):
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
+	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the ") && editIntent:
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate_then_implement"}, mode)
 	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate"}, mode)
 	case util.ContainsAny(words, " architecture ", " boundary ", " boundaries ", " coupling ", " refactor stage "):
-		if util.ContainsAny(words, " fix ", " change ", " implement ", " refactor ", " update ", " edit ") {
+		if editIntent {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture_then_implement"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
@@ -353,12 +356,12 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	case util.ContainsAny(words, " security ", " prompt injection ", " adversarial "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "security_review"}, mode)
 	case util.ContainsAny(words, " performance ", " perf ", " timeout ", " timed out ", " regression ", " slow "):
-		if util.ContainsAny(words, " fix ", " change ", " implement ", " update ", " edit ") {
+		if editIntent {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "review_then_implement"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
 	case util.ContainsAny(words, " review ", " investigate "):
-		if util.ContainsAny(words, " fix ", " change ", " implement ", " update ", " edit ") {
+		if editIntent {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "review_then_implement"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
@@ -379,7 +382,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
-	case hasEditIntent(words):
+	case editIntent:
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
 	}
 	if util.ContainsAny(words,
@@ -513,6 +516,48 @@ func hasEditIntent(words string) bool {
 		" creating ",
 		" patch ",
 		" patching ",
+	)
+}
+
+func hasEffectiveEditIntent(words string) bool {
+	return hasEditIntent(words) && !explicitlyForbidsEdits(words)
+}
+
+func explicitlyForbidsEdits(words string) bool {
+	return util.ContainsAny(words,
+		" do not edit ",
+		" dont edit ",
+		" don t edit ",
+		" no edits ",
+		" without edits ",
+		" without editing ",
+		" without changing ",
+		" do not change files ",
+		" do not modify ",
+		" without modifying ",
+		" no file changes ",
+	)
+}
+
+func isSuggestionOnlyArchitectureQuestion(words string) bool {
+	if !util.ContainsAny(words, " what can we ", " what should we ", " how can we ", " how should we ") {
+		return false
+	}
+	if !util.ContainsAny(words, " add ", " improve ", " make ", " increasing ", " increase ", " better ", " useful ", " usefulness ") {
+		return false
+	}
+	return util.ContainsAny(words,
+		" tool ",
+		" tools ",
+		" harness ",
+		" repo ",
+		" repository ",
+		" codebase ",
+		" system ",
+		" workflow ",
+		" architecture ",
+		" agent ",
+		" agents ",
 	)
 }
 

@@ -97,6 +97,46 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	}
 }
 
+func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "generated")
+	writeSWETwoTaskSmokeSuite(t, suitePath)
+
+	command := strings.Join([]string{
+		`if test "$IDIOM_SWE_TASK_ID" = "first"; then`,
+		`printf 'not json\n' > {log_path}; exit 7;`,
+		`else`,
+		`printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"Explain routing."}'`,
+		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
+		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
+		`> {log_path};`,
+		`fi`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-run-live-continue-on-error", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected failing suite exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "failed first") || !strings.Contains(stderr.String(), "[2/2] finished second") {
+		t.Fatalf("expected continue-on-error progress, got stderr=%s", stderr.String())
+	}
+	firstLog, err := os.ReadFile(filepath.Join(logsDir, "first.jsonl"))
+	if err != nil {
+		t.Fatalf("read first log: %v", err)
+	}
+	if !strings.Contains(string(firstLog), `"type":"error"`) || !strings.Contains(string(firstLog), "live runner task failed") {
+		t.Fatalf("expected synthetic JSONL error log, got %s", firstLog)
+	}
+	if _, err := eval.LoadRecords(filepath.Join(logsDir, "first.jsonl")); err != nil {
+		t.Fatalf("synthetic error log must be loadable JSONL: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(logsDir, "second.jsonl")); err != nil {
+		t.Fatalf("expected second task log after first failure: %v", err)
+	}
+}
+
 func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
@@ -269,6 +309,63 @@ func writeSWEMultiTurnSmokeSuite(t *testing.T, path string) {
 	}
 }
 
+func writeSWETwoTaskSmokeSuite(t *testing.T, path string) {
+	t.Helper()
+	suite := `{
+  "name": "cli-two-task-suite",
+  "tasks": [
+    {
+      "id": "first",
+      "family": "direct_question",
+      "prompt": "Explain routing.",
+      "tags": ["read-only"],
+      "scenario": {
+        "name": "first",
+        "prompt_contains": ["Explain routing"],
+        "require_route_plan": {
+          "initial_lane": "main",
+          "reason": "direct_conversation",
+          "contract": "direct_answer"
+        },
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "max_errors": 0
+      }
+    },
+    {
+      "id": "second",
+      "family": "direct_question",
+      "prompt": "Explain routing.",
+      "tags": ["read-only"],
+      "scenario": {
+        "name": "second",
+        "prompt_contains": ["Explain routing"],
+        "require_route_plan": {
+          "initial_lane": "main",
+          "reason": "direct_conversation",
+          "contract": "direct_answer"
+        },
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "max_tool_requests": 2
+      }
+    }
+  ]
+}
+`
+	if err := os.WriteFile(path, []byte(suite), 0o644); err != nil {
+		t.Fatalf("write two-task suite: %v", err)
+	}
+}
+
 func writeSWESmokeSuite(t *testing.T, path string, logPath string) {
 	t.Helper()
 	taskLog := ""
@@ -341,6 +438,22 @@ func TestRepresentativeSuiteLintsClean(t *testing.T) {
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("representative suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Lint: PASS") {
+		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
+	}
+}
+
+func TestCLIParityRegressionSuiteLintsClean(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "swe", "cli-parity-regression-suite.json")
+	if _, err := os.Stat(suitePath); err != nil {
+		t.Fatalf("cli parity regression suite missing: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("cli parity regression suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())

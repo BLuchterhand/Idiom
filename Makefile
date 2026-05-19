@@ -137,7 +137,7 @@ swe-suite:
 	go run ./cmd/idiom-swe-eval -suite $(SUITE) -suite-only
 
 swe-live:
-	go run ./cmd/idiom-swe-eval -suite $(SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"
+	go run ./cmd/idiom-swe-eval -suite $(SUITE) -run-live -run-live-continue-on-error -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"
 
 swe-live-subset:
-	go run ./cmd/idiom-swe-eval -suite $(LIVE_SUBSET_SUITE) -run-live -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"
+	go run ./cmd/idiom-swe-eval -suite $(LIVE_SUBSET_SUITE) -run-live -run-live-continue-on-error -generated-logs $(LIVE_LOGS) -runner-command "$(CURDIR)/scripts/swe-live-runner.sh"
