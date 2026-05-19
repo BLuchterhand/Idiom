@@ -135,6 +135,7 @@ func (r *Runner) Run(
 	collectedResults := append([]workspace.ToolResult(nil), r.SeedResults...)
 	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
+	currentAllowedTools := []string(nil)
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -191,6 +192,7 @@ func (r *Runner) Run(
 			}
 			allowed = filtered
 		}
+		currentAllowedTools = append(currentAllowedTools[:0], allowed...)
 		tools := buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
 		// Schema-level enforcement of closure-biased contracts: once the
 		// lane has reached answer readiness, received a child packet, or
@@ -761,6 +763,13 @@ func (r *Runner) Run(
 			rebuildTools()
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "implementation_write_only_recovery", Content: prompt})
+			continue
+		}
+		if summary, errorText, reject := currentToolSurfaceRejection(req, currentAllowedTools); reject {
+			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+			if done {
+				return finish(answer, err, "tool_not_allowed_by_runtime_surface", true)
+			}
 			continue
 		}
 
@@ -6517,6 +6526,17 @@ func containsRunnerTool(tools []string, target string) bool {
 
 func runnerAllowsTool(tools []string, tool string) bool {
 	return containsRunnerTool(tools, tool)
+}
+
+func currentToolSurfaceRejection(req workspace.ToolRequest, allowedTools []string) (string, string, bool) {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" || runnerAllowsTool(allowedTools, tool) {
+		return "", "", false
+	}
+	if len(allowedTools) == 0 {
+		return "Tool not available in current runtime contract", fmt.Sprintf("%s is not available because the current runtime contract exposes no tools. Answer from gathered evidence or report a concrete blocker.", tool), true
+	}
+	return "Tool not available in current runtime contract", fmt.Sprintf("%s is not in the current allowed tool surface. Available tools: %s. Use an available tool, answer from gathered evidence, or report a concrete blocker.", tool, strings.Join(allowedTools, ", ")), true
 }
 
 func runnerHasWorkspaceWriteCapability(brief workerruntime.WorkerRuntimeBrief, tools []string) bool {

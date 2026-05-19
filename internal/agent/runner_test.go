@@ -6126,6 +6126,61 @@ func TestRunnerPermissionPolicyDeniesToolBeforeExecution(t *testing.T) {
 	}
 }
 
+func TestRunnerRejectsToolOutsideCurrentSurfaceBeforeExecution(t *testing.T) {
+	root := t.TempDir()
+	replies := []string{
+		"```tool\n{\"tool\":\"write_file\",\"path\":\"blocked.txt\",\"content\":\"should not be written\",\"description\":\"attempt disallowed write\"}\n```",
+		"Blocked by the current tool surface.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+
+	var rejected bool
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "answer without writes"}}, llama.ChatOptions{}, nil, nil, func(event ToolResultEvent) {
+		if event.Request.Tool == "write_file" && strings.Contains(event.Result.Summary, "Tool not available in current runtime contract") {
+			rejected = true
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "Blocked by the current tool surface") {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if !rejected {
+		t.Fatal("expected runner to reject the disallowed tool at the current surface gate")
+	}
+	if _, err := os.Stat(filepath.Join(root, "blocked.txt")); !os.IsNotExist(err) {
+		t.Fatalf("disallowed write executed, stat err=%v", err)
+	}
+}
+
 func TestRunnerCreatesCheckpointBeforeFirstWrite(t *testing.T) {
 	root := t.TempDir()
 	runGit(t, root, "init")
