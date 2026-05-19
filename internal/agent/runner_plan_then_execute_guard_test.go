@@ -1336,6 +1336,27 @@ func TestDeterministicNoWriteRecoverySearchesAfterContextPackOnly(t *testing.T) 
 	}
 }
 
+func TestDeterministicNoWriteRecoverySearchesAfterFailedContextPack(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "replace the model path in the top-right banner with the model alias",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	req, raw, ok := runner.deterministicNoWriteRecoverySearch([]workspace.ToolResult{{
+		Tool:  "context_pack",
+		Error: "context index unavailable",
+	}})
+	if !ok {
+		t.Fatalf("expected deterministic search recovery after failed context_pack")
+	}
+	if req.Tool != "search_content" || !strings.Contains(req.Pattern, "banner") {
+		t.Fatalf("unexpected recovery search request after failed context_pack: %#v raw=%s", req, raw)
+	}
+}
+
 func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

@@ -5448,7 +5448,7 @@ func (r *Runner) deterministicNoWriteRecoveryTargetRead(results []workspace.Tool
 }
 
 func (r *Runner) deterministicNoWriteRecoverySearch(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
-	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "context_pack" {
+	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || (lastNonGateTool(results) != "context_pack" && !lastNonGateAttemptWasUnavailableContextPack(results)) {
 		return workspace.ToolRequest{}, "", false
 	}
 	if len(concreteRecoveryEvidencePaths(results, 1)) > 0 || successfulToolSeen(results, "search_content") {
@@ -5490,6 +5490,20 @@ func lastNonGateTool(results []workspace.ToolResult) string {
 		return tool
 	}
 	return ""
+}
+
+func lastNonGateAttemptWasUnavailableContextPack(results []workspace.ToolResult) bool {
+	for i := len(results) - 1; i >= 0; i-- {
+		tool := strings.TrimSpace(results[i].Tool)
+		if tool == "" || tool == "completion_gate" {
+			continue
+		}
+		if tool != "context_pack" {
+			return false
+		}
+		return strings.TrimSpace(results[i].Error) != "" || !contextPackResultHasTargets(results[i])
+	}
+	return false
 }
 
 func alreadyReadPath(results []workspace.ToolResult, path string) bool {
