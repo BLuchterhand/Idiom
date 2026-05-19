@@ -1318,7 +1318,7 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 			"logs/e2e/*.jsonl",
 			"logs/telemetry/*.jsonl",
 		} {
-			matches, err := m.auditGlob(pattern)
+			matches, err := m.auditDefaultJSONLGlob(pattern)
 			if err != nil {
 				warnings = append(warnings, err.Error())
 				continue
@@ -1351,6 +1351,39 @@ func (m *Manager) auditLogPaths(req ToolRequest, limit int) ([]string, []harness
 		}
 	}
 	return paths, sources, warnings, nil
+}
+
+func (m *Manager) auditDefaultJSONLGlob(pattern string) ([]string, error) {
+	const suffix = "/*.jsonl"
+	if !strings.HasSuffix(strings.ToLower(pattern), suffix) {
+		return m.auditGlob(pattern)
+	}
+	dirPattern := pattern[:len(pattern)-len(suffix)]
+	if strings.TrimSpace(dirPattern) == "" {
+		return m.auditGlob(pattern)
+	}
+	if hasAuditGlobMagic(dirPattern) {
+		return m.auditGlob(pattern)
+	}
+	dir, err := m.resolvePath(dirPattern, "")
+	if err != nil {
+		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
+	}
+	entries, err := os.ReadDir(dir)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("audit glob %q: %w", pattern, err)
+	}
+	paths := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.EqualFold(filepath.Ext(entry.Name()), ".jsonl") {
+			continue
+		}
+		paths = append(paths, filepath.Join(dir, entry.Name()))
+	}
+	return paths, nil
 }
 
 func (m *Manager) auditGlob(pattern string) ([]string, error) {

@@ -1906,8 +1906,8 @@ func TestFileStatsCountsFileAndDirectoryScopes(t *testing.T) {
 func TestHarnessAuditBehaviorDefaultIncludesTelemetryLogs(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{
-		filepath.Join(root, "logs", "conversations", "session.jsonl"),
-		filepath.Join(root, "logs", "telemetry", "tool.jsonl"),
+		filepath.Join(root, "logs", "conversations", "session.JSONL"),
+		filepath.Join(root, "logs", "telemetry", "tool.JSONL"),
 	} {
 		lines := []string{
 			`{"type":"tool_request","tool":"pwd","action":"pwd"}`,
