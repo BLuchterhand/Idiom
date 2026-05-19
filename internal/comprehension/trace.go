@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"idiom/internal/util"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -1077,27 +1078,27 @@ func normalizeTracePath(root string, raw string) (string, bool) {
 	path = strings.Trim(path, `"'()[]`)
 	path = strings.TrimPrefix(path, "file://")
 	path = strings.TrimPrefix(path, "res://")
-	path = filepath.ToSlash(path)
+	path = strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
 	if module := goModulePath(root); module != "" && strings.HasPrefix(path, module+"/") {
 		path = strings.TrimPrefix(path, module+"/")
 	}
 	if filepath.IsAbs(path) {
 		rel, err := filepath.Rel(root, filepath.Clean(path))
-		if err != nil || strings.HasPrefix(rel, "..") {
+		if err != nil || traceRelEscapesWorkspace(rel) {
 			evalRoot, rootErr := filepath.EvalSymlinks(root)
 			evalPath, pathErr := filepath.EvalSymlinks(filepath.Clean(path))
 			if rootErr != nil || pathErr != nil {
 				return "", false
 			}
 			rel, err = filepath.Rel(evalRoot, evalPath)
-			if err != nil || strings.HasPrefix(rel, "..") {
+			if err != nil || traceRelEscapesWorkspace(rel) {
 				return "", false
 			}
 		}
 		path = filepath.ToSlash(rel)
 	}
-	path = filepath.ToSlash(filepath.Clean(path))
-	if path == "." || path == "" {
+	path = pathpkg.Clean(strings.ReplaceAll(filepath.ToSlash(path), "\\", "/"))
+	if path == "." || path == "" || traceRelEscapesWorkspace(path) {
 		return "", false
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err == nil {
@@ -1107,6 +1108,11 @@ func normalizeTracePath(root string, raw string) (string, bool) {
 		return resolveTraceBasename(root, path)
 	}
 	return "", false
+}
+
+func traceRelEscapesWorkspace(rel string) bool {
+	rel = strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(rel)), "\\", "/")
+	return rel == ".." || strings.HasPrefix(rel, "../")
 }
 
 func resolveTraceBasename(root string, base string) (string, bool) {
