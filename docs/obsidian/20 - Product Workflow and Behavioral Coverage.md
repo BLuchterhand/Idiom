@@ -87,6 +87,60 @@ The model may draft PRD/ADR prose, synthesize examples, or propose risk ratings
 when asked by an operator. Every generated artifact must re-enter deterministic
 parse, audit, acceptance, coverage, and dispatch gates before it affects work.
 
+## TDD Operator Process
+
+The shipped TDD process is an obligation workflow, not a classic red-green UI
+inside the TUI. The operator uses product commands to derive test obligations
+from accepted PRD/ADR artifacts, evaluate whether those obligations are covered,
+and block brief dispatch when coverage evidence is incomplete.
+
+```mermaid
+flowchart TD
+    Accepted["Accepted PRD and ADR artifacts"]
+    Plan["Plan TDD obligations<br/>idiom product tdd --plan-obligations"]
+    Ledger["tdd.json<br/>obligations, owners, commands, coverage tier"]
+    Evaluate["Evaluate coverage<br/>idiom product tdd --evaluate-coverage"]
+    Gate{"Coverage gate passes?"}
+    Brief["Render implementation brief<br/>idiom product brief --render"]
+    Blocker["Typed blockers<br/>missing obligations or evidence"]
+    Lane["Dispatch through implement<br/>or plan-execute lane"]
+    Feedback["Execution feedback<br/>tests, blockers, reconciliation"]
+
+    Accepted --> Plan --> Ledger --> Evaluate --> Gate
+    Gate -- yes --> Brief --> Lane --> Feedback
+    Gate -- no --> Blocker --> Ledger
+    Feedback -. strengthens .-> Ledger
+```
+
+Current operator sequence:
+
+1. Accept or update PRD/ADR artifacts through the product workflow.
+2. Run `idiom product tdd --effort-root <path> --plan-obligations`.
+3. Review `tdd.json` for obligation IDs, owners, commands, and coverage tier.
+4. Run `idiom product tdd --effort-root <path> --evaluate-coverage --json`.
+5. Resolve coverage blockers by adding or updating required tests, commands,
+   evidence refs, or accepted artifact links.
+6. Render the implementation brief only after the coverage gate passes:
+   `idiom product brief --effort-root <path> --render`.
+7. Dispatch the brief through `implement` or `plan-execute`.
+8. Feed execution results back into product workflow feedback and future TDD
+   obligations when tests, blockers, or recovery show missing coverage.
+
+| TDD surface | Current role |
+| --- | --- |
+| `tdd.json` | Durable obligation ledger for the effort |
+| `--plan-obligations` | Deterministically derives obligations from accepted PRD/ADR artifacts |
+| `--evaluate-coverage` | Evaluates current fixture coverage and reports blockers |
+| `brief --render` | Blocks when coverage-gate blockers remain |
+| Lane verification | Proves required commands after implementation; command names alone are not proof |
+| Product feedback | Records execution evidence that can strengthen later obligations |
+
+The important distinction is between **obligation planning** and **verification
+proof**. A command listed in `tdd.json` or a brief is pending work. It becomes
+evidence only after a run records a passing result, and readiness remains open
+until required test evidence is present or a typed blocker explains why it
+cannot be produced.
+
 ## Behavioral Coverage
 
 The target behavioral coverage design* is broader than the current shipped

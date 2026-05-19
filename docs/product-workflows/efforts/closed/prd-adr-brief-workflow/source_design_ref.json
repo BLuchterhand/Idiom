@@ -17,10 +17,10 @@
       "reviewed_at": "2026-05-18"
     },
     {
-      "path": "docs/obsidian/22 - Product Workflow ROADMAP.md",
-      "role": "roadmap",
-      "title": "ROADMAP: Product Workflow and TDD Coverage",
-      "status": "roadmap"
+      "path": "docs/obsidian/20 - Product Workflow and Behavioral Coverage.md",
+      "role": "obsidian_summary",
+      "title": "Product Workflow and Behavioral Coverage",
+      "status": "current-with-open-work"
     }
   ],
   "initiating_commit": "85af477",

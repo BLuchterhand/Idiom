@@ -358,8 +358,8 @@ Open blockers are:
 - Keep the Obsidian vault notes in parity with durable workflow reality. Before
   closing any atom that changes product-workflow status, implemented surfaces,
   phase completion, model policy, or remaining roadmap items, update
-  `docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md` and
-  `docs/obsidian/22 - Product Workflow ROADMAP.md` or record an explicit
+  `docs/obsidian/20 - Product Workflow and Behavioral Coverage.md` and
+  `docs/obsidian/21 - Recovery and Decomposition.md` or record an explicit
   no-change rationale in the investigation report. Treat stale Obsidian status
   labels such as "NOT STARTED" as closeout drift for this effort.
 - Use the product workflow CLI surfaces that are ready now during every
@@ -445,8 +445,8 @@ Preserve them until explicitly resolved by follow-up atoms:
   fail closed until that policy is encoded.
 - Obsidian parity gate: the manual parity rule above should become a lint/audit
   obligation before effort closeout. It must catch stale status labels or stale
-  phase checkboxes in `docs/obsidian/20 - PRD ADR Brief Research Workflow
-  PROPOSAL.md` and `docs/obsidian/22 - Product Workflow ROADMAP.md`, or require
+  phase checkboxes in `docs/obsidian/20 - Product Workflow and Behavioral
+  Coverage.md` and `docs/obsidian/21 - Recovery and Decomposition.md`, or require
   an explicit no-change rationale in the atom report.
 - Human-readable CLI coverage: each new operator-facing product command needs
   tests for text output as well as JSON output, including actionable failure
