@@ -64,7 +64,7 @@ func TestLearnedWeightsDecayTowardBaseline(t *testing.T) {
 
 func TestLearnedWeightsRejectsTraversalKeys(t *testing.T) {
 	root := t.TempDir()
-	if _, err := UpdateLearnedWeights(root, UpdateLearnedWeightsOptions{Boost: []string{"../escape.go", "/abs.go", " "}}); err != nil {
+	if _, err := UpdateLearnedWeights(root, UpdateLearnedWeightsOptions{Boost: []string{"../escape.go", "/abs.go", " ", "safe/../escape.go", "safe/./escape.go", "safe//escape.go"}}); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	got, _ := LoadLearnedWeights(root)

@@ -186,9 +186,16 @@ func clampLearnedWeight(v float64) float64 {
 
 func normalizeWeightKey(p string) string {
 	cleaned := strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
-	cleaned = strings.TrimPrefix(cleaned, "./")
+	for strings.HasPrefix(cleaned, "./") {
+		cleaned = strings.TrimPrefix(cleaned, "./")
+	}
 	if cleaned == "" || strings.HasPrefix(cleaned, "../") || strings.HasPrefix(cleaned, "/") {
 		return ""
+	}
+	for _, part := range strings.Split(cleaned, "/") {
+		if part == "" || part == "." || part == ".." {
+			return ""
+		}
 	}
 	return cleaned
 }
