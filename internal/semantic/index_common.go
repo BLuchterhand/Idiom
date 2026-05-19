@@ -84,10 +84,13 @@ func FindFilesExactPartial[T any](files []T, pattern string) []string {
 }
 
 func normalizeSearchPath(value string) string {
+	return strings.ToLower(normalizeFileLookupPath(value))
+}
+
+func normalizeFileLookupPath(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.ReplaceAll(value, "\\", "/")
-	value = filepath.ToSlash(value)
-	return strings.ToLower(value)
+	return filepath.ToSlash(value)
 }
 
 func AnyPath(v any) string {

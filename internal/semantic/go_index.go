@@ -491,8 +491,9 @@ func exportedSymbolCount(symbols []GoSymbol) int {
 }
 
 func (idx *GoIndex) fileByPath(path string) *GoFile {
+	path = normalizeFileLookupPath(path)
 	for i := range idx.Files {
-		if idx.Files[i].Path == path {
+		if normalizeFileLookupPath(idx.Files[i].Path) == path {
 			return &idx.Files[i]
 		}
 	}
