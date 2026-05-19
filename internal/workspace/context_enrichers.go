@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"sort"
@@ -674,8 +675,8 @@ func normalizeGraphOutputPath(path string, root string) string {
 			path = rel
 		}
 	}
-	path = filepath.ToSlash(filepath.Clean(path))
-	if path == "." || strings.HasPrefix(path, "../") {
+	path = pathpkg.Clean(strings.ReplaceAll(filepath.ToSlash(path), "\\", "/"))
+	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
 		return ""
 	}
 	return strings.TrimPrefix(path, "./")
