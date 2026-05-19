@@ -28,10 +28,8 @@ and can be read directly in any editor.
 18. [[17 - Security Privacy and Data Boundaries]]
 19. [[18 - Prompt Stack and Profiles]]
 20. [[19 - CLI TUI and Operator Surface]]
-21. [[20 - PRD ADR Brief Research Workflow PROPOSAL]]
-22. [[21 - Behavioral TDD Coverage PROPOSAL]]
-23. [[22 - Product Workflow ROADMAP]]
-24. [[23 - Decompose On Failure PROPOSAL]]
+21. [[20 - Product Workflow and Behavioral Coverage]]
+22. [[21 - Recovery and Decomposition]]
 
 ## Source Documents
 

@@ -27,6 +27,8 @@ loop limits, and auditability.
 
 - [[01 - System Map]]
 - [[02 - Deterministic Evidence-Based Development]]
+- [[04 - Runtime Lanes]]
+- [[19 - CLI TUI and Operator Surface]]
 - [[16 - Operational Commands and Evidence Products]]
 - [[17 - Security Privacy and Data Boundaries]]
 
@@ -85,31 +87,22 @@ before discussing enterprise or regulated use.
 - [[17 - Security Privacy and Data Boundaries]]
 - [[18 - Prompt Stack and Profiles]]
 - [[19 - CLI TUI and Operator Surface]]
-- [[20 - PRD ADR Brief Research Workflow PROPOSAL]]
-- [[21 - Behavioral TDD Coverage PROPOSAL]]
-- [[22 - Product Workflow ROADMAP]]
-- [[23 - Decompose On Failure PROPOSAL]]
+- [[20 - Product Workflow and Behavioral Coverage]]
+- [[21 - Recovery and Decomposition]]
 
-## Proposals and Roadmaps
+## Product Workflow and Recovery
 
-These notes track proposed and partially implemented work. All seven
-architectural pillars are complete. The PRD/ADR/brief product workflow now has
-deterministic headless CLI surfaces and a durable closed effort folder, but the
-post-closeout review still lists delivery blockers before the design can be
-claimed complete. The full behavioral TDD coverage pipeline remains a target
-design, with only the narrower product-workflow coverage evaluator currently
-implemented.
+These notes replace the older proposal/roadmap split. All seven architectural
+pillars have substantial implementation. The product workflow has deterministic
+headless CLI surfaces and durable fixtures, while full behavioral coverage,
+write-capable TUI continuation, and some sidecar exposure remain open work.
 
-- [[20 - PRD ADR Brief Research Workflow PROPOSAL]] — upstream artifact
-  pipeline from research evidence to dispatch-ready briefs, with current
-  implementation status and blockers
-- [[21 - Behavioral TDD Coverage PROPOSAL]] — exhaustive behavioral coverage
-  between human-approved ADR and implementation brief
-- [[22 - Product Workflow ROADMAP]] — what is done, what remains, and the
-  implementation phase plan
-- [[23 - Decompose On Failure PROPOSAL]] — recovery layer for converting failed
+- [[20 - Product Workflow and Behavioral Coverage]] — upstream artifact
+  pipeline from research evidence to dispatch-ready briefs, current shipped
+  commands, behavioral coverage target, and remaining work
+- [[21 - Recovery and Decomposition]] — recovery layer for converting failed
   plan-execute runs into classified evidence, decomposition packets, and gated
-  follow-up atoms, with validated CLI/product reconciliation now landed
+  follow-up atoms
 
 ## Core Sources
 

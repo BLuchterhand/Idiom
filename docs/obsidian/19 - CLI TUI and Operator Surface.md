@@ -34,7 +34,7 @@ markdown, preflights it, refines or atomizes when needed, and then executes
 dispatchable atoms through plan-execute.
 
 This is pre-dispatch decomposition. The post-failure plan-execute loop described
-in [[23 - Decompose On Failure PROPOSAL]] now writes a durable failure record,
+in [[21 - Recovery and Decomposition]] now writes a durable failure record,
 classified failure shape, and decomposition packet automatically when a
 plan-execute session fails; failed `idiom lane implement` subprocesses now
 write the same recovery artifact pair from bounded lane/session evidence. The
@@ -53,6 +53,42 @@ inside the workspace boundary. `/product-status` appends a TUI-local
 `/recover-status --packet ...` handoff hint when recovery packet state is
 present. Both status commands are read-only, operator-authored, filtered before
 compaction, and not replayed as model messages.
+
+## Literal TUI Prompt Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant TUI as Bubble Tea TUI
+    participant App as internal/app Model
+    participant Route as turn route and writer route
+    participant Dispatch as implementation dispatch
+    participant PlanExecute as plan-execute lane
+    participant Runner
+    participant Workspace
+    participant Logs as debug logs and telemetry
+
+    User->>TUI: typed prompt or slash command
+    TUI->>App: sendPromptAsync
+    App->>App: RunPromptOnce owns message bookkeeping
+    App->>Route: classify task family, lane, writer mode
+    Route-->>App: runtime brief, model roles, required/candidate scope
+    App->>Dispatch: implementation-like prompt with referenced doc?
+    Dispatch-->>App: blocker, source-satisfied, atomization, or dispatch plan
+    Dispatch->>PlanExecute: dispatch each non-terminal atom when enabled
+    PlanExecute->>Runner: planner prompt with submit_plan contract
+    Runner->>Workspace: validated read/discovery/submit_plan calls
+    Workspace-->>Runner: evidence or plan artifact
+    PlanExecute->>Workspace: executor applies preflighted edits
+    PlanExecute-->>App: summary, blocker, or recovery state
+    App->>Logs: conversation JSONL and telemetry events
+    App-->>TUI: visible transcript, status, compact trace
+```
+
+The TUI does not own a parallel planning engine. It owns interactive
+presentation, local session state, slash commands, and dispatch glue.
+Contracts, write scope, `submit_plan`, executor preflight, readiness,
+verification, and recovery state are shared with CLI lane machinery.
 
 ## Operator Surface Map
 
@@ -76,6 +112,11 @@ flowchart TD
     TUI --> Logs
     CLI --> Logs
 ```
+
+The CLI remains the preferred reproducible surface for regression tests and
+automation. The TUI is the preferred exploratory/operator surface when the user
+wants to watch a local session, inspect status, switch profiles, or use
+read-only presenters during an interactive run.
 
 ## Main CLI Families
 
@@ -149,16 +190,16 @@ belong to the TUI/prompt harness path.
 
 ## Product Workflow UX Contract
 
-For the partially implemented PRD/ADR/TDD product workflow, the TUI is still a
-target presenter over the same application use cases as the CLI. The CLI has a
-shared operator status view model, effort browsing, and status migration; the
-TUI now has a read-only `/product-status` projection over that operator view,
-including recovery packet state, plus a read-only `/recover-status` projection
-over decomposition packets. Write-capable TUI continuation/handoff fixtures
-remain open delivery work. A TUI action such as capture, start, continue,
-promote, dispatch, or close should resolve a stable effort ID, render the
-shared status view model, advance exactly one valid action, reconcile state
-from artifacts and evidence, and then render the next valid action.
+For the product workflow, the TUI is a presenter over the same application use
+cases as the CLI. The CLI has a shared operator status view model, effort
+browsing, and status migration; the TUI has a read-only `/product-status`
+projection over that operator view, including recovery packet state, plus a
+read-only `/recover-status` projection over decomposition packets.
+Write-capable TUI continuation/handoff fixtures remain open delivery work. A
+future TUI action such as capture, start, continue, promote, dispatch, or close
+should resolve a stable effort ID, render the shared status view model, advance
+exactly one valid action, reconcile state from artifacts and evidence, and then
+render the next valid action.
 
 Efforts should be browsable by coarse status folders:
 
