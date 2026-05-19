@@ -214,6 +214,23 @@ func TestDoctorReadinessQueueUnavailablePolicyIsProfileSpecific(t *testing.T) {
 	}
 }
 
+func TestWorkspaceRootFromConfigResolvesRelativeRootAgainstConfigDir(t *testing.T) {
+	dir := t.TempDir()
+	configDir := filepath.Join(dir, "config")
+	if err := os.MkdirAll(configDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(configDir, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"workspace":{"root":"../repo"}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	want := filepath.Clean(filepath.Join(dir, "repo"))
+	if got := workspaceRootFromConfig(configPath); got != want {
+		t.Fatalf("workspaceRootFromConfig() = %q, want %q", got, want)
+	}
+}
+
 func TestDoctorReadinessClassifierDisabledIsSoftDegradation(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)

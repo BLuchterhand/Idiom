@@ -397,7 +397,11 @@ func workspaceRootFromConfig(path string) string {
 	if err := json.Unmarshal(body, &shape); err != nil {
 		return ""
 	}
-	return strings.TrimSpace(shape.Workspace.Root)
+	root := strings.TrimSpace(shape.Workspace.Root)
+	if root == "" || filepath.IsAbs(root) {
+		return root
+	}
+	return filepath.Clean(filepath.Join(filepath.Dir(abs), root))
 }
 
 // checkPython3 looks for python3 on $PATH. Required for `idiom brief
