@@ -1,0 +1,933 @@
+# Reusability Design — Lift the Plan-Execute Workflow into Agent Harness
+
+**Status:** Design draft, YYYY-MM-DD (Phases 1-5 + 4b + 4c + 5b + 6 + 6.5 + 7 shipped YYYY-MM-DD / YYYY-MM-DD; Phase 3 rules-embed backfill shipped YYYY-MM-DD after the post-Phase-6 audit below; Phase 8 pending; plug-and-play Phase 9 partial ship YYYY-MM-DD — `harness version`, goreleaser config, release workflow, install.sh, three-tier Docker install test (`make test-install-docker`: 14-subcommand surface + 3 static-functionality tests + stub-LLM lane test, all green), and the `internal/autodetect` library landed parallel to canonical Phase 7/8; Phase 11 partial ship — `harness doctor` landed; remaining 9/10/11 deliverables and Phase 12 unscheduled)
+**Author:** Agent Harness session log, original implementation donkey-atom debugging
+**Related:** `docs/original implementation-extraction-plan.md` (raw inventory),
+`docs/planner-executor-delegation-design.md` (the lane shape this
+generalizes), `docs/planner-executor-usage.md` (current user-facing docs).
+
+## Background
+
+The plan-execute lane (planner phase emits `submit_plan`, executor
+phase dispatches the edits) is now production-ready end-to-end on
+original implementation's donkey atom: 26 seconds for a 9-file, 11-edit atom with all
+gates green and structured telemetry. Six runner-side gates plus
+two prompt-side fixes plus a brief-lint extension got us there.
+
+But the actual workflow today is a mix of:
+
+- Agent Harness giving the lane shape, gates, runner, workspace tools.
+- original implementation providing a thick layer of `bash`/`python` wrappers,
+  prompt-stack overrides, and rule docs that compose a brief, route
+  a model, validate a diff, and feed everything to harness.
+
+If you wanted to set up the same workflow in a different repo today,
+you'd be copy-pasting ~25 shell scripts, two parallel rules trees
+(`.agent-config/` and `.agent-config/`), and a chunk of YAML/JSON tool adapters.
+That's the friction this design addresses.
+
+## Goals
+
+1. **Anything not project-specific lives in harness.** A new project
+   should clone harness-provided defaults, not invent them.
+2. **Project layer is small and structured.** A clear, documented
+   set of files in `.harness/` is what a project owns. Everything else
+   inherits.
+3. **No language gating.** Agent Harness always supports every language it has
+   tools for; no per-project "install" step. Workspace mode is
+   detected at runtime from filesystem evidence (already true today —
+   we don't undo that).
+4. **No churn for existing users.** original implementation's current plumbing keeps
+   working through this whole migration. The end state is
+   compatibility shims so old scripts call new harness commands.
+
+## Non-goals
+
+- Not building a "framework" with plugin loaders. The Go binary
+  loads its own canonical resources at compile time; project layers
+  override via well-known paths.
+- Not redesigning the plan-execute lane itself. The current shape
+  (`submit_plan`, executor dispatch, JSON event stream) is what gets
+  generalized — not rewritten.
+- Not migrating external coding agent/external coding agent SKILL files for projects.
+  `harness skills install <name>` is a copy-templated convenience but
+  the canonical author of project skills is the project.
+
+## Architectural principles
+
+### The seam: harness resources, project overrides
+
+Agent Harness ships canonical resources at well-known paths inside its
+install (or embedded via `go:embed`). A project's `.harness/` directory
+is the override surface. The lookup order for any given resource is:
+
+1. Project: `<repo>/.harness/<resource-path>`
+2. Agent Harness builtin: embedded canonical default
+
+The project layer is **additive or replacing**, not "instead of."
+For prompts the merge is concatenation (harness's preamble first,
+then project's preamble). For tool registries, the project's entries
+extend harness's (with project entries winning by name on collision).
+For postflight rules, project rules extend harness's generic rule set.
+
+### Always-on language support
+
+Agent Harness binary always carries every language tool. Workspace mode is
+auto-detected from filesystem markers (`go.mod`, `package.json`,
+`*.csproj`, `Cargo.toml`, `CMakeLists.txt`, `pyproject.toml`,
+`pom.xml`). Multiple language matches are fine — harness exposes all
+matched language tool families to the model.
+
+Today this is already approximately true (`m.isGoWorkspace()` etc.
+in `internal/workspace/manager.go`). The change is making the
+detection *exhaustive* (no opt-out, no per-project disable) and
+documenting it as guaranteed.
+
+### Configuration with sensible defaults
+
+`.harness/config.json` holds project-specific settings:
+
+- LLM endpoint, model alias, prompt cache size
+- Workspace root, CWD, write enable
+- Optional MCP server list
+- Optional language hints (only used to bias detection ties)
+
+Agent Harness ships a default config baked into `harness init`. New projects
+edit a few fields and go.
+
+### Project-specific tooling stays project-specific
+
+original implementation's `lookup.sh`, `trace_code.sh`, `ast_grep.sh`, etc. do
+domain-specific work (C++ symbol queries with project-aware filters,
+Godot scene tracing). Those stay in original implementation. The pattern that exposes
+them — `.harness/external_tools/<name>.json` describing
+`{command, args, env, schema}` — is generic and stays in harness.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Project repo (e.g. original implementation)                                  │
+│                                                             │
+│  .harness/                                                    │
+│    config.json              ← endpoint, workspace, MCP      │
+│    backends.json            ← which local LLMs to launch    │
+│    external_tools/*.json    ← project-specific tool adapters│
+│    postflight/checks/*.json ← project-specific lint rules   │
+│    prompts/                                                 │
+│      lanes/<mode>/          ← optional preamble overrides   │
+│      rules/                 ← optional rule overrides       │
+│  .agent-config/  .agent-config/          ← project-only rules + skills   │
+│  scripts/  src/  tests/     ← actual project code           │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+                              │ overlays
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Agent Harness binary (single Go executable)                         │
+│                                                             │
+│  Subcommands:                                               │
+│    harness init                                               │
+│    harness lane <mode> <brief>                                │
+│    harness plan-execute / implement   (existing low-level)    │
+│    harness probe lane                                         │
+│    harness backend start | proxy                              │
+│    harness brief lint | preload                               │
+│    harness audit enum-mirrors | …                             │
+│    harness skills install <name>                              │
+│                                                             │
+│  Embedded resources (go:embed):                             │
+│    prompts/lanes/<mode>/{preamble,postamble,addendum}.md    │
+│    prompts/rules/{loop-protocol,brief-skeleton,             │
+│                   known-traps-generic,                      │
+│                   orchestrator-workflow}.md                 │
+│    prompts/skills/<name>/SKILL.md (templates)               │
+│    postflight/rules-generic/*.json                          │
+│    backends/profiles/<profile>.json                         │
+│                                                             │
+│  Always-loaded language tool families:                      │
+│    cpp_*, go_*, python_*, ts_*, rust_*, java_*              │
+│    (auto-detected per workspace; all available always)      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+## Components in detail
+
+### `harness init`
+
+```
+harness init [<dir>]
+```
+
+Creates `.harness/` in the target directory with:
+
+```
+.harness/
+├── config.json          (template — user fills in endpoint, root)
+├── backends.json        (template — user uncomments models they have)
+├── external_tools/
+│   └── README.md        (explains the JSON adapter shape)
+├── postflight/
+│   └── checks/
+│       └── README.md    (explains custom-rule format)
+└── prompts/
+    ├── lanes/
+    │   └── README.md    (explains override pattern)
+    └── rules/
+        └── README.md
+```
+
+No `--language` flag, no per-language seeding. The runtime detects
+languages from filesystem markers (the current `isGoWorkspace()` /
+`isCppWorkspace()` paths in `manager.go`).
+
+**Existing project that wants to upgrade:** `harness init --merge` adds
+any missing `.harness/` files without overwriting existing config.
+
+### `harness lane`
+
+```
+harness lane <mode> [--title T] [--coder] [--model M] [--mode-flag …] <brief.md>
+```
+
+Where `<mode>` is one of `plan-execute` (default), `implement`, or a
+project-registered mode.
+
+Replaces what `original implementation/scripts/run_harness_impl.sh` does today:
+
+1. Compose the prompt: harness's mode preamble + project preamble (if
+   present) + brief body + project postamble (if present) + harness's
+   mode postamble.
+2. Auto-route plan-execute to the configured coder model when
+   `--model` isn't set (inheriting the rule we just shipped to
+   original implementation's script).
+3. Invoke `harness plan-execute` or `harness implement` with the composed
+   prompt and JSON event stream.
+4. Capture the run log; on non-zero exit, run a harness audit and emit
+   harness feedback automatically.
+5. Forward the lane's exit code.
+
+original implementation's `run_harness_impl.sh` becomes:
+
+```bash
+#!/usr/bin/env bash
+exec harness lane "${HARNESS_LANE_MODE:-plan-execute}" "$@"
+```
+
+A 3-line shim, kept only for backward compat with anything that calls
+the script by path.
+
+### `harness backend`
+
+```
+harness backend start [--profile <name>]
+harness backend proxy
+harness backend list
+harness backend stop [--profile <name>]
+```
+
+Reads `.harness/backends.json`:
+
+```json
+{
+  "default_profile": "local-model-pair",
+  "profiles": {
+    "local-model-pair": {
+      "models": [
+        {
+          "alias": "local-model3.6-35b",
+          "binary": "mlx_lm.server",
+          "model_path": "~/models/local-model3.6-35b",
+          "port": 47780,
+          "cache_size": 4,
+          "cache_bytes": 21474836480,
+          "max_tokens": 8192,
+          "extra_args": ["--temp", "1.0", "--chat-template-args", "{\"enable_thinking\":true}"]
+        },
+        {
+          "alias": "local-model3-coder-30b",
+          "binary": "mlx_lm.server",
+          "model_path": "~/models/local-model3-coder-30b",
+          "port": 47781,
+          "max_tokens": 8192,
+          "extra_args": ["--temp", "0.7", "--top-p", "0.8"]
+        }
+      ],
+      "proxy": {
+        "listen": 47680,
+        "default_alias": "local-model3.6-35b"
+      }
+    }
+  }
+}
+```
+
+Agent Harness ships canonical profile templates for common stacks
+(`local-model-pair`, `single-llama-cpp`, `mlx-single`). Projects can extend
+with custom profiles.
+
+`harness backend proxy` is a full Go port of `mlx_alias_proxy.py` that
+routes a single client port to multiple backends by model alias,
+rewrites the `model` field to the absolute path mlx_lm.server expects,
+merges multiple system messages into one leading entry, and streams
+responses chunk-by-chunk for SSE compatibility.
+
+### `harness probe lane`
+
+```
+harness probe lane [--mode plan-execute|implement] [--coder]
+```
+
+Synthetic-brief route probe. Asserts:
+
+- `route_plan` is `initial=implement reason=explicit_task_family
+  contract=implementation_result`.
+- Plan-execute lanes route to `task_family=plan_then_execute_planner`.
+- Implement lanes route to `task_family=implementation`.
+- Allowed-tools surface is non-empty.
+
+Replaces `original implementation/scripts/harness_route_probe.sh`.
+
+### `harness lane postflight`
+
+```
+harness lane postflight [--diff <patch>] [--rules <rule-set>]
+```
+
+Runs a configurable check pipeline against a returned diff. Generic
+checks ship in harness; project-specific checks live under
+`.harness/postflight/checks/`.
+
+Generic checks (always on):
+
+- Unresolved `<<QUESTION>>:` markers in modified files (not just
+  reports).
+- File-allowlist mismatch (writes outside the brief's
+  `required_edit_paths`).
+- Narrating-comment heuristic on newly-added test code.
+
+Project checks: each `<name>.json` describes a check:
+
+```json
+{
+  "name": "doctest-check-stream",
+  "kind": "ast_grep",
+  "rule": "scripts/ast_grep_rules/doctest-check-stream.yml",
+  "scope": "diff:added:test_*.cpp"
+}
+```
+
+Or a shell-out:
+
+```json
+{
+  "name": "fixture-binding",
+  "kind": "shell",
+  "command": "scripts/check_fixture_binding.sh",
+  "args": ["--diff", "{diff}"]
+}
+```
+
+### `harness audit enum-mirrors`
+
+```
+harness audit enum-mirrors --enum <Name> [--language cpp]
+```
+
+Generalizes `original implementation/scripts/enum_mirror_audit.sh` using harness's
+existing language tools (`*_references`, `*_workspace_symbol`,
+`*_read_symbol`). Lists every site that breaks if the enum changes:
+array indices, switch cases, name tables, doctest expectations.
+
+### Prompt stack — canonical + override
+
+Agent Harness embeds canonical lane prompts under `prompts/lanes/<mode>/`:
+
+```
+prompts/lanes/plan-execute/preamble.md
+prompts/lanes/plan-execute/postamble.md
+prompts/lanes/plan-execute/addendum.md       (the system addendum we ship today)
+prompts/lanes/implement/preamble.md
+prompts/lanes/implement/postamble.md
+prompts/lanes/atom-spec/preamble.md
+prompts/lanes/atom-spec/postamble.md
+```
+
+And canonical rules under `prompts/rules/`:
+
+```
+prompts/rules/loop-protocol.md            (state machine)
+prompts/rules/brief-skeleton.md           (drafting discipline)
+prompts/rules/known-traps-generic.md      (anchor mismatch, structure-
+                                           describing anchors,
+                                           decomposition rules)
+prompts/rules/orchestrator-workflow.md    (dual-architect loop)
+```
+
+Project overrides live at `<repo>/.harness/prompts/{lanes,rules}/...`.
+The lane runner concatenates harness's preamble + project's preamble
+(if present) + brief body. For rules, harness's text is the base; the
+project's text is appended unless a same-named project file replaces
+it (declarative `replace: true` field for explicit replacement).
+
+original implementation deletes the rules that mirror harness's canonical set, keeping
+only the ones that are actually project-specific (coding standards,
+cpp-safety, ears-specs, gdscript-patterns, save-load-safety,
+test-helpers-ref, e2e-binding-tests, north-star,
+glm-roadmap-execution, long-play-safety, integration-test-philosophy,
+workflow, workflow-planning, tooling, external-agent-mcp-guide).
+
+### Skills
+
+Agent Harness embeds skill templates under `prompts/skills/<name>/SKILL.md`.
+`harness skills install <name>` copies a template into
+`<project>/.agent-config/skills/<name>/` (or `.agent-config/skills/<name>/` if
+that's the convention the project follows).
+
+The template contains placeholders for project context. The user is
+expected to customize after install — skills are inherently
+project-shaped.
+
+## Plan / phasing
+
+| Phase | What | Effort | Risk | Value |
+|---|---|---|---|---|
+| 1 | Lane architecture doc + `docs/lane-architecture.md` | 1-2h | none | unblocks everything |
+| 2 | `harness lane <mode>` subcommand absorbs `run_harness_impl.sh` | 3-4h | low | most-used surface |
+| 3 | Prompt-stack reorg — embed canonical, project override | 3-4h | medium | kills duplication |
+| 4 | `harness backend start|proxy` + `backends.json` schema | 2-3h | low | new-project unblock |
+| 5 | `harness lane postflight` + pluggable rules | 2-3h | medium | reusable QC |
+| 5b | `harness lane <mode> --postflight` auto-invokes Phase 5 against `git diff` after the lane returns | 1-2h | low | wires QC into the loop |
+| 6 | `harness probe lane` + `harness audit enum-mirrors` + `harness brief preload` | 2-3h | low | covers remaining scripts |
+| 7 | `harness init` + `harness skills install` + canonical `prompts/profiles/{coding,external-agent-worker}.md` templates + `prompts/skills/orchestrator-workflow/SKILL.md` (deferred from Phase 3) | 2-3h | low | greenfield onboarding |
+| 8 | original implementation shim cleanup — delete generic rules + scripts that harness now provides; deletion gated on `harness probe lane` plus a full plan-execute lane against a known-good fixture brief | 2-3h | low | proves the migration |
+| **Total** | | **18-26h** | | |
+
+### Suggested order
+
+1 → 2 → 3 → 5 → 4 → 6 → 7 → 8
+
+Phase 1 first because docs unblock the rest. Phase 2 because the lane
+wrapper is the most-used surface. Phase 3 because that's where the
+biggest copy-paste tax is today. Phase 5 because postflight ships next
+on the user-facing path.
+
+Phases 4, 6, 7 are project-onboarding wins; the existing original implementation
+plumbing already works for original implementation so they aren't blockers.
+
+Phase 8 (original implementation cleanup) is the proof-of-migration: delete the files
+in original implementation that harness now provides and confirm the lane still runs
+clean.
+
+## Open questions
+
+### How does the prompt overlay merge work?
+
+Two reasonable models:
+
+1. **Strict concatenation:** harness's preamble first, project's
+   appended. Simple. Project can override by prepending an explicit
+   "Ignore the above" sentence (model-side discipline) or by setting
+   `replace: true` in a YAML frontmatter block.
+2. **Section-keyed merge:** both files use a section format (e.g.
+   `## Hard rules`, `## Closeout`); the merger interleaves matching
+   sections. More elegant; harder to maintain.
+
+**Recommendation:** start with strict concatenation; add section
+keying only if real overlap problems emerge.
+
+### Where do canonical resources live in the binary?
+
+`go:embed` is the cleanest path: the prompts and templates ship as
+embedded files in the binary. No filesystem dependency on the harness
+install location, no path-resolution bugs, no "I have two harnesss,
+which prompts won?" issues.
+
+The embed live at compile time under `harness/embed/`. The Go side has
+helpers like `embedlib.LoadLanePreamble("plan-execute")` that walk
+the project override path first, fall back to embed.
+
+### Versioning
+
+Agent Harness releases with a version tag. Project's `.harness/config.json`
+optionally carries a `min_harness_version` field. The runner warns at
+start when the running harness is older than the project's pinned
+minimum.
+
+For prompt-stack changes that need migration (rare), harness can ship
+a `harness prompts migrate` subcommand that walks the project's
+`.harness/prompts/` and either auto-applies known migrations or
+flags conflicts.
+
+### Backend launcher: shell out vs reimplement
+
+The current original implementation scripts (`start_local_local-model.sh`,
+`mlx_alias_proxy.py`) are short and reliable. Phase 4's `harness
+backend` could:
+
+- **Wrap** the existing Python proxy and the bash launcher (just
+  invoke them via `os.exec`). Lowest cost, keeps ownership in the
+  scripts.
+- **Reimplement in Go.** Pure harness-native, no Python dependency
+  at runtime, single binary distribution.
+
+**Recommendation:** start by wrapping. Reimplement in Go only if a
+real reason emerges (Windows support, single-binary distribution
+requirement).
+
+### What about the dual-architect (external coding agent orchestrator) loop?
+
+The orchestrator runs in external coding agent (or similar), feeds briefs to
+harness, watches output. That loop's "smarts" — when to dispatch,
+when to retry, when to escalate — lives in the orchestrator's
+SKILL.md files today. Should it move into harness?
+
+**Recommendation:** no, not yet. The orchestrator is the *consumer*
+of harness; harness should stay an executor. Encoding the orchestrator's
+loop in harness would couple the two unnecessarily and re-create the
+problem we just solved (original implementation-side specific behavior accumulating
+in harness). Skills templates (Phase 7) are the right level of
+sharing — copy-paste with project customization.
+
+## Success criteria
+
+After all phases, a fresh project's onboarding looks like:
+
+```bash
+cd ~/projects/new-project
+harness init                       # creates .harness/ skeleton
+$EDITOR .harness/config.json       # set endpoint + workspace root
+$EDITOR .harness/backends.json     # uncomment models you have
+harness backend start              # launches local LLMs
+# author a brief at .planning/atom-001.md
+harness brief lint .planning/atom-001.md
+harness lane plan-execute --title atom-001 .planning/atom-001.md
+```
+
+Project-side files reduce to the directory shown in the architecture
+diagram. Everything else lives in harness.
+
+The original implementation repo (Phase 8) shrinks by:
+
+- ~25 generic shell scripts deleted
+- ~6 rule docs (the canonical-equivalent set) deleted
+- `run_harness_impl.sh` → 3-line shim
+- Project-specific scripts (lookup.sh, trace_code.sh, etc.) keep
+  their existing JSON adapters under `.harness/external_tools/`,
+  unchanged
+
+## Holes identified in YYYY-MM-DD audit
+
+A review against the actual code state (`cmd/harness/lane.go` + the
+embedded files under `cmd/harness/lanes/`) found gaps between what the
+design described as "shipped" and what the completed phases actually
+delivered. This section enumerates them so the roadmap reflects
+reality.
+
+### Phase 3 — partially shipped (rules-embed backfill)
+
+The Phase 3 architecture diagram lists both `prompts/lanes/<mode>/...`
+AND `prompts/rules/{loop-protocol, brief-skeleton,
+known-traps-generic, orchestrator-workflow}.md` as embedded resources.
+Only the lane preambles/postambles actually shipped — the canonical
+rules were never embedded.
+
+**Backfill (this session):** embed three canonical generic rule files
+(`loop-protocol`, `brief-skeleton`, `known-traps-generic`) at
+`cmd/harness/lanes/rules/<name>.md` and prepend them to the lane
+wrapper's composed prompt. Project overlay at
+`<root>/.harness/prompts/rules/<name>.md` with same-name semantics:
+matching project files replace the canonical entry, extras append after
+the canonical block in alphabetical order. **Status: shipped YYYY-MM-DD.**
+
+**Deferred — `orchestrator-workflow.md`:** the design's own
+"What about the dual-architect orchestrator loop?" answer recommends
+keeping the orchestrator out of harness and sharing via skill templates.
+Embedding orchestrator-workflow as an executor-facing rule contradicts
+that recommendation — the executor doesn't need it. Move this content
+to `prompts/skills/orchestrator-workflow/SKILL.md` when Phase 7 ships
+skill templates (now listed under Phase 7 in the table).
+
+### Phase 5b — lane → postflight integration (NEW)
+
+`harness lane postflight` ships as a standalone subcommand. There is no
+flag on `harness lane <mode>` that auto-runs postflight after the lane
+returns; the success-criteria onboarding flow doesn't show postflight
+at all. Result: project orchestrators have to wire postflight
+separately, and many won't.
+
+**Proposed:** a new Phase 5b adds `harness lane <mode> --postflight` that
+runs the lane normally, then invokes `runLanePostflight` against
+`git diff` (or a configurable base ref) before returning. Final exit
+is the worse of (lane exit, postflight exit). Pending.
+
+### Phase 7 — additional sub-items
+
+The original Phase 7 description covered only `harness init` +
+`harness skills install`. The audit identified two additional
+Phase-7-shaped items, now folded into the table row:
+
+1. **Canonical profile templates** — original implementation's
+   `prompts/profiles/coding.md` and `prompts/profiles/external-agent-worker.md`
+   have no canonical harness equivalent. New projects pointing
+   `chat.system_prompt_files` at `.harness/prompts/profiles/coding.md`
+   today are pointing at a file they have to author from scratch.
+   Embed them as templates copied during `harness init`.
+
+2. **Skill templates expanded** — alongside whatever skills ship with
+   `harness skills install`, include the canonical
+   `orchestrator-workflow` deferred from Phase 3.
+
+### Phase 8 — verification gate (NEW sub-item)
+
+Phase 8 says "delete generic rules + scripts that harness now provides
+and confirm the lane still runs clean." That confirmation was
+informal. Before deletion, the gate is:
+
+1. `harness probe lane --mode plan-execute` and `--mode implement`
+   return clean.
+2. A full plan-execute lane against a known-good fixture brief (e.g.
+   the donkey-atom replay under `testdata/swe/`) completes green.
+3. Each canonical rule referenced in the design (3 embedded + 1
+   deferred to skills, see Phase 3 entry above) is surfaced where
+   expected: rules appear in the composed lane prompt;
+   orchestrator-workflow is reachable via `harness skills install`.
+
+Recorded here so a future original implementation-deletion PR can't run ahead of the
+canonical replacement.
+
+### Open question — base prompt ownership
+
+`docs/lane-architecture.md` documents that the chat-side base prompt
+(loaded via `chat.system_prompt_files`) is fully project-owned today: a
+project's `.harness/prompts/base.md` is the entire base, with no
+canonical harness layer. The north-star drift recommendation says
+"Base/profile prompts own general working style," which implies a
+centralized authority. These two views aren't reconciled.
+
+Options:
+
+1. **Status quo** — projects own `base.md` fully; harness updates
+   working-style guidance only via canonical rules (now embedded) and
+   lane preambles. Pro: clean ownership, no new overlay slot. Con:
+   projects drift independently on stable working-style guidance.
+2. **Canonical base + project overlay** — symmetric to lanes/rules:
+   embed `prompts/base.md` in the binary, project file at
+   `.harness/prompts/base.md` extends or replaces. Pro: harness updates
+   propagate. Con: another overlay slot to design and test.
+
+**Recommendation pending.** The rules embed (above) covers most of
+the "shared working style" need; if real drift problems emerge after
+Phase 7 ships profile templates, revisit option 2.
+
+### Deferred — `brief-preflight.py` Go port
+
+`harness brief lint` shells out to an embedded Python script at runtime
+(`cmd/harness/brief-preflight.py`). The "single Go binary distribution"
+pitch under the "Backend launcher" open question doesn't account for
+this Python dependency. Schedule a Go port in a later phase; not
+blocking for project onboarding.
+
+### Deferred — atom-spec lane subcommand
+
+`docs/lane-architecture.md` lists three lanes (`implement`,
+`plan-execute`, `atom-spec`), but the reusability plan only schedules
+the first two. `atom-spec` drafting still rides on the low-level
+`harness artifact --no-tools` command. Schedule `harness atom-spec draft`
+(with the same canonical preamble/postamble + project overlay seam)
+when Phase 7 brings the rest of the brief-authoring loop into harness.
+
+## Migration safety
+
+Each phase is shippable independently. Old paths keep working:
+
+- Phase 2 (`harness lane`) ships alongside the existing `harness
+  plan-execute` / `harness implement` subcommands; the wrapper just
+  composes a prompt and calls them.
+- Phase 3 (prompts) merges project overlays on top of harness embeds;
+  if project files are absent, harness uses embeds; if both are
+  present, behavior matches today's original implementation override pattern.
+- Phase 8 is the only "delete from original implementation" phase, and it runs after
+  every replacement is shipped and verified.
+
+## Beyond Phase 8 — Plug-and-Play Roadmap
+
+Phases 1-8 + 5b finish the "lift original implementation plumbing into harness" story: a
+project that authors `.harness/config.json`, `.harness/backends.json`, and
+a brief can run plan-execute lanes against any local LLM stack without
+copying scripts. That's a developer-grade onboarding — appropriate for
+engineers who already know what harness is.
+
+To get to a true install-and-run experience — `brew install harness`,
+`cd ~/projects/foo && harness start`, run lanes — three more layers are
+needed: distribution, zero-config init, and lifecycle. Operator
+observability rounds out the experience. An optional thin orchestrator
+closes the brief-authoring blank-page gap for fresh-install users who
+don't have an orchestrator yet.
+
+These phases are explicitly *outside* the "lift original implementation plumbing"
+charter of Phases 1-8; they are the path from "harness for engineers
+who already know what harness is" to "tool a fresh user can install and
+use." Schedule them only after Phase 8 closes the migration loop and
+original implementation validates the lifted plumbing.
+
+| Phase | What | Effort | Risk | Value |
+|---|---|---|---|---|
+| 9 | Distribution: goreleaser, brew formula, install.sh, signed darwin builds, `harness version`/`harness upgrade`, `harness models pull` | 6-10h | medium | gates every other plug-and-play phase |
+| 10 | Zero-config `harness init --auto`: scan backends, models, workspace; single `.harness/harness.toml`; user-level config at `~/.config/harness/` | 4-6h | low | turns Phase 7 from "templated skeleton" into "first-run works" |
+| 11 | Lifecycle: `harness start`/`harness stop`/`harness status`/`harness doctor`/`harness service install`; unified `harness logs`; `harness usage` | 4-6h | low (medium for `doctor`) | one-command runtime, recoverable failures, broken is easy to diagnose |
+| 12 | Optional thin orchestrator — `harness run "<task>"` chaining atom-spec draft → brief lint → lane → postflight | 3-5h | medium | closes the brief-authoring gap if appetite exists; skip leaves the orchestrator-stays-consumer recommendation intact |
+| **Plug-and-play subtotal** | | **17-27h** (excl. Phase 12: 14-22h) | | |
+
+### Phase 9 — Distribution
+
+Until the binary is reachable to non-Go-developers, nothing else
+matters. Goal: `brew install harness` on macOS, `curl
+https://harness.sh/install.sh | sh` elsewhere, and signed releases on
+GitHub.
+
+**Status (YYYY-MM-DD):** core release pipeline shipped — `.goreleaser.yaml`,
+`.github/workflows/release.yml`, `install.sh`, `harness version` with
+`-ldflags`-injected build metadata. Pending: macOS signing/notarization
+(needs Apple Developer credentials provisioned in CI secrets), Homebrew
+tap (needs the `harness-sh/tap` repo), `harness upgrade` self-update
+subcommand, `harness models pull` model fetcher.
+
+Deliverables:
+
+- **Release pipeline** ✓ — `.goreleaser.yaml` + `.github/workflows/release.yml`
+  build `darwin-{arm64,amd64}`, `linux-{amd64,arm64}`, `windows-amd64`
+  on tag push. Generates `SHA256SUMS` for `install.sh` to verify.
+- **Homebrew formula** — `brew install harness` from a tap (likely
+  `harness-sh/tap`) until criteria for homebrew-core are met. Pending
+  the tap repo creation; goreleaser's `brews:` section wires in once
+  it exists.
+- **Install script** ✓ — `install.sh` at the repo root resolves the
+  latest release, downloads the right asset for the host, verifies
+  the SHA256 checksum, drops the binary in `~/.local/bin` (or
+  `/usr/local/bin` if writable). POSIX sh; tested syntax-clean with
+  `sh -n`. Carries an `HARNESS_RELEASE_URL_BASE` override so the Docker
+  install test can point it at a local server.
+- **Docker install test** ✓ — `scripts/test-install-docker.sh` (host
+  orchestrator) + `scripts/test-install-entrypoint.sh` (in-container)
+  cross-build harness for the docker arch, package the binary in
+  goreleaser archive format, serve the tarball + SHA256SUMS via a
+  local `python3 -m http.server` inside an `ubuntu:24.04` container,
+  run `install.sh` against the local URL, then run a three-tier
+  assurance pass:
+
+  - **Tier 1 — surface coverage:** all 14 subcommands listed in the
+    main.go dispatch table (`version`, `doctor`, `lane`, `backend`,
+    `brief`, `plan-execute`, `implement`, `artifact`, `context`,
+    `architect`, `audit`, `ranker`, `probe`, `tool`) respond to
+    `--help` with exit 0 or 2 and non-empty output. Catches
+    dispatch-table regressions and missing-flag panics.
+  - **Tier 2 — static functionality (no LLM):** `harness brief lint`
+    against a fixture brief (Python brief-preflight integration),
+    `harness lane postflight` against a fixture diff (Phase 5
+    pipeline), `harness backend list` against a fixture
+    `backends.json` (Phase 4 resolver). Each asserts a
+    meaningful exit code and content.
+  - **Tier 3 — stub-LLM lane:** a Python mock chat-completions
+    server returns canonical API provider-shaped responses; harness lane
+    implement runs against a workspace whose `.harness/config.json`
+    points at the mock; the assertion is that the mock received at
+    least one POST during the run. Proves the lane runner — config
+    load, prompt composition, model dispatch — is intact end-to-end
+    after install. A no-op `llama-server` stub at
+    `/usr/local/bin/llama-server` satisfies the auto-start path so
+    the readiness check completes against the mock's listening port.
+
+  Wrapped by `make test-install-docker`. A passing run means a fresh
+  user installing via `install.sh` gets a binary whose entire
+  reachable surface — every subcommand, the static QC pipelines, and
+  the lane runner up to the LLM dispatch — actually works. The
+  remaining unchecked layer is real-LLM lane completion (edits land,
+  postflight passes), which would require pulling a real model in CI.
+- **macOS signing + notarization** — Developer ID code signature on
+  darwin assets so Gatekeeper accepts them without right-click.
+  Pending Apple Developer credentials in CI secrets; wire `gon` /
+  `quill` step into `release.yml` once provisioned.
+- **`harness version`** ✓ — prints version, commit, build date, Go
+  toolchain version, and host os/arch. Build-time metadata via
+  `-ldflags '-X main.{version,commit,date}=...'`; falls back to
+  `debug.ReadBuildInfo()` for `go install` builds without ldflags.
+- **`harness upgrade`** — fetches latest release and self-replaces.
+  Pending; can ship after the first tagged release exists.
+- **`harness models pull <alias>`** — wraps `huggingface-cli download`
+  (or equivalent) to fetch a model file into the project-configured
+  cache dir. Model files are too large to ship in the binary; this is
+  the boundary. Resolves alias via `.harness/backends.json`. Pending.
+- **Backend dependency posture** — `harness doctor` (Phase 11) verifies
+  `mlx_lm.server` (or `llama-server`, `ollama`) is on `$PATH`. The
+  Python dependency is acknowledged and documented. Go-porting model
+  serving is non-goal: `mlx_lm.server` and `llama.cpp` are
+  research-velocity codebases and shipping a parallel implementation
+  is not worth tracking.
+
+### Phase 10 — Zero-config init
+
+Phase 7's `harness init` ships a templated skeleton. For plug-and-play,
+init must *discover*, not template. A fresh user runs `harness init
+--auto` and the `.harness/` directory comes out wired to whatever they
+actually have installed.
+
+**Status (YYYY-MM-DD):** the `internal/autodetect` library landed
+parallel to canonical Phase 7. It exposes `DetectBackends()` (scans
+`$PATH` for `mlx_lm.server`, `llama-server`, `ollama`) and
+`DetectModels()` (walks `~/.cache/huggingface/hub`, `~/models`,
+`~/.ollama/models/manifests` and surfaces normalized aliases). Phase 7
+will wire this into `harness init --auto`; until then `harness doctor`
+already consumes the library to tell users what was found.
+
+Deliverables:
+
+- **Auto-detect backends** — scan `$PATH` for `mlx_lm.server`,
+  `llama-server` (llama.cpp), `ollama`. Generate the `backends.json`
+  profile from what's actually installed; one runner means one
+  profile, multiple means multiple.
+- **Auto-detect models** — walk `~/.cache/huggingface/`, `~/models/`,
+  `~/.ollama/models`. Pick a default executor by tags + size (smallest
+  coder ≥ 7B) and a default planner if a non-coder model is present.
+  Surface the picks; user can override interactively.
+- **Auto-detect workspace** — `cwd` becomes `workspace.root`; the
+  language registry (`internal/workspace/language_registry.go`)
+  already does the rest.
+- **Single config file** — collapse `.harness/config.json` and
+  `.harness/backends.json` into `.harness/harness.toml` (TOML is easier for
+  hand-editing; JSON also acceptable). Maintain backward
+  compatibility: the loader reads `.harness/harness.toml` if present, else
+  falls back to the legacy two-file split. Existing two-file projects
+  keep working.
+- **User-level config** — lookup order:
+  `<repo>/.harness/harness.toml` > `~/.config/harness/harness.toml` >
+  embedded defaults. Project files override per-key, not whole-file.
+  A user with one local-LLM setup configures backends *once* at the
+  user level and every project inherits.
+- **`harness init --interactive`** — interactive flow for the 3-4
+  things autodetect can't infer (executor model choice when multiple
+  match, write enable, MCP servers, project name).
+- **Sample brief** — init drops `.planning/example-atom.md` so a fresh
+  user has something to lane against end-to-end.
+
+### Phase 11 — Lifecycle + observability
+
+Today: `harness backend start`, then per-task `harness lane`. Plug-and-play
+needs one entry, supervision, and a clear way to diagnose failures.
+
+**Status (YYYY-MM-DD):** `harness doctor` shipped with checks for
+backend runners, local models, project config, workspace writability,
+python3 (warn), and git (warn). Each non-pass check carries an exact
+remedy line; `--json` emits a machine-parseable summary for CI / dashboard
+consumers. Pending: `harness start`/`stop`/`status` umbrella subcommands,
+`harness service install` for launchd/systemd unit generation,
+`harness logs <session>` unified reader, `harness usage` token/cost reporter.
+
+Deliverables:
+
+- **`harness start`** — launches backends if not already up, warms
+  caches, prints a ready signal, optionally drops into a TUI or stays
+  foreground supervising. Idempotent: if backends are already running,
+  it re-attaches.
+- **`harness stop`** — clean teardown of everything `harness start`
+  brought up. SIGTERM with grace, SIGKILL on timeout (already the
+  Phase 4b shape; lift to umbrella).
+- **`harness status`** — live state: which backends are up on which
+  ports, executor alias, last lane outcome, queue depth if a TUI is
+  running.
+- **`harness doctor`** ✓ — preflight diagnostic. Checks backend
+  runners on PATH, local model presence, project config validity,
+  workspace writability, python3 + git availability. Each non-pass
+  check carries an exact remedy line; `--json` emits machine-parseable
+  output. Future expansion: port-collision detection (overlap with
+  `harness backend status`).
+- **`harness service install`** — generates `launchd` (macOS) /
+  `systemd` (Linux) units for backend supervision and
+  restart-on-crash. Optional; users running `harness start` foreground
+  don't need it.
+- **`harness logs <session>`** and **`harness logs tail`** — unified
+  reader over the three streams documented in
+  `docs/lane-architecture.md` (conversation log, stdout JSONL,
+  telemetry stream). Selects events by role/type rather than asking
+  users to grep three files.
+- **`harness usage`** — tokens/cost per lane / session / day. The
+  `model_session` telemetry events already carry the data; this is a
+  reader on top.
+
+### Phase 12 — Optional: thin orchestrator
+
+The design's existing recommendation (under "What about the
+dual-architect orchestrator loop?") keeps the orchestrator
+consumer-side. That stays correct for projects with a real
+orchestrator (original implementation, etc.). But fresh-install users have no
+orchestrator — they have harness, a brief template, and a blank page.
+
+To close that gap *without* re-coupling harness to a specific
+orchestrator shape, ship a *thin* opinionated entry:
+
+- **`harness run "<natural-language-task>"`** — drafts a brief via the
+  atom-spec lane (currently `harness artifact --no-tools`, scheduled in
+  the audit deferrals as `harness atom-spec draft`), lints it via
+  `harness brief lint`, runs the chosen lane (default plan-execute),
+  runs `harness lane postflight`, and reports a single result.
+- The thin orchestrator does NOT carry retry / re-route / escalation
+  smarts — those stay in dual-architect skill templates (Phase 7).
+  Failures surface as exit codes and diagnostic output; the user
+  decides what to do next.
+
+Status: optional. Ship only if Phase 11 lands cleanly and there's
+appetite for an opinionated entry. Skipping leaves the design's
+existing orchestrator-stays-consumer recommendation fully intact.
+
+### Out of scope for the plug-and-play roadmap
+
+Listed here so they don't leak into a phase by accident:
+
+- **IDE plugins** (VS Code, JetBrains) — value-add but a separate
+  product surface; depends on a stable CLI contract that Phases 1-12
+  establish first.
+- **Web UI / dashboard** — the CLI + TUI cover operator UX; a web
+  layer is over-investment until usage justifies it.
+- **Telemetry export to Grafana/Datadog/etc.** —
+  `logs/telemetry/*.jsonl` is the structured data; ship import
+  recipes for popular tools as docs, not a daemon.
+- **Go-porting model servers** — `mlx_lm.server`, `llama.cpp`,
+  `ollama` are the right boundary; harness shells out via the
+  alias-routing proxy.
+- **Secret management beyond filesystem permissions** — `.harness/`
+  config can carry endpoint tokens but harness does not encrypt or
+  vault them. Projects with stricter requirements integrate their own
+  secret store and pass values via env.
+
+### Suggested order
+
+Phase 9 is the gate — without it, no fresh user can install, and the
+remaining phases produce code paths nobody runs. Phase 10 follows
+because zero-config is the second largest plug-and-play win once the
+binary is reachable. Phase 11 lands next because it converts "has a
+binary, has config" into "is actually running." Phase 12 is optional
+and can ship later (or never) depending on whether fresh-install
+users without orchestrators are a real audience.
+
+```
+9 → 10 → 11 → (12 optional)
+```
+
+## What's already done in this session
+
+- `harness plan-execute` subcommand (full lane orchestration)
+- Pre-execute plan validator (atomic preflight)
+- JSON event stream for phase 2 (`plan_artifact_loaded`,
+  `executor_edit`, `executor_complete` with `duration_ms`, etc.)
+- Step-2 short-circuit for plan-execute mode
+- Brief lint (`harness brief lint`) with anchor-specificity and
+  structure-describing-anchor rules
+- Read-symbol pattern validator at the workspace dispatch layer
+- `harness delegate_edit` tool for tool-level model handoff
+- Six runner-side gates that handle plan-execute correctly
+- The mode flag in `original implementation/scripts/run_harness_impl.sh` (auto-routes
+  plan-execute to the coder, mode-aware preambles)
+
+This is roughly Phase 0 — the lane shape works end-to-end, and original implementation
+exercises it. The 16-23h of work above lifts the rest of the
+plumbing into harness.
