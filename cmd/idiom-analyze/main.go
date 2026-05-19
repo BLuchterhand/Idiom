@@ -9,6 +9,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"flag"
@@ -16,7 +17,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"cmp"
 	"slices"
 	"strings"
 	"time"
@@ -34,6 +34,7 @@ const clusterThreshold = 3
 type logEntry struct {
 	TS      string          `json:"ts"`
 	Kind    string          `json:"kind"`
+	Type    string          `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
 
@@ -186,18 +187,36 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		switch entry.Kind {
+		kind := strings.TrimSpace(entry.Kind)
+		if kind == "" {
+			kind = strings.TrimSpace(entry.Type)
+		}
+		payload := entry.Payload
+		if len(payload) == 0 {
+			payload = []byte(line)
+		}
+		switch kind {
+		case "message":
+			if summary.FirstPrompt == "" {
+				var p struct {
+					Role    string `json:"role"`
+					Content string `json:"content"`
+				}
+				if json.Unmarshal(payload, &p) == nil && p.Role == "user" {
+					summary.FirstPrompt = p.Content
+				}
+			}
 		case "user_turn":
 			if summary.FirstPrompt == "" {
 				var p struct {
 					Prompt string `json:"prompt"`
 				}
-				_ = json.Unmarshal(entry.Payload, &p)
+				_ = json.Unmarshal(payload, &p)
 				summary.FirstPrompt = p.Prompt
 			}
 		case "tool_request":
 			var p toolRequestPayload
-			if err := json.Unmarshal(entry.Payload, &p); err != nil {
+			if err := json.Unmarshal(payload, &p); err != nil {
 				continue
 			}
 			summary.TotalCalls++
@@ -217,10 +236,10 @@ func parseSession(path, session string, summary *sessionSummary) ([]toolCall, er
 			calls = append(calls, tc)
 		case "run_event":
 			var p struct {
-				Role    string `json:"Role"`
-				Content string `json:"Content"`
+				Role    string `json:"role"`
+				Content string `json:"content"`
 			}
-			_ = json.Unmarshal(entry.Payload, &p)
+			_ = json.Unmarshal(payload, &p)
 			if p.Role == "discovery_redirect" {
 				summary.Redirects++
 			}
