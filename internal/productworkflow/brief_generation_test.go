@@ -87,3 +87,36 @@ func TestBriefGenerationBlocksWhenCoverageOrAcceptedInputsMissing(t *testing.T) 
 		t.Fatal("expected blockers")
 	}
 }
+
+func TestBriefGenerationDoesNotTreatHumanOwnerAsReadPath(t *testing.T) {
+	out := GenerateImplementationBrief(BriefGenerationInput{
+		WorkflowState: WorkflowState{TaskID: "impl-1"},
+		PRD: PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Statement: "Do the thing"},
+			},
+		},
+		ADRs: []ParsedADR{
+			{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted"}}},
+		},
+		TDD: TDDLedger{
+			TaskID: "impl-1",
+			Obligations: []TDDObligation{
+				{ID: "TDD-1", Owner: "platform team", Command: "make test"},
+			},
+		},
+		ImplementationRecords: []ImplementationLedgerRecord{
+			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"src/app.go"}}},
+		},
+		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
+	})
+	for _, path := range out.FilesToReadFirst {
+		if path == "platform team" {
+			t.Fatalf("human owner should not be treated as a read path: %#v", out.FilesToReadFirst)
+		}
+	}
+	if !strings.Contains(out.RenderedBrief, "`make test` passes.") {
+		t.Fatalf("make command should be rendered as a passing command:\n%s", out.RenderedBrief)
+	}
+}
