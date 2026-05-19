@@ -14,15 +14,18 @@ const (
 	defaultPRDReportPath      = "reports/prd-draft.report.json"
 )
 
-func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence []EvidenceCard) PRDDraftPromptPlan {
+func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence []EvidenceCard, tdd TDDLedger) PRDDraftPromptPlan {
 	plan := PRDDraftPromptPlan{
 		EvidenceLedgerPath: "evidence/evidence.jsonl",
+		TDDLedgerPath:      "tdd.json",
 		PromptPath:         defaultIfBlank(promptPath, defaultPRDDraftPromptPath),
 		PRDOutputPath:      defaultIfBlank(prdOutputPath, defaultPRDOutputPath),
 		EventsPath:         defaultPRDEventsPath,
 		ReportPath:         defaultPRDReportPath,
 		EvidenceCardIDs:    []string{},
 		EvidenceSummaries:  []PRDEvidenceCardSummary{},
+		TDDObligationIDs:   []string{},
+		TDDObligations:     []PRDTDDObligationSummary{},
 		Findings:           []ProfileFinding{},
 	}
 
@@ -81,7 +84,23 @@ func PlanPRDDraftPrompt(effortRoot, promptPath, prdOutputPath string, evidence [
 	sort.Slice(plan.EvidenceSummaries, func(i, j int) bool { return plan.EvidenceSummaries[i].CardID < plan.EvidenceSummaries[j].CardID })
 	sort.Strings(plan.EvidenceCardIDs)
 	plan.EvidenceCardCount = len(plan.EvidenceCardIDs)
-	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.PRDOutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("prd"))
+	for _, obligation := range tdd.Obligations {
+		id := strings.TrimSpace(obligation.ID)
+		if id == "" {
+			continue
+		}
+		plan.TDDObligationIDs = append(plan.TDDObligationIDs, id)
+		plan.TDDObligations = append(plan.TDDObligations, PRDTDDObligationSummary{
+			ID:       id,
+			Type:     strings.TrimSpace(obligation.Type),
+			Behavior: shorten(obligation.Behavior, 140),
+			Owner:    strings.TrimSpace(obligation.Owner),
+			Command:  strings.TrimSpace(obligation.Command),
+		})
+	}
+	sort.Slice(plan.TDDObligations, func(i, j int) bool { return plan.TDDObligations[i].ID < plan.TDDObligations[j].ID })
+	sort.Strings(plan.TDDObligationIDs)
+	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.PRDOutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("prd")+" --tdd-ledger tdd.json")
 	sortProfileFindings(plan.Findings)
 	return plan
 }
@@ -96,6 +115,7 @@ func RenderPRDDraftPromptText(plan PRDDraftPromptPlan) string {
 	b.WriteString("- Do not use markdown tables for requirements; the parser only recognizes bullet fields.\n")
 	b.WriteString("- For each requirement block, emit these exact bullet keys: - **id**:, - **priority**:, - **statement**:, - **evidence_refs**:, - **tdd_obligations**:, - **owner_alignment**:, - **testability**:, - **metric**:, - **open_questions**:.\n")
 	b.WriteString("- Inline array fields must use bracket syntax, for example [\"EV-001\"] or [].\n")
+	b.WriteString("- tdd_obligations values must be IDs from the supplied TDD obligations list. Do not invent prose obligations or new IDs.\n")
 	b.WriteString("- Use evidence_refs that point to card IDs from the supplied evidence list.\n")
 	b.WriteString("- Preserve unsupported claims and conflicts as open questions or explicitly labeled inference.\n")
 	b.WriteString("- Do not claim acceptance, approval, or final decision status.\n")
@@ -116,6 +136,14 @@ func RenderPRDDraftPromptText(plan PRDDraftPromptPlan) string {
 		b.WriteByte('\n')
 	}
 	if len(plan.EvidenceSummaries) == 0 {
+		b.WriteString("- none\n")
+	}
+	b.WriteByte('\n')
+	b.WriteString(fmt.Sprintf("Known TDD obligations (%d total):\n", len(plan.TDDObligations)))
+	for _, obligation := range plan.TDDObligations {
+		b.WriteString(fmt.Sprintf("- %s | type=%s | owner=%s | command=%s | behavior=%s\n", obligation.ID, orUnknown(obligation.Type), orUnknown(obligation.Owner), orUnknown(obligation.Command), obligation.Behavior))
+	}
+	if len(plan.TDDObligations) == 0 {
 		b.WriteString("- none\n")
 	}
 	return b.String()

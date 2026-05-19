@@ -4606,6 +4606,7 @@ func TestProductResearchRenderPromptsRejectsSymlinkPromptFileBeforePartialWrites
 func TestProductPRDRenderPromptWritesPromptOnly(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
 
 	var stdout, stderr bytes.Buffer
 	code := runProductPRD([]string{
@@ -4634,7 +4635,7 @@ func TestProductPRDRenderPromptWritesPromptOnly(t *testing.T) {
 		t.Fatalf("read prompt: %v", err)
 	}
 	prompt := string(promptData)
-	if !strings.Contains(prompt, "PRD parser/audit contract") || !strings.Contains(prompt, "Do not claim acceptance") {
+	if !strings.Contains(prompt, "PRD parser/audit contract") || !strings.Contains(prompt, "Do not claim acceptance") || !strings.Contains(prompt, "Known TDD obligations") || !strings.Contains(prompt, "TDD-001") {
 		t.Fatalf("missing PRD contract guidance in prompt:\n%s", prompt)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "prd.md")); !os.IsNotExist(err) {
@@ -4651,6 +4652,7 @@ func TestProductPRDRenderPromptWritesPromptOnly(t *testing.T) {
 func TestProductPRDRenderPromptFailsClosedOnInvalidEvidenceLedger(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "evidence/evidence.jsonl", "{bad json")
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
 	var stdout, stderr bytes.Buffer
 	code := runProductPRD([]string{
 		"--effort-root", dir,
@@ -4679,6 +4681,7 @@ func TestProductPRDRenderPromptFailsClosedOnInvalidEvidenceLedger(t *testing.T) 
 
 func TestProductPRDRenderPromptFailsClosedWhenEvidenceLedgerMissing(t *testing.T) {
 	dir := t.TempDir()
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
 	var stdout, stderr bytes.Buffer
 	code := runProductPRD([]string{
 		"--effort-root", dir,
@@ -4705,6 +4708,7 @@ func TestProductPRDRenderPromptFailsClosedWhenEvidenceLedgerMissing(t *testing.T
 func TestProductPRDRenderPromptRejectsUnsafePromptOrOutputPath(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "evidence/evidence.jsonl", validTestEvidenceJSONL())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
 
 	var stdout, stderr bytes.Buffer
 	code := runProductPRD([]string{
@@ -4771,6 +4775,29 @@ created_at: 2026-05-17T00:00:00Z
 	}
 	if out.Status != "fail" || !strings.Contains(out.Error, "PRD has no requirements") {
 		t.Fatalf("expected PRD parser failure, got %#v", out)
+	}
+}
+
+func TestProductValidateArtifactFailsClosedForUnknownPRDTDDObligation(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "prd.md", strings.Replace(validTestPRDMarkdown(), `["TDD-001"]`, `["The generated test must pass."]`, 1))
+	var stdout, stderr bytes.Buffer
+	code := runProductValidateArtifact([]string{
+		"--kind", "prd",
+		"--path", filepath.Join(dir, "prd.md"),
+		"--tdd-ledger", filepath.Join(dir, "tdd.json"),
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for traceability-invalid PRD, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productValidateArtifactOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "fail" || !strings.Contains(out.Error, "references TDD obligation") {
+		t.Fatalf("expected PRD TDD cross-link failure, got %#v", out)
 	}
 }
 
@@ -4951,6 +4978,31 @@ func TestProductValidateArtifactFailsClosedForInvalidGeneratedADR(t *testing.T) 
 	}
 	if out.Status != "fail" || !strings.Contains(out.Error, "invalid coverage_tier") {
 		t.Fatalf("expected ADR coverage tier failure, got %#v", out)
+	}
+}
+
+func TestProductValidateArtifactFailsClosedForUnknownADRTDDObligation(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, "prd.md", validTestPRDMarkdown())
+	writeTestFile(t, dir, "tdd.json", validTestTDDJSON())
+	writeTestFile(t, dir, "adr.md", strings.Replace(validTestADRMarkdown(), "TDD-001", "The generated test must pass.", 1))
+	var stdout, stderr bytes.Buffer
+	code := runProductValidateArtifact([]string{
+		"--kind", "adr",
+		"--path", filepath.Join(dir, "adr.md"),
+		"--prd", filepath.Join(dir, "prd.md"),
+		"--tdd-ledger", filepath.Join(dir, "tdd.json"),
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1 for traceability-invalid ADR, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productValidateArtifactOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "fail" || !strings.Contains(out.Error, "tdd_obligation") {
+		t.Fatalf("expected ADR TDD cross-link failure, got %#v", out)
 	}
 }
 

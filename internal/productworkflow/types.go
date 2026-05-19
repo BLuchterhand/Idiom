@@ -424,16 +424,19 @@ type ResearchArtifactPromptRunSpec struct {
 }
 
 type PRDDraftPromptPlan struct {
-	EvidenceLedgerPath string                   `json:"evidence_ledger_path"`
-	PromptPath         string                   `json:"prompt_path"`
-	PRDOutputPath      string                   `json:"prd_output_path"`
-	EventsPath         string                   `json:"events_path"`
-	ReportPath         string                   `json:"report_path"`
-	Command            string                   `json:"command"`
-	EvidenceCardCount  int                      `json:"evidence_card_count"`
-	EvidenceCardIDs    []string                 `json:"evidence_card_ids"`
-	EvidenceSummaries  []PRDEvidenceCardSummary `json:"evidence_summaries"`
-	Findings           []ProfileFinding         `json:"findings"`
+	EvidenceLedgerPath string                    `json:"evidence_ledger_path"`
+	TDDLedgerPath      string                    `json:"tdd_ledger_path,omitempty"`
+	PromptPath         string                    `json:"prompt_path"`
+	PRDOutputPath      string                    `json:"prd_output_path"`
+	EventsPath         string                    `json:"events_path"`
+	ReportPath         string                    `json:"report_path"`
+	Command            string                    `json:"command"`
+	EvidenceCardCount  int                       `json:"evidence_card_count"`
+	EvidenceCardIDs    []string                  `json:"evidence_card_ids"`
+	EvidenceSummaries  []PRDEvidenceCardSummary  `json:"evidence_summaries"`
+	TDDObligationIDs   []string                  `json:"tdd_obligation_ids,omitempty"`
+	TDDObligations     []PRDTDDObligationSummary `json:"tdd_obligations,omitempty"`
+	Findings           []ProfileFinding          `json:"findings"`
 }
 
 type PRDEvidenceCardSummary struct {
@@ -443,6 +446,14 @@ type PRDEvidenceCardSummary struct {
 	Freshness   string `json:"freshness"`
 	Claim       string `json:"claim"`
 	Uncertainty string `json:"uncertainty"`
+}
+
+type PRDTDDObligationSummary struct {
+	ID       string `json:"id"`
+	Type     string `json:"type"`
+	Behavior string `json:"behavior"`
+	Owner    string `json:"owner"`
+	Command  string `json:"command"`
 }
 
 type ADRDraftPromptPlan struct {
@@ -668,11 +679,13 @@ type ADREvidenceCardSummary struct {
 }
 
 type ADRPRDRequirementSummary struct {
-	ID          string `json:"id"`
-	Priority    string `json:"priority"`
-	Statement   string `json:"statement"`
-	Evidence    int    `json:"evidence_ref_count"`
-	Obligations int    `json:"tdd_obligation_count"`
+	ID                string   `json:"id"`
+	Priority          string   `json:"priority"`
+	Statement         string   `json:"statement"`
+	Evidence          int      `json:"evidence_ref_count"`
+	Obligations       int      `json:"tdd_obligation_count"`
+	EvidenceRefs      []string `json:"evidence_ref_ids,omitempty"`
+	TDDObligationRefs []string `json:"tdd_obligation_ids,omitempty"`
 }
 
 type ADRDocument struct {

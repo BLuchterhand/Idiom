@@ -22,7 +22,7 @@ func TestADRDraftPromptPlanDeterministic(t *testing.T) {
 	if canonicalADRDraftPlan(plan1) != canonicalADRDraftPlan(plan2) {
 		t.Fatalf("expected deterministic ADR draft prompt plan")
 	}
-	if plan1.Command != `idiom artifact --prompt-file adrs/adr.prompt.md --output adrs/ADR-draft.md --json-out events/adr-draft.events.jsonl --report-out reports/adr-draft.report.json --no-tools --mechanical-repair --validator 'idiom product validate-artifact --kind adr --path "$IDIOM_ARTIFACT"'` {
+	if plan1.Command != `idiom artifact --prompt-file adrs/adr.prompt.md --output adrs/ADR-draft.md --json-out events/adr-draft.events.jsonl --report-out reports/adr-draft.report.json --no-tools --mechanical-repair --validator 'idiom product validate-artifact --kind adr --path "$IDIOM_ARTIFACT" --prd prd.md --tdd-ledger tdd.json'` {
 		t.Fatalf("unexpected command recipe: %q", plan1.Command)
 	}
 	prompt := RenderADRDraftPromptText(plan1)
@@ -30,6 +30,8 @@ func TestADRDraftPromptPlanDeterministic(t *testing.T) {
 	assertContains(t, prompt, "Keep acceptance metadata fields empty unless a human explicitly provided them")
 	assertContains(t, prompt, "coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional")
 	assertContains(t, prompt, "Do not use priority words such as must, should, or could as coverage tiers")
+	assertContains(t, prompt, "Do not invent prose obligations or new IDs")
+	assertContains(t, prompt, "tdd_obligations=[TDD-1]")
 	assertContains(t, prompt, "Do not claim acceptance, approval, or supersession.")
 	assertContains(t, prompt, "PRD requirements (2 total):")
 	assertContains(t, prompt, "Evidence cards (2 total):")

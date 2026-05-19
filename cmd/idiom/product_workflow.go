@@ -97,9 +97,13 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 	fs.SetOutput(stderr)
 	var kind string
 	var path string
+	var prdPath string
+	var tddLedgerPath string
 	var jsonOutput bool
 	fs.StringVar(&kind, "kind", "", "artifact kind to validate: prd or adr")
 	fs.StringVar(&path, "path", "", "path to the generated artifact")
+	fs.StringVar(&prdPath, "prd", "", "optional PRD path for ADR cross-link validation")
+	fs.StringVar(&tddLedgerPath, "tdd-ledger", "", "optional tdd.json path for PRD/ADR cross-link validation")
 	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
 	if err := fs.Parse(args); err != nil {
 		if err == flag.ErrHelp {
@@ -131,9 +135,63 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 	} else {
 		switch kind {
 		case "prd":
-			_, err = productworkflow.ParsePRDMarkdown(data)
+			var prd productworkflow.PRDDocument
+			prd, err = productworkflow.ParsePRDMarkdown(data)
+			if err == nil && strings.TrimSpace(tddLedgerPath) != "" {
+				var tdd productworkflow.TDDLedger
+				tdd, err = parseProductValidatorTDDLedger(tddLedgerPath)
+				if err == nil {
+					tddIDs := map[string]bool{}
+					for _, obligation := range tdd.Obligations {
+						id := strings.TrimSpace(obligation.ID)
+						if id != "" {
+							tddIDs[id] = true
+						}
+					}
+					if linkErrs := productworkflow.ValidatePRDTDDObligationCrossLinks(prd.Requirements, tddIDs); len(linkErrs) > 0 {
+						err = errors.New(linkErrs[0].Message)
+					}
+				}
+			}
 		case "adr":
-			_, err = productworkflow.ParseADRMarkdown(data)
+			var adr productworkflow.ADRDocument
+			adr, err = productworkflow.ParseADRMarkdown(data)
+			if err == nil && (strings.TrimSpace(prdPath) != "" || strings.TrimSpace(tddLedgerPath) != "") {
+				var prdIDs map[string]bool
+				if strings.TrimSpace(prdPath) != "" {
+					var prd productworkflow.PRDDocument
+					prd, err = parseProductValidatorPRD(prdPath)
+					if err == nil {
+						prdIDs = map[string]bool{}
+						for _, req := range prd.Requirements {
+							id := strings.TrimSpace(req.ID)
+							if id != "" {
+								prdIDs[id] = true
+							}
+						}
+					}
+				}
+				var tddIDs map[string]bool
+				if err == nil && strings.TrimSpace(tddLedgerPath) != "" {
+					var tdd productworkflow.TDDLedger
+					tdd, err = parseProductValidatorTDDLedger(tddLedgerPath)
+					if err == nil {
+						tddIDs = map[string]bool{}
+						for _, obligation := range tdd.Obligations {
+							id := strings.TrimSpace(obligation.ID)
+							if id != "" {
+								tddIDs[id] = true
+							}
+						}
+					}
+				}
+				if err == nil {
+					linkErrs := productworkflow.ValidateADRCrossLinks([]productworkflow.ParsedADR{{RelPath: cleanPath, Doc: adr}}, prdIDs, nil, tddIDs)
+					if len(linkErrs) > 0 {
+						err = errors.New(linkErrs[0].Message)
+					}
+				}
+			}
 		}
 		if err != nil {
 			out.Status = "fail"
@@ -164,6 +222,22 @@ func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Write
 		return 1
 	}
 	return 0
+}
+
+func parseProductValidatorPRD(path string) (productworkflow.PRDDocument, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return productworkflow.PRDDocument{}, fmt.Errorf("read PRD cross-link input: %w", err)
+	}
+	return productworkflow.ParsePRDMarkdown(data)
+}
+
+func parseProductValidatorTDDLedger(path string) (productworkflow.TDDLedger, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return productworkflow.TDDLedger{}, fmt.Errorf("read TDD cross-link input: %w", err)
+	}
+	return productworkflow.ParseTDDLedgerJSON(data)
 }
 
 func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -1013,6 +1087,7 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 	evidencePath := filepath.Join(absRoot, "evidence", "evidence.jsonl")
 	evidenceData, err := os.ReadFile(evidencePath)
 	var evidenceCards []productworkflow.EvidenceCard
+	var tddLedger productworkflow.TDDLedger
 	var findings []productworkflow.ProfileFinding
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -1041,7 +1116,36 @@ func runProductPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			})
 		}
 	}
-	plan := productworkflow.PlanPRDDraftPrompt(absRoot, prdPromptPath, prdOutputPath, evidenceCards)
+	tddPath := filepath.Join(absRoot, "tdd.json")
+	tddData, err := os.ReadFile(tddPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "missing_tdd_ledger",
+				Message:  "required tdd.json not found",
+				File:     "tdd.json",
+				Severity: "error",
+			})
+		} else {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "read_error",
+				Message:  fmt.Sprintf("failed to read tdd.json: %v", err),
+				File:     "tdd.json",
+				Severity: "error",
+			})
+		}
+	} else {
+		tddLedger, err = productworkflow.ParseTDDLedgerJSON(tddData)
+		if err != nil {
+			findings = append(findings, productworkflow.ProfileFinding{
+				Kind:     "validation_error",
+				Message:  fmt.Sprintf("existing tdd.json failed validation: %v", err),
+				File:     "tdd.json",
+				Severity: "error",
+			})
+		}
+	}
+	plan := productworkflow.PlanPRDDraftPrompt(absRoot, prdPromptPath, prdOutputPath, evidenceCards, tddLedger)
 	plan.Findings = append(findings, plan.Findings...)
 	productworkflow.SortProfileFindings(plan.Findings)
 	writeBlocked := hasResearchErrorFinding(plan.Findings)

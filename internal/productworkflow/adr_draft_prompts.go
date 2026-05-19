@@ -78,11 +78,13 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 		}
 		plan.PRDRequirementIDs = append(plan.PRDRequirementIDs, id)
 		plan.PRDRequirementSummary = append(plan.PRDRequirementSummary, ADRPRDRequirementSummary{
-			ID:          id,
-			Priority:    strings.TrimSpace(req.Priority),
-			Statement:   shorten(req.Statement, 160),
-			Evidence:    len(req.EvidenceRefs),
-			Obligations: len(req.TDDObligations),
+			ID:                id,
+			Priority:          strings.TrimSpace(req.Priority),
+			Statement:         shorten(req.Statement, 160),
+			Evidence:          len(req.EvidenceRefs),
+			Obligations:       len(req.TDDObligations),
+			EvidenceRefs:      stableUniqueStrings(req.EvidenceRefs),
+			TDDObligationRefs: stableUniqueStrings(req.TDDObligations),
 		})
 	}
 	sort.Slice(plan.EvidenceSummaries, func(i, j int) bool { return plan.EvidenceSummaries[i].CardID < plan.EvidenceSummaries[j].CardID })
@@ -91,7 +93,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 	sort.Strings(plan.PRDRequirementIDs)
 	plan.EvidenceCardCount = len(plan.EvidenceCardIDs)
 	plan.PRDRequirementCount = len(plan.PRDRequirementIDs)
-	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.ADROutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("adr"))
+	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.ADROutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("adr")+" --prd prd.md --tdd-ledger tdd.json")
 	sortProfileFindings(plan.Findings)
 	return plan
 }
@@ -104,6 +106,7 @@ func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 	b.WriteString("- Include front matter fields: schema_version, adr_id, status, prd_refs, evidence_refs, tdd_obligations, coverage_tier.\n")
 	b.WriteString("- Use status: draft. Keep acceptance metadata fields empty unless a human explicitly provided them: accepted_at, accepted_by, acceptance_profile.\n")
 	b.WriteString("- coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional. Do not use priority words such as must, should, or could as coverage tiers.\n")
+	b.WriteString("- prd_refs, evidence_refs, and tdd_obligations must use IDs from the supplied PRD requirements and evidence lists. Do not invent prose obligations or new IDs.\n")
 	b.WriteString("- Body sections are required: Context, Decision, Alternatives Considered, Evidence, Consequences, Compatibility and Migration, TDD Obligations, Rollback, Open Questions.\n")
 	b.WriteString("- Cite PRD requirement IDs from the supplied PRD requirement list and evidence card IDs from the supplied evidence list.\n")
 	b.WriteString("- Preserve conflicts and unsupported claims as open questions or explicitly labeled inference.\n")
@@ -118,7 +121,7 @@ func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 
 	b.WriteString(fmt.Sprintf("PRD requirements (%d total):\n", plan.PRDRequirementCount))
 	for _, req := range plan.PRDRequirementSummary {
-		b.WriteString(fmt.Sprintf("- %s | priority=%s | statement=%s | evidence_refs=%d | tdd_obligations=%d\n", req.ID, orUnknown(req.Priority), req.Statement, req.Evidence, req.Obligations))
+		b.WriteString(fmt.Sprintf("- %s | priority=%s | statement=%s | evidence_refs=%v | tdd_obligations=%v\n", req.ID, orUnknown(req.Priority), req.Statement, req.EvidenceRefs, req.TDDObligationRefs))
 	}
 	if len(plan.PRDRequirementSummary) == 0 {
 		b.WriteString("- none\n")
