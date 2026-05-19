@@ -231,6 +231,9 @@ func writeProductWorkflowTransition(absRoot string, state WorkflowState, event P
 			return fmt.Errorf("workflow_state artifact_paths.events must be a safe relative path")
 		}
 		eventsPath = filepath.Join(absRoot, filepath.FromSlash(rel))
+		if err := rejectTransitionSymlinkParent(absRoot, eventsPath); err != nil {
+			return err
+		}
 		if err := rejectTransitionSymlink(eventsPath); err != nil && !os.IsNotExist(err) {
 			return err
 		}
@@ -303,6 +306,31 @@ func rejectTransitionTempPath(path string) error {
 		return fmt.Errorf("%s must not be a symlink", filepath.Base(path))
 	}
 	return fmt.Errorf("%s already exists", filepath.Base(path))
+}
+
+func rejectTransitionSymlinkParent(absRoot, targetPath string) error {
+	rel, err := filepath.Rel(absRoot, filepath.Dir(targetPath))
+	if err != nil || rel == "." {
+		return err
+	}
+	current := absRoot
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, statErr := os.Lstat(current)
+		if os.IsNotExist(statErr) {
+			return nil
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s must not be a symlink", filepath.Base(current))
+		}
+	}
+	return nil
 }
 
 func rollbackProductWorkflowTransition(workflowPath string, workflowBytes []byte, eventsPath string, eventsBytes []byte, eventsExisted bool) error {

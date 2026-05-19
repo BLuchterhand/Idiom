@@ -207,6 +207,30 @@ func TestCloseTransitionBlockedByOpenBlockers(t *testing.T) {
 	}
 }
 
+func TestWriteProductWorkflowTransitionRejectsSymlinkedEventsParent(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "workflow_state.json"), []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("write workflow_state.json: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "events")); err != nil {
+		t.Fatalf("symlink events parent: %v", err)
+	}
+
+	err := writeProductWorkflowTransition(root, WorkflowState{
+		ArtifactPaths: map[string]string{"events": "events/log.jsonl"},
+	}, ProductWorkflowTransitionEvent{Event: "transition_test"})
+	if err == nil {
+		t.Fatal("expected symlinked events parent to be rejected")
+	}
+	if !strings.Contains(err.Error(), "events must not be a symlink") {
+		t.Fatalf("expected symlink parent error, got %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "log.jsonl")); !os.IsNotExist(statErr) {
+		t.Fatalf("transition must not write through symlinked events parent, stat err=%v", statErr)
+	}
+}
+
 func TestCloseTransitionBlockedByOpenObligations(t *testing.T) {
 	result := EvaluateTransition(TransitionInput{
 		StatusBucket:    "started",
