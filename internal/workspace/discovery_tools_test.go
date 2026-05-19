@@ -2618,6 +2618,20 @@ func TestLanguageToolResultsExposeStructuredRelationships(t *testing.T) {
 	}
 }
 
+func TestLanguageToolResultsNormalizeBackslashRelationshipPaths(t *testing.T) {
+	result := annotateLanguageRelationships(ToolResult{
+		Tool:   "python_calls_from",
+		Output: `src\app.py:2 -> helper in src\lib.py:1`,
+	})
+	if len(result.Relationships) != 1 {
+		t.Fatalf("expected parsed relationship payload, got %#v", result)
+	}
+	relationship := result.Relationships[0]
+	if relationship.SourcePath != "src/app.py" || relationship.TargetPath != "src/lib.py" {
+		t.Fatalf("expected slash-normalized relationship paths, got %#v", relationship)
+	}
+}
+
 func TestLSPCallHierarchyFormattersReturnStructuredRelationships(t *testing.T) {
 	root := t.TempDir()
 	app := filepath.Join(root, "app.py")

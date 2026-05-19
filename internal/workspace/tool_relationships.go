@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 )
@@ -202,8 +203,8 @@ func parseRelationshipLocation(text string) (string, int, string, bool) {
 func cleanRelationshipPath(path string) string {
 	path = strings.Trim(strings.TrimSpace(path), `"'(),`)
 	path = strings.TrimPrefix(path, "file://")
-	path = filepath.ToSlash(filepath.Clean(path))
-	if path == "." || strings.HasPrefix(path, "../") {
+	path = pathpkg.Clean(strings.ReplaceAll(filepath.ToSlash(path), "\\", "/"))
+	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
 		return ""
 	}
 	return strings.TrimPrefix(path, "./")
