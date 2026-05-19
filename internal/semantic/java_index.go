@@ -322,9 +322,9 @@ func (idx *JavaIndex) FileByPath(path string) *JavaFile {
 	if idx == nil {
 		return nil
 	}
-	path = filepath.ToSlash(strings.TrimSpace(path))
+	path = normalizeFileLookupPath(path)
 	for i := range idx.Files {
-		if idx.Files[i].Path == path {
+		if normalizeFileLookupPath(idx.Files[i].Path) == path {
 			return &idx.Files[i]
 		}
 	}
