@@ -105,6 +105,18 @@ release:
     curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install.sh | sh
     ```
 
+    Tool sidecar only (no model harness or queue setup):
+
+    ```
+    curl -fsSL https://raw.githubusercontent.com/BLuchterhand/idiom/main/install-tools.sh | sh
+    ```
+
+    Windows PowerShell tool sidecar:
+
+    ```powershell
+    irm https://raw.githubusercontent.com/BLuchterhand/idiom/main/install-tools.ps1 | iex
+    ```
+
     See the [README's Quick install section](https://github.com/BLuchterhand/idiom#quick-install-binary) for override knobs (`IDIOM_VERSION`, `IDIOM_INSTALL_DIR`, `IDIOM_REPO`).
 
     Or grab the binary for your platform from the assets above.

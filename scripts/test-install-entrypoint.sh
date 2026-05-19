@@ -140,20 +140,30 @@ PY
 # Subcommands listed in cmd/idiom/main.go's dispatch table. Order
 # matches the dispatch order so changes to the table show up here too.
 SURFACE_SUBCOMMANDS=(
-  version
-  doctor
+  tool
+  mcp
+  context
+  atom
+  artifact
+  implement
+  plan-execute
+  recover
   lane
   backend
-  brief
-  plan-execute
-  implement
-  artifact
-  context
   architect
   audit
   ranker
+  brief
   probe
-  tool
+  queue
+  local-ops
+  product
+  product-evidence
+  release
+  init
+  skills
+  version
+  doctor
 )
 
 verify_subcommand_help() {

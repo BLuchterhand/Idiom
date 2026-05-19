@@ -107,11 +107,12 @@ for _ in 1 2 3 4 5 6 7 8 9 10; do
   sleep 0.3
 done
 $ping_ok || fail "queue daemon never responded to ping after install"
-idiom queue status </dev/null 2>&1 | grep -q "qwen-35b" \
+status_out="$(idiom queue status </dev/null 2>&1)"
+echo "$status_out" | grep -q "qwen-35b" \
   || fail "queue status should list qwen-35b pool"
-idiom queue status </dev/null 2>&1 | grep -q "qwen-27b" \
+echo "$status_out" | grep -q "qwen-27b" \
   || fail "queue status should list qwen-27b pool"
-idiom queue status </dev/null 2>&1 | grep -q "qwen-coder" \
+echo "$status_out" | grep -q "qwen-coder" \
   || fail "queue status should list qwen-coder pool"
 echo "  ok"
 

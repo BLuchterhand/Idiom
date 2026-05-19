@@ -1,0 +1,62 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestInstallToolsScriptsExposeSidecarOnlyLaunchers(t *testing.T) {
+	root := repoRootForInstallToolTest(t)
+
+	unixScript := readInstallToolFile(t, root, "install-tools.sh")
+	for _, want := range []string{
+		"idiom-tool-bin",
+		"exec \"$DIR/idiom-tool-bin\" tool \"$@\"",
+		"exec \"$DIR/idiom-tool-bin\" mcp serve --stdio --profile discovery \"$@\"",
+		"use the Windows installer",
+		"list --profile discovery",
+	} {
+		if !strings.Contains(unixScript, want) {
+			t.Fatalf("install-tools.sh missing %q", want)
+		}
+	}
+	if strings.Contains(unixScript, "${INSTALL_DIR}/idiom\"") {
+		t.Fatal("tools installer must not expose the full idiom command name")
+	}
+
+	powerShellScript := readInstallToolFile(t, root, "install-tools.ps1")
+	for _, want := range []string{
+		"windows_amd64.zip",
+		"idiom-tool-bin.exe",
+		"idiom-tool.cmd",
+		"idiom-mcp-discovery.cmd",
+		"Get-FileHash -Algorithm SHA256",
+		"Expand-Archive",
+		"tool %*",
+		"mcp serve --stdio --profile discovery %*",
+	} {
+		if !strings.Contains(powerShellScript, want) {
+			t.Fatalf("install-tools.ps1 missing %q", want)
+		}
+	}
+}
+
+func repoRootForInstallToolTest(t *testing.T) string {
+	t.Helper()
+	cwd, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("get cwd: %v", err)
+	}
+	return filepath.Clean(filepath.Join(cwd, "../.."))
+}
+
+func readInstallToolFile(t *testing.T, root string, rel string) string {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(root, rel))
+	if err != nil {
+		t.Fatalf("read %s: %v", rel, err)
+	}
+	return string(data)
+}
