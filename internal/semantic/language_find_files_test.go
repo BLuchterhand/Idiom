@@ -46,6 +46,9 @@ func TestFileByPathNormalizesPathSeparators(t *testing.T) {
 	if got := goIndex.FileByPath(` internal\app\app.go `); got == nil || got.Path != "internal/app/app.go" {
 		t.Fatalf("Go FileByPath should normalize caller path separators, got %#v", got)
 	}
+	if got := goIndex.FileByPath(`.\internal\app\app.go`); got == nil || got.Path != "internal/app/app.go" {
+		t.Fatalf("Go FileByPath should normalize caller current-directory prefix, got %#v", got)
+	}
 
 	rustIndex := &RustIndex{Files: []RustFile{{Path: "src/lib.rs"}}}
 	if got := rustIndex.FileByPath(`src\lib.rs`); got == nil || got.Path != "src/lib.rs" {

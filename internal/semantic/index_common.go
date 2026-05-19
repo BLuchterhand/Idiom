@@ -90,6 +90,9 @@ func normalizeSearchPath(value string) string {
 func normalizeFileLookupPath(value string) string {
 	value = strings.TrimSpace(value)
 	value = strings.ReplaceAll(value, "\\", "/")
+	for strings.HasPrefix(value, "./") {
+		value = strings.TrimPrefix(value, "./")
+	}
 	return filepath.ToSlash(value)
 }
 
