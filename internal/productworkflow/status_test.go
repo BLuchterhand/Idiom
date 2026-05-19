@@ -339,6 +339,17 @@ func TestLoadProductStatusRedactsUnsafeRecoveryPacketPath(t *testing.T) {
 	}
 }
 
+func TestProductRecoverySafePathsRejectsBackslashTraversal(t *testing.T) {
+	got := productRecoverySafePaths([]string{
+		`docs\product-workflows\prd.md`,
+		`..\secret.md`,
+		`docs\..\secret.md`,
+	})
+	if len(got) != 1 || got[0] != "docs/product-workflows/prd.md" {
+		t.Fatalf("expected only normalized safe product link, got %#v", got)
+	}
+}
+
 func TestProductOperatorStatusViewUnblocksClosedRecoveryPacket(t *testing.T) {
 	dir := t.TempDir()
 	packetJSON := statusTestRecoveryPacketJSON(t)

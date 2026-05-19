@@ -758,7 +758,20 @@ func productRecoverySafePaths(paths []string) []string {
 	seen := map[string]bool{}
 	var out []string
 	for _, path := range paths {
-		path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+		raw := strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
+		if raw == "" {
+			continue
+		}
+		for _, part := range strings.Split(raw, "/") {
+			if part == ".." {
+				raw = ""
+				break
+			}
+		}
+		if raw == "" {
+			continue
+		}
+		path = filepath.ToSlash(filepath.Clean(filepath.FromSlash(raw)))
 		if path == "" || path == "." || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) || seen[path] {
 			continue
 		}
