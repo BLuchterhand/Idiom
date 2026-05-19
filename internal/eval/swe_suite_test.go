@@ -491,6 +491,12 @@ func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
 	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "does not contain required text") {
 		t.Fatalf("expected file content failure, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
+
+	task.Oracle.RequireFileContent[0] = SWEFileContentExpectation{Path: `..\secret.md`, Contains: []string{"secret"}}
+	report = EvaluateSWETask("docs.jsonl", records, task)
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "escapes workspace root") {
+		t.Fatalf("expected unsafe file content path failure, got passed=%t findings=%#v", report.Passed, report.Findings)
+	}
 }
 
 func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {

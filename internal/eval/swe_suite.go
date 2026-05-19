@@ -854,13 +854,20 @@ func evaluateGroundednessOracle(metrics Metrics, oracle SWEGroundednessOracle) (
 		if path == "" {
 			continue
 		}
+		if err := validateFixturePathSyntax(path); err != nil {
+			if strings.Contains(err.Error(), "relative") {
+				return 0, fmt.Sprintf("groundedness oracle context path %q must be relative", raw)
+			}
+			return 0, fmt.Sprintf("groundedness oracle context path %q escapes workspace root", raw)
+		}
+		path = normalizedFixturePath(path)
 		if filepath.IsAbs(path) {
 			return 0, fmt.Sprintf("groundedness oracle context path %q must be relative", raw)
 		}
 		if root == "" {
 			return 0, fmt.Sprintf("groundedness oracle for %q has no workspace root in log", raw)
 		}
-		full := filepath.Clean(filepath.Join(root, path))
+		full := filepath.Clean(filepath.Join(root, filepath.FromSlash(path)))
 		rel, err := filepath.Rel(root, full)
 		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 			return 0, fmt.Sprintf("groundedness oracle context path %q escapes workspace root", raw)
@@ -930,14 +937,21 @@ func evaluateFileContentOracle(workspaceRoot string, expected SWEFileContentExpe
 	if root == "" {
 		return []string{fmt.Sprintf("file content oracle for %q has no workspace root in log", expected.Path)}
 	}
-	path := filepath.Clean(strings.TrimSpace(expected.Path))
+	path := strings.TrimSpace(expected.Path)
 	if path == "" || path == "." {
 		return []string{"file content oracle has empty path"}
 	}
+	if err := validateFixturePathSyntax(path); err != nil {
+		if strings.Contains(err.Error(), "relative") {
+			return []string{fmt.Sprintf("file content oracle path %q must be relative", expected.Path)}
+		}
+		return []string{fmt.Sprintf("file content oracle path %q escapes workspace root", expected.Path)}
+	}
+	path = normalizedFixturePath(path)
 	if filepath.IsAbs(path) {
 		return []string{fmt.Sprintf("file content oracle path %q must be relative", expected.Path)}
 	}
-	fullPath := filepath.Clean(filepath.Join(root, path))
+	fullPath := filepath.Clean(filepath.Join(root, filepath.FromSlash(path)))
 	rel, err := filepath.Rel(root, fullPath)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return []string{fmt.Sprintf("file content oracle path %q escapes workspace root", expected.Path)}
