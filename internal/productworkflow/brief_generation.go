@@ -398,10 +398,16 @@ func collectTDDReadFirstPaths(ledger TDDLedger) []string {
 }
 
 func looksLikeWorkspaceFile(path string) bool {
+	path = strings.ReplaceAll(strings.TrimSpace(path), "\\", "/")
 	if path == "" || filepath.IsAbs(path) {
 		return false
 	}
-	clean := filepath.ToSlash(filepath.Clean(path))
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
 	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return false
 	}

@@ -5,6 +5,15 @@ import (
 	"testing"
 )
 
+func TestLooksLikeWorkspaceFileNormalizesBackslashesAndRejectsTraversal(t *testing.T) {
+	if !looksLikeWorkspaceFile(`internal\productworkflow\status.go`) {
+		t.Fatal("expected backslash workspace path to be recognized")
+	}
+	if looksLikeWorkspaceFile(`..\secret.go`) || looksLikeWorkspaceFile(`internal\..\secret.go`) {
+		t.Fatal("expected backslash traversal paths to be rejected")
+	}
+}
+
 func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 	input := BriefGenerationInput{
 		WorkflowState: WorkflowState{
