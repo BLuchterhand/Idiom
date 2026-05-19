@@ -37,6 +37,13 @@ func LintEffortFolder(root string) LintSummaryResult {
 	checkFile := func(relPath string, validate func([]byte) error) {
 		fullPath := filepath.Join(root, relPath)
 		result.CheckedFiles = append(result.CheckedFiles, relPath)
+		if info, statErr := os.Lstat(fullPath); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+			addFinding("symlink_file", relPath, "required file must not be a symlink")
+			return
+		} else if statErr != nil && !os.IsNotExist(statErr) {
+			addFinding("read_error", relPath, statErr.Error())
+			return
+		}
 		data, err := os.ReadFile(fullPath)
 		if err != nil {
 			if os.IsNotExist(err) {
@@ -133,6 +140,10 @@ func LintEffortFolder(root string) LintSummaryResult {
 			relPath := filepath.Join("reports", entry.Name())
 			result.CheckedFiles = append(result.CheckedFiles, relPath)
 			reportPaths[relPath] = true
+			if entry.Type()&os.ModeSymlink != 0 {
+				addFinding("symlink_file", relPath, "report file must not be a symlink")
+				continue
+			}
 			data, readErr := os.ReadFile(filepath.Join(reportsDir, entry.Name()))
 			if readErr != nil {
 				addFinding("read_error", relPath, readErr.Error())
