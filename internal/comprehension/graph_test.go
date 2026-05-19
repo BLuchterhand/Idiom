@@ -163,6 +163,23 @@ func format(value string) string {
 	}
 }
 
+func TestCleanScopeRejectsTraversalAndNormalizesBackslashes(t *testing.T) {
+	if got := cleanScope(`pkg\file.go`); got != "pkg/file.go" {
+		t.Fatalf("cleanScope(backslash path) = %q, want pkg/file.go", got)
+	}
+	for _, path := range []string{"../outside.go", "/tmp/outside.go", `C:\tmp\outside.go`} {
+		if got := cleanScope(path); got != "." {
+			t.Fatalf("cleanScope(%q) = %q, want root scope", path, got)
+		}
+	}
+	if !pathInScope(`pkg\file.go`, "pkg") {
+		t.Fatalf("pathInScope should normalize backslash paths")
+	}
+	if pathInScope("../outside.go", "pkg") {
+		t.Fatalf("pathInScope should reject traversal paths")
+	}
+}
+
 func TestStatusReportsCollectorVersionMismatch(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/collector\n\ngo 1.22\n")

@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -11,7 +12,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"cmp"
 	"regexp"
 	"slices"
 	"sort"
@@ -1612,9 +1612,21 @@ func normalizeRoot(root string) (string, error) {
 }
 
 func cleanScope(path string) string {
-	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-	if path == "" || path == "." {
+	path = cleanScopePath(path)
+	if path == "" {
 		return "."
+	}
+	return path
+}
+
+func cleanScopePath(path string) string {
+	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/")
+	if normalized == "" || filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") || looksLikeWindowsAbsPath(normalized) {
+		return ""
+	}
+	path = filepath.ToSlash(filepath.Clean(normalized))
+	if path == "." || path == ".." || strings.HasPrefix(path, "../") {
+		return ""
 	}
 	return strings.TrimSuffix(path, "/")
 }
@@ -1624,7 +1636,10 @@ func pathInScope(path string, scope string) bool {
 	if scope == "." {
 		return true
 	}
-	path = filepath.ToSlash(filepath.Clean(path))
+	path = cleanScopePath(path)
+	if path == "" {
+		return false
+	}
 	return path == scope || strings.HasPrefix(path, scope+"/")
 }
 
