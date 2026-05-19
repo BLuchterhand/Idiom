@@ -54,7 +54,7 @@ func OverviewSystemPrompt(root string) string {
 		}
 		if strings.HasPrefix(name, ".") {
 			if isNotableDotfile(name) {
-				notable = append(notable, name)
+				notable = append(notable, overviewDisplayName(name))
 			}
 			continue
 		}
@@ -62,7 +62,7 @@ func OverviewSystemPrompt(root string) string {
 			dirs = append(dirs, e)
 			continue
 		}
-		topFiles = append(topFiles, name)
+		topFiles = append(topFiles, overviewDisplayName(name))
 	}
 	slices.SortFunc(dirs, func(a, b os.DirEntry) int { return cmp.Compare(a.Name(), b.Name()) })
 	slices.Sort(topFiles)
@@ -92,8 +92,9 @@ func OverviewSystemPrompt(root string) string {
 				break
 			}
 			sub := filepath.Join(cleaned, d.Name())
-			count, sample := summarizeSubdir(sub, d.Name()+"/")
-			fmt.Fprintf(&b, "  %s/ (%d files)", d.Name(), count)
+			displayName := overviewDisplayName(d.Name())
+			count, sample := summarizeSubdir(sub, displayName+"/")
+			fmt.Fprintf(&b, "  %s/ (%d files)", displayName, count)
 			if len(sample) > 0 {
 				fmt.Fprintf(&b, " — e.g. %s", strings.Join(sample, ", "))
 			}
@@ -118,6 +119,20 @@ func isNotableDotfile(name string) bool {
 	return false
 }
 
+func overviewDisplayName(name string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r < 0x20 || r == 0x7f {
+			return ' '
+		}
+		return r
+	}, name)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	if cleaned == "" {
+		return "_"
+	}
+	return cleaned
+}
+
 func summarizeSubdir(path string, prefix string) (int, []string) {
 	count, sample := collectDirSample(path, prefix)
 	if count == 0 {
@@ -137,7 +152,7 @@ func summarizeSubdir(path string, prefix string) (int, []string) {
 				continue
 			}
 			sub := filepath.Join(path, e.Name())
-			c, s := collectDirSample(sub, prefix+e.Name()+"/")
+			c, s := collectDirSample(sub, prefix+overviewDisplayName(e.Name())+"/")
 			count += c
 			sample = append(sample, s...)
 			if len(sample) >= workspaceOverviewMaxFilesPerDir {
@@ -173,7 +188,7 @@ func collectDirSample(path string, prefix string) (int, []string) {
 		}
 		count++
 		if len(sample) < workspaceOverviewMaxFilesPerDir {
-			sample = append(sample, prefix+name)
+			sample = append(sample, prefix+overviewDisplayName(name))
 		}
 	}
 	return count, sample
