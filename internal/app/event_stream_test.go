@@ -169,6 +169,44 @@ func TestLogRunEventStoresInternalRecoveryAsRunEvent(t *testing.T) {
 	}
 }
 
+func TestLogRunEventStoresControlRailsAsRunEvent(t *testing.T) {
+	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: transcript.DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	model := &Model{debugLogger: logger}
+	model.logRunEvent(agent.RunEvent{
+		Role:    "control_rails",
+		Content: `{"allowed_tools":["read_file"]}`,
+	})
+
+	body, err := os.ReadFile(logger.Path())
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	if strings.Contains(string(body), `"type":"message"`) {
+		t.Fatalf("control_rails must not be written as a message record:\n%s", body)
+	}
+	if !strings.Contains(string(body), `"type":"run_event"`) || !strings.Contains(string(body), `"role":"control_rails"`) {
+		t.Fatalf("expected control_rails run_event record, got:\n%s", body)
+	}
+}
+
+func TestJSONMessageSkipsControlRails(t *testing.T) {
+	var buf bytes.Buffer
+	model := &Model{}
+	model.SetJSONEventStream(&buf, "sess-1")
+	model.emitJSONMessage("control_rails", `{"allowed_tools":["read_file"]}`)
+	if strings.TrimSpace(buf.String()) != "" {
+		t.Fatalf("control_rails must not be emitted as a JSON message event:\n%s", buf.String())
+	}
+}
+
 func TestSetJSONEventStreamNilDisables(t *testing.T) {
 	var buf bytes.Buffer
 	model := &Model{}

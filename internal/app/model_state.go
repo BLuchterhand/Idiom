@@ -1152,12 +1152,7 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 }
 
 func shouldLogRunnerEventAsRunEvent(role string) bool {
-	switch strings.TrimSpace(role) {
-	case "control_rails":
-		return false
-	default:
-		return true
-	}
+	return strings.TrimSpace(role) != ""
 }
 
 func (m *Model) logNestedToolRequest(content string) bool {

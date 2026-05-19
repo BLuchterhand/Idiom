@@ -74,7 +74,7 @@ func (m *Model) emitJSONEvent(record map[string]any) {
 
 func (m *Model) emitJSONMessage(role, content string) {
 	switch role {
-	case "user", "assistant", "route_plan", "control_rails":
+	case "user", "assistant", "route_plan":
 	default:
 		return
 	}
