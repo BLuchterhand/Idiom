@@ -17,7 +17,7 @@ around it: contracts, memory, tools, verification, telemetry, and evals.
 ## Local Ops Shape
 
 ```mermaid
-flowchart LR
+flowchart TD
     User["User"]
     Doctor["idiom doctor"]
     Backend["Backend manager"]
@@ -44,7 +44,7 @@ Local model operations include:
 - Detecting available model backends.
 - Starting or connecting to local inference servers.
 - Managing role-aware backend profiles for planner, executor/coder, route
-  classifier, summarizer, verifier/critic, and future embedding/ranker roles.
+  classifier, summarizer, verifier/critic, and embedding/ranker roles*.
 - Reporting readiness and degraded modes.
 - Managing context budgets.
 - Gating concurrent work through the local queue daemon.
@@ -72,7 +72,9 @@ such as discovery, plan, implement, eval, and sidecar. Profiles report
 
 Current readiness gates are partly report-only in the quickstart path. Treat a
 doctor report as operator evidence and lane-start guidance, not as proof that a
-future model run will succeed.
+later model run will succeed.
+
+`*` marks roadmapped model roles.
 
 Backend commands:
 

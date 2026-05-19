@@ -6,6 +6,12 @@ Open `docs/obsidian` as a vault in Obsidian, then start with [[00 - Home]].
 The notes use wiki links and Mermaid diagrams, but they remain plain Markdown
 and can be read directly in any editor.
 
+## Roadmap Marker
+
+Across this vault, `*` marks roadmapped or not-yet-implemented behavior in
+tables, diagrams, command lists, and prose. Unmarked items should still be
+checked against source or command output before being treated as release claims.
+
 ## Reading Order
 
 1. [[00 - Home]]

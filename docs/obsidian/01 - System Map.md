@@ -36,7 +36,7 @@ flowchart TD
     Evidence --> Work["Lane execution<br/>implement or plan-execute"]
     Work --> Verify["Verification and review<br/>source sanity, tests, gates"]
     Verify --> Outcome["Final answer, typed blocker,<br/>or recovery packet"]
-    Outcome --> Learn["Audit, eval, ranker learning,<br/>docs and product evidence"]
+    Outcome --> Learn["Audit, eval, ranker learning (partial*),<br/>docs and product evidence"]
     Learn -. improves .-> Evidence
     Learn -. tightens .-> Route
 ```
@@ -56,7 +56,7 @@ auditable conditions.
 | Repository memory | `internal/comprehension`, `internal/discovery`, [[07 - Repository Memory and Context Graph]] | Persistent graph, context packets, freshness, trace packs, cached views |
 | Planning and handoff | `cmd/idiom/plan_execute.go`, `internal/architect`, [[08 - Planning Packets and Handoff]] | Structured plans, `submit_plan`, packet inheritance, executor handoff |
 | Verification/readiness | `internal/workspace/source_sanity.go`, `internal/agent`, [[09 - Verification Readiness and Completion]] | Post-write proof, changed-path evidence, readiness closure |
-| Telemetry/audit/eval | `internal/telemetry`, `internal/eval`, `harness_audit`, [[10 - Telemetry Audit Eval and Learning]] | Conversation logs, command telemetry, behavior audit, eval and ranker feedback |
+| Telemetry/audit/eval | `internal/telemetry`, `internal/eval`, `harness_audit`, [[10 - Telemetry Audit Eval and Learning]] | Conversation logs, command telemetry, behavior audit, eval and ranker feedback* |
 | Local model operations | `internal/backends`, `internal/llama`, [[11 - Local Model Operations]] | Backend profiles, route models, queueing, degraded mode, readiness checks |
 | Sidecar/integrations | `internal/mcp`, `idiom tool`, [[12 - Sidecar and External Integrations]] | External agent access to evidence, tools, recovery status, and schemas |
 | Product workflow | `internal/productworkflow`, `cmd/idiom/product_workflow.go`, [[20 - Product Workflow and Behavioral Coverage]] | Research evidence, PRD, ADR, TDD obligations, coverage gate, dispatch briefs |
@@ -65,36 +65,30 @@ auditable conditions.
 ## Literal Harness Flow
 
 ```mermaid
-sequenceDiagram
-    participant Human as User
-    participant Surface as CLI, TUI, or sidecar
-    participant Route as Route / writer decision
-    participant Brief as Runtime brief and prompt stack
-    participant Runner as Runner
-    participant Model as Model backend
-    participant Tools as Workspace tools
-    participant Memory as Repository memory
-    participant Executor as Plan executor
-    participant Verify as Verification / review
-    participant Audit as Logs, telemetry, audit
+flowchart TD
+    Human["User"]
+    Surface["CLI, TUI, or sidecar<br/>ask, brief, slash command, or tool request"]
+    Route["Route / writer decision<br/>classify task family, lane, model role, scope"]
+    Brief["Runtime brief and prompt stack<br/>attach contract, tools, evidence, context packet"]
+    Runner["Runner<br/>prompt, runtime brief, tool manifest"]
+    ModelTurn["Model backend<br/>answer, reasoning, or tool request"]
+    Tools["Workspace tools<br/>validate protocol, permission, path role"]
+    Memory["Repository memory<br/>context query, freshness check, source lookup"]
+    ToolResult["Bounded evidence packet, normalized result, or gap"]
+    Recovery["Evidence back to model<br/>or contract recovery"]
+    Decision["Model output<br/>final, blocker, write, verification request, or submit_plan"]
+    Executor["Plan executor<br/>plan-execute only; apply validated plan edits"]
+    Verify["Verification / review<br/>source_sanity, review-repair, required tests"]
+    Proof["Proof or blocker"]
+    Audit["Logs, telemetry, audit<br/>transcript, control rails, artifacts"]
+    Outcome["Surface result<br/>final only when readiness is closed; otherwise blocker/recovery"]
 
-    Human->>Surface: ask, brief, slash command, or tool request
-    Surface->>Route: classify task family, lane, model role, scope
-    Route->>Brief: attach contract, tools, evidence, context packet
-    Brief->>Runner: prompt, runtime brief, tool manifest
-    Runner->>Model: model turn
-    Model-->>Runner: answer, reasoning, or tool request
-    Runner->>Tools: validate protocol, permission, path role
-    Tools->>Memory: context query, freshness check, source lookup
-    Memory-->>Tools: bounded evidence packet or gap
-    Tools-->>Runner: normalized result
-    Runner->>Model: evidence or contract recovery
-    Model-->>Runner: final, blocker, write, verification request, or submit_plan
-    Runner->>Executor: plan-execute only; apply validated plan edits
-    Executor->>Verify: source_sanity / review-repair / required tests
-    Verify-->>Runner: proof or blocker
-    Runner->>Audit: transcript, control rails, telemetry, artifacts
-    Runner-->>Surface: final only when readiness is closed, otherwise blocker/recovery
+    Human --> Surface --> Route --> Brief --> Runner --> ModelTurn
+    ModelTurn --> Tools --> Memory --> ToolResult --> Recovery --> Decision
+    Decision --> Executor --> Verify --> Proof --> Runner
+    Decision --> Verify
+    Runner --> Audit --> Outcome
+    Outcome --> Surface
 ```
 
 The same components appear in different surface modes:

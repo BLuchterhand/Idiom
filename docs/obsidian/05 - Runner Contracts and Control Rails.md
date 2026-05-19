@@ -32,6 +32,8 @@ The runner owns:
 
 ```mermaid
 stateDiagram-v2
+    direction TB
+
     [*] --> Prompt
     Prompt --> ModelTurn
     ModelTurn --> ToolRequest: tool call
@@ -135,7 +137,7 @@ Use code, schemas, tests, and gates for:
 ## Runner Cross-Cutting Concerns
 
 ```mermaid
-flowchart LR
+flowchart TD
     Prompt["Prompt/profile"]
     Model["Model turn"]
     Parser["Tool parser"]

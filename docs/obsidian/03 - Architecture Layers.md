@@ -129,7 +129,7 @@ contracts, and verification.
 ## System Interfaces
 
 ```mermaid
-flowchart LR
+flowchart TD
     Brief["Task brief"]
     RuntimeBrief["Runtime brief"]
     ToolManifest["Tool manifest"]

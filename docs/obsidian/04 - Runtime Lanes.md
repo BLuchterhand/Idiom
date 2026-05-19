@@ -29,27 +29,23 @@ ordinary chat context.
 ## Lane Lifecycle
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant CLI as cmd/idiom
-    participant Lane as Lane orchestrator
-    participant Prompt as Prompt/profile assembly
-    participant Runner
-    participant Workspace
-    participant Verify as Source sanity/tests
-    participant Telemetry
+flowchart TD
+    User["User"]
+    CLI["cmd/idiom<br/>idiom lane &lt;name&gt; --brief"]
+    Lane["Lane orchestrator<br/>parse flags and project config"]
+    Prompt["Prompt/profile assembly<br/>attach lane profile, contracts, context"]
+    Runner["Runner<br/>runtime brief and tool profile"]
+    Workspace["Workspace<br/>validated tool calls"]
+    ToolResult["Evidence or mutation result"]
+    Verify["Source sanity/tests<br/>requested or required verification"]
+    Proof["Proof or blocker"]
+    Telemetry["Telemetry<br/>lane events and phase evidence"]
+    Result["Final, blocker, or artifact"]
 
-    User->>CLI: idiom lane <name> --brief
-    CLI->>Lane: parse flags and project config
-    Lane->>Prompt: attach lane profile, contracts, context
-    Prompt->>Runner: runtime brief and tool profile
-    Runner->>Workspace: validated tool calls
-    Workspace-->>Runner: evidence or mutation result
-    Runner->>Verify: requested or required verification
-    Verify-->>Runner: proof or blocker
-    Runner->>Telemetry: lane events and phase evidence
-    Runner-->>Lane: final, blocker, or artifact
-    Lane-->>User: result
+    User --> CLI --> Lane --> Prompt --> Runner
+    Runner --> Workspace --> ToolResult --> Runner
+    Runner --> Verify --> Proof --> Runner
+    Runner --> Telemetry --> Result --> User
 ```
 
 ## `implement`

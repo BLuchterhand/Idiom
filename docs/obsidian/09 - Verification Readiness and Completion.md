@@ -64,6 +64,8 @@ proposal is supported.
 
 ```mermaid
 stateDiagram-v2
+    direction TB
+
     [*] --> Work
     Work --> FinalAttempt
     FinalAttempt --> CheckObligations

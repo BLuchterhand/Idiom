@@ -14,4 +14,4 @@ current maintained explanation has moved to
 [[20 - Product Workflow and Behavioral Coverage]].
 
 Use the consolidated note for the current state of the shipped tiered coverage
-gate and the broader target coverage pipeline.
+gate and the broader target coverage pipeline*.

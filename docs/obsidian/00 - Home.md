@@ -21,6 +21,13 @@ approach a task, but the harness constrains what counts as valid work: scoped
 paths, permissions, typed artifacts, source evidence, verification, readiness,
 loop limits, and auditability.
 
+## Roadmap Marker
+
+Across these notes, `*` marks roadmapped or not-yet-implemented behavior. When
+an element in a table, diagram, command list, or prose sentence carries `*`,
+treat it as target direction rather than shipped capability unless source,
+tests, or operator commands prove otherwise.
+
 ## What To Read First
 
 ### 10-Minute Director Read
@@ -94,12 +101,12 @@ before discussing enterprise or regulated use.
 
 These notes replace the older proposal/roadmap split. All seven architectural
 pillars have substantial implementation. The product workflow has deterministic
-headless CLI surfaces and durable fixtures, while full behavioral coverage,
-write-capable TUI continuation, and some sidecar exposure remain open work.
+headless CLI surfaces and durable fixtures, while full behavioral coverage*,
+write-capable TUI continuation*, and some sidecar exposure* remain open work.
 
 - [[20 - Product Workflow and Behavioral Coverage]] — upstream artifact
   pipeline from research evidence to dispatch-ready briefs, current shipped
-  commands, behavioral coverage target, and remaining work
+  commands, behavioral coverage target*, and remaining work*
 - [[21 - Recovery and Decomposition]] — recovery layer for converting failed
   plan-execute runs into classified evidence, decomposition packets, and gated
   follow-up atoms

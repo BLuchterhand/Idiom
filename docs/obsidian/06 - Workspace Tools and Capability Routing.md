@@ -58,19 +58,21 @@ what it needs:
 The harness then chooses the best available adapter based on target, language,
 precision, freshness, cost, permissions, and contract requirements.
 
-## Current Implementation Versus Design Target
+## Current Implementation Versus Design Target*
 
-| Area | Current implementation | Design target |
+`*` marks target behavior that may be broader than the current implementation.
+
+| Area | Current implementation | Design target* |
 | --- | --- | --- |
-| Direct tools | Built-in workspace tools are exported through schemas and dispatched by the workspace manager. | Keep schemas stable and normalized across CLI, runner, and sidecar/MCP surfaces. |
-| `read_only_capability` | Current registry supports a small set of read-only capability IDs in code. | Broader capability vocabulary from the design doc, resolved by adapter scoring. |
-| Source sanity | Implemented as diagnostics or generic syntax sanity. | Remain source-aware, and stay distinct from test/build verification. |
-| Project external tools | `.idiom/external_tools/<name>.json` can define project tools with schemas and safety flags. | Treat external tools as first-class adapters behind the same permission and telemetry boundary. |
-| MCP | CLI/MCP surfaces reuse tool schemas, with current inbound MCP filtered toward discovery/context surfaces. | Parity across transports without duplicating less-safe tool implementations. |
+| Direct tools | Built-in workspace tools are exported through schemas and dispatched by the workspace manager. | Keep schemas stable and normalized across CLI, runner, and sidecar/MCP surfaces.* |
+| `read_only_capability` | Current registry supports a small set of read-only capability IDs in code. | Broader capability vocabulary from the design doc, resolved by adapter scoring.* |
+| Source sanity | Implemented as diagnostics or generic syntax sanity. | Remain source-aware, and stay distinct from test/build verification.* |
+| Project external tools | `.idiom/external_tools/<name>.json` can define project tools with schemas and safety flags. | Treat external tools as first-class adapters behind the same permission and telemetry boundary.* |
+| MCP | CLI/MCP surfaces reuse tool schemas, with current inbound MCP filtered toward discovery/context surfaces. | Parity across transports without duplicating less-safe tool implementations.* |
 
 ## Capability Vocabulary
 
-| Capability | Typical tool or adapter | Purpose |
+| Capability* | Typical tool or adapter | Purpose |
 | --- | --- | --- |
 | `localize_change` | `context_pack`, discovery tools | Find relevant files, symbols, tests |
 | `query_context` | `context_query`, graph queries | Ask graph-shaped questions |
@@ -82,7 +84,7 @@ precision, freshness, cost, permissions, and contract requirements.
 | `source_sanity` | source sanity tool | Diagnostics or syntax sanity after edits |
 | `audit_behavior` | `harness_audit` | Diagnose agent behavior from logs/artifacts |
 
-This table includes design-target names. For the current implemented
+`*` means this vocabulary includes design-target names. For the current implemented
 `read_only_capability` IDs, check `internal/workspace/capabilities.go` before
 documenting a capability as supported.
 
@@ -200,7 +202,7 @@ text or ad hoc command parsing.
 | `internal/workspace/tool_schemas.go` | Built-in tool schema definitions |
 | `internal/workspace/capabilities.go` | Current read-only capability registry and dispatch |
 | `internal/workspace/source_sanity.go` | Current source sanity implementation |
-| `docs/design-capability-oriented-tooling.md` | Broader design target |
+| `docs/design-capability-oriented-tooling.md` | Broader design target* |
 
 ## Related Notes
 

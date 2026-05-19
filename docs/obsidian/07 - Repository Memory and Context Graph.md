@@ -66,27 +66,23 @@ The graph should expose what it knows and what it does not know.
 ## Packet Lifecycle
 
 ```mermaid
-sequenceDiagram
-    participant Agent
-    participant Tool as context_pack
-    participant Graph as graph.sqlite
-    participant Cache as graph_views
-    participant Runner
-    participant Executor
+flowchart TD
+    Agent["Agent"]
+    Request["context_pack request<br/>task string, mode, scope, limit"]
+    Graph["graph.sqlite<br/>validate index and freshness"]
+    Cache["graph_views<br/>check content-addressed key"]
+    Hit{"Cache hit?"}
+    Existing["Return existing packet"]
+    Build["Build ranked facts and provenance"]
+    Store["Store packet view"]
+    Result["Packet and pack_id<br/>or stale blocker/unresolved gaps"]
+    Runner["Runner uses packet as evidence"]
+    Executor["Optional pack_id handoff to executor"]
 
-    Agent->>Tool: task string, mode, scope, limit
-    Tool->>Graph: validate index and freshness
-    Tool->>Cache: check content-addressed key
-    alt cache hit
-        Cache-->>Tool: existing packet
-    else cache miss
-        Graph-->>Tool: ranked facts and provenance
-        Tool->>Cache: store packet view
-    end
-    Tool-->>Agent: packet and pack_id
-    Tool-->>Agent: stale blocker or unresolved gaps
-    Agent->>Runner: use packet as evidence
-    Runner->>Executor: optional pack_id handoff
+    Agent --> Request --> Graph --> Cache --> Hit
+    Hit -- yes --> Existing --> Result
+    Hit -- no --> Build --> Store --> Result
+    Result --> Agent --> Runner --> Executor
 ```
 
 ## Current Graph Shape

@@ -19,7 +19,7 @@ runner.
 ## Integration Shape
 
 ```mermaid
-flowchart LR
+flowchart TD
     External["External agent"]
     CLI["idiom tool <name>"]
     Schemas["idiom tool schemas"]
@@ -119,13 +119,15 @@ requests such as `initialize`, `tools/list`, `tools/call`, `roots/list`,
 
 Current limitations include:
 
-- Resource file bodies are not returned yet.
+- Resource file bodies are not returned yet.*
 - Resource paths are root-clamped and protected locations are denied.
-- Full resource/freshness parity remains later work.
+- Full resource/freshness parity remains later work.*
 - Tool exposure is filtered by profile, with discovery/context and read-only
   recovery status surfaces favored for MCP.
 - Telemetry and permission behavior should be checked against the CLI sidecar
   path when changing MCP behavior.
+
+`*` marks roadmapped MCP/resource parity work.
 
 ## Project External Tools
 

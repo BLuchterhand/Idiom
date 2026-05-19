@@ -142,6 +142,8 @@ For a docs-only change this normally means:
 
 ```mermaid
 stateDiagram-v2
+    direction TB
+
     [*] --> Evidence
     Evidence --> Contract: identify invariant
     Contract --> Test: encode expected behavior
@@ -173,7 +175,7 @@ The repo calls out several recurring traps:
 ## Relationship To Repository Systems
 
 ```mermaid
-flowchart LR
+flowchart TD
     Pattern["Deterministic evidence pattern"]
     Memory["Repository memory"]
     Tools["Capability tools"]

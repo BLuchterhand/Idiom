@@ -57,32 +57,29 @@ compaction, and not replayed as model messages.
 ## Literal TUI Prompt Flow
 
 ```mermaid
-sequenceDiagram
-    participant User
-    participant TUI as Bubble Tea TUI
-    participant App as internal/app Model
-    participant Route as turn route and writer route
-    participant Dispatch as implementation dispatch
-    participant PlanExecute as plan-execute lane
-    participant Runner
-    participant Workspace
-    participant Logs as debug logs and telemetry
+flowchart TD
+    User["User"]
+    TUI["Bubble Tea TUI<br/>typed prompt or slash command"]
+    App["internal/app Model<br/>sendPromptAsync"]
+    Bookkeeping["RunPromptOnce<br/>message bookkeeping"]
+    Route["Turn route and writer route<br/>task family, lane, writer mode"]
+    Brief["Runtime brief<br/>model roles, required/candidate scope"]
+    Dispatch{"Implementation-like prompt<br/>with referenced doc?"}
+    DispatchResult["Blocker, source-satisfied,<br/>atomization, or dispatch plan"]
+    PlanExecute["plan-execute lane<br/>dispatch each non-terminal atom"]
+    Runner["Runner<br/>planner prompt with submit_plan contract"]
+    Workspace["Workspace<br/>validated read/discovery/submit_plan calls"]
+    Evidence["Evidence or plan artifact"]
+    Executor["Executor<br/>applies preflighted edits"]
+    LaneResult["Summary, blocker, or recovery state"]
+    Logs["Debug logs and telemetry<br/>conversation JSONL and events"]
+    Transcript["Visible transcript, status, compact trace"]
 
-    User->>TUI: typed prompt or slash command
-    TUI->>App: sendPromptAsync
-    App->>App: RunPromptOnce owns message bookkeeping
-    App->>Route: classify task family, lane, writer mode
-    Route-->>App: runtime brief, model roles, required/candidate scope
-    App->>Dispatch: implementation-like prompt with referenced doc?
-    Dispatch-->>App: blocker, source-satisfied, atomization, or dispatch plan
-    Dispatch->>PlanExecute: dispatch each non-terminal atom when enabled
-    PlanExecute->>Runner: planner prompt with submit_plan contract
-    Runner->>Workspace: validated read/discovery/submit_plan calls
-    Workspace-->>Runner: evidence or plan artifact
-    PlanExecute->>Workspace: executor applies preflighted edits
-    PlanExecute-->>App: summary, blocker, or recovery state
-    App->>Logs: conversation JSONL and telemetry events
-    App-->>TUI: visible transcript, status, compact trace
+    User --> TUI --> App --> Bookkeeping --> Route --> Brief --> Dispatch
+    Dispatch -- no --> Runner
+    Dispatch -- yes --> DispatchResult --> PlanExecute --> Runner
+    Runner --> Workspace --> Evidence --> Runner
+    PlanExecute --> Executor --> LaneResult --> Logs --> Transcript --> TUI
 ```
 
 The TUI does not own a parallel planning engine. It owns interactive
@@ -195,11 +192,13 @@ cases as the CLI. The CLI has a shared operator status view model, effort
 browsing, and status migration; the TUI has a read-only `/product-status`
 projection over that operator view, including recovery packet state, plus a
 read-only `/recover-status` projection over decomposition packets.
-Write-capable TUI continuation/handoff fixtures remain open delivery work. A
-future TUI action such as capture, start, continue, promote, dispatch, or close
+Write-capable TUI continuation/handoff fixtures* remain open delivery work. A
+future TUI action* such as capture, start, continue, promote, dispatch, or close
 should resolve a stable effort ID, render the shared status view model, advance
 exactly one valid action, reconcile state from artifacts and evidence, and then
 render the next valid action.
+
+`*` marks product-workflow TUI behavior that is roadmapped rather than shipped.
 
 Efforts should be browsable by coarse status folders:
 

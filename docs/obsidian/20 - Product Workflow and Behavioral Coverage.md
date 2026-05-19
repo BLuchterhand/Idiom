@@ -23,7 +23,7 @@ remain the canonical long-form references:
 The workflow has deterministic headless CLI surfaces and durable fixtures. The
 closed effort folder under
 `docs/product-workflows/efforts/closed/prd-adr-brief-workflow/` is a status
-bucket, not a claim that every target design is complete.
+bucket, not a claim that every target design* is complete.
 
 Implemented surfaces include:
 
@@ -44,6 +44,8 @@ The shipped path is intentionally conservative. Product commands render,
 validate, link, and summarize artifacts; they do not turn arbitrary product
 intent into write authority by themselves. Dispatch still belongs to Idiom lanes
 and their runtime contracts.
+
+`*` marks roadmapped coverage, TUI, sidecar, or telemetry behavior.
 
 ## Product Pipeline
 
@@ -87,20 +89,21 @@ parse, audit, acceptance, coverage, and dispatch gates before it affects work.
 
 ## Behavioral Coverage
 
-The target behavioral coverage design is broader than the current shipped gate.
-The long-form target remains in [design-tdd-coverage.md](../design-tdd-coverage.md).
+The target behavioral coverage design* is broader than the current shipped
+gate. The long-form target* remains in
+[design-tdd-coverage.md](../design-tdd-coverage.md).
 
 ```mermaid
 flowchart TD
-    ADR["Accepted ADR"] --> EARS["EARS requirements"]
-    EARS --> Examples["Example mapping"]
-    Examples --> BDD["BDD scenarios"]
-    BDD --> Contracts["Design by Contract"]
-    Contracts --> Failure["FMEA / HAZOP / FTA"]
-    Failure --> State["State model and decision tables"]
+    ADR["Accepted ADR"] --> EARS["EARS requirements*"]
+    EARS --> Examples["Example mapping*"]
+    Examples --> BDD["BDD scenarios*"]
+    BDD --> Contracts["Design by Contract*"]
+    Contracts --> Failure["FMEA / HAZOP / FTA*"]
+    Failure --> State["State model and decision tables*"]
     State --> Tests["Test obligations"]
-    Tests --> Mutation["Mutation verification"]
-    Mutation --> Gate["Deterministic coverage gate"]
+    Tests --> Mutation["Mutation verification*"]
+    Mutation --> Gate["Full deterministic coverage gate*"]
     Gate --> Brief["Dispatch-ready brief"]
 ```
 
@@ -111,31 +114,36 @@ Current implementation is narrower:
 - A tiered coverage evaluator exists for current product-workflow fixtures.
 - Brief generation blocks on coverage-gate blockers.
 
-Remaining target work includes EARS parsing, example mapping, BDD validation,
-contract schemas, FMEA/HAZOP/FTA templates, state-machine checks, decision table
-enumeration, property-based obligations, mutation score calculation, and the
-full nine-stage coverage gate.
+Remaining target work* includes EARS parsing*, example mapping*, BDD
+validation*, contract schemas*, FMEA/HAZOP/FTA templates*, state-machine
+checks*, decision table enumeration*, property-based obligations*, mutation
+score calculation*, and the full nine-stage coverage gate*.
 
-## Open Work
+## Open Work*
 
-High-signal remaining work:
+High-signal remaining work*:
 
-- Reuse product lint/audit traceability, acceptance, and supersession authority
+- Reuse product lint/audit traceability, acceptance, and supersession authority*
   inside the coverage gate, or run those validators as blocking preconditions.
-- Harden status-migration apply temp-path writes against symlink surprises.
-- Add the durable two-ADR supersession fixture and encode the
+- Harden status-migration apply temp-path writes against symlink surprises.*
+- Add the durable two-ADR supersession fixture* and encode the
   index-vs-markdown divergence authority rule.
-- Complete TUI continuation/handoff fixtures for product workflow actions.
-- Expose read-only product workflow status through `idiom tool` and MCP.
-- Add `tdd_eval` research profiles with FMEA/HAZOP sources.
-- Add runtime telemetry events for research, evidence-card, PRD, ADR, TDD,
+- Complete TUI continuation/handoff fixtures* for product workflow actions.
+- Expose read-only product workflow status through `idiom tool` and MCP.*
+- Add `tdd_eval` research profiles* with FMEA/HAZOP sources.
+- Add runtime telemetry events* for research, evidence-card, PRD, ADR, TDD,
   coverage-gate, and dispatch-blocked transitions where durable reports are not
   enough.
 
-## Operator Model
+## Operator Model*
+
+`*` means this is the target operator model; shipped CLI status and read-only
+TUI presenters cover only the implemented subset.
 
 ```mermaid
 stateDiagram-v2
+    direction TB
+
     [*] --> Draft
     Draft --> ResearchBlocked: missing evidence or conflict
     Draft --> PRDAudit: evidence ledger merged
