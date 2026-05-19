@@ -133,6 +133,29 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 }
 
+func TestAnalyzeExtractsRunnerMetricsFromRunEvents(t *testing.T) {
+	records := []Record{
+		{Type: "run_event", Data: map[string]any{"role": "control_rails", "content": `{"task_family":"implementation","permission_profile":"guarded_workspace_write","allowed_tools":["read_file"]}`}},
+		{Type: "run_event", Data: map[string]any{"role": "budget_ledger", "content": `{"lane":"implement","used_model_calls":1,"budget_exhausted":false}`}},
+		{Type: "run_event", Data: map[string]any{"role": "context_compaction", "content": `{"dropped_messages":2,"retained_messages":4,"strategy":"retain_recent_history"}`}},
+	}
+
+	metrics := Analyze(records)
+
+	if got := metrics.MessageRoles["control_rails"]; got != 1 {
+		t.Fatalf("expected control_rails run_event role to be counted, got %d", got)
+	}
+	if len(metrics.ControlRails) != 1 || metrics.ControlRails[0].TaskFamily != "implementation" {
+		t.Fatalf("expected control rails from run_event, got %#v", metrics.ControlRails)
+	}
+	if len(metrics.BudgetLedgers) != 1 || metrics.BudgetLedgers[0].Lane != "implement" {
+		t.Fatalf("expected budget ledger from run_event, got %#v", metrics.BudgetLedgers)
+	}
+	if len(metrics.ContextCompactions) != 1 || metrics.ContextCompactions[0].DroppedMessages != 2 {
+		t.Fatalf("expected context compaction from run_event, got %#v", metrics.ContextCompactions)
+	}
+}
+
 func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 	records := []Record{
 		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{

@@ -104,12 +104,7 @@ func Analyze(records []Record) Metrics {
 		case "message":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
-			if trimmedRole := strings.TrimSpace(role); trimmedRole != "" {
-				if metrics.MessageRoles == nil {
-					metrics.MessageRoles = map[string]int{}
-				}
-				metrics.MessageRoles[trimmedRole]++
-			}
+			countMetricsRole(&metrics, role)
 			if strings.Contains(strings.ToLower(content), "summary rejected") {
 				metrics.SummaryRejections++
 				if lane := summaryRejectionLane(role); lane != "" {
@@ -192,6 +187,27 @@ func Analyze(records []Record) Metrics {
 			case "tool_failure_confidence":
 				if failure := parseToolFailureConfidence(content); failure.Raw != "" {
 					metrics.ToolFailureConfidence = append(metrics.ToolFailureConfidence, failure)
+				}
+			case "control_rails":
+				if rails := parseControlRails(content); rails.Raw != "" {
+					metrics.ControlRails = append(metrics.ControlRails, rails)
+				}
+			}
+			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
+				metrics.LanguageCapabilities = mergeLanguageCapabilities(metrics.LanguageCapabilities, caps)
+			}
+		case "run_event":
+			role := stringField(record.Data, "role")
+			content := stringField(record.Data, "content")
+			countMetricsRole(&metrics, role)
+			switch role {
+			case "budget_ledger":
+				if ledger := parseBudgetLedger(content); ledger.Raw != "" {
+					metrics.BudgetLedgers = append(metrics.BudgetLedgers, ledger)
+				}
+			case "context_compaction":
+				if compaction := parseContextCompaction(content); compaction.Raw != "" {
+					metrics.ContextCompactions = append(metrics.ContextCompactions, compaction)
 				}
 			case "control_rails":
 				if rails := parseControlRails(content); rails.Raw != "" {
@@ -321,6 +337,20 @@ func Analyze(records []Record) Metrics {
 	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
 	return metrics
+}
+
+func countMetricsRole(metrics *Metrics, role string) {
+	if metrics == nil {
+		return
+	}
+	trimmedRole := strings.TrimSpace(role)
+	if trimmedRole == "" {
+		return
+	}
+	if metrics.MessageRoles == nil {
+		metrics.MessageRoles = map[string]int{}
+	}
+	metrics.MessageRoles[trimmedRole]++
 }
 
 func Evaluate(logPath string, records []Record, scenario Scenario) Report {

@@ -211,7 +211,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			if v, ok := rec.Data["workspace_root"].(string); ok && v != "" {
 				_ = v
 			}
-			// The log file name is the session id surrogate.
+		// The log file name is the session id surrogate.
 		case "message":
 			role, _ := rec.Data["role"].(string)
 			content, _ := rec.Data["content"].(string)
@@ -227,6 +227,15 @@ func analyzeRecords(path string, records []Record) PerfReport {
 				// Keep only the last assistant message as the final.
 				rep.FinalAnswerChars = len(content)
 			case "budget_ledger":
+				parseBudgetLedgerIntoPerfReport(content, &rep)
+			}
+		case "run_event":
+			role, _ := rec.Data["role"].(string)
+			content, _ := rec.Data["content"].(string)
+			if strings.TrimSpace(role) != "" {
+				agentBehavior = true
+			}
+			if role == "budget_ledger" {
 				parseBudgetLedgerIntoPerfReport(content, &rep)
 			}
 		case "user_turn":
@@ -1017,7 +1026,7 @@ func detectPromptSurfaceOverlap(rep *PerfReport, records []Record) {
 			if len(sources) >= 8 {
 				addExample(fmt.Sprintf("%s has %d prompt/context sources", rec.Type, len(sources)))
 			}
-		case "message":
+		case "message", "run_event":
 			role := stringField(rec.Data, "role")
 			if role != "control_rails" {
 				continue

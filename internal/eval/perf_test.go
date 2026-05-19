@@ -315,7 +315,7 @@ func TestDetectPromptSurfaceOverlap(t *testing.T) {
 				".codex/rules/qwen-brief-skeleton.md",
 			},
 		}},
-		{Type: "message", Data: map[string]any{
+		{Type: "run_event", Data: map[string]any{
 			"role":    "control_rails",
 			"content": `{"contract":"implementation_result","dynamic_instruction_attachment":true}`,
 		}},
