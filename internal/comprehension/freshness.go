@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -812,11 +813,19 @@ func cleanFreshnessPaths(paths []string) []string {
 }
 
 func cleanFreshnessPath(path string) string {
-	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-	if path == "" || path == "." {
+	normalized := strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/")
+	if normalized == "" || filepath.IsAbs(path) || strings.HasPrefix(normalized, "/") || looksLikeWindowsAbsPath(normalized) {
+		return ""
+	}
+	path = pathpkg.Clean(normalized)
+	if path == "" || path == "." || path == ".." || strings.HasPrefix(path, "../") {
 		return ""
 	}
 	return strings.TrimSuffix(path, "/")
+}
+
+func looksLikeWindowsAbsPath(path string) bool {
+	return len(path) >= 3 && path[1] == ':' && path[2] == '/'
 }
 
 func boundedFreshnessScope(path string) string {

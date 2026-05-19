@@ -148,6 +148,17 @@ func TestFreshnessRefreshScopesDoesNotOverCollapseNestedFanout(t *testing.T) {
 	}
 }
 
+func TestCleanFreshnessPathRejectsTraversalAndNormalizesBackslashes(t *testing.T) {
+	if got := cleanFreshnessPath(`pkg\file.go`); got != "pkg/file.go" {
+		t.Fatalf("cleanFreshnessPath(backslash path) = %q, want pkg/file.go", got)
+	}
+	for _, path := range []string{"../outside.go", "/tmp/outside.go", `C:\tmp\outside.go`} {
+		if got := cleanFreshnessPath(path); got != "" {
+			t.Fatalf("cleanFreshnessPath(%q) = %q, want rejection", path, got)
+		}
+	}
+}
+
 func TestFreshnessDetectsPostIndexAddedSourceFile(t *testing.T) {
 	root := t.TempDir()
 	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/freshadded\n\ngo 1.22\n")
