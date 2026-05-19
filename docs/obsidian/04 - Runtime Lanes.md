@@ -72,6 +72,13 @@ Use `--no-context-pack` only when the caller already supplied equivalent
 context. Keep the same task string across related context calls so packet cache
 reuse remains possible.
 
+When `implement` is run through `idiom lane implement`, a non-zero subcommand
+exit writes `.idiom/recovery/<failure-id>/failure.json` and `packet.json` from
+bounded lane/session evidence. The wrapper records the original brief path and
+required edit paths rather than the composed temporary prompt, so follow-up
+`idiom recover inspect`, `decompose`, `status`, `promote`, and `reconcile`
+operations stay tied to the operator-authored atom.
+
 ## `plan-execute`
 
 `plan-execute` splits strategy from mutation.

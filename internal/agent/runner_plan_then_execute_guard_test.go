@@ -1053,6 +1053,17 @@ func TestImplementationScopedEditAllowsSubmitPlan(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSubmitPlanCountsAsWriteDuringWriteOnlyRecovery(t *testing.T) {
+	r := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}}
+	if !r.writeOnlyRecoveryToolIsWrite("submit_plan") {
+		t.Fatal("plan-execute write-only recovery must treat submit_plan as the planner write contract")
+	}
+	normal := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: "implementation"}}
+	if normal.writeOnlyRecoveryToolIsWrite("submit_plan") {
+		t.Fatal("submit_plan should not be treated as a normal implementation write tool outside plan-execute planner phase")
+	}
+}
+
 func TestImplementationScopedSurfaceActiveForRequiredPathMutation(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",

@@ -1778,6 +1778,9 @@ func reviewAnswerPassContradictionReason(answer string) string {
 		}
 		switch {
 		case strings.Contains(line, "❌"), strings.Contains(line, "[ ]"):
+			if reviewLineIsPlannerOwnedPending(line) {
+				continue
+			}
 			return "failed_checklist_item"
 		case reviewLineContainsAny(line,
 			"appears to be missing",
@@ -1812,6 +1815,17 @@ func reviewAnswerPassContradictionReason(answer string) string {
 		}
 	}
 	return ""
+}
+
+func reviewLineIsPlannerOwnedPending(line string) bool {
+	return reviewLineContainsAny(line,
+		"planner-owned",
+		"planner owned",
+		"pending outside this lane",
+		"pending outside lane",
+		"must run outside this lane",
+		"not run by this lane",
+	)
 }
 
 func normalizeReviewAnswerLine(line string) string {

@@ -194,7 +194,7 @@ func (m *Manager) loadRecoveryFailureRecord(req ToolRequest) (recovery.FailureRe
 	failureID := strings.TrimSpace(req.FailureID)
 	sessionID := strings.TrimSpace(req.SessionID)
 	if failureID == "" && sessionID == "" {
-		if strings.HasPrefix(strings.TrimSpace(req.ID), "plan-execute-") {
+		if isRecoveryFailureID(strings.TrimSpace(req.ID)) {
 			failureID = strings.TrimSpace(req.ID)
 		} else {
 			sessionID = strings.TrimSpace(req.ID)
@@ -206,7 +206,7 @@ func (m *Manager) loadRecoveryFailureRecord(req ToolRequest) (recovery.FailureRe
 	if sessionID == "" {
 		return recovery.FailureRecord{}, "", false, fmt.Errorf("session_id or failure_id is required")
 	}
-	return recovery.TryLoadPlanExecuteFailureRecord(m.cfg.Root, sessionID)
+	return recovery.TryLoadFailureRecordForSession(m.cfg.Root, sessionID)
 }
 
 func (m *Manager) recoveryPacketPathForRequest(req ToolRequest) (string, error) {
@@ -226,10 +226,29 @@ func (m *Manager) recoveryPacketPathForRequest(req ToolRequest) (string, error) 
 		if sessionID == "" {
 			return "", fmt.Errorf("packet_path, session_id, or failure_id is required")
 		}
-		failureID = recovery.PlanExecuteFailureID(sessionID)
+		candidates := recovery.FailureIDCandidatesForSession(sessionID)
+		for _, candidate := range candidates {
+			fullPath, _, err := recovery.DecompositionPacketPath(m.cfg.Root, candidate, "")
+			if err != nil {
+				return "", err
+			}
+			if _, err := os.Stat(fullPath); err == nil {
+				return fullPath, nil
+			}
+		}
+		if len(candidates) > 0 {
+			failureID = candidates[0]
+		} else {
+			failureID = recovery.PlanExecuteFailureID(sessionID)
+		}
 	}
 	fullPath, _, err := recovery.DecompositionPacketPath(m.cfg.Root, failureID, "")
 	return fullPath, err
+}
+
+func isRecoveryFailureID(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "plan-execute-") || strings.HasPrefix(value, "implement-")
 }
 
 func (m *Manager) recoveryDecomposeOutputPath(failureID string, outputPath string) (string, error) {

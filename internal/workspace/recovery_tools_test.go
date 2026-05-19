@@ -86,6 +86,63 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 	}
 }
 
+func TestRecoveryToolsInspectDecomposeAndStatusImplementRecord(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")
+	record, _, err := recovery.WriteFailureRecord(root, recovery.FailureRecordInput{
+		FailureID: recovery.ImplementFailureID("sid-implement"),
+		SourceRun: recovery.SourceRun{
+			Lane:              recovery.SourceLaneImplement,
+			SessionID:         "sid-implement",
+			RequiredEditPaths: []string{"internal/app/foo.go"},
+			AllowedEditPaths:  []string{"internal/app/foo.go"},
+		},
+		FailureClass:   recovery.FailureClassExecutorEdit,
+		FailureKind:    "implement_process_failed",
+		FailureSummary: "implement process failed: exit_code=1",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write implement failure record: %v", err)
+	}
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	inspect := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_inspect", SessionID: "sid-implement"})
+	if inspect.Error != "" {
+		t.Fatalf("recovery_inspect returned error: %v\n%s", inspect.Error, inspect.Output)
+	}
+	var inspectReport recoveryInspectToolReport
+	if err := json.Unmarshal([]byte(inspect.Output), &inspectReport); err != nil {
+		t.Fatalf("decode inspect report: %v\n%s", err, inspect.Output)
+	}
+	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != recovery.FailureClassExecutorEdit {
+		t.Fatalf("unexpected inspect report: %#v", inspectReport)
+	}
+
+	decompose := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_decompose", SessionID: "sid-implement"})
+	if decompose.Error != "" {
+		t.Fatalf("recovery_decompose returned error: %v\n%s", decompose.Error, decompose.Output)
+	}
+	var decomposeReport recoveryDecomposeToolReport
+	if err := json.Unmarshal([]byte(decompose.Output), &decomposeReport); err != nil {
+		t.Fatalf("decode decompose report: %v\n%s", err, decompose.Output)
+	}
+	if decomposeReport.FailureID != record.FailureID || len(decomposeReport.CandidateAtoms) != 1 {
+		t.Fatalf("unexpected decompose report: %#v", decomposeReport)
+	}
+
+	status := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_status", SessionID: "sid-implement"})
+	if status.Error != "" {
+		t.Fatalf("recovery_status returned error: %v\n%s", status.Error, status.Output)
+	}
+	var statusReport recoveryStatusToolReport
+	if err := json.Unmarshal([]byte(status.Output), &statusReport); err != nil {
+		t.Fatalf("decode status report: %v\n%s", err, status.Output)
+	}
+	if statusReport.FailureID != record.FailureID || statusReport.Status != "ready" {
+		t.Fatalf("unexpected status report: %#v", statusReport)
+	}
+}
+
 func TestRecoveryDecomposeToolRejectsSymlinkedOutputPath(t *testing.T) {
 	root := t.TempDir()
 	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")

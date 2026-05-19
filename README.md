@@ -152,8 +152,8 @@ Other useful subcommands:
 - `idiom backend start | stop | status | list | proxy` — manage local
   LLM runners.
 - `idiom recover inspect --session <id> [--json]` — inspect the recovery
-  failure record and classified partial state for a failed `plan-execute`
-  session.
+  failure record and classified partial state for a failed `plan-execute` or
+  `idiom lane implement` session.
 - `idiom recover status --packet <packet.json> [--json]` — inspect candidate
   recovery atoms, residual-work evidence refs, product links, gates, and the
   next valid action from a decomposition packet. Packet paths must stay under
@@ -164,7 +164,8 @@ Other useful subcommands:
   from the current workspace directory, and the rendered operator message is
   not replayed into later model context.
 - `idiom recover decompose --session <id> [--output <packet.json>] [--json]`
-  — rebuild a recovery packet from a failed plan-execute session. Custom
+  — rebuild a recovery packet from a failed plan-execute or lane-implement
+  session. Custom
   output paths must stay under the workspace root, avoid protected paths such
   as `.git`, `logs`, `.env`, and `config.json`, avoid recovery control
   artifacts such as `failure.json` and `reconciliation.json`, and must not
@@ -179,9 +180,9 @@ Other useful subcommands:
   `reconciliation.json` next to the packet when that path is under the workspace
   root. Valid reconciliation also appends an evidence-only
   `source:"recovery_reconciliation"` ranker-learning event without mutating
-  learned weights. Failed plan-execute runs automatically write both
-  `.idiom/recovery/<failure-id>/failure.json` and
-  `.idiom/recovery/<failure-id>/packet.json`; packet residual work cites
+  learned weights. Failed plan-execute runs and failed `idiom lane implement`
+  subprocesses automatically write both `.idiom/recovery/<failure-id>/failure.json`
+  and `.idiom/recovery/<failure-id>/packet.json`; packet residual work cites
   scoped required-path, changed-path, failure, and required-test evidence refs.
   Promotion still does not dispatch follow-up work, and reconciliation
   preserves the original failure record.
@@ -193,10 +194,11 @@ Other useful subcommands:
   profile, allowlisted short opaque caller metadata, contract metadata,
   freshness, warnings, audit IDs, structured output, and typed errors for
   integrations.
-  Recovery state is available through `recovery_inspect` and `recovery_status`
-  in the discovery profile; `recovery_decompose` writes local recovery artifacts
-  under `.idiom/recovery`, rejects symlinked output parents, and therefore
-  requires the default profile. `recovery_promote` and
+  Recovery state for plan-execute and lane-implement failures is available
+  through `recovery_inspect` and `recovery_status` in the discovery profile;
+  `recovery_decompose` writes local recovery artifacts under `.idiom/recovery`,
+  rejects symlinked output parents, and therefore requires the default profile.
+  `recovery_promote` and
   `recovery_reconcile` remain first-party `idiom recover` commands. Product
   operator status and the TUI `/product-status` presenter also surface recovery
   packets referenced from `workflow_state.artifact_paths`, validate recovery

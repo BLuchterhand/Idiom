@@ -7,15 +7,16 @@ memory, freshness, contracts, audit, and evals.**
 Status: cross-pillar target design, drafted 2026-05-18; reviewed for
 north-star/tool parity 2026-05-18
 
-Implementation state as of 2026-05-19: the plan-execute recovery loop is now
-shipped for the first supported failure source. Failed `plan-execute` runs
-automatically persist a privacy-safe failure record and a decomposition packet.
-Operators can inspect the failed session, inspect packet status, rebuild the
-packet, promote one candidate recovery atom into a normal brief after brief
-lint, atom intake, and recovery scope gates pass, and reconcile completed atoms
-back to the original packet. Promotion is deliberately not dispatch authority;
-the promoted brief still enters the usual lane workflow. Product/operator
-status, the TUI `/product-status` and `/recover-status` presenters,
+Implementation state as of 2026-05-19: the plan-execute recovery loop and the
+first generic lane-implement adapter are now shipped. Failed `plan-execute`
+runs and failed `idiom lane implement` subprocesses automatically persist a
+privacy-safe failure record and a decomposition packet. Operators can inspect
+the failed session, inspect packet status, rebuild the packet, promote one
+candidate recovery atom into a normal brief after brief lint, atom intake, and
+recovery scope gates pass, and reconcile completed atoms back to the original
+packet. Promotion is deliberately not dispatch authority; the promoted brief
+still enters the usual lane workflow. Product/operator status, the TUI
+`/product-status` and `/recover-status` presenters,
 audit-watch, product-evidence, and release-evidence now project recovery state
 from bounded artifacts and telemetry events. Successful `recover reconcile`
 runs also write sanitized, evidence-only ranker-learning events without
@@ -24,7 +25,7 @@ Residual-work records now cite deterministic, privacy-safe evidence refs for
 required paths, changed paths, applicable failure evidence, and required-test
 commands. The TUI now also exposes a read-only `/recover-status` handoff
 surface backed by the same status presenter as `idiom recover status`.
-Remaining extensions are write-capable TUI continuation actions and
+Remaining extensions are write-capable TUI continuation actions and additional
 non-plan-execute adapters.
 
 Verified adjacent implementation:
@@ -48,6 +49,13 @@ Verified adjacent implementation:
   `.idiom/recovery/<failure-id>/failure.json` and
   `.idiom/recovery/<failure-id>/packet.json` automatically whenever a
   `plan-execute` progress state is saved with `status:"failed"`.
+- `cmd/idiom/lane.go` and `cmd/idiom/lane_recovery.go` now write the same
+  recovery artifacts when an `idiom lane implement` subcommand exits non-zero.
+  The adapter records the original workspace-relative brief path, extracts
+  required edit paths from that original brief, uses bounded lane/session
+  metadata as evidence, and classifies the failed run into a decomposable
+  generic execution failure unless a narrower budget, stale-context,
+  verification, or scope signal is present.
 - `cmd/idiom/recover.go` exposes read-only inspection for those records, with a
   legacy fallback that can derive the same report from failed progress state
   without mutating the workspace.
@@ -63,8 +71,9 @@ Verified adjacent implementation:
   reconciliation artifacts.
 - `internal/workspace/recovery_tools.go` exposes `recovery_inspect` and
   `recovery_status` through `idiom tool --profile discovery` and MCP with the
-  normal sidecar envelope. `recovery_decompose` is available only through the
-  default tool profile because it writes `.idiom/recovery` artifacts.
+  normal sidecar envelope for both plan-execute and lane-implement records.
+  `recovery_decompose` is available only through the default tool profile
+  because it writes `.idiom/recovery` artifacts.
 - `internal/productworkflow/status.go` projects `workflow_state.artifact_paths`
   recovery packets into `idiom product status` and the shared operator status
   view. Open recovery packets block normal workflow dispatch and add a runnable
@@ -316,11 +325,13 @@ idiom recover status --packet .idiom/recovery/<id>/packet.json --json
 
 Required behavior:
 
-- `inspect` reads only durable logs, progress state, plan artifacts, telemetry,
-  and git status. It does not run models or mutate files.
+- `inspect` reads only durable logs, progress state, lane history, plan
+  artifacts, telemetry, and git status. It does not run models or mutate files.
 - Failed plan-execute saves automatically write a failure record and default
-  decomposition packet. `decompose` rebuilds that packet explicitly when an
-  operator wants a different output path or current partial-state evidence.
+  decomposition packet. Failed `idiom lane implement` subprocesses write the
+  same artifact pair from bounded lane/session evidence. `decompose` rebuilds
+  that packet explicitly when an operator wants a different output path or
+  current partial-state evidence.
   Custom CLI output paths are workspace-contained, protected-path checked, and
   symlink-ancestor checked before any packet write occurs; packet writes cannot
   target recovery control artifacts such as `failure.json` or
@@ -358,7 +369,7 @@ not-applicable for a given failure class.
 | Surface | Parity requirement |
 | --- | --- |
 | `idiom plan-execute` | Read progress state, plan artifacts, required/allowed paths, changed paths, source-sanity evidence, review-repair status, and failure kinds such as `planner_blocked` or `plan_artifact_missing`. |
-| `idiom implement` and `idiom lane` | Capture lane history, command lifecycle, queue/backend readiness, stdout JSONL events, changed-path evidence, and stop reasons. |
+| `idiom implement` and `idiom lane` | Capture lane history, command lifecycle, queue/backend readiness, stdout JSONL events, changed-path evidence, and stop reasons. Failed `idiom lane implement` runs now write recovery records and decomposition packets from bounded lane/session evidence. |
 | `idiom architect` | Reuse packet, budget, plan-audit, prompt, and brief artifacts when a failure came from planning/handoff quality rather than execution. |
 | `idiom artifact` | Use only as an optional schema-bound drafting mechanism for candidate recovery prose; artifact output is not authority until recovery gates promote it. |
 | `idiom atom intake` | Reuse dispatchability, terminal, source-satisfied, stale, dirty, invalid-scope, and missing-scope classifications for promoted recovery atoms. |
@@ -467,8 +478,8 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 0: Evidence Inventory
 
-- Status: partially landed for `plan-execute` failure records and read-only
-  inspection.
+- Status: landed for `plan-execute` and the first `idiom lane implement`
+  failure records, with read-only inspection across both record sources.
 - Inventory plan-execute progress state, lane postflight reports, debug logs,
   telemetry events, plan artifacts, brief lint output, atom intake output, and
   product workflow reports.
@@ -478,7 +489,9 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 1: Deterministic Failure Classifier
 
-- Status: partially landed for plan-execute failure kinds.
+- Status: landed for plan-execute failure kinds and bounded lane-implement
+  process failures; additional lane adapters should reuse the same failure
+  class contract instead of adding source-specific packet semantics.
 - Classify `planner_blocked`, `plan_missing`, `executor_edit_failed`,
   `verification_failed`, `review_repair_failed`, `scope_too_large`,
   `stale_context`, `budget_exhausted`, and `needs_human_answer`.
@@ -524,9 +537,9 @@ it moved into a recovery state, not like it vanished into a separate tool.
   It is read-only, CWD-relative for packet paths, operator-authored, and not
   replayed into model context.
 - Status: sidecar read-only parity landed for `recovery_inspect` and
-  `recovery_status`; artifact-writing `recovery_decompose` is intentionally
-  default-profile only, and `recovery_promote`/`recovery_reconcile` remain
-  CLI-only.
+  `recovery_status` across plan-execute and lane-implement recovery records;
+  artifact-writing `recovery_decompose` is intentionally default-profile only,
+  and `recovery_promote`/`recovery_reconcile` remain CLI-only.
 - Status: product/operator status now projects recovery packets referenced from
   durable workflow state, and audit-watch packets now include a bounded
   `recovery` summary plus `failure_recovery` findings.

@@ -89,7 +89,7 @@ func runRecoverInspectMain(args []string, stdout io.Writer, stderr io.Writer) in
 	fs := flag.NewFlagSet("idiom recover inspect", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "path to config file")
-	fs.StringVar(&opts.SessionID, "session", "", "plan-execute session id to inspect")
+	fs.StringVar(&opts.SessionID, "session", "", "recovery session id to inspect")
 	fs.BoolVar(&opts.JSON, "json", false, "emit machine-readable recovery report")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -120,7 +120,7 @@ func runRecoverInspectMain(args []string, stdout io.Writer, stderr io.Writer) in
 
 func buildRecoverInspectReport(root string, sessionID string) (recoverInspectReport, error) {
 	sessionID = strings.TrimSpace(sessionID)
-	record, recordPath, found, err := recovery.TryLoadPlanExecuteFailureRecord(root, sessionID)
+	record, recordPath, found, err := recovery.TryLoadFailureRecordForSession(root, sessionID)
 	if err != nil {
 		return recoverInspectReport{}, err
 	}
@@ -200,7 +200,14 @@ func writeRecoverInspectReport(stdout io.Writer, stderr io.Writer, jsonOut bool,
 		fmt.Fprintf(stderr, "next_valid_action: %s\n", report.NextAction)
 		return code
 	}
-	fmt.Fprintf(stdout, "recover inspect: plan-execute session %s\n", report.SessionID)
+	lane := ""
+	if report.Record != nil {
+		lane = strings.TrimSpace(report.Record.SourceRun.Lane)
+	}
+	if lane == "" {
+		lane = "recovery"
+	}
+	fmt.Fprintf(stdout, "recover inspect: %s session %s\n", lane, report.SessionID)
 	fmt.Fprintf(stdout, "status: %s\n", report.Status)
 	if report.FailureClass != "" {
 		fmt.Fprintf(stdout, "failure_class: %s\n", report.FailureClass)

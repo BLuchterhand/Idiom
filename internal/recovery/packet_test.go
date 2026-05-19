@@ -232,6 +232,71 @@ func TestWriteDecompositionPacketRejectsExistingTempSymlink(t *testing.T) {
 	}
 }
 
+func TestWriteDecompositionPacketRejectsFinalSymlink(t *testing.T) {
+	root := t.TempDir()
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-final-symlink",
+		FailureKind:       "executor_failed",
+		RequiredEditPaths: []string{"a.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	fullPath, _, err := DecompositionPacketPath(root, record.FailureID, "")
+	if err != nil {
+		t.Fatalf("DecompositionPacketPath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
+		t.Fatalf("mkdir packet dir: %v", err)
+	}
+	target := filepath.Join(t.TempDir(), "packet.json")
+	if err := os.WriteFile(target, []byte("outside\n"), 0o600); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	if err := os.Symlink(target, fullPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := WriteDecompositionPacket(root, packet, ""); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Fatalf("expected final symlink write rejection, got %v", err)
+	}
+	if body, err := os.ReadFile(target); err != nil || string(body) != "outside\n" {
+		t.Fatalf("symlink target should not be touched, body=%q err=%v", string(body), err)
+	}
+}
+
+func TestWriteDecompositionPacketRejectsSymlinkedRecoveryDirectory(t *testing.T) {
+	root := t.TempDir()
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-packet-symlink",
+		FailureKind:       "executor_failed",
+		RequiredEditPaths: []string{"a.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{Now: time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC)})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".idiom", "recovery")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, _, err := WriteDecompositionPacket(root, packet, ""); err == nil || !strings.Contains(err.Error(), "symlinked directories") {
+		t.Fatalf("expected symlinked recovery packet rejection, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, record.FailureID, "packet.json")); !os.IsNotExist(err) {
+		t.Fatalf("packet should not be written through symlinked recovery dir, stat err=%v", err)
+	}
+}
+
 func TestBuildWriteAndLoadReconciliation(t *testing.T) {
 	root := t.TempDir()
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{

@@ -36,8 +36,10 @@ dispatchable atoms through plan-execute.
 This is pre-dispatch decomposition. The post-failure plan-execute loop described
 in [[23 - Decompose On Failure PROPOSAL]] now writes a durable failure record,
 classified failure shape, and decomposition packet automatically when a
-plan-execute session fails. The CLI surface is `idiom recover inspect`,
-`idiom recover status`, `idiom recover decompose`, `idiom recover promote`, and
+plan-execute session fails; failed `idiom lane implement` subprocesses now
+write the same recovery artifact pair from bounded lane/session evidence. The
+CLI surface is `idiom recover inspect`, `idiom recover status`,
+`idiom recover decompose`, `idiom recover promote`, and
 `idiom recover reconcile`. Product operator status now projects referenced
 recovery packets, blocks normal workflow dispatch while recovery is open, and
 unblocks only after a validated reconciliation artifact covers the current

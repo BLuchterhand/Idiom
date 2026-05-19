@@ -82,10 +82,13 @@ schema version, session ID, prompt hash, prompt file, phase, status, required
 and allowed edit paths, plan path, `pack_id`, changed paths, executor evidence,
 source-sanity checks, and review-repair status.
 
-When a saved progress state is `failed`, plan-execute also writes recovery
-artifacts under `.idiom/recovery/<failure-id>/`: `failure.json` for the
-classified failure record and `packet.json` for candidate recovery atoms.
-Operators inspect or promote these artifacts through:
+When a saved progress state is `failed`, plan-execute writes recovery artifacts
+under `.idiom/recovery/<failure-id>/`: `failure.json` for the classified
+failure record and `packet.json` for candidate recovery atoms. Failed
+`idiom lane implement` subprocesses now write the same artifact pair from
+bounded lane history, session summary, original-brief path, required edit
+paths, and stop-reason evidence. Operators inspect or promote these artifacts
+through:
 
 ```bash
 idiom recover inspect --session <session-id> --json
@@ -113,11 +116,13 @@ idiom tool recovery_status --profile discovery --input '{"packet_path":".idiom/r
 
 `recovery_decompose` writes local `.idiom/recovery` artifacts, so it is exposed
 only through the default tool profile and rejects output paths that leave the
-workspace or traverse symlinked directories. CLI `recover decompose --output`
-also rejects protected paths such as `.git`, `logs`, `.env`, and
-`config.json`, plus recovery control artifacts such as `failure.json` and
-`reconciliation.json`. `recovery_promote` and `recovery_reconcile` remain
-CLI-only.
+workspace or traverse symlinked directories. CLI `recover inspect`,
+`recover decompose`, `recovery_inspect`, and `recovery_decompose` resolve both
+plan-execute and lane-implement failure records by session ID. CLI
+`recover decompose --output` also rejects protected paths such as `.git`,
+`logs`, `.env`, and `config.json`, plus recovery control artifacts such as
+`failure.json` and `reconciliation.json`. `recovery_promote` and
+`recovery_reconcile` remain CLI-only.
 
 Product workflow status can surface recovery packets when durable
 `workflow_state.json` includes `artifact_paths.recovery_packet`. The shared

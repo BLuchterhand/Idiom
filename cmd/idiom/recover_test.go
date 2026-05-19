@@ -55,6 +55,56 @@ func TestRunMainRecoverInspectReadsFailureRecord(t *testing.T) {
 	}
 }
 
+func TestRunRecoverInspectAndDecomposeReadImplementFailureRecord(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "allowed.go"), []byte("package allowed\n"), 0o644); err != nil {
+		t.Fatalf("write scoped source: %v", err)
+	}
+	record, _, err := recovery.WriteFailureRecord(root, recovery.FailureRecordInput{
+		FailureID: recovery.ImplementFailureID("implement-session-1"),
+		SourceRun: recovery.SourceRun{
+			Lane:              recovery.SourceLaneImplement,
+			SessionID:         "implement-session-1",
+			PromptFile:        "brief.md",
+			RequiredEditPaths: []string{"allowed.go"},
+		},
+		FailureClass:   recovery.FailureClassExecutorEdit,
+		FailureKind:    "implement_process_failed",
+		FailureSummary: "implement process failed: exit_code=1",
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write implement recovery record: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"inspect", "--config", configPath, "--session", "implement-session-1", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover inspect exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var inspectReport recoverInspectReport
+	if err := json.Unmarshal(stdout.Bytes(), &inspectReport); err != nil {
+		t.Fatalf("decode inspect report: %v\n%s", err, stdout.String())
+	}
+	if inspectReport.FailureID != record.FailureID || inspectReport.FailureClass != recovery.FailureClassExecutorEdit || inspectReport.NextAction != recovery.NextActionReviewDecomposition {
+		t.Fatalf("unexpected inspect report: %#v", inspectReport)
+	}
+
+	stdout.Reset()
+	stderr.Reset()
+	code = runRecoverMain([]string{"decompose", "--config", configPath, "--session", "implement-session-1", "--output", "implement-packet.json", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover decompose exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var decomposeReport recoverDecomposeReport
+	if err := json.Unmarshal(stdout.Bytes(), &decomposeReport); err != nil {
+		t.Fatalf("decode decompose report: %v\n%s", err, stdout.String())
+	}
+	if decomposeReport.FailureID != record.FailureID || decomposeReport.Status != "ready" || len(decomposeReport.CandidateAtoms) != 1 {
+		t.Fatalf("unexpected decompose report: %#v", decomposeReport)
+	}
+}
+
 func TestRunRecoverInspectComputesLegacyFailedProgressWithoutWriting(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)

@@ -148,6 +148,9 @@ func WriteDecompositionPacket(root string, packet DecompositionPacket, outputPat
 	if err != nil {
 		return "", "", err
 	}
+	if err := ensureRecoveryWritePath(root, fullPath); err != nil {
+		return "", "", fmt.Errorf("recovery decomposition packet path rejected: %w", err)
+	}
 	if existing, _, found, err := TryLoadDecompositionPacket(fullPath); err == nil && found && strings.TrimSpace(existing.CreatedAt) != "" {
 		packet.CreatedAt = existing.CreatedAt
 	}

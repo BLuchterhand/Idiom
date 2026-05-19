@@ -1628,6 +1628,19 @@ func TestReviewAnswerPassContradictionAllowsNegatedMissingCoverage(t *testing.T)
 	}
 }
 
+func TestReviewAnswerPassContradictionAllowsPlannerOwnedPendingCommand(t *testing.T) {
+	answer := strings.Join([]string{
+		"Verification Checklist",
+		"- [x] Required behavior: implemented from the diff evidence.",
+		"- [ ] npm test — planner-owned, pending outside this lane. Not marked as run.",
+		"",
+		"Decision: pass",
+	}, "\n")
+	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+		t.Fatalf("planner-owned pending verification should not make pass contradictory, got %q", reason)
+	}
+}
+
 func TestReviewAnswerPassContradictionRejectsUnverifiableRequiredEdit(t *testing.T) {
 	answer := strings.Join([]string{
 		"Verification Checklist",

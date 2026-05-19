@@ -119,7 +119,7 @@ func runRecoverDecomposeMain(args []string, stdout io.Writer, stderr io.Writer) 
 	fs := flag.NewFlagSet("idiom recover decompose", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "path to config file")
-	fs.StringVar(&opts.SessionID, "session", "", "plan-execute session id to decompose")
+	fs.StringVar(&opts.SessionID, "session", "", "recovery session id to decompose")
 	fs.StringVar(&opts.OutputPath, "output", "", "packet output path; defaults to .idiom/recovery/<failure-id>/packet.json")
 	fs.BoolVar(&opts.JSON, "json", false, "emit machine-readable recovery packet report")
 	if err := fs.Parse(args); err != nil {
@@ -148,7 +148,7 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 		return recoverDecomposeReport{}, err
 	}
 	if inspectReport.Record == nil || inspectReport.Status != "failed" {
-		return recoverDecomposeReport{}, fmt.Errorf("recover decompose requires a failed plan-execute session")
+		return recoverDecomposeReport{}, fmt.Errorf("recover decompose requires a failed recovery session")
 	}
 	packet, err := recovery.BuildDecompositionPacket(*inspectReport.Record, recovery.DecompositionOptions{
 		Now:          time.Now().UTC(),

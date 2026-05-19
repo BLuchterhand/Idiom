@@ -54,10 +54,11 @@ The executable implementation plan is
   defines the recovery layer that turns a failed lane or atom into a durable
   failure record, deterministic failure classification, smaller gated recovery
   atoms, and auditable reconciliation through the `idiom recover` namespace.
-  The plan-execute slice now writes failure records and decomposition packets
-  automatically, with `recover inspect/status/decompose/promote/reconcile`
-  covering the operator loop and read-only `recovery_inspect`/`recovery_status`
-  exposed through the sidecar/MCP tool surface. Product/operator status and
+  The plan-execute and lane-implement slices now write failure records and
+  decomposition packets automatically, with
+  `recover inspect/status/decompose/promote/reconcile` covering the operator
+  loop and read-only `recovery_inspect`/`recovery_status` exposed through the
+  sidecar/MCP tool surface. Product/operator status and
   audit-watch, product-evidence, release-evidence, and the TUI
   `/product-status` and `/recover-status` presenters now project recovery
   packet state through bounded summaries. The recovery classifier covers the
@@ -68,8 +69,8 @@ The executable implementation plan is
   `source:"recovery_reconciliation"` without mutating learned weights.
   Residual-work records now carry scoped required-path, changed-path, failure,
   and required-test evidence refs without raw prompt/transcript/file-body
-  content. Write-capable TUI continuation actions and non-plan-execute failure
-  sources remain follow-up work.
+  content. Write-capable TUI continuation actions and additional
+  non-plan-execute failure sources remain follow-up work.
 
 ## System Shape
 

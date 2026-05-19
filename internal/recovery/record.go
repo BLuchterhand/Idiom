@@ -13,6 +13,7 @@ const FailureRecordSchemaVersion = "idiom.recovery.failure_record.v1"
 
 const (
 	SourceLanePlanExecute = "plan-execute"
+	SourceLaneImplement   = "implement"
 
 	FailureClassPlannerFailed     = "planner_failed"
 	FailureClassPlannerBlocked    = "planner_blocked"
@@ -69,6 +70,18 @@ type PlanExecuteFailureInput struct {
 	ReviewError       string
 }
 
+type FailureRecordInput struct {
+	FailureID      string
+	SourceRun      SourceRun
+	FailureClass   string
+	FailureKind    string
+	FailurePhase   string
+	FailureSummary string
+	EvidenceRefs   []EvidenceRef
+	PartialState   PartialState
+	NextAction     string
+}
+
 type FailureRecord struct {
 	SchemaVersion string       `json:"schema_version"`
 	FailureID     string       `json:"failure_id"`
@@ -115,21 +128,74 @@ type PartialState struct {
 	ScopeStatus  string   `json:"scope_status"`
 }
 
-func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time) (FailureRecord, error) {
-	sessionID := strings.TrimSpace(input.SessionID)
-	if !validRecoveryComponent(sessionID) {
-		return FailureRecord{}, fmt.Errorf("invalid plan-execute session id %q", input.SessionID)
+func BuildFailureRecord(input FailureRecordInput, now time.Time) (FailureRecord, error) {
+	failureID := strings.TrimSpace(input.FailureID)
+	if !validRecoveryComponent(failureID) {
+		return FailureRecord{}, fmt.Errorf("invalid recovery failure id %q", input.FailureID)
+	}
+	source := cleanSourceRun(input.SourceRun)
+	if strings.TrimSpace(source.Lane) == "" {
+		return FailureRecord{}, fmt.Errorf("recovery source lane is empty")
+	}
+	if !validRecoveryComponent(source.SessionID) {
+		return FailureRecord{}, fmt.Errorf("invalid recovery session id %q", input.SourceRun.SessionID)
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
 	stamp := now.UTC().Format(time.RFC3339Nano)
-	failureClass := ClassifyPlanExecuteFailure(input.FailureKind, input.FailureReason, input.ReviewReasonClass)
-	record := FailureRecord{
+	failureClass := strings.TrimSpace(input.FailureClass)
+	if failureClass == "" {
+		failureClass = FailureClassUnknown
+	}
+	if !validFailureClass(failureClass) {
+		return FailureRecord{}, fmt.Errorf("invalid recovery failure class %q", input.FailureClass)
+	}
+	partial := input.PartialState
+	partial.ChangedPaths = cleanPathList(partial.ChangedPaths)
+	if partial.DirtyStatus == "" {
+		partial.DirtyStatus = DirtyStatusNotChecked
+	}
+	if partial.ScopeStatus == "" {
+		partial.ScopeStatus = scopeStatus(partial.ChangedPaths, source.RequiredEditPaths, source.AllowedEditPaths)
+	}
+	nextAction := strings.TrimSpace(input.NextAction)
+	if nextAction == "" {
+		nextAction = nextActionForFailureClass(failureClass)
+	}
+	if !validNextAction(nextAction) {
+		return FailureRecord{}, fmt.Errorf("invalid recovery next action %q", input.NextAction)
+	}
+	summary := sanitizeAndTruncate(input.FailureSummary, 2000)
+	if summary == "" {
+		summary = strings.TrimSpace(source.Lane) + " failed"
+	}
+	return FailureRecord{
 		SchemaVersion: FailureRecordSchemaVersion,
-		FailureID:     PlanExecuteFailureID(sessionID),
+		FailureID:     failureID,
 		CreatedAt:     stamp,
 		UpdatedAt:     stamp,
+		SourceRun:     source,
+		Failure: Failure{
+			Class:        failureClass,
+			Kind:         strings.TrimSpace(input.FailureKind),
+			Phase:        strings.TrimSpace(input.FailurePhase),
+			Summary:      summary,
+			EvidenceRefs: cleanEvidenceRefs(input.EvidenceRefs),
+		},
+		PartialState: partial,
+		NextAction:   nextAction,
+	}, nil
+}
+
+func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time) (FailureRecord, error) {
+	sessionID := strings.TrimSpace(input.SessionID)
+	if !validRecoveryComponent(sessionID) {
+		return FailureRecord{}, fmt.Errorf("invalid plan-execute session id %q", input.SessionID)
+	}
+	failureClass := ClassifyPlanExecuteFailure(input.FailureKind, input.FailureReason, input.ReviewReasonClass)
+	return BuildFailureRecord(FailureRecordInput{
+		FailureID: PlanExecuteFailureID(sessionID),
 		SourceRun: SourceRun{
 			Lane:              SourceLanePlanExecute,
 			SessionID:         sessionID,
@@ -142,13 +208,11 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 			RequiredEditPaths: cleanPathList(input.RequiredEditPaths),
 			AllowedEditPaths:  cleanPathList(input.AllowedEditPaths),
 		},
-		Failure: Failure{
-			Class:        failureClass,
-			Kind:         strings.TrimSpace(input.FailureKind),
-			Phase:        strings.TrimSpace(input.Phase),
-			Summary:      failureSummary(input),
-			EvidenceRefs: planExecuteEvidenceRefs(input),
-		},
+		FailureClass:   failureClass,
+		FailureKind:    input.FailureKind,
+		FailurePhase:   input.Phase,
+		FailureSummary: failureSummary(input),
+		EvidenceRefs:   planExecuteEvidenceRefs(input),
 		PartialState: PartialState{
 			DirtyStatus:  DirtyStatusNotChecked,
 			ChangedPaths: cleanPathList(input.ChangedPaths),
@@ -156,8 +220,7 @@ func BuildPlanExecuteFailureRecord(input PlanExecuteFailureInput, now time.Time)
 			ScopeStatus:  scopeStatus(input.ChangedPaths, input.RequiredEditPaths, input.AllowedEditPaths),
 		},
 		NextAction: nextActionForFailureClass(failureClass),
-	}
-	return record, nil
+	}, now)
 }
 
 func PartialStateForDirtyPaths(dirtyPaths []string, changedPaths []string, requiredPaths []string, allowedPaths []string, totalEdits int) PartialState {
@@ -262,9 +325,30 @@ func WritePlanExecuteFailureRecord(root string, input PlanExecuteFailureInput, n
 	if err != nil {
 		return FailureRecord{}, "", err
 	}
+	return writeFailureRecord(root, record, now)
+}
+
+func WriteFailureRecord(root string, input FailureRecordInput, now time.Time) (FailureRecord, string, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
+	record, err := BuildFailureRecord(input, now)
+	if err != nil {
+		return FailureRecord{}, "", err
+	}
+	return writeFailureRecord(root, record, now)
+}
+
+func writeFailureRecord(root string, record FailureRecord, now time.Time) (FailureRecord, string, error) {
+	if now.IsZero() {
+		now = time.Now().UTC()
+	}
 	fullPath, relPath, err := FailureRecordPath(root, record.FailureID)
 	if err != nil {
 		return FailureRecord{}, "", err
+	}
+	if err := ensureRecoveryWritePath(root, fullPath); err != nil {
+		return FailureRecord{}, "", fmt.Errorf("recovery failure record path rejected: %w", err)
 	}
 	if existing, _, found, err := TryLoadFailureRecord(root, record.FailureID); err == nil && found && strings.TrimSpace(existing.CreatedAt) != "" {
 		record.CreatedAt = existing.CreatedAt
@@ -290,6 +374,20 @@ func WritePlanExecuteFailureRecord(root string, input PlanExecuteFailureInput, n
 
 func TryLoadPlanExecuteFailureRecord(root string, sessionID string) (FailureRecord, string, bool, error) {
 	return TryLoadFailureRecord(root, PlanExecuteFailureID(strings.TrimSpace(sessionID)))
+}
+
+func TryLoadImplementFailureRecord(root string, sessionID string) (FailureRecord, string, bool, error) {
+	return TryLoadFailureRecord(root, ImplementFailureID(strings.TrimSpace(sessionID)))
+}
+
+func TryLoadFailureRecordForSession(root string, sessionID string) (FailureRecord, string, bool, error) {
+	for _, failureID := range FailureIDCandidatesForSession(sessionID) {
+		record, path, found, err := TryLoadFailureRecord(root, failureID)
+		if err != nil || found {
+			return record, path, found, err
+		}
+	}
+	return FailureRecord{}, "", false, nil
 }
 
 func TryLoadFailureRecord(root string, failureID string) (FailureRecord, string, bool, error) {
@@ -337,6 +435,92 @@ func PlanExecuteFailureID(sessionID string) string {
 		return sessionID
 	}
 	return "plan-execute-" + sessionID
+}
+
+func ImplementFailureID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if strings.HasPrefix(sessionID, "implement-") {
+		return sessionID
+	}
+	return "implement-" + sessionID
+}
+
+func FailureIDCandidatesForSession(sessionID string) []string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return nil
+	}
+	if strings.HasPrefix(sessionID, "plan-execute-") || strings.HasPrefix(sessionID, "implement-") {
+		return []string{sessionID}
+	}
+	return []string{PlanExecuteFailureID(sessionID), ImplementFailureID(sessionID)}
+}
+
+func cleanSourceRun(source SourceRun) SourceRun {
+	return SourceRun{
+		Lane:              strings.TrimSpace(source.Lane),
+		SessionID:         strings.TrimSpace(source.SessionID),
+		ProgressStatePath: cleanRelPath(source.ProgressStatePath),
+		PromptSHA256:      strings.TrimSpace(source.PromptSHA256),
+		PromptFile:        cleanRelPath(source.PromptFile),
+		PlanPath:          cleanRelPath(source.PlanPath),
+		PlanID:            strings.TrimSpace(source.PlanID),
+		PackID:            strings.TrimSpace(source.PackID),
+		RequiredEditPaths: cleanPathList(source.RequiredEditPaths),
+		AllowedEditPaths:  cleanPathList(source.AllowedEditPaths),
+	}
+}
+
+func cleanEvidenceRefs(refs []EvidenceRef) []EvidenceRef {
+	var out []EvidenceRef
+	for _, ref := range refs {
+		clean := EvidenceRef{
+			Kind:    strings.TrimSpace(ref.Kind),
+			Path:    cleanRelPath(ref.Path),
+			ID:      strings.TrimSpace(ref.ID),
+			Summary: sanitizeAndTruncate(ref.Summary, 500),
+		}
+		if clean.Kind == "" {
+			continue
+		}
+		out = append(out, clean)
+	}
+	return out
+}
+
+func validFailureClass(value string) bool {
+	switch strings.TrimSpace(value) {
+	case FailureClassPlannerFailed,
+		FailureClassPlannerBlocked,
+		FailureClassPlanMissing,
+		FailureClassPlanInvalid,
+		FailureClassScopeTooLarge,
+		FailureClassExecutorEdit,
+		FailureClassVerification,
+		FailureClassReviewRepair,
+		FailureClassStaleContext,
+		FailureClassBudgetExhausted,
+		FailureClassDirtyWorkspace,
+		FailureClassNeedsHumanAnswer,
+		FailureClassUnsafePolicyBlock,
+		FailureClassUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+func validNextAction(value string) bool {
+	switch strings.TrimSpace(value) {
+	case NextActionReviewDecomposition,
+		NextActionAnswerBlocker,
+		NextActionInspectFailure,
+		NextActionHumanIntervention,
+		NextActionNone:
+		return true
+	default:
+		return false
+	}
 }
 
 func validRecoveryComponent(value string) bool {

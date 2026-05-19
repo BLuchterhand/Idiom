@@ -68,6 +68,166 @@ func TestWritePlanExecuteFailureRecordPreservesCreatedAt(t *testing.T) {
 	}
 }
 
+func TestWritePlanExecuteFailureRecordRejectsSymlinkedRecoveryDirectory(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, ".idiom", "recovery")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	_, _, err := WritePlanExecuteFailureRecord(root, PlanExecuteFailureInput{
+		SessionID:   "session-symlink-recovery",
+		FailureKind: "planner_failed",
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err == nil || !strings.Contains(err.Error(), "symlinked directories") {
+		t.Fatalf("expected symlinked recovery write rejection, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(outside, "plan-execute-session-symlink-recovery", "failure.json")); !os.IsNotExist(err) {
+		t.Fatalf("failure record should not be written through symlinked recovery dir, stat err=%v", err)
+	}
+}
+
+func TestBuildFailureRecordImplementDefaultsToInspectFailure(t *testing.T) {
+	record, err := BuildFailureRecord(FailureRecordInput{
+		FailureID: recoveryIDForTest("implement", "session-implement"),
+		SourceRun: SourceRun{
+			Lane:              SourceLaneImplement,
+			SessionID:         "session-implement",
+			PromptFile:        "atoms/brief.md",
+			RequiredEditPaths: []string{"internal/recovery/record.go"},
+		},
+		FailureKind:    "implement_process_failed",
+		FailureSummary: "implement process failed: exit_code=1 final_state=failed stop_reason=model_error degradations=queue_degraded",
+		EvidenceRefs: []EvidenceRef{
+			{Kind: "lane_history", Path: ".idiom/lane-history.jsonl"},
+			{Kind: "session_summary", ID: "session-implement", Summary: "stop_reason=model_error"},
+		},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildFailureRecord: %v", err)
+	}
+	if record.FailureID != "implement-session-implement" {
+		t.Fatalf("failure id=%q", record.FailureID)
+	}
+	if record.SourceRun.Lane != SourceLaneImplement {
+		t.Fatalf("source lane=%q", record.SourceRun.Lane)
+	}
+	if record.Failure.Class != FailureClassUnknown {
+		t.Fatalf("failure class=%q", record.Failure.Class)
+	}
+	if record.NextAction != NextActionInspectFailure {
+		t.Fatalf("next action=%q", record.NextAction)
+	}
+	if record.SourceRun.PromptFile != "atoms/brief.md" {
+		t.Fatalf("prompt file=%q", record.SourceRun.PromptFile)
+	}
+	if len(record.SourceRun.RequiredEditPaths) != 1 || record.SourceRun.RequiredEditPaths[0] != "internal/recovery/record.go" {
+		t.Fatalf("required paths=%#v", record.SourceRun.RequiredEditPaths)
+	}
+}
+
+func TestBuildFailureRecordRedactsGenericDetails(t *testing.T) {
+	record, err := BuildFailureRecord(FailureRecordInput{
+		FailureID: "implement-session-redact",
+		SourceRun: SourceRun{
+			Lane:      SourceLaneImplement,
+			SessionID: "session-redact",
+		},
+		FailureKind:    "implement_process_failed",
+		FailureSummary: "exit_code=1\nraw_prompt: do the secret thing\nOPENAI_API_KEY=sk-live-secret",
+		EvidenceRefs: []EvidenceRef{
+			{Kind: "session_summary", ID: "session-redact", Summary: "transcript: hidden\nbearer abc123"},
+		},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildFailureRecord: %v", err)
+	}
+	rendered := record.Failure.Summary + "\n" + record.Failure.EvidenceRefs[0].Summary
+	for _, forbidden := range []string{"raw_prompt", "OPENAI_API_KEY", "sk-live-secret", "transcript", "bearer abc123"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("generic failure record leaked %q in %q", forbidden, rendered)
+		}
+	}
+	if !strings.Contains(rendered, "[redacted sensitive recovery detail]") {
+		t.Fatalf("expected redaction marker in %q", rendered)
+	}
+}
+
+func TestBuildFailureRecordRejectsUnknownContractValues(t *testing.T) {
+	base := FailureRecordInput{
+		FailureID: "implement-session-contract",
+		SourceRun: SourceRun{
+			Lane:      SourceLaneImplement,
+			SessionID: "session-contract",
+		},
+		FailureClass: FailureClassExecutorEdit,
+	}
+	if _, err := BuildFailureRecord(FailureRecordInput{
+		FailureID:    "implement-session-bad-class",
+		SourceRun:    base.SourceRun,
+		FailureClass: "made_up_class",
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)); err == nil || !strings.Contains(err.Error(), "failure class") {
+		t.Fatalf("expected invalid failure class error, got %v", err)
+	}
+	base.NextAction = "made_up_action"
+	if _, err := BuildFailureRecord(base, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC)); err == nil || !strings.Contains(err.Error(), "next action") {
+		t.Fatalf("expected invalid next action error, got %v", err)
+	}
+}
+
+func TestPlanExecuteFailureWrappersPreserveFailureIDs(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:   "plan-execute-existing",
+		FailureKind: "planner_failed",
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	if record.FailureID != "plan-execute-existing" {
+		t.Fatalf("prefixed session id should not be double-prefixed, got %q", record.FailureID)
+	}
+
+	root := t.TempDir()
+	written, path, err := WritePlanExecuteFailureRecord(root, PlanExecuteFailureInput{
+		SessionID:   "session-wrapper",
+		FailureKind: "planner_failed",
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("WritePlanExecuteFailureRecord: %v", err)
+	}
+	if written.FailureID != "plan-execute-session-wrapper" {
+		t.Fatalf("written failure id=%q", written.FailureID)
+	}
+	if path != filepath.ToSlash(filepath.Join(".idiom", "recovery", "plan-execute-session-wrapper", "failure.json")) {
+		t.Fatalf("record path=%q", path)
+	}
+}
+
+func TestTryLoadFailureRecordForSessionFindsImplementRecord(t *testing.T) {
+	root := t.TempDir()
+	written, _, err := WriteFailureRecord(root, FailureRecordInput{
+		FailureID: ImplementFailureID("session-implement-load"),
+		SourceRun: SourceRun{
+			Lane:      SourceLaneImplement,
+			SessionID: "session-implement-load",
+		},
+		FailureClass: FailureClassExecutorEdit,
+		FailureKind:  "implement_process_failed",
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("WriteFailureRecord: %v", err)
+	}
+	loaded, path, found, err := TryLoadFailureRecordForSession(root, "session-implement-load")
+	if err != nil || !found {
+		t.Fatalf("TryLoadFailureRecordForSession found=%v err=%v", found, err)
+	}
+	if loaded.FailureID != written.FailureID || path != filepath.ToSlash(filepath.Join(".idiom", "recovery", written.FailureID, "failure.json")) {
+		t.Fatalf("loaded wrong record/path: %#v path=%s", loaded, path)
+	}
+}
+
 func TestClassifyPlanExecuteFailureRecognizesBudgetExhaustion(t *testing.T) {
 	got := ClassifyPlanExecuteFailure("planner_failed", "completion reached max_tokens before submit_plan", "")
 	if got != FailureClassBudgetExhausted {
@@ -170,6 +330,10 @@ func TestPartialStateForDirtyPathsClassifiesOutOfScope(t *testing.T) {
 	if partial.ScopeStatus != ScopeStatusOutOfScope {
 		t.Fatalf("scope status=%q", partial.ScopeStatus)
 	}
+}
+
+func recoveryIDForTest(prefix, sessionID string) string {
+	return prefix + "-" + sessionID
 }
 
 func containsAny(value string, needles []string) bool {

@@ -10,9 +10,11 @@ tags:
 
 # PROPOSAL: Decompose On Failure
 
-> **Status: PLAN-EXECUTE LOOP LANDED** — Idiom has pre-dispatch
-> atomization/refine behavior, one planner-blocked retry-or-surface path, and
-> automatic failed `plan-execute` recovery records plus decomposition packets.
+> **Status: PLAN-EXECUTE LOOP AND LANE-IMPLEMENT ADAPTER LANDED** — Idiom has
+> pre-dispatch atomization/refine behavior, one planner-blocked
+> retry-or-surface path, automatic failed `plan-execute` recovery records plus
+> decomposition packets, and a generic failed `idiom lane implement` adapter
+> that writes the same artifact pair from bounded lane/session evidence.
 > `idiom recover inspect`, `status`, `decompose`, `promote`, and `reconcile`
 > provide the operator-facing loop. Read-only `recovery_inspect` and
 > `recovery_status` are also exposed through `idiom tool`/MCP with the normal
@@ -53,6 +55,9 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] Planner-blocked recovery can choose one retry or surface to the human.
 - [x] Failed plan-execute runs write
   `.idiom/recovery/<failure-id>/packet.json` automatically.
+- [x] Failed `idiom lane implement` runs write recovery failure records and
+  decomposition packets automatically from lane history, session summary,
+  original-brief path, required edit paths, and stop-reason evidence.
 - [x] Smaller candidate recovery atoms are synthesized from required and
   changed path evidence.
 - [x] Residual-work records include scoped evidence refs for required paths,
@@ -65,8 +70,9 @@ failed run -> failure record -> failure class -> decomposition packet
   symlinked packet files; reconciliation artifacts discovered for status use
   the same symlink boundary.
 - [x] `idiom tool --profile discovery recovery_inspect` and `recovery_status`
-  expose the read-only recovery state; `recovery_decompose` stays out of the
-  discovery profile because it writes artifacts.
+  expose the read-only recovery state for plan-execute and lane-implement
+  records; `recovery_decompose` stays out of the discovery profile because it
+  writes artifacts.
 - [x] `recover decompose --output` is workspace-contained, protected-path
   checked, and symlink-ancestor checked before writing packets; the sidecar
   `recovery_decompose` writer keeps output under `.idiom/recovery` and rejects
@@ -96,8 +102,8 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] Valid `recover reconcile` runs append evidence-only ranker-learning events
   with packet-quality, localization, atom-count, and verification-count metrics;
   the adapter rejects ranker state paths and never mutates weights.
-- [ ] Write-capable TUI continuation/handoff actions and non-plan-execute
-  adapters are not yet complete.
+- [ ] Write-capable TUI continuation/handoff actions and additional
+  non-plan-execute adapters are not yet complete.
 
 ## Target Lifecycle
 
@@ -166,7 +172,7 @@ Recovery should reuse existing surfaces instead of inventing parallel checks:
 
 | Surface | Role |
 | --- | --- |
-| `plan-execute`, `implement`, `lane` | source failure records, progress state, events, changed paths |
+| `plan-execute`, `implement`, `lane` | source failure records, progress state, lane history, events, changed paths |
 | `architect`, `artifact` | planning/handoff evidence and optional schema-bound drafting, not authority |
 | `brief lint`, `atom intake`, `lane postflight` | promotion gates for recovery atoms |
 | `task`, `task_ledger` | operator-visible recovery work items without overriding gates |

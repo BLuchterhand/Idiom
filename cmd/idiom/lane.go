@@ -336,17 +336,19 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 	// analyzer works either way; --json just makes it machine-precise.
 	tee := newTeeBuffer(stdout)
 	var subcode int
+	sessionCapture := &lanePromptSessionCapture{}
 	switch opts.Mode {
 	case "plan-execute":
 		subcode = deps.runPlanExecute(forwardArgs, tee, stderr, deps.defaultPromptRun)
 	case "implement":
-		subcode = deps.runImplement(forwardArgs, tee, stderr, deps.defaultPromptRun)
+		subcode = deps.runImplement(forwardArgs, tee, stderr, sessionCapture.wrap(deps.defaultPromptRun))
 	default:
 		// parseLaneOptions already rejects unknown modes; defensive
 		// belt-and-suspenders.
 		fmt.Fprintf(stderr, "lane: unknown mode %q\n", opts.Mode)
 		return 2
 	}
+	subcommandExit := subcode
 	degraded := analyzeLaneOutput(tee.Bytes(), subcode)
 	if opts.Postflight {
 		pfExit := runLanePostflightAfterLane(opts, stdout, stderr)
@@ -381,11 +383,17 @@ func runLaneMainWithDeps(args []string, stdout io.Writer, stderr io.Writer, deps
 		historyEvt.DurationMS = summary.DurationMS
 		historyEvt.StopReason = summary.StopReason
 	}
+	if historyEvt.SessionID == "" {
+		historyEvt.SessionID = sessionCapture.SessionID()
+	}
 	if err := appendLaneHistory(opts.ProjectRoot, historyEvt); err != nil {
 		fmt.Fprintf(stderr, "lane: history append failed: %v\n", err)
 	}
 	if opts.JSONEvents {
 		emitLaneJSONEvent(stdout, "run_ledger", laneHistoryEventFields(historyEvt))
+	}
+	if opts.Mode == "implement" && subcommandExit != 0 {
+		writeLaneImplementRecovery(opts, historyEvt, subcommandExit, stderr)
 	}
 
 	// Post-analyze: detect three regression classes and emit a
