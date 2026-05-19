@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -173,12 +174,13 @@ func researchEvidenceFindings(cards []EvidenceCard, policy MergePolicy) []Profil
 }
 
 func cleanResearchOutputDir(relDir string) (string, bool) {
-	if strings.TrimSpace(relDir) == "" || filepath.IsAbs(relDir) {
+	raw := strings.TrimSpace(relDir)
+	normalized := strings.ReplaceAll(filepath.ToSlash(raw), "\\", "/")
+	if normalized == "" || filepath.IsAbs(raw) || strings.HasPrefix(normalized, "/") {
 		return "", false
 	}
-	clean := filepath.Clean(relDir)
-	slash := filepath.ToSlash(clean)
-	if slash == "." || slash == ".." || strings.HasPrefix(slash, "../") {
+	clean := path.Clean(normalized)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
 		return "", false
 	}
 	return clean, true

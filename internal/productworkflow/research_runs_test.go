@@ -64,6 +64,31 @@ func TestResearchRunPlanNormalizesOutputDir(t *testing.T) {
 	if plan.Runs[0].OutputPath != "research/outputs/alpha--ok.json" {
 		t.Fatalf("unexpected output_path: %q", plan.Runs[0].OutputPath)
 	}
+
+	backslashPlan := PlanResearchRuns(profiles, "", `research\outputs`)
+	if backslashPlan.ResearchOutputDir != "research/outputs" {
+		t.Fatalf("expected backslash-separated output dir to normalize, got %q", backslashPlan.ResearchOutputDir)
+	}
+	if backslashPlan.Runs[0].OutputPath != "research/outputs/alpha--ok.json" {
+		t.Fatalf("unexpected backslash output_path: %q", backslashPlan.Runs[0].OutputPath)
+	}
+}
+
+func TestResearchRunPlanBlocksBackslashTraversalOutputDir(t *testing.T) {
+	profiles := []ResearchProfile{{
+		Name:      "primary",
+		ProfileID: "alpha",
+		Researchers: []Researcher{
+			{ID: "ok", Alignment: "market", Question: "q1", AllowedCapabilities: []string{"context_query"}, Output: "evidence_cards"},
+		},
+	}}
+	plan := PlanResearchRuns(profiles, "", `..\outside`)
+	if plan.RunCount != 0 {
+		t.Fatalf("expected no runs for traversal output dir, got %d", plan.RunCount)
+	}
+	if !hasFindingKind(plan.Findings, "invalid_research_output_dir") {
+		t.Fatalf("expected invalid_research_output_dir finding, got %#v", plan.Findings)
+	}
 }
 
 func TestResearchRunPlanBlocksInvalidProfileID(t *testing.T) {
