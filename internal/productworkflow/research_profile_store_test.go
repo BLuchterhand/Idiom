@@ -243,6 +243,35 @@ func TestDiscoverProfilesSkipsNonJSON(t *testing.T) {
 	}
 }
 
+func TestDiscoverProfilesRejectsSymlinkProfiles(t *testing.T) {
+	root := t.TempDir()
+	dir := createProfilesDir(t, root)
+	outside := filepath.Join(t.TempDir(), "outside.json")
+	if err := os.WriteFile(outside, []byte(validResearchProfileJSONWithID("outside")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "linked.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := DiscoverProfiles(root)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Profiles) != 0 {
+		t.Fatalf("expected symlinked profile to be rejected, got %d profile(s)", len(result.Profiles))
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Kind == "profile_symlink" && f.Severity == "error" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected profile_symlink error finding, got: %#v", result.Findings)
+	}
+}
+
 func TestDiscoverProfilesGeneratesProfileIDFromFilename(t *testing.T) {
 	root := t.TempDir()
 	dir := createProfilesDir(t, root)

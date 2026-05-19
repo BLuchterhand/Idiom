@@ -41,6 +41,15 @@ func DiscoverProfiles(projectRoot string) (*ProfileStoreResult, error) {
 			continue
 		}
 		name := entry.Name()
+		if entry.Type()&os.ModeSymlink != 0 {
+			result.Findings = append(result.Findings, ProfileFinding{
+				Kind:     "profile_symlink",
+				Message:  fmt.Sprintf("profile file %q must not be a symlink", name),
+				File:     name,
+				Severity: "error",
+			})
+			continue
+		}
 		if strings.Contains(name, string(filepath.Separator)+".."+string(filepath.Separator)) ||
 			name == ".." || strings.HasPrefix(name, "../") ||
 			strings.HasSuffix(name, "/..") || strings.HasPrefix(name, "/") {
