@@ -249,6 +249,22 @@ func TestValidateLocalizationCorpusRejectsInvalidBenchmarkEvidence(t *testing.T)
 	}
 }
 
+func TestValidateLocalizationCorpusRejectsBackslashTraversalEvidencePath(t *testing.T) {
+	corpus := validLocalizationCorpusForTest()
+	corpus.Tasks[0].Benchmark = &LocalizationBenchmarkInput{
+		ContextPacket: &LocalizationContextPacketEvidence{
+			Files: []LocalizationCandidateFile{{Path: `..\outside.go`}},
+		},
+	}
+	err := ValidateLocalizationCorpus(corpus)
+	if err == nil {
+		t.Fatal("expected backslash traversal evidence path to fail validation")
+	}
+	if !strings.Contains(err.Error(), "context packet candidate file path") {
+		t.Fatalf("expected candidate path validation error, got %v", err)
+	}
+}
+
 func TestValidateLocalizationCorpusRejectsInvalidCompetitiveConditionEvidence(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
 	corpus.Tasks[0].Benchmark = &LocalizationBenchmarkInput{

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	pathpkg "path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -548,28 +549,37 @@ func EvaluateLocalizationCorpusFileWithOptions(path string, root string, options
 }
 
 func validateLocalizationRelativePath(path string) error {
+	_, err := normalizeLocalizationRelativePath(path)
+	return err
+}
+
+func normalizeLocalizationRelativePath(path string) (string, error) {
 	trimmed := strings.TrimSpace(path)
 	if trimmed == "" {
-		return fmt.Errorf("empty path")
+		return "", fmt.Errorf("empty path")
 	}
-	if filepath.IsAbs(trimmed) {
-		return fmt.Errorf("absolute paths are not allowed")
+	normalized := strings.ReplaceAll(filepath.ToSlash(trimmed), "\\", "/")
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
+		return "", fmt.Errorf("absolute paths are not allowed")
 	}
-	cleaned := filepath.Clean(trimmed)
-	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
-		return fmt.Errorf("path must stay within the workspace")
+	cleaned := pathpkg.Clean(normalized)
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return "", fmt.Errorf("path must stay within the workspace")
 	}
-	if strings.Contains(cleaned, string(filepath.Separator)+".."+string(filepath.Separator)) {
-		return fmt.Errorf("path must not contain traversal")
+	for _, part := range strings.Split(cleaned, "/") {
+		if part == ".." {
+			return "", fmt.Errorf("path must not contain traversal")
+		}
 	}
-	return nil
+	return cleaned, nil
 }
 
 func localizationPathExists(root string, path string) bool {
-	if err := validateLocalizationRelativePath(path); err != nil {
+	cleaned, err := normalizeLocalizationRelativePath(path)
+	if err != nil {
 		return false
 	}
-	_, err := os.Stat(filepath.Join(root, filepath.Clean(path)))
+	_, err = os.Stat(filepath.Join(root, filepath.FromSlash(cleaned)))
 	return err == nil
 }
 
