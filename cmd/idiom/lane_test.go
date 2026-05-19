@@ -372,6 +372,48 @@ func TestRunLaneMainInjectsAutomaticContextPackBeforeBrief(t *testing.T) {
 	}
 }
 
+func TestRenderLaneContextPackSectionAddsFallbackWhenNoTargets(t *testing.T) {
+	section, err := renderLaneContextPackSection(workspace.ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/empty.json with 0 candidate file(s)",
+		Output:  `{"pack_id":"empty","candidate_files":[],"candidate_symbols":[],"tests":[]}`,
+	})
+	if err != nil {
+		t.Fatalf("render context pack: %v", err)
+	}
+	for _, want := range []string{
+		"## Context Discovery Fallback",
+		"context_pack returned no candidate files",
+		"`search_files`",
+		"`search_content`",
+		"`read_file`",
+		"If a literal phrase misses, broaden",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("fallback section missing %q:\n%s", want, section)
+		}
+	}
+}
+
+func TestRenderLaneContextDiscoveryFallbackSectionIncludesObjective(t *testing.T) {
+	section := renderLaneContextDiscoveryFallbackSection(laneOptions{
+		Title: "Replace banner path with alias",
+	}, "context index unavailable\nretry timed out")
+	for _, want := range []string{
+		"## Context Discovery Fallback",
+		"Replace banner path with alias",
+		"context index unavailable retry timed out",
+		"`search_files`",
+		"`search_content`",
+		"`read_file`",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("fallback section missing %q:\n%s", want, section)
+		}
+	}
+}
+
 func TestRunLaneMainTelemetryMatchesDoctorReadinessProfile(t *testing.T) {
 	root := t.TempDir()
 	t.Chdir(root)

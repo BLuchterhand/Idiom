@@ -18,8 +18,13 @@ func TestNextActionsForAllStates_TableDriven(t *testing.T) {
 	}{
 		{
 			state: "planned", statusBucket: "started",
-			wantActions: []string{"start_implementation", "start_investigation"},
-			wantOwners:  []string{"implementor", "investigator"},
+			wantActions: []string{"submit_for_human_verification", "start_investigation"},
+			wantOwners:  []string{"planner", "investigator"},
+		},
+		{
+			state: "human_verification", statusBucket: "started",
+			wantActions: []string{"approve_for_implementation", "request_changes", "request_investigation"},
+			wantOwners:  []string{"operator", "operator", "operator"},
 		},
 		{
 			state: "implementing", statusBucket: "started",
@@ -371,11 +376,25 @@ func TestApproveActionListedWhenPreconditionsMet(t *testing.T) {
 	}
 }
 
-func TestValidTransitionPlannedToImplementing(t *testing.T) {
+func TestValidTransitionPlannedToHumanVerification(t *testing.T) {
 	result := EvaluateTransition(TransitionInput{
 		StatusBucket:    "started",
 		CurrentState:    "planned",
-		RequestedAction: "start_implementation",
+		RequestedAction: "submit_for_human_verification",
+	})
+	if len(result.Blockers) > 0 {
+		t.Fatalf("expected no blockers, got %v", result.Blockers)
+	}
+	if result.ToState != "human_verification" {
+		t.Fatalf("expected ToState human_verification, got %q", result.ToState)
+	}
+}
+
+func TestValidTransitionHumanVerificationToImplementing(t *testing.T) {
+	result := EvaluateTransition(TransitionInput{
+		StatusBucket:    "started",
+		CurrentState:    "human_verification",
+		RequestedAction: "approve_for_implementation",
 	})
 	if len(result.Blockers) > 0 {
 		t.Fatalf("expected no blockers, got %v", result.Blockers)
@@ -568,8 +587,28 @@ func TestNextActionsStableOrder_Planned(t *testing.T) {
 		t.Fatalf("expected no blockers, got %v", blockers)
 	}
 	want := []TransitionAction{
-		{Action: "start_implementation", Owner: "implementor"},
+		{Action: "submit_for_human_verification", Owner: "planner"},
 		{Action: "start_investigation", Owner: "investigator"},
+	}
+	if len(actions) != len(want) {
+		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
+	}
+	for i := range want {
+		if actions[i] != want[i] {
+			t.Fatalf("action[%d]: expected %+v, got %+v", i, want[i], actions[i])
+		}
+	}
+}
+
+func TestNextActionsStableOrder_HumanVerification(t *testing.T) {
+	actions, blockers := NextActionsForState("started", "human_verification")
+	if len(blockers) > 0 {
+		t.Fatalf("expected no blockers, got %v", blockers)
+	}
+	want := []TransitionAction{
+		{Action: "approve_for_implementation", Owner: "operator"},
+		{Action: "request_changes", Owner: "operator"},
+		{Action: "request_investigation", Owner: "operator"},
 	}
 	if len(actions) != len(want) {
 		t.Fatalf("expected %d actions, got %d: %v", len(want), len(actions), actions)
@@ -622,7 +661,7 @@ func TestNextActionsStableOrder_Implementing(t *testing.T) {
 func TestStableOrderHoldsAcrossRepeatedCalls(t *testing.T) {
 	for run := 0; run < 20; run++ {
 		actions, _ := NextActionsForState("started", "planned")
-		if len(actions) != 2 || actions[0].Action != "start_implementation" || actions[1].Action != "start_investigation" {
+		if len(actions) != 2 || actions[0].Action != "submit_for_human_verification" || actions[1].Action != "start_investigation" {
 			t.Fatalf("run %d: ordering changed: %v", run, actions)
 		}
 	}

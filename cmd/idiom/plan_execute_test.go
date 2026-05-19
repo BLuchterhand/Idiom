@@ -16,6 +16,7 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/planexecute"
 	"idiom/internal/workspace"
 )
@@ -102,7 +103,7 @@ func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 }
 
 func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
-	addendum := planExecutePlannerSystemAddendum(nil)
+	addendum := planExecutePlannerSystemAddendum(nil, nil)
 	for _, forbidden := range []string{
 		"At most one bounded source-read",
 		"Never re-read the same file",
@@ -117,6 +118,9 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 		"planner target packet",
 		"missing body evidence",
 		"`Decision: source-satisfied`",
+		"candidate/target refs",
+		"No required edit paths were provided",
+		"real edits grounded in the objective/target refs",
 	} {
 		if !strings.Contains(addendum, want) {
 			t.Fatalf("planner addendum missing readiness-oriented wording %q:\n%s", want, addendum)
@@ -125,7 +129,7 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 }
 
 func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
-	addendum := planExecutePlannerSystemAddendum([]string{"a.cpp", "b.cpp", "a.cpp"})
+	addendum := planExecutePlannerSystemAddendum([]string{"a.cpp", "b.cpp", "a.cpp"}, nil)
 
 	for _, want := range []string{
 		"Required `submit_plan` coverage for this run: 2 required path(s).",
@@ -137,6 +141,33 @@ func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
 		if !strings.Contains(addendum, want) {
 			t.Fatalf("planner addendum missing %q:\n%s", want, addendum)
 		}
+	}
+}
+
+func TestPlanExecutePlannerAddendumIncludesAllowedPathChecklist(t *testing.T) {
+	addendum := planExecutePlannerSystemAddendum(nil, []string{"internal/app/rendering.go", "internal/app/rendering.go"})
+
+	for _, want := range []string{
+		"Allowed `submit_plan` edit scope for this run: 1 candidate path(s).",
+		"- internal/app/rendering.go",
+		"allowlist, not coverage obligations",
+	} {
+		if !strings.Contains(addendum, want) {
+			t.Fatalf("planner addendum missing %q:\n%s", want, addendum)
+		}
+	}
+}
+
+func TestPlanExecuteScopeToBriefBodyInsertsAllowedPathsInsideMarkers(t *testing.T) {
+	prompt := pathparse.WrapBriefBody("# Objective\n\nUpdate the banner.")
+	got := planExecuteScopeToBriefBody(prompt, nil, []string{"internal/app/rendering.go"})
+	scoped := pathparse.ScopeToBriefBody(got)
+
+	if !strings.Contains(scoped, "allowed_edit_paths:") || !strings.Contains(scoped, "internal/app/rendering.go") {
+		t.Fatalf("allowed scope was not inserted inside brief body:\n%s", got)
+	}
+	if allowed := app.AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/app/rendering.go" {
+		t.Fatalf("allowed paths were not parseable from scoped prompt: %#v\n%s", allowed, got)
 	}
 }
 

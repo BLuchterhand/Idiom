@@ -19,6 +19,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		FilesToReadFirst:     []string{},
 		VerifiedCurrentState: []string{},
 		RequiredBehavior:     []string{},
+		ImplementationShape:  []string{},
 		Constraints:          []string{},
 		Tests:                []string{},
 		Acceptance:           []string{},
@@ -106,6 +107,11 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 	}
 
 	out.RequiredBehavior = briefUniqueSortedStrings(out.RequiredBehavior)
+	shapes, missingNewFileShapes := collectAcceptedADRCodeBlocks(input.ADRs, out.FileActions)
+	out.ImplementationShape = briefUniqueSortedStrings(shapes)
+	for _, path := range missingNewFileShapes {
+		out.Blockers = append(out.Blockers, fmt.Sprintf("accepted ADRs do not include a concrete path-labeled implementation code block for new file %s", path))
+	}
 	out.Decisions = briefUniqueSortedStrings(out.Decisions)
 	out.Blockers = briefUniqueSortedStrings(out.Blockers)
 	if len(out.Blockers) == 0 {
@@ -150,6 +156,16 @@ func renderImplementationBriefMarkdown(result BriefGenerationResult) string {
 	b.WriteString("\n## Required Behavior\n\n")
 	for i, line := range result.RequiredBehavior {
 		b.WriteString(fmt.Sprintf("%d. %s\n", i+1, line))
+	}
+	if len(result.ImplementationShape) > 0 {
+		b.WriteString("\n## Implementation Shape\n\n")
+		for _, block := range result.ImplementationShape {
+			b.WriteString(block)
+			if !strings.HasSuffix(block, "\n") {
+				b.WriteByte('\n')
+			}
+			b.WriteByte('\n')
+		}
 	}
 	b.WriteString("\n## Constraints\n\n")
 	for _, line := range result.Constraints {
@@ -249,6 +265,117 @@ func collectAcceptedADRIDs(adrs []ParsedADR) []string {
 		}
 	}
 	return briefUniqueSortedStrings(ids)
+}
+
+func collectAcceptedADRCodeBlocks(adrs []ParsedADR, actions map[string]string) ([]string, []string) {
+	blocks := []string{}
+	requiredPaths := briefActionPaths(actions)
+	newFilePaths := briefNewFileActionPaths(actions)
+	found := map[string]bool{}
+	for _, adr := range adrs {
+		if !isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
+			continue
+		}
+		for _, block := range markdownCodeBlocks(adr.RawMarkdown, requiredPaths) {
+			if strings.TrimSpace(block.Body) != "" {
+				found[block.Path] = true
+				blocks = append(blocks, fmt.Sprintf("`%s`\n\n%s", block.Path, normalizeBriefCodeFence(block.Body)))
+			}
+		}
+	}
+	missing := []string{}
+	for _, path := range newFilePaths {
+		if !found[path] {
+			missing = append(missing, path)
+		}
+	}
+	return blocks, missing
+}
+
+func briefActionPaths(actions map[string]string) []string {
+	paths := make([]string, 0, len(actions))
+	for path := range actions {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func briefNewFileActionPaths(actions map[string]string) []string {
+	paths := []string{}
+	for path, action := range actions {
+		if strings.Contains(strings.ToLower(action), "create new file") {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+func normalizeBriefCodeFence(block string) string {
+	lines := strings.Split(block, "\n")
+	if len(lines) == 0 {
+		return block
+	}
+	if isMarkdownFenceLine(lines[0]) {
+		lines[0] = "```text"
+	}
+	return strings.Join(lines, "\n")
+}
+
+type markdownCodeBlock struct {
+	Path string
+	Body string
+}
+
+func markdownCodeBlocks(markdown string, requiredPaths []string) []markdownCodeBlock {
+	lines := strings.Split(markdown, "\n")
+	blocks := []markdownCodeBlock{}
+	var current []string
+	currentPath := ""
+	inFence := false
+	previousNonEmpty := ""
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			if inFence {
+				current = append(current, line)
+				if currentPath != "" {
+					blocks = append(blocks, markdownCodeBlock{Path: currentPath, Body: strings.Join(current, "\n")})
+				}
+				current = nil
+				currentPath = ""
+				inFence = false
+				continue
+			}
+			currentPath = pathMentionedInLine(previousNonEmpty, requiredPaths)
+			inFence = true
+			current = []string{line}
+			continue
+		}
+		if inFence {
+			current = append(current, line)
+			continue
+		}
+		if trimmed != "" {
+			previousNonEmpty = line
+		}
+	}
+	return blocks
+}
+
+func pathMentionedInLine(line string, requiredPaths []string) string {
+	for _, path := range requiredPaths {
+		if strings.Contains(line, path) {
+			return path
+		}
+	}
+	return ""
+}
+
+func isMarkdownFenceLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~")
 }
 
 func collectTDDReadFirstPaths(ledger TDDLedger) []string {

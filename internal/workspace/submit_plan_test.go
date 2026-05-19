@@ -66,6 +66,48 @@ func submitPlanTestContains(values []string, want string) bool {
 	return false
 }
 
+func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
+	defs := BuildToolDefinitions([]string{"submit_plan"})
+	if len(defs) != 1 {
+		t.Fatalf("expected submit_plan schema, got %d definitions", len(defs))
+	}
+	var schema struct {
+		AnyOf      []map[string][]string `json:"anyOf"`
+		Properties struct {
+			Edits struct {
+				MinItems int `json:"minItems"`
+				Items    struct {
+					Required []string              `json:"required"`
+					AnyOf    []map[string][]string `json:"anyOf"`
+				} `json:"items"`
+			} `json:"edits"`
+			PlanArtifact struct {
+				Required   []string `json:"required"`
+				Properties struct {
+					Edits struct {
+						MinItems int `json:"minItems"`
+					} `json:"edits"`
+				} `json:"properties"`
+			} `json:"plan_artifact"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(defs[0].ParametersJSON), &schema); err != nil {
+		t.Fatalf("decode submit_plan schema: %v\n%s", err, defs[0].ParametersJSON)
+	}
+	if len(schema.AnyOf) != 2 {
+		t.Fatalf("submit_plan should require either top-level edits or plan_artifact, got %#v", schema.AnyOf)
+	}
+	if schema.Properties.Edits.MinItems != 1 || !submitPlanTestContains(schema.Properties.Edits.Items.Required, "path") {
+		t.Fatalf("top-level edits should require at least one path-scoped edit, got %#v", schema.Properties.Edits)
+	}
+	if len(schema.Properties.Edits.Items.AnyOf) == 0 {
+		t.Fatalf("edit items should require a concrete edit shape")
+	}
+	if !submitPlanTestContains(schema.Properties.PlanArtifact.Required, "edits") || schema.Properties.PlanArtifact.Properties.Edits.MinItems != 1 {
+		t.Fatalf("plan_artifact should require nonempty edits, got %#v", schema.Properties.PlanArtifact)
+	}
+}
+
 func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolResult, forbidden []string) PlanArtifact {
 	t.Helper()
 	body, err := os.ReadFile(filepath.Join(root, ".idiom", "plans", "last.plan.json"))

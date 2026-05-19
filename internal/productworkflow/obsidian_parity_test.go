@@ -8,8 +8,8 @@ import (
 
 func TestObsidianParityDetectsStaleStatusWithoutRationale(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ObsidianProposalPath), "> **Status: NOT STARTED**")
-	mustWrite(t, filepath.Join(root, ObsidianRoadmapPath), "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	mustWrite(t, filepath.Join(root, ObsidianProductWorkflowPath), "> **Status: NOT STARTED**")
+	mustWrite(t, filepath.Join(root, ObsidianRecoveryPath), "# Recovery and Decomposition")
 	mustWrite(t, filepath.Join(root, "reports", "impl-0032-investigation.json"), "{}")
 
 	ws := &WorkflowState{
@@ -25,8 +25,8 @@ func TestObsidianParityDetectsStaleStatusWithoutRationale(t *testing.T) {
 
 func TestObsidianParityAllowsNoChangeRationale(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ObsidianProposalPath), "> **Status: NOT STARTED**")
-	mustWrite(t, filepath.Join(root, ObsidianRoadmapPath), "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	mustWrite(t, filepath.Join(root, ObsidianProductWorkflowPath), "> **Status: NOT STARTED**")
+	mustWrite(t, filepath.Join(root, ObsidianRecoveryPath), "# Recovery and Decomposition")
 	ws := &WorkflowState{
 		EffortID:     "prd-adr-brief-workflow",
 		TaskID:       "impl-0032-phase-5-obsidian-parity-check",
@@ -46,8 +46,8 @@ func TestObsidianParityAllowsNoChangeRationale(t *testing.T) {
 
 func TestObsidianParitySkipsUnrelatedEffortWithoutCheckedFiles(t *testing.T) {
 	root := t.TempDir()
-	mustWrite(t, filepath.Join(root, ObsidianProposalPath), "> **Status: NOT STARTED**")
-	mustWrite(t, filepath.Join(root, ObsidianRoadmapPath), "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	mustWrite(t, filepath.Join(root, ObsidianProductWorkflowPath), "> **Status: NOT STARTED**")
+	mustWrite(t, filepath.Join(root, ObsidianRecoveryPath), "# Recovery and Decomposition")
 	ws := &WorkflowState{
 		EffortID:     "other-effort",
 		TaskID:       "impl-test",
@@ -65,8 +65,8 @@ func TestObsidianParitySkipsUnrelatedEffortWithoutCheckedFiles(t *testing.T) {
 func TestObsidianParityDoesNotReadAncestorDocs(t *testing.T) {
 	parent := t.TempDir()
 	nested := filepath.Join(parent, "nested", "effort")
-	mustWrite(t, filepath.Join(parent, ObsidianProposalPath), "> **Status: PARTIALLY IMPLEMENTED**")
-	mustWrite(t, filepath.Join(parent, ObsidianRoadmapPath), "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	mustWrite(t, filepath.Join(parent, ObsidianProductWorkflowPath), "> **Status: PARTIALLY IMPLEMENTED**")
+	mustWrite(t, filepath.Join(parent, ObsidianRecoveryPath), "# Recovery and Decomposition")
 	ws := &WorkflowState{
 		EffortID:     "prd-adr-brief-workflow",
 		TaskID:       "impl-0032-phase-5-obsidian-parity-check",

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
@@ -634,6 +636,68 @@ func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 	}
 }
 
+func TestWriterRouteDecisionForPromptDispatchesUnscopedImplementationToPlanExecute(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:         agent.BuildMode(),
+		route:        turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("remove the busy mode trace ctx footer from the TUI input area", plan)
+
+	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+		t.Fatalf("unscoped TUI implementation should dispatch to plan-execute, got %#v", decision)
+	}
+	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	}
+}
+
+func TestImplementationDispatchFallbackSearchRanksUIRenderPath(t *testing.T) {
+	output := strings.Join([]string{
+		`f11 internal/agent/runner.go:5174: return containsAny(lowerObjective, "banner")`,
+		`f6 internal/app/approval.go:51:// invariant that the banner always matches a real request`,
+		`f12 internal/app/model_state.go:1375: func (m *Model) errorBanner() string {`,
+		`f10 internal/app/rendering.go:50: if banner := m.errorBanner(); banner != "" {`,
+		`f10 internal/app/rendering.go:51: footerLines = append(footerLines, errorStyle.Render(banner))`,
+		`f5 internal/frontier/locate.go:169: if ContainsAny(normalized, "top", "header", "banner") {`,
+	}, "\n")
+
+	paths := implementationDispatchRankSearchPaths("replace the model path in the top-right banner with the actual model alias", output, 3)
+	if len(paths) == 0 || paths[0] != "internal/app/rendering.go" {
+		t.Fatalf("expected rendering.go first, got %#v", paths)
+	}
+}
+
+func TestImplementationDispatchFallbackSearchKeepsNonGoSourcePaths(t *testing.T) {
+	output := strings.Join([]string{
+		`f1 web/src/components/Banner.tsx:42: <HeaderBanner modelAlias={activeAlias} />`,
+		`f2 docs/banner.md:4: banner model alias notes`,
+	}, "\n")
+
+	paths := implementationDispatchRankSearchPaths("replace the banner model path with the actual model alias", output, 3)
+	if len(paths) == 0 || paths[0] != "web/src/components/Banner.tsx" {
+		t.Fatalf("expected TSX source path to remain eligible, got %#v", paths)
+	}
+}
+
+func TestAppendDiscoveredCandidateScopeStaysInsideBriefBody(t *testing.T) {
+	prompt := pathparse.WrapBriefBody("# Objective\n\nUpdate the banner.")
+	got := appendDiscoveredCandidateScopeAddendum(prompt, []string{"internal/app/rendering.go"})
+	scoped := pathparse.ScopeToBriefBody(got)
+
+	if !strings.Contains(scoped, "allowed_edit_paths:") || !strings.Contains(scoped, "internal/app/rendering.go") {
+		t.Fatalf("discovered candidate scope was not inserted inside brief body:\n%s", got)
+	}
+	if allowed := AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/app/rendering.go" {
+		t.Fatalf("discovered candidate scope is not parseable as allowed paths: %#v\n%s", allowed, got)
+	}
+}
+
 func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
@@ -681,6 +745,147 @@ func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 	}
 	if !slices.Contains(decision.ReasonCodes, "route.read_only_question") {
 		t.Fatalf("read-only route reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisabled(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	var chatRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "mock-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read request: %v", err)
+			}
+			requestText := string(body)
+			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
+				t.Fatalf("unscoped TUI implementation should not enter plan-execute planner:\n%s", requestText)
+			}
+			switch chatRequests.Add(1) {
+			case 1:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{
+						"message": map[string]string{"content": `<tool_call>
+{"tool":"write_file","path":"target.txt","content":"new\n","description":"update target through implement route"}`},
+					}},
+				})
+			default:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{
+						"message": map[string]string{"content": "Updated target.txt."},
+					}},
+				})
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = server.URL
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = ""
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "update target.txt")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(got) != "new\n" {
+		t.Fatalf("target content = %q, want new", string(got))
+	}
+}
+
+func TestPlanExecutePlannerBlockedNoScopeSurfacesWithoutRetry(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	answer, handled, err := model.handlePlanExecutePlannerBlocked(context.Background(), implementationDispatchPlanExecuteFailure{
+		Prompt: "remove the busy mode trace ctx footer from the TUI input area",
+		Plan: promptExecutionPlan{
+			mode:         agent.BuildMode(),
+			route:        turnRoutePlan{Family: "implementation"},
+			runtimeBrief: workerruntime.WorkerRuntimeBrief{},
+		},
+		Result: planexecute.RunResult{
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "completion gate rejected final answer before submit_plan",
+		},
+	})
+	if err != nil || !handled {
+		t.Fatalf("expected handled no-scope blocker, handled=%t err=%v answer=%q", handled, err, answer)
+	}
+	for _, want := range []string{
+		"Plan-execute dispatch blocked before retry",
+		"concrete edit scope",
+		"completion gate rejected final answer",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("no-scope blocker missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestPlanExecutePlannerBlockedMessageHidesInternalCompletionGatePrompt(t *testing.T) {
+	answer := humanPlanExecutePlannerBlockedMessage(implementationDispatchPlanExecuteFailure{
+		AllowedPaths: []string{"internal/app/rendering.go"},
+		Result: planexecute.RunResult{
+			FailureReason: "<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
+			PlannerAnswer: "Missing completion evidence: [gate retry 3/3] plan-execute planner phase requires a successful submit_plan tool result before final answer.",
+		},
+	}, implementationDispatchRecoveryDecision{
+		Decision: "surface",
+		Reason:   "automatic discovered-scope retry did not produce a plan",
+	})
+
+	for _, want := range []string{
+		"Plan-execute could not produce a plan artifact",
+		"automatic discovered-scope retry did not produce a plan",
+		"planner stopped before emitting a `submit_plan` tool call for the discovered candidate scope",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("planner blocked message missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{
+		"Completion gate rejected",
+		"Missing completion evidence",
+		"gate retry",
+		"final answer repeatedly",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("planner blocked message leaked internal completion-gate detail %q:\n%s", forbidden, answer)
+		}
 	}
 }
 
@@ -733,6 +938,19 @@ func TestFallbackTurnRouteRecognizesDebugLogs(t *testing.T) {
 	}
 	if plan.InitialLane != "explore" || plan.Contract != "grounded_explanation" {
 		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestRouteClassifierChatClientFallsBackToPlannerWhenClassifierUnreachable(t *testing.T) {
+	planner := &reachableListModelsClient{models: []llama.ModelInfo{{ID: "planner"}}}
+	classifier := &failingListModelsClient{err: errors.New("classifier down")}
+	model := &Model{
+		client:        planner,
+		summaryClient: classifier,
+	}
+
+	if got := model.routeClassifierChatClient(); got != planner {
+		t.Fatalf("expected active planner client fallback, got %#v", got)
 	}
 }
 
@@ -792,6 +1010,17 @@ func TestFallbackTurnRouteRecognizesSuggestionQuestionAsArchitecture(t *testing.
 		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
 	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestFallbackTurnRouteRecognizesUILayoutMutation(t *testing.T) {
+	prompt := "can you re-align the text input field to be flush against the bottom of the terminal? When it needs to wrap to a new line, it should simply increase in height to avoid going off-screen"
+	plan := fallbackTurnRoute(prompt, agent.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -2107,7 +2336,7 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 	}
 }
 
-func TestPlanExecutePlannerThinkingPolicy(t *testing.T) {
+func TestPlanExecutePlannerThinkingPolicyDoesNotForceLocalNoThink(t *testing.T) {
 	thinkingOn := true
 	qwen := &Model{
 		cfg: config.Config{
@@ -2116,8 +2345,8 @@ func TestPlanExecutePlannerThinkingPolicy(t *testing.T) {
 		},
 		modelID: "qwen3.6-35b",
 	}
-	if !qwen.shouldDisableThinkingForPlanExecutePlanner() {
-		t.Fatalf("local Qwen planner should disable thinking for plan-execute")
+	if qwen.shouldDisableThinkingForPlanExecutePlanner() {
+		t.Fatalf("local Qwen planner should keep the active thinking policy for plan-execute")
 	}
 
 	hosted := &Model{
@@ -2426,8 +2655,8 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	if !sawRetryPrompt.Load() {
 		t.Fatalf("expected second plan-execute attempt with recovery addendum")
 	}
-	if firstPlannerReplies.Load() != 1 {
-		t.Fatalf("expected one failed initial planner reply before retry, got %d", firstPlannerReplies.Load())
+	if firstPlannerReplies.Load() != 2 {
+		t.Fatalf("expected one failed planner reply, one deterministic target-read retry, then recovery decision; got %d planner replies", firstPlannerReplies.Load())
 	}
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
@@ -2465,7 +2694,46 @@ func loadOnlyTimestampedPlanArtifactForTest(t *testing.T, root string) workspace
 	return artifact
 }
 
-func TestComposeImplementationBriefPromotesPlanDocumentScopeToRequiredPaths(t *testing.T) {
+func TestImplementationDispatchInlineOnlyEditMarkdownTargetIsNotPlanDocument(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "widget_config.json"), []byte(`{"labels":["alpha"]}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "widget_notes.md"), []byte("# Notes\n\nStatus: draft.\n"), 0o644); err != nil {
+		t.Fatalf("write notes: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	plan := promptExecutionPlan{
+		route: turnRoutePlan{Family: "direct_implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "implementation",
+			Contract:   "implementation_result",
+			TargetRefs: []string{"widget_config.json", "widget_notes.md"},
+		},
+	}
+	prompt := "Please update widget_config.json and widget_notes.md. Only edit widget_config.json and widget_notes.md."
+
+	required, allowed, docs, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	if len(required) != 0 {
+		t.Fatalf("inline only-edit scope should not become required coverage, got %#v", required)
+	}
+	for _, want := range []string{"widget_config.json", "widget_notes.md"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("allowed edit paths missing %q: %#v", want, allowed)
+		}
+	}
+	if len(docs) != 0 {
+		t.Fatalf("markdown edit target must not be treated as a referenced plan document: %#v", docs)
+	}
+	if len(blockers) != 0 {
+		t.Fatalf("direct markdown edit target must not produce plan-document blockers: %#v", blockers)
+	}
+}
+
+func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
@@ -2487,6 +2755,9 @@ func TestComposeImplementationBriefPromotesPlanDocumentScopeToRequiredPaths(t *t
 	if err := os.WriteFile(filepath.Join(root, "docs", "handoff.md"), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write handoff: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("existing\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
 
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -2496,8 +2767,11 @@ func TestComposeImplementationBriefPromotesPlanDocumentScopeToRequiredPaths(t *t
 		runtimeBrief: runtimeBriefForTest([]string{"docs/handoff.md"}),
 	}
 	brief := composeImplementationBrief("start working on docs/handoff.md", plan, cfg)
-	if !strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
-		t.Fatalf("brief missing active required edit scope:\n%s", brief)
+	if strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
+		t.Fatalf("design-doc scope must not become active required edit scope:\n%s", brief)
+	}
+	if !strings.Contains(brief, "## Candidate Edit Scope From Target References\n\n- target.txt") {
+		t.Fatalf("brief missing candidate edit scope:\n%s", brief)
 	}
 	for _, want := range []string{
 		"## Referenced Plan Documents",
@@ -2510,12 +2784,15 @@ func TestComposeImplementationBriefPromotesPlanDocumentScopeToRequiredPaths(t *t
 			t.Fatalf("brief missing %q:\n%s", want, brief)
 		}
 	}
-	if got := requiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
-		t.Fatalf("plan document scope must become active required edit paths, got %#v\n%s", got, brief)
+	if got := requiredEditPathsFromPrompt(brief); slices.Contains(got, "target.txt") {
+		t.Fatalf("design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
+	}
+	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+		t.Fatalf("design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
 	}
 }
 
-func TestComposeImplementationBriefResolvesUniquePlanDocumentBasename(t *testing.T) {
+func TestComposeImplementationBriefResolvesUniquePlanDocumentBasenameAsCandidateScope(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
 		t.Fatalf("mkdir docs: %v", err)
@@ -2534,6 +2811,12 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasename(t *testing
 	if err := os.WriteFile(filepath.Join(root, "docs", docName), []byte(planDoc), 0o644); err != nil {
 		t.Fatalf("write plan doc: %v", err)
 	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir internal/app: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "app", "writer_route.go"), []byte("package app\n"), 0o644); err != nil {
+		t.Fatalf("write writer route: %v", err)
+	}
 
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -2544,7 +2827,7 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasename(t *testing
 	}
 	brief := composeImplementationBrief("start working on "+docName, plan, cfg)
 	for _, want := range []string{
-		"## Files to Modify\n\n- internal/app/writer_route.go",
+		"## Candidate Edit Scope From Target References\n\n- internal/app/writer_route.go",
 		"### docs/" + docName,
 		"> | internal/app/writer_route.go | Add writer route decision support |",
 	} {
@@ -2552,8 +2835,47 @@ func TestComposeImplementationBriefResolvesUniquePlanDocumentBasename(t *testing
 			t.Fatalf("brief missing %q:\n%s", want, brief)
 		}
 	}
-	if got := requiredEditPathsFromPrompt(brief); !slices.Contains(got, "internal/app/writer_route.go") {
-		t.Fatalf("resolved plan document scope must become active required edit paths, got %#v\n%s", got, brief)
+	if got := requiredEditPathsFromPrompt(brief); slices.Contains(got, "internal/app/writer_route.go") {
+		t.Fatalf("resolved design-doc scope must not become required edit paths, got %#v\n%s", got, brief)
+	}
+	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "internal/app/writer_route.go") {
+		t.Fatalf("resolved design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
+	}
+}
+
+func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
+	root := t.TempDir()
+	atomRel := filepath.Join(".idiom", "atoms", "handoff", "atom-001.md")
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(atomRel)), 0o755); err != nil {
+		t.Fatalf("mkdir atom dir: %v", err)
+	}
+	atomDoc := strings.Join([]string{
+		"# Handoff Atom",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Purpose |",
+		"|---|---|",
+		"| target.txt | Do the important thing |",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, atomRel), []byte(atomDoc), 0o644); err != nil {
+		t.Fatalf("write atom: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	plan := promptExecutionPlan{
+		route:        turnRoutePlan{Family: "docs_edit"},
+		runtimeBrief: runtimeBriefForTest([]string{filepath.ToSlash(atomRel)}),
+	}
+	brief := composeImplementationBrief("start working on "+filepath.ToSlash(atomRel), plan, cfg)
+	if !strings.Contains(brief, "## Files to Modify\n\n- target.txt") {
+		t.Fatalf("atom scope must remain active required edit scope:\n%s", brief)
+	}
+	if got := requiredEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
+		t.Fatalf("atom scope must become required edit paths, got %#v\n%s", got, brief)
 	}
 }
 

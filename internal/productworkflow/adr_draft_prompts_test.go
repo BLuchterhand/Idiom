@@ -31,6 +31,8 @@ func TestADRDraftPromptPlanDeterministic(t *testing.T) {
 	assertContains(t, prompt, "coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional")
 	assertContains(t, prompt, "Do not use priority words such as must, should, or could as coverage tiers")
 	assertContains(t, prompt, "Do not invent prose obligations or new IDs")
+	assertContains(t, prompt, "Preserve every supplied PRD requirement statement semantically")
+	assertContains(t, prompt, "include one concrete fenced code block for each required source file")
 	assertContains(t, prompt, "tdd_obligations=[TDD-1]")
 	assertContains(t, prompt, "Do not claim acceptance, approval, or supersession.")
 	assertContains(t, prompt, "PRD requirements (2 total):")

@@ -770,23 +770,22 @@ func TestProductAuditJSONIncludesAllRequiredSections(t *testing.T) {
 func TestProductObsidianParityDurableFixturePasses(t *testing.T) {
 	effortRoot := writeValidTestEffort(t)
 	writeTestFile(t, effortRoot, ".git/HEAD", "ref: refs/heads/main\n")
-	writeTestFile(t, effortRoot, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", `---
-status: proposal
----
-> **Status: PARTIALLY IMPLEMENTED** As of 2026-05-18
-- [x] **Phase 0** complete
+	writeTestFile(t, effortRoot, productworkflow.ObsidianProductWorkflowPath, `---
+	status: current-with-open-work
+	---
+	> **Status: PARTIALLY IMPLEMENTED** As of 2026-05-18
+	- [x] **Phase 0** complete
 - [x] **Phase 1** complete
 - [x] **Phase 2** complete
 - [x] **Phase 3** complete
-- [x] **Phase 4** complete
-- [ ] **Phase 5** active
-`)
-	writeTestFile(t, effortRoot, "docs/obsidian/22 - Product Workflow ROADMAP.md", `---
-status: roadmap
----
-Last audited 2026-05-18.
-- [ ] Obsidian parity check in product lint/audit or closeout reporting (active Atom 32)
-`)
+	- [x] **Phase 4** complete
+	- [ ] **Phase 5** active
+	`)
+	writeTestFile(t, effortRoot, productworkflow.ObsidianRecoveryPath, `---
+	status: current-with-open-work
+	---
+	# Recovery and Decomposition
+	`)
 	writeTestFile(t, effortRoot, "workflow_state.json", strings.ReplaceAll(strings.ReplaceAll(validTestWorkflowStateJSON(),
 		`"effort_id":"test-effort"`, `"effort_id":"prd-adr-brief-workflow"`),
 		`"task_id":"impl-test"`, `"task_id":"impl-0032-phase-5-obsidian-parity-check"`))
@@ -828,8 +827,8 @@ func TestProductObsidianParityFailsWithoutNoChangeRationale(t *testing.T) {
 		"durability_level":"source_controlled",
 		"next_valid_actions":["complete"]
 	}`)
-	writeTestFile(t, dir, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", "> **Status: NOT STARTED**")
-	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	writeTestFile(t, dir, productworkflow.ObsidianProductWorkflowPath, "> **Status: NOT STARTED**")
+	writeTestFile(t, dir, productworkflow.ObsidianRecoveryPath, "# Recovery and Decomposition")
 	writeTestFile(t, dir, "reports/impl-0032-investigation.json", validTestTestInvestigationReportJSON())
 
 	result := productworkflow.LintEffortFolder(dir)
@@ -904,8 +903,8 @@ func TestProductObsidianParityAllowsNoChangeRationale(t *testing.T) {
 		"durability_level":"source_controlled",
 		"next_valid_actions":["complete"]
 	}`)
-	writeTestFile(t, dir, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", "> **Status: NOT STARTED**")
-	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	writeTestFile(t, dir, productworkflow.ObsidianProductWorkflowPath, "> **Status: NOT STARTED**")
+	writeTestFile(t, dir, productworkflow.ObsidianRecoveryPath, "# Recovery and Decomposition")
 	writeTestFile(t, dir, "reports/impl-0032-investigation.json", `{
 		"schema_version":"idiom.investigation_report.v1.fixture",
 		"effort_id":"prd-adr-brief-workflow",
@@ -950,8 +949,8 @@ func TestProductStatusObsidianParityFailureSections(t *testing.T) {
 		"durability_level":"source_controlled",
 		"next_valid_actions":["complete"]
 	}`)
-	writeTestFile(t, dir, "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md", "> **Status: NOT STARTED**")
-	writeTestFile(t, dir, "docs/obsidian/22 - Product Workflow ROADMAP.md", "## IN PROGRESS: PRD/ADR/Brief Workflow")
+	writeTestFile(t, dir, productworkflow.ObsidianProductWorkflowPath, "> **Status: NOT STARTED**")
+	writeTestFile(t, dir, productworkflow.ObsidianRecoveryPath, "# Recovery and Decomposition")
 	writeTestFile(t, dir, "reports/impl-0032-investigation.json", validTestTestInvestigationReportJSON())
 
 	var jsonStdout, jsonStderr bytes.Buffer
@@ -2355,7 +2354,7 @@ func TestProductStatusOperatorViewJSON(t *testing.T) {
 	ws = strings.Replace(
 		ws,
 		`"next_valid_actions":["complete"]`,
-		`"next_valid_actions":["start_implementation"]`,
+		`"next_valid_actions":["submit_for_human_verification"]`,
 		1,
 	)
 	writeTestFile(t, dir, "workflow_state.json", ws)
@@ -2384,13 +2383,48 @@ func TestProductStatusOperatorViewJSON(t *testing.T) {
 	}
 	var action productworkflow.ProductOperatorAction
 	for _, candidate := range result.NextValidActions {
-		if candidate.ID == "start_implementation" {
+		if candidate.ID == "submit_for_human_verification" {
 			action = candidate
 			break
 		}
 	}
-	if action.ID != "start_implementation" || action.Label != "start implementation" || action.Owner != "implementor" || !action.Dispatchable || !action.RunnableNow {
-		t.Fatalf("expected typed dispatchable transition action, got %#v", action)
+	if action.ID != "submit_for_human_verification" || action.Label != "submit for human verification" || action.Owner != "planner" || !action.Dispatchable || !action.RunnableNow {
+		t.Fatalf("expected typed human-verification transition action, got %#v", action)
+	}
+}
+
+func TestProductStatusOperatorViewBlocksLegacyStartImplementationWithoutHumanVerification(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	ws := strings.Replace(
+		validTestWorkflowStateJSON(),
+		`"current_state":"implementing"`,
+		`"current_state":"planned"`,
+		1,
+	)
+	ws = strings.Replace(
+		ws,
+		`"next_valid_actions":["complete"]`,
+		`"next_valid_actions":["start_implementation"]`,
+		1,
+	)
+	writeTestFile(t, dir, "workflow_state.json", ws)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--effort-root", dir, "--operator-view", "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected operator status to preserve status exit behavior, got code=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+
+	var result productworkflow.ProductOperatorStatusView
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("operator output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	action := findProductOperatorAction(t, result.NextValidActions, "start_implementation")
+	if action.Dispatchable || action.RunnableNow {
+		t.Fatalf("legacy start_implementation must be blocked until human verification, got %#v", action)
+	}
+	if !containsString(action.BlockedBy, "human_verification_required") {
+		t.Fatalf("expected human_verification_required blocker, got %#v", action)
 	}
 }
 
@@ -2447,7 +2481,7 @@ func TestProductStatusOperatorViewIncludesRecoveryPacket(t *testing.T) {
 func TestProductStatusOperatorViewTextFailsClosedOnStaleContext(t *testing.T) {
 	dir := writeValidTestEffort(t)
 	ws := strings.Replace(validTestWorkflowStateJSON(), `"freshness_state":"current"`, `"freshness_state":"stale"`, 1)
-	ws = strings.Replace(ws, `"next_valid_actions":["complete"]`, `"next_valid_actions":["start_implementation"]`, 1)
+	ws = strings.Replace(ws, `"next_valid_actions":["complete"]`, `"next_valid_actions":["submit_for_human_verification"]`, 1)
 	writeTestFile(t, dir, "workflow_state.json", ws)
 
 	var stdout, stderr bytes.Buffer
@@ -3622,6 +3656,12 @@ Test context.
 ## Decision
 
 Test decision.
+
+test.go
+
+~~~text
+package test
+~~~
 
 ## Alternatives Considered
 

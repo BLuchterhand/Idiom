@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"idiom/internal/frontier/workerruntime"
@@ -286,6 +287,94 @@ func (r *Runner) preflightPlanThenExecutePlannerToolGuard(req workspace.ToolRequ
 	}
 }
 
+func (r *Runner) preflightPlanThenExecuteReviewRepairNoopSubmitPlanGuard(req workspace.ToolRequest) verificationInterceptResult {
+	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
+		return verificationInterceptResult{}
+	}
+	if strings.TrimSpace(req.Tool) != "submit_plan" {
+		return verificationInterceptResult{}
+	}
+	edits := req.Edits
+	if len(edits) == 0 && req.PlanArtifact != nil {
+		edits = req.PlanArtifact.Edits
+	}
+	if len(edits) == 0 || planEditsHaveNoConcretePath(edits) {
+		return reviewRepairNoopSubmitPlanIntercept("no concrete corrective edit paths were provided")
+	}
+	if r.Workspace != nil && reviewRepairPlanEditsAlreadyApplied(r.Workspace.Root(), edits) {
+		return reviewRepairNoopSubmitPlanIntercept("all submitted corrective edits already match the current workspace")
+	}
+	return verificationInterceptResult{}
+}
+
+func reviewRepairNoopSubmitPlanIntercept(reason string) verificationInterceptResult {
+	return verificationInterceptResult{
+		Intercepted: true,
+		Reason:      "review-repair submit_plan suppressed: " + reason,
+		Result: workspace.ToolResult{
+			Tool:    "review_repair_noop_plan",
+			Summary: "review-repair submit_plan ignored: no new corrective plan",
+			Output: strings.Join([]string{
+				"The attempted review-repair submit_plan did not contain a new corrective edit.",
+				"If the verification checklist passes, answer with `Decision: pass` and include the `Verification Checklist`.",
+				"If a checklist item fails, call `submit_plan` only with concrete new corrective edits for the failing item.",
+			}, " "),
+		},
+	}
+}
+
+func planEditsHaveNoConcretePath(edits []workspace.PlanEdit) bool {
+	if len(edits) == 0 {
+		return true
+	}
+	for _, edit := range edits {
+		if strings.TrimSpace(edit.Path) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func reviewRepairPlanEditsAlreadyApplied(root string, edits []workspace.PlanEdit) bool {
+	root = strings.TrimSpace(root)
+	if root == "" || len(edits) == 0 {
+		return false
+	}
+	for _, edit := range edits {
+		path := strings.TrimSpace(edit.Path)
+		if path == "" || filepath.IsAbs(path) {
+			return false
+		}
+		clean := filepath.Clean(path)
+		if clean == "." || strings.HasPrefix(clean, ".."+string(os.PathSeparator)) || clean == ".." {
+			return false
+		}
+		bodyBytes, err := os.ReadFile(filepath.Join(root, clean))
+		if err != nil {
+			return false
+		}
+		if !reviewRepairPlanEditAlreadyApplied(string(bodyBytes), edit) {
+			return false
+		}
+	}
+	return true
+}
+
+func reviewRepairPlanEditAlreadyApplied(body string, edit workspace.PlanEdit) bool {
+	oldText := edit.OldText
+	newText := edit.NewText
+	switch {
+	case edit.ReplaceAll && oldText == "" && newText != "":
+		return body == newText
+	case oldText != "" && newText != "":
+		return !strings.Contains(body, oldText) && strings.Contains(body, newText)
+	case oldText != "" && newText == "":
+		return !strings.Contains(body, oldText)
+	default:
+		return false
+	}
+}
+
 // planThenExecuteForbiddenWriteTool lists the per-edit write tools
 // the planner phase must not call. submit_plan is OUR tool, not a
 // per-edit write — it captures the structured plan.
@@ -328,6 +417,9 @@ func planThenExecuteShortCircuitAnswer(brief workerruntime.WorkerRuntimeBrief, r
 		return "", false
 	}
 	if strings.TrimSpace(req.Tool) != "submit_plan" {
+		return "", false
+	}
+	if strings.TrimSpace(result.Tool) != "submit_plan" {
 		return "", false
 	}
 	if strings.TrimSpace(result.Error) != "" {
@@ -477,9 +569,6 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		return ""
 	}
 	required := brief.RequiredEditPaths
-	if len(required) == 0 {
-		return ""
-	}
 	if successfulSubmitPlanResultCount(results) > 0 {
 		// Plan already submitted — the gate-exemption path will close
 		// the runner cleanly; nothing to nudge.
@@ -488,6 +577,27 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 	read := readPathsFromResults(results)
 	if len(read) == 0 {
 		return ""
+	}
+	if len(required) == 0 {
+		paths := make([]string, 0, len(read))
+		for path := range read {
+			paths = append(paths, path)
+		}
+		sort.Strings(paths)
+		return strings.Join([]string{
+			"PLANNER READINESS REACHED: at least one candidate edit path has been read in this turn. The candidate path evidence is sufficient to submit a bounded plan, close as source-satisfied, or name one concrete blocker.",
+			"",
+			"Read candidate path(s): " + strings.Join(paths, ", "),
+			"",
+			"Next action MUST be one of:",
+			"  1. `submit_plan` with only the edit(s) needed by the objective, using a substring or line-range anchor copied from the read candidate source, plus a one-sentence purpose per edit.",
+			"  2. `Decision: source-satisfied` naming the relevant candidate path(s) and observed current-state evidence when the requested final state is already present.",
+			"  3. `<<QUESTION>>:` with the exact blocker that prevents drafting the plan.",
+			"",
+			"Hidden reasoning is not executable evidence. The next action must be visible content or a native tool call.",
+			"",
+			"Default to submitting now. Only read/search again if you can name one exact new edit-safety fact that is still missing after the candidate path read.",
+		}, "\n")
 	}
 	for _, path := range required {
 		if _, ok := read[normalizeRunnerPath(path)]; !ok {

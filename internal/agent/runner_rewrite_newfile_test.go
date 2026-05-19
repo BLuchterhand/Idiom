@@ -1,9 +1,12 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
@@ -75,6 +78,56 @@ func TestRewriteMissingRequiredNewFileProbeFiresOnMissingParentOutline(t *testin
 	}
 	if strings.Contains(got.Error, "internal/app/writer_route.go") {
 		t.Fatalf("rewrite should only list required paths under the missing probe target, got: %s", got.Error)
+	}
+}
+
+func TestUnavailableRequiredNewFileProbeNudgesMissingParent(t *testing.T) {
+	root := t.TempDir()
+	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	req := workspace.ToolRequest{Tool: "go_file_outline", Path: "./internal/writerroute"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{
+			"internal/writerroute/decision.go",
+			"internal/app/writer_route.go",
+		},
+	}
+
+	summary, errorText, ok := unavailableRequiredNewFileProbeNudge(req, brief, manager)
+
+	if !ok {
+		t.Fatal("expected unavailable required new-file probe nudge")
+	}
+	for _, want := range []string{
+		"Required new-file directory does not exist yet",
+		"internal/writerroute/decision.go",
+		"go_file_outline",
+		"submit_plan",
+		"replace_all",
+	} {
+		if !strings.Contains(summary+"\n"+errorText, want) {
+			t.Fatalf("nudge missing %q:\nsummary=%s\nerror=%s", want, summary, errorText)
+		}
+	}
+	if strings.Contains(errorText, "internal/app/writer_route.go") {
+		t.Fatalf("nudge should only list required paths under the missing probe target, got: %s", errorText)
+	}
+}
+
+func TestUnavailableRequiredNewFileProbeDoesNotMaskExistingTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "writerroute"), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	req := workspace.ToolRequest{Tool: "go_file_outline", Path: "./internal/writerroute"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"internal/writerroute/decision.go"},
+	}
+
+	_, _, ok := unavailableRequiredNewFileProbeNudge(req, brief, manager)
+
+	if ok {
+		t.Fatal("existing target should keep the original unavailable-tool rejection")
 	}
 }
 

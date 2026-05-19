@@ -43,6 +43,7 @@ type planExecuteOptions struct {
 	DisableThinking   bool
 	MaxTokens         int
 	RequiredEditPaths multiFlag
+	AllowedEditPaths  multiFlag
 	// PlannerOwnedVerification is accepted for compatibility with
 	// `idiom implement` invocations that pass the flag. Plan-execute
 	// always treats verification as planner-owned (the executor phase
@@ -144,18 +145,23 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	defer queueRelease()
 
 	requiredEditPaths := planExecuteRequiredEditPaths(opts, prompt)
+	allowedEditPaths := planExecuteAllowedEditPaths(opts, prompt)
 	promptRequiredEditPaths := app.RequiredEditPathsFromPrompt(prompt)
 	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
+	explicitAllowedEditPaths := planExecuteUniqueRequiredPaths([]string(opts.AllowedEditPaths))
 	logCLIPhase(rec, "plan_execute_required_edit_paths", map[string]any{
 		"count":          len(requiredEditPaths),
 		"explicit_count": len(explicitRequiredEditPaths),
 		"prompt_count":   len(promptRequiredEditPaths),
+		"allowed_count":  len(allowedEditPaths),
 	})
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "required_edit_paths_resolved", map[string]any{
 		"count":               len(requiredEditPaths),
 		"explicit_count":      len(explicitRequiredEditPaths),
 		"prompt_count":        len(promptRequiredEditPaths),
+		"allowed_count":       len(explicitAllowedEditPaths),
 		"required_edit_paths": requiredEditPaths,
+		"allowed_edit_paths":  allowedEditPaths,
 	})
 	decision := buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
 		Mode:              writerroute.ModePlanSubmission,
@@ -173,7 +179,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		return runPlanExecuteResumeReviewRepair(cfg, opts, prompt, requiredEditPaths, *resumeState, resumeStatePath, stdout, stderr, promptRun, rec)
 	}
 
-	progress := planexecute.NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, nil, time.Now().UTC())
+	progress := planexecute.NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
 	if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -184,14 +190,19 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// writes for submit_plan. We reuse the existing implement runner
 	// because that lane already has the right read-side guards and
 	// brief audit; only the tool surface differs.
-	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths) + "\n\n" + prompt
+	plannerBrief := planExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
+	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths, allowedEditPaths) + "\n\n" + plannerBrief
 	plannerMaxTokens := 16384
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
 	}
 	answer := ""
 	executorRequiredEditPaths := requiredEditPaths
-	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, requiredEditPaths)
+	autoExactScopePaths := requiredEditPaths
+	if len(autoExactScopePaths) == 0 {
+		autoExactScopePaths = allowedEditPaths
+	}
+	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
 		answer = planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
 		progress.Phase = planexecute.ProgressPhaseComplete
@@ -290,12 +301,17 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// session's planner phase and dispatch its edits in order.
 	planPath, err := findLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
-		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, requiredEditPaths) {
+		sourceSatisfiedPaths := requiredEditPaths
+		if len(sourceSatisfiedPaths) == 0 {
+			sourceSatisfiedPaths = allowedEditPaths
+		}
+		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
 			progress.Phase = planexecute.ProgressPhaseComplete
 			progress.Status = planexecute.ProgressStatusCompleted
 			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
 				"required_edit_paths": requiredEditPaths,
+				"allowed_edit_paths":  allowedEditPaths,
 				"reason":              "planner reported requested final state already present",
 			})
 			if !opts.JSONEvents {
@@ -387,7 +403,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			progressSaveErr = err
 		}
 	}
-	report, runErr := runExecutorPhase(cfg, plan, executorRequiredEditPaths, opts.JSONEvents, stdout, progressCallback)
+	report, runErr := runExecutorPhaseScoped(cfg, plan, executorRequiredEditPaths, allowedEditPaths, opts.JSONEvents, stdout, progressCallback)
 	if runErr == nil && progressSaveErr != nil {
 		runErr = progressSaveErr
 	}
@@ -707,6 +723,7 @@ func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOption
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: plan-execute does not run builds or tests; this is a no-op")
 	fs.BoolVar(&opts.SkipReviewRepair, "skip-review-repair", false, "skip the post-execute review-repair planner pass")
 	fs.Var(&opts.RequiredEditPaths, "required-edit-path", "workspace-relative required edit path for this plan-execute run; repeatable and augments prompt extraction")
+	fs.Var(&opts.AllowedEditPaths, "allowed-edit-path", "workspace-relative candidate edit path for this plan-execute run; repeatable and augments prompt extraction without requiring coverage")
 	if err := fs.Parse(args); err != nil {
 		return planExecuteOptions{}, err
 	}
@@ -746,6 +763,13 @@ func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []stri
 	paths := make([]string, 0, len(opts.RequiredEditPaths))
 	paths = append(paths, []string(opts.RequiredEditPaths)...)
 	paths = append(paths, app.RequiredEditPathsFromPrompt(prompt)...)
+	return planExecuteUniqueRequiredPaths(paths)
+}
+
+func planExecuteAllowedEditPaths(opts planExecuteOptions, prompt string) []string {
+	paths := make([]string, 0, len(opts.AllowedEditPaths))
+	paths = append(paths, []string(opts.AllowedEditPaths)...)
+	paths = append(paths, app.AllowedEditPathsFromPrompt(prompt)...)
 	return planExecuteUniqueRequiredPaths(paths)
 }
 
@@ -854,11 +878,11 @@ func patchPlanArtifactPackID(path string, packID string) error {
 // budget before it can emit submit_plan. Every rule earned its place
 // from a real failure mode; if you add another, compress an existing
 // rule to make room.
-func planExecutePlannerSystemAddendum(requiredEditPaths []string) string {
+func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
 	lines := []string{
 		"# Plan-then-execute (planner phase)",
 		"",
-		"The plan-submission capability must cover every brief-required edit once; the executor dispatches the submitted edits after you stop.",
+		"The plan-submission capability must cover every brief-required edit once; when no required path list is present, use the objective and candidate/target refs to assemble a bounded real edit plan. The executor dispatches the submitted edits after you stop.",
 		"Treat the brief body and any preloaded Context Pack below as the planner target packet.",
 		"",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
@@ -866,13 +890,59 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string) string {
 		"3. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"5. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence. Re-read the target packet before any source read.",
-		"6. Use source-read capability only for a new named edit-safety fact on a required path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
-		"7. Submit as soon as you have anchors for every required path. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every required path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
+		"6. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
+		"7. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
 		lines = append(lines, "", checklist)
+	} else if checklist := planExecuteAllowedPathChecklist(allowedEditPaths); checklist != "" {
+		lines = append(lines, "", checklist)
+	} else {
+		lines = append(lines, "", "No required edit paths were provided. You still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func planExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
+	section := planExecuteScopeSection(requiredEditPaths, allowedEditPaths)
+	if section == "" {
+		return prompt
+	}
+	if end := strings.Index(prompt, pathparse.BriefBodyEndMarker); end >= 0 {
+		return strings.TrimSpace(prompt[:end]) + "\n\n" + section + "\n\n" + strings.TrimSpace(prompt[end:])
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + section
+}
+
+func planExecuteScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
+	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	allowed := planExecuteUniqueRequiredPaths(allowedEditPaths)
+	if len(required) == 0 && len(allowed) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(required) > 0 {
+		b.WriteString("## Files to Modify\n\n")
+		b.WriteString("required_edit_paths:\n")
+		for _, path := range required {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	if len(allowed) > 0 {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("## Candidate Edit Scope From Target References\n\n")
+		b.WriteString("allowed_edit_paths:\n")
+		for _, path := range allowed {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
@@ -888,6 +958,22 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 		b.WriteByte('\n')
 	}
 	b.WriteString("Your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	return strings.TrimSpace(b.String())
+}
+
+func planExecuteAllowedPathChecklist(allowedEditPaths []string) string {
+	paths := planExecuteUniqueRequiredPaths(allowedEditPaths)
+	if len(paths) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Allowed `submit_plan` edit scope for this run: %d candidate path(s).\n", len(paths))
+	for _, path := range paths {
+		b.WriteString("- ")
+		b.WriteString(path)
+		b.WriteByte('\n')
+	}
+	b.WriteString("These paths are an allowlist, not coverage obligations. Submit edits only for the paths needed by the objective, and do not submit outside paths.")
 	return strings.TrimSpace(b.String())
 }
 

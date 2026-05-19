@@ -19,6 +19,7 @@ import (
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
+	"idiom/internal/workspace"
 )
 
 type implementationDispatchPlanDocument struct {
@@ -102,6 +103,14 @@ func isPlanExecuteInternalFamily(family string) bool {
 	default:
 		return false
 	}
+}
+
+func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
+	requiredPaths, allowedPaths, planDocuments, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	return len(requiredPaths) > 0 ||
+		len(allowedPaths) > 0 ||
+		len(planDocuments) > 0 ||
+		len(blockers) > 0
 }
 
 func composeImplementationBrief(prompt string, plan promptExecutionPlan, cfg config.Config) string {
@@ -733,15 +742,54 @@ func limitImplementationDispatchRefineTitle(title string) string {
 	return prefix + "-" + suffix
 }
 
-func implementationDispatchEditScopeFromPlanDocuments(plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) ([]string, []string) {
+func implementationDispatchEditScopeFromPlanDocuments(prompt string, plan promptExecutionPlan, cfg config.Config, planDocuments []implementationDispatchPlanDocument) ([]string, []string) {
 	requiredPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
+	requiredPaths = appendUniqueBriefStrings(requiredPaths, requiredEditPathsFromPrompt(prompt)...)
+	allowedPaths := allowedEditPathsFromPrompt(prompt)
+	root := implementationDispatchWorkspaceRoot(cfg)
 	for _, doc := range planDocuments {
-		requiredPaths = appendUniqueBriefStrings(requiredPaths, doc.EditPaths...)
+		if implementationDispatchPlanDocumentScopeIsRequired(doc, root) {
+			requiredPaths = appendUniqueBriefStrings(requiredPaths, doc.EditPaths...)
+			continue
+		}
+		allowedPaths = appendUniqueBriefStrings(allowedPaths, doc.EditPaths...)
 	}
-	if len(requiredPaths) > 0 {
-		return requiredPaths, nil
+	return requiredPaths, allowedPaths
+}
+
+func implementationDispatchPlanDocumentScopeIsRequired(doc implementationDispatchPlanDocument, root string) bool {
+	return implementationDispatchIsAtomizedPlanDocumentPath(doc.Path) ||
+		implementationDispatchIsRefinedAcceptedPlanDocumentPath(doc.Path) ||
+		implementationDispatchPlanDocumentScopeIsAllMissing(root, doc.EditPaths)
+}
+
+func implementationDispatchPlanDocumentScopeIsAllMissing(root string, paths []string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" || len(paths) == 0 {
+		return false
 	}
-	return nil, nil
+	for _, path := range paths {
+		abs, ok := implementationDispatchWorkspaceFile(root, path)
+		if !ok {
+			return false
+		}
+		if _, err := os.Stat(abs); err == nil || !os.IsNotExist(err) {
+			return false
+		}
+	}
+	return true
+}
+
+func implementationDispatchIsRefinedAcceptedPlanDocumentPath(path string) bool {
+	path = strings.TrimSpace(filepath.ToSlash(path))
+	if path == "" {
+		return false
+	}
+	if !strings.HasPrefix(path, ".idiom/refine/") {
+		return false
+	}
+	base := filepath.Base(path)
+	return base == "accepted.md" || strings.HasSuffix(base, ".dispatch.md")
 }
 
 func replaceImplementationDispatchPlanDocument(planDocuments []implementationDispatchPlanDocument, originalPath string, refined implementationDispatchPlanDocument) []implementationDispatchPlanDocument {
@@ -885,14 +933,17 @@ func implementationDispatchEditScopeAndPlanDocuments(prompt string, plan promptE
 
 func implementationDispatchEditScopePlanDocumentsAndResolution(prompt string, plan promptExecutionPlan, cfg config.Config) ([]string, []string, []implementationDispatchPlanDocument, []implementationDispatchPlanDocumentResolutionBlocker) {
 	requiredPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
+	allowedPaths := allowedEditPathsFromPrompt(prompt)
 	planDocuments, blockers := implementationDispatchPlanDocumentsAndResolutionBlockers(prompt, plan, cfg)
+	root := implementationDispatchWorkspaceRoot(cfg)
 	for _, doc := range planDocuments {
-		requiredPaths = appendUniqueBriefStrings(requiredPaths, doc.EditPaths...)
+		if implementationDispatchPlanDocumentScopeIsRequired(doc, root) {
+			requiredPaths = appendUniqueBriefStrings(requiredPaths, doc.EditPaths...)
+			continue
+		}
+		allowedPaths = appendUniqueBriefStrings(allowedPaths, doc.EditPaths...)
 	}
-	if len(requiredPaths) > 0 {
-		return requiredPaths, nil, planDocuments, blockers
-	}
-	return nil, nil, planDocuments, blockers
+	return requiredPaths, allowedPaths, planDocuments, blockers
 }
 
 func implementationDispatchPlanDocumentEditScope(prompt string, plan promptExecutionPlan, cfg config.Config) []string {
@@ -911,10 +962,16 @@ func implementationDispatchPlanDocumentsAndResolutionBlockers(prompt string, pla
 		return nil, nil
 	}
 	refs := implementationDispatchPlanDocumentRefs(prompt, plan)
+	explicitEditPaths := appendUniqueBriefStrings(nil, plan.runtimeBrief.RequiredEditPaths...)
+	explicitEditPaths = appendUniqueBriefStrings(explicitEditPaths, requiredEditPathsFromPrompt(prompt)...)
+	explicitEditPaths = appendUniqueBriefStrings(explicitEditPaths, allowedEditPathsFromPrompt(prompt)...)
 	var docs []implementationDispatchPlanDocument
 	var blockers []implementationDispatchPlanDocumentResolutionBlocker
 	blockUnresolvedPlanDocuments := implementationDispatchPromptRequiresResolvedPlanDocument(prompt, plan, refs)
 	for _, ref := range refs {
+		if implementationDispatchRefIsExplicitEditPath(ref, explicitEditPaths) {
+			continue
+		}
 		doc, candidates, ok := resolveImplementationDispatchPlanDocument(root, ref)
 		if !ok {
 			if blocker, blocked := implementationDispatchPlanDocumentResolutionBlockerForRef(ref, candidates, blockUnresolvedPlanDocuments); blocked {
@@ -935,6 +992,20 @@ func implementationDispatchPlanDocumentsAndResolutionBlockers(prompt string, pla
 		docs = append(docs, doc)
 	}
 	return docs, blockers
+}
+
+func implementationDispatchRefIsExplicitEditPath(ref string, editPaths []string) bool {
+	ref, ok := pathparse.NormalizeWorkspacePathToken(ref)
+	if !ok {
+		return false
+	}
+	for _, path := range editPaths {
+		path, ok := pathparse.NormalizeWorkspacePathToken(path)
+		if ok && path == ref {
+			return true
+		}
+	}
+	return false
 }
 
 func implementationDispatchPlanDocumentRefs(prompt string, plan promptExecutionPlan) []string {
@@ -2912,10 +2983,6 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorEventStream := m.eventStream
 	priorPlanExecuteActive := m.planExecuteActive
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking
-	if strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily && m.shouldDisableThinkingForPlanExecutePlanner() {
-		disableThinking = true
-	}
-
 	m.planExecuteActive = true
 	m.cfg.Workspace.SessionID = cfg.Workspace.SessionID
 	if m.workspace != nil {
@@ -2968,7 +3035,7 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 }
 
 func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) (string, error) {
-	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
+	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 	if closed := implementationDispatchPlanDocumentsTerminalAtoms(planDocuments); len(closed) == len(planDocuments) && len(closed) > 0 {
 		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d closed design-doc atom(s)", len(closed)))
 		return humanImplementationDispatchTerminalAtomMessage(closed), nil
@@ -3011,7 +3078,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 			refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, doc.Path, refined.Document)
 		}
 		planDocuments = refinedPlanDocuments
-		requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
+		requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 		if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
 			if implementationDispatchPreflightAllSourceSatisfied(refinedBlocked) {
 				m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined atom preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
@@ -3080,7 +3147,7 @@ func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context
 				refinedPlanDocuments = replaceImplementationDispatchPlanDocument(refinedPlanDocuments, docPath, refined.Document)
 			}
 			planDocuments = refinedPlanDocuments
-			requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(plan, planDocuments)
+			requiredPaths, allowedPaths = implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 			if refinedBlocked := preflightImplementationDispatchPlanDocuments(ctx, m.cfg, planDocuments); len(refinedBlocked) > 0 {
 				if implementationDispatchPreflightAllSourceSatisfied(refinedBlocked) {
 					m.logMessage("dispatch_source_satisfied", fmt.Sprintf("refined preflight classified %d atom(s) as source-satisfied", len(refinedBlocked)))
@@ -3267,7 +3334,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		result.ExitCode, result.SessionID, result.ResumeStatePath, outBuf.Len(), errBuf.Len()))
 
 	if result.ExitCode != 0 {
-		if result.FailureKind == planexecute.RunFailurePlannerBlocked {
+		if implementationDispatchPlanExecuteFailureCanUseRecovery(result) {
 			answer, handled, err := m.handlePlanExecutePlannerBlocked(ctx, implementationDispatchPlanExecuteFailure{
 				Prompt:        prompt,
 				Plan:          plan,
@@ -3289,6 +3356,15 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 	return strings.TrimSpace(outBuf.String()), nil
 }
 
+func implementationDispatchPlanExecuteFailureCanUseRecovery(result planexecute.RunResult) bool {
+	switch strings.TrimSpace(result.FailureKind) {
+	case planexecute.RunFailurePlannerBlocked, "plan_artifact_missing":
+		return true
+	default:
+		return false
+	}
+}
+
 type implementationDispatchPlanExecuteFailure struct {
 	Prompt        string
 	Plan          promptExecutionPlan
@@ -3302,6 +3378,35 @@ type implementationDispatchPlanExecuteFailure struct {
 }
 
 func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (string, bool, error) {
+	if !m.planExecuteFailureHasPlanExecuteHandoff(failure) {
+		allowedPaths := m.resolveUnscopedImplementationAllowedPaths(ctx, failure.Prompt)
+		if len(allowedPaths) == 0 {
+			m.logMessage("dispatch_recovery", "surfacing planner blocker without retry because plan-execute dispatch has no concrete edit scope")
+			return humanPlanExecuteDispatchWithoutScopeMessage(failure), true, nil
+		}
+		retryOptions := failure.Options
+		retryOptions.AllowedEditPaths = allowedPaths
+		retryOptions.Prompt = appendDiscoveredCandidateScopeAddendum(failure.Options.Prompt, allowedPaths)
+		m.logMessage("dispatch_recovery", fmt.Sprintf("retrying plan-execute with discovered candidate scope: %s", strings.Join(allowedPaths, ", ")))
+		m.events <- infoMsg{text: "Retrying plan-execute with discovered candidate scope..."}
+		var retryOut, retryErr bytes.Buffer
+		retryResult := planexecute.Run(m.cfg, retryOptions, m.newPlanExecutePromptRunner(ctx), nil, &retryOut, &retryErr)
+		m.logMessage("dispatch_result", fmt.Sprintf("plan-execute discovered-scope retry finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
+			retryResult.ExitCode, retryResult.SessionID, retryResult.ResumeStatePath, retryOut.Len(), retryErr.Len()))
+		if retryResult.ExitCode == 0 {
+			return strings.TrimSpace(retryOut.String()), true, nil
+		}
+		retryFailure := failure
+		retryFailure.AllowedPaths = allowedPaths
+		retryFailure.Options = retryOptions
+		retryFailure.Result = retryResult
+		retryFailure.Stdout = retryOut.String()
+		retryFailure.Stderr = retryErr.String()
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+			Decision: "surface",
+			Reason:   "automatic discovered-scope retry did not produce a plan",
+		}), true, nil
+	}
 	decision, raw, err := m.decidePlanExecutePlannerBlocked(ctx, failure)
 	if err != nil {
 		m.logMessage("dispatch_recovery", "recovery decision failed; surfacing planner blocker: "+err.Error())
@@ -3335,6 +3440,269 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}), true, nil
 	}
 	return humanPlanExecutePlannerBlockedMessage(failure, decision), true, nil
+}
+
+func appendDiscoveredCandidateScopeAddendum(prompt string, allowedPaths []string) string {
+	allowedPaths = uniqueImplementationDispatchPaths(allowedPaths)
+	if len(allowedPaths) == 0 {
+		return strings.TrimSpace(prompt)
+	}
+	section := discoveredCandidateScopeSection(allowedPaths)
+	if end := strings.Index(prompt, pathparse.BriefBodyEndMarker); end >= 0 {
+		return strings.TrimSpace(prompt[:end]) + "\n\n" + section + "\n\n" + strings.TrimSpace(prompt[end:])
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + section
+}
+
+func discoveredCandidateScopeSection(allowedPaths []string) string {
+	var b strings.Builder
+	b.WriteString("## Discovered Candidate Edit Scope\n\n")
+	b.WriteString("The first planner attempt stopped without `submit_plan` and the original TUI request had no explicit edit path. A bounded fallback discovery pass found these candidate source paths. Use them as the candidate edit scope; read an exact current anchor if needed, then submit a plan or name the concrete blocker.\n")
+	b.WriteString("\nallowed_edit_paths:\n")
+	for _, path := range allowedPaths {
+		b.WriteString("- ")
+		b.WriteString(path)
+		b.WriteString("\n")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func uniqueImplementationDispatchPaths(paths []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.ToSlash(strings.TrimSpace(path))
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func (m *Model) resolveUnscopedImplementationAllowedPaths(ctx context.Context, prompt string) []string {
+	if m == nil {
+		return nil
+	}
+	pattern := implementationDispatchFallbackSearchPattern(prompt)
+	if pattern == "" {
+		return nil
+	}
+	wsCfg := m.cfg.Workspace
+	if strings.TrimSpace(wsCfg.Root) == "" {
+		wsCfg.Root = m.projectRoot()
+	}
+	if strings.TrimSpace(wsCfg.CWD) == "" {
+		wsCfg.CWD = wsCfg.Root
+	}
+	wsCfg.EnableWrites = false
+	result := workspace.NewManager(wsCfg).Execute(ctx, workspace.ToolRequest{
+		Tool:              "search_content",
+		Path:              ".",
+		Pattern:           pattern,
+		NamedGap:          "locate candidate source path for unscoped TUI implementation dispatch",
+		WhyNotAnswering:   "need candidate edit scope before plan-execute retry",
+		BudgetTokens:      1600,
+		FreshnessPolicy:   "scoped",
+		FreshnessMaxFiles: 64,
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		m.logMessage("dispatch_recovery", "fallback scope search failed: "+truncateImplementationDispatchText(result.Error, 240))
+		return nil
+	}
+	paths := implementationDispatchRankSearchPaths(prompt, result.Output, 4)
+	if len(paths) > 0 {
+		m.logMessage("dispatch_recovery", fmt.Sprintf("fallback scope search %q found %s", pattern, strings.Join(paths, ", ")))
+	}
+	return paths
+}
+
+func implementationDispatchFallbackSearchPattern(prompt string) string {
+	lower := strings.ToLower(strings.TrimSpace(prompt))
+	if lower == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer("'", " ", "\"", " ", "`", " ", "’", " ", "-", " ", "_", " ", "/", " ")
+	lower = replacer.Replace(lower)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	stop := map[string]struct{}{
+		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "model": {}, "alias": {},
+	}
+	var terms []string
+	seen := map[string]struct{}{}
+	for _, word := range words {
+		word = strings.TrimSpace(word)
+		if len(word) < 4 {
+			continue
+		}
+		if _, skip := stop[word]; skip {
+			continue
+		}
+		if _, ok := seen[word]; ok {
+			continue
+		}
+		seen[word] = struct{}{}
+		terms = append(terms, word)
+		if len(terms) >= 4 {
+			break
+		}
+	}
+	return strings.Join(terms, "|")
+}
+
+func implementationDispatchRankSearchPaths(prompt string, output string, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	terms := strings.Split(implementationDispatchFallbackSearchPattern(prompt), "|")
+	uiObjective := strings.Contains(strings.ToLower(prompt), "tui") ||
+		strings.Contains(strings.ToLower(prompt), "ui") ||
+		strings.Contains(strings.ToLower(prompt), "banner") ||
+		strings.Contains(strings.ToLower(prompt), "header") ||
+		strings.Contains(strings.ToLower(prompt), "top-right") ||
+		strings.Contains(strings.ToLower(prompt), "top right") ||
+		strings.Contains(strings.ToLower(prompt), "view") ||
+		strings.Contains(strings.ToLower(prompt), "render")
+	type scored struct {
+		path  string
+		score int
+		order int
+	}
+	scores := map[string]*scored{}
+	order := 0
+	for _, line := range strings.Split(output, "\n") {
+		path, text, ok := implementationDispatchSearchLinePathText(line)
+		if !ok {
+			continue
+		}
+		entry := scores[path]
+		if entry == nil {
+			entry = &scored{path: path, order: order}
+			scores[path] = entry
+			order++
+		}
+		entry.score += implementationDispatchSearchPathScore(path, text, terms, uiObjective)
+	}
+	ranked := make([]scored, 0, len(scores))
+	for _, entry := range scores {
+		ranked = append(ranked, *entry)
+	}
+	sort.SliceStable(ranked, func(i, j int) bool {
+		if ranked[i].score != ranked[j].score {
+			return ranked[i].score > ranked[j].score
+		}
+		return ranked[i].order < ranked[j].order
+	})
+	var out []string
+	for _, entry := range ranked {
+		if entry.score <= -50 {
+			continue
+		}
+		out = append(out, entry.path)
+		if len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
+func implementationDispatchSearchLinePathText(line string) (string, string, bool) {
+	line = strings.TrimSpace(line)
+	firstColon := strings.Index(line, ":")
+	if firstColon < 0 {
+		return "", "", false
+	}
+	fields := strings.Fields(strings.TrimSpace(line[:firstColon]))
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	path := filepath.ToSlash(fields[len(fields)-1])
+	if !implementationDispatchPathLooksEditableSource(path) || !strings.Contains(path, "/") {
+		return "", "", false
+	}
+	rest := line[firstColon+1:]
+	text := ""
+	if secondColon := strings.Index(rest, ":"); secondColon >= 0 {
+		text = strings.TrimSpace(rest[secondColon+1:])
+	}
+	return path, text, true
+}
+
+func implementationDispatchPathLooksEditableSource(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+	for _, suffix := range []string{
+		".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".java", ".kt", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
+		".rb", ".php", ".sh", ".bash", ".zsh", ".fish", ".lua", ".sql",
+		".html", ".css", ".scss", ".sass", ".vue", ".svelte", ".templ",
+		".json", ".yaml", ".yml", ".toml", ".xml", ".md", ".mdx",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationDispatchSearchPathScore(path string, text string, terms []string, uiObjective bool) int {
+	lowerPath := strings.ToLower(filepath.ToSlash(path))
+	lowerText := strings.ToLower(text)
+	score := 1
+	for _, term := range terms {
+		term = strings.TrimSpace(term)
+		if term == "" {
+			continue
+		}
+		if strings.Contains(lowerPath, term) {
+			score += 10
+		}
+		if strings.Contains(lowerText, term) {
+			score += 12
+		}
+	}
+	if strings.HasSuffix(lowerPath, "_test.go") {
+		score -= 100
+	}
+	if strings.HasPrefix(strings.TrimSpace(lowerText), "//") {
+		score -= 8
+	}
+	if strings.Contains(lowerPath, "/agent/") || strings.Contains(lowerPath, "/workspace/") || strings.Contains(lowerPath, "/eval/") {
+		score -= 30
+	}
+	if uiObjective {
+		if strings.HasPrefix(lowerPath, "internal/app/") {
+			score += 45
+		}
+		if strings.Contains(lowerPath, "render") || strings.Contains(lowerPath, "view") {
+			score += 70
+		}
+		if strings.Contains(lowerPath, "model_state") {
+			score += 5
+		}
+		if strings.Contains(lowerPath, "frontier/") || strings.Contains(lowerPath, "comprehension/") {
+			score -= 25
+		}
+	}
+	return score
+}
+
+func (m *Model) planExecuteFailureHasPlanExecuteHandoff(failure implementationDispatchPlanExecuteFailure) bool {
+	if len(failure.RequiredPaths) > 0 || len(failure.AllowedPaths) > 0 {
+		return true
+	}
+	if m == nil {
+		return false
+	}
+	return implementationDispatchHasPlanExecuteHandoff(failure.Prompt, failure.Plan, m.cfg)
 }
 
 func (m *Model) decidePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (implementationDispatchRecoveryDecision, string, error) {
@@ -3472,7 +3840,7 @@ func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExe
 		b.WriteString("\n\nDecision: ")
 		b.WriteString(reason)
 	}
-	if summary := strings.TrimSpace(failure.Result.FailureReason); summary != "" {
+	if summary := humanPlanExecutePlannerBlockerSummary(failure); summary != "" {
 		b.WriteString("\n\nPlanner blocker: ")
 		b.WriteString(summary)
 	}
@@ -3483,27 +3851,56 @@ func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExe
 			b.WriteString(path)
 		}
 	}
-	if answer := strings.TrimSpace(failure.Result.PlannerAnswer); answer != "" && !strings.Contains(answer, "Completion gate rejected the final answer repeatedly") {
+	if answer := strings.TrimSpace(failure.Result.PlannerAnswer); answer != "" && !planExecutePlannerAnswerIsInternalCompletionGate(answer) {
 		b.WriteString("\n\nPlanner answer:\n")
 		b.WriteString(truncateImplementationDispatchText(answer, 2000))
 	}
 	return strings.TrimSpace(b.String())
 }
 
-func (m *Model) shouldDisableThinkingForPlanExecutePlanner() bool {
-	if m == nil || m.modelThinkingFloor {
-		return false
+func planExecutePlannerAnswerIsInternalCompletionGate(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return strings.Contains(lower, "completion gate rejected") ||
+		strings.Contains(lower, "missing completion evidence") ||
+		strings.Contains(lower, "gate retry") ||
+		strings.Contains(lower, "requires a successful submit_plan tool result")
+}
+
+func humanPlanExecutePlannerBlockerSummary(failure implementationDispatchPlanExecuteFailure) string {
+	summary := strings.TrimSpace(failure.Result.FailureReason)
+	if summary == "" {
+		return ""
 	}
-	for _, value := range []string{
-		m.modelID,
-		m.cfg.Chat.ModelFamily,
-		m.cfg.LlamaServer.Model,
-		m.plannerSpec.Model,
-	} {
-		lower := strings.ToLower(strings.TrimSpace(value))
-		if strings.Contains(lower, "qwen") {
-			return true
+	lowerSummary := strings.ToLower(summary)
+	answer := strings.ToLower(strings.TrimSpace(failure.Result.PlannerAnswer))
+	if strings.Contains(lowerSummary, "completion gate rejected") ||
+		strings.Contains(answer, "completion gate rejected the final answer repeatedly") {
+		if len(failure.AllowedPaths) > 0 {
+			return "planner stopped before emitting a `submit_plan` tool call for the discovered candidate scope"
 		}
+		if len(failure.RequiredPaths) > 0 {
+			return "planner stopped before emitting a `submit_plan` tool call covering the required edit paths"
+		}
+		return "planner stopped before emitting a `submit_plan` tool call"
 	}
+	return summary
+}
+
+func humanPlanExecuteDispatchWithoutScopeMessage(failure implementationDispatchPlanExecuteFailure) string {
+	var b strings.Builder
+	b.WriteString("<<QUESTION>>: Plan-execute dispatch blocked before retry because the TUI did not provide a concrete edit scope.")
+	b.WriteString("\n\nThe TUI plan-execute path needs required edit paths, allowed edit paths, or a resolved plan document before retrying the planner.")
+	if prompt := strings.TrimSpace(failure.Prompt); prompt != "" {
+		b.WriteString("\n\nObjective:\n")
+		b.WriteString(prompt)
+	}
+	if summary := strings.TrimSpace(failure.Result.FailureReason); summary != "" {
+		b.WriteString("\n\nPlanner blocker:\n")
+		b.WriteString(summary)
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (m *Model) shouldDisableThinkingForPlanExecutePlanner() bool {
 	return false
 }

@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	ObsidianProposalPath = "docs/obsidian/20 - PRD ADR Brief Research Workflow PROPOSAL.md"
-	ObsidianRoadmapPath  = "docs/obsidian/22 - Product Workflow ROADMAP.md"
+	ObsidianProductWorkflowPath = "docs/obsidian/20 - Product Workflow and Behavioral Coverage.md"
+	ObsidianRecoveryPath        = "docs/obsidian/21 - Recovery and Decomposition.md"
 )
 
 type ObsidianParityFinding struct {
@@ -31,61 +31,60 @@ func EvaluateObsidianParity(root string, ws *WorkflowState, ledger []Implementat
 	if ws == nil || ws.EffortID != "prd-adr-brief-workflow" {
 		return result
 	}
-	result.CheckedFiles = []string{ObsidianProposalPath, ObsidianRoadmapPath}
+	result.CheckedFiles = []string{ObsidianProductWorkflowPath, ObsidianRecoveryPath}
 
-	proposal, proposalErr := readObsidian(root, ObsidianProposalPath)
-	if proposalErr != nil {
+	productWorkflowDoc, productWorkflowErr := readObsidian(root, ObsidianProductWorkflowPath)
+	if productWorkflowErr != nil {
 		result.Findings = append(result.Findings, ObsidianParityFinding{
 			Code:    "obsidian_read_error",
-			Path:    ObsidianProposalPath,
-			Message: fileReadFindingMessage(proposalErr),
+			Path:    ObsidianProductWorkflowPath,
+			Message: fileReadFindingMessage(productWorkflowErr),
 		})
 	}
-	roadmap, roadmapErr := readObsidian(root, ObsidianRoadmapPath)
-	if roadmapErr != nil {
+	_, recoveryErr := readObsidian(root, ObsidianRecoveryPath)
+	if recoveryErr != nil {
 		result.Findings = append(result.Findings, ObsidianParityFinding{
 			Code:    "obsidian_read_error",
-			Path:    ObsidianRoadmapPath,
-			Message: fileReadFindingMessage(roadmapErr),
+			Path:    ObsidianRecoveryPath,
+			Message: fileReadFindingMessage(recoveryErr),
 		})
 	}
-	if proposalErr != nil || roadmapErr != nil {
+	if productWorkflowErr != nil || recoveryErr != nil {
 		return result
 	}
 
-	proposalText := string(proposal)
-	roadmapText := string(roadmap)
+	productWorkflowText := string(productWorkflowDoc)
 	var stale []ObsidianParityFinding
-	if strings.Contains(strings.ToUpper(proposalText), "STATUS: NOT STARTED") {
+	if strings.Contains(strings.ToUpper(productWorkflowText), "STATUS: NOT STARTED") {
 		stale = append(stale, ObsidianParityFinding{
 			Code:    "obsidian_stale_status",
-			Path:    ObsidianProposalPath,
-			Message: "proposal status claims NOT STARTED while durable workflow is active",
+			Path:    ObsidianProductWorkflowPath,
+			Message: "product workflow note status claims NOT STARTED while durable workflow is active",
 		})
 	}
-	if strings.Contains(roadmapText, "## NOT STARTED: PRD/ADR/Brief Workflow") {
+	if strings.Contains(productWorkflowText, "## NOT STARTED: PRD/ADR/Brief Workflow") {
 		stale = append(stale, ObsidianParityFinding{
 			Code:    "obsidian_stale_status",
-			Path:    ObsidianRoadmapPath,
-			Message: "roadmap marks PRD/ADR/Brief workflow as NOT STARTED while durable workflow is active",
+			Path:    ObsidianProductWorkflowPath,
+			Message: "product workflow note marks PRD/ADR/Brief workflow as NOT STARTED while durable workflow is active",
 		})
 	}
 	if ws.CurrentPhase == "phase-5-execution-feedback" {
 		for _, phase := range []string{"Phase 0", "Phase 1", "Phase 2", "Phase 3", "Phase 4"} {
-			if hasUncheckedPhase(proposalText, phase) {
+			if hasUncheckedPhase(productWorkflowText, phase) {
 				stale = append(stale, ObsidianParityFinding{
 					Code:    "obsidian_phase_checklist_drift",
-					Path:    ObsidianProposalPath,
-					Message: fmt.Sprintf("proposal checklist shows %s incomplete while durable workflow is in %s", phase, ws.CurrentPhase),
+					Path:    ObsidianProductWorkflowPath,
+					Message: fmt.Sprintf("product workflow checklist shows %s incomplete while durable workflow is in %s", phase, ws.CurrentPhase),
 				})
 			}
 		}
 	}
-	if obsidianParityAtomCompleted(ledger) && strings.Contains(roadmapText, "- [ ] Obsidian parity check in product lint/audit") {
+	if obsidianParityAtomCompleted(ledger) && strings.Contains(productWorkflowText, "- [ ] Obsidian parity check in product lint/audit") {
 		stale = append(stale, ObsidianParityFinding{
 			Code:    "obsidian_roadmap_checklist_drift",
-			Path:    ObsidianRoadmapPath,
-			Message: "roadmap still lists Obsidian parity check as TODO after atom completion",
+			Path:    ObsidianProductWorkflowPath,
+			Message: "product workflow note still lists Obsidian parity check as TODO after atom completion",
 		})
 	}
 	if len(stale) == 0 {

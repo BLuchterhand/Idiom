@@ -869,7 +869,7 @@ func TestStructuredRequiredEditPathsIgnoresNegativeAllowlistKeys(t *testing.T) {
 	}
 }
 
-func TestStructuredRequiredEditPathsCapturesYAMLStyleWriteScope(t *testing.T) {
+func TestStructuredAllowedEditPathsCapturesYAMLStyleWriteScope(t *testing.T) {
 	prompt := `
 Write Scope:
 - native/tests/test_transport_system.cpp
@@ -878,8 +878,12 @@ Evidence:
 - native/src/simulation/transport/route_graph.cpp
 `
 	got := structuredRequiredEditPathsFromPrompt(prompt)
-	if len(got) != 1 || got[0] != "native/tests/test_transport_system.cpp" {
-		t.Fatalf("expected YAML-style write_scope path only, got %#v", got)
+	if len(got) != 0 {
+		t.Fatalf("write_scope is candidate scope, not required edit coverage, got %#v", got)
+	}
+	allowed := structuredAllowedEditPathsFromPrompt(prompt)
+	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
+		t.Fatalf("expected YAML-style write_scope candidate path only, got %#v", allowed)
 	}
 }
 
@@ -889,8 +893,60 @@ write_scope: native/tests/test_transport_system.cpp
 evidence: native/src/simulation/transport/route_graph.cpp
 `
 	got := structuredRequiredEditPathsFromPrompt(prompt)
-	if len(got) != 1 || got[0] != "native/tests/test_transport_system.cpp" {
-		t.Fatalf("expected inline write_scope path only, got %#v", got)
+	if len(got) != 0 {
+		t.Fatalf("write_scope is candidate scope, not required edit coverage, got %#v", got)
+	}
+	allowed := structuredAllowedEditPathsFromPrompt(prompt)
+	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
+		t.Fatalf("expected inline write_scope candidate path only, got %#v", allowed)
+	}
+}
+
+func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
+	prompt := `
+## Allowed Edit Paths
+
+- native/tests/test_transport_system.cpp
+- native/src/simulation/transport/route_graph.cpp
+
+## Evidence
+
+- docs/design.md
+`
+	if got := requiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
+	}
+	allowed := allowedEditPathsFromPrompt(prompt)
+	for _, want := range []string{
+		"native/tests/test_transport_system.cpp",
+		"native/src/simulation/transport/route_graph.cpp",
+	} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+	if slices.Contains(allowed, "docs/design.md") {
+		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
+	}
+}
+
+func TestStructuredRequiredEditPathsIgnoreAllowedKeys(t *testing.T) {
+	prompt := `{
+  "allowed_edit_paths": ["native/src/a.cpp"],
+  "allowed_files": ["native/src/b.cpp"],
+  "evidence": ["native/src/c.cpp"]
+}`
+	if got := structuredRequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("allowed structured keys must not define required coverage, got %#v", got)
+	}
+	allowed := structuredAllowedEditPathsFromPrompt(prompt)
+	for _, want := range []string{"native/src/a.cpp", "native/src/b.cpp"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+	if slices.Contains(allowed, "native/src/c.cpp") {
+		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
 	}
 }
 
@@ -1233,7 +1289,7 @@ Run the tests.
 	}
 }
 
-func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAllowlist(t *testing.T) {
+func TestBuildPromptExecutionPlanCapturesFilesYouMayEditAsCandidateScope(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
@@ -1258,8 +1314,76 @@ Implement the patch in the named files only.
 		"native/src/simulation/world/megaflora_stamper.cpp",
 		"scripts/world/megaflora_stamper.gd",
 	} {
-		if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
-			t.Fatalf("expected required edit path %q, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
+		if slices.Contains(plan.runtimeBrief.RequiredEditPaths, want) {
+			t.Fatalf("files-you-may-edit path %q must not become required coverage, got %#v", want, plan.runtimeBrief.RequiredEditPaths)
+		}
+		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
+			t.Fatalf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
+		}
+	}
+}
+
+func TestReviewRepairPromptDoesNotPromoteEditScopeToRequiredPaths(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("plan_then_execute_review_repair")
+
+	prompt := `
+# Plan-then-execute review-repair phase
+
+## Allowed Repair Paths
+
+- widget_config.json
+- widget_notes.md
+
+## Phase Evidence Bundle
+
+` + "```text" + `
+required_paths: (none)
+allowed_repair_paths: widget_config.json, widget_notes.md
+submitted_plan_state:
+- ` + "`widget_config.json`" + ` status=applied
+- ` + "`widget_notes.md`" + ` status=applied
+` + "```" + `
+
+## Diff Evidence
+
+` + "```diff" + `
+diff --git a/widget_config.json b/widget_config.json
+--- a/widget_config.json
++++ b/widget_config.json
+@@ -1 +1 @@
+-{"labels":["alpha"]}
++{"labels":["alpha","beta","live-tui-e2e"],"version":2}
+` + "```" + `
+
+## Original Task / Spec
+
+> <!-- IDIOM:BRIEF-BODY-START -->
+> # Objective
+>
+> Please update widget_config.json and widget_notes.md. Only edit widget_config.json and widget_notes.md.
+>
+> ## Candidate Edit Scope From Target References
+>
+> - widget_config.json
+> - widget_notes.md
+>
+> <!-- IDIOM:BRIEF-BODY-END -->
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if len(plan.runtimeBrief.RequiredEditPaths) != 0 {
+		t.Fatalf("review-repair allowed/original edit scope must not become required coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	if slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope") {
+		t.Fatalf("review-repair must not get mutation required-path constraints, got %#v", plan.runtimeBrief.Constraints)
+	}
+	for _, want := range []string{"widget_config.json", "widget_notes.md"} {
+		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
+			t.Fatalf("expected review target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
 		}
 	}
 }

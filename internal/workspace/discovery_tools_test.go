@@ -2233,7 +2233,7 @@ func TestHarnessAuditFlagsIncompleteImplementLifecycle(t *testing.T) {
 	}, "\n"))
 	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
 		`{"type":"session_start","command":"implement","workspace_root":"` + root + `"}`,
-		`{"type":"process_start","command":"implement","pid":123,"workspace_root":"` + root + `"}`,
+		fmt.Sprintf(`{"type":"process_start","command":"implement","pid":%d,"workspace_root":"%s"}`, harnessAuditTestStoppedPID(t), root),
 		`{"type":"model_session","session_id":"session","debug_log_path":"` + conversationPath + `"}`,
 		"",
 	}, "\n"))
@@ -2262,6 +2262,17 @@ func TestHarnessAuditFlagsIncompleteImplementLifecycle(t *testing.T) {
 	}) {
 		t.Fatalf("expected incomplete lifecycle finding, got %#v", report.Findings)
 	}
+}
+
+func harnessAuditTestStoppedPID(t *testing.T) int {
+	t.Helper()
+	for pid := 999999; pid > 900000; pid-- {
+		if !processIDAppearsRunning(pid) {
+			return pid
+		}
+	}
+	t.Fatal("could not find a non-running PID for harness audit fixture")
+	return 0
 }
 
 func TestHarnessAuditClassifiesActiveImplementLifecycleAsInProgress(t *testing.T) {
@@ -2299,6 +2310,50 @@ func TestHarnessAuditClassifiesActiveImplementLifecycleAsInProgress(t *testing.T
 		return finding.ID == "incomplete_implement_session_lifecycle"
 	}) {
 		t.Fatalf("expected no incomplete lifecycle finding for active process, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditClassifiesActiveTUIImplementationConversationAsInProgress(t *testing.T) {
+	root := t.TempDir()
+	conversationPath := filepath.Join(root, "logs", "conversations", "active-tui.jsonl")
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "active-tui.jsonl")
+	writeWorkspaceFile(t, conversationPath, strings.Join([]string{
+		`{"type":"session_start","workspace_root":"` + root + `"}`,
+		`{"type":"message","role":"control_rails","content":"{\"contract\":\"implementation_result\",\"task_family\":\"implementation\"}"}`,
+		"",
+	}, "\n"))
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"tui","workspace_root":"` + root + `"}`,
+		fmt.Sprintf(`{"type":"process_start","command":"tui","pid":%d,"workspace_root":"%s"}`, os.Getpid(), root),
+		`{"type":"model_session","session_id":"active-tui","debug_log_path":"` + conversationPath + `"}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || len(report.LogBehavior.InProgressSessions) != 1 {
+		t.Fatalf("expected one in-progress TUI session, got %#v", report.LogBehavior)
+	}
+	session := report.LogBehavior.InProgressSessions[0]
+	if session.TelemetryLog != "logs/telemetry/active-tui.jsonl" ||
+		session.ConversationLog != "logs/conversations/active-tui.jsonl" ||
+		session.Command != "tui" {
+		t.Fatalf("unexpected in-progress TUI session: %#v", session)
+	}
+	if len(report.LogBehavior.IncompleteSessions) != 0 {
+		t.Fatalf("active TUI conversation should not be incomplete, got %#v", report.LogBehavior.IncompleteSessions)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "incomplete_implement_session_lifecycle"
+	}) {
+		t.Fatalf("expected no incomplete lifecycle finding for active TUI process, got %#v", report.Findings)
 	}
 }
 

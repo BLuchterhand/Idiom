@@ -949,8 +949,9 @@ func ValidatePRDTDDObligationCrossLinks(
 }
 
 type ParsedADR struct {
-	Doc     ADRDocument
-	RelPath string
+	Doc         ADRDocument
+	RelPath     string
+	RawMarkdown string
 }
 
 type ADRSupersessionLinkError struct {

@@ -54,8 +54,11 @@ func planExecuteRequiredEditPaths(opts Options, prompt string) []string {
 	return planExecuteUniqueRequiredPaths(paths)
 }
 
-func planExecuteAllowedEditPaths(opts Options) []string {
-	return planExecuteUniqueRequiredPaths([]string(opts.AllowedEditPaths))
+func planExecuteAllowedEditPaths(opts Options, prompt string) []string {
+	paths := make([]string, 0, len(opts.AllowedEditPaths))
+	paths = append(paths, []string(opts.AllowedEditPaths)...)
+	paths = append(paths, AllowedEditPathsFromPrompt(prompt)...)
+	return planExecuteUniqueRequiredPaths(paths)
 }
 
 func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
@@ -180,6 +183,48 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		lines = append(lines, "", "No required edit paths were provided. You still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func appendPlanExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
+	section := planExecuteScopeSection(requiredEditPaths, allowedEditPaths)
+	if section == "" {
+		return prompt
+	}
+	if end := strings.Index(prompt, pathparse.BriefBodyEndMarker); end >= 0 {
+		return strings.TrimSpace(prompt[:end]) + "\n\n" + section + "\n\n" + strings.TrimSpace(prompt[end:])
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + section
+}
+
+func planExecuteScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
+	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	allowed := planExecuteUniqueRequiredPaths(allowedEditPaths)
+	if len(required) == 0 && len(allowed) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(required) > 0 {
+		b.WriteString("## Files to Modify\n\n")
+		b.WriteString("required_edit_paths:\n")
+		for _, path := range required {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	if len(allowed) > 0 {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("## Candidate Edit Scope From Target References\n\n")
+		b.WriteString("allowed_edit_paths:\n")
+		for _, path := range allowed {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {

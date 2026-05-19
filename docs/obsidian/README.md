@@ -36,6 +36,7 @@ checked against source or command output before being treated as release claims.
 20. [[19 - CLI TUI and Operator Surface]]
 21. [[20 - Product Workflow and Behavioral Coverage]]
 22. [[21 - Recovery and Decomposition]]
+23. [[22 - Ground-Up Implementation Plan]]
 
 ## Source Documents
 
@@ -44,6 +45,7 @@ This vault summarizes and connects the repository's canonical documents:
 - [README.md](../../README.md)
 - [docs/idiom-strategic-thesis.md](../idiom-strategic-thesis.md)
 - [docs/idiom-design-roadmap.md](../idiom-design-roadmap.md)
+- [docs/idiom-implementation-plan.md](../idiom-implementation-plan.md)
 - [docs/decisioning-north-star.md](../decisioning-north-star.md)
 - [docs/idiom-maintenance-best-practices.md](../idiom-maintenance-best-practices.md)
 - [docs/lane-architecture.md](../lane-architecture.md)

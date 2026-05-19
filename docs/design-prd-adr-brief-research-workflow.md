@@ -274,6 +274,7 @@ multi-session research and implementation for complex features.
 8a. Coverage gate (deterministic, risk-tiered completeness check)
 9. Brief generation
 10. Brief lint and intake
+10a. Human verification (operator approval of the final PRD/ADR/TDD/brief packet)
 11. Lane dispatch
 12. Execution audit and learning (feeds back into step 8)
 ```
@@ -291,7 +292,8 @@ flowchart TD
     TDD --> CoverageGate["Coverage gate<br/>deterministic risk-tier check<br/>required techniques depend on blast radius"]
     CoverageGate --> Briefs["Implementation briefs<br/>bounded executor contracts"]
     Briefs --> Gates["Lint and intake gates"]
-    Gates --> Lanes["Idiom lanes<br/>implement or plan-execute"]
+    Gates --> HumanVerification["Human verification<br/>operator approval boundary"]
+    HumanVerification --> Lanes["Idiom lanes<br/>implement or plan-execute"]
     Lanes --> Feedback["Execution audit and learning"]
     Feedback -. improves .-> EvidenceLedger
     Feedback -. strengthens .-> TDD
@@ -882,7 +884,9 @@ The operator needs explicit continuation verbs:
 | Build TDD plan | Generate/update obligations for accepted requirements/ADRs | PRD/ADR accepted |
 | Run coverage gate | Evaluate required criteria for the declared coverage tier | TDD ledger ready |
 | Generate briefs | Produce bounded dispatch briefs | coverage gate passed or documented blocker |
-| Dispatch brief | Run `implement` or `plan-execute` | brief lint and atom intake passed |
+| Submit for human verification | Ask the operator to approve or reject the final PRD/ADR/TDD/brief packet | brief lint and atom intake passed |
+| Approve for implementation | Record human approval for the implementation packet | operator accepted the final packet |
+| Dispatch brief | Run `implement` or `plan-execute` | human verification approved |
 | Continue execution | Resume lane/review-repair from saved progress state | incomplete resumable lane state |
 | Close workflow | Mark complete, source-satisfied, abandoned, or blocked | no open dispatch/verification obligations, or explicit blocker |
 
@@ -1552,7 +1556,9 @@ stateDiagram-v2
     BriefLint --> Intake: brief lint passes
     Intake --> IntakeBlocked: complete, source-satisfied, stale, dirty, invalid scope
     IntakeBlocked --> Draft: rebase, close, or unblock scope
-    Intake --> DispatchReady: dispatchable
+    Intake --> HumanVerification: submit final packet
+    HumanVerification --> IntakeBlocked: operator requests changes
+    HumanVerification --> DispatchReady: operator approves implementation packet
     DispatchReady --> Dispatched: lane starts
     Dispatched --> Verified: required verification passes
     Dispatched --> ExecutionBlocked: verification or contract failure

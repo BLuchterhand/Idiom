@@ -254,6 +254,29 @@ func TestDebugLoggerSuppressesDuplicateAssistantSummaryMessages(t *testing.T) {
 	}
 }
 
+func TestDebugLoggerRunEventDoesNotWriteMessageRecord(t *testing.T) {
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	if err := logger.LogRunEvent("completion_gate_recovery", "internal recovery prompt"); err != nil {
+		t.Fatalf("LogRunEvent: %v", err)
+	}
+
+	records := readDebugLogRecords(t, logger.Path())
+	if len(records) != 1 {
+		t.Fatalf("expected one record, got %#v", records)
+	}
+	if records[0]["type"] != "run_event" || records[0]["role"] != "completion_gate_recovery" {
+		t.Fatalf("internal runner event should be typed as run_event, got %#v", records[0])
+	}
+}
+
 func TestDebugLoggerLogsContextFillTelemetry(t *testing.T) {
 	dir := t.TempDir()
 	logger, err := NewDebugLogger(DebugLoggerOptions{

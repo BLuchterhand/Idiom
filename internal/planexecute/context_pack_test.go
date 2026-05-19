@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
 	"idiom/internal/config"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/workspace"
 )
 
@@ -25,6 +27,67 @@ func TestComposePlannerPromptWithContextPackScopesBriefBody(t *testing.T) {
 	got := RequiredEditPathsFromPrompt(prompt)
 	if len(got) != 1 || got[0] != "pkg/target.go" {
 		t.Fatalf("required paths = %#v, want only brief-scoped target path", got)
+	}
+}
+
+func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
+	prompt := `
+## Allowed Edit Paths
+
+- pkg/target.go
+- pkg/optional.go
+
+## Evidence
+
+- pkg/evidence.go
+`
+	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("allowed edit paths must not define required coverage, got %#v", got)
+	}
+	allowed := AllowedEditPathsFromPrompt(prompt)
+	for _, want := range []string{"pkg/target.go", "pkg/optional.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+	if slices.Contains(allowed, "pkg/evidence.go") {
+		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteAllowedEditPathsIncludesPromptAllowedScope(t *testing.T) {
+	prompt := `{
+  "allowed_edit_paths": ["pkg/target.go"],
+  "evidence": ["pkg/evidence.go"]
+}`
+	required := planExecuteRequiredEditPaths(Options{}, prompt)
+	if len(required) != 0 {
+		t.Fatalf("allowed_edit_paths must not define required coverage, got %#v", required)
+	}
+	allowed := planExecuteAllowedEditPaths(Options{
+		AllowedEditPaths: []string{"pkg/explicit.go"},
+	}, prompt)
+	for _, want := range []string{"pkg/explicit.go", "pkg/target.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+	if slices.Contains(allowed, "pkg/evidence.go") {
+		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
+	}
+}
+
+func TestAppendPlanExecuteScopeToBriefBodyMakesAllowedPathsParseable(t *testing.T) {
+	prompt := ComposePlannerPromptWithContextPack("# Objective\n\nUpdate banner.", "## Context Pack\n\n- `noise.go`")
+	got := appendPlanExecuteScopeToBriefBody(prompt, nil, []string{"internal/app/rendering.go"})
+	scoped := pathparse.ScopeToBriefBody(got)
+
+	if !strings.Contains(scoped, "allowed_edit_paths:") || !strings.Contains(scoped, "internal/app/rendering.go") {
+		t.Fatalf("allowed scope was not inserted inside the brief body:\n%s", got)
+	}
+	allowed := AllowedEditPathsFromPrompt(got)
+	if len(allowed) != 1 || allowed[0] != "internal/app/rendering.go" {
+		t.Fatalf("allowed paths not parseable from composed prompt: %#v\n%s", allowed, got)
 	}
 }
 
@@ -58,6 +121,50 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 	for _, want := range []string{"context view artifact", "`internal/app/prompt_routing.go`", "`runtimeBriefForRoute`", "`go test ./internal/app`"} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("expected %q in context section:\n%s", want, section)
+		}
+	}
+}
+
+func TestRenderPromptContextPackSectionAddsFallbackWhenNoTargets(t *testing.T) {
+	section, err := RenderPromptContextPackSection(workspace.ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/empty.json with 0 candidate file(s)",
+		Output:  `{"pack_id":"empty","candidate_files":[],"candidate_symbols":[],"tests":[]}`,
+	})
+	if err != nil {
+		t.Fatalf("render context pack: %v", err)
+	}
+	for _, want := range []string{
+		"## Context Discovery Fallback",
+		"context_pack returned no candidate files",
+		"`search_files`",
+		"`search_content`",
+		"`read_file`",
+		"If a literal phrase misses, broaden",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("fallback section missing %q:\n%s", want, section)
+		}
+	}
+}
+
+func TestRenderPromptContextDiscoveryFallbackSectionIncludesBriefScope(t *testing.T) {
+	section := RenderPromptContextDiscoveryFallbackSection(PromptContextPackOptions{
+		Title:             "Replace banner path with alias",
+		RequiredEditPaths: []string{"internal/app/rendering.go", "internal/app/rendering.go"},
+	}, "context index unavailable\nretry timed out")
+	for _, want := range []string{
+		"## Context Discovery Fallback",
+		"Replace banner path with alias",
+		"internal/app/rendering.go",
+		"context index unavailable retry timed out",
+		"`search_files`",
+		"`search_content`",
+		"`read_file`",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("fallback section missing %q:\n%s", want, section)
 		}
 	}
 }

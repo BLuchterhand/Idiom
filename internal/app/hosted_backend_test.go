@@ -68,3 +68,50 @@ func TestRoleSpecResolvesExplicitHostedAliasAcrossProfiles(t *testing.T) {
 		t.Fatalf("unexpected resolved spec: %#v", got)
 	}
 }
+
+func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	backendsJSON := `{
+  "default_profile": "local",
+  "profiles": {
+    "local": {
+      "models": [{
+        "alias": "planner",
+        "kind": "mlx",
+        "binary": "/bin/false",
+        "model_path": "/models/planner",
+        "host": "127.0.0.1",
+        "port": 47780,
+        "roles": ["planner", "classifier"]
+      }]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.RouteClassifier.Enabled = true
+	cfg.RouteClassifier.AutoStartServer = true
+	cfg.RouteClassifier.BaseURL = "http://127.0.0.1:11437"
+	cfg.RouteClassifier.Binary = "/bin/false"
+	cfg.RouteClassifier.Host = "127.0.0.1"
+	cfg.RouteClassifier.Port = 11437
+	cfg.RouteClassifier.ServerModel = "/models/classifier"
+
+	model := New(cfg)
+	defer model.Close()
+
+	if model.summaryClient != model.client {
+		t.Fatal("classifier role shares the planner target; expected summary client to reuse planner client")
+	}
+	if model.summaryController != nil {
+		t.Fatal("classifier role shares the planner target; must not create a second server controller")
+	}
+}

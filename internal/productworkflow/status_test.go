@@ -204,6 +204,61 @@ func TestProductOperatorStatusViewUsesTypedContinuationActions(t *testing.T) {
 	}
 }
 
+func TestProductOperatorStatusViewHumanVerificationApprovalAction(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"current_state":"implementing"`, `"current_state":"human_verification"`, 1)
+	wsJSON = strings.Replace(wsJSON, `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["complete"]`, `"next_valid_actions":["approve_for_implementation"]`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{
+		Status:       "pass",
+		CheckedFiles: []string{"workflow_state.json"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	action := findOperatorContinuationAction(t, view.NextValidActions, "approve_for_implementation")
+	if action.Owner != "operator" || !action.Dispatchable || !action.RunnableNow {
+		t.Fatalf("expected runnable operator approval action, got %#v", action)
+	}
+	if len(action.Blockers) != 0 {
+		t.Fatalf("expected no blockers on human approval action, got %#v", action.Blockers)
+	}
+}
+
+func TestProductOperatorStatusViewBlocksStartImplementationShortcut(t *testing.T) {
+	dir := t.TempDir()
+	wsJSON := strings.Replace(statusTestWorkflowStateJSON(), `"current_state":"implementing"`, `"current_state":"planned"`, 1)
+	wsJSON = strings.Replace(wsJSON, `"open_obligations":["TDD-001"]`, `"open_obligations":[]`, 1)
+	wsJSON = strings.Replace(wsJSON, `"next_valid_actions":["complete"]`, `"next_valid_actions":["start_implementation"]`, 1)
+	writeStatusTestFile(t, dir, "workflow_state.json", wsJSON)
+
+	status, err := LoadProductStatus(dir, &LintSummaryResult{Status: "pass"})
+	if err != nil {
+		t.Fatalf("unexpected status error: %v", err)
+	}
+	workflowState, err := ParseWorkflowStateJSON([]byte(wsJSON))
+	if err != nil {
+		t.Fatalf("unexpected workflow state parse error: %v", err)
+	}
+
+	view := BuildProductOperatorStatusView(status, &workflowState)
+	action := findOperatorContinuationAction(t, view.NextValidActions, "start_implementation")
+	if action.Dispatchable || action.RunnableNow {
+		t.Fatalf("expected start_implementation shortcut to be blocked, got %#v", action)
+	}
+	if !statusStringsContain(action.BlockedBy, "human_verification_required") {
+		t.Fatalf("expected human_verification_required blocker, got %#v", action)
+	}
+}
+
 func TestProductOperatorStatusViewIncludesRecoveryPacketState(t *testing.T) {
 	dir := t.TempDir()
 	writeStatusTestFile(t, dir, "references/recovery_packet.json", statusTestRecoveryPacketJSON(t))

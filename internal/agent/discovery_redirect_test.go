@@ -193,6 +193,29 @@ func TestRedirectSkipsNonIdentifierPattern(t *testing.T) {
 	}
 }
 
+func TestSearchContentSkipsLowercaseLiteralTerm(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "banner", Glob: "*.go", Path: "internal/app"}, ws)
+	if decision.ShouldRedirect {
+		t.Fatalf("lowercase literal UI/domain term should run as text search, got redirect to %s", decision.Capability)
+	}
+}
+
+func TestSearchContentRedirectsSymbolShapedBareIdentifier(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	decision := d.Consider(workspace.ToolRequest{Tool: "search_content", Pattern: "headerModelLabel", Glob: "*.go", Path: "internal/app"}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("symbol-shaped identifier should redirect to structured symbol search")
+	}
+	if decision.Capability != workspace.CapFindSymbol {
+		t.Fatalf("capability: want find_symbol, got %s", decision.Capability)
+	}
+}
+
 // TestRedirectSkipsGenericGlob ensures search_content with no glob or
 // a language-agnostic glob doesn't fire — we can't pick a language
 // without a concrete extension.

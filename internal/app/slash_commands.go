@@ -16,30 +16,32 @@ import (
 type slashCommandFunc func(m *Model, raw string, fields []string) bool
 
 var slashCommands = map[string]slashCommandFunc{
-	"/quit":           (*Model).slashQuit,
-	"/exit":           (*Model).slashQuit,
-	"/help":           (*Model).slashHelp,
-	"/clear":          (*Model).slashClear,
-	"/save":           (*Model).slashSave,
-	"/context":        (*Model).slashContext,
-	"/workspace":      (*Model).slashWorkspace,
-	"/pwd":            (*Model).slashPwd,
-	"/debuglog":       (*Model).slashDebugLog,
-	"/trace":          (*Model).slashTrace,
-	"/mode":           (*Model).slashMode,
-	"/approve":        (*Model).slashApprove,
-	"/deny":           (*Model).slashDeny,
-	"/undo":           (*Model).slashUndo,
-	"/panel":          (*Model).slashPanel,
-	"/resume":         (*Model).slashResume,
-	"/plan":           (*Model).slashPlan,
-	"/system":         (*Model).slashSystem,
-	"/temp":           (*Model).slashTemp,
-	"/preset":         (*Model).slashPreset,
-	"/server":         (*Model).slashServer,
-	"/profile":        (*Model).slashProfile,
-	"/product-status": (*Model).slashProductStatus,
-	"/recover-status": (*Model).slashRecoverStatus,
+	"/quit":             (*Model).slashQuit,
+	"/exit":             (*Model).slashQuit,
+	"/help":             (*Model).slashHelp,
+	"/clear":            (*Model).slashClear,
+	"/save":             (*Model).slashSave,
+	"/context":          (*Model).slashContext,
+	"/workspace":        (*Model).slashWorkspace,
+	"/pwd":              (*Model).slashPwd,
+	"/debuglog":         (*Model).slashDebugLog,
+	"/trace":            (*Model).slashTrace,
+	"/mode":             (*Model).slashMode,
+	"/approve":          (*Model).slashApprove,
+	"/deny":             (*Model).slashDeny,
+	"/undo":             (*Model).slashUndo,
+	"/panel":            (*Model).slashPanel,
+	"/resume":           (*Model).slashResume,
+	"/plan":             (*Model).slashPlan,
+	"/system":           (*Model).slashSystem,
+	"/temp":             (*Model).slashTemp,
+	"/preset":           (*Model).slashPreset,
+	"/server":           (*Model).slashServer,
+	"/profile":          (*Model).slashProfile,
+	"/product-status":   (*Model).slashProductStatus,
+	"/product-continue": (*Model).slashProductContinue,
+	"/product-approve":  (*Model).slashProductApprove,
+	"/recover-status":   (*Model).slashRecoverStatus,
 }
 
 func (m *Model) slashQuit(_ string, _ []string) bool {
@@ -47,7 +49,7 @@ func (m *Model) slashQuit(_ string, _ []string) bool {
 }
 
 func (m *Model) slashHelp(_ string, _ []string) bool {
-	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
+	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
 	return false
 }
 

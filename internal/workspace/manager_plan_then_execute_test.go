@@ -29,9 +29,14 @@ func TestManagerPlanThenExecutePlannerModeSwapsManifest(t *testing.T) {
 			t.Fatalf("planner-mode manifest must hide %s, got %v", write, plannerTools)
 		}
 	}
+	for _, forbidden := range []string{"task", "task_ledger", "pwd", "source_sanity", "git_status", "git_diff", "shell", "context_trace_pack"} {
+		if planModeManifestContains(plannerTools, forbidden) {
+			t.Fatalf("planner-mode manifest must not advertise %s because the planner guard rejects it, got %v", forbidden, plannerTools)
+		}
+	}
 	// Read-class tools should still be present so the planner can
 	// gather evidence before submitting the plan.
-	for _, read := range []string{"read_file", "search_content", "code_navigate"} {
+	for _, read := range []string{"read_file", "search_content", "code_navigate", "context_pack", "harness_feedback", "submit_plan"} {
 		if !planModeManifestContains(plannerTools, read) {
 			t.Fatalf("planner-mode manifest must keep %s, got %v", read, plannerTools)
 		}

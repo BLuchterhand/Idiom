@@ -42,6 +42,118 @@ func (m *Model) slashProductStatus(_ string, fields []string) bool {
 	return false
 }
 
+func (m *Model) slashProductApprove(_ string, fields []string) bool {
+	absRoot, err := m.productStatusEffortRoot(fields)
+	if err != nil {
+		m.status = strings.Replace(err.Error(), "/product-status", "/product-approve", 1)
+		return false
+	}
+	return m.applyProductWorkflowTransition(absRoot, "approve_for_implementation")
+}
+
+func (m *Model) slashProductContinue(_ string, fields []string) bool {
+	action, rootFields, err := productContinueArgs(fields)
+	if err != nil {
+		m.status = err.Error()
+		return false
+	}
+	absRoot, err := m.productStatusEffortRoot(rootFields)
+	if err != nil {
+		m.status = strings.Replace(err.Error(), "/product-status", "/product-continue", 1)
+		return false
+	}
+	return m.applyProductWorkflowTransition(absRoot, action)
+}
+
+func productContinueArgs(fields []string) (string, []string, error) {
+	if len(fields) < 2 {
+		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+	}
+	action := ""
+	rootFields := []string{fields[0]}
+	for i := 1; i < len(fields); i++ {
+		field := strings.TrimSpace(fields[i])
+		if field == "" {
+			continue
+		}
+		if field == "--effort-root" {
+			if i+1 >= len(fields) {
+				return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+			}
+			rootFields = append(rootFields, "--effort-root", fields[i+1])
+			i++
+			continue
+		}
+		if action == "" {
+			action = field
+			continue
+		}
+		if len(rootFields) == 1 {
+			rootFields = append(rootFields, field)
+			continue
+		}
+		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+	}
+	if action == "" {
+		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+	}
+	return action, rootFields, nil
+}
+
+func (m *Model) applyProductWorkflowTransition(absRoot string, action string) bool {
+	result := productworkflow.ApplyProductWorkflowTransition(productworkflow.ProductWorkflowTransitionApplyOptions{
+		EffortRoot: absRoot,
+		Action:     action,
+		Actor:      "operator",
+	})
+	body := productWorkflowTransitionTUIMessage(result)
+	if result.Status == "applied" {
+		statusView, workflowState, statusErr := productworkflow.LoadCheckedProductStatus(absRoot)
+		operatorStatus := productworkflow.BuildProductOperatorStatusView(statusView, workflowState)
+		body = strings.TrimRight(body, "\n") + "\n\n" + strings.TrimRight(productworkflow.FormatProductOperatorStatusText(filepath.Base(absRoot), operatorStatus), "\n")
+		if statusErr != nil {
+			body = strings.TrimRight(body, "\n") + "\nstatus_reload_error: " + statusErr.Error()
+		}
+	}
+	m.insertBeforePendingAssistant(llama.ChatMessage{
+		Role:    "operator",
+		Content: strings.TrimRight(body, "\n"),
+	})
+	displayRoot := m.displayPath(absRoot)
+	if result.Status != "applied" {
+		m.status = fmt.Sprintf("Product workflow transition blocked for %s: %d blocker(s).", displayRoot, len(result.Blockers))
+		return false
+	}
+	m.status = fmt.Sprintf("Product workflow transition applied for %s: %s -> %s.", displayRoot, result.FromState, result.ToState)
+	return false
+}
+
+func productWorkflowTransitionTUIMessage(result productworkflow.ProductWorkflowTransitionApplyResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "product workflow transition: %s\n", result.Status)
+	fmt.Fprintf(&b, "  action: %s\n", result.Action)
+	if result.FromState != "" || result.ToState != "" {
+		fmt.Fprintf(&b, "  state: %s -> %s\n", result.FromState, result.ToState)
+	}
+	if result.Event.EventID != "" {
+		fmt.Fprintf(&b, "  event_id: %s\n", result.Event.EventID)
+	}
+	if result.NextValidAction != "" {
+		fmt.Fprintf(&b, "  next: %s\n", result.NextValidAction)
+	}
+	if len(result.Blockers) > 0 {
+		fmt.Fprintf(&b, "  blockers (%d):\n", len(result.Blockers))
+		for _, blocker := range result.Blockers {
+			if blocker.Path != "" {
+				fmt.Fprintf(&b, "    [%s] %s: %s\n", blocker.Code, blocker.Path, blocker.Message)
+			} else {
+				fmt.Fprintf(&b, "    [%s] %s\n", blocker.Code, blocker.Message)
+			}
+		}
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
 func (m *Model) productStatusEffortRoot(fields []string) (string, error) {
 	switch len(fields) {
 	case 1:

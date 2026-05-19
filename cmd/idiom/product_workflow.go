@@ -1430,7 +1430,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			addFinding("parse_error", parseErr.Error(), relPath)
 			continue
 		}
-		parsedADRs = append(parsedADRs, productworkflow.ParsedADR{Doc: doc, RelPath: relPath})
+		parsedADRs = append(parsedADRs, productworkflow.ParsedADR{Doc: doc, RelPath: relPath, RawMarkdown: string(data)})
 	}
 	var ledger productworkflow.TDDLedger
 	if data, ok := readFile("tdd.json"); ok {
@@ -2440,7 +2440,7 @@ func loadBriefGenerationInput(effortRoot string) (productworkflow.BriefGeneratio
 		readAndParse(rel, func(data []byte) error {
 			parsed, err := productworkflow.ParseADRMarkdown(data)
 			if err == nil {
-				in.ADRs = append(in.ADRs, productworkflow.ParsedADR{Doc: parsed, RelPath: rel})
+				in.ADRs = append(in.ADRs, productworkflow.ParsedADR{Doc: parsed, RelPath: rel, RawMarkdown: string(data)})
 			}
 			return err
 		})

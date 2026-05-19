@@ -27,13 +27,14 @@ type TransitionBlocker struct {
 }
 
 var validStates = map[string]string{
-	"planned":       "started",
-	"implementing":  "started",
-	"verifying":     "started",
-	"reviewing":     "started",
-	"investigating": "started",
-	"blocked":       "started",
-	"closed":        "closed",
+	"planned":            "started",
+	"human_verification": "started",
+	"implementing":       "started",
+	"verifying":          "started",
+	"reviewing":          "started",
+	"investigating":      "started",
+	"blocked":            "started",
+	"closed":             "closed",
 }
 
 var validStatusBuckets = map[string]bool{
@@ -83,8 +84,16 @@ var orderedTransitionTable = []orderedStateEntry{
 	{
 		State: "planned",
 		Actions: []orderedAction{
-			{Action: "start_implementation", Rule: transitionRule{ToState: "implementing", Owner: "implementor"}},
+			{Action: "submit_for_human_verification", Rule: transitionRule{ToState: "human_verification", Owner: "planner"}},
 			{Action: "start_investigation", Rule: transitionRule{ToState: "investigating", Owner: "investigator"}},
+		},
+	},
+	{
+		State: "human_verification",
+		Actions: []orderedAction{
+			{Action: "approve_for_implementation", Rule: transitionRule{ToState: "implementing", Owner: "operator"}},
+			{Action: "request_changes", Rule: transitionRule{ToState: "planned", Owner: "operator"}},
+			{Action: "request_investigation", Rule: transitionRule{ToState: "investigating", Owner: "operator"}},
 		},
 	},
 	{

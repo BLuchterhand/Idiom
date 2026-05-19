@@ -136,6 +136,20 @@ func (r *Runner) Run(
 	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
 	currentAllowedTools := []string(nil)
+	restoreWorkspacePlanThenExecuteMode := func() {}
+	if r.Workspace != nil {
+		priorPlanThenExecuteMode := r.Workspace.PlanThenExecutePlannerMode()
+		switch strings.TrimSpace(r.RuntimeBrief.TaskFamily) {
+		case PlanThenExecutePlannerTaskFamily, PlanThenExecuteReviewRepairTaskFamily:
+			r.Workspace.SetPlanThenExecutePlannerMode(true)
+		default:
+			r.Workspace.SetPlanThenExecutePlannerMode(false)
+		}
+		restoreWorkspacePlanThenExecuteMode = func() {
+			r.Workspace.SetPlanThenExecutePlannerMode(priorPlanThenExecuteMode)
+		}
+		defer restoreWorkspacePlanThenExecuteMode()
+	}
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -416,7 +430,8 @@ func (r *Runner) Run(
 
 		metrics.ModelCalls++
 		modelStart := time.Now()
-		assistantMessage, err := r.Client.CompleteChatMessage(ctx, turnMessages, opts)
+		requestMessages := chatMessagesForOptions(turnMessages, opts)
+		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 		if err != nil {
 			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
 				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
@@ -425,7 +440,7 @@ func (r *Runner) Run(
 			return finish("", err, "model_error", false)
 		}
 		metrics.addUsage(assistantMessage.Usage)
-		r.emitModelCallTrace(stepNumber, "main_loop", turnMessages, assistantMessage, time.Since(modelStart).Milliseconds())
+		r.emitModelCallTrace(stepNumber, "main_loop", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds())
 		reply := assistantMessage.Content
 		// Capture the full message (including ReasoningContent) so the
 		// auto-salvage path can recover review prose that landed inside
@@ -448,6 +463,21 @@ func (r *Runner) Run(
 		} else {
 			req, raw, ok, parseErr = workspace.ParseToolRequest(reply)
 		}
+		if !ok && parseErr == nil {
+			if salvagedReq, salvagedRaw, salvaged := r.salvageToolRequestFromReasoning(assistantMessage, collectedResults); salvaged {
+				req, raw, ok = salvagedReq, salvagedRaw, true
+				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryTargetRead(collectedResults); recovered {
+				req, raw, ok = recoveredReq, recoveredRaw, true
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_target_read", Content: fmt.Sprintf("completion recovery found candidate target %s in the runtime brief; issuing bounded read before another plan attempt", req.Path)})
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoverySearch(collectedResults); recovered {
+				req, raw, ok = recoveredReq, recoveredRaw, true
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_search", Content: fmt.Sprintf("completion recovery found only context-packet candidates; issuing bounded literal search %q", req.Pattern)})
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryRead(collectedResults); recovered {
+				req, raw, ok = recoveredReq, recoveredRaw, true
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_read", Content: fmt.Sprintf("completion recovery found candidate path %s after literal search; issuing bounded read before another final-answer attempt", req.Path)})
+			}
+		}
 		err = parseErr
 		if err != nil {
 			assistantToolTurn := assistantMessage
@@ -456,6 +486,7 @@ func (r *Runner) Run(
 				activeToolCall = &call
 				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
 			}
+			assistantToolTurn = assistantHistoryMessageForOptions(assistantToolTurn, opts)
 			turnMessages = append(turnMessages, assistantToolTurn)
 			r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
 			controller.recordParseFailure(stepNumber, activeToolCall, raw, err)
@@ -513,8 +544,11 @@ func (r *Runner) Run(
 					autonomyRecorder.emitCompletionGate(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults)
 				}
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
-				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && priorGateRejections == 0 {
-					opts = completionGateRecoveryChatOptions(opts, r.RuntimeBrief)
+				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
+					result.Summary == "Completion gate rejected unresolved process narration" ||
+					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults))
+				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && shouldAttachRecoveryPrompt {
+					opts = completionGateRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
 					if hideReads {
 						implementationWriteOnlyRecoveryActive = true
 						if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
@@ -571,6 +605,7 @@ func (r *Runner) Run(
 			activeToolCall = &call
 			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
 		}
+		assistantToolTurn = assistantHistoryMessageForOptions(assistantToolTurn, opts)
 		turnMessages = append(turnMessages, assistantToolTurn)
 		r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
 		if r.shouldForceAnswerForPostCompletionVerification(req, collectedResults, &postCompletionVerificationCalls) {
@@ -692,6 +727,17 @@ func (r *Runner) Run(
 				continue
 			}
 		}
+		if summary, errorText, prompt, reject := r.unscopedContextPackCandidateReadRecovery(req, collectedResults); reject {
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: summary,
+				Error:   errorText,
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "context_pack_read_recovery", Content: prompt})
+			continue
+		}
 		recoveryReadAllowanceGrantedThisRequest := false
 		if implementationWriteOnlyRecoveryActive && !r.writeOnlyRecoveryToolIsWrite(req.Tool) {
 			if r.consumeRecoveryReadAllowance(req, recoveryReadAllowanceUsed, collectedResults) {
@@ -766,6 +812,10 @@ func (r *Runner) Run(
 			continue
 		}
 		if summary, errorText, reject := currentToolSurfaceRejection(req, currentAllowedTools); reject {
+			if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
+				summary = newFileSummary
+				errorText = newFileError
+			}
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if done {
 				return finish(answer, err, "tool_not_allowed_by_runtime_surface", true)
@@ -1385,6 +1435,12 @@ func (r *Runner) Run(
 				Role:    "plan_then_execute_tool_guard",
 				Content: guard.Reason,
 			})
+		} else if guard := r.preflightPlanThenExecuteReviewRepairNoopSubmitPlanGuard(req); guard.Intercepted {
+			result = guard.Result
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_review_repair_guard",
+				Content: guard.Reason,
+			})
 		} else if intercept := r.preflightVerificationOnAlreadyEditedPath(req, collectedResults); intercept.Intercepted {
 			result = intercept.Result
 			r.emitEvent(RunEvent{
@@ -1473,6 +1529,7 @@ func (r *Runner) Run(
 			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, collectedResults); nudge != "" {
 				planThenExecuteReadinessNudged = true
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+				opts = planThenExecuteCandidatePostReadChatOptions(opts, r.RuntimeBrief, collectedResults)
 				r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
 			}
 		}
@@ -1658,6 +1715,25 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 		return
 	}
 	r.OnEvent(RunEvent{Role: "thinking_trace", Content: string(data)})
+}
+
+func chatMessagesForOptions(messages []llama.ChatMessage, opts llama.ChatOptions) []llama.ChatMessage {
+	if opts.PreserveThinking {
+		return messages
+	}
+	out := make([]llama.ChatMessage, len(messages))
+	copy(out, messages)
+	for i := range out {
+		out[i].ReasoningContent = ""
+	}
+	return out
+}
+
+func assistantHistoryMessageForOptions(message llama.ChatMessage, opts llama.ChatOptions) llama.ChatMessage {
+	if !opts.PreserveThinking {
+		message.ReasoningContent = ""
+	}
+	return message
 }
 
 func thinkingOptionForLog(enableThinking *bool) string {
@@ -3968,6 +4044,9 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 	if result, rejected := r.unexecutedToolRequestCompletionRejection(reply); rejected {
 		return result, true
 	}
+	if result, rejected := unresolvedProcessIntentCompletionRejection(reply); rejected {
+		return result, true
+	}
 	ledgerOwnedByMutationContract := r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) && len(r.RuntimeBrief.RequiredEditPaths) > 0
 	if !ledgerOwnedByMutationContract && taskLedger != nil {
 		if result, rejected := taskLedger.completionRejection(reply); rejected {
@@ -4007,6 +4086,47 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 		Tool:    "completion_gate",
 		Summary: summary,
 		Error:   errorText,
+	}, true
+}
+
+func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolResult, bool) {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return workspace.ToolResult{}, false
+	}
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
+	if containsAny(lower,
+		" blocked ",
+		" blocker ",
+		" cannot ",
+		" can't ",
+		" could not ",
+		" unable ",
+		" no access ",
+		" permission ",
+		" not available ",
+	) {
+		return workspace.ToolResult{}, false
+	}
+	if !containsAny(lower,
+		" let me search ",
+		" let me inspect ",
+		" let me read ",
+		" i need to search ",
+		" i need to inspect ",
+		" i need to find ",
+		" i need to read ",
+		" i'll search ",
+		" i'll inspect ",
+		" i will search ",
+		" i will inspect ",
+	) {
+		return workspace.ToolResult{}, false
+	}
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Completion gate rejected unresolved process narration",
+		Error:   "the reply describes an intended future search/read/inspection instead of completing the answer. Issue the needed tool call now, answer from gathered evidence, or state a concrete blocker.",
 	}, true
 }
 
@@ -4573,29 +4693,33 @@ func recoverableMarkdownDeliverableShape(body string) bool {
 // errors) also return false; the original gate rejection wins.
 func (r *Runner) autoSalvageMarkdownDeliverable(reply string) (workspace.ToolRequest, workspace.ToolResult, bool) {
 	if r == nil || r.Workspace == nil {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: nil runner or workspace\n")
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
+	}
+	if strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	if len(r.RuntimeBrief.RequiredEditPaths) != 1 {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: required_edit_paths count=%d, want 1\n", len(r.RuntimeBrief.RequiredEditPaths))
+		if len(r.RuntimeBrief.RequiredEditPaths) > 0 {
+			r.emitAutoSalvageEvent("skip: required_edit_paths count=%d, want 1", len(r.RuntimeBrief.RequiredEditPaths))
+		}
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	path := strings.TrimSpace(r.RuntimeBrief.RequiredEditPaths[0])
 	if path == "" || !strings.HasSuffix(strings.ToLower(path), ".md") {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q is not a .md file\n", path)
+		r.emitAutoSalvageEvent("skip: path %q is not a .md file", path)
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	cleanPath := filepath.ToSlash(filepath.Clean(path))
 	if filepath.IsAbs(path) || cleanPath == "." || cleanPath == ".." || strings.HasPrefix(cleanPath, "../") {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q is not a safe relative path\n", path)
+		r.emitAutoSalvageEvent("skip: path %q is not a safe relative path", path)
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	if root := strings.TrimSpace(r.Workspace.Root()); root != "" {
 		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(cleanPath))); err == nil {
-			fmt.Fprintf(os.Stderr, "[auto-salvage] skip: path %q already exists\n", path)
+			r.emitAutoSalvageEvent("skip: path %q already exists", path)
 			return workspace.ToolRequest{}, workspace.ToolResult{}, false
 		} else if !os.IsNotExist(err) {
-			fmt.Fprintf(os.Stderr, "[auto-salvage] skip: cannot stat %q: %v\n", path, err)
+			r.emitAutoSalvageEvent("skip: cannot stat %q: %v", path, err)
 			return workspace.ToolRequest{}, workspace.ToolResult{}, false
 		}
 	}
@@ -4603,7 +4727,7 @@ func (r *Runner) autoSalvageMarkdownDeliverable(reply string) (workspace.ToolReq
 	source := "reply"
 	if body != "" && strings.TrimSpace(body) != strings.TrimSpace(reply) {
 		source = "reply-structured"
-		fmt.Fprintf(os.Stderr, "[auto-salvage] extracted structured markdown from reply prose (%d chars)\n", len(body))
+		r.emitAutoSalvageEvent("extracted structured markdown from reply prose (%d chars)", len(body))
 	}
 	// Fallback path (#95): Qwen3 thinking mode sometimes burns the
 	// entire generation budget inside the <think> block and exits
@@ -4616,15 +4740,15 @@ func (r *Runner) autoSalvageMarkdownDeliverable(reply string) (workspace.ToolReq
 		if salvaged := extractStructuredMarkdownFromReasoning(r.LastAssistantMessage.ReasoningContent); salvaged != "" {
 			body = salvaged
 			source = "reasoning"
-			fmt.Fprintf(os.Stderr, "[auto-salvage] recovering from reasoning content (reply was %d chars, reasoning yielded %d)\n", len(strings.TrimSpace(reply)), len(body))
+			r.emitAutoSalvageEvent("recovering from reasoning content (reply was %d chars, reasoning yielded %d)", len(strings.TrimSpace(reply)), len(body))
 		}
 	}
 	if len(body) < 100 {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body too short (%d chars, source=%s)\n", len(body), source)
+		r.emitAutoSalvageEvent("skip: body too short (%d chars, source=%s)", len(body), source)
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	if !recoverableMarkdownDeliverableShape(body) {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] skip: body is not a recognized markdown deliverable shape (first 100 chars: %q)\n", body[:min(100, len(body))])
+		r.emitAutoSalvageEvent("skip: body is not a recognized markdown deliverable shape (first 100 chars: %q)", body[:min(100, len(body))])
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
 	ctx := context.Background()
@@ -4636,11 +4760,18 @@ func (r *Runner) autoSalvageMarkdownDeliverable(reply string) (workspace.ToolReq
 	}
 	result := r.Workspace.Execute(ctx, req)
 	if strings.TrimSpace(result.Error) != "" {
-		fmt.Fprintf(os.Stderr, "[auto-salvage] FAILED: write_file %s: %s\n", path, result.Error)
+		r.emitAutoSalvageEvent("FAILED: write_file %s: %s", path, result.Error)
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
-	fmt.Fprintf(os.Stderr, "[auto-salvage] SUCCESS: wrote %s (%d bytes)\n", path, len(body))
+	r.emitAutoSalvageEvent("SUCCESS: wrote %s (%d bytes)", path, len(body))
 	return req, result, true
+}
+
+func (r *Runner) emitAutoSalvageEvent(format string, args ...any) {
+	if r == nil {
+		return
+	}
+	r.emitEvent(RunEvent{Role: "auto_salvage", Content: fmt.Sprintf(format, args...)})
 }
 
 // tryAutoSalvageMarkdownDeliverable is retained for focused unit tests
@@ -4768,10 +4899,20 @@ func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
 }
 
 func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
+	if r != nil && r.unscopedNoWriteCompletionRecoveryApplies(results) {
+		return 2
+	}
 	if r != nil && r.completionGateMutationRecoveryApplies(results) {
 		return 1
 	}
 	return 2
+}
+
+func (r *Runner) unscopedNoWriteCompletionRecoveryApplies(results []workspace.ToolResult) bool {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return false
+	}
+	return len(changedPathsFromToolResults(results)) == 0 && len(r.RuntimeBrief.RequiredEditPaths) == 0
 }
 
 func (r *Runner) completionGateMutationRecoveryApplies(results []workspace.ToolResult) bool {
@@ -4782,6 +4923,9 @@ func (r *Runner) completionGateMutationRecoveryApplies(results []workspace.ToolR
 		return true
 	}
 	if len(r.missingRequiredEditSnippets(results)) > 0 {
+		return true
+	}
+	if len(changedPathsFromToolResults(results)) == 0 && len(r.RuntimeBrief.RequiredEditPaths) == 0 {
 		return true
 	}
 	return hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
@@ -4828,14 +4972,65 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 		return fmt.Sprintf("The completion gate rejected a final answer while required edit snippet(s) are still missing: %s. Read/search tools are hidden for this turn. The available contract outcomes are snippet-backed write capability or <<QUESTION>> naming the exact blocker for each missing snippet; do not perform additional discovery.", strings.Join(missing, ", ")), true, true
 	}
 	if r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) == 0 && successfulSubmitPlanResultCount(results) == 0 {
+		readPathSet := readPathsFromResults(results)
+		readPaths := make([]string, 0, len(readPathSet))
+		for path := range readPathSet {
+			readPaths = append(readPaths, path)
+		}
+		sort.Strings(readPaths)
+		candidatePaths := recoveryEvidencePathsForObjective(r.RuntimeBrief.Objective, results, 4)
+		for _, path := range readPaths {
+			if !slices.Contains(candidatePaths, path) {
+				candidatePaths = append([]string{path}, candidatePaths...)
+			}
+		}
+		targetSummary := "No concrete candidate path has been read yet."
+		nextAction := "If one edit-safety fact is missing, call one bounded read/search on the highest-confidence candidate path with a named missing edit-safety fact."
+		hideReads := false
+		if len(candidatePaths) > 0 {
+			targetSummary = "Current candidate path evidence: " + strings.Join(candidatePaths, ", ")
+			nextAction = fmt.Sprintf("If one edit-safety fact is missing, read the highest-confidence candidate path now: `read_file` on `%s` with a named missing edit-safety fact. Otherwise call `submit_plan`.", candidatePaths[0])
+		}
+		if len(readPaths) > 0 {
+			targetSummary = "Read candidate path(s): " + strings.Join(readPaths, ", ")
+			nextAction = "Read/search tools are hidden for this recovery turn because candidate source has already been read. Call `submit_plan` using exact source anchors from the read output, answer `Decision: source-satisfied` with current-state evidence, or answer `<<QUESTION>>:` with the exact blocker. Do not request another read."
+			hideReads = true
+		}
 		return strings.Join([]string{
 			"The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) produced an artifact for candidate/allowed scope. No required_edit_paths list is active, so choose the needed candidate path(s) from the objective and target refs instead of treating the allowlist as coverage.",
+			targetSummary,
 			"Your next visible message must be exactly one parser-readable action, not the same prose. Do not include analysis before or after the action.",
-			"If the brief already gives exact anchors, full new-file content, or enough replacement shape, use this shape:",
-			"```tool\n{\"tool\":\"submit_plan\",\"rationale\":\"why these candidate path edits satisfy the objective\",\"edits\":[{\"path\":\"candidate/path.go\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}\n```",
-			"If one edit-safety fact is missing, call one bounded read/search on a candidate path with a named missing edit-safety fact, for example:",
-			"```tool\n{\"tool\":\"read_file\",\"path\":\"candidate/path.go\",\"start_line\":1,\"end_line\":160,\"named_gap\":\"exact missing edit-safety fact\",\"why_not_answering\":\"need current source before submit_plan\"}\n```",
+			"Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. The `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` outcome must appear in visible content or a native tool call.",
+			"When submitting, each `submit_plan.edits[]` entry must use a real candidate path plus either exact `old_text` copied from the read/source evidence with `new_text`, or a concrete line range with replacement `content`, plus a one-sentence `purpose`. Do not copy schema examples or placeholder text as field values.",
+			nextAction,
 			"The only non-tool closeouts are a visible answer starting exactly with `Decision: source-satisfied` plus current-state evidence for the relevant path(s), or `<<QUESTION>>:` naming the exact blocker. Do not call per-edit write tools.",
+		}, "\n\n"), hideReads, true
+	}
+	if r.unscopedNoWriteCompletionRecoveryApplies(results) {
+		candidatePaths := recoveryEvidencePathsForObjective(r.RuntimeBrief.Objective, results, 4)
+		writePath := "candidate/path.go"
+		if len(candidatePaths) > 0 {
+			writePath = candidatePaths[0]
+		}
+		writeStep := "Do not call a write tool until current evidence identifies the concrete edit path and edit shape. If the exact target and replacement are already known, call one write tool now: `edit_file`, `write_file`, `append_file`, or `apply_patch`."
+		if len(candidatePaths) > 0 {
+			writeStep = fmt.Sprintf("If the current evidence identifies the edit target and edit shape, call one write tool now: `edit_file`, `write_file`, `append_file`, or `apply_patch`. For textual-tool backends, use this exact fenced shape with real path and text values:\n\n```tool\n{\"tool\":\"edit_file\",\"path\":\"%s\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"description\":\"one sentence\"}\n```", writePath)
+		}
+		targetDiscoveryStep := "If the edit target is not identified, call `context_pack` for the user's objective rather than repeating a literal search that already missed:\n\n```tool\n{\"tool\":\"context_pack\",\"mode\":\"plan\",\"limit\":8,\"task\":\"find the implementation file and edit target for: <user objective>\"}\n```"
+		if len(candidatePaths) > 0 {
+			targetDiscoveryStep = fmt.Sprintf("Current evidence paths already identify candidate target(s): %s.\n\nIf one edit-safety fact is still missing, read the highest-confidence candidate instead of restarting discovery:\n\n```tool\n{\"tool\":\"read_file\",\"path\":\"%s\",\"start_line\":1,\"end_line\":180,\"named_gap\":\"exact current code that renders the requested UI/text/behavior\",\"why_not_answering\":\"need current source before the write\"}\n```\n\nDo not call `context_pack` again unless every listed candidate is proven irrelevant.", strings.Join(candidatePaths, ", "), candidatePaths[0])
+		} else if contextPackUnavailableForRecovery(results) {
+			targetDiscoveryStep = "The previous `context_pack` result failed or returned no usable target candidates, so do not call `context_pack` again in this recovery. Run a bounded fallback discovery phase instead: first `search_files` for likely filenames/components/domain terms, then `search_content` for stable labels, symbols, config keys, command names, or error text. If a literal phrase missed, broaden to nearby concepts. Read the highest-confidence candidate with `read_file` or a language-aware symbol tool before writing."
+		} else if contextPackSeen(results) {
+			targetDiscoveryStep = "The previous `context_pack` did not establish an exact edit target. Do not write or read a context-pack candidate unless it contains exact current-state evidence for the requested UI/text/behavior. Run bounded fallback discovery instead: use `search_content` for stable labels, visible UI terms, symbols, config keys, command names, or error text from the user's objective, then read the highest-confidence hit before writing."
+		}
+		return strings.Join([]string{
+			"The completion gate rejected a final answer before any successful workspace write. No required_edit_paths list is active, so this is a target-selection failure, not a required-path coverage failure.",
+			"Your next visible message must be exactly one parser-readable action, not prose and not an implementation summary. Do not include analysis before or after the action.",
+			writeStep,
+			targetDiscoveryStep,
+			"If one edit-safety fact is missing after a concrete candidate exists, call exactly one bounded discovery/read tool with `named_gap` and `why_not_answering` that names the fact needed before the write.",
+			"The only non-tool closeout is `<<QUESTION>>:` naming the exact blocker, such as no resolvable edit target, missing permission, or missing body evidence. Do not repeat a final answer without a tool-backed write.",
 		}, "\n\n"), false, true
 	}
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
@@ -4848,7 +5043,472 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	return "", false, false
 }
 
-func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief) llama.ChatOptions {
+func contextPackUnavailableForRecovery(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "context_pack" {
+			continue
+		}
+		if strings.TrimSpace(result.Error) != "" {
+			return true
+		}
+		if !contextPackResultHasTargets(result) {
+			return true
+		}
+	}
+	return false
+}
+
+func contextPackSeen(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == "context_pack" {
+			return true
+		}
+	}
+	return false
+}
+
+func contextPackResultHasTargets(result workspace.ToolResult) bool {
+	output := strings.TrimSpace(result.Output)
+	if output == "" {
+		return false
+	}
+	var view struct {
+		CandidateFiles   []json.RawMessage `json:"candidate_files"`
+		CandidateSymbols []json.RawMessage `json:"candidate_symbols"`
+		Tests            []json.RawMessage `json:"tests"`
+	}
+	if err := json.Unmarshal([]byte(output), &view); err != nil {
+		return false
+	}
+	return len(view.CandidateFiles) > 0 || len(view.CandidateSymbols) > 0 || len(view.Tests) > 0
+}
+
+func concreteRecoveryEvidencePaths(results []workspace.ToolResult, max int) []string {
+	filtered := make([]workspace.ToolResult, 0, len(results))
+	for _, result := range results {
+		switch strings.TrimSpace(result.Tool) {
+		case "context_pack", "completion_gate":
+			continue
+		default:
+			filtered = append(filtered, result)
+		}
+	}
+	return promptEvidencePathsFromToolResults(filtered, max)
+}
+
+func recoveryEvidencePathsForObjective(objective string, results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	searchRanked := rankedSearchContentEvidencePaths(objective, results, max)
+	if len(searchRanked) >= max {
+		return searchRanked[:max]
+	}
+	seen := make(map[string]struct{}, len(searchRanked))
+	paths := make([]string, 0, max)
+	for _, path := range searchRanked {
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	for _, path := range concreteRecoveryEvidencePaths(results, max*2) {
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+		if len(paths) >= max {
+			break
+		}
+	}
+	return paths
+}
+
+func rankedSearchContentEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	terms := recoveryObjectiveSignalTerms(objective)
+	uiObjective := objectiveMentionsUI(strings.ToLower(objective))
+	type scoredPath struct {
+		path  string
+		score int
+		order int
+	}
+	scores := map[string]*scoredPath{}
+	order := 0
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "search_content" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, line := range strings.Split(result.Output, "\n") {
+			path, text, ok := searchContentPathAndText(line)
+			if !ok {
+				continue
+			}
+			entry, exists := scores[path]
+			if !exists {
+				entry = &scoredPath{path: path, order: order}
+				scores[path] = entry
+				order++
+			}
+			entry.score += recoverySearchLineScore(path, text, terms, uiObjective)
+		}
+	}
+	if len(scores) == 0 {
+		return nil
+	}
+	paths := make([]scoredPath, 0, len(scores))
+	for _, entry := range scores {
+		paths = append(paths, *entry)
+	}
+	sort.SliceStable(paths, func(i, j int) bool {
+		if paths[i].score != paths[j].score {
+			return paths[i].score > paths[j].score
+		}
+		return paths[i].order < paths[j].order
+	})
+	out := make([]string, 0, min(max, len(paths)))
+	for _, entry := range paths {
+		if entry.score <= -50 {
+			continue
+		}
+		out = append(out, entry.path)
+		if len(out) >= max {
+			break
+		}
+	}
+	return out
+}
+
+func searchContentPathAndText(line string) (path string, text string, ok bool) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return "", "", false
+	}
+	firstColon := strings.Index(line, ":")
+	if firstColon < 0 {
+		return "", "", false
+	}
+	before := strings.TrimSpace(line[:firstColon])
+	fields := strings.Fields(before)
+	if len(fields) == 0 {
+		return "", "", false
+	}
+	path = fields[len(fields)-1]
+	if !recoverySearchPathLooksEditableSource(path) || !strings.Contains(path, "/") {
+		return "", "", false
+	}
+	rest := line[firstColon+1:]
+	secondColon := strings.Index(rest, ":")
+	if secondColon >= 0 {
+		text = strings.TrimSpace(rest[secondColon+1:])
+	}
+	return filepath.ToSlash(path), text, true
+}
+
+func recoverySearchLineScore(path string, text string, terms []string, uiObjective bool) int {
+	lowerPath := strings.ToLower(filepath.ToSlash(path))
+	lowerText := strings.ToLower(text)
+	score := 1
+	for _, term := range terms {
+		if strings.Contains(lowerPath, term) {
+			score += 10
+		}
+		if strings.Contains(lowerText, term) {
+			score += 12
+		}
+	}
+	if strings.HasSuffix(lowerPath, "_test.go") {
+		score -= 100
+	}
+	if strings.HasPrefix(strings.TrimSpace(lowerText), "//") {
+		score -= 8
+	}
+	if strings.Contains(lowerPath, "tool_schemas.go") || strings.Contains(lowerPath, "/agent/") || strings.Contains(lowerPath, "/eval/") {
+		score -= 30
+	}
+	if uiObjective {
+		if strings.HasPrefix(lowerPath, "internal/app/") {
+			score += 45
+		}
+		if containsAny(lowerPath, "render", "view", "model_state", "update_handlers") {
+			score += 25
+		}
+		if containsAny(lowerPath, "frontier/", "comprehension/", "workspace/") {
+			score -= 25
+		}
+	}
+	return score
+}
+
+func recoveryObjectiveSignalTerms(objective string) []string {
+	pattern := literalRecoverySearchPattern(objective)
+	if pattern == "" {
+		return nil
+	}
+	parts := strings.Split(pattern, "|")
+	terms := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.ToLower(strings.TrimSpace(part))
+		if part == "" {
+			continue
+		}
+		terms = append(terms, strings.ReplaceAll(part, `\`, ""))
+	}
+	return terms
+}
+
+func objectiveMentionsUI(lowerObjective string) bool {
+	return containsAny(lowerObjective, "tui", "ui", "banner", "header", "footer", "top-right", "top right", "window", "screen", "view", "render")
+}
+
+func (r *Runner) salvageToolRequestFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || strings.TrimSpace(reply.Content) != "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	reasoning := strings.TrimSpace(reply.ReasoningContent)
+	if reasoning == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	for _, candidate := range reasoningToolRequestCandidates(reasoning) {
+		req, raw, ok, err := workspace.ParseToolRequest(candidate)
+		if !ok || err != nil {
+			continue
+		}
+		if safeReasoningToolRequest(req, results, r.planThenExecutePlanSubmissionPhase()) {
+			return req, raw, true
+		}
+	}
+	return workspace.ToolRequest{}, "", false
+}
+
+func reasoningToolRequestCandidates(reasoning string) []string {
+	reasoning = strings.TrimSpace(reasoning)
+	if reasoning == "" {
+		return nil
+	}
+	candidates := make([]string, 0, 3)
+	for offset := 0; offset < len(reasoning); {
+		idx := strings.Index(reasoning[offset:], "```tool")
+		if idx < 0 {
+			break
+		}
+		start := offset + idx
+		rest := reasoning[start:]
+		end := strings.Index(rest, "\n```")
+		if end < 0 {
+			break
+		}
+		candidates = append(candidates, rest[:end+4])
+		offset = start + end + 4
+	}
+	if strings.Contains(reasoning, "<tool_call>") || strings.Contains(reasoning, "<function=") {
+		candidates = append(candidates, reasoning)
+	}
+	if strings.Contains(reasoning, `"tool"`) {
+		candidates = append(candidates, reasoning)
+	}
+	return candidates
+}
+
+func safeReasoningToolRequest(req workspace.ToolRequest, results []workspace.ToolResult, allowSubmitPlan bool) bool {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" || reasoningToolRequestHasPlaceholder(req) {
+		return false
+	}
+	switch tool {
+	case "read_file":
+		return strings.TrimSpace(req.Path) != ""
+	case "search_content":
+		return strings.TrimSpace(req.Pattern) != ""
+	case "search_files":
+		return strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Glob) != ""
+	case "context_pack":
+		return strings.TrimSpace(req.Task) != "" && !contextPackUnavailableForRecovery(results)
+	case "submit_plan":
+		return allowSubmitPlan && reasoningSubmitPlanHasConcreteEdit(req)
+	default:
+		return false
+	}
+}
+
+func reasoningToolRequestHasPlaceholder(req workspace.ToolRequest) bool {
+	fields := []string{
+		req.Path,
+		req.Task,
+		req.Pattern,
+		req.Query,
+		req.Content,
+		req.OldText,
+		req.NewText,
+		req.NamedGap,
+		req.WhyNotAnswering,
+		req.Rationale,
+	}
+	for _, edit := range reasoningSubmitPlanEdits(req) {
+		fields = append(fields,
+			edit.Path,
+			edit.OldText,
+			edit.NewText,
+			edit.NewTextRef,
+			edit.Content,
+			edit.ContentRef,
+			edit.Purpose,
+		)
+	}
+	for _, field := range fields {
+		lower := strings.ToLower(strings.TrimSpace(field))
+		if lower == "" {
+			continue
+		}
+		if containsAny(lower,
+			"candidate/path.go",
+			"exact current text",
+			"replacement text",
+			"why these candidate path edits satisfy the objective",
+			"one sentence",
+			"<full file body>",
+			"<user objective>",
+			"<path>",
+			"<pattern>",
+		) {
+			return true
+		}
+	}
+	return false
+}
+
+func reasoningSubmitPlanHasConcreteEdit(req workspace.ToolRequest) bool {
+	edits := reasoningSubmitPlanEdits(req)
+	if len(edits) == 0 {
+		return false
+	}
+	for _, edit := range edits {
+		if strings.TrimSpace(edit.Path) == "" {
+			continue
+		}
+		hasOldText := strings.TrimSpace(edit.OldText) != ""
+		hasContent := strings.TrimSpace(edit.Content) != "" || strings.TrimSpace(edit.ContentRef) != ""
+		hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
+		hasReplace := edit.ReplaceAll && (strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "")
+		if hasOldText || hasRange || hasReplace {
+			return true
+		}
+	}
+	return false
+}
+
+func reasoningSubmitPlanEdits(req workspace.ToolRequest) []workspace.PlanEdit {
+	edits := append([]workspace.PlanEdit(nil), req.Edits...)
+	if req.PlanArtifact != nil {
+		edits = append(edits, req.PlanArtifact.Edits...)
+	}
+	return edits
+}
+
+func (r *Runner) deterministicNoWriteRecoveryRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "search_content" {
+		return workspace.ToolRequest{}, "", false
+	}
+	paths := recoveryEvidencePathsForObjective(r.RuntimeBrief.Objective, results, 4)
+	if len(paths) == 0 || alreadyReadPath(results, paths[0]) {
+		return workspace.ToolRequest{}, "", false
+	}
+	req := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            paths[0],
+		StartLine:       1,
+		EndLine:         180,
+		NamedGap:        "exact current code needed before writing the requested implementation change",
+		WhyNotAnswering: "need current source before the write",
+	}
+	return req, marshalToolRequestRaw(req), true
+}
+
+func (r *Runner) deterministicNoWriteRecoveryTargetRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	for _, ref := range r.RuntimeBrief.TargetRefs {
+		path := strings.TrimSpace(filepath.ToSlash(ref))
+		if path == "" || !recoverySearchPathLooksEditableSource(path) || alreadyReadPath(results, path) {
+			continue
+		}
+		req := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         180,
+			NamedGap:        "exact current code needed before submitting the requested plan",
+			WhyNotAnswering: "need current source before submit_plan can anchor the edit",
+		}
+		return req, marshalToolRequestRaw(req), true
+	}
+	return workspace.ToolRequest{}, "", false
+}
+
+func (r *Runner) deterministicNoWriteRecoverySearch(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "context_pack" {
+		return workspace.ToolRequest{}, "", false
+	}
+	if len(concreteRecoveryEvidencePaths(results, 1)) > 0 || successfulToolSeen(results, "search_content") {
+		return workspace.ToolRequest{}, "", false
+	}
+	pattern := literalRecoverySearchPattern(r.RuntimeBrief.Objective)
+	if pattern == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	req := workspace.ToolRequest{
+		Tool:            "search_content",
+		Path:            ".",
+		Pattern:         pattern,
+		NamedGap:        "locate exact current source for the requested UI/text/behavior",
+		WhyNotAnswering: "need a grounded source hit before reading or writing",
+	}
+	return req, marshalToolRequestRaw(req), true
+}
+
+func successfulToolSeen(results []workspace.ToolResult, tool string) bool {
+	tool = strings.TrimSpace(tool)
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == tool && strings.TrimSpace(result.Error) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func lastNonGateTool(results []workspace.ToolResult) string {
+	for i := len(results) - 1; i >= 0; i-- {
+		tool := strings.TrimSpace(results[i].Tool)
+		if tool == "" || tool == "completion_gate" {
+			continue
+		}
+		if strings.TrimSpace(results[i].Error) != "" {
+			continue
+		}
+		return tool
+	}
+	return ""
+}
+
+func alreadyReadPath(results []workspace.ToolResult, path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if strings.Contains(result.Summary, path) || strings.Contains(result.Output, path) {
+			return true
+		}
+	}
+	return false
+}
+
+func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
 	if briefIsScratchpadDeliverableLane(brief) {
 		if opts.MaxTokens <= 0 {
 			opts.MaxTokens = 16384
@@ -4857,14 +5517,7 @@ func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerrunti
 	}
 	if planThenExecutePlannerBrief(brief) {
 		if len(brief.RequiredEditPaths) == 0 {
-			thinkingOff := false
-			opts.EnableThinking = &thinkingOff
-			opts.PreserveThinking = false
-			opts.ChatTemplateKwargs = true
-			if opts.MaxTokens <= 0 || opts.MaxTokens > 2048 {
-				opts.MaxTokens = 2048
-			}
-			return opts
+			return planThenExecuteCandidatePostReadChatOptions(opts, brief, results)
 		}
 		if opts.MaxTokens <= 0 {
 			opts.MaxTokens = 16384
@@ -4874,9 +5527,43 @@ func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerrunti
 	limit := 1536
 	if runnerBriefRequiresMutation(brief) {
 		limit = 1024
+		if len(brief.RequiredEditPaths) == 0 {
+			limit = 2048
+		}
+		if len(brief.RequiredEditPaths) == 0 && lastNonGateTool(results) == "read_file" && successfulToolSeen(results, "read_file") {
+			thinkingOff := false
+			opts.EnableThinking = &thinkingOff
+			opts.PreserveThinking = false
+			opts.ChatTemplateKwargs = true
+			if len(opts.Tools) > 0 {
+				opts.ToolChoice = "required"
+			}
+			limit = 1024
+		} else if len(brief.RequiredEditPaths) == 0 && strings.EqualFold(strings.TrimSpace(opts.ToolChoice), "required") {
+			opts.ToolChoice = "auto"
+		}
 	}
 	if opts.MaxTokens <= 0 || opts.MaxTokens > limit {
 		opts.MaxTokens = limit
+	}
+	return opts
+}
+
+func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) > 0 {
+		return opts
+	}
+	if successfulToolSeen(results, "read_file") || lastNonGateTool(results) == "read_file" {
+		thinkingOff := false
+		opts.EnableThinking = &thinkingOff
+		opts.PreserveThinking = false
+		opts.ChatTemplateKwargs = true
+	}
+	if len(opts.Tools) > 0 && successfulSubmitPlanResultCount(results) == 0 {
+		opts.ToolChoice = "required"
+	}
+	if opts.MaxTokens <= 0 || opts.MaxTokens > 4096 {
+		opts.MaxTokens = 4096
 	}
 	return opts
 }
@@ -4949,21 +5636,24 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 			b.WriteString("\n")
 		}
 	}
-	if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
-		b.WriteString("\nRequired edit paths not changed:\n")
-		for _, path := range missing {
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteString("\n")
-		}
-		b.WriteString("\nPath-level blockers:\n")
-		for _, path := range missing {
-			b.WriteString("- ")
-			b.WriteString(path)
-			if r.planThenExecutePlannerPhase() {
-				b.WriteString(": no successful submit_plan edit entry was recorded for this path, and the recovery reply did not provide source-satisfied evidence or a path-specific blocker reason.\n")
-			} else {
-				b.WriteString(": no successful write was recorded for this path, and the recovery reply did not provide a path-specific blocker reason.\n")
+	if runnerBriefRequiresMutation(r.RuntimeBrief) {
+		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+		if len(missing) > 0 {
+			b.WriteString("\nRequired edit paths not changed:\n")
+			for _, path := range missing {
+				b.WriteString("- ")
+				b.WriteString(path)
+				b.WriteString("\n")
+			}
+			b.WriteString("\nPath-level blockers:\n")
+			for _, path := range missing {
+				b.WriteString("- ")
+				b.WriteString(path)
+				if r.planThenExecutePlannerPhase() {
+					b.WriteString(": no successful submit_plan edit entry was recorded for this path, and the recovery reply did not provide source-satisfied evidence or a path-specific blocker reason.\n")
+				} else {
+					b.WriteString(": no successful write was recorded for this path, and the recovery reply did not provide a path-specific blocker reason.\n")
+				}
 			}
 		}
 	}
@@ -5006,14 +5696,26 @@ func verificationContractSkipsGate(contract string) bool {
 }
 
 func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
-	switch strings.TrimSpace(brief.Contract) {
-	case "architecture_assessment", "review_findings":
-		return true
-	}
-	if strings.TrimSpace(brief.PermissionProfile) != "read_only_workspace" {
+	contract := strings.TrimSpace(brief.Contract)
+	permission := strings.TrimSpace(brief.PermissionProfile)
+	family := strings.TrimSpace(brief.TaskFamily)
+	switch family {
+	case PlanThenExecuteReviewRepairTaskFamily:
 		return false
 	}
-	switch strings.TrimSpace(brief.TaskFamily) {
+	switch contract {
+	case "architecture_assessment":
+		return permission == "read_only_workspace" || family == "architecture"
+	case "review_findings":
+		return permission == "read_only_workspace" ||
+			family == "review" ||
+			family == "security_review" ||
+			family == "performance_review"
+	}
+	if permission != "read_only_workspace" {
+		return false
+	}
+	switch family {
 	case "architecture", "review":
 		return true
 	default:
@@ -5272,6 +5974,86 @@ func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolReques
 	errorText = fmt.Sprintf("the target packet and required_edit_paths already establish write readiness for %s. %s does not satisfy the pre-write implementation contract; available outcomes are an allowed write capability or <<QUESTION>> with the exact path-specific blocker.", target, tool)
 	prompt = fmt.Sprintf("The exact-anchor implementation packet is write-first for %s. Non-write tools are now hidden for this turn. The available contract outcome is the smallest safe write capability for each remaining required path. If the supplied anchor is stale or missing, answer with <<QUESTION>> and name that exact blocker; do not perform additional discovery or task planning.", target)
 	return summary, errorText, prompt, true
+}
+
+func (r *Runner) unscopedContextPackCandidateReadRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || !contextPackSeen(results) || len(concreteRecoveryEvidencePaths(results, 1)) > 0 {
+		return "", "", "", false
+	}
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return "", "", "", false
+	}
+	pattern := literalRecoverySearchPattern(r.RuntimeBrief.Objective)
+	if pattern == "" {
+		pattern = strings.TrimSpace(req.Path)
+	}
+	if pattern == "" {
+		pattern = "requested UI text|visible label|component name"
+	}
+	summary = "Context packet candidate read rejected"
+	errorText = fmt.Sprintf("context_pack has not established an exact edit target yet. %s is only a packet candidate, so recovery must first gather literal or semantic evidence tied to the user's requested behavior.", strings.TrimSpace(req.Path))
+	prompt = fmt.Sprintf("The context packet did not establish an exact edit target. Do not read or write packet candidates yet. Run one bounded fallback discovery action tied to the user's visible terms, for example:\n\n```tool\n{\"tool\":\"search_content\",\"path\":\".\",\"pattern\":\"%s\",\"named_gap\":\"locate exact current source for the requested UI/text/behavior\",\"why_not_answering\":\"need a grounded source hit before reading or writing\"}\n```\n\nAfter a concrete hit, read the highest-confidence path before writing.", pattern)
+	return summary, errorText, prompt, true
+}
+
+func recoverySearchPathLooksEditableSource(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+	for _, suffix := range []string{
+		".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".java", ".kt", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
+		".rb", ".php", ".sh", ".bash", ".zsh", ".fish", ".lua", ".sql",
+		".html", ".css", ".scss", ".sass", ".vue", ".svelte", ".templ",
+		".json", ".yaml", ".yml", ".toml", ".xml", ".md", ".mdx",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+func literalRecoverySearchPattern(objective string) string {
+	lower := strings.ToLower(strings.TrimSpace(objective))
+	if lower == "" {
+		return ""
+	}
+	replacer := strings.NewReplacer("'", " ", "\"", " ", "`", " ", "’", " ", "-", " ", "_", " ", "/", " ")
+	lower = replacer.Replace(lower)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	stop := map[string]struct{}{
+		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "model": {}, "alias": {},
+	}
+	terms := make([]string, 0, 4)
+	seen := make(map[string]struct{})
+	for _, word := range words {
+		word = strings.TrimSpace(word)
+		if len(word) < 4 {
+			continue
+		}
+		if _, skip := stop[word]; skip {
+			continue
+		}
+		if _, ok := seen[word]; ok {
+			continue
+		}
+		seen[word] = struct{}{}
+		terms = append(terms, regexp.QuoteMeta(word))
+		if len(terms) >= 4 {
+			break
+		}
+	}
+	if len(terms) == 0 {
+		return ""
+	}
+	if len(terms) > 4 {
+		terms = terms[:4]
+	}
+	return strings.Join(terms, "|")
 }
 
 func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
@@ -8845,14 +9627,15 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	}
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
-	assistantMessage, err := r.Client.CompleteChatMessage(ctx, turnMessages, textOnlyOpts)
+	requestMessages := chatMessagesForOptions(turnMessages, textOnlyOpts)
+	assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
 	if err != nil {
 		return "", err
 	}
 	if metrics != nil {
 		metrics.addUsage(assistantMessage.Usage)
 	}
-	r.emitModelCallTrace(0, "forced_completion", turnMessages, assistantMessage, time.Since(modelStart).Milliseconds())
+	r.emitModelCallTrace(0, "forced_completion", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds())
 	reply := assistantMessage.Content
 	r.emitThinkingTrace(0, "forced_completion_reply", assistantMessage, textOnlyOpts, false)
 	preferDeterministicFallback := shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults)
@@ -8996,14 +9779,15 @@ func (r *Runner) repairInternalFinalAnswer(
 		metrics.ModelCalls++
 	}
 	modelStart := time.Now()
-	repairMessage, err := r.Client.CompleteChatMessage(ctx, repairMessages, opts)
+	requestMessages := chatMessagesForOptions(repairMessages, opts)
+	repairMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 	if err != nil {
 		return "", false, err
 	}
 	if metrics != nil {
 		metrics.addUsage(repairMessage.Usage)
 	}
-	r.emitModelCallTrace(0, "fallback_final_answer_retry", repairMessages, repairMessage, time.Since(modelStart).Milliseconds())
+	r.emitModelCallTrace(0, "fallback_final_answer_retry", requestMessages, repairMessage, time.Since(modelStart).Milliseconds())
 	r.emitThinkingTrace(0, "fallback_final_answer_retry_reply", repairMessage, opts, false)
 
 	if len(repairMessage.ToolCalls) > 0 {
@@ -9037,11 +9821,11 @@ func (r *Runner) retryInvalidFinalAnswer(
 ) (string, bool, error) {
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
-		retryMessages = append(retryMessages, llama.ChatMessage{
+		retryMessages = append(retryMessages, assistantHistoryMessageForOptions(llama.ChatMessage{
 			Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
-		})
+		}, opts))
 	}
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -9059,14 +9843,15 @@ func (r *Runner) retryInvalidFinalAnswer(
 		metrics.ModelCalls++
 	}
 	modelStart := time.Now()
-	retryMessage, err := r.Client.CompleteChatMessage(ctx, retryMessages, opts)
+	requestMessages := chatMessagesForOptions(retryMessages, opts)
+	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 	if err != nil {
 		return "", false, err
 	}
 	if metrics != nil {
 		metrics.addUsage(retryMessage.Usage)
 	}
-	r.emitModelCallTrace(0, "invalid_final_answer_retry", retryMessages, retryMessage, time.Since(modelStart).Milliseconds())
+	r.emitModelCallTrace(0, "invalid_final_answer_retry", requestMessages, retryMessage, time.Since(modelStart).Milliseconds())
 	r.emitThinkingTrace(0, "invalid_final_answer_retry_reply", retryMessage, opts, false)
 
 	if len(retryMessage.ToolCalls) > 0 {
@@ -9338,6 +10123,47 @@ func rewriteMissingRequiredNewFileProbe(req workspace.ToolRequest, result worksp
 	result.Summary = "Required new-file directory does not exist yet"
 	result.Error = fmt.Sprintf("path %q is a missing parent for required_edit_paths: %s. These are NEW FILES you must create. Do NOT keep trying to inspect the missing directory. In submit_plan, include one replace_all edit per required new-file path with empty old_text and a full new_text body. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming that missing body evidence.", target, quotedRunnerStrings(matches))
 	return result
+}
+
+func unavailableRequiredNewFileProbeNudge(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, manager *workspace.Manager) (string, string, bool) {
+	if !missingRequiredNewFileProbeTool(req.Tool) {
+		return "", "", false
+	}
+	target := normalizeRunnerPath(strings.TrimSpace(req.Path))
+	if target == "" {
+		return "", "", false
+	}
+	matches := requiredNewFileProbeMatches(target, brief.RequiredEditPaths)
+	if len(matches) == 0 {
+		return "", "", false
+	}
+	if !requiredNewFileProbeTargetMissing(target, manager) {
+		return "", "", false
+	}
+	if len(matches) == 1 && normalizeRunnerPath(matches[0]) == target {
+		return "Required new-file path does not exist yet",
+			fmt.Sprintf("path %q is in your required_edit_paths but does not exist on disk yet — this is a NEW FILE you must create. The requested probe tool %q is not available in the current allowed tool surface, and probing is unnecessary. In submit_plan, include this edit shape: {\"path\":%q, \"replace_all\": true, \"old_text\": \"\", \"new_text\": \"<full file body>\", \"purpose\": \"...\"}. The brief must provide the full file body or an explicit replacement edit shape for missing source/test paths; if that evidence is absent, answer with <<QUESTION>> naming the missing body evidence.", target, strings.TrimSpace(req.Tool), target),
+			true
+	}
+	return "Required new-file directory does not exist yet",
+		fmt.Sprintf("path %q is a missing parent for required_edit_paths: %s. These are NEW FILES you must create. The requested probe tool %q is not available in the current allowed tool surface, and probing is unnecessary. In submit_plan, include one replace_all edit per required new-file path with empty old_text and a full new_text body. If the brief does not provide enough body evidence for a required source/test file, answer with <<QUESTION>> naming that missing body evidence.", target, quotedRunnerStrings(matches), strings.TrimSpace(req.Tool)),
+		true
+}
+
+func requiredNewFileProbeTargetMissing(target string, manager *workspace.Manager) bool {
+	root := ""
+	if manager != nil {
+		root = strings.TrimSpace(manager.Root())
+	}
+	if root == "" {
+		return true
+	}
+	path := target
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(root, filepath.FromSlash(path))
+	}
+	_, err := os.Stat(path)
+	return os.IsNotExist(err)
 }
 
 func missingRequiredNewFileProbeTool(tool string) bool {
@@ -10124,11 +10950,11 @@ func (r *Runner) ensureNonEmptyAnswer(
 
 	retryMessages := append([]llama.ChatMessage(nil), turnMessages...)
 	if strings.TrimSpace(reply.Content) != "" || strings.TrimSpace(reply.ReasoningContent) != "" {
-		retryMessages = append(retryMessages, llama.ChatMessage{
+		retryMessages = append(retryMessages, assistantHistoryMessageForOptions(llama.ChatMessage{
 			Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
 			Content:          reply.Content,
 			ReasoningContent: reply.ReasoningContent,
-		})
+		}, opts))
 	}
 	retryMessages = append(retryMessages, llama.ChatMessage{
 		Role: "system",
@@ -10143,14 +10969,15 @@ func (r *Runner) ensureNonEmptyAnswer(
 	}
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
-	retryMessage, err := r.Client.CompleteChatMessage(ctx, retryMessages, textOnlyOpts)
+	requestMessages := chatMessagesForOptions(retryMessages, textOnlyOpts)
+	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, textOnlyOpts)
 	if err != nil {
 		return "", err
 	}
 	if metrics != nil {
 		metrics.addUsage(retryMessage.Usage)
 	}
-	r.emitModelCallTrace(0, "empty_answer_retry", retryMessages, retryMessage, time.Since(modelStart).Milliseconds())
+	r.emitModelCallTrace(0, "empty_answer_retry", requestMessages, retryMessage, time.Since(modelStart).Milliseconds())
 	retryReply := retryMessage.Content
 	r.emitThinkingTrace(0, "empty_answer_retry_reply", retryMessage, textOnlyOpts, false)
 	if len(retryMessage.ToolCalls) > 0 {

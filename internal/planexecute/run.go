@@ -72,7 +72,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	defer queueRelease()
 
 	requiredEditPaths := planExecuteRequiredEditPaths(opts, prompt)
-	allowedEditPaths := planExecuteAllowedEditPaths(opts)
+	allowedEditPaths := planExecuteAllowedEditPaths(opts, prompt)
 	promptRequiredEditPaths := RequiredEditPathsFromPrompt(prompt)
 	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
 	explicitAllowedEditPaths := planExecuteUniqueRequiredPaths([]string(opts.AllowedEditPaths))
@@ -114,7 +114,8 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		return RunResult{ExitCode: 1, SessionID: sessionID}
 	}
 
-	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths, allowedEditPaths) + "\n\n" + prompt
+	plannerBrief := appendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
+	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths, allowedEditPaths) + "\n\n" + plannerBrief
 	plannerMaxTokens := 16384
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
@@ -122,9 +123,13 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	answer := ""
 	emitPhase := opts.OnPhase
 	executorRequiredEditPaths := requiredEditPaths
-	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, requiredEditPaths)
+	autoExactScopePaths := requiredEditPaths
+	if len(autoExactScopePaths) == 0 {
+		autoExactScopePaths = allowedEditPaths
+	}
+	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
-		answer = planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
+		answer = planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths)
 		progress.Phase = ProgressPhaseComplete
 		progress.Status = ProgressStatusCompleted
 		_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
@@ -132,11 +137,13 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			"edits":               autoExact.EditCount,
 			"applied":             autoExact.AppliedCount,
 			"required_edit_paths": requiredEditPaths,
+			"allowed_edit_paths":  allowedEditPaths,
 			"applied_paths":       autoExact.AppliedPaths,
 			"reason":              autoExact.Reason,
 		})
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
 			"required_edit_paths": requiredEditPaths,
+			"allowed_edit_paths":  allowedEditPaths,
 			"reason":              autoExact.Reason,
 		})
 		if !opts.JSONEvents {
@@ -213,12 +220,17 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 
 	planPath, err := FindLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
-		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, requiredEditPaths) {
+		sourceSatisfiedPaths := requiredEditPaths
+		if len(sourceSatisfiedPaths) == 0 {
+			sourceSatisfiedPaths = allowedEditPaths
+		}
+		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
 			progress.Phase = ProgressPhaseComplete
 			progress.Status = ProgressStatusCompleted
 			_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
 				"required_edit_paths": requiredEditPaths,
+				"allowed_edit_paths":  allowedEditPaths,
 				"reason":              "planner reported requested final state already present",
 			})
 			if !opts.JSONEvents {
@@ -272,7 +284,14 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			}
 			fmt.Fprintln(stderr, saveErr)
 		}
-		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
+		return RunResult{
+			ExitCode:        1,
+			SessionID:       sessionID,
+			ResumeStatePath: progressPath,
+			FailureKind:     "plan_artifact_missing",
+			FailureReason:   sanitizeProgressReason(err.Error()),
+			PlannerAnswer:   answer,
+		}
 	}
 	plan, err := workspace.LoadPlanArtifact(planPath)
 	if err != nil {

@@ -120,14 +120,14 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 		if stderr != nil {
 			fmt.Fprintf(stderr, "plan-execute: context_pack skipped: %s\n", result.Error)
 		}
-		return ""
+		return RenderPromptContextDiscoveryFallbackSection(opts, result.Error)
 	}
 	section, err := RenderPromptContextPackSection(result)
 	if err != nil {
 		if stderr != nil {
 			fmt.Fprintf(stderr, "plan-execute: context_pack skipped: %v\n", err)
 		}
-		return ""
+		return RenderPromptContextDiscoveryFallbackSection(opts, err.Error())
 	}
 	if strings.TrimSpace(section) != "" && stderr != nil {
 		fmt.Fprintf(stderr, "plan-execute: context_pack preloaded (%s)\n", result.Summary)
@@ -176,7 +176,36 @@ func RenderPromptContextPackSection(result workspace.ToolResult) (string, error)
 	writePromptContextSymbols(&b, view.CandidateSymbols, 8)
 	writePromptContextTests(&b, view.Tests, 4)
 	writePromptContextGaps(&b, view.UnresolvedGaps, 4)
+	if !promptContextPackHasTargets(view) {
+		b.WriteString("\n\n")
+		b.WriteString(RenderPromptContextDiscoveryFallbackSection(PromptContextPackOptions{}, "context_pack returned no candidate files, symbols, or tests"))
+	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, reason string) string {
+	var b strings.Builder
+	b.WriteString("## Context Discovery Fallback\n\n")
+	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before writing; do not repeat the same failed `context_pack` call.\n\n")
+	if reason = strings.TrimSpace(reason); reason != "" {
+		fmt.Fprintf(&b, "- Context packet status: unavailable (%s)\n", collapsePromptContextWhitespace(reason, 220))
+	}
+	if title := strings.TrimSpace(opts.Title); title != "" {
+		fmt.Fprintf(&b, "- Objective: %s\n", collapsePromptContextWhitespace(title, 160))
+	}
+	if len(opts.RequiredEditPaths) > 0 {
+		fmt.Fprintf(&b, "- Required edit paths from brief: %s\n", strings.Join(planExecuteUniqueRequiredPaths(opts.RequiredEditPaths), ", "))
+	}
+	b.WriteString("\n### Required Fallback Discovery Phase\n\n")
+	b.WriteString("- Start with `search_files` for likely filenames, component names, package names, or UI/domain terms from the objective.\n")
+	b.WriteString("- Then use `search_content` for stable labels, symbols, config keys, command names, or error text. If a literal phrase misses, broaden to nearby concepts instead of repeating it.\n")
+	b.WriteString("- Read only the highest-confidence candidate file or symbol range with `read_file` or a language-aware symbol tool before the first write.\n")
+	b.WriteString("- If all bounded discovery misses, answer with `<<QUESTION>>:` and name the exact missing target evidence; do not invent an edit path.\n")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func promptContextPackHasTargets(view promptContextPackView) bool {
+	return len(view.CandidateFiles) > 0 || len(view.CandidateSymbols) > 0 || len(view.Tests) > 0
 }
 
 func promptContextPackMode(mode string) string {
@@ -304,4 +333,12 @@ func firstPromptContextNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func collapsePromptContextWhitespace(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit > 0 && len(value) > limit {
+		return strings.TrimSpace(value[:limit-1]) + "..."
+	}
+	return value
 }

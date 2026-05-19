@@ -661,6 +661,7 @@ type BriefGenerationResult struct {
 	FilesToReadFirst     []string          `json:"files_to_read_first"`
 	VerifiedCurrentState []string          `json:"verified_current_state"`
 	RequiredBehavior     []string          `json:"required_behavior"`
+	ImplementationShape  []string          `json:"implementation_shape,omitempty"`
 	Constraints          []string          `json:"constraints"`
 	Tests                []string          `json:"tests"`
 	Acceptance           []string          `json:"acceptance"`

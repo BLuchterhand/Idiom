@@ -64,7 +64,8 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 }
 
 func (m *Model) finishPromptOnceReply(reply string) string {
-	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply, ReasoningContent: m.takeLastAssistantReasoningContent()})
+	m.takeLastAssistantReasoningContent()
+	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
 	m.logMessage("assistant", reply)
 	m.emitJSONFinal(reply)
 	return reply
@@ -108,7 +109,26 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
 	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptContextEvidencePaths(prompt)...)
 	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
-	if required := requiredEditPathsFromPrompt(prompt); len(required) > 0 {
+	allowed := allowedEditPathsFromPrompt(prompt)
+	required := requiredEditPathsFromPrompt(prompt)
+	implementationLike := isImplementationLikeFamily(route.Family)
+	if !implementationLike {
+		if len(required) > 0 {
+			brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, required...)
+		}
+		required = nil
+	}
+	if implementationLike && len(required) == 0 && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
+		required = appendUniqueBriefStrings(required, allowed...)
+		allowed = nil
+	}
+	if len(allowed) > 0 {
+		brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, allowed...)
+		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
+			"treat allowed_edit_paths as candidate write scope, not required coverage obligations",
+		)
+	}
+	if len(required) > 0 {
 		brief.RequiredEditPaths = appendUniqueBriefStrings(brief.RequiredEditPaths, required...)
 		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, brief.RequiredEditPaths)...)
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "required_edit_paths_define_write_scope")
@@ -183,21 +203,94 @@ func RequiredEditPathsFromPrompt(prompt string) []string {
 	return requiredEditPathsFromPrompt(prompt)
 }
 
+func promptHasRequiredEditPayload(prompt string) bool {
+	if promptContainsExactEditAnchor(prompt) {
+		return true
+	}
+	for _, marker := range promptContextPacketMarkers(prompt) {
+		if marker == "prompt_context:required_edits" {
+			return true
+		}
+	}
+	return false
+}
+
+// AllowedEditPathsFromPrompt returns explicit candidate write-scope paths from
+// prompts. Unlike RequiredEditPathsFromPrompt, these paths are not completion
+// coverage obligations.
+func AllowedEditPathsFromPrompt(prompt string) []string {
+	return allowedEditPathsFromPrompt(prompt)
+}
+
 func requiredEditPathsFromPrompt(prompt string) []string {
 	// Scope to the brief body when the lane wrapper has wrapped it
 	// in IDIOM:BRIEF-BODY markers; otherwise scan the whole prompt
 	// (back-compat for chat / direct API). pathparse.ScopeToBriefBody
 	// is the authoritative helper.
 	prompt = pathparse.ScopeToBriefBody(prompt)
-	headings := []string{
+	return appendUniqueBriefStrings(
+		requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings()),
+		structuredRequiredEditPathsFromPrompt(prompt)...,
+	)
+}
+
+func allowedEditPathsFromPrompt(prompt string) []string {
+	prompt = pathparse.ScopeToBriefBody(prompt)
+	paths := requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings())
+	paths = appendUniqueBriefStrings(paths, structuredAllowedEditPathsFromPrompt(prompt)...)
+	paths = appendUniqueBriefStrings(paths, inlineAllowedEditPathsFromPrompt(prompt)...)
+	return paths
+}
+
+func inlineAllowedEditPathsFromPrompt(prompt string) []string {
+	text := pathparse.ScopeToBriefBody(prompt)
+	words := plannerWordText(text)
+	hasInlineScope := false
+	for _, phrase := range []string{
+		" only edit ",
+		" only modify ",
+		" only change ",
+		" edit only ",
+		" modify only ",
+		" change only ",
+		" limit edits to ",
+		" restrict edits to ",
+		" limit changes to ",
+		" restrict changes to ",
+	} {
+		if strings.Contains(words, phrase) {
+			hasInlineScope = true
+			break
+		}
+	}
+	if !hasInlineScope {
+		return nil
+	}
+	return pathparse.MentionedWorkspacePaths(text)
+}
+
+func requiredEditPathHeadings() []string {
+	return []string{
 		"files to modify",
 		"files-to-modify",
 		"files to edit",
+		"edit files",
+		"editable files",
+		"required edit paths",
+		"required files",
+		"required paths",
+	}
+}
+
+func allowedEditPathHeadings() []string {
+	return []string{
+		"candidate edit scope",
+		"candidate edit scope from target references",
+		"candidate paths",
+		"candidate files",
 		"files you may edit",
 		"files you may modify",
 		"files you can edit",
-		"edit files",
-		"editable files",
 		"write scope",
 		"allowed files",
 		"allowed edit files",
@@ -208,10 +301,6 @@ func requiredEditPathsFromPrompt(prompt string) []string {
 		"files allowlist",
 		"source allowlist",
 	}
-	return appendUniqueBriefStrings(
-		requiredEditPathsUnderPromptHeadings(prompt, headings),
-		structuredRequiredEditPathsFromPrompt(prompt)...,
-	)
 }
 
 func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []string {
@@ -261,16 +350,24 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 }
 
 func structuredRequiredEditPathsFromPrompt(prompt string) []string {
-	prompt = pathparse.ScopeToBriefBody(prompt)
-	keys := []string{
+	return structuredEditPathsFromPrompt(prompt, []string{
 		"files_to_modify",
 		"files_to_edit",
 		"required_edit_paths",
-		"allowed_edit_paths",
 		"editable_files",
+	})
+}
+
+func structuredAllowedEditPathsFromPrompt(prompt string) []string {
+	return structuredEditPathsFromPrompt(prompt, []string{
+		"allowed_edit_paths",
 		"allowed_files",
 		"write_scope",
-	}
+	})
+}
+
+func structuredEditPathsFromPrompt(prompt string, keys []string) []string {
+	prompt = pathparse.ScopeToBriefBody(prompt)
 	var paths []string
 	active := false
 	activeArray := false

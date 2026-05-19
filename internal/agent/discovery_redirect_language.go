@@ -56,7 +56,7 @@ func languageForSearchRequest(req workspace.ToolRequest, ws *workspace.Manager) 
 }
 
 func patternCompatibleWithLanguage(pattern string, lang workspace.LanguageSupport) bool {
-	return looksLikeIdentifier(pattern) || languageSyntaxMatches(lang.Name, pattern)
+	return looksLikeSymbolIdentifier(pattern) || languageSyntaxMatches(lang.Name, pattern)
 }
 
 func languageFromConcretePath(path string) (workspace.LanguageSupport, bool) {
@@ -98,6 +98,24 @@ func looksLikeIdentifier(pattern string) bool {
 		}
 	}
 	return true
+}
+
+func looksLikeSymbolIdentifier(pattern string) bool {
+	if !looksLikeIdentifier(pattern) {
+		return false
+	}
+	hasSymbolShape := false
+	for _, r := range pattern {
+		switch {
+		case r == '_' || r == ':':
+			hasSymbolShape = true
+		case r >= '0' && r <= '9':
+			hasSymbolShape = true
+		case r >= 'A' && r <= 'Z':
+			hasSymbolShape = true
+		}
+	}
+	return hasSymbolShape
 }
 
 // languageFromGlob derives a language from a filename glob like

@@ -842,12 +842,12 @@ func buildLaneContextPackSection(opts laneOptions, cfg config.Config, stderr io.
 	})
 	if strings.TrimSpace(result.Error) != "" {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: %s\n", result.Error)
-		return ""
+		return renderLaneContextDiscoveryFallbackSection(opts, result.Error)
 	}
 	section, err := renderLaneContextPackSection(result)
 	if err != nil {
 		fmt.Fprintf(stderr, "lane: context_pack skipped: %v\n", err)
-		return ""
+		return renderLaneContextDiscoveryFallbackSection(opts, err.Error())
 	}
 	if strings.TrimSpace(section) != "" {
 		fmt.Fprintf(stderr, "lane: context_pack preloaded (%s)\n", result.Summary)
@@ -924,6 +924,14 @@ func firstMarkdownHeading(body string) string {
 	return ""
 }
 
+func collapseLaneContextWhitespace(value string, limit int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if limit > 0 && len(value) > limit {
+		return strings.TrimSpace(value[:limit-1]) + "..."
+	}
+	return value
+}
+
 func renderLaneContextPackSection(result workspace.ToolResult) (string, error) {
 	var view laneContextPackView
 	if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
@@ -950,7 +958,33 @@ func renderLaneContextPackSection(result workspace.ToolResult) (string, error) {
 	writeLaneContextSymbols(&b, view.CandidateSymbols, 8)
 	writeLaneContextTests(&b, view.Tests, 4)
 	writeLaneContextGaps(&b, view.UnresolvedGaps, 4)
+	if !laneContextPackHasTargets(view) {
+		b.WriteString("\n\n")
+		b.WriteString(renderLaneContextDiscoveryFallbackSection(laneOptions{}, "context_pack returned no candidate files, symbols, or tests"))
+	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func renderLaneContextDiscoveryFallbackSection(opts laneOptions, reason string) string {
+	var b strings.Builder
+	b.WriteString("## Context Discovery Fallback\n\n")
+	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before writing; do not repeat the same failed `context_pack` call.\n\n")
+	if reason = strings.TrimSpace(reason); reason != "" {
+		fmt.Fprintf(&b, "- Context packet status: unavailable (%s)\n", collapseLaneContextWhitespace(reason, 220))
+	}
+	if title := strings.TrimSpace(opts.Title); title != "" {
+		fmt.Fprintf(&b, "- Objective: %s\n", collapseLaneContextWhitespace(title, 160))
+	}
+	b.WriteString("\n### Required Fallback Discovery Phase\n\n")
+	b.WriteString("- Start with `search_files` for likely filenames, component names, package names, or UI/domain terms from the objective.\n")
+	b.WriteString("- Then use `search_content` for stable labels, symbols, config keys, command names, or error text. If a literal phrase misses, broaden to nearby concepts instead of repeating it.\n")
+	b.WriteString("- Read only the highest-confidence candidate file or symbol range with `read_file` or a language-aware symbol tool before the first write.\n")
+	b.WriteString("- If all bounded discovery misses, answer with `<<QUESTION>>:` and name the exact missing target evidence; do not invent an edit path.\n")
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func laneContextPackHasTargets(view laneContextPackView) bool {
+	return len(view.CandidateFiles) > 0 || len(view.CandidateSymbols) > 0 || len(view.Tests) > 0
 }
 
 func writeLaneContextFiles(b *strings.Builder, files []laneContextPackFile, limit int) {

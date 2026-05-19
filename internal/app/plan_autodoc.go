@@ -347,7 +347,6 @@ func planLineLabel(req workspace.ToolRequest, path string) string {
 	return req.Tool
 }
 
-
 // ensurePlanSessionHeading appends a `## Session <id>` heading to the
 // plan file the first time the autodoc lands a record in this live
 // session. If the plan file is empty or missing the heading also
@@ -922,6 +921,9 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 		return
 	}
 	if strings.TrimSpace(req.Tool) != "submit_plan" {
+		return
+	}
+	if strings.TrimSpace(result.Tool) != "submit_plan" {
 		return
 	}
 	if strings.TrimSpace(result.Error) != "" {

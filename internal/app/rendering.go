@@ -51,24 +51,6 @@ func (m *Model) View() string {
 		footerLines = append(footerLines, errorStyle.Render(banner))
 	}
 
-	// Compact status bar: context info left, status + char count right.
-	infoLeft := contextStyle.Render(
-		"mode: " + m.modeSummary() + "  ·  trace: " + m.traceSummary() +
-			"  ·  ctx: " + m.contextSummary() + "  ·  " + m.workspaceSummary())
-	var rightParts []string
-	if m.status != "" {
-		rightParts = append(rightParts, m.status)
-	}
-	if n := len([]rune(m.input.Value())); n > 0 {
-		rightParts = append(rightParts, fmt.Sprintf("%d", n))
-	}
-	infoRight := statusStyle.Render(strings.Join(rightParts, "  ·  "))
-	barGap := w - lipgloss.Width(infoLeft) - lipgloss.Width(infoRight)
-	if barGap < 1 {
-		barGap = 1
-	}
-	footerLines = append(footerLines, infoLeft+strings.Repeat(" ", barGap)+infoRight)
-
 	footer := strings.Join(footerLines, "\n")
 
 	// ── Content row: main viewport + optional side panel (tabbed) ────────────
@@ -91,7 +73,11 @@ func (m *Model) View() string {
 		contentRow = m.viewport.View()
 	}
 
-	return lipgloss.JoinVertical(lipgloss.Left, header, divider, contentRow, divider, m.input.View(), footer)
+	parts := []string{header, divider, contentRow, divider, m.input.View()}
+	if footer != "" {
+		parts = append(parts, footer)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
 
 func (m *Model) requestMessages() []llama.ChatMessage {
@@ -135,9 +121,8 @@ func (m *Model) requestMessages() []llama.ChatMessage {
 	}
 	for _, msg := range history[start:] {
 		messages = append(messages, llama.ChatMessage{
-			Role:             normalizeHistoryRole(msg.Role),
-			Content:          msg.Content,
-			ReasoningContent: msg.ReasoningContent,
+			Role:    normalizeHistoryRole(msg.Role),
+			Content: msg.Content,
 		})
 	}
 	return messages

@@ -170,7 +170,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    "plan_submission_review",
 			ToolProfile:          CapabilityPlanSubmissionReview,
 			RequiredEvidence:     []string{"verification_checklist", "decision_pass_or_corrective_plan_or_blocker"},
-			RequiredTools:        []string{"review_decision"},
+			RequiredTools:        nil,
 			ReadinessGate:        []string{"verification_checklist_completed", "decision_pass_or_corrective_plan_or_blocker"},
 			SearchPolicy:         []string{"use_phase_evidence_first", "do_not_re_submit_applied_plan_edits", "submit_plan_only_for_new_corrective_edits", "pass_when_open_obligations_are_closed"},
 			VerificationContract: "not_required_for_review_lane",
@@ -301,6 +301,7 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 		opts.IncludeWriteTools = true
 	case CapabilityPlanSubmissionPlanner:
 		opts.IncludePlanThenExecute = true
+		opts.PlanThenExecutePlannerSurface = true
 	case CapabilityPlanSubmissionReview:
 		opts.IncludePlanThenExecute = true
 	case CapabilityReadOnlyDiscovery, CapabilityConversationReadOnly:

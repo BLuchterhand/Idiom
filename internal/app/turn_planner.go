@@ -64,7 +64,6 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	if !m.cfg.RouteClassifier.Enabled {
 		return turnRoutePlan{}, false
 	}
-	_ = m.ensureSummaryServer()
 	history := renderRecentConversationForRouting(m.messages, 6)
 	messages := []llama.ChatMessage{
 		{
@@ -101,12 +100,20 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	classifyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	thinkingOff := false
-	text, err := m.completeChatWithFallback(classifyCtx, messages, llama.ChatOptions{
+	opts := llama.ChatOptions{
 		MaxTokens:          256,
 		Temperature:        0.1,
 		EnableThinking:     &thinkingOff,
 		ChatTemplateKwargs: true,
-	})
+	}
+	client := m.routeClassifierChatClient()
+	if client == nil {
+		return turnRoutePlan{}, false
+	}
+	text, err := client.CompleteChat(classifyCtx, messages, opts)
+	if err != nil && client != m.client && m.client != nil {
+		text, err = m.client.CompleteChat(classifyCtx, messages, opts)
+	}
 	if err != nil {
 		return turnRoutePlan{}, false
 	}
@@ -116,6 +123,23 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	}
 	plan = normalizeTurnRoutePlan(plan, mode)
 	return plan, plan.Family != ""
+}
+
+func (m *Model) routeClassifierChatClient() llama.LLMClient {
+	if m == nil {
+		return nil
+	}
+	if m.summaryClient == nil || m.summaryClient == m.client {
+		return m.client
+	}
+	pingCtx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	_, err := m.summaryClient.ListModels(pingCtx)
+	cancel()
+	if err == nil {
+		return m.summaryClient
+	}
+	m.logError("route_classifier", "unreachable; falling back to active planner model: "+err.Error())
+	return m.client
 }
 
 func parseTurnRoutePlan(text string) (turnRoutePlan, error) {
@@ -520,7 +544,37 @@ func hasEditIntent(words string) bool {
 }
 
 func hasEffectiveEditIntent(words string) bool {
-	return hasEditIntent(words) && !explicitlyForbidsEdits(words)
+	return (hasEditIntent(words) || hasUILayoutMutationIntent(words)) && !explicitlyForbidsEdits(words)
+}
+
+func hasUILayoutMutationIntent(words string) bool {
+	if !util.ContainsAny(words,
+		" input field ",
+		" text input ",
+		" textarea ",
+		" terminal ",
+		" tui ",
+		" ui ",
+		" viewport ",
+		" footer ",
+		" prompt box ",
+	) {
+		return false
+	}
+	return util.ContainsAny(words,
+		" re align ",
+		" realign ",
+		" align ",
+		" flush ",
+		" bottom ",
+		" wrap ",
+		" height ",
+		" off screen ",
+		" offscreen ",
+		" resize ",
+		" reposition ",
+		" move ",
+	)
 }
 
 func explicitlyForbidsEdits(words string) bool {

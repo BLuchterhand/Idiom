@@ -360,6 +360,13 @@ func BuildProductOperatorStatusView(status ProductStatusView, workflowState *Wor
 			Source:  "workflow_state",
 		})
 	}
+	if productOperatorRequestsImplementationDispatch(status.NextValidActions) {
+		view.Blockers = append(view.Blockers, ProductOperatorBlocker{
+			Code:    "human_verification_required",
+			Message: "implementation dispatch requires an explicit human verification phase; transition planned work through submit_for_human_verification and approve_for_implementation",
+			Source:  "workflow_transition",
+		})
+	}
 	if status.Recovery != nil {
 		if status.Recovery.Status != "closed" {
 			view.Blockers = append(view.Blockers, ProductOperatorBlocker{
@@ -866,6 +873,15 @@ func productOperatorActionMessage(action string, dispatchable bool, blockerCodes
 	return "blocked by " + strings.Join(blockerCodes, ", ")
 }
 
+func productOperatorRequestsImplementationDispatch(actions []string) bool {
+	for _, action := range actions {
+		if strings.EqualFold(strings.TrimSpace(action), "start_implementation") {
+			return true
+		}
+	}
+	return false
+}
+
 func operatorFreshnessCurrent(state string) bool {
 	switch strings.ToLower(strings.TrimSpace(state)) {
 	case "current", "fresh", "verified":
@@ -887,6 +903,8 @@ func productOperatorActionOwner(action string) string {
 	normalized := strings.ToLower(strings.TrimSpace(action))
 	switch {
 	case strings.Contains(normalized, "restore") || strings.Contains(normalized, "fix") || strings.Contains(normalized, "repair"):
+		return "operator"
+	case strings.Contains(normalized, "approve") || strings.Contains(normalized, "human"):
 		return "operator"
 	case strings.Contains(normalized, "review"):
 		return "reviewer"
@@ -955,7 +973,7 @@ func ClassifySection(relPath string) string {
 		return "traceability"
 	case len(relPath) > 8 && relPath[:8] == "reports/":
 		return "reports"
-	case relPath == ObsidianProposalPath || relPath == ObsidianRoadmapPath:
+	case relPath == ObsidianProductWorkflowPath || relPath == ObsidianRecoveryPath:
 		return "obsidian"
 	default:
 		return ""

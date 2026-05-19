@@ -649,8 +649,9 @@ func (m *Model) resize() {
 
 	headerHeight := 1
 	dividerCount := 2 // one after header, one before input
-	inputHeight := 5
-	footerHeight := 4 // compact bar + up to 3 conditional lines
+	m.input.SetWidth(m.width)
+	inputHeight := m.syncInputHeight()
+	footerHeight := m.footerLineCount()
 	contentHeight := max(m.height-headerHeight-dividerCount-inputHeight-footerHeight, 5)
 
 	var mainWidth, panelWidth int
@@ -680,7 +681,6 @@ func (m *Model) resize() {
 		m.sessions.viewport.Height = panelContentHeight
 	}
 
-	m.input.SetWidth(m.width)
 	m.ensureMarkdownRenderer(max(20, mainWidth-2))
 	if mainWidthChanged {
 		m.invalidateMessageRenderCache()
@@ -689,6 +689,41 @@ func (m *Model) resize() {
 	if m.history.panelOpen {
 		m.rerenderActivePanel()
 	}
+}
+
+func (m *Model) syncInputHeight() int {
+	height := m.desiredInputHeight()
+	m.input.SetHeight(height)
+	return height
+}
+
+func (m *Model) desiredInputHeight() int {
+	const maxInputHeight = 8
+	width := max(1, m.input.Width())
+	value := m.input.Value()
+	rows := 1
+	if value != "" {
+		rows = 0
+		for _, line := range strings.Split(value, "\n") {
+			rows += max(1, len(wrapLines(line, width)))
+		}
+	}
+	limit := maxInputHeight
+	if m.height > 0 {
+		limit = min(limit, max(1, m.height/3))
+	}
+	return min(max(1, rows), limit)
+}
+
+func (m *Model) footerLineCount() int {
+	count := 0
+	if m.currentApproval() != nil {
+		count++
+	}
+	if m.errorBanner() != "" {
+		count++
+	}
+	return count
 }
 
 func (m *Model) ensureMarkdownRenderer(wrapWidth int) {
@@ -1107,7 +1142,22 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 			return
 		}
 	}
+	if shouldLogRunnerEventAsRunEvent(event.Role) {
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogRunEvent(event.Role, event.Content)
+		}
+		return
+	}
 	m.logMessage(event.Role, event.Content)
+}
+
+func shouldLogRunnerEventAsRunEvent(role string) bool {
+	switch strings.TrimSpace(role) {
+	case "control_rails":
+		return false
+	default:
+		return true
+	}
 }
 
 func (m *Model) logNestedToolRequest(content string) bool {

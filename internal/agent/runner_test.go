@@ -1032,6 +1032,66 @@ func TestRunnerPreservesReasoningContentBetweenToolTurns(t *testing.T) {
 	}
 }
 
+func TestRunnerDropsReasoningContentBetweenToolTurnsWhenNotPreserving(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	type requestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+	}
+	var payloads []requestPayload
+	replies := []string{
+		"{\"choices\":[{\"message\":{\"role\":\"assistant\",\"reasoning_content\":\"tool-call reasoning\",\"content\":\"```tool\\n{\\\"tool\\\":\\\"read_file\\\",\\\"path\\\":\\\"README.md\\\"}\\n```\"}}]}",
+		`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		if len(payloads) > len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		_, _ = w.Write([]byte(replies[len(payloads)-1]))
+	}))
+	defer server.Close()
+
+	enableThinking := true
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 2},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "read README.md"}},
+		llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: false, MaxTokens: 128},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected two model requests, got %d", len(payloads))
+	}
+	for _, message := range payloads[1].Messages {
+		if message.ReasoningContent != "" {
+			t.Fatalf("expected second request to strip prior reasoning_content, got %#v", payloads[1].Messages)
+		}
+	}
+}
+
 func TestRunnerPreservesEmptyReplyReasoningForRetry(t *testing.T) {
 	root := t.TempDir()
 	type requestPayload struct {
@@ -1090,6 +1150,62 @@ func TestRunnerPreservesEmptyReplyReasoningForRetry(t *testing.T) {
 	}
 	if !foundPreserved {
 		t.Fatalf("expected retry request to include empty reply reasoning_content, got %#v", payloads[1].Messages)
+	}
+}
+
+func TestRunnerDropsEmptyReplyReasoningForRetryWhenNotPreserving(t *testing.T) {
+	root := t.TempDir()
+	type requestPayload struct {
+		Messages []llama.ChatMessage `json:"messages"`
+	}
+	var payloads []requestPayload
+	replies := []string{
+		`{"choices":[{"message":{"role":"assistant","reasoning_content":"unfinished reasoning","content":""}}]}`,
+		`{"choices":[{"message":{"role":"assistant","content":"Done."}}]}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload requestPayload
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		payloads = append(payloads, payload)
+		if len(payloads) > len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		_, _ = w.Write([]byte(replies[len(payloads)-1]))
+	}))
+	defer server.Close()
+
+	enableThinking := true
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 2},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "answer"}},
+		llama.ChatOptions{Model: "model", EnableThinking: &enableThinking, PreserveThinking: false, MaxTokens: 128},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(payloads) != 2 {
+		t.Fatalf("expected two model requests, got %d", len(payloads))
+	}
+	for _, message := range payloads[1].Messages {
+		if message.ReasoningContent != "" {
+			t.Fatalf("expected retry request to strip empty reply reasoning_content, got %#v", payloads[1].Messages)
+		}
 	}
 }
 
@@ -2174,6 +2290,20 @@ func TestForcedCompletionRepairsTextualJSONToolRequestBeforeFallback(t *testing.
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected invalid final answer retry, got %d requests", requests)
+	}
+}
+
+func TestCompletionGateRejectsUnresolvedProcessNarration(t *testing.T) {
+	result, rejected := unresolvedProcessIntentCompletionRejection("The context_pack result is polluted. I need to find the actual TUI/input rendering code. Let me search for the input field implementation.")
+	if !rejected {
+		t.Fatal("expected unresolved process narration to be rejected")
+	}
+	if result.Tool != "completion_gate" || !strings.Contains(result.Error, "future search") {
+		t.Fatalf("unexpected rejection result: %#v", result)
+	}
+
+	if _, rejected := unresolvedProcessIntentCompletionRejection("Blocked: I cannot inspect the logs because the file is missing."); rejected {
+		t.Fatal("concrete blocker answer should not be rejected as process narration")
 	}
 }
 

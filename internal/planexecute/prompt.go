@@ -11,17 +11,48 @@ func RequiredEditPathsFromPrompt(prompt string) []string {
 	return requiredEditPathsFromPrompt(prompt)
 }
 
+func AllowedEditPathsFromPrompt(prompt string) []string {
+	return allowedEditPathsFromPrompt(prompt)
+}
+
 func requiredEditPathsFromPrompt(prompt string) []string {
 	prompt = pathparse.ScopeToBriefBody(prompt)
-	headings := []string{
+	return appendUniqueBriefStrings(
+		requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings()),
+		structuredRequiredEditPathsFromPrompt(prompt)...,
+	)
+}
+
+func allowedEditPathsFromPrompt(prompt string) []string {
+	prompt = pathparse.ScopeToBriefBody(prompt)
+	return appendUniqueBriefStrings(
+		requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings()),
+		structuredAllowedEditPathsFromPrompt(prompt)...,
+	)
+}
+
+func requiredEditPathHeadings() []string {
+	return []string{
 		"files to modify",
 		"files-to-modify",
 		"files to edit",
+		"edit files",
+		"editable files",
+		"required edit paths",
+		"required files",
+		"required paths",
+	}
+}
+
+func allowedEditPathHeadings() []string {
+	return []string{
+		"candidate edit scope",
+		"candidate edit scope from target references",
+		"candidate paths",
+		"candidate files",
 		"files you may edit",
 		"files you may modify",
 		"files you can edit",
-		"edit files",
-		"editable files",
 		"write scope",
 		"allowed files",
 		"allowed edit files",
@@ -32,10 +63,6 @@ func requiredEditPathsFromPrompt(prompt string) []string {
 		"files allowlist",
 		"source allowlist",
 	}
-	return appendUniqueBriefStrings(
-		requiredEditPathsUnderPromptHeadings(prompt, headings),
-		structuredRequiredEditPathsFromPrompt(prompt)...,
-	)
 }
 
 func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []string {
@@ -85,16 +112,24 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 }
 
 func structuredRequiredEditPathsFromPrompt(prompt string) []string {
-	prompt = pathparse.ScopeToBriefBody(prompt)
-	keys := []string{
+	return structuredEditPathsFromPrompt(prompt, []string{
 		"files_to_modify",
 		"files_to_edit",
 		"required_edit_paths",
-		"allowed_edit_paths",
 		"editable_files",
+	})
+}
+
+func structuredAllowedEditPathsFromPrompt(prompt string) []string {
+	return structuredEditPathsFromPrompt(prompt, []string{
+		"allowed_edit_paths",
 		"allowed_files",
 		"write_scope",
-	}
+	})
+}
+
+func structuredEditPathsFromPrompt(prompt string, keys []string) []string {
+	prompt = pathparse.ScopeToBriefBody(prompt)
 	var paths []string
 	active := false
 	activeArray := false

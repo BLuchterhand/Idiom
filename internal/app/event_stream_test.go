@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"strings"
 	"testing"
 
 	"idiom/internal/agent"
+	"idiom/internal/transcript"
 	"idiom/internal/workspace"
 )
 
@@ -136,6 +138,34 @@ func TestLogRunEventEmitsCompletionStatusJSON(t *testing.T) {
 	}
 	if event["session_id"] != "sess-1" {
 		t.Fatalf("session_id missing on completion_status event: %v", event)
+	}
+}
+
+func TestLogRunEventStoresInternalRecoveryAsRunEvent(t *testing.T) {
+	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
+		Dir:  t.TempDir(),
+		Mode: transcript.DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	model := &Model{debugLogger: logger}
+	model.logRunEvent(agent.RunEvent{
+		Role:    "completion_gate_recovery",
+		Content: "internal recovery prompt",
+	})
+
+	body, err := os.ReadFile(logger.Path())
+	if err != nil {
+		t.Fatalf("read debug log: %v", err)
+	}
+	if strings.Contains(string(body), `"type":"message"`) {
+		t.Fatalf("internal recovery event must not be written as a message record:\n%s", body)
+	}
+	if !strings.Contains(string(body), `"type":"run_event"`) || !strings.Contains(string(body), `"role":"completion_gate_recovery"`) {
+		t.Fatalf("expected run_event record, got:\n%s", body)
 	}
 }
 

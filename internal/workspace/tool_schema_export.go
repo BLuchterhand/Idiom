@@ -170,7 +170,7 @@ func toolSchemaExportProfiles() map[string][]string {
 		{name: "task_ledger", opts: ToolManifestToolOptions{IncludeTaskLedger: true}},
 		{name: "delegation", opts: ToolManifestToolOptions{IncludeTask: true}},
 		{name: "write", opts: ToolManifestToolOptions{IncludeWriteTools: true}},
-		{name: "plan_then_execute", opts: ToolManifestToolOptions{IncludePlanThenExecute: true}},
+		{name: "plan_then_execute", opts: ToolManifestToolOptions{IncludePlanThenExecute: true, PlanThenExecutePlannerSurface: true}},
 		{name: "go", opts: ToolManifestToolOptions{IncludeGo: true}},
 		{name: "go_write", opts: ToolManifestToolOptions{IncludeGo: true, IncludeWriteTools: true}},
 		{name: "cpp", opts: ToolManifestToolOptions{IncludeCpp: true}},

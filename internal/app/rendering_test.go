@@ -31,6 +31,77 @@ func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
 	}
 }
 
+func TestViewOmitsCompactContextFooterBelowInput(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	m := New(cfg)
+	defer m.Close()
+	m.ready = true
+	m.width = 80
+	m.contextError = ""
+	m.viewport = viewport.New(80, 3)
+	m.input.SetHeight(1)
+	m.input.SetValue("hello")
+
+	view := m.View()
+
+	for _, removed := range []string{"mode:", "trace:", "ctx:"} {
+		if strings.Contains(view, removed) {
+			t.Fatalf("view should not render compact context footer containing %q:\n%s", removed, view)
+		}
+	}
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if len(lines) == 0 || !strings.Contains(lines[len(lines)-1], "hello") {
+		t.Fatalf("input should be the last normal-state row, got:\n%s", view)
+	}
+}
+
+func TestResizeUsesFullTerminalHeightWithoutFooter(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	m := New(cfg)
+	defer m.Close()
+	m.width = 80
+	m.height = 14
+
+	m.resize()
+	view := m.View()
+
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if got := len(lines); got != m.height {
+		t.Fatalf("view height = %d, want terminal height %d:\n%s", got, m.height, view)
+	}
+	if !strings.Contains(lines[len(lines)-1], "Type a prompt") {
+		t.Fatalf("input should be flush with bottom, got:\n%s", view)
+	}
+}
+
+func TestInputHeightGrowsForWrappedPrompt(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	m := New(cfg)
+	defer m.Close()
+	m.width = 32
+	m.height = 18
+	m.input.SetValue(strings.Repeat("wrapped ", 12))
+
+	m.resize()
+
+	if got := m.input.Height(); got <= 1 {
+		t.Fatalf("input height = %d, want growth for wrapped text", got)
+	}
+	lines := strings.Split(strings.TrimRight(m.View(), "\n"), "\n")
+	if got := len(lines); got != m.height {
+		t.Fatalf("view height = %d, want terminal height %d", got, m.height)
+	}
+}
+
 // OpenCode-aligned: requestMessages no longer injects a static workspace
 // overview. The model discovers the workspace on demand through tool
 // calls (list_files, search_*, glob). We assert the absence so a future
@@ -70,6 +141,26 @@ func TestRequestMessagesDoesNotCompactOperatorMessages(t *testing.T) {
 	}
 	if len(m.messages) < 2 || m.messages[1].Role != "operator" {
 		t.Fatalf("request payload filtering must not mutate transcript messages: %#v", m.messages)
+	}
+}
+
+func TestRequestMessagesDropsAssistantReasoningFromCrossTurnHistory(t *testing.T) {
+	m := &Model{
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "first prompt"},
+			{Role: "assistant", Content: "first answer", ReasoningContent: "hidden plan from prior turn"},
+			{Role: "user", Content: "second prompt"},
+		},
+	}
+
+	msgs := m.requestMessages()
+	for _, msg := range msgs {
+		if msg.ReasoningContent != "" {
+			t.Fatalf("request payload must not replay cross-turn hidden reasoning: %#v", msgs)
+		}
+	}
+	if m.messages[1].ReasoningContent == "" {
+		t.Fatalf("request payload filtering must not mutate transcript history")
 	}
 }
 

@@ -80,7 +80,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 		plan.PRDRequirementSummary = append(plan.PRDRequirementSummary, ADRPRDRequirementSummary{
 			ID:                id,
 			Priority:          strings.TrimSpace(req.Priority),
-			Statement:         shorten(req.Statement, 160),
+			Statement:         strings.TrimSpace(req.Statement),
 			Evidence:          len(req.EvidenceRefs),
 			Obligations:       len(req.TDDObligations),
 			EvidenceRefs:      stableUniqueStrings(req.EvidenceRefs),
@@ -107,6 +107,8 @@ func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 	b.WriteString("- Use status: draft. Keep acceptance metadata fields empty unless a human explicitly provided them: accepted_at, accepted_by, acceptance_profile.\n")
 	b.WriteString("- coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional. Do not use priority words such as must, should, or could as coverage tiers.\n")
 	b.WriteString("- prd_refs, evidence_refs, and tdd_obligations must use IDs from the supplied PRD requirements and evidence lists. Do not invent prose obligations or new IDs.\n")
+	b.WriteString("- Preserve every supplied PRD requirement statement semantically, including behavior details such as normalization, casing, imports, paths, and exact return strings.\n")
+	b.WriteString("- When the PRD requires source file creation, include one concrete fenced code block for each required source file, immediately preceded by a line naming the file path. Use code fences even for short files.\n")
 	b.WriteString("- Body sections are required: Context, Decision, Alternatives Considered, Evidence, Consequences, Compatibility and Migration, TDD Obligations, Rollback, Open Questions.\n")
 	b.WriteString("- Cite PRD requirement IDs from the supplied PRD requirement list and evidence card IDs from the supplied evidence list.\n")
 	b.WriteString("- Preserve conflicts and unsupported claims as open questions or explicitly labeled inference.\n")

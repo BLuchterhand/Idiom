@@ -81,10 +81,14 @@ func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.
 	if c.metrics != nil {
 		c.metrics.CompletionGateRejections++
 	}
-	if c.turnMessages != nil {
-		*c.turnMessages = append(*c.turnMessages, completionGateRejectedHistoryMessage(c.runner, reply, result, c.snapshotResults()))
+	historyReply := reply
+	if !c.currentOpts().PreserveThinking {
+		historyReply.ReasoningContent = ""
 	}
-	c.runner.emitThinkingTrace(step, "completion_gate_reply_preserved", reply, c.currentOpts(), true)
+	if c.turnMessages != nil {
+		*c.turnMessages = append(*c.turnMessages, completionGateRejectedHistoryMessage(c.runner, historyReply, result, c.snapshotResults()))
+	}
+	c.runner.emitThinkingTrace(step, "completion_gate_reply_preserved", historyReply, c.currentOpts(), true)
 	c.recorder.activeToolCall = activeToolCall
 	c.recorder.recordWithOptions(step, workspace.ToolRequest{Tool: "completion_gate"}, result, "completion_gate_rejected", runnerRecordOptions{
 		IncrementNoProgress: true,

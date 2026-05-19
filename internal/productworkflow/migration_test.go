@@ -112,7 +112,7 @@ func TestProductStatusMigrationPlansUnstartedToStartedWithPriorPaths(t *testing.
 	if !reflect.DeepEqual(plan.PriorIndexPaths, wantIndexPriors) {
 		t.Fatalf("unexpected top-level index prior paths: %#v", plan.PriorIndexPaths)
 	}
-	if !reflect.DeepEqual(plan.UpdatedWorkflowState.NextValidActions, []string{"start_implementation", "start_investigation"}) {
+	if !reflect.DeepEqual(plan.UpdatedWorkflowState.NextValidActions, []string{"submit_for_human_verification", "start_investigation"}) {
 		t.Fatalf("unexpected started/planned next valid actions: %#v", plan.UpdatedWorkflowState.NextValidActions)
 	}
 }

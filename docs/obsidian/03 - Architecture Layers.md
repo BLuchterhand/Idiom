@@ -160,3 +160,4 @@ test that owns the invariant.
 - [[04 - Runtime Lanes]]
 - [[12 - Sidecar and External Integrations]]
 - [[18 - Prompt Stack and Profiles]]
+- [[22 - Ground-Up Implementation Plan]]

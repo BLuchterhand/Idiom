@@ -22,12 +22,17 @@ type ToolManifestToolOptions struct {
 	// apply_patch, delegate_edit). Used by the plan-then-execute
 	// orchestrator's planner phase.
 	IncludePlanThenExecute bool
-	IncludeGo              bool
-	IncludeCpp             bool
-	IncludePython          bool
-	IncludeTypescript      bool
-	IncludeRust            bool
-	IncludeJava            bool
+	// PlanThenExecutePlannerSurface narrows the built-in manifest to the
+	// planner lane's actual contract. It is intentionally separate from
+	// IncludePlanThenExecute so review/repair can share submit_plan while
+	// keeping its own review-shaped read surface.
+	PlanThenExecutePlannerSurface bool
+	IncludeGo                     bool
+	IncludeCpp                    bool
+	IncludePython                 bool
+	IncludeTypescript             bool
+	IncludeRust                   bool
+	IncludeJava                   bool
 }
 
 func ToolManifestTools(opts ToolManifestToolOptions) []string {
@@ -182,7 +187,46 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 			"java_file_outline",
 		)
 	}
+	if opts.PlanThenExecutePlannerSurface {
+		tools = filterManifestToolNames(tools, planThenExecutePlannerManifestToolNames()...)
+	}
 	return tools
+}
+
+func planThenExecutePlannerManifestToolNames() []string {
+	return []string{
+		"search_files",
+		"search_content",
+		"read_file",
+		"file_stats",
+		"code_navigate",
+		"harness_feedback",
+		"context_status",
+		"context_query",
+		"context_zoom",
+		"context_pack",
+		"context_impact",
+		"discovery_query",
+		"structural_search",
+		"submit_plan",
+	}
+}
+
+func filterManifestToolNames(tools []string, names ...string) []string {
+	allowed := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			allowed[name] = struct{}{}
+		}
+	}
+	var out []string
+	for _, tool := range tools {
+		if _, ok := allowed[strings.TrimSpace(tool)]; ok {
+			out = append(out, tool)
+		}
+	}
+	return out
 }
 
 func toolManifestToolsAcrossBuiltInSurfaces() []string {
@@ -351,7 +395,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "append_file", Request: `{"tool":"append_file","path":"relative/file","content":"text to append"}`, Purpose: "append text"},
 		{Tool: "apply_patch", Request: `{"tool":"apply_patch","content":"*** Begin Patch\n*** Update File: relative/file\n@@\n-old\n+new\n*** End Patch"}`, Purpose: "multi-file patch envelope. Use ONLY these *** directives: Begin Patch, End Patch, Add File, Update File, Delete File, Move to. Hunks (`@@`) inside Update File. Do not invent extras like *** Sanity Check / *** Note / *** Verification."},
 		{Tool: "delegate_edit", Request: `{"tool":"delegate_edit","path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}`, Purpose: "hand a single edit spec to the configured executor-role model and return its dispatch result. Use this when you have already decided the exact change and want to keep your own context focused on planning the next edit instead of re-reading what you just wrote. Falls back to direct dispatch when no executor is configured."},
-		{Tool: "submit_plan", Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}]}`, Purpose: "submit a structured edit plan (plan-then-execute mode only). The planner enumerates every edit up-front; large bodies are spilled to artifact refs after submission."},
+		{Tool: "submit_plan", Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact substring","new_text":"replacement","purpose":"why this edit"}]}`, Purpose: "submit a structured edit plan (plan-then-execute mode only). Use only for supported planner edits or review-repair corrective edits; clean review-repair closes with Decision: pass. Large bodies are spilled to artifact refs after submission."},
 		{Tool: "git_status", Request: `{"tool":"git_status","workdir":"."}`, Purpose: "inspect git state"},
 		{Tool: "git_diff", Request: `{"tool":"git_diff","workdir":".","path":"optional/path"}`, Purpose: "inspect git diff"},
 		{Tool: "shell", Request: `{"tool":"shell","command":"go test ./...","workdir":"."}`, Purpose: "run an allowed shell command"},

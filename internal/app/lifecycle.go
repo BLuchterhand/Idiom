@@ -55,6 +55,9 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 	}
 	if m.Port > 0 {
 		out.Port = m.Port
+		if strings.TrimSpace(m.BaseURL) == "" {
+			out.BaseURL = ""
+		}
 	}
 	if model := strings.TrimSpace(m.Model); model != "" {
 		out.Model = model
@@ -183,7 +186,7 @@ func New(cfg config.Config) *Model {
 	in.Placeholder = "Type a prompt. Enter sends. /help shows commands."
 	in.Focus()
 	in.ShowLineNumbers = false
-	in.SetHeight(3)
+	in.SetHeight(1)
 	in.KeyMap.InsertNewline.SetEnabled(false)
 	in.FocusedStyle.Prompt = lipgloss.NewStyle().Foreground(colorAccent)
 	in.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(colorDim)
@@ -208,6 +211,7 @@ func New(cfg config.Config) *Model {
 	projectRoot := strings.TrimSpace(cfg.Workspace.Root)
 
 	plannerSpec, _ := roleSpec(projectRoot, backends.RolePlanner, cfg.LlamaServer)
+	plannerClient := llama.NewClientForServer(plannerSpec, callTimeout)
 
 	// Executor inherits from cfg.Implementer when set, falling back to
 	// cfg.LlamaServer otherwise so a project can declare just the
@@ -238,18 +242,24 @@ func New(cfg config.Config) *Model {
 	classifierDefaults := cfg.RouteClassifier.LlamaServerSpec()
 	classifierSpec, classifierFromBackends := roleSpec(projectRoot, backends.RoleClassifier, classifierDefaults)
 
-	var summaryClient *llama.Client
+	var summaryClient llama.LLMClient
 	var summaryController *llama.ServerController
 	classifierBaseURL := strings.TrimSpace(cfg.RouteClassifier.BaseURL)
 	if classifierFromBackends {
 		classifierBaseURL = llamaServerBaseURL(classifierSpec)
 	}
-	if classifierBaseURL != "" {
+	if classifierFromBackends && sameLlamaTarget(classifierSpec, plannerSpec) {
+		// The classifier role often aliases the active planner model in
+		// .idiom/backends.json. Reuse the already-managed planner client so
+		// lazy classifier startup does not try to bind the planner port twice.
+		summaryClient = plannerClient
+	} else if classifierBaseURL != "" {
 		timeout := time.Duration(cfg.RouteClassifier.TimeoutSeconds) * time.Second
 		classifierSpec.BaseURL = classifierBaseURL
-		summaryClient = llama.NewClientForServer(classifierSpec, timeout)
+		classifierClient := llama.NewClientForServer(classifierSpec, timeout)
+		summaryClient = classifierClient
 		if cfg.RouteClassifier.AutoStartServer && classifierSpec.IsLaunchable() && classifierSpec.Binary != "" {
-			summaryController = llama.NewServerController(classifierSpec, summaryClient)
+			summaryController = llama.NewServerController(classifierSpec, classifierClient)
 		}
 	}
 
@@ -262,7 +272,6 @@ func New(cfg config.Config) *Model {
 		}
 	}
 
-	plannerClient := llama.NewClientForServer(plannerSpec, callTimeout)
 	m := &Model{
 		cfg:                   cfg,
 		plannerSpec:           plannerSpec,
@@ -513,7 +522,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var inputCmd tea.Cmd
+	oldInputHeight := m.input.Height()
 	m.input, inputCmd = m.input.Update(msg)
+	if m.ready && m.syncInputHeight() != oldInputHeight {
+		m.resize()
+	}
 	cmds = append(cmds, inputCmd, waitForEvent(m.events))
 	return m, tea.Batch(cmds...)
 }
@@ -809,7 +822,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			if !m.planExecuteActive {
 				m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
 			}
-			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" || event.Request.Tool == "submit_plan" {
+			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" || strings.TrimSpace(event.Result.Tool) == "submit_plan" {
 				m.events <- planRefreshMsg{}
 			}
 		},

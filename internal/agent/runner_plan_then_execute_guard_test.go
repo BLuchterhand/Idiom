@@ -118,11 +118,11 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.txt"},
 	}
-	got := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief)
+	got := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, nil)
 	if got.MaxTokens != 16384 {
 		t.Fatalf("plan-execute recovery must preserve submit_plan budget, got %d", got.MaxTokens)
 	}
-	got = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief)
+	got = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, nil)
 	if got.MaxTokens != 16384 {
 		t.Fatalf("plan-execute recovery should default to planner-sized budget, got %d", got.MaxTokens)
 	}
@@ -382,9 +382,88 @@ func TestReviewRepairCompletionGateAcceptsPassChecklistOrSubmittedPlan(t *testin
 	if got, rejected := runner.completionGateRejection(passAnswer, nil, 1, nil, false); rejected {
 		t.Fatalf("review-repair pass checklist should be accepted, got %#v", got)
 	}
+	pathOnlyChecklist := "Decision: pass\n\nVerification Checklist:\n- `widget_config.json`\n- `widget_notes.md`\n"
+	if got, rejected := runner.completionGateRejection(pathOnlyChecklist, nil, 1, nil, false); rejected {
+		t.Fatalf("review-repair pass checklist must not be rejected by the generic read-only explanation gate, got %#v", got)
+	}
 	results := []workspace.ToolResult{{Tool: "submit_plan", Summary: "Plan submitted with 1 edit(s); the executor phase will dispatch them."}}
 	if got, rejected := runner.completionGateRejection("Plan submitted with 1 edit.", results, 2, nil, false); rejected {
 		t.Fatalf("review-repair submitted corrective plan should be accepted, got %#v", got)
+	}
+}
+
+func TestReviewRepairCompletionCloseoutDoesNotInventMissingWrites(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+			RequiredEditPaths: []string{"widget_config.json", "widget_notes.md"},
+		},
+	}
+	answer := runner.completionGateRepeatedBlockerAnswer(workspace.ToolResult{
+		Tool:  "completion_gate",
+		Error: "review-repair must close with Decision: pass or a corrective plan",
+	}, nil)
+	if strings.Contains(answer, "Required edit paths not changed") || strings.Contains(answer, "no successful write was recorded") {
+		t.Fatalf("review-repair closeout should not describe allowed repair scope as missing writes:\n%s", answer)
+	}
+	if !strings.Contains(answer, "review-repair must close") {
+		t.Fatalf("closeout should preserve the actual completion blocker, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanGuardSuppressesMalformedPassPlan(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+		},
+	}
+	got := runner.preflightPlanThenExecuteReviewRepairNoopSubmitPlanGuard(workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Verification Checklist:\n- Required behavior passes.",
+		Edits:     []workspace.PlanEdit{{Purpose: "verification pass"}},
+	})
+	if !got.Intercepted {
+		t.Fatal("review-repair malformed/no-path submit_plan should be suppressed before workspace schema errors")
+	}
+	if got.Result.Tool != "review_repair_noop_plan" || strings.TrimSpace(got.Result.Error) != "" {
+		t.Fatalf("noop review plan should be a non-error nudge, got %#v", got.Result)
+	}
+	if _, ok := planThenExecuteShortCircuitAnswer(runner.RuntimeBrief, workspace.ToolRequest{Tool: "submit_plan"}, got.Result); ok {
+		t.Fatal("suppressed review-repair noop plan must not look like a successful corrective submit_plan")
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanGuardSuppressesAlreadyAppliedPlan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "widget_config.json"), []byte("{\n  \"labels\": [\"alpha\", \"beta\"]\n}\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+		},
+	}
+	got := runner.preflightPlanThenExecuteReviewRepairNoopSubmitPlanGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "widget_config.json",
+			OldText: "\"labels\": [\"alpha\"]",
+			NewText: "\"labels\": [\"alpha\", \"beta\"]",
+			Purpose: "stale original edit",
+		}},
+	})
+	if !got.Intercepted {
+		t.Fatal("review-repair stale submit_plan should be suppressed before submit_plan validation rejects it")
+	}
+	if got.Result.Tool != "review_repair_noop_plan" || strings.Contains(strings.ToLower(got.Result.Summary), "rejected") {
+		t.Fatalf("stale review submit_plan should become a non-error pass nudge, got %#v", got.Result)
 	}
 }
 
@@ -575,11 +654,10 @@ func TestCompletionGateRecoveryPromptPointsCandidateScopeAtToolAction(t *testing
 		"not the same prose",
 		"parser-readable action",
 		"Do not include analysis before or after",
-		"```tool",
-		`{"tool":"submit_plan"`,
-		`{"tool":"read_file"`,
+		"hidden reasoning",
+		"ignored by the tool parser",
 		"`submit_plan`",
-		"one bounded read/search on a candidate path",
+		"one bounded read/search on the highest-confidence candidate path",
 		"named missing edit-safety fact",
 		"source-satisfied",
 		"<<QUESTION>>",
@@ -591,9 +669,76 @@ func TestCompletionGateRecoveryPromptPointsCandidateScopeAtToolAction(t *testing
 	if strings.Contains(prompt, "edit_file") || strings.Contains(prompt, "apply_patch") {
 		t.Fatalf("planner-phase recovery must not point at per-edit tools: %q", prompt)
 	}
+	for _, forbidden := range []string{"candidate/path.go", "exact current text", "replacement text", "why these candidate path edits satisfy the objective"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("candidate-scope recovery must not include copyable placeholder %q:\n%s", forbidden, prompt)
+		}
+	}
 }
 
-func TestPlanExecuteCandidateScopeRecoveryDisablesThinking(t *testing.T) {
+func TestCompletionGateRecoveryPromptHidesReadsAfterCandidateScopeRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "replace the model path in the top-right banner with the alias",
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f10 internal/app/rendering.go lines 1-180",
+			Output:  "rightInfo := statusStyle.Render(serverState + \"  \" + util.Fallback(m.modelID, \"unknown\"))",
+		},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt for planner phase with candidate scope")
+	}
+	if !hideReads {
+		t.Fatalf("candidate-scope recovery should hide reads once candidate source has already been read")
+	}
+	for _, want := range []string{
+		"Read candidate path(s): internal/app/rendering.go",
+		"Read/search tools are hidden",
+		"Call `submit_plan` using exact source anchors",
+		"Do not request another read",
+		"Actions written only in hidden reasoning are ignored",
+		"Do not copy schema examples or placeholder text",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("post-read candidate recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"candidate/path.go", "exact current text", "replacement text"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("post-read candidate recovery must not include copyable placeholder %q:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestDeterministicNoWriteRecoveryReadsRuntimeTargetRef(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "replace the model path in the top-right banner with the alias",
+			TargetRefs:        []string{"internal/app/rendering.go", "docs/banner.md"},
+		},
+	}
+
+	req, _, ok := runner.deterministicNoWriteRecoveryTargetRead(nil)
+	if !ok {
+		t.Fatalf("expected deterministic target read for candidate-scope planner")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/app/rendering.go" || req.StartLine != 1 || req.EndLine != 180 {
+		t.Fatalf("unexpected recovery read request: %#v", req)
+	}
+}
+
+func TestPlanExecuteCandidateScopeRecoveryPreservesThinking(t *testing.T) {
 	thinkingOn := true
 	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
 		EnableThinking:     &thinkingOn,
@@ -601,23 +746,55 @@ func TestPlanExecuteCandidateScopeRecoveryDisablesThinking(t *testing.T) {
 		ChatTemplateKwargs: false,
 		ModelThinkingFloor: false,
 		MaxTokens:          16384,
+		Tools:              []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
 	}, workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-	})
+	}, nil)
+
+	if opts.EnableThinking == nil || !*opts.EnableThinking {
+		t.Fatalf("candidate-scope recovery should preserve thinking mode, got %#v", opts.EnableThinking)
+	}
+	if !opts.PreserveThinking {
+		t.Fatalf("candidate-scope recovery should preserve hidden reasoning policy")
+	}
+	if opts.ChatTemplateKwargs {
+		t.Fatalf("candidate-scope recovery should not force request-level chat_template_kwargs")
+	}
+	if opts.MaxTokens != 4096 {
+		t.Fatalf("candidate-scope recovery MaxTokens = %d, want 4096", opts.MaxTokens)
+	}
+	if opts.ToolChoice != "required" {
+		t.Fatalf("candidate-scope recovery should require a tool call, got %q", opts.ToolChoice)
+	}
+}
+
+func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		MaxTokens:          16384,
+		Tools:              []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/app/rendering.go lines 1-120"}})
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
-		t.Fatalf("candidate-scope recovery should disable thinking, got %#v", opts.EnableThinking)
+		t.Fatalf("post-read plan-execute recovery should disable hidden thinking for the next response, got %#v", opts.EnableThinking)
 	}
 	if opts.PreserveThinking {
-		t.Fatalf("candidate-scope recovery should not preserve hidden reasoning")
+		t.Fatalf("post-read plan-execute recovery should stop preserving prior hidden reasoning")
 	}
 	if !opts.ChatTemplateKwargs {
-		t.Fatalf("candidate-scope recovery should force request-level chat_template_kwargs")
+		t.Fatalf("post-read plan-execute recovery should send request-level thinking kwargs")
 	}
-	if opts.MaxTokens != 2048 {
-		t.Fatalf("candidate-scope recovery MaxTokens = %d, want 2048", opts.MaxTokens)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("post-read plan-execute recovery should require visible tool use, got %q", opts.ToolChoice)
 	}
 }
 
@@ -763,6 +940,465 @@ func TestMutationCompletionGateStillRejectsImplementationLaneWithoutEdits(t *tes
 	}
 }
 
+func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWrite(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Ranked context packet produced.", Output: `{"candidate_files":[{"path":"candidate/path.go"}]}`},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt for direct implementation with no write")
+	}
+	if hideReads {
+		t.Fatalf("direct implementation recovery should leave bounded reads visible")
+	}
+	for _, want := range []string{
+		"before any successful workspace write",
+		"No required_edit_paths list is active",
+		"target-selection failure",
+		"parser-readable action",
+		"not prose",
+		"edit_file",
+		"write_file",
+		"append_file",
+		"apply_patch",
+		"Do not call a write tool until",
+		"previous `context_pack` did not establish an exact edit target",
+		"`search_content`",
+		"named_gap",
+		"why_not_answering",
+		"<<QUESTION>>",
+		"Do not repeat a final answer",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("direct implementation recovery prompt missing %q: %q", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "submit_plan") {
+		t.Fatalf("direct implementation recovery must not point at planner-phase submit_plan: %q", prompt)
+	}
+	for _, forbidden := range []string{"Current evidence paths", `"path":"candidate/path.go"`} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("context_pack-only recovery should not treat packet candidates as concrete targets (%q): %q", forbidden, prompt)
+		}
+	}
+}
+
+func TestCompletionGateRecoveryPromptUsesSearchContentEvidencePath(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	prompt, _, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{
+			Tool:    "search_content",
+			Summary: "Found 24 matching line(s).",
+			Output:  "internal/app/rendering.go:50: if banner := m.errorBanner(); banner != \"\" {\ninternal/frontier/locate.go:12: banner",
+		},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt")
+	}
+	for _, want := range []string{
+		"Current evidence paths",
+		"internal/app/rendering.go",
+		`"tool":"read_file"`,
+		`"path":"internal/app/rendering.go"`,
+		"Do not call `context_pack` again",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("search-content recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, `"tool":"context_pack"`) {
+		t.Fatalf("search-content recovery should not request context_pack:\n%s", prompt)
+	}
+}
+
+func TestCompletionGateRecoveryPromptFallsBackAfterContextPackFailure(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	prompt, _, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{Tool: "context_pack", Summary: "context_pack failed", Error: "index unavailable"},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt")
+	}
+	for _, want := range []string{
+		"do not call `context_pack` again",
+		"bounded fallback discovery phase",
+		"`search_files`",
+		"`search_content`",
+		"If a literal phrase missed, broaden",
+		"`read_file`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("context fallback recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, `"tool":"context_pack"`) {
+		t.Fatalf("context_pack failure recovery should not ask for another context_pack call:\n%s", prompt)
+	}
+}
+
+func TestCompletionGateRecoveryPromptFallsBackAfterEmptyContextPack(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	prompt, _, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{Tool: "context_pack", Summary: "0 candidates", Output: `{"candidate_files":[],"candidate_symbols":[],"tests":[]}`},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt")
+	}
+	if !strings.Contains(prompt, "bounded fallback discovery phase") {
+		t.Fatalf("empty context_pack should trigger fallback discovery:\n%s", prompt)
+	}
+	if strings.Contains(prompt, `"tool":"context_pack"`) {
+		t.Fatalf("empty context_pack recovery should not ask for another context_pack call:\n%s", prompt)
+	}
+}
+
+func TestCompletionGateRecoveryChatOptionsPreservesDirectMutationModelMode(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		MaxTokens:          16384,
+		Tools:              []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "edit_file"}}},
+		ToolChoice:         "auto",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}, []workspace.ToolResult{{Tool: "context_pack", Summary: "context"}})
+
+	if opts.EnableThinking == nil || !*opts.EnableThinking {
+		t.Fatalf("direct mutation recovery should preserve thinking mode, got %#v", opts.EnableThinking)
+	}
+	if !opts.PreserveThinking {
+		t.Fatalf("direct mutation recovery should preserve hidden-reasoning policy")
+	}
+	if opts.ChatTemplateKwargs {
+		t.Fatalf("direct mutation recovery should not force request-level chat_template_kwargs")
+	}
+	if opts.MaxTokens != 2048 {
+		t.Fatalf("direct mutation recovery MaxTokens = %d, want 2048", opts.MaxTokens)
+	}
+	if opts.ToolChoice != "auto" {
+		t.Fatalf("direct mutation recovery should preserve existing tool choice, got %q", opts.ToolChoice)
+	}
+}
+
+func TestCompletionGateRecoveryChatOptionsForcesVisibleToolAfterConcreteRead(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		MaxTokens:          16384,
+		Tools:              []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "edit_file"}}},
+		ToolChoice:         "auto",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read internal/app/rendering.go", Output: "rightInfo := statusStyle.Render(...) "}})
+
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("post-read mutation recovery should disable thinking, got %#v", opts.EnableThinking)
+	}
+	if opts.PreserveThinking {
+		t.Fatalf("post-read mutation recovery should not preserve hidden reasoning")
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatalf("post-read mutation recovery should force request-level chat_template_kwargs")
+	}
+	if opts.ToolChoice != "required" {
+		t.Fatalf("post-read mutation recovery should require visible tool use, got %q", opts.ToolChoice)
+	}
+	if opts.MaxTokens != 1024 {
+		t.Fatalf("post-read mutation recovery MaxTokens = %d, want 1024", opts.MaxTokens)
+	}
+}
+
+func TestSalvageToolRequestFromEmptyReasoning(t *testing.T) {
+	runner := &Runner{}
+	req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
+		Content:          "",
+		ReasoningContent: "I should inspect it.\n\n```tool\n{\"tool\":\"read_file\",\"path\":\"internal/app/rendering.go\",\"start_line\":1,\"end_line\":180,\"named_gap\":\"render branch\",\"why_not_answering\":\"need source\"}\n```",
+	}, nil)
+	if !ok {
+		t.Fatalf("expected reasoning tool request to be salvaged")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/app/rendering.go" {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+}
+
+func TestSalvageToolRequestFromReasoningAllowsPlanExecuteSubmitPlan(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+		},
+	}
+	req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
+		Content: "",
+		ReasoningContent: "I have the anchor now.\n\n```tool\n" +
+			`{"tool":"submit_plan","rationale":"Replace the banner model path with the configured alias.","edits":[{"path":"internal/app/rendering.go","old_text":"rightInfo := statusStyle.Render(serverState + \"  \" + util.Fallback(m.modelID, \"unknown\"))","new_text":"rightInfo := statusStyle.Render(serverState + \"  \" + util.Fallback(m.currentAliasForRole(\"writer\"), \"unknown\"))","purpose":"Display the model alias in the TUI banner instead of the raw model path."}]}` +
+			"\n```",
+	}, nil)
+	if !ok {
+		t.Fatalf("expected hidden-reasoning submit_plan to be salvaged during plan-execute planner phase")
+	}
+	if req.Tool != "submit_plan" || len(req.Edits) != 1 || req.Edits[0].Path != "internal/app/rendering.go" {
+		t.Fatalf("unexpected salvaged submit_plan: %#v", req)
+	}
+}
+
+func TestSalvageToolRequestFromReasoningRejectsSubmitPlanOutsidePlanSubmission(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: "implementation",
+		},
+	}
+	if req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
+		Content: "",
+		ReasoningContent: "```tool\n" +
+			`{"tool":"submit_plan","rationale":"Plan.","edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace text"}]}` +
+			"\n```",
+	}, nil); ok {
+		t.Fatalf("submit_plan salvage must stay scoped to plan-submission phases, got %#v", req)
+	}
+}
+
+func TestSalvageToolRequestFromReasoningRejectsSubmitPlanPlaceholders(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+		},
+	}
+	if req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
+		Content: "",
+		ReasoningContent: "```tool\n" +
+			`{"tool":"submit_plan","rationale":"why these candidate path edits satisfy the objective","edits":[{"path":"candidate/path.go","old_text":"exact current text","new_text":"replacement text","purpose":"one sentence"}]}` +
+			"\n```",
+	}, nil); ok {
+		t.Fatalf("placeholder submit_plan request should not be salvaged: %#v", req)
+	}
+}
+
+func TestSalvageToolRequestFromReasoningRejectsPlaceholders(t *testing.T) {
+	runner := &Runner{}
+	if req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
+		Content:          "",
+		ReasoningContent: "```tool\n{\"tool\":\"edit_file\",\"path\":\"candidate/path.go\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\"}\n```",
+	}, nil); ok {
+		t.Fatalf("placeholder request should not be salvaged: %#v", req)
+	}
+}
+
+func TestSalvageToolRequestFromReasoningRejectsMutatingTools(t *testing.T) {
+	runner := &Runner{}
+	for _, reasoning := range []string{
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"a.txt\",\"old_text\":\"old\",\"new_text\":\"new\"}\n```",
+		"```tool\n{\"tool\":\"write_file\",\"path\":\"a.txt\",\"content\":\"new\"}\n```",
+		"```tool\n{\"tool\":\"append_file\",\"path\":\"a.txt\",\"content\":\"new\"}\n```",
+		"```tool\n{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Update File: a.txt\\n@@\\n-old\\n+new\\n*** End Patch\\n\"}\n```",
+	} {
+		if req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
+			Content:          "",
+			ReasoningContent: reasoning,
+		}, nil); ok {
+			t.Fatalf("hidden-reasoning mutating request should not be salvaged: %#v", req)
+		}
+	}
+}
+
+func TestDeterministicNoWriteRecoveryReadsSearchContentCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	req, raw, ok := runner.deterministicNoWriteRecoveryRead([]workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line.",
+		Output:  "internal/app/rendering.go:50: banner",
+	}})
+	if !ok {
+		t.Fatalf("expected deterministic read recovery")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/app/rendering.go" {
+		t.Fatalf("unexpected recovery read request: %#v raw=%s", req, raw)
+	}
+}
+
+func TestDeterministicNoWriteRecoveryRanksUISourceOverSchemasAndComments(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "replace the model path in the top-right banner with the model alias",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	req, raw, ok := runner.deterministicNoWriteRecoveryRead([]workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found matching lines.",
+		Output: strings.Join([]string{
+			`f33 internal/workspace/tool_schemas.go:120: "model alias"`,
+			`f6 internal/app/approval.go:51:// invariant that the banner always matches a real request`,
+			`f8 internal/app/rendering.go:50: if banner := m.errorBanner(); banner != "" {`,
+			`f8 internal/app/rendering.go:51: footerLines = append(footerLines, errorStyle.Render(banner))`,
+			`f3 internal/frontier/locate.go:169: if ContainsAny(normalized, "top", "header", "banner") {`,
+		}, "\n"),
+	}})
+	if !ok {
+		t.Fatalf("expected deterministic read recovery")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/app/rendering.go" {
+		t.Fatalf("unexpected ranked recovery read request: %#v raw=%s", req, raw)
+	}
+}
+
+func TestDeterministicNoWriteRecoveryKeepsNonGoSourcePaths(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "replace the banner model path with the actual model alias",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	req, raw, ok := runner.deterministicNoWriteRecoveryRead([]workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found matching lines.",
+		Output: strings.Join([]string{
+			`f1 web/src/components/Banner.tsx:42: <HeaderBanner modelAlias={activeAlias} />`,
+			`f2 docs/banner.md:4: banner model alias notes`,
+		}, "\n"),
+	}})
+	if !ok {
+		t.Fatalf("expected deterministic read recovery")
+	}
+	if req.Tool != "read_file" || req.Path != "web/src/components/Banner.tsx" {
+		t.Fatalf("unexpected non-Go recovery read request: %#v raw=%s", req, raw)
+	}
+}
+
+func TestDeterministicNoWriteRecoverySearchesAfterContextPackOnly(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "replace the model path in the top-right banner with the model alias",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	req, raw, ok := runner.deterministicNoWriteRecoverySearch([]workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "packet",
+		Output:  `{"candidate_files":[{"path":"internal/app/model_popup.go"}]}`,
+	}})
+	if !ok {
+		t.Fatalf("expected deterministic search recovery")
+	}
+	if req.Tool != "search_content" || !strings.Contains(req.Pattern, "banner") {
+		t.Fatalf("unexpected recovery search request: %#v raw=%s", req, raw)
+	}
+	if strings.Contains(req.Pattern, "model alias") || strings.Contains(req.Pattern, "alias") {
+		t.Fatalf("recovery search should avoid broad replacement terms, got pattern %q", req.Pattern)
+	}
+}
+
+func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "replace the model path in the top-right banner with model alias",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	summary, errText, prompt, rejected := runner.unscopedContextPackCandidateReadRecovery(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/model_popup.go"},
+		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/app/model_popup.go"}]}`}},
+	)
+	if !rejected {
+		t.Fatalf("expected context-pack-only read to be rejected")
+	}
+	for _, want := range []string{
+		"Context packet candidate read rejected",
+		"context_pack has not established an exact edit target",
+		`"tool":"search_content"`,
+		"banner",
+	} {
+		if !strings.Contains(summary+"\n"+errText+"\n"+prompt, want) {
+			t.Fatalf("expected recovery text to contain %q, got summary=%q err=%q prompt=%q", want, summary, errText, prompt)
+		}
+	}
+}
+
+func TestCompletionGateRetryLimitAllowsTwoUnscopedNoWriteRecoveries(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{Tool: "search_content", Summary: "No content matches"}}
+
+	if got := runner.completionGateRetryLimit(results); got != 2 {
+		t.Fatalf("unscoped no-write recovery retry limit = %d, want 2", got)
+	}
+	if !runner.unscopedNoWriteCompletionRecoveryApplies(results) {
+		t.Fatalf("expected unscoped no-write recovery to apply")
+	}
+}
+
+func TestCompletionGateRejectsUnresolvedProcessIntent(t *testing.T) {
+	got, rejected := unresolvedProcessIntentCompletionRejection("I'll search the codebase and inspect the TUI next.")
+	if !rejected {
+		t.Fatalf("expected process narration to be rejected")
+	}
+	if got.Tool != "completion_gate" {
+		t.Fatalf("rejection should be attributed to completion gate, got %#v", got)
+	}
+	if !strings.Contains(got.Error, "Issue the needed tool call now") {
+		t.Fatalf("rejection should point at action, got %q", got.Error)
+	}
+
+	if _, rejected := unresolvedProcessIntentCompletionRejection("I cannot proceed because the workspace is read-only."); rejected {
+		t.Fatalf("concrete blocker answers should not be classified as unresolved process intent")
+	}
+}
+
 func TestFinalAnswerBlockerKindExemptsPlannerPhaseWithSubmitPlan(t *testing.T) {
 	// Post-answer blocker check: in the plan-execute planner phase,
 	// successful submit_plan IS the deliverable — the executor phase
@@ -850,6 +1486,33 @@ func TestPlanThenExecuteReadyToSubmitNudgeWaitsForFullCoverage(t *testing.T) {
 	}
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
 		t.Fatalf("nudge must NOT fire while a required path is unread; got %q", got)
+	}
+}
+
+func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/app/rendering.go lines 1-120"},
+	}
+
+	got := planThenExecuteReadyToSubmitNudge(brief, results)
+	if got == "" {
+		t.Fatalf("expected candidate-scope readiness nudge after a read")
+	}
+	for _, want := range []string{
+		"at least one candidate edit path has been read",
+		"internal/app/rendering.go",
+		"submit_plan",
+		"Decision: source-satisfied",
+		"<<QUESTION>>",
+		"Hidden reasoning is not executable evidence",
+		"Only read/search again if you can name one exact new edit-safety fact",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("candidate-scope nudge missing %q: %q", want, got)
+		}
 	}
 }
 

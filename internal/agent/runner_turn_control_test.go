@@ -71,7 +71,7 @@ func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	if got := rejectedActions[toolActionClass(req)]; got != 1 {
 		t.Fatalf("rejectedActions[%q] = %d, want 1", toolActionClass(req), got)
 	}
-	if got := 	requestBudget.fingerprint.rejected[currentFingerprint]; got != "Read rejected" {
+	if got := requestBudget.fingerprint.rejected[currentFingerprint]; got != "Read rejected" {
 		t.Fatalf("rejected fingerprint = %q, want %q", got, "Read rejected")
 	}
 	if lastToolKey == "" {
@@ -143,7 +143,7 @@ func TestRunnerTurnControllerRejectToolDoesNotMarkMissingNamedGapAsDeadEnd(t *te
 	if got := rejectedActions[toolActionClass(req)]; got != 0 {
 		t.Fatalf("rejectedActions[%q] = %d, want 0 for recoverable legibility rejection", toolActionClass(req), got)
 	}
-	if got := 	requestBudget.fingerprint.rejected[currentFingerprint]; got != "Post-readiness follow-up missing named gap" {
+	if got := requestBudget.fingerprint.rejected[currentFingerprint]; got != "Post-readiness follow-up missing named gap" {
 		t.Fatalf("rejected fingerprint = %q, want %q", got, "Post-readiness follow-up missing named gap")
 	}
 }
@@ -217,6 +217,45 @@ func TestRunnerTurnControllerRejectCompletionPreservesReplyAndRecordsGate(t *tes
 	}
 	if turnMessages[0].Role != "assistant" || turnMessages[0].Content != "partial answer" {
 		t.Fatalf("preserved reply = %#v, want assistant partial answer", turnMessages[0])
+	}
+}
+
+func TestRunnerTurnControllerRejectCompletionDropsReasoningWhenNotPreserving(t *testing.T) {
+	collected := []workspace.ToolResult{}
+	turnMessages := []llama.ChatMessage{}
+	metrics := &runnerMetrics{}
+	opts := llama.ChatOptions{PreserveThinking: false}
+	recorder := runnerTurnRecorder{
+		collectedResults:      &collected,
+		turnMessages:          &turnMessages,
+		metrics:               metrics,
+		consecutiveNoProgress: new(int),
+	}
+	controller := runnerTurnController{
+		runner:                   &Runner{},
+		metrics:                  metrics,
+		recorder:                 &recorder,
+		opts:                     &opts,
+		turnMessages:             &turnMessages,
+		collectedResults:         &collected,
+		completionGateRejections: new(int),
+	}
+
+	controller.rejectCompletion(1, nil, llama.ChatMessage{
+		Role:             "assistant",
+		Content:          "",
+		ReasoningContent: "hidden-only failed action",
+	}, workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Final answer rejected",
+		Error:   "missing submit_plan",
+	})
+
+	if len(turnMessages) == 0 {
+		t.Fatalf("expected rejected reply to be preserved in history")
+	}
+	if turnMessages[0].ReasoningContent != "" {
+		t.Fatalf("rejected reasoning should not be preserved when PreserveThinking=false: %#v", turnMessages[0])
 	}
 }
 

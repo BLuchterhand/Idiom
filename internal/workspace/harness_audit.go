@@ -899,7 +899,13 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 	var incomplete []harnessAuditIncompleteSession
 	var inProgress []harnessAuditInProgressSession
 	var warnings []string
-	seen := make(map[string]struct{})
+	type auditedLog struct {
+		path        string
+		displayPath string
+		facts       harnessAuditLogFacts
+	}
+	logs := make([]auditedLog, 0, len(paths))
+	activeConversationLogs := make(map[string]harnessAuditInProgressSession)
 
 	for _, path := range paths {
 		facts, err := readHarnessAuditLogFacts(path)
@@ -908,6 +914,36 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			continue
 		}
 		displayPath := m.displayPath(path)
+		logs = append(logs, auditedLog{path: path, displayPath: displayPath, facts: facts})
+		if facts.HasProcessStart && facts.HasModelSession && !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
+			if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
+				session := harnessAuditInProgressSession{
+					TelemetryLog:    displayPath,
+					ConversationLog: m.displayPath(conversationPath),
+					SessionID:       strings.TrimSpace(facts.SessionID),
+					Command:         strings.TrimSpace(facts.Command),
+					PID:             facts.PID,
+				}
+				activeConversationLogs[filepath.Clean(conversationPath)] = session
+				activeConversationLogs[session.ConversationLog] = session
+			}
+		}
+	}
+
+	seenIncomplete := make(map[string]struct{})
+	seenInProgress := make(map[string]struct{})
+	appendInProgress := func(session harnessAuditInProgressSession) {
+		key := session.TelemetryLog + "|" + session.ConversationLog
+		if _, ok := seenInProgress[key]; ok {
+			return
+		}
+		seenInProgress[key] = struct{}{}
+		inProgress = append(inProgress, session)
+	}
+
+	for _, log := range logs {
+		facts := log.facts
+		displayPath := log.displayPath
 		if facts.HasProcessStart && strings.EqualFold(strings.TrimSpace(facts.Command), "implement") {
 			if !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
 				session := harnessAuditInProgressSession{
@@ -921,7 +957,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 						session.ConversationLog = m.displayPath(conversationPath)
 					}
 				}
-				inProgress = append(inProgress, session)
+				appendInProgress(session)
 				continue
 			}
 			session := harnessAuditIncompleteSession{
@@ -949,14 +985,25 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			}
 			if len(session.Missing) > 0 {
 				key := session.TelemetryLog + "|" + session.ConversationLog
-				if _, ok := seen[key]; !ok {
-					seen[key] = struct{}{}
+				if _, ok := seenIncomplete[key]; !ok {
+					seenIncomplete[key] = struct{}{}
 					incomplete = append(incomplete, session)
 				}
 			}
 			continue
 		}
 		if facts.IsImplementConversation && !facts.HasSessionSummary {
+			activeSession, ok := activeConversationLogs[filepath.Clean(log.path)]
+			if !ok {
+				activeSession, ok = activeConversationLogs[displayPath]
+			}
+			if ok {
+				if strings.TrimSpace(activeSession.Command) == "" {
+					activeSession.Command = "tui"
+				}
+				appendInProgress(activeSession)
+				continue
+			}
 			session := harnessAuditIncompleteSession{
 				ConversationLog: displayPath,
 				SessionID:       strings.TrimSpace(facts.SessionID),
@@ -964,8 +1011,8 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 				Missing:         []string{"session_summary"},
 			}
 			key := session.TelemetryLog + "|" + session.ConversationLog
-			if _, ok := seen[key]; !ok {
-				seen[key] = struct{}{}
+			if _, ok := seenIncomplete[key]; !ok {
+				seenIncomplete[key] = struct{}{}
 				incomplete = append(incomplete, session)
 			}
 		}

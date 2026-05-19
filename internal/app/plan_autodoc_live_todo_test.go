@@ -62,7 +62,7 @@ func TestRecordSubmittedPlanReplacesExistingSection(t *testing.T) {
 	m.recordSubmittedPlan(first, workspace.ToolResult{Tool: "submit_plan", Summary: "ok"})
 
 	second := workspace.ToolRequest{
-		Tool:  "submit_plan",
+		Tool: "submit_plan",
 		Edits: []workspace.PlanEdit{
 			{Path: "new.go", Purpose: "new edit 1", OldText: "c", NewText: "d"},
 			{Path: "new2.go", Purpose: "new edit 2", OldText: "e", NewText: "f"},
@@ -94,6 +94,25 @@ func TestRecordSubmittedPlanSkipsErrors(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(root, ".planning", "sessA.md")); !os.IsNotExist(err) {
 		plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
 		t.Errorf("plan should not exist after error, got:\n%s", string(plan))
+	}
+}
+
+func TestRecordSubmittedPlanSkipsSuppressedReviewNoopPlan(t *testing.T) {
+	root := t.TempDir()
+	m := snapshotModel(t, root)
+
+	req := workspace.ToolRequest{
+		Tool:  "submit_plan",
+		Edits: []workspace.PlanEdit{{Purpose: "verification pass"}},
+	}
+	m.recordSubmittedPlan(req, workspace.ToolResult{
+		Tool:    "review_repair_noop_plan",
+		Summary: "review-repair submit_plan ignored: no new corrective plan",
+	})
+
+	if _, err := os.Stat(filepath.Join(root, ".planning", "sessA.md")); !os.IsNotExist(err) {
+		plan, _ := os.ReadFile(filepath.Join(root, ".planning", "sessA.md"))
+		t.Errorf("suppressed review noop plan should not create plan UI, got:\n%s", string(plan))
 	}
 }
 

@@ -527,16 +527,17 @@ func (m *Manager) exploreInstructions() string {
 
 func (m *Manager) toolManifestTools(readOnly bool) []string {
 	return ToolManifestTools(ToolManifestToolOptions{
-		IncludeTaskLedger:      !readOnly,
-		IncludeTask:            true,
-		IncludeWriteTools:      !readOnly,
-		IncludePlanThenExecute: m.planThenExecutePlannerMode && !readOnly,
-		IncludeGo:              m.isGoWorkspace(),
-		IncludeCpp:             m.isCppWorkspace(),
-		IncludePython:          m.isPythonWorkspace(),
-		IncludeTypescript:      m.isTsWorkspace(),
-		IncludeRust:            m.isRustWorkspace(),
-		IncludeJava:            m.isJavaWorkspace(),
+		IncludeTaskLedger:             !readOnly,
+		IncludeTask:                   true,
+		IncludeWriteTools:             !readOnly,
+		IncludePlanThenExecute:        m.planThenExecutePlannerMode && !readOnly,
+		PlanThenExecutePlannerSurface: m.planThenExecutePlannerMode && !readOnly,
+		IncludeGo:                     m.isGoWorkspace(),
+		IncludeCpp:                    m.isCppWorkspace(),
+		IncludePython:                 m.isPythonWorkspace(),
+		IncludeTypescript:             m.isTsWorkspace(),
+		IncludeRust:                   m.isRustWorkspace(),
+		IncludeJava:                   m.isJavaWorkspace(),
 	})
 }
 

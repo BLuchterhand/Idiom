@@ -64,6 +64,9 @@ func TestRuntimeContractForPlanThenExecuteReviewRepairIsReviewShaped(t *testing.
 	if planThenExecuteToolListContains(spec.RequiredTools, "submit_plan") {
 		t.Fatalf("review-repair must not require submit_plan when a checklist-backed pass is valid, got %v", spec.RequiredTools)
 	}
+	if len(spec.RequiredTools) != 0 {
+		t.Fatalf("review-repair must not require unavailable decision tools, got %v", spec.RequiredTools)
+	}
 }
 
 func TestRuntimeBriefForPlanThenExecuteReviewRepairKeepsSubmitPlanWithoutWrites(t *testing.T) {

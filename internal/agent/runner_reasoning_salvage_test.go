@@ -338,11 +338,11 @@ func TestCompletionGateRecoveryKeepsScratchpadDeliverableOutputBudget(t *testing
 		Contract:          "implementation_result",
 		RequiredEditPaths: []string{".idiom/refine/example/iter-3/draft.md"},
 	}
-	opts := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief)
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, nil)
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery must preserve full deliverable budget, got %d", opts.MaxTokens)
 	}
-	opts = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief)
+	opts = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, nil)
 	if opts.MaxTokens != 16384 {
 		t.Fatalf("scratchpad recovery should default to full deliverable budget, got %d", opts.MaxTokens)
 	}

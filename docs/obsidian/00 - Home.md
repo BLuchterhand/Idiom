@@ -41,6 +41,7 @@ tests, or operator commands prove otherwise.
 
 ### Implementation Maintainer Read
 
+- [[22 - Ground-Up Implementation Plan]]
 - [[03 - Architecture Layers]]
 - [[04 - Runtime Lanes]]
 - [[05 - Runner Contracts and Control Rails]]
@@ -96,6 +97,7 @@ before discussing enterprise or regulated use.
 - [[19 - CLI TUI and Operator Surface]]
 - [[20 - Product Workflow and Behavioral Coverage]]
 - [[21 - Recovery and Decomposition]]
+- [[22 - Ground-Up Implementation Plan]]
 
 ## Product Workflow and Recovery
 
@@ -110,6 +112,9 @@ write-capable TUI continuation*, and some sidecar exposure* remain open work.
 - [[21 - Recovery and Decomposition]] — recovery layer for converting failed
   plan-execute runs into classified evidence, decomposition packets, and gated
   follow-up atoms
+- [[22 - Ground-Up Implementation Plan]] — rebuild blueprint for recreating the
+  harness from a new project with explicit efforts, architecture patterns,
+  testing layers, DRY rules, and acceptance gates
 
 ## Core Sources
 
@@ -117,6 +122,9 @@ write-capable TUI continuation*, and some sidecar exposure* remain open work.
   lane, atom, queue, MCP, and release-evidence surfaces.
 - [docs/idiom-strategic-thesis.md](../idiom-strategic-thesis.md) defines the
   product thesis and seven pillars.
+- [docs/idiom-implementation-plan.md](../idiom-implementation-plan.md) is the
+  canonical repository implementation plan that this vault blueprint summarizes
+  into rebuild order.
 - [docs/decisioning-north-star.md](../decisioning-north-star.md) defines the
   model-strategy versus harness-contract split.
 - [docs/lane-architecture.md](../lane-architecture.md) explains lane execution.
