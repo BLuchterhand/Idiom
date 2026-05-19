@@ -211,6 +211,22 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	if statusReport.Status != "ready" || statusReport.NextAction != recovery.NextActionReviewDecomposition {
 		t.Fatalf("unexpected status report: %#v", statusReport)
 	}
+	if len(statusReport.ResidualWork) != 1 ||
+		!recoveryEvidenceRefsContain(statusReport.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "required_path", Path: "allowed.go"}) ||
+		!recoveryEvidenceRefsContain(statusReport.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "required_test", ID: "go test ./..."}) {
+		t.Fatalf("expected residual evidence refs in status report: %#v", statusReport.ResidualWork)
+	}
+
+	statusOut.Reset()
+	statusErr.Reset()
+	code = runRecoverMain([]string{"status", "--config", configPath, "--packet", "packet.json"}, &statusOut, &statusErr)
+	if code != 0 {
+		t.Fatalf("recover status text exit=%d stdout=%s stderr=%s", code, statusOut.String(), statusErr.String())
+	}
+	if !strings.Contains(statusOut.String(), "evidence_refs: required_path:allowed.go") ||
+		!strings.Contains(statusOut.String(), "required_test:go test ./...") {
+		t.Fatalf("expected residual evidence refs in status text, got %s", statusOut.String())
+	}
 
 	var promoteOut, promoteErr bytes.Buffer
 	code = runRecoverMain([]string{"promote", "--config", configPath, "--packet", "packet.json", "--atom", "recovery-001", "--output", "briefs/recovery-001.md", "--json"}, &promoteOut, &promoteErr)
@@ -287,6 +303,39 @@ func TestRecoverDecomposeStatusAndPromote(t *testing.T) {
 	}
 	if statusReport.Status != "recovered" || statusReport.NextAction != recovery.NextActionNone || len(statusReport.CandidateAtoms) != 0 || statusReport.Reconciliation == nil {
 		t.Fatalf("expected recovered status after reconcile, got %#v", statusReport)
+	}
+	if len(statusReport.ResidualWork) != 0 {
+		t.Fatalf("recovered status should not list remaining residual work: %#v", statusReport.ResidualWork)
+	}
+}
+
+func TestRecoverStatusScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	packet := writeRecoverTestPacket(t, root, "recover-session-summary-scrub", "packet.json")
+	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{
+		Kind:    "legacy_failure",
+		Path:    "allowed.go",
+		Summary: "raw_prompt: persisted legacy detail",
+	})
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "packet.json"); err != nil {
+		t.Fatalf("rewrite packet: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runRecoverMain([]string{"status", "--config", configPath, "--packet", "packet.json", "--json"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("recover status exit=%d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var report recoverStatusReport
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatalf("decode status report: %v\n%s", err, stdout.String())
+	}
+	if strings.Contains(stdout.String(), "raw_prompt") || strings.Contains(stdout.String(), "persisted legacy detail") {
+		t.Fatalf("status JSON leaked residual evidence summary: %s", stdout.String())
+	}
+	if !recoveryEvidenceRefsContain(report.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "legacy_failure", Path: "allowed.go"}) {
+		t.Fatalf("expected sanitized legacy evidence ref in %#v", report.ResidualWork)
 	}
 }
 
@@ -786,6 +835,15 @@ func recoverGateBlocked(gates []recoverGateReport, name string) bool {
 func recoverAtomIDsContain(ids []string, want string) bool {
 	for _, id := range ids {
 		if id == want {
+			return true
+		}
+	}
+	return false
+}
+
+func recoveryEvidenceRefsContain(refs []recovery.EvidenceRef, want recovery.EvidenceRef) bool {
+	for _, ref := range refs {
+		if ref == want {
 			return true
 		}
 	}

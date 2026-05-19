@@ -109,6 +109,7 @@ func (m *Manager) recoveryStatus(ctx context.Context, req ToolRequest) ToolResul
 	status := recoveryPacketStatus(packet)
 	nextAction := packet.NextAction
 	candidateAtoms := packet.CandidateAtoms
+	statusPacket := sanitizeRecoveryStatusPacket(packet)
 	blockers := recoveryPacketBlockers(packet)
 	var reconciliationRef *recovery.Reconciliation
 	reconciliationPath := ""
@@ -125,6 +126,7 @@ func (m *Manager) recoveryStatus(ctx context.Context, req ToolRequest) ToolResul
 		candidateAtoms = recoveryRemainingCandidateAtoms(packet, reconciliation)
 		if reconciliation.Status == recovery.ReconciliationStatusRecovered {
 			blockers = nil
+			statusPacket.ResidualWork = nil
 		}
 	}
 	report := recoveryStatusToolReport{
@@ -141,7 +143,7 @@ func (m *Manager) recoveryStatus(ctx context.Context, req ToolRequest) ToolResul
 		CandidateAtoms:     candidateAtoms,
 		Reconciliation:     reconciliationRef,
 		NextAction:         nextAction,
-		Packet:             &packet,
+		Packet:             &statusPacket,
 	}
 	return jsonToolResult("recovery_status", "Read recovery decomposition packet status", report)
 }
@@ -540,6 +542,36 @@ func failureRecordFromRecoveryPacket(packet recovery.DecompositionPacket) recove
 		PartialState:  packet.PartialState,
 		NextAction:    packet.NextAction,
 	}
+}
+
+func sanitizeRecoveryStatusPacket(packet recovery.DecompositionPacket) recovery.DecompositionPacket {
+	for i := range packet.ResidualWork {
+		packet.ResidualWork[i].EvidenceRefs = sanitizeRecoveryEvidenceRefs(packet.ResidualWork[i].EvidenceRefs)
+	}
+	return packet
+}
+
+func sanitizeRecoveryEvidenceRefs(refs []recovery.EvidenceRef) []recovery.EvidenceRef {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]recovery.EvidenceRef, 0, len(refs))
+	seen := map[recovery.EvidenceRef]bool{}
+	for _, ref := range refs {
+		ref.Kind = strings.TrimSpace(ref.Kind)
+		ref.Path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(ref.Path)))
+		if ref.Path == "." {
+			ref.Path = ""
+		}
+		ref.ID = strings.TrimSpace(ref.ID)
+		ref.Summary = ""
+		if ref.Kind == "" || seen[ref] {
+			continue
+		}
+		seen[ref] = true
+		out = append(out, ref)
+	}
+	return out
 }
 
 func compactRecoveryStrings(values []string) []string {

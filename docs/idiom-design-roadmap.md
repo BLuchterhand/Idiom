@@ -65,9 +65,10 @@ The executable implementation plan is
   only after packet-digest, atom manifest, and required-test evidence
   validation. Successful reconciliation also records sanitized evidence-only
   ranker-learning events under `source:"recovery_reconciliation"` without
-  mutating learned weights. Broader TUI continuation/handoff actions, deeper
-  residual-work evidence, and non-plan-execute failure sources remain follow-up
-  work.
+  mutating learned weights. Residual-work records now carry scoped
+  required-path, changed-path, failure, and required-test evidence refs without
+  raw prompt/transcript/file-body content. Broader TUI continuation/handoff
+  actions and non-plan-execute failure sources remain follow-up work.
 
 ## System Shape
 

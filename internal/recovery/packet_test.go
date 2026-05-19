@@ -68,6 +68,97 @@ func TestBuildDecompositionPacketUsesDeepestGoPackageForRequiredTests(t *testing
 	}
 }
 
+func TestBuildDecompositionPacketAddsResidualEvidenceRefs(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:         "session-residual-evidence",
+		ProgressStatePath: ".idiom/plan-execute/session-residual-evidence/state.json",
+		PlanPath:          ".idiom/plan-execute/session-residual-evidence/plan.json",
+		FailureKind:       "verification_failed",
+		FailureReason:     "required tests failed",
+		RequiredEditPaths: []string{"internal/recovery/record.go", "internal/recovery/packet.go"},
+		ChangedPaths:      []string{"internal/recovery/record.go"},
+		ExecutorFailures:  []string{"raw_prompt: do not store\nfailing test TestRecovery"},
+		ReviewStatus:      "failed",
+		ReviewReasonClass: "verification_failed",
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: PartialStateForDirtyPaths(nil, record.PartialState.ChangedPaths, record.SourceRun.RequiredEditPaths, nil, 1),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	if len(packet.ResidualWork) != 1 {
+		t.Fatalf("residual work=%#v", packet.ResidualWork)
+	}
+	refs := packet.ResidualWork[0].EvidenceRefs
+	for _, want := range []EvidenceRef{
+		{Kind: "required_path", Path: "internal/recovery/record.go"},
+		{Kind: "changed_path", Path: "internal/recovery/record.go"},
+		{Kind: "required_path", Path: "internal/recovery/packet.go"},
+		{Kind: "progress_state", Path: ".idiom/plan-execute/session-residual-evidence/state.json"},
+		{Kind: "plan_artifact", Path: ".idiom/plan-execute/session-residual-evidence/plan.json"},
+		{Kind: "review_repair_status", ID: "failed"},
+		{Kind: "review_repair_reason", ID: "verification_failed"},
+		{Kind: "required_test", ID: "go test ./internal/recovery"},
+	} {
+		if !evidenceRefsContain(refs, want) {
+			t.Fatalf("expected residual evidence ref %#v in %#v", want, refs)
+		}
+	}
+	if !evidenceRefsContainKind(refs, "executor_failure") {
+		t.Fatalf("expected executor failure evidence in %#v", refs)
+	}
+	for _, ref := range refs {
+		if ref.Summary != "" {
+			t.Fatalf("residual evidence refs must be metadata-only, got %#v in %#v", ref, refs)
+		}
+	}
+	if evidenceRefsContainText(refs, "raw_prompt") ||
+		evidenceRefsContainText(refs, "do not store") ||
+		evidenceRefsContainText(refs, "failing test") {
+		t.Fatalf("residual evidence leaked free-form failure text: %#v", refs)
+	}
+}
+
+func TestBuildDecompositionPacketScopesChangedPathEvidenceToResidualGroup(t *testing.T) {
+	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
+		SessionID:   "session-residual-groups",
+		FailureKind: "executor_failed",
+		RequiredEditPaths: []string{
+			"cmd/idiom/recover.go",
+			"internal/app/model.go",
+			"internal/app/product_status.go",
+			"internal/recovery/packet.go",
+			"internal/recovery/record.go",
+		},
+		ChangedPaths: []string{"internal/app/model.go", "internal/recovery/packet.go"},
+	}, time.Date(2026, 5, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("BuildPlanExecuteFailureRecord: %v", err)
+	}
+	packet, err := BuildDecompositionPacket(record, DecompositionOptions{
+		Now:          time.Date(2026, 5, 18, 12, 1, 0, 0, time.UTC),
+		PartialState: PartialStateForDirtyPaths(nil, record.PartialState.ChangedPaths, record.SourceRun.RequiredEditPaths, nil, 2),
+	})
+	if err != nil {
+		t.Fatalf("BuildDecompositionPacket: %v", err)
+	}
+	appResidual, ok := residualWorkForPath(packet, "internal/app/model.go")
+	if !ok {
+		t.Fatalf("missing internal/app residual in %#v", packet.ResidualWork)
+	}
+	if !evidenceRefsContain(appResidual.EvidenceRefs, EvidenceRef{Kind: "changed_path", Path: "internal/app/model.go"}) {
+		t.Fatalf("expected app changed-path evidence in %#v", appResidual.EvidenceRefs)
+	}
+	if evidenceRefsContain(appResidual.EvidenceRefs, EvidenceRef{Kind: "changed_path", Path: "internal/recovery/packet.go"}) {
+		t.Fatalf("app residual should not cite recovery changed-path evidence: %#v", appResidual.EvidenceRefs)
+	}
+}
+
 func TestWriteAndLoadDecompositionPacket(t *testing.T) {
 	root := t.TempDir()
 	record, err := BuildPlanExecuteFailureRecord(PlanExecuteFailureInput{
@@ -343,6 +434,47 @@ func stringSlicesEqual(a []string, b []string) bool {
 		}
 	}
 	return true
+}
+
+func evidenceRefsContain(refs []EvidenceRef, want EvidenceRef) bool {
+	for _, ref := range refs {
+		if ref == want {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceRefsContainKind(refs []EvidenceRef, kind string) bool {
+	for _, ref := range refs {
+		if ref.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
+func evidenceRefsContainText(refs []EvidenceRef, text string) bool {
+	for _, ref := range refs {
+		if strings.Contains(ref.Kind, text) ||
+			strings.Contains(ref.Path, text) ||
+			strings.Contains(ref.ID, text) ||
+			strings.Contains(ref.Summary, text) {
+			return true
+		}
+	}
+	return false
+}
+
+func residualWorkForPath(packet DecompositionPacket, path string) (ResidualWork, bool) {
+	for _, residual := range packet.ResidualWork {
+		for _, residualPath := range residual.Paths {
+			if residualPath == path {
+				return residual, true
+			}
+		}
+	}
+	return ResidualWork{}, false
 }
 
 func reconciliationFindingsContain(findings []ReconciliationValidationFinding, code string) bool {

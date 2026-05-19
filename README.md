@@ -155,8 +155,8 @@ Other useful subcommands:
   failure record and classified partial state for a failed `plan-execute`
   session.
 - `idiom recover status --packet <packet.json> [--json]` — inspect candidate
-  recovery atoms, product links, gates, and the next valid action from a
-  decomposition packet.
+  recovery atoms, residual-work evidence refs, product links, gates, and the
+  next valid action from a decomposition packet.
 - `idiom recover decompose --session <id> [--output <packet.json>] [--json]`
   — rebuild a recovery packet from a failed plan-execute session. Custom
   output paths must stay under the workspace root, avoid protected paths such
@@ -175,8 +175,10 @@ Other useful subcommands:
   `source:"recovery_reconciliation"` ranker-learning event without mutating
   learned weights. Failed plan-execute runs automatically write both
   `.idiom/recovery/<failure-id>/failure.json` and
-  `.idiom/recovery/<failure-id>/packet.json`; promotion still does not dispatch
-  follow-up work, and reconciliation preserves the original failure record.
+  `.idiom/recovery/<failure-id>/packet.json`; packet residual work cites
+  scoped required-path, changed-path, failure, and required-test evidence refs.
+  Promotion still does not dispatch follow-up work, and reconciliation
+  preserves the original failure record.
 - `idiom tool schemas` — export built-in workspace tool schemas plus
   profile, side-effect, and policy metadata as JSON.
 - `idiom tool <name> --input '<json>'` — run one workspace tool and print JSON

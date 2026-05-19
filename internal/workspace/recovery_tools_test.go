@@ -71,6 +71,14 @@ func TestRecoveryToolsInspectDecomposeAndStatus(t *testing.T) {
 	if statusReport.Status != "ready" || statusReport.NextAction != recovery.NextActionReviewDecomposition {
 		t.Fatalf("unexpected status report: %#v", statusReport)
 	}
+	if statusReport.Packet == nil || len(statusReport.Packet.ResidualWork) != 1 {
+		t.Fatalf("status report missing residual work: %#v", statusReport.Packet)
+	}
+	for _, ref := range statusReport.Packet.ResidualWork[0].EvidenceRefs {
+		if ref.Summary != "" {
+			t.Fatalf("status packet residual refs must be metadata-only: %#v", statusReport.Packet.ResidualWork[0].EvidenceRefs)
+		}
+	}
 	for _, gate := range []string{recovery.GateWorkspaceState, recovery.GateBriefLint, recovery.GateAtomIntake, recovery.GateScope, recovery.GateRequiredTests} {
 		if !stringSliceContains(statusReport.Gates, gate) {
 			t.Fatalf("status report missing gate %q: %#v", gate, statusReport.Gates)
@@ -256,6 +264,57 @@ func TestRecoveryStatusToolReflectsReconciliation(t *testing.T) {
 	if report.Status != "recovered" || report.NextAction != recovery.NextActionNone || report.Reconciliation == nil || len(report.CandidateAtoms) != 0 {
 		t.Fatalf("expected recovered status, got %#v", report)
 	}
+	if report.Packet != nil && len(report.Packet.ResidualWork) != 0 {
+		t.Fatalf("recovered tool status should hide completed residual work: %#v", report.Packet.ResidualWork)
+	}
+}
+
+func TestRecoveryStatusToolScrubsPersistedResidualEvidenceSummaries(t *testing.T) {
+	root := t.TempDir()
+	writeRecoveryWorkspaceFile(t, root, "internal/app/foo.go", "package app\n")
+	record, _, err := recovery.WritePlanExecuteFailureRecord(root, recovery.PlanExecuteFailureInput{
+		SessionID:         "sid-summary-scrub",
+		Phase:             "executor",
+		Status:            "failed",
+		FailureKind:       "executor_failed",
+		FailureReason:     "exact edit did not apply",
+		RequiredEditPaths: []string{"internal/app/foo.go"},
+		AllowedEditPaths:  []string{"internal/app/foo.go"},
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write failure record: %v", err)
+	}
+	packet, _, err := recovery.WriteDecompositionPacketForFailureRecord(root, record, time.Now().UTC())
+	if err != nil {
+		t.Fatalf("write packet: %v", err)
+	}
+	packet.ResidualWork[0].EvidenceRefs = append(packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{
+		Kind:    "legacy_failure",
+		Path:    "internal/app/foo.go",
+		Summary: "raw_prompt: persisted legacy detail",
+	})
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, ""); err != nil {
+		t.Fatalf("rewrite packet: %v", err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	status := mgr.Execute(context.Background(), ToolRequest{Tool: "recovery_status", SessionID: "sid-summary-scrub"})
+	if status.Error != "" {
+		t.Fatalf("recovery_status returned error: %v\n%s", status.Error, status.Output)
+	}
+	if strings.Contains(status.Output, "raw_prompt") || strings.Contains(status.Output, "persisted legacy detail") {
+		t.Fatalf("status output leaked residual summary: %s", status.Output)
+	}
+	var report recoveryStatusToolReport
+	if err := json.Unmarshal([]byte(status.Output), &report); err != nil {
+		t.Fatalf("decode status report: %v\n%s", err, status.Output)
+	}
+	if report.Packet == nil || len(report.Packet.ResidualWork) != 1 {
+		t.Fatalf("status report missing residual work: %#v", report.Packet)
+	}
+	if !recoveryToolEvidenceRefsContain(report.Packet.ResidualWork[0].EvidenceRefs, recovery.EvidenceRef{Kind: "legacy_failure", Path: "internal/app/foo.go"}) {
+		t.Fatalf("expected sanitized legacy evidence ref: %#v", report.Packet.ResidualWork[0].EvidenceRefs)
+	}
 }
 
 func TestRecoveryStatusToolBlocksInvalidReconciliation(t *testing.T) {
@@ -364,6 +423,15 @@ func writeRecoveryWorkspaceFile(t *testing.T, root string, rel string, body stri
 func stringSliceContains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
+			return true
+		}
+	}
+	return false
+}
+
+func recoveryToolEvidenceRefsContain(refs []recovery.EvidenceRef, want recovery.EvidenceRef) bool {
+	for _, ref := range refs {
+		if ref == want {
 			return true
 		}
 	}

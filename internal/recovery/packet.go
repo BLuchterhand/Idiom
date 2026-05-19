@@ -107,19 +107,20 @@ func BuildDecompositionPacket(record FailureRecord, opts DecompositionOptions) (
 		residualID := fmt.Sprintf("residual-%03d", i+1)
 		atomID := fmt.Sprintf("recovery-%03d", i+1)
 		title := residualTitle(record, group)
+		requiredTests := requiredTestsForPaths(group)
 		packet.ResidualWork = append(packet.ResidualWork, ResidualWork{
 			ID:           residualID,
 			Title:        title,
 			Reason:       record.Failure.Class,
 			Paths:        group,
-			EvidenceRefs: record.Failure.EvidenceRefs,
+			EvidenceRefs: residualEvidenceRefs(record, partial, group, requiredTests),
 		})
 		packet.CandidateAtoms = append(packet.CandidateAtoms, CandidateAtom{
 			ID:              atomID,
 			Title:           title,
 			Complexity:      complexityForPaths(group),
 			RequiredPaths:   group,
-			RequiredTests:   requiredTestsForPaths(group),
+			RequiredTests:   requiredTests,
 			Gates:           []string{GateWorkspaceState, GateBriefLint, GateAtomIntake, GateScope, GateRequiredTests},
 			ResidualWorkIDs: []string{residualID},
 		})
@@ -281,6 +282,81 @@ func writeBriefProductLinks(b *strings.Builder, label string, paths []string) {
 
 func residualCandidatePaths(record FailureRecord, partial PartialState) []string {
 	return cleanPathList(append(append([]string{}, record.SourceRun.RequiredEditPaths...), partial.ChangedPaths...))
+}
+
+func residualEvidenceRefs(record FailureRecord, partial PartialState, paths []string, requiredTests []string) []EvidenceRef {
+	requiredPaths := pathSet(record.SourceRun.RequiredEditPaths)
+	changedPaths := pathSet(partial.ChangedPaths)
+	groupPaths := pathSet(paths)
+	var refs []EvidenceRef
+	for _, path := range cleanPathList(paths) {
+		if requiredPaths[path] {
+			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "required_path", Path: path})
+		}
+		if changedPaths[path] {
+			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "changed_path", Path: path})
+		}
+	}
+	for _, ref := range record.Failure.EvidenceRefs {
+		if evidenceRefAppliesToResidual(ref, groupPaths) {
+			refs = appendUniqueEvidenceRef(refs, ref)
+		}
+	}
+	for _, test := range requiredTests {
+		if test = strings.TrimSpace(test); test != "" {
+			refs = appendUniqueEvidenceRef(refs, EvidenceRef{Kind: "required_test", ID: test})
+		}
+	}
+	return refs
+}
+
+func pathSet(paths []string) map[string]bool {
+	set := map[string]bool{}
+	for _, path := range cleanPathList(paths) {
+		set[path] = true
+	}
+	return set
+}
+
+func evidenceRefAppliesToResidual(ref EvidenceRef, paths map[string]bool) bool {
+	if strings.TrimSpace(ref.Kind) == "" {
+		return false
+	}
+	path := cleanRelPath(ref.Path)
+	if path == "" {
+		return true
+	}
+	if paths[path] {
+		return true
+	}
+	kind := strings.ToLower(strings.TrimSpace(ref.Kind))
+	switch kind {
+	case "progress_state", "plan_artifact", "executor_failure", "review_repair_status", "review_repair_reason":
+		return true
+	}
+	return strings.Contains(kind, "test") || strings.Contains(kind, "verification")
+}
+
+func appendUniqueEvidenceRef(refs []EvidenceRef, ref EvidenceRef) []EvidenceRef {
+	ref = normalizeEvidenceRef(ref)
+	if strings.TrimSpace(ref.Kind) == "" {
+		return refs
+	}
+	for _, existing := range refs {
+		if normalizeEvidenceRef(existing) == ref {
+			return refs
+		}
+	}
+	return append(refs, ref)
+}
+
+func normalizeEvidenceRef(ref EvidenceRef) EvidenceRef {
+	return EvidenceRef{
+		Kind:    strings.TrimSpace(ref.Kind),
+		Path:    cleanRelPath(ref.Path),
+		ID:      strings.TrimSpace(ref.ID),
+		Summary: "",
+	}
 }
 
 func groupResidualPaths(paths []string) [][]string {

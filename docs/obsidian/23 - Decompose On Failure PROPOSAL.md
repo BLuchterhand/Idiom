@@ -20,7 +20,9 @@ tags:
 > presenter, audit-watch, product-evidence, and release-evidence now project
 > bounded recovery state. Promotion writes a normal gated brief; reconciliation
 > closes the packet only after packet-digest, atom-manifest, and required-test
-> evidence validation. Valid reconciliation also records sanitized,
+> evidence validation. Residual-work records cite scoped required-path,
+> changed-path, failure, and required-test evidence refs. Valid reconciliation
+> also records sanitized,
 > evidence-only ranker-learning events under
 > `source:"recovery_reconciliation"` without mutating learned weights.
 >
@@ -53,6 +55,9 @@ failed run -> failure record -> failure class -> decomposition packet
   `.idiom/recovery/<failure-id>/packet.json` automatically.
 - [x] Smaller candidate recovery atoms are synthesized from required and
   changed path evidence.
+- [x] Residual-work records include scoped evidence refs for required paths,
+  changed paths, applicable failure evidence, and generated required-test
+  commands without raw transcripts or file bodies.
 - [x] `idiom recover promote` writes a candidate atom brief only after brief
   lint, atom intake, and scope gates pass.
 - [x] `idiom tool --profile discovery recovery_inspect` and `recovery_status`
@@ -82,8 +87,8 @@ failed run -> failure record -> failure class -> decomposition packet
 - [x] Valid `recover reconcile` runs append evidence-only ranker-learning events
   with packet-quality, localization, atom-count, and verification-count metrics;
   the adapter rejects ranker state paths and never mutates weights.
-- [ ] Broader TUI continuation/handoff actions, deeper residual-work evidence,
-  and non-plan-execute adapters are not yet complete.
+- [ ] Broader TUI continuation/handoff actions and non-plan-execute adapters
+  are not yet complete.
 
 ## Target Lifecycle
 
@@ -122,6 +127,10 @@ flowchart TD
 - The classifier emits one root failure class plus evidence tags.
 - Decomposition packets list residual work, partial state, candidate atoms,
   required paths, forbidden paths, tests, and next valid action.
+- Residual work carries evidence refs for required paths, changed paths,
+  applicable failure evidence, and required-test commands so operators can see
+  why each candidate exists without exposing raw prompts, transcripts, or file
+  bodies.
 - Candidate atoms must pass normal brief lint, atom intake, scope, and product
   workflow gates before dispatch.
 - The original failure remains immutable and linked after recovery succeeds.

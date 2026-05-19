@@ -19,8 +19,10 @@ status, the TUI `/product-status` presenter, audit-watch, product-evidence, and
 release-evidence now project recovery state from bounded artifacts and
 telemetry events. Successful `recover reconcile` runs also write sanitized,
 evidence-only ranker-learning events without mutating learned weights.
-Remaining extensions are broader TUI continuation/handoff actions, deeper
-residual-work evidence, and non-plan-execute adapters.
+Residual-work records now cite deterministic, privacy-safe evidence refs for
+required paths, changed paths, applicable failure evidence, and required-test
+commands. Remaining extensions are broader TUI continuation/handoff actions and
+non-plan-execute adapters.
 
 Verified adjacent implementation:
 
@@ -87,12 +89,17 @@ Verified adjacent implementation:
   is written. The event uses action `no_op`, records packet quality,
   localization-improvement, completed/remaining atom counts, and verification
   counts, and does not create or update `.idiom/ranker/weights.json`.
+- `internal/recovery/packet.go` enriches each residual-work record with
+  scoped evidence refs for its required paths, changed paths, inherited failure
+  evidence, and generated required-test commands. This keeps packet evidence
+  bounded to metadata and command IDs while avoiding raw transcript, prompt, or
+  file-body storage.
 
 Those pieces now cover the operator-facing plan-execute loop across CLI,
 sidecar, product workflow, evidence exports, and the first TUI product-status
-projection. The remaining design work is to broaden adapters, deepen
-residual-work evidence, feed deterministic recovered outcomes into learning,
-and keep the original failure visible without letting the model loop.
+projection. The remaining design work is to broaden adapters and handoff
+surfaces while keeping the original failure visible without letting the model
+loop.
 
 ## Problem
 
@@ -253,7 +260,12 @@ The first durable schema can be small and JSON-first:
     {
       "id": "residual-001",
       "paths": ["internal/app/foo.go"],
-      "reason": "failing assertion points at parser branch not isolated by original atom"
+      "reason": "verification_failed",
+      "evidence_refs": [
+        {"kind": "required_path", "path": "internal/app/foo.go"},
+        {"kind": "changed_path", "path": "internal/app/foo.go"},
+        {"kind": "required_test", "id": "go test ./internal/app"}
+      ]
     }
   ],
   "candidate_atoms": [
@@ -299,8 +311,10 @@ Required behavior:
   symlink-ancestor checked before any packet write occurs; packet writes cannot
   target recovery control artifacts such as `failure.json` or
   `reconciliation.json`.
-  Future adapters may use `context_pack`, `context_trace_pack`,
-  `context_impact`, and test output to localize residual work more deeply.
+  Residual-work records cite required paths, changed paths, applicable failure
+  evidence, and generated required-test commands. Future adapters may attach
+  additional `context_pack`, `context_trace_pack`, `context_impact`, or bounded
+  failing-test metadata when those signals are available.
 - `promote` converts one candidate atom into a normal dispatchable brief only
   after required gates pass. It writes the brief and stops; it does not dispatch
   or mark the original failure recovered.
@@ -459,6 +473,8 @@ it moved into a recovery state, not like it vanished into a separate tool.
 
 ### Phase 2: Decomposition Packet Builder
 
+- Status: landed for plan-execute required/changed-path residuals with scoped
+  evidence refs and generated required-test command refs.
 - Build residual-work records from required paths, changed paths, failed edits,
   failing tests, and context graph impact.
 - Generate candidate atom boundaries from file ownership, test affinity,
