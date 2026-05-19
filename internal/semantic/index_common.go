@@ -2,6 +2,7 @@ package semantic
 
 import (
 	"cmp"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -57,7 +58,7 @@ func UniqueRankedPaths[T any](files []T, limit int) []string {
 }
 
 func FindFilesExactPartial[T any](files []T, pattern string) []string {
-	pattern = strings.TrimSpace(strings.ToLower(pattern))
+	pattern = normalizeSearchPath(pattern)
 	if pattern == "" {
 		return nil
 	}
@@ -65,8 +66,8 @@ func FindFilesExactPartial[T any](files []T, pattern string) []string {
 	partial := make([]string, 0)
 	for _, file := range files {
 		p := AnyPath(file)
-		base := strings.ToLower(filepath.Base(p))
-		full := strings.ToLower(p)
+		full := normalizeSearchPath(p)
+		base := path.Base(full)
 		switch {
 		case base == pattern || full == pattern:
 			exact = append(exact, p)
@@ -80,6 +81,13 @@ func FindFilesExactPartial[T any](files []T, pattern string) []string {
 	}
 	slices.Sort(partial)
 	return partial
+}
+
+func normalizeSearchPath(value string) string {
+	value = strings.TrimSpace(value)
+	value = strings.ReplaceAll(value, "\\", "/")
+	value = filepath.ToSlash(value)
+	return strings.ToLower(value)
 }
 
 func AnyPath(v any) string {

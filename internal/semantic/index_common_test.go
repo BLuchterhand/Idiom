@@ -168,3 +168,20 @@ func TestFindFilesExactPartial_FullPathExact(t *testing.T) {
 		t.Errorf("expected [src/main.cpp], got %v", result)
 	}
 }
+
+func TestFindFilesExactPartial_NormalizesPathSeparators(t *testing.T) {
+	files := []CppFile{
+		{Path: "src/main.cpp"},
+		{Path: `lib\worker.cpp`},
+	}
+
+	result := FindFilesExactPartial(files, `src\main.cpp`)
+	if len(result) != 1 || result[0] != "src/main.cpp" {
+		t.Errorf("expected [src/main.cpp], got %v", result)
+	}
+
+	result = FindFilesExactPartial(files, "worker.cpp")
+	if len(result) != 1 || result[0] != `lib\worker.cpp` {
+		t.Errorf("expected [lib\\worker.cpp], got %v", result)
+	}
+}
