@@ -105,6 +105,22 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 	}
 }
 
+func TestBuildToolSchemaExportNormalizesAllowedToolNames(t *testing.T) {
+	export, err := BuildToolSchemaExport([]string{" read_file ", "", "\tcontext_pack\n"})
+	if err != nil {
+		t.Fatalf("BuildToolSchemaExport returned error for padded allowed tools: %v", err)
+	}
+	var names []string
+	for _, tool := range export.Tools {
+		names = append(names, tool.Name)
+	}
+	slices.Sort(names)
+	want := []string{"context_pack", "read_file"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("expected normalized allowed tool export %v, got %v", want, names)
+	}
+}
+
 func TestBuildMCPDiscoveryToolSchemasDerivesFromDiscoveryProfileAndSemanticCapability(t *testing.T) {
 	tools, err := BuildMCPDiscoveryToolSchemas(ToolProfileDiscovery)
 	if err != nil {

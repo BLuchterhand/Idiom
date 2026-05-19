@@ -1,5 +1,7 @@
 package workspace
 
+import "strings"
+
 // ToolDefinition is the neutral form of an OpenAI-function-calling tool
 // spec. The agent layer converts this to llama.Tool before sending.
 // ParametersJSON is a raw JSON schema string; we keep it as text so
@@ -22,6 +24,7 @@ type ToolDefinition struct {
 func BuildToolDefinitions(allowedTools []string) []ToolDefinition {
 	allowed := make(map[string]struct{}, len(allowedTools))
 	for _, tool := range allowedTools {
+		tool = strings.TrimSpace(tool)
 		if tool != "" {
 			allowed[tool] = struct{}{}
 		}
