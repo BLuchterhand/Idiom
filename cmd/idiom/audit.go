@@ -996,7 +996,7 @@ func collectAuditWatchFiles(root string, paths []string) ([]auditWatchFile, erro
 			return nil, fmt.Errorf("stat audit watch path %s: %w", path, err)
 		}
 		if !info.IsDir() {
-			if filepath.Ext(abs) == ".jsonl" {
+			if auditWatchIsJSONL(abs) {
 				files = appendAuditWatchFile(files, seen, root, abs, info)
 			}
 			continue
@@ -1005,7 +1005,7 @@ func collectAuditWatchFiles(root string, paths []string) ([]auditWatchFile, erro
 			if walkErr != nil {
 				return walkErr
 			}
-			if entry.IsDir() || filepath.Ext(child) != ".jsonl" {
+			if entry.IsDir() || !auditWatchIsJSONL(child) {
 				return nil
 			}
 			info, err := entry.Info()
@@ -1025,6 +1025,10 @@ func collectAuditWatchFiles(root string, paths []string) ([]auditWatchFile, erro
 		)
 	})
 	return files, nil
+}
+
+func auditWatchIsJSONL(path string) bool {
+	return strings.EqualFold(filepath.Ext(path), ".jsonl")
 }
 
 func appendAuditWatchFile(files []auditWatchFile, seen map[string]struct{}, root string, path string, info os.FileInfo) []auditWatchFile {

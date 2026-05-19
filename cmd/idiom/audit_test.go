@@ -552,6 +552,20 @@ func TestAuditWatchHelpSkipsFlagValues(t *testing.T) {
 	}
 }
 
+func TestCollectAuditWatchFilesIncludesCaseInsensitiveJSONL(t *testing.T) {
+	root := t.TempDir()
+	writeAuditWatchFile(t, filepath.Join(root, "logs", "telemetry", "upper.JSONL"), "{}\n")
+	writeAuditWatchFile(t, filepath.Join(root, "logs", "telemetry", "skip.txt"), "{}\n")
+
+	files, err := collectAuditWatchFiles(root, []string{"logs/telemetry"})
+	if err != nil {
+		t.Fatalf("collectAuditWatchFiles returned error: %v", err)
+	}
+	if len(files) != 1 || files[0].DisplayPath != "logs/telemetry/upper.JSONL" {
+		t.Fatalf("expected uppercase JSONL log to be collected, got %#v", files)
+	}
+}
+
 func writeAuditWatchConfig(t *testing.T, root string) string {
 	t.Helper()
 	path := filepath.Join(root, "config.json")
