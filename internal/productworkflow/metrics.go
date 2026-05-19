@@ -3,6 +3,7 @@ package productworkflow
 import (
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -178,17 +179,34 @@ func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error)
 }
 
 func readMetricsArtifact(absRoot, relPath string) ([]byte, error) {
-	data, err := os.ReadFile(filepath.Join(absRoot, relPath))
+	cleanRelPath, ok := cleanMetricsArtifactPath(relPath)
+	if !ok {
+		return nil, metricsArtifactError("read", relPath, fmt.Errorf("artifact path must be effort-relative and must not contain traversal"))
+	}
+	data, err := os.ReadFile(filepath.Join(absRoot, filepath.FromSlash(cleanRelPath)))
 	if err != nil {
-		return nil, metricsArtifactError("read", relPath, err)
+		return nil, metricsArtifactError("read", cleanRelPath, err)
 	}
 	return data, nil
+}
+
+func cleanMetricsArtifactPath(relPath string) (string, bool) {
+	raw := strings.TrimSpace(relPath)
+	normalized := strings.ReplaceAll(filepath.ToSlash(raw), "\\", "/")
+	if normalized == "" || filepath.IsAbs(raw) || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
+		return "", false
+	}
+	clean := path.Clean(normalized)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return "", false
+	}
+	return clean, true
 }
 
 func metricsArtifactError(op, relPath string, err error) ProductWorkflowMetricsError {
 	return ProductWorkflowMetricsError{
 		Op:   op,
-		Path: filepath.ToSlash(relPath),
+		Path: strings.ReplaceAll(filepath.ToSlash(relPath), "\\", "/"),
 		Err:  err,
 	}
 }

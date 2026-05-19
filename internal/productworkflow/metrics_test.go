@@ -75,6 +75,18 @@ func TestProductWorkflowMetrics(t *testing.T) {
 		}
 	})
 
+	t.Run("rejects unsafe artifact paths", func(t *testing.T) {
+		root := writeMetricsFixture(t)
+		writeFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"metrics-effort","adrs":[{"adr_id":"ADR-1","title":"A","status":"accepted","path":"../../outside.md","coverage_tier":"unit","prd_refs":["REQ-1"],"created_at":"2026-05-17T00:00:00Z"}]}`)
+		if _, err := BuildProductWorkflowMetrics(root); err == nil {
+			t.Fatal("expected unsafe ADR path to fail closed")
+		} else if strings.Contains(err.Error(), root) {
+			t.Fatalf("metrics error should not leak absolute root path, got %q", err.Error())
+		} else if !strings.Contains(err.Error(), "artifact path must be effort-relative") {
+			t.Fatalf("expected unsafe artifact path error, got %q", err.Error())
+		}
+	})
+
 	t.Run("fails closed on unbounded metric values", func(t *testing.T) {
 		tests := []struct {
 			name    string
