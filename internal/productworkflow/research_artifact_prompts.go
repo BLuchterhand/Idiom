@@ -171,12 +171,29 @@ func researchPromptBoundaryFinding(effortRoot, absPath, relPath, outsideKind, la
 }
 
 func artifactCommandRecipe(promptPath, outputPath, eventsPath, reportPath string) string {
+	return artifactCommandRecipeWithValidator(promptPath, outputPath, eventsPath, reportPath, "")
+}
+
+func artifactCommandRecipeWithValidator(promptPath, outputPath, eventsPath, reportPath, validator string) string {
+	parts := []string{
+		"idiom artifact",
+		"--prompt-file " + shellQuoteArg(promptPath),
+		"--output " + shellQuoteArg(outputPath),
+		"--json-out " + shellQuoteArg(eventsPath),
+		"--report-out " + shellQuoteArg(reportPath),
+		"--no-tools",
+		"--mechanical-repair",
+	}
+	if strings.TrimSpace(validator) != "" {
+		parts = append(parts, "--validator "+shellQuoteArg(validator))
+	}
+	return strings.Join(parts, " ")
+}
+
+func productArtifactValidatorCommand(kind string) string {
 	return fmt.Sprintf(
-		"idiom artifact --prompt-file %s --output %s --json-out %s --report-out %s --no-tools --mechanical-repair",
-		shellQuoteArg(promptPath),
-		shellQuoteArg(outputPath),
-		shellQuoteArg(eventsPath),
-		shellQuoteArg(reportPath),
+		`idiom product validate-artifact --kind %s --path "$IDIOM_ARTIFACT"`,
+		shellQuoteArg(kind),
 	)
 }
 

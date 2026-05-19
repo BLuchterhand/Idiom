@@ -23,7 +23,9 @@ func TestPRDDraftPromptPlanDeterministic(t *testing.T) {
 	}
 	prompt := RenderPRDDraftPromptText(plan1)
 	assertContains(t, prompt, "PRD parser/audit contract")
-	assertContains(t, prompt, "tdd_obligations (when known)")
+	assertContains(t, prompt, "Do not use markdown tables for requirements")
+	assertContains(t, prompt, "- **tdd_obligations**:")
+	assertContains(t, prompt, "Inline array fields must use bracket syntax")
 	assertContains(t, prompt, "Preserve unsupported claims and conflicts as open questions or explicitly labeled inference.")
 	assertContains(t, prompt, "Do not claim acceptance, approval, or final decision status.")
 	assertContains(t, prompt, "Evidence cards (2 total):")

@@ -796,6 +796,9 @@ func validateADRIndex(idx ADRIndex) error {
 		if len(entry.PRDRefs) == 0 {
 			errs = append(errs, fmt.Errorf("%s missing prd_refs", prefix))
 		}
+		if entry.CoverageTier != "" && !allowedCoverageTiers[entry.CoverageTier] {
+			errs = append(errs, fmt.Errorf("%s invalid coverage_tier %q", prefix, entry.CoverageTier))
+		}
 	}
 	for _, linkErr := range ValidateADRIndexSupersessionLinks(idx) {
 		errs = append(errs, errors.New(linkErr.Message))
@@ -832,6 +835,9 @@ func validateADR(doc ADRDocument) error {
 		errs = append(errs, errors.New("ADR front matter missing tdd_obligations"))
 	}
 	require(&errs, doc.FrontMatter.CoverageTier, "ADR front matter missing coverage_tier")
+	if doc.FrontMatter.CoverageTier != "" && !allowedCoverageTiers[doc.FrontMatter.CoverageTier] {
+		errs = append(errs, fmt.Errorf("ADR front matter invalid coverage_tier %q", doc.FrontMatter.CoverageTier))
+	}
 	if !doc.Sections.HasContext {
 		errs = append(errs, errors.New("ADR body missing ## Context section"))
 	}

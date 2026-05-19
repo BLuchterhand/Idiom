@@ -17,6 +17,13 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 	if plan.CoverageTier == "" {
 		plan.CoverageTier = "unit"
 	}
+	obligationByID := map[string]TDDObligation{}
+	for _, obligation := range ledger.Obligations {
+		id := strings.TrimSpace(obligation.ID)
+		if id != "" {
+			obligationByID[id] = obligation
+		}
+	}
 	if !isAcceptedArtifact(prd.FrontMatter.Status) {
 		plan.Findings = append(plan.Findings, TDDObligationPlanFinding{
 			Kind:     "unaccepted_prd",
@@ -90,11 +97,18 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			if ownerPath == "" {
 				ownerPath = adr.RelPath
 			}
+			existingRefs := stableUniqueStrings(append(req.TDDObligations, adr.Doc.FrontMatter.TDDObligations...))
 			suggestedType, command := suggestedTDDPlanForTier(coverageTier)
+			if existingType, existingCommand := existingTDDPlan(existingRefs, obligationByID); existingCommand != "" {
+				if existingType != "" {
+					suggestedType = existingType
+				}
+				command = existingCommand
+			}
 			plan.Obligations = append(plan.Obligations, TDDObligationPlanItem{
 				PRDRequirementRef:      req.ID,
 				ADRRef:                 adr.Doc.FrontMatter.ADRID,
-				ExistingObligationRefs: stableUniqueStrings(append(req.TDDObligations, adr.Doc.FrontMatter.TDDObligations...)),
+				ExistingObligationRefs: existingRefs,
 				EvidenceRefs:           stableUniqueStrings(append(req.EvidenceRefs, adr.Doc.FrontMatter.EvidenceRefs...)),
 				CoverageTier:           coverageTier,
 				SuggestedType:          suggestedType,
@@ -119,6 +133,21 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 		return plan.Findings[i].Severity > plan.Findings[j].Severity
 	})
 	return plan
+}
+
+func existingTDDPlan(refs []string, obligationByID map[string]TDDObligation) (string, string) {
+	for _, ref := range refs {
+		obligation, ok := obligationByID[strings.TrimSpace(ref)]
+		if !ok {
+			continue
+		}
+		command := strings.TrimSpace(obligation.Command)
+		if command == "" {
+			continue
+		}
+		return strings.TrimSpace(obligation.Type), command
+	}
+	return "", ""
 }
 
 func TDDObligationPlanHasBlockers(plan TDDObligationSynthesisPlan) bool {

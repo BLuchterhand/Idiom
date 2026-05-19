@@ -44,6 +44,8 @@ func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 		return runProductBrief(args[1:], stdout, stderr, rec)
 	case "feedback":
 		return runProductFeedback(args[1:], stdout, stderr, rec)
+	case "validate-artifact":
+		return runProductValidateArtifact(args[1:], stdout, stderr, rec)
 	case "-h", "--help", "help":
 		printProductUsage(stdout)
 		return 0
@@ -70,6 +72,7 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --plan-obligations [--json]")
 	fmt.Fprintln(w, "  idiom product tdd --effort-root <path> --evaluate-coverage [--json]")
 	fmt.Fprintln(w, "  idiom product brief --effort-root <path> --render [--brief-output briefs/<task>.md] [--json]")
+	fmt.Fprintln(w, "  idiom product validate-artifact --kind prd|adr --path <artifact-path> [--json]")
 	fmt.Fprintln(w, "  idiom product feedback --effort-root <path> --lane-history-file <path> --plan-progress-file <path> --product-evidence-id <id> --product-evidence-path <path> --release-evidence-id <id> --release-evidence-path <path> --verification-file <path> --brief-path <path> --changed-path <path> --tdd-obligation-ref <id> [--json]")
 	fmt.Fprintln(w, "  idiom product feedback --effort-root <path> --reconcile-summary <path> --reconciled-state-output <path> [--json]")
 	fmt.Fprintln(w)
@@ -79,6 +82,88 @@ func printProductUsage(w io.Writer) {
 	fmt.Fprintln(w, "and all JSON report files.")
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Exit codes: 0 pass, 1 lint findings, 2 usage error.")
+}
+
+type productValidateArtifactOutput struct {
+	Status          string `json:"status"`
+	Kind            string `json:"kind"`
+	Path            string `json:"path"`
+	Error           string `json:"error,omitempty"`
+	NextValidAction string `json:"next_valid_action"`
+}
+
+func runProductValidateArtifact(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
+	fs := flag.NewFlagSet("idiom product validate-artifact", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	var kind string
+	var path string
+	var jsonOutput bool
+	fs.StringVar(&kind, "kind", "", "artifact kind to validate: prd or adr")
+	fs.StringVar(&path, "path", "", "path to the generated artifact")
+	fs.BoolVar(&jsonOutput, "json", false, "emit structured JSON output")
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			return 0
+		}
+		return 2
+	}
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "prd" && kind != "adr" {
+		fmt.Fprintln(stderr, "product validate-artifact: --kind must be prd or adr")
+		return 2
+	}
+	if strings.TrimSpace(path) == "" {
+		fmt.Fprintln(stderr, "product validate-artifact: --path is required")
+		return 2
+	}
+	cleanPath := filepath.Clean(path)
+	data, err := os.ReadFile(cleanPath)
+	out := productValidateArtifactOutput{
+		Status:          "pass",
+		Kind:            kind,
+		Path:            cleanPath,
+		NextValidAction: "artifact is parser-valid for product workflow intake",
+	}
+	if err != nil {
+		out.Status = "fail"
+		out.Error = fmt.Sprintf("read artifact: %v", err)
+		out.NextValidAction = "regenerate or repair the artifact before continuing"
+	} else {
+		switch kind {
+		case "prd":
+			_, err = productworkflow.ParsePRDMarkdown(data)
+		case "adr":
+			_, err = productworkflow.ParseADRMarkdown(data)
+		}
+		if err != nil {
+			out.Status = "fail"
+			out.Error = err.Error()
+			out.NextValidAction = "regenerate or repair the artifact before continuing"
+		}
+	}
+	logCLIPhase(rec, "product_validate_artifact", map[string]any{
+		"status": out.Status,
+		"kind":   kind,
+	})
+	if jsonOutput {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			fmt.Fprintf(stderr, "product validate-artifact: encode JSON: %v\n", err)
+			return 1
+		}
+	} else if out.Status == "pass" {
+		fmt.Fprintf(stdout, "product validate-artifact: %s %s OK\n", out.Kind, out.Path)
+		fmt.Fprintf(stdout, "  next: %s\n", out.NextValidAction)
+	} else {
+		fmt.Fprintf(stdout, "product validate-artifact: %s %s FAILED\n", out.Kind, out.Path)
+		fmt.Fprintf(stdout, "  error: %s\n", out.Error)
+		fmt.Fprintf(stdout, "  next: %s\n", out.NextValidAction)
+	}
+	if out.Status != "pass" {
+		return 1
+	}
+	return 0
 }
 
 func runProductLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

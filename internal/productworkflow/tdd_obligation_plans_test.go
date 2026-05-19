@@ -43,6 +43,50 @@ func TestTDDObligationPlanSynthesizesFromAcceptedPRDAndADR(t *testing.T) {
 	}
 }
 
+func TestTDDObligationPlanReusesExistingLedgerCommand(t *testing.T) {
+	prd := PRDDocument{
+		FrontMatter: PRDFrontMatter{Status: "accepted"},
+		Requirements: []PRDRequirement{
+			{ID: "REQ-1", Priority: "must", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-NPM"}},
+		},
+	}
+	adrs := []ParsedADR{
+		{
+			RelPath: "adrs/ADR-1.md",
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					PRDRefs:        []string{"REQ-1"},
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-NPM"},
+					CoverageTier:   "behavior_standard",
+				},
+			},
+		},
+	}
+	ledger := TDDLedger{
+		CoverageTier: "behavior_standard",
+		Obligations: []TDDObligation{
+			{ID: "TDD-NPM", Type: "acceptance", Owner: "greeting.test.js", Command: "npm test"},
+		},
+	}
+	plan := PlanTDDObligations(prd, adrs, ledger, nil)
+	if len(plan.Findings) != 0 {
+		t.Fatalf("expected no findings, got %#v", plan.Findings)
+	}
+	if len(plan.Obligations) != 1 {
+		t.Fatalf("expected one obligation, got %#v", plan.Obligations)
+	}
+	got := plan.Obligations[0]
+	if got.Command != "npm test" {
+		t.Fatalf("expected ledger command to win, got %#v", got)
+	}
+	if got.SuggestedType != "acceptance" {
+		t.Fatalf("expected ledger type to win, got %#v", got)
+	}
+}
+
 func TestTDDObligationPlanAddsBlockerWhenADRMappingUnavailable(t *testing.T) {
 	prd := PRDDocument{
 		FrontMatter: PRDFrontMatter{Status: "accepted"},

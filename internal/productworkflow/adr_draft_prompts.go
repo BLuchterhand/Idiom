@@ -91,7 +91,7 @@ func PlanADRDraftPrompt(effortRoot, promptPath, adrOutputPath string, evidence [
 	sort.Strings(plan.PRDRequirementIDs)
 	plan.EvidenceCardCount = len(plan.EvidenceCardIDs)
 	plan.PRDRequirementCount = len(plan.PRDRequirementIDs)
-	plan.Command = artifactCommandRecipe(plan.PromptPath, plan.ADROutputPath, plan.EventsPath, plan.ReportPath)
+	plan.Command = artifactCommandRecipeWithValidator(plan.PromptPath, plan.ADROutputPath, plan.EventsPath, plan.ReportPath, productArtifactValidatorCommand("adr"))
 	sortProfileFindings(plan.Findings)
 	return plan
 }
@@ -102,7 +102,8 @@ func RenderADRDraftPromptText(plan ADRDraftPromptPlan) string {
 	b.WriteString("ADR contract requirements:\n")
 	b.WriteString("- Follow the existing ADR parser/audit contract.\n")
 	b.WriteString("- Include front matter fields: schema_version, adr_id, status, prd_refs, evidence_refs, tdd_obligations, coverage_tier.\n")
-	b.WriteString("- Keep acceptance metadata fields empty unless a human explicitly provided them: accepted_at, accepted_by, acceptance_profile.\n")
+	b.WriteString("- Use status: draft. Keep acceptance metadata fields empty unless a human explicitly provided them: accepted_at, accepted_by, acceptance_profile.\n")
+	b.WriteString("- coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional. Do not use priority words such as must, should, or could as coverage tiers.\n")
 	b.WriteString("- Body sections are required: Context, Decision, Alternatives Considered, Evidence, Consequences, Compatibility and Migration, TDD Obligations, Rollback, Open Questions.\n")
 	b.WriteString("- Cite PRD requirement IDs from the supplied PRD requirement list and evidence card IDs from the supplied evidence list.\n")
 	b.WriteString("- Preserve conflicts and unsupported claims as open questions or explicitly labeled inference.\n")

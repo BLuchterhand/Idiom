@@ -28,6 +28,8 @@ func TestADRDraftPromptPlanDeterministic(t *testing.T) {
 	prompt := RenderADRDraftPromptText(plan1)
 	assertContains(t, prompt, "ADR parser/audit contract")
 	assertContains(t, prompt, "Keep acceptance metadata fields empty unless a human explicitly provided them")
+	assertContains(t, prompt, "coverage_tier must be one of: documentation, unit, local_low, behavior_standard, contract_high, formal_optional")
+	assertContains(t, prompt, "Do not use priority words such as must, should, or could as coverage tiers")
 	assertContains(t, prompt, "Do not claim acceptance, approval, or supersession.")
 	assertContains(t, prompt, "PRD requirements (2 total):")
 	assertContains(t, prompt, "Evidence cards (2 total):")

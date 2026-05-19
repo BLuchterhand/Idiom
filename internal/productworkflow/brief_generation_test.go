@@ -24,7 +24,7 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 		TDD: TDDLedger{
 			TaskID: "impl-0028",
 			Obligations: []TDDObligation{
-				{ID: "TDD-1", Command: "go test ./..."},
+				{ID: "TDD-1", Owner: "greeting.test.js", Command: "npm test"},
 			},
 		},
 		ImplementationRecords: []ImplementationLedgerRecord{
@@ -42,6 +42,23 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 	}
 	if strings.Index(a.RenderedBrief, "`a.go`") > strings.Index(a.RenderedBrief, "`b.go`") {
 		t.Fatalf("files should be sorted in rendered brief:\n%s", a.RenderedBrief)
+	}
+	for _, unexpected := range []string{
+		"Do not dispatch work",
+		"- npm test\n",
+	} {
+		if strings.Contains(a.RenderedBrief, unexpected) {
+			t.Fatalf("brief contains unexpected text %q:\n%s", unexpected, a.RenderedBrief)
+		}
+	}
+	for _, expected := range []string{
+		"`greeting.test.js`",
+		"`package.json`",
+		"`npm test` passes.",
+	} {
+		if !strings.Contains(a.RenderedBrief, expected) {
+			t.Fatalf("brief missing expected text %q:\n%s", expected, a.RenderedBrief)
+		}
 	}
 	for _, section := range []string{
 		"## Files To Modify",

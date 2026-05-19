@@ -51,7 +51,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		briefArtifactPath(input.ArtifactRootPath, "adrs/index.json"),
 		briefArtifactPath(input.ArtifactRootPath, "tdd.json"),
 		briefArtifactPath(input.ArtifactRootPath, "evidence/traceability_matrix.json"),
-	}, collectAcceptedADRPaths(input.ArtifactRootPath, input.ADRs)...))
+	}, append(collectAcceptedADRPaths(input.ArtifactRootPath, input.ADRs), collectTDDReadFirstPaths(input.TDD)...)...))
 
 	out.VerifiedCurrentState = append(out.VerifiedCurrentState,
 		fmt.Sprintf("workflow_state: %s/%s (task_id=%s)", input.WorkflowState.CurrentPhase, input.WorkflowState.CurrentState, input.WorkflowState.TaskID),
@@ -72,7 +72,6 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 	}
 
 	out.Constraints = append(out.Constraints,
-		"Do not dispatch work, execute models, or start lane execution from this brief.",
 		"Do not mutate durable workflow artifacts except the requested brief output path.",
 		"Do not edit files outside the Files To Modify allowlist.",
 		"Preserve privacy: do not store raw prompts, raw transcripts, file bodies, secrets, generated brief bodies, or customer-identifying data in durable reports.",
@@ -166,7 +165,7 @@ func renderImplementationBriefMarkdown(result BriefGenerationResult) string {
 	}
 	b.WriteString("\n## Acceptance\n\n")
 	for _, line := range result.Acceptance {
-		if strings.HasPrefix(line, "go ") || strings.HasPrefix(line, "git ") || strings.HasPrefix(line, "idiom ") {
+		if briefLooksLikeCommand(line) {
 			b.WriteString("- `")
 			b.WriteString(line)
 			b.WriteString("` passes.\n")
@@ -185,6 +184,16 @@ func renderImplementationBriefMarkdown(result BriefGenerationResult) string {
 	b.WriteString("\n## Stop Rule\n\n")
 	b.WriteString("Stop and report a blocker if required facts are missing, stale, contradicted, or outside the allowed scope.\n")
 	return b.String()
+}
+
+func briefLooksLikeCommand(line string) bool {
+	command := strings.TrimSpace(line)
+	for _, prefix := range []string{"go ", "git ", "idiom ", "npm ", "yarn ", "pnpm ", "node "} {
+		if strings.HasPrefix(command, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func briefArtifactPath(artifactRoot, relPath string) string {
@@ -224,6 +233,33 @@ func collectAcceptedADRIDs(adrs []ParsedADR) []string {
 		}
 	}
 	return briefUniqueSortedStrings(ids)
+}
+
+func collectTDDReadFirstPaths(ledger TDDLedger) []string {
+	paths := []string{}
+	needsPackageManifest := false
+	for _, obligation := range ledger.Obligations {
+		owner := strings.TrimSpace(filepath.ToSlash(obligation.Owner))
+		if owner != "" && looksLikeWorkspaceFile(owner) {
+			paths = append(paths, owner)
+		}
+		command := strings.TrimSpace(obligation.Command)
+		if strings.HasPrefix(command, "npm ") || strings.HasPrefix(command, "yarn ") || strings.HasPrefix(command, "pnpm ") {
+			needsPackageManifest = true
+		}
+	}
+	if needsPackageManifest {
+		paths = append(paths, "package.json")
+	}
+	return briefUniqueSortedStrings(paths)
+}
+
+func looksLikeWorkspaceFile(path string) bool {
+	if path == "" || filepath.IsAbs(path) {
+		return false
+	}
+	clean := filepath.ToSlash(filepath.Clean(path))
+	return clean != "." && clean != ".." && !strings.HasPrefix(clean, "../")
 }
 
 func collectPlannedScopeFiles(records []ImplementationLedgerRecord, taskID string) []string {

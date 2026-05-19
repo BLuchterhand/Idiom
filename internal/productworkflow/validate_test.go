@@ -871,6 +871,68 @@ func TestValidAllCoverageTiersAccepted(t *testing.T) {
 	}
 }
 
+func TestADRInvalidCoverageTierFailsClosed(t *testing.T) {
+	adr := []byte(`---
+schema_version: idiom.adr.v1
+adr_id: ADR-1
+status: draft
+prd_refs: [REQ-1]
+evidence_refs: [EV-1]
+tdd_obligations: [TDD-1]
+coverage_tier: must
+---
+# ADR
+
+## Context
+x
+## Decision
+x
+## Alternatives Considered
+x
+## Evidence
+x
+## Consequences
+x
+## Compatibility and Migration
+x
+## TDD Obligations
+x
+## Rollback
+x
+## Open Questions
+x
+`)
+	_, err := ParseADRMarkdown(adr)
+	if err == nil {
+		t.Fatal("expected invalid ADR coverage tier to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid coverage_tier") {
+		t.Fatalf("expected coverage tier error, got %v", err)
+	}
+}
+
+func TestADRIndexInvalidCoverageTierFailsClosed(t *testing.T) {
+	_, err := ParseADRIndexJSON([]byte(`{
+  "schema_version":"v1",
+  "effort_id":"test-effort",
+  "adrs":[{
+    "adr_id":"ADR-1",
+    "title":"Test",
+    "status":"draft",
+    "path":"ADR-1.md",
+    "coverage_tier":"must",
+    "prd_refs":["REQ-1"],
+    "created_at":"2026-05-17T00:00:00Z"
+  }]
+}`))
+	if err == nil {
+		t.Fatal("expected invalid ADR index coverage tier to fail")
+	}
+	if !strings.Contains(err.Error(), "invalid coverage_tier") {
+		t.Fatalf("expected coverage tier error, got %v", err)
+	}
+}
+
 func TestValidAllObligationTypesAccepted(t *testing.T) {
 	types := []string{"characterization", "regression", "acceptance", "contract", "source_sanity", "eval", "audit", "property_based", "fmea_negative", "hazop_deviation", "decision_table", "boundary_value", "mutation_score", "post_mortem", "manual"}
 	for _, typ := range types {
