@@ -66,4 +66,9 @@ func TestFileByPathNormalizesPathSeparators(t *testing.T) {
 	if got := tsIndex.FileByPath(`src\app.ts`); got == nil || got.Path != "src/app.ts" {
 		t.Fatalf("TypeScript FileByPath should normalize caller path separators, got %#v", got)
 	}
+
+	cppIndex := &CppIndex{Files: []CppFile{{Path: "src/native/app.cpp"}}}
+	if got := cppIndex.FileByPath(`src\native\app.cpp`); got == nil || got.Path != "src/native/app.cpp" {
+		t.Fatalf("C++ FileByPath should normalize caller path separators, got %#v", got)
+	}
 }
