@@ -994,6 +994,33 @@ func TestLoadPlanArtifactRejectsNoOpLegacyEdit(t *testing.T) {
 	}
 }
 
+func TestValidatePlanArtifactRejectsBackslashTraversalPath(t *testing.T) {
+	artifact := PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-backslash-traversal",
+		Created:       "2026-05-19T00:00:00Z",
+		Task:          PlanArtifactTask{ID: "task-backslash-traversal"},
+		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
+		Packet:        PlanArtifactPacket{Status: "not_provided"},
+		Paths:         PlanArtifactPaths{Editable: []string{"safe.txt"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "planner_submission", Summary: "test"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Kind:     "test",
+			Command:  "go test ./internal/workspace",
+			Owner:    "planner",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{Status: "implicit", ScopeID: "scope-test", ExecutionPermission: "execute_all"},
+		Handoff:  PlanArtifactHandoff{ID: "handoff-test", Status: "ready"},
+		Edits:    []PlanEdit{{Path: `..\secret.txt`, OldText: "old", NewText: "new"}},
+	}
+
+	err := ValidatePlanArtifact(artifact)
+	if err == nil || !strings.Contains(err.Error(), "edits[0].path") {
+		t.Fatalf("expected invalid edit path error, got %v", err)
+	}
+}
+
 func TestPlanArtifactClientClassificationExamplesCoverApprovedClasses(t *testing.T) {
 	for _, class := range approvedPlanArtifactClientClasses() {
 		artifact := normalizePlanArtifactForSubmit(PlanArtifact{

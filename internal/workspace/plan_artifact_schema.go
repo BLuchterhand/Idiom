@@ -725,6 +725,7 @@ func firstNonEmptyStrings(primary []string, fallback []string) []string {
 
 func planArtifactPathIsSafe(path string) bool {
 	path = strings.TrimSpace(path)
+	path = strings.ReplaceAll(path, "\\", "/")
 	if path == "" || filepath.IsAbs(path) || strings.ContainsRune(path, 0) {
 		return false
 	}
@@ -735,6 +736,10 @@ func planArtifactPathIsSafe(path string) bool {
 func sanitizePlanArtifactPathValue(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" || planArtifactTextLooksSensitive(value) {
+		return ""
+	}
+	value = strings.ReplaceAll(value, "\\", "/")
+	if !planArtifactPathIsSafe(value) {
 		return ""
 	}
 	value = filepath.ToSlash(filepath.Clean(filepath.FromSlash(value)))
