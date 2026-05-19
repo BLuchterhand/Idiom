@@ -22,7 +22,7 @@ func TestADRDraftPromptPlanDeterministic(t *testing.T) {
 	if canonicalADRDraftPlan(plan1) != canonicalADRDraftPlan(plan2) {
 		t.Fatalf("expected deterministic ADR draft prompt plan")
 	}
-	if plan1.Command != "idiom artifact --prompt-file adrs/adr.prompt.md --output adrs/ADR-draft.md --json-out events/adr-draft.events.jsonl --report-out reports/adr-draft.report.json --no-tools --mechanical-repair" {
+	if plan1.Command != `idiom artifact --prompt-file adrs/adr.prompt.md --output adrs/ADR-draft.md --json-out events/adr-draft.events.jsonl --report-out reports/adr-draft.report.json --no-tools --mechanical-repair --validator 'idiom product validate-artifact --kind adr --path "$IDIOM_ARTIFACT"'` {
 		t.Fatalf("unexpected command recipe: %q", plan1.Command)
 	}
 	prompt := RenderADRDraftPromptText(plan1)

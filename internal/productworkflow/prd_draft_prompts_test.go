@@ -18,7 +18,7 @@ func TestPRDDraftPromptPlanDeterministic(t *testing.T) {
 	if canonicalPRDDraftPlan(plan1) != canonicalPRDDraftPlan(plan2) {
 		t.Fatalf("expected deterministic PRD draft prompt plan")
 	}
-	if plan1.Command != "idiom artifact --prompt-file prd.prompt.md --output prd.md --json-out events/prd-draft.events.jsonl --report-out reports/prd-draft.report.json --no-tools --mechanical-repair" {
+	if plan1.Command != `idiom artifact --prompt-file prd.prompt.md --output prd.md --json-out events/prd-draft.events.jsonl --report-out reports/prd-draft.report.json --no-tools --mechanical-repair --validator 'idiom product validate-artifact --kind prd --path "$IDIOM_ARTIFACT"'` {
 		t.Fatalf("unexpected command recipe: %q", plan1.Command)
 	}
 	prompt := RenderPRDDraftPromptText(plan1)
