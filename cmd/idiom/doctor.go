@@ -356,8 +356,8 @@ func checkWorkspaceWritable(configPath string) checkResult {
 			remedy: "set workspace.root in .idiom/config.json",
 		}
 	}
-	probe := filepath.Join(root, ".idiom-doctor-write-probe")
-	if err := os.WriteFile(probe, []byte("probe"), 0o644); err != nil {
+	probe, err := os.CreateTemp(root, ".idiom-doctor-write-probe-*")
+	if err != nil {
 		return checkResult{
 			name:   "workspace writable",
 			status: "fail",
@@ -365,7 +365,9 @@ func checkWorkspaceWritable(configPath string) checkResult {
 			remedy: "check filesystem permissions on the workspace root, or change workspace.root in config",
 		}
 	}
-	_ = os.Remove(probe)
+	probePath := probe.Name()
+	_ = probe.Close()
+	_ = os.Remove(probePath)
 	return checkResult{
 		name:   "workspace writable",
 		status: "pass",

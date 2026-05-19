@@ -146,6 +146,29 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 	}
 }
 
+func TestCheckWorkspaceWritableDoesNotClobberFixedProbeName(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	stageDoctorConfig(t, dir)
+	probe := filepath.Join(dir, ".idiom-doctor-write-probe")
+	if err := os.WriteFile(probe, []byte("keep"), 0o644); err != nil {
+		t.Fatalf("stage fixed probe file: %v", err)
+	}
+
+	result := checkWorkspaceWritable(filepath.Join(dir, ".idiom", "config.json"))
+
+	if result.status != "pass" {
+		t.Fatalf("expected writable workspace, got %#v", result)
+	}
+	data, err := os.ReadFile(probe)
+	if err != nil {
+		t.Fatalf("fixed probe file should still exist: %v", err)
+	}
+	if string(data) != "keep" {
+		t.Fatalf("fixed probe file was clobbered: %q", string(data))
+	}
+}
+
 func TestDoctorReadinessGatePolicyBlocksMissingBackendRolesForPlanAndImplement(t *testing.T) {
 	dir := t.TempDir()
 	t.Chdir(dir)
