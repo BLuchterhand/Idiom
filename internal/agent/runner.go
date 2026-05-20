@@ -2483,19 +2483,26 @@ func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []worker
 	}
 	required := make(map[string]struct{}, len(brief.RequiredTools))
 	for _, tool := range brief.RequiredTools {
-		tool = strings.TrimSpace(tool)
-		if tool != "" {
-			required[tool] = struct{}{}
+		for _, concrete := range textualToolProtocolConcreteRequiredTools(tool) {
+			if concrete != "" {
+				required[concrete] = struct{}{}
+			}
 		}
 	}
 	selected := make([]workerruntime.ToolManifestEntry, 0, len(brief.ToolManifest))
-	seen := make(map[string]struct{}, len(brief.ToolManifest))
+	seenEntries := make(map[string]struct{}, len(brief.ToolManifest))
+	seenTools := make(map[string]struct{}, len(brief.ToolManifest))
 	if len(required) > 0 {
 		for _, entry := range brief.ToolManifest {
 			tool := strings.TrimSpace(entry.Tool)
 			if _, ok := required[tool]; ok {
+				key := textualToolProtocolEntryKey(entry)
+				if _, seen := seenEntries[key]; seen {
+					continue
+				}
 				selected = append(selected, entry)
-				seen[tool] = struct{}{}
+				seenEntries[key] = struct{}{}
+				seenTools[tool] = struct{}{}
 			}
 		}
 	}
@@ -2508,13 +2515,37 @@ func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []worker
 		if tool == "" {
 			continue
 		}
-		if _, ok := seen[tool]; ok {
+		if _, ok := seenTools[tool]; ok {
+			continue
+		}
+		key := textualToolProtocolEntryKey(entry)
+		if _, seen := seenEntries[key]; seen {
 			continue
 		}
 		selected = append(selected, entry)
-		seen[tool] = struct{}{}
+		seenEntries[key] = struct{}{}
+		seenTools[tool] = struct{}{}
 	}
 	return selected
+}
+
+func textualToolProtocolConcreteRequiredTools(tool string) []string {
+	tool = strings.TrimSpace(tool)
+	switch tool {
+	case "edit_file_or_apply_patch":
+		return []string{"edit_file", "write_file", "append_file", "apply_patch"}
+	case "source_sanity_or_verification_shell", "verification_shell":
+		return []string{"source_sanity", "shell"}
+	default:
+		if tool == "" {
+			return nil
+		}
+		return []string{tool}
+	}
+}
+
+func textualToolProtocolEntryKey(entry workerruntime.ToolManifestEntry) string {
+	return strings.TrimSpace(entry.Tool) + "\x00" + strings.TrimSpace(entry.Request)
 }
 
 func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {

@@ -671,6 +671,73 @@ func TestTextOnlyChatOptionsUsesContractAwareCaps(t *testing.T) {
 	}
 }
 
+func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		AllowedTools: []string{
+			"read_file",
+			"code_navigate",
+			"source_sanity",
+			"context_status",
+			"context_query",
+			"context_zoom",
+			"context_pack",
+			"context_impact",
+			"discovery_query",
+			"structural_search",
+			"mkdir",
+			"edit_file",
+			"write_file",
+			"append_file",
+			"apply_patch",
+		},
+		RequiredTools: []string{"edit_file_or_apply_patch", "semantic_discovery_or_narrow_read_for_named_gap"},
+		ToolManifest: workerruntime.BuildToolManifest([]string{
+			"read_file",
+			"code_navigate",
+			"source_sanity",
+			"context_status",
+			"context_query",
+			"context_zoom",
+			"context_pack",
+			"context_impact",
+			"discovery_query",
+			"structural_search",
+			"mkdir",
+			"edit_file",
+			"write_file",
+			"append_file",
+			"apply_patch",
+		}),
+	}
+
+	entries := textualToolProtocolEntries(brief)
+	if len(entries) > 8 {
+		t.Fatalf("expected textual protocol entries to honor cap, got %d entries", len(entries))
+	}
+	if len(entries) < 5 {
+		t.Fatalf("expected write examples to be selected, got %#v", entries)
+	}
+	for _, want := range []string{"edit_file", "write_file", "append_file", "apply_patch"} {
+		found := false
+		for _, entry := range entries {
+			if entry.Tool != want {
+				continue
+			}
+			found = true
+			var request map[string]any
+			if err := json.Unmarshal([]byte(entry.Request), &request); err != nil {
+				t.Fatalf("%s request is not valid JSON: %v\n%s", want, err, entry.Request)
+			}
+			if got, _ := request["description"].(string); strings.TrimSpace(got) == "" {
+				t.Fatalf("%s textual protocol example must include description: %s", want, entry.Request)
+			}
+		}
+		if !found {
+			t.Fatalf("expected textual protocol entries to include %s before read examples, got %#v", want, entries)
+		}
+	}
+}
+
 func TestPinnedPathsFromToolResultsRejectsToolJSONFragments(t *testing.T) {
 	paths := pinnedPathsFromToolResults([]workspace.ToolResult{
 		{

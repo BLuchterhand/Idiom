@@ -77,7 +77,14 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	record("hazop", requireContract, hazopPass, fmt.Sprintf("expected hazop_deviations_tested == hazop_deviations_total (%d/%d)", ledger.Coverage.HAZOPDeviationsTested, ledger.Coverage.HAZOPDeviationsTotal), "tdd.json", "coverage_hazop_incomplete")
 
 	pbtPass := ledger.Coverage.InvariantsTotal == 0 || ledger.Coverage.InvariantsWithPBT == ledger.Coverage.InvariantsTotal
-	record("pbt", requireContract, pbtPass, fmt.Sprintf("expected invariants_with_pbt == invariants_total (%d/%d)", ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal), "tdd.json", "coverage_pbt_incomplete")
+	if requireContract && ledger.Coverage.InvariantsTotal == 0 {
+		// Property-based coverage must fail closed when invariants_total is zero
+		// because no invariant inventory means property-based obligations were not planned.
+		pbtPass = false
+		record("pbt", requireContract, pbtPass, fmt.Sprintf("expected invariants_with_pbt == invariants_total (%d/%d), but invariants_total is zero (no property-based obligations planned)", ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal), "tdd.json", "coverage_pbt_incomplete")
+	} else {
+		record("pbt", requireContract, pbtPass, fmt.Sprintf("expected invariants_with_pbt == invariants_total (%d/%d)", ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal), "tdd.json", "coverage_pbt_incomplete")
+	}
 
 	decisionRequired := requireContract && ledger.Coverage.DecisionTablesTotal > 0
 	decisionPass := ledger.Coverage.DecisionTablesTotal == 0 || ledger.Coverage.DecisionTablesEnumerated == ledger.Coverage.DecisionTablesTotal

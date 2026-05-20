@@ -466,3 +466,88 @@ func TestBuildKnownTDDObligationIDsScopesHistoricalRecords(t *testing.T) {
 		}
 	}
 }
+
+func TestCoverageGateBlocksContractTiersWhenPBTInvariantTotalIsZero(t *testing.T) {
+	for _, tier := range []string{"contract_high", "formal_optional"} {
+		t.Run(tier, func(t *testing.T) {
+			eval := coverageGateEvalWithZeroInvariants(tier)
+			if eval.Status != "blocked" {
+				t.Fatalf("expected blocked, got %q", eval.Status)
+			}
+
+			foundPBT := false
+			for _, blocker := range eval.Blockers {
+				if blocker.Criterion == "pbt" {
+					foundPBT = true
+					if !strings.Contains(blocker.Message, "invariants_total is zero") {
+						t.Fatalf("blocker message should mention invariants_total is zero, got: %s", blocker.Message)
+					}
+					break
+				}
+			}
+			if !foundPBT {
+				t.Fatalf("expected pbt blocker, got %#v", eval.Blockers)
+			}
+		})
+	}
+}
+
+func TestCoverageGateDoesNotBlockLowerTiersWhenPBTInvariantTotalIsZero(t *testing.T) {
+	for _, tier := range []string{"documentation", "local_low", "unit", "behavior_standard"} {
+		t.Run(tier, func(t *testing.T) {
+			eval := coverageGateEvalWithZeroInvariants(tier)
+			if eval.Status != "pass" {
+				t.Fatalf("expected pass, got %q", eval.Status)
+			}
+
+			for _, blocker := range eval.Blockers {
+				if blocker.Criterion == "pbt" {
+					t.Fatalf("expected no pbt blocker in %s tier, got %#v", tier, eval.Blockers)
+				}
+			}
+		})
+	}
+}
+
+func coverageGateEvalWithZeroInvariants(tier string) CoverageGateEvaluation {
+	return EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:        "ADR-1",
+					Status:       "accepted",
+					EvidenceRefs: []string{"EV-1"},
+				},
+			},
+		}},
+		TDDLedger{
+			CoverageTier: tier,
+			Coverage: TDDCoverage{
+				EARSTotal:                1,
+				EARSMapped:               1,
+				BDDTotal:                 1,
+				BDDWithConcreteData:      1,
+				FMEAModesTotal:           1,
+				FMEAModesMitigated:       1,
+				HAZOPDeviationsTotal:     1,
+				HAZOPDeviationsTested:    1,
+				InvariantsTotal:          0,
+				InvariantsWithPBT:        0,
+				DecisionTablesTotal:      1,
+				DecisionTablesEnumerated: 1,
+				GatesPassed:              []string{"contract"},
+			},
+			Obligations: []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
+		},
+	)
+}
