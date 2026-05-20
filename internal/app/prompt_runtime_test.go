@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/agent"
 	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
@@ -306,6 +307,67 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	}
 }
 
+func TestTuneChatOptionsForPlanExecutePlannerUsesStrictToolSampling(t *testing.T) {
+	thinkingOn := true
+	opts := llama.ChatOptions{
+		Temperature:      0.6,
+		TopP:             0.95,
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        8192,
+	}
+	plan := promptExecutionPlan{
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        agent.PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	tuned := tuneChatOptionsForPlan(opts, plan)
+	if tuned.Temperature != 0 || tuned.TopP != 1 {
+		t.Fatalf("plan-execute planner sampling = temp %.2f top_p %.2f, want deterministic tool sampling", tuned.Temperature, tuned.TopP)
+	}
+	if tuned.EnableThinking == nil || *tuned.EnableThinking {
+		t.Fatalf("plan-execute planner should disable local thinking before strict tool emission, got %#v", tuned.EnableThinking)
+	}
+	if tuned.PreserveThinking {
+		t.Fatalf("plan-execute planner should not preserve thinking in strict tool mode")
+	}
+	if !tuned.ChatTemplateKwargs {
+		t.Fatalf("plan-execute planner should send explicit thinking kwargs")
+	}
+	if tuned.MaxTokens != 8192 {
+		t.Fatalf("plan-execute planner should not inherit read-only token clamps, got %d", tuned.MaxTokens)
+	}
+}
+
+func TestTuneChatOptionsForImplementationLaneKeepsConfiguredSampling(t *testing.T) {
+	thinkingOn := true
+	opts := llama.ChatOptions{
+		Temperature:      0.6,
+		TopP:             0.95,
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        8192,
+	}
+	plan := promptExecutionPlan{
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	tuned := tuneChatOptionsForPlan(opts, plan)
+	if tuned.Temperature != 0.6 || tuned.TopP != 0.95 {
+		t.Fatalf("implementation sampling changed unexpectedly: temp %.2f top_p %.2f", tuned.Temperature, tuned.TopP)
+	}
+	if tuned.EnableThinking == nil || !*tuned.EnableThinking || !tuned.PreserveThinking {
+		t.Fatalf("implementation thinking config should stay as configured, got %#v preserve=%t", tuned.EnableThinking, tuned.PreserveThinking)
+	}
+}
+
 func TestChatOptionsCanForceThinkingOffForRun(t *testing.T) {
 	thinkingOn := true
 	model := &Model{
@@ -479,6 +541,54 @@ func TestPlannerOwnedVerificationMarksImplementationBrief(t *testing.T) {
 	}
 }
 
+func TestPlanExecutePromptRuntimeBriefDoesNotAdvertiseImplementationActions(t *testing.T) {
+	model := &Model{}
+	model.SetForcedTaskFamily(agent.PlanThenExecutePlannerTaskFamily)
+	model.SetPlannerOwnedVerification(true)
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files To Modify
+
+| File | Purpose |
+| --- | --- |
+| internal/app/prompt_routing.go | Align runtime brief guidance |
+
+Old text:
+oldRuntimeBrief()
+
+New text:
+newRuntimeBrief()
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	joinedNext := strings.Join(plan.runtimeBrief.RequiredNext, "\n")
+	joinedPolicy := strings.Join(plan.runtimeBrief.SearchPolicy, "\n")
+	joinedInvalid := strings.Join(plan.runtimeBrief.InvalidActions, "\n")
+
+	for _, want := range []string{
+		"source-body evidence before submit_plan",
+		"submit_plan scope",
+		"packet anchors establish scope but existing paths still need source-body evidence before submit_plan",
+		"do not run build, test, shell, git, or source_sanity in the plan-execute planner phase",
+	} {
+		if !strings.Contains(joinedNext+"\n"+joinedPolicy, want) {
+			t.Fatalf("plan-execute runtime brief missing %q\nnext=%#v\npolicy=%#v", want, plan.runtimeBrief.RequiredNext, plan.runtimeBrief.SearchPolicy)
+		}
+	}
+	for _, forbidden := range []string{
+		"edit an in-scope required path",
+		"after source edits run source_sanity",
+	} {
+		if strings.Contains(joinedNext, forbidden) {
+			t.Fatalf("plan-execute runtime brief retained implementation action %q\nnext=%#v", forbidden, plan.runtimeBrief.RequiredNext)
+		}
+	}
+	if !strings.Contains(joinedInvalid, "source_sanity_in_planner_phase") {
+		t.Fatalf("plan-execute runtime brief should reject planner-phase source_sanity, got %#v", plan.runtimeBrief.InvalidActions)
+	}
+}
+
 func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.T) {
 	var classifierCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -568,6 +678,53 @@ enqueue_loader_job_once();
 	}
 	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts") {
 		t.Fatalf("expected required-path scoped search policy, got %#v", plan.runtimeBrief.SearchPolicy)
+	}
+}
+
+func TestBuildPromptExecutionPlanCarriesObjectiveIntoRuntimeBrief(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily(agent.PlanThenExecutePlannerTaskFamily)
+
+	prompt := "Smoke test without changing files and answer source-satisfied with evidence. Required edit paths: internal/app/app.go, internal/agent/runner.go."
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if plan.runtimeBrief.Objective != prompt {
+		t.Fatalf("runtime brief objective = %q, want original prompt", plan.runtimeBrief.Objective)
+	}
+	if plan.runtimeBrief.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("expected plan-execute planner family, got %q", plan.runtimeBrief.TaskFamily)
+	}
+}
+
+func TestBuildPromptExecutionPlanScopesWrappedPlanExecuteObjective(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily(agent.PlanThenExecutePlannerTaskFamily)
+
+	wrapped := strings.Repeat("planner addendum text ", 80) + `
+<!-- IDIOM:BRIEF-BODY-START -->
+# Objective
+
+Smoke test without changing files and answer source-satisfied with evidence.
+
+## Files to Modify
+
+required_edit_paths:
+- internal/app/app.go
+- internal/agent/runner.go
+<!-- IDIOM:BRIEF-BODY-END -->`
+	plan := model.buildPromptExecutionPlan(context.Background(), wrapped)
+
+	if strings.Contains(plan.runtimeBrief.Objective, "planner addendum text") {
+		t.Fatalf("runtime brief objective leaked planner addendum: %q", plan.runtimeBrief.Objective)
+	}
+	if !strings.Contains(plan.runtimeBrief.Objective, "source-satisfied") || !strings.Contains(plan.runtimeBrief.Objective, "without changing files") {
+		t.Fatalf("runtime brief objective lost source-satisfied no-write intent: %q", plan.runtimeBrief.Objective)
 	}
 }
 
@@ -927,6 +1084,39 @@ func TestRequiredEditPathsIgnoreAllowedEditPaths(t *testing.T) {
 	}
 	if slices.Contains(allowed, "docs/design.md") {
 		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
+	}
+}
+
+func TestRequiredEditPathsCaptureInlineColonList(t *testing.T) {
+	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
+	got := requiredEditPathsFromPrompt(prompt)
+	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("missing required path %q, got %#v", want, got)
+		}
+	}
+}
+
+func TestRequiredEditPathsRejectDirectoryLikeObligations(t *testing.T) {
+	prompt := `
+## Files To Modify
+
+- cmd/idiom
+- cmd/idiom/product_workflow.go
+- Makefile
+`
+	got := requiredEditPathsFromPrompt(prompt)
+	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
+	if len(got) != len(want) {
+		t.Fatalf("expected file-only required paths %#v, got %#v", want, got)
+	}
+	for _, path := range want {
+		if !slices.Contains(got, path) {
+			t.Fatalf("missing required path %q, got %#v", path, got)
+		}
+	}
+	if slices.Contains(got, "cmd/idiom") {
+		t.Fatalf("directory-like target must not become an exact required edit path: %#v", got)
 	}
 }
 

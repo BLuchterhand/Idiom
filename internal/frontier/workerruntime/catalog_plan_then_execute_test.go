@@ -21,6 +21,12 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 	if !planThenExecuteToolListContains(spec.RequiredTools, "submit_plan") {
 		t.Fatalf("planner phase must require submit_plan in RequiredTools, got %v", spec.RequiredTools)
 	}
+	if !planThenExecuteToolListContains(spec.SearchPolicy, "required_existing_paths_need_source_body_before_submit_plan") {
+		t.Fatalf("planner phase search policy must name source-body-before-submit_plan, got %v", spec.SearchPolicy)
+	}
+	if planThenExecuteToolListContains(spec.SearchPolicy, "trust_preloaded_current_state_anchors") {
+		t.Fatalf("planner phase search policy must not imply anchors satisfy source-body evidence, got %v", spec.SearchPolicy)
+	}
 }
 
 func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *testing.T) {

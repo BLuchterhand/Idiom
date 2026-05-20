@@ -31,9 +31,10 @@ snippet.
 
 Remedy: structure-describing anchors are not edit-safe. Treat the
 brief as needing semantic discovery or one narrow read to refresh the
-literal anchor. If the brief gave no literal-anchor evidence at all for
-an edit site, stop with `<<QUESTION>>:` and ask for the literal anchor.
-Do not guess.
+literal anchor when the lane contract permits scoped evidence gathering.
+If the brief gives no scoped path, symbol, section, or other bounded fact
+that can lead to a literal anchor, stop with `<<QUESTION>>:` and ask for
+that missing scope. Do not guess.
 
 ### Stale discovery evidence
 

@@ -405,12 +405,19 @@ func TestRenderLaneContextDiscoveryFallbackSectionIncludesObjective(t *testing.T
 		"## Context Discovery Fallback",
 		"Replace banner path with alias",
 		"context index unavailable retry timed out",
+		"before the first edit-bearing action",
+		"before the first `submit_plan` or write action",
 		"`search_files`",
 		"`search_content`",
 		"`read_file`",
 	} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("fallback section missing %q:\n%s", want, section)
+		}
+	}
+	for _, notWant := range []string{"before writing", "before the first write"} {
+		if strings.Contains(section, notWant) {
+			t.Fatalf("fallback prompt should not use implementation-only phrase %q:\n%s", notWant, section)
 		}
 	}
 }
@@ -925,10 +932,23 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		"replace_all:true",
 		"full body for a new file or intentional",
 		"missing body evidence",
+		"Existing required paths still need",
+		"source-body evidence",
+		"this does not waive the source-body obligation",
+		"exact-plan-ready/source-satisfied",
 	}
 	for _, marker := range required {
 		if !strings.Contains(prompt, marker) {
 			t.Fatalf("plan-execute composed prompt missing canonical preamble marker %q; head=%s", marker, prompt[:min(400, len(prompt))])
+		}
+	}
+	for _, forbidden := range []string{
+		"sufficient source evidence for the plan",
+		"Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence",
+		"if the location is known from the packet, plan it directly",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("plan-execute composed prompt retained ambiguous source-evidence phrase %q:\n%s", forbidden, prompt)
 		}
 	}
 	if strings.Index(prompt, "Plan-Then-Execute Lane Brief") > strings.Index(prompt, briefBody) {
@@ -1083,9 +1103,27 @@ func TestCanonicalImplementPromptDoesNotMakeWriteTheLiteralFinalAction(t *testin
 		"before closeout",
 		"lane-owned sanity",
 		"do not make placeholder edits",
+		"source_sanity",
+		"`git diff --check` is patch hygiene only",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("implement prompt missing clarified closeout language %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestCanonicalProfileSeedsStayInSync(t *testing.T) {
+	for _, name := range []string{"coding.md", "claude-qwen-worker.md"} {
+		canonical, err := os.ReadFile(filepath.Join("..", "..", "prompts", "profiles", name))
+		if err != nil {
+			t.Fatalf("read canonical profile %s: %v", name, err)
+		}
+		seed, err := os.ReadFile(filepath.Join("profiles", name))
+		if err != nil {
+			t.Fatalf("read embedded seed profile %s: %v", name, err)
+		}
+		if string(seed) != string(canonical) {
+			t.Fatalf("embedded profile seed %s drifted from prompts/profiles/%s", name, name)
 		}
 	}
 }
@@ -1105,6 +1143,30 @@ func TestCanonicalPromptFilesDoNotEncourageNoopWrites(t *testing.T) {
 		}
 		if strings.Contains(string(body), "no-op write attempt") {
 			t.Fatalf("%s still encourages no-op write attempts:\n%s", path, string(body))
+		}
+	}
+}
+
+func TestCanonicalLaneRulesDoNotForceQuestionWhenScopedDiscoveryCanRefreshAnchor(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("lanes", "rules", "known-traps-generic.md"))
+	if err != nil {
+		t.Fatalf("read known traps: %v", err)
+	}
+	prompt := string(body)
+	for _, want := range []string{
+		"when the lane contract permits scoped evidence gathering",
+		"If the brief gives no scoped path, symbol, section, or other bounded fact",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("known-traps prompt missing scoped-discovery anchor guidance %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"If the brief gave no literal-anchor evidence at all for",
+		"ask for the literal anchor",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("known-traps prompt still forces premature human question %q:\n%s", forbidden, prompt)
 		}
 	}
 }

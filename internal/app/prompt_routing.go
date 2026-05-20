@@ -137,13 +137,22 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, brief.RequiredEditPaths)...)
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "required_edit_paths_define_write_scope")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
-		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
-			"use semantic/context/declared project discovery or narrow reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>",
-		)
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
-		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
-			"treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts",
-		)
+		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
+			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+				"for existing required paths, gather source-body evidence before submit_plan unless the packet is exact-plan-ready/source-satisfied; then call submit_plan, answer Decision: source-satisfied with per-path evidence, or report <<QUESTION>>",
+			)
+			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
+				"treat required_edit_paths plus packet evidence as submit_plan scope; packet anchors establish scope but existing paths still need source-body evidence before submit_plan",
+			)
+		} else {
+			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+				"use semantic/context/declared project discovery or narrow reads only for one named edit-safety fact; after that fact is resolved, edit an in-scope required path or report <<QUESTION>>",
+			)
+			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
+				"treat required_edit_paths plus packet evidence as edit scope; prefer semantic/context/declared project discovery before narrow required-path reads for named edit-safety facts",
+			)
+		}
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
 		if len(brief.RequiredEditSnippets) > 0 {
 			brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_snippets_present_or_blocked")
@@ -184,9 +193,18 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions,
 			"build_or_test_shell",
 		)
-		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
-			"after source edits run source_sanity; for non-source edits run only cheap non-build sanity checks or report planner-owned verification status",
-		)
+		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
+			brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions,
+				"source_sanity_in_planner_phase",
+			)
+			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+				"do not run build, test, shell, git, or source_sanity in the plan-execute planner phase; close with submit_plan, Decision: source-satisfied, or <<QUESTION>>",
+			)
+		} else {
+			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+				"after source edits run source_sanity; for non-source edits run only cheap non-build sanity checks or report planner-owned verification status",
+			)
+		}
 	}
 	if isImplementationLikeFamily(route.Family) && promptContainsExactEditAnchor(prompt) {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")

@@ -3,7 +3,7 @@
 A lane brief is the planner target packet. The format below is what
 idiom's runner recognizes; sections beyond these are treated as
 additional context. Brief authors (orchestrator, drafter, human) follow
-this shape; executors treat what they receive as ground truth.
+this shape; lane actors treat what they receive as ground truth.
 
 Required sections:
 
@@ -13,17 +13,18 @@ Required sections:
   Edit" (and near-equivalents) as `required_edit_paths`. Writes outside
   this list are rejected.
 - **Verified Current State** — exact source snippets (with `file:line`
-  references) that match the code today. These are the anchors the
-  executor uses for `old_text` substrings or `start_line`/`end_line`
-  ranges. If a section cannot be quoted exactly, do not fake an anchor
-  — name the gap explicitly.
+  references) that match the code today. These are source anchors for
+  implementation writes or plan-execute `submit_plan` edit entries. If a
+  section cannot be quoted exactly, do not fake an anchor — name the gap
+  explicitly.
 - **Required Edits** or **Implementation Shape** — what changes,
   edit-fact by edit-fact. Each Required Edit names ONE concrete change
   site (file + anchor + new text or behavior). Avoid bundling unrelated
   changes into one edit.
 - **Acceptance** — what counts as done. Build and test commands listed
-  here are planner-owned; idiom enforces that contract and the
-  executor does not run them.
+  here are planner-owned; idiom enforces that contract. Lane-specific
+  preambles and runtime briefs own any cheap lane sanity check such as
+  source-sanity or patch hygiene.
 
 Recommended:
 

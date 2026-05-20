@@ -18,8 +18,15 @@ Treat the brief below as the planner target packet.
 
 Modify only the allowlisted files named in the brief. Exact anchors, exact
 old/new snippets, Current-State Anchors, Required Edits, full new-file bodies,
-explicit `replace_all:true` edit shapes, or unified patches in the brief are
-sufficient source evidence for the plan.
+explicit `replace_all:true` edit shapes, or unified patches in the brief can
+identify the intended edit and scope. Packet anchors establish scope. Existing
+required paths still need source-body evidence in this planner turn
+before `submit_plan`, unless the run short-circuits as exact-plan-ready before
+planner execution or closes as `Decision: source-satisfied` with current-state
+evidence. Missing/new files with a substantial full body or explicit whole-file
+replacement shape do not need a file read.
+Existing required paths still need source-body evidence; this does not waive the
+source-body obligation.
 Copy those anchors into each edit's `old_text`/`new_text` (substring shape) or
 `start_line`/`end_line`/`content` (range shape). For a new file or intentional
 whole-file write, use `replace_all:true` with empty `old_text` and `new_text`
@@ -61,9 +68,11 @@ When a code-body edit requires file-prelude changes such as includes, imports,
 forward declarations, or using declarations, include those prelude edits in
 the plan too.
 Treat verified snippets and discovery output in the target packet as usable
-current-state evidence. Do not spend reads on broad container symbols when the
-packet already gives the nearby anchor; if the location is known from the
-packet, plan it directly.
+current-state scope and anchor evidence. Do not spend reads on broad container
+symbols when the packet already gives the nearby anchor. For existing required
+paths, this does not waive the source-body obligation above: plan directly only
+when the packet is exact-plan-ready/source-satisfied, or after this planner turn
+has source-body evidence for the affected path.
 Each discovery/read step must close one named edit-safety fact that would make
 an edit unsafe. Once that fact is resolved, the next action is to extend the
 plan, call `submit_plan`, or close as `Decision: source-satisfied` when the

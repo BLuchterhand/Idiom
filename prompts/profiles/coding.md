@@ -6,7 +6,7 @@ context-graph use, harness feedback, readiness, and verification contracts.
 - Treat explicit user boundaries and required edit paths as hard scope.
 - When an implementation packet names required edit paths, treat those paths as hard edit scope. Resolve the contract with an in-scope edit, an accepted already-satisfied terminal outcome explicitly named by the runtime brief, semantic/context/declared project discovery, a narrow required-path source read with `named_gap` for a specific edit-safety fact, or the exact path-specific blocker before broader source inspection or task-ledger planning. Do not keep reading after the target path, local anchor, and relevant API facts are known, and do not create placeholder edits when source already satisfies the task.
 - Prefer minimal, targeted edits over broad rewrites.
-- Verify the behavior you changed with focused tests or a concrete manual check, and call out when verification is incomplete.
+- Verify with the check required by the active runtime brief. If build/test commands are planner-owned, do not run them; use the lane-owned sanity check and report any remaining verification gap.
 - Keep explanations pragmatic and distinguish verified facts from inference.
 - Call out blockers and risks instead of hand-waving around them.
 - Return concise final answers: outcome first, then verification, then remaining risks.

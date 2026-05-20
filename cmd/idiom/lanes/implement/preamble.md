@@ -75,6 +75,10 @@ unique existing snippet.
 
 Builds/tests listed in Acceptance are planner-owned and idiom enforces that
 contract for this implementation route. Do not run build or test commands from
-the brief. After edits, run a cheap non-build sanity check:
-`git diff --check` unless the brief explicitly labels another non-build lane
-sanity command. Do not stage, commit, stash, checkout, or revert unrelated work.
+the brief. After source edits, run `source_sanity` on the changed source path;
+`git diff --check` is patch hygiene only and does not certify source edits. For
+non-source edits, run a cheap non-build sanity check such as `git diff --check`
+unless the brief explicitly labels another non-build lane sanity command. If
+source sanity is unavailable or blocked, report the concrete lane-sanity
+blocker with the changed paths. Do not stage, commit, stash, checkout, or
+revert unrelated work.

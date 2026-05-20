@@ -153,7 +153,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			RequiredEvidence:     []string{"plan_submitted_or_source_satisfied_or_blocker"},
 			RequiredTools:        []string{"submit_plan"},
 			ReadinessGate:        []string{"submit_plan_or_source_satisfied_or_blocker_reported"},
-			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
 			VerificationContract: "not_required_for_text_mutations",
 			StopConditions:       []string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"},
 			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called_or_source_satisfied", "edits_or_source_satisfied_evidence_listed_in_summary"},

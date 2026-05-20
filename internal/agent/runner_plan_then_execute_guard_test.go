@@ -92,7 +92,9 @@ func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
 		"# Textual Tool Call Protocol",
 		"```tool",
 		`"tool":"submit_plan"`,
+		"Update target.txt using the confirmed source anchor",
 		"`edits` must be an array",
+		"never placeholders",
 		"no prose",
 		"XML tags",
 	} {
@@ -124,12 +126,17 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 		RequiredEditPaths: []string{"a.txt"},
 	}
 	got := completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, nil)
-	if got.MaxTokens != 16384 {
-		t.Fatalf("plan-execute recovery must preserve submit_plan budget, got %d", got.MaxTokens)
+	if got.MaxTokens != 768 {
+		t.Fatalf("plan-execute source-read recovery should cap to one tool call, got %d", got.MaxTokens)
 	}
-	got = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, nil)
-	if got.MaxTokens != 16384 {
-		t.Fatalf("plan-execute recovery should default to planner-sized budget, got %d", got.MaxTokens)
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"}}
+	got = completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, results)
+	if got.MaxTokens != 4096 {
+		t.Fatalf("plan-execute existing-file recovery should cap submit_plan budget, got %d", got.MaxTokens)
+	}
+	got = completionGateRecoveryChatOptions(llama.ChatOptions{}, brief, results)
+	if got.MaxTokens != 4096 {
+		t.Fatalf("plan-execute existing-file recovery should default to capped submit_plan budget, got %d", got.MaxTokens)
 	}
 }
 
@@ -685,6 +692,9 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 	if !strings.Contains(errorText, "previous submit_plan was rejected") || !strings.Contains(errorText, "at most one bounded source-body read") {
 		t.Fatalf("rejection should point back to corrected submit_plan, got %q", errorText)
 	}
+	if !strings.Contains(errorText, "Last submit_plan rejection:") || !strings.Contains(errorText, "missing required edit path") {
+		t.Fatalf("rejection should preserve exact submit_plan failure details, got %q", errorText)
+	}
 	_, _, reject = planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool: "read_file",
 		Path: "cmd/idiom/product_workflow.go",
@@ -1168,7 +1178,11 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 		},
 	}
 
-	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(nil)
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10"},
+	}
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
 	if !ok {
 		t.Fatalf("expected completion gate recovery prompt for planner phase with missing required paths")
 	}
@@ -1176,13 +1190,16 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 		t.Fatalf("planner-phase recovery should hide reads and leave submit_plan as the write surface")
 	}
 	for _, want := range []string{
-		"your next response must be a `submit_plan` tool call, not prose",
+		"your next response must be a native `submit_plan` tool call, not prose",
 		"explicit replacement edit shapes",
 		"replace_all:true",
 		"empty `old_text`",
 		"`new_text` as the full file body",
 		"no substantial inline body or explicit replacement shape",
 		"one-sentence `purpose`",
+		"Every required path already has source-body evidence",
+		"read/search/discovery tools are hidden now",
+		"Do not call read_file",
 		"source-satisfied",
 		"a.txt",
 		"b.txt",
@@ -1194,6 +1211,46 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 	}
 	if strings.Contains(prompt, "edit_file") || strings.Contains(prompt, "apply_patch") {
 		t.Fatalf("planner-phase recovery must not point at per-edit tools: %q", prompt)
+	}
+}
+
+func TestCompletionGateRecoveryPromptPointsPlanExecuteAtFirstRequiredReadWhenNoEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(nil)
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt for planner phase with missing required paths")
+	}
+	if hideReads {
+		t.Fatalf("required-path recovery without source evidence must keep source reads visible")
+	}
+	for _, want := range []string{
+		"source-body evidence",
+		"Unread required path: a.txt",
+		"Do not draft `submit_plan` from outline/search hits",
+		"read_file",
+		"code_navigate",
+		"Hidden reasoning is not executable evidence",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("recovery prompt missing %q: %q", want, prompt)
+		}
+	}
+	for _, notWant := range []string{
+		"Every required path already has source-body evidence",
+		"read/search/discovery tools are hidden now",
+		"Your next response must be a native `submit_plan` tool call",
+	} {
+		if strings.Contains(prompt, notWant) {
+			t.Fatalf("recovery prompt should not claim submit_plan readiness before source evidence (%q): %q", notWant, prompt)
+		}
 	}
 }
 
@@ -1230,6 +1287,102 @@ func TestCompletionGateRecoveryPromptPrioritizesUnreadRequiredSource(t *testing.
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("recovery prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestDeterministicPlanExecuteRequiredSourceReadStartsFreshPlanner(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+	}
+
+	req, raw, ok := runner.deterministicPlanExecuteRequiredSourceRead(nil)
+	if !ok {
+		t.Fatalf("expected deterministic source read for fresh required-path planner")
+	}
+	if req.Tool != "read_file" || req.Path != "a.txt" {
+		t.Fatalf("unexpected recovery request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"read_file"`) || !strings.Contains(raw, `"path":"a.txt"`) {
+		t.Fatalf("raw request should be parser-readable JSON, got %q", raw)
+	}
+
+	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
+	})
+	if !ok || req.Tool != "read_file" || req.Path != "b.txt" {
+		t.Fatalf("expected deterministic recovery to advance to next unread required path, got %#v ok=%v", req, ok)
+	}
+
+	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{Tool: "read_file", Summary: "Redirected a.txt to code_navigate", Output: "a.txt requires file_outline"},
+	})
+	if !ok || req.Tool != "read_file" || req.Path != "b.txt" {
+		t.Fatalf("expected deterministic recovery to skip attempted path and advance, got %#v ok=%v", req, ok)
+	}
+
+	singlePathRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt"},
+		},
+	}
+	req, _, ok = singlePathRunner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{Tool: "read_file", Summary: "Redirected a.txt to code_navigate", Output: "a.txt requires file_outline"},
+	})
+	if ok {
+		t.Fatalf("deterministic recovery should not repeat a required path already attempted; got %#v", req)
+	}
+}
+
+func TestDeterministicPlanExecuteRequiredSourceReadFollowsRedirectedOutline(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Implement coverage gate authority reuse for product tdd coverage gate",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+
+	req, _, ok := runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
+			Output:  `The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.`,
+		},
+	})
+	if !ok || req.Tool != "code_navigate" || req.Capability != "file_outline" || req.Path != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("redirected required path should deterministically request outline, got %#v ok=%v", req, ok)
+	}
+
+	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
+			Output:  `The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output: strings.Join([]string{
+				"capability: file_outline",
+				"route_summary: Outlined 2 top-level declaration(s) in cmd/idiom/product_workflow.go.",
+				"declarations:",
+				"- buildAuditResult lines 313-354 tags: core",
+				"- runProductTDD lines 1396-1671 tags: implementation",
+			}, "\n"),
+		},
+	})
+	if !ok || req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Pattern != "runProductTDD" {
+		t.Fatalf("outline should deterministically advance to best matching source-body symbol, got %#v ok=%v", req, ok)
 	}
 }
 
@@ -1399,6 +1552,35 @@ func TestPlanExecuteCompletionRecoveryCapsUnreadRequiredSourceCall(t *testing.T)
 	}
 }
 
+func TestPlanExecuteCompletionRecoveryForcesVisibleUnreadSourceToolWhenAvailable(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        16384,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}, []workspace.ToolResult{
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n"},
+	})
+
+	if opts.ToolChoice != "required" {
+		t.Fatalf("unread required source recovery should force a visible source-read tool call, got %q", opts.ToolChoice)
+	}
+	if len(opts.Tools) != 2 || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("unread required source recovery should expose only source-read tools, got %#v", opts.Tools)
+	}
+}
+
 func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing.T) {
 	thinkingOn := true
 	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
@@ -1507,6 +1689,39 @@ func TestPlanExecuteReadyToSubmitCapsCloseoutBudget(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteReadyToSubmitForcesSubmitPlanOnlyWhenAvailable(t *testing.T) {
+	thinkingOn := true
+	opts := planThenExecuteReadyToSubmitChatOptions(llama.ChatOptions{
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        8192,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "search_content"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/app/app.go", "internal/agent/runner.go"},
+	}, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56"},
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/agent/runner.go lines 88-210"},
+	})
+
+	if opts.ToolChoice != "required" {
+		t.Fatalf("ready-to-submit should force a visible submit_plan tool call, got %q", opts.ToolChoice)
+	}
+	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("ready-to-submit should expose only submit_plan, got %#v", opts.Tools)
+	}
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("ready-to-submit should force visible/tool output over hidden thinking, got %#v", opts.EnableThinking)
+	}
+}
+
 func TestPlanExecuteRequiredPathSymbolReadRecoveryCapsPlannerBudget(t *testing.T) {
 	thinkingOn := true
 	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
@@ -1566,8 +1781,8 @@ func TestPlanExecuteRequiredPathAllSourcesReadRecoveryKeepsPlannerBudget(t *test
 	if opts.PreserveThinking {
 		t.Fatalf("all-source recovery should stop preserving prior hidden reasoning")
 	}
-	if opts.MaxTokens != 8192 {
-		t.Fatalf("all-source recovery MaxTokens = %d, want 8192", opts.MaxTokens)
+	if opts.MaxTokens != 4096 {
+		t.Fatalf("all-source recovery MaxTokens = %d, want 4096", opts.MaxTokens)
 	}
 }
 
@@ -1598,8 +1813,8 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t
 	if opts.ToolChoice != "required" {
 		t.Fatalf("write-only plan-execute recovery should force a native tool call, got %q", opts.ToolChoice)
 	}
-	if opts.MaxTokens != 16384 {
-		t.Fatalf("write-only plan-execute recovery should preserve planner budget, got %d", opts.MaxTokens)
+	if opts.MaxTokens != 4096 {
+		t.Fatalf("write-only plan-execute recovery should cap existing-file planner budget, got %d", opts.MaxTokens)
 	}
 }
 
@@ -1631,8 +1846,8 @@ func TestPlanExecuteRequiredWriteOnlyRecoveryForcesVisibleSubmitPlan(t *testing.
 	if opts.ToolChoice != "required" {
 		t.Fatalf("required-path recovery should force a native submit_plan call, got %q", opts.ToolChoice)
 	}
-	if opts.MaxTokens != 16384 {
-		t.Fatalf("required-path recovery should preserve planner budget, got %d", opts.MaxTokens)
+	if opts.MaxTokens != 4096 {
+		t.Fatalf("required-path recovery should cap existing-file planner budget, got %d", opts.MaxTokens)
 	}
 }
 
@@ -1866,6 +2081,12 @@ func TestPlanThenExecuteControlRailsKeepSubmitPlanContract(t *testing.T) {
 	if !slices.Contains(rails.ReadinessGate, "submit_plan_or_source_satisfied_or_blocker_reported") {
 		t.Fatalf("control rails must keep submit_plan readiness gate, got %#v", rails.ReadinessGate)
 	}
+	if !slices.Contains(rails.SearchPolicy, "required_existing_paths_need_source_body_before_submit_plan") {
+		t.Fatalf("control rails must advertise source-body-before-submit_plan policy, got %#v", rails.SearchPolicy)
+	}
+	if slices.Contains(rails.SearchPolicy, "trust_preloaded_current_state_anchors") {
+		t.Fatalf("control rails must not imply preloaded anchors satisfy source-body evidence, got %#v", rails.SearchPolicy)
+	}
 	if !slices.Contains(rails.FinalCritic, "submit_plan_called_or_source_satisfied") {
 		t.Fatalf("control rails must keep submit_plan final critic, got %#v", rails.FinalCritic)
 	}
@@ -1885,11 +2106,63 @@ func TestPlanThenExecuteRequiredPathHintsUseSubmitPlanLanguage(t *testing.T) {
 	if !strings.Contains(joined, "submit_plan") {
 		t.Fatalf("planner-phase hints must name submit_plan, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
 	}
+	if !strings.Contains(joined, "read required_edit_path a.txt with source-body evidence before submit_plan") {
+		t.Fatalf("planner-phase hints must frontload unread required-path source evidence, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
+	}
+	if !strings.Contains(joined, "submit_plan before every existing required_edit_path has source-body evidence") {
+		t.Fatalf("planner-phase hints must reject premature submit_plan, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
+	}
 	if !strings.Contains(joined, "source-satisfied") {
 		t.Fatalf("planner-phase hints must name source-satisfied closeout, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
 	}
 	if strings.Contains(joined, "write capability") || strings.Contains(joined, "first required-path write") {
 		t.Fatalf("planner-phase hints must not use generic write/edit closeout language: %s", joined)
+	}
+}
+
+func TestPlanThenExecuteRequiredPathHintsSwitchToSubmitPlanAfterSourceEvidence(t *testing.T) {
+	brief := runnerBriefWithPhaseHints(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredTools:     []string{"submit_plan"},
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+		TargetPacket:      []string{"verified anchors"},
+	}, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10", Output: "current a"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10", Output: "current b"},
+	})
+
+	joined := strings.Join(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), "\n")
+	if !strings.Contains(joined, "submit_plan with one ordered edit entry for every required_edit_paths entry") {
+		t.Fatalf("planner-phase hints should require submit_plan once required paths are read, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
+	}
+	if strings.Contains(joined, "read required_edit_path a.txt with source-body evidence before submit_plan") {
+		t.Fatalf("planner-phase hints should not keep source-read-first language after every required path is read: %s", joined)
+	}
+}
+
+func TestPlanThenExecuteRequiredPathHintsDoNotReadTerminalMissingPath(t *testing.T) {
+	brief := runnerBriefWithPhaseHints(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredTools:     []string{"submit_plan"},
+		RequiredEditPaths: []string{"new_file.go"},
+	}, []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "read_file failed for new_file.go",
+			Error:   `path "new_file.go" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.`,
+		},
+	})
+
+	joined := strings.Join(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), "\n")
+	if !strings.Contains(joined, "submit_plan with one ordered edit entry for every required_edit_paths entry") {
+		t.Fatalf("terminal missing-file evidence should move planner toward submit_plan/question, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
+	}
+	if strings.Contains(joined, "read required_edit_path new_file.go with source-body evidence before submit_plan") {
+		t.Fatalf("terminal missing-file evidence should not keep read-first language: %s", joined)
 	}
 }
 
@@ -2491,6 +2764,25 @@ func TestCompletionGateRetryLimitAllowsTwoUnscopedNoWriteRecoveries(t *testing.T
 	}
 }
 
+func TestCompletionGateRetryLimitAllowsSecondPlanExecuteSubmitPlanRecovery(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read A in a.go lines 1-10\n"},
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read B in b.go lines 1-10\n"},
+	}
+
+	if got := runner.completionGateRetryLimit(results); got != 3 {
+		t.Fatalf("plan-execute submit_plan recovery retry limit = %d, want 3", got)
+	}
+}
+
 func TestCompletionGateRejectsUnresolvedProcessIntent(t *testing.T) {
 	got, rejected := unresolvedProcessIntentCompletionRejection("I'll search the codebase and inspect the TUI next.")
 	if !rejected {
@@ -3064,8 +3356,10 @@ func TestPlanExecuteRecoveryRejectsNonSubmitPlanWithoutTerminalWriteOnlyBlocker(
 		}
 	}
 	replies := []string{
-		"Done.",
 		`{"tool":"read_file","path":"a.txt"}`,
+		`{"tool":"read_file","path":"b.txt"}`,
+		"Done.",
+		`{"tool":"search_content","path":".","pattern":"before"}`,
 		"<<QUESTION>>: exact blocker: no safe edit body is available for a.txt or b.txt.",
 	}
 	var requests int
@@ -3119,6 +3413,83 @@ func TestPlanExecuteRecoveryRejectsNonSubmitPlanWithoutTerminalWriteOnlyBlocker(
 	}
 	if !strings.Contains(answer, "exact blocker") {
 		t.Fatalf("expected final blocker answer after recovery, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteRecoveryRetriesAfterNonSpecificSubmitPlanBlocker(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte("before\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt"}`,
+		`{"tool":"read_file","path":"b.txt"}`,
+		"Done.",
+		`{"tool":"read_file","path":"a.txt"}`,
+		"Still done.",
+		"<<QUESTION>>: blocked by missing safe edit body.\n- a.txt: no safe edit body is available.\n- b.txt: no safe edit body is available.",
+	}
+	var requests int
+	var recoveryPrompts int
+	var sawSubmitPlanRequired bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "completion_gate_recovery":
+				recoveryPrompts++
+			case "plan_then_execute_submit_plan_required":
+				sawSubmitPlanRequired = true
+			case "completion_status":
+				if strings.Contains(event.Content, "completion_gate_required_paths_remaining_repeated") {
+					t.Fatalf("plan-execute recovery should not block immediately after one non-specific submit_plan blocker: %s", event.Content)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{MaxTokens: 2048}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected recovery to continue through blocker closeout, got %d request(s)", requests)
+	}
+	if recoveryPrompts < 2 {
+		t.Fatalf("expected completion recovery to be reattached after non-specific submit_plan blocker, got %d prompt(s)", recoveryPrompts)
+	}
+	if !sawSubmitPlanRequired {
+		t.Fatalf("expected plan_then_execute_submit_plan_required event")
+	}
+	if !strings.Contains(answer, "missing safe edit body") {
+		t.Fatalf("expected final path-specific blocker answer after recovery, got:\n%s", answer)
 	}
 }
 

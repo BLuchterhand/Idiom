@@ -30,6 +30,28 @@ func TestComposePlannerPromptWithContextPackScopesBriefBody(t *testing.T) {
 	}
 }
 
+func TestContextDiscoveryFallbackUsesLaneNeutralEditBearingLanguage(t *testing.T) {
+	got := RenderPromptContextDiscoveryFallbackSection(PromptContextPackOptions{
+		Title:             "Update target behavior",
+		RequiredEditPaths: []string{"pkg/target.go"},
+	}, "cache unavailable")
+
+	for _, want := range []string{
+		"before the first edit-bearing action",
+		"before the first `submit_plan` or write action",
+		"Required edit paths from brief: pkg/target.go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fallback prompt missing %q:\n%s", want, got)
+		}
+	}
+	for _, notWant := range []string{"before writing", "before the first write"} {
+		if strings.Contains(got, notWant) {
+			t.Fatalf("fallback prompt should not use implementation-only phrase %q:\n%s", notWant, got)
+		}
+	}
+}
+
 func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
 	prompt := `
 ## Allowed Edit Paths
@@ -52,6 +74,58 @@ func TestRequiredEditPathsFromPromptIgnoresAllowedEditPaths(t *testing.T) {
 	}
 	if slices.Contains(allowed, "pkg/evidence.go") {
 		t.Fatalf("evidence path must not bleed into allowed edit paths, got %#v", allowed)
+	}
+}
+
+func TestRequiredEditPathsFromPromptCapturesInlineColonList(t *testing.T) {
+	prompt := "Implement the change. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
+	got := RequiredEditPathsFromPrompt(prompt)
+	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("missing required path %q, got %#v", want, got)
+		}
+	}
+}
+
+func TestRequiredEditPathsFromPromptIgnoresTrailingSlashProse(t *testing.T) {
+	prompt := "Implement the change. Required edit paths: `cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`. Add focused tests for missing `--effort-root` and mutually exclusive/missing mode flags under JSON output."
+	got := RequiredEditPathsFromPrompt(prompt)
+	want := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
+	if len(got) != len(want) {
+		t.Fatalf("required paths = %#v, want %#v", got, want)
+	}
+	for _, path := range want {
+		if !slices.Contains(got, path) {
+			t.Fatalf("missing required path %q, got %#v", path, got)
+		}
+	}
+	for _, forbidden := range []string{"exclusive/missing", "cmd/idiom"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("slash prose or truncated directory leaked into required paths: %#v", got)
+		}
+	}
+}
+
+func TestRequiredEditPathsFromPromptRejectsDirectoryLikeObligations(t *testing.T) {
+	prompt := strings.Join([]string{
+		"## Files To Modify",
+		"",
+		"- cmd/idiom",
+		"- cmd/idiom/product_workflow.go",
+		"- Makefile",
+	}, "\n")
+	got := RequiredEditPathsFromPrompt(prompt)
+	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
+	if len(got) != len(want) {
+		t.Fatalf("expected file-only required paths %#v, got %#v", want, got)
+	}
+	for _, path := range want {
+		if !slices.Contains(got, path) {
+			t.Fatalf("missing required path %q, got %#v", path, got)
+		}
+	}
+	if slices.Contains(got, "cmd/idiom") {
+		t.Fatalf("directory-like target must not become an exact required edit path: %#v", got)
 	}
 }
 
@@ -121,6 +195,52 @@ func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 	for _, want := range []string{"context view artifact", "`internal/app/prompt_routing.go`", "`runtimeBriefForRoute`", "`go test ./internal/app`"} {
 		if !strings.Contains(section, want) {
 			t.Fatalf("expected %q in context section:\n%s", want, section)
+		}
+	}
+}
+
+func TestRenderPromptContextPackSectionPrefersSiblingTestsOverUnrelatedTestCandidates(t *testing.T) {
+	root := t.TempDir()
+	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling test: %v", err)
+	}
+	output := `{
+  "pack_id": "abc123",
+  "fresh": true,
+  "candidate_files": [
+    {"path":"internal/productworkflow/migration_apply.go","role":"editable","reason":"matched task terms","score":5.0},
+    {"path":"cmd/idiom/lane_test.go","role":"test","reason":"matched task terms","score":4.6}
+  ],
+  "candidate_symbols": [
+    {"qualified_name":"TestRunLaneMainEmbedsCanonicalPlanExecutePreamble","path":"cmd/idiom/lane_test.go","kind":"test","start_line":908,"reason":"matched task terms"}
+  ],
+  "tests": [
+    {"command":"go test ./cmd/idiom","path":"cmd/idiom/lane_test.go"}
+  ]
+}`
+	section, err := RenderPromptContextPackSectionWithOptions(workspace.ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 2 candidate file(s)",
+		Output:  output,
+	}, PromptContextPackOptions{ProjectRoot: root})
+	if err != nil {
+		t.Fatalf("render context pack: %v", err)
+	}
+	for _, want := range []string{
+		"`internal/productworkflow/migration_apply.go`",
+		"`go test ./internal/productworkflow` - internal/productworkflow/migration_apply_test.go",
+	} {
+		if !strings.Contains(section, want) {
+			t.Fatalf("expected %q in context section:\n%s", want, section)
+		}
+	}
+	for _, forbidden := range []string{"cmd/idiom/lane_test.go", "`go test ./cmd/idiom`", "TestRunLaneMainEmbedsCanonicalPlanExecutePreamble"} {
+		if strings.Contains(section, forbidden) {
+			t.Fatalf("context section should omit unrelated test candidate %q:\n%s", forbidden, section)
 		}
 	}
 }

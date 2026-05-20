@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
@@ -122,7 +124,7 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 		}
 		return RenderPromptContextDiscoveryFallbackSection(opts, result.Error)
 	}
-	section, err := RenderPromptContextPackSection(result)
+	section, err := RenderPromptContextPackSectionWithOptions(result, opts)
 	if err != nil {
 		if stderr != nil {
 			fmt.Fprintf(stderr, "plan-execute: context_pack skipped: %v\n", err)
@@ -133,6 +135,10 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 		fmt.Fprintf(stderr, "plan-execute: context_pack preloaded (%s)\n", result.Summary)
 	}
 	return section
+}
+
+func RenderPromptContextPackSection(result workspace.ToolResult) (string, error) {
+	return RenderPromptContextPackSectionWithOptions(result, PromptContextPackOptions{})
 }
 
 func PromptAlreadyHasContextPack(body string) bool {
@@ -150,7 +156,7 @@ func PromptAlreadyHasContextPack(body string) bool {
 		strings.HasPrefix(trimmed, "context packet:")
 }
 
-func RenderPromptContextPackSection(result workspace.ToolResult) (string, error) {
+func RenderPromptContextPackSectionWithOptions(result workspace.ToolResult, opts PromptContextPackOptions) (string, error) {
 	var view promptContextPackView
 	if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
 		return "", fmt.Errorf("decode context_pack output: %w", err)
@@ -173,8 +179,8 @@ func RenderPromptContextPackSection(result workspace.ToolResult) (string, error)
 		fmt.Fprintf(&b, "- Fresh: %t\n", view.Fresh)
 	}
 	writePromptContextFiles(&b, view.CandidateFiles, 8)
-	writePromptContextSymbols(&b, view.CandidateSymbols, 8)
-	writePromptContextTests(&b, view.Tests, 4)
+	writePromptContextSymbols(&b, view.CandidateSymbols, view.CandidateFiles, 8)
+	writePromptContextTests(&b, view.Tests, view.CandidateFiles, opts, 4)
 	writePromptContextGaps(&b, view.UnresolvedGaps, 4)
 	if !promptContextPackHasTargets(view) {
 		b.WriteString("\n\n")
@@ -186,7 +192,7 @@ func RenderPromptContextPackSection(result workspace.ToolResult) (string, error)
 func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, reason string) string {
 	var b strings.Builder
 	b.WriteString("## Context Discovery Fallback\n\n")
-	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before writing; do not repeat the same failed `context_pack` call.\n\n")
+	b.WriteString("Source: idiom context preload fallback. The ranked context packet was unavailable or did not identify a useful target. Run this bounded discovery phase before the first edit-bearing action; do not repeat the same failed `context_pack` call.\n\n")
 	if reason = strings.TrimSpace(reason); reason != "" {
 		fmt.Fprintf(&b, "- Context packet status: unavailable (%s)\n", collapsePromptContextWhitespace(reason, 220))
 	}
@@ -199,7 +205,7 @@ func RenderPromptContextDiscoveryFallbackSection(opts PromptContextPackOptions, 
 	b.WriteString("\n### Required Fallback Discovery Phase\n\n")
 	b.WriteString("- Start with `search_files` for likely filenames, component names, package names, or UI/domain terms from the objective.\n")
 	b.WriteString("- Then use `search_content` for stable labels, symbols, config keys, command names, or error text. If a literal phrase misses, broaden to nearby concepts instead of repeating it.\n")
-	b.WriteString("- Read only the highest-confidence candidate file or symbol range with `read_file` or a language-aware symbol tool before the first write.\n")
+	b.WriteString("- Read only the highest-confidence candidate file or symbol range with `read_file` or a language-aware symbol tool before the first `submit_plan` or write action.\n")
 	b.WriteString("- If all bounded discovery misses, answer with `<<QUESTION>>:` and name the exact missing target evidence; do not invent an edit path.\n")
 	return strings.TrimRight(b.String(), "\n")
 }
@@ -260,10 +266,16 @@ func writePromptContextFiles(b *strings.Builder, files []promptContextPackFile, 
 	if len(files) == 0 {
 		return
 	}
-	b.WriteString("\n### Candidate Files\n\n")
+	var rendered int
 	for i, file := range files {
 		if i >= limit {
 			break
+		}
+		if strings.EqualFold(strings.TrimSpace(file.Role), "test") {
+			continue
+		}
+		if rendered == 0 {
+			b.WriteString("\n### Candidate Files\n\n")
 		}
 		role := firstPromptContextNonEmpty(file.Role, "candidate")
 		score := ""
@@ -275,10 +287,12 @@ func writePromptContextFiles(b *strings.Builder, files []promptContextPackFile, 
 			hub = ", hub"
 		}
 		fmt.Fprintf(b, "- `%s` (%s%s%s): %s\n", file.Path, role, score, hub, firstPromptContextNonEmpty(file.Reason, file.Confidence, file.Language))
+		rendered++
 	}
 }
 
-func writePromptContextSymbols(b *strings.Builder, symbols []promptContextPackSymbol, limit int) {
+func writePromptContextSymbols(b *strings.Builder, symbols []promptContextPackSymbol, files []promptContextPackFile, limit int) {
+	symbols = promptContextRelevantSymbols(symbols, files)
 	if len(symbols) == 0 {
 		return
 	}
@@ -296,7 +310,26 @@ func writePromptContextSymbols(b *strings.Builder, symbols []promptContextPackSy
 	}
 }
 
-func writePromptContextTests(b *strings.Builder, tests []promptContextPackTest, limit int) {
+func promptContextRelevantSymbols(symbols []promptContextPackSymbol, files []promptContextPackFile) []promptContextPackSymbol {
+	sourceDirs := promptContextEditableSourceDirs(files)
+	if len(sourceDirs) == 0 {
+		return symbols
+	}
+	out := make([]promptContextPackSymbol, 0, len(symbols))
+	for _, sym := range symbols {
+		path := filepath.ToSlash(strings.TrimSpace(sym.Path))
+		if path == "" {
+			continue
+		}
+		if _, ok := sourceDirs[filepath.ToSlash(filepath.Dir(path))]; ok {
+			out = append(out, sym)
+		}
+	}
+	return out
+}
+
+func writePromptContextTests(b *strings.Builder, tests []promptContextPackTest, files []promptContextPackFile, opts PromptContextPackOptions, limit int) {
+	tests = promptContextRelevantTests(tests, files, opts)
 	if len(tests) == 0 {
 		return
 	}
@@ -311,6 +344,93 @@ func writePromptContextTests(b *strings.Builder, tests []promptContextPackTest, 
 		}
 		fmt.Fprintf(b, "- `%s`%s\n", test.Command, target)
 	}
+}
+
+func promptContextRelevantTests(tests []promptContextPackTest, files []promptContextPackFile, opts PromptContextPackOptions) []promptContextPackTest {
+	sourceDirs := promptContextEditableSourceDirs(files)
+	out := promptContextSiblingTests(files, opts)
+	seen := map[string]struct{}{}
+	for _, test := range out {
+		seen[promptContextTestKey(test)] = struct{}{}
+	}
+	for _, test := range tests {
+		if !promptContextTestMatchesSourceDir(test, sourceDirs) {
+			continue
+		}
+		key := promptContextTestKey(test)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, test)
+	}
+	return out
+}
+
+func promptContextEditableSourceDirs(files []promptContextPackFile) map[string]struct{} {
+	dirs := map[string]struct{}{}
+	for _, file := range files {
+		if strings.EqualFold(strings.TrimSpace(file.Role), "test") {
+			continue
+		}
+		path := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if path == "" {
+			continue
+		}
+		dir := filepath.ToSlash(filepath.Dir(path))
+		if dir == "." || dir == "" {
+			continue
+		}
+		dirs[dir] = struct{}{}
+	}
+	return dirs
+}
+
+func promptContextSiblingTests(files []promptContextPackFile, opts PromptContextPackOptions) []promptContextPackTest {
+	root := firstPromptContextNonEmpty(opts.ProjectRoot, ".")
+	var out []promptContextPackTest
+	for _, file := range files {
+		if strings.EqualFold(strings.TrimSpace(file.Role), "test") {
+			continue
+		}
+		path := filepath.ToSlash(strings.TrimSpace(file.Path))
+		if !strings.HasSuffix(strings.ToLower(path), ".go") || strings.HasSuffix(strings.ToLower(path), "_test.go") {
+			continue
+		}
+		testPath := strings.TrimSuffix(path, ".go") + "_test.go"
+		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(testPath)))
+		if err != nil || info.IsDir() {
+			continue
+		}
+		out = append(out, promptContextPackTest{
+			Command: "go test ./" + filepath.ToSlash(filepath.Dir(path)),
+			Path:    testPath,
+		})
+	}
+	return out
+}
+
+func promptContextTestMatchesSourceDir(test promptContextPackTest, sourceDirs map[string]struct{}) bool {
+	if len(sourceDirs) == 0 {
+		return false
+	}
+	path := filepath.ToSlash(strings.TrimSpace(test.Path))
+	if path != "" {
+		if _, ok := sourceDirs[filepath.ToSlash(filepath.Dir(path))]; ok {
+			return true
+		}
+	}
+	command := strings.TrimSpace(test.Command)
+	for dir := range sourceDirs {
+		if strings.Contains(command, "./"+dir) {
+			return true
+		}
+	}
+	return false
+}
+
+func promptContextTestKey(test promptContextPackTest) string {
+	return strings.TrimSpace(test.Command) + "\x00" + filepath.ToSlash(strings.TrimSpace(test.Path)) + "\x00" + strings.TrimSpace(test.Symbol)
 }
 
 func writePromptContextGaps(b *strings.Builder, gaps []string, limit int) {
