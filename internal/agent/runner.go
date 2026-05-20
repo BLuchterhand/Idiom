@@ -47,6 +47,11 @@ var (
 // for enforcement.
 const delegatedReadOnlyProbeBudget = 2
 
+const scopedImplementationLargeReadLineThreshold = 800
+const scopedImplementationLargeReadByteThreshold = 96 * 1024
+const scopedImplementationBoundedReadWindowLines = 180
+const scopedImplementationBoundedReadLineCharCap = 400
+
 const forceAnswerTailGatheredEvidence = "Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer."
 
 const forceAnswerTailEvidenceAlreadyGathered = "Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
@@ -112,6 +117,7 @@ func (r *Runner) Run(
 	implementationWriteOnlyRecoveryActive := false
 	requiredPathCompletionRecoveryActive := false
 	implementationWriteOnlyHiddenTools := make(map[string]bool)
+	scopedHiddenNonWriteRecoveryUsed := false
 	scratchpadCloseoutNonWriteRejections := 0
 	// recoveryReadAllowanceUsed tracks paths that have already consumed
 	// their one bounded read during the current write-only recovery. The
@@ -746,13 +752,17 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_source_discovery_recovery", Content: prompt})
 			continue
 		}
-		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject {
+		scopedHiddenNonWrite := implementationScopedHiddenTools[strings.TrimSpace(req.Tool)] && !workspace.IsWorkspaceWriteTool(req.Tool)
+		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject && !(scopedHiddenNonWrite && scopedHiddenNonWriteRecoveryUsed) {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
 				Error:   errorText,
 			}
 			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			if scopedHiddenNonWrite {
+				scopedHiddenNonWriteRecoveryUsed = true
+			}
 			rebuildTools()
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			r.emitEvent(RunEvent{Role: "implementation_scoped_tool_recovery", Content: prompt})
@@ -1090,42 +1100,44 @@ func (r *Runner) Run(
 			}
 		}
 		discoveryRedirect.SetAllowedTools(currentAllowedTools)
-		if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
-			// Hard-reject path: the model has been nudged enough times
-			// on this redirect class. Route through rejectTool so the
-			// fingerprint is recorded in rejectedFingerprints and a
-			// repeat terminates the turn. The soft-redirect path stays
-			// as a result append with no rejection counters bumped.
-			if decision.HardReject {
+		if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, collectedResults, req) {
+			if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
+				// Hard-reject path: the model has been nudged enough times
+				// on this redirect class. Route through rejectTool so the
+				// fingerprint is recorded in rejectedFingerprints and a
+				// repeat terminates the turn. The soft-redirect path stays
+				// as a result append with no rejection counters bumped.
+				if decision.HardReject {
+					if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
+						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
+						r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
+					}
+					r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s) HARD_REJECT", req.Tool, decision.Language, decision.Capability)})
+					// Hide the source tool from the manifest for the rest
+					// of the turn. If shell was redirected to a structured
+					// tool N times and now hard-rejected, the model has
+					// shown it won't self-correct — remove the tool.
+					if tool := strings.TrimSpace(req.Tool); tool != "" && !turnHiddenTools[tool] && r.shouldHideToolAfterDiscoveryHardRedirect(req) {
+						turnHiddenTools[tool] = true
+						rebuildTools()
+						r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after hard-redirect", tool)})
+					}
+					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.Result.Summary, decision.Result.Error)
+					if done {
+						return finish(answer, err, "redirect_hard_block_exhausted", true)
+					}
+					continue
+				}
+				result := decision.Result
+				recorder.activeToolCall = activeToolCall
+				recorder.record(stepNumber, req, result, "discovery_redirect", false, false)
 				if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
 					r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
 				}
-				r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s) HARD_REJECT", req.Tool, decision.Language, decision.Capability)})
-				// Hide the source tool from the manifest for the rest
-				// of the turn. If shell was redirected to a structured
-				// tool N times and now hard-rejected, the model has
-				// shown it won't self-correct — remove the tool.
-				if tool := strings.TrimSpace(req.Tool); tool != "" && !turnHiddenTools[tool] && r.shouldHideToolAfterDiscoveryHardRedirect(req) {
-					turnHiddenTools[tool] = true
-					rebuildTools()
-					r.emitEvent(RunEvent{Role: "tool_hidden", Content: fmt.Sprintf("%s hidden for rest of turn after hard-redirect", tool)})
-				}
-				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, decision.Result.Summary, decision.Result.Error)
-				if done {
-					return finish(answer, err, "redirect_hard_block_exhausted", true)
-				}
+				r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s)", req.Tool, decision.Language, decision.Capability)})
 				continue
 			}
-			result := decision.Result
-			recorder.activeToolCall = activeToolCall
-			recorder.record(stepNumber, req, result, "discovery_redirect", false, false)
-			if strings.TrimSpace(decision.DecisionGuide) != "" && !runnerClosureGuidanceActive(r.agentName(), r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive) {
-				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: decision.DecisionGuide})
-				r.emitEvent(RunEvent{Role: "discovery_decision_guide", Content: decision.DecisionGuide})
-			}
-			r.emitEvent(RunEvent{Role: "discovery_redirect", Content: fmt.Sprintf("%s → %s (%s)", req.Tool, decision.Language, decision.Capability)})
-			continue
 		}
 		if summary, errorText, reject := declarationMoveConstraintRejection(req, declarationMovesForbidden); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -1561,6 +1573,12 @@ func (r *Runner) Run(
 				Role:    "verification_intercept_already_edited",
 				Content: intercept.Reason,
 			})
+		} else if intercept := r.preflightScopedImplementationBoundedSourceRead(req, collectedResults); intercept.Intercepted {
+			result = intercept.Result
+			r.emitEvent(RunEvent{
+				Role:    "scoped_bounded_source_read",
+				Content: intercept.Reason,
+			})
 		} else {
 			switch precheck := r.preflightApplyPatchAgainstChangedPaths(req, collectedResults); precheck.Action {
 			case applyPatchPreflightAllSkipped:
@@ -1822,6 +1840,304 @@ func (r *Runner) Run(
 	return finish(answer, err, "tool_step_budget_exhausted", true)
 }
 
+func implementationScopedReadFileRequestInExplicitScope(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) bool {
+	if !implementationScopedEditSurfaceActive(brief, results) {
+		return false
+	}
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return false
+	}
+	return readRequestTargetsRequiredEditPath(req, implementationScopedExplicitReadScope(brief))
+}
+
+func (r *Runner) preflightScopedImplementationBoundedSourceRead(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil || r.Workspace == nil {
+		return verificationInterceptResult{}
+	}
+	if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, results, req) {
+		return verificationInterceptResult{}
+	}
+	if req.StartLine > 0 || req.EndLine > 0 {
+		return verificationInterceptResult{}
+	}
+	relPath := normalizeRunnerPath(req.Path)
+	if relPath == "" || strings.HasPrefix(relPath, "../") || relPath == ".." || filepath.IsAbs(relPath) {
+		return verificationInterceptResult{}
+	}
+	relPath = filepath.ToSlash(filepath.Clean(relPath))
+	if relPath == "." || strings.HasPrefix(relPath, "../") || relPath == ".." {
+		return verificationInterceptResult{}
+	}
+	absPath := filepath.Join(r.Workspace.Root(), filepath.FromSlash(relPath))
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return verificationInterceptResult{}
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) <= scopedImplementationLargeReadLineThreshold && len(data) <= scopedImplementationLargeReadByteThreshold {
+		return verificationInterceptResult{}
+	}
+	start, end, selector := scopedImplementationBoundedReadWindow(r.RuntimeBrief, relPath, lines)
+	output := scopedImplementationBoundedReadOutput(r.RuntimeBrief, relPath, lines, start, end, selector)
+	r.Workspace.MarkPathObserved(relPath)
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result: workspace.ToolResult{
+			Tool: "read_file",
+			Summary: fmt.Sprintf(
+				"Read %s lines %d-%d (bounded large required-path source; file has %d lines total; full range-less read omitted)",
+				relPath, start, end, len(lines),
+			),
+			Output: output,
+		},
+		Reason: fmt.Sprintf("bounded range-less read_file on large scoped path %s to lines %d-%d of %d", relPath, start, end, len(lines)),
+	}
+}
+
+func scopedImplementationBoundedReadWindow(brief workerruntime.WorkerRuntimeBrief, path string, lines []string) (int, int, string) {
+	total := len(lines)
+	if total <= 0 {
+		return 1, 1, "empty file fallback"
+	}
+	terms := scopedImplementationSourceSelectionTerms(brief, path)
+	if line := firstLineMatchingAnyTerm(lines, terms); line > 0 {
+		start, end := centeredLineWindow(line, total, scopedImplementationBoundedReadWindowLines)
+		return start, end, fmt.Sprintf("first task/path term match near line %d", line)
+	}
+	if line := firstDeclarationLine(lines); line > 0 {
+		start, end := centeredLineWindow(line, total, scopedImplementationBoundedReadWindowLines)
+		return start, end, fmt.Sprintf("first declaration fallback near line %d", line)
+	}
+	end := scopedImplementationBoundedReadWindowLines
+	if end > total {
+		end = total
+	}
+	return 1, end, "top-of-file fallback"
+}
+
+func scopedImplementationBoundedReadOutput(brief workerruntime.WorkerRuntimeBrief, path string, lines []string, start int, end int, selector string) string {
+	total := len(lines)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Bounded source packet for %s\n", path)
+	fmt.Fprintf(&b, "- file_lines: %d\n", total)
+	fmt.Fprintf(&b, "- returned_lines: %d-%d\n", start, end)
+	fmt.Fprintf(&b, "- selector: %s\n", selector)
+	fmt.Fprintf(&b, "- reason: range-less read_file on a large scoped required/evidence path was bounded to preserve context.\n")
+	fmt.Fprintf(&b, "- next: request a smaller read_file range or a code_navigate read_symbol for the exact edit-safety fact you still need.\n")
+	for _, suggestion := range scopedImplementationSuggestedReadRanges(brief, path, lines, start, end) {
+		fmt.Fprintf(&b, "- suggested_next_read: %s\n", suggestion)
+	}
+	b.WriteString("\nSource lines:\n")
+	for i := start - 1; i < end && i < len(lines); i++ {
+		fmt.Fprintf(&b, "%d:%s\n", i+1, truncateScopedImplementationBoundedReadLine(lines[i]))
+	}
+	return strings.TrimRight(b.String(), "\n")
+}
+
+func truncateScopedImplementationBoundedReadLine(line string) string {
+	if len(line) <= scopedImplementationBoundedReadLineCharCap {
+		return line
+	}
+	return fmt.Sprintf("%s... [truncated %d chars]", line[:scopedImplementationBoundedReadLineCharCap], len(line)-scopedImplementationBoundedReadLineCharCap)
+}
+
+func scopedImplementationSuggestedReadRanges(brief workerruntime.WorkerRuntimeBrief, path string, lines []string, returnedStart int, returnedEnd int) []string {
+	terms := scopedImplementationSourceSelectionTerms(brief, path)
+	total := len(lines)
+	seen := map[string]struct{}{
+		fmt.Sprintf("%d-%d", returnedStart, returnedEnd): {},
+	}
+	var suggestions []string
+	add := func(line int, why string) {
+		if line <= 0 || line > total || len(suggestions) >= 3 {
+			return
+		}
+		start, end := centeredLineWindow(line, total, scopedImplementationBoundedReadWindowLines)
+		key := fmt.Sprintf("%d-%d", start, end)
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		suggestions = append(suggestions, fmt.Sprintf(
+			`{"tool":"read_file","path":%q,"start_line":%d,"end_line":%d,"named_gap":%q,"why_not_answering":"need bounded current source before the edit"}`,
+			path, start, end, why,
+		))
+	}
+	for _, line := range allDeclarationLinesMatchingAnyTerm(lines, terms, 6) {
+		add(line, "inspect task-relevant declaration in large scoped file")
+	}
+	for _, line := range allLinesMatchingAnyTerm(lines, terms, 6) {
+		add(line, "inspect task-relevant source range in large scoped file")
+	}
+	if len(suggestions) == 0 {
+		add(1, "inspect file header/imports before selecting a narrower symbol or range")
+	}
+	return suggestions
+}
+
+func scopedImplementationSourceSelectionTerms(brief workerruntime.WorkerRuntimeBrief, path string) []string {
+	seen := map[string]struct{}{}
+	var terms []string
+	add := func(term string) {
+		term = strings.ToLower(strings.TrimSpace(term))
+		term = strings.Trim(term, "`'\".,:;()[]{}")
+		if len(term) < 4 || scopedImplementationSourceSelectionStopWord(term) {
+			return
+		}
+		if _, ok := seen[term]; ok {
+			return
+		}
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+	}
+	text := strings.Join([]string{
+		brief.Objective,
+		strings.Join(brief.RequiredNext, " "),
+		strings.Join(brief.SearchPolicy, " "),
+		strings.Join(brief.Constraints, " "),
+	}, " ")
+	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(text, -1) {
+		if len(match) > 1 && !strings.Contains(match[1], "/") {
+			add(match[1])
+		}
+	}
+	for _, token := range codeShapedTokenPattern.FindAllString(text, -1) {
+		add(token)
+	}
+	for _, token := range codeShapedSnakeCasePattern.FindAllString(text, -1) {
+		add(token)
+		for _, part := range strings.Split(token, "_") {
+			add(part)
+		}
+	}
+	for _, token := range strings.FieldsFunc(text, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	}) {
+		add(token)
+	}
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	add(stem)
+	for _, part := range strings.FieldsFunc(stem, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	}) {
+		add(part)
+	}
+	add(filepath.Base(path))
+	if len(terms) > 16 {
+		return terms[:16]
+	}
+	return terms
+}
+
+func scopedImplementationSourceSelectionStopWord(term string) bool {
+	switch term {
+	case "this", "that", "with", "from", "into", "file", "files", "path", "paths",
+		"source", "read", "edit", "edits", "write", "writes", "scope", "scoped",
+		"required", "implementation", "implement", "contract", "evidence", "exact",
+		"task", "test", "tests", "need", "needs", "before", "after", "current", "main":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstLineMatchingAnyTerm(lines []string, terms []string) int {
+	for _, line := range allLinesMatchingAnyTerm(lines, terms, 1) {
+		return line
+	}
+	return 0
+}
+
+func allLinesMatchingAnyTerm(lines []string, terms []string, max int) []int {
+	if max <= 0 || len(terms) == 0 {
+		return nil
+	}
+	var out []int
+	for i, line := range lines {
+		lower := strings.ToLower(line)
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
+				out = append(out, i+1)
+				break
+			}
+		}
+		if len(out) >= max {
+			return out
+		}
+	}
+	return out
+}
+
+func firstDeclarationLine(lines []string) int {
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "func ") ||
+			strings.HasPrefix(trimmed, "type ") ||
+			strings.HasPrefix(trimmed, "const ") ||
+			strings.HasPrefix(trimmed, "var ") ||
+			strings.HasPrefix(trimmed, "class ") ||
+			strings.HasPrefix(trimmed, "def ") {
+			return i + 1
+		}
+	}
+	return 0
+}
+
+func allDeclarationLinesMatchingAnyTerm(lines []string, terms []string, max int) []int {
+	if max <= 0 || len(terms) == 0 {
+		return nil
+	}
+	var out []int
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		isDecl := strings.HasPrefix(trimmed, "func ") ||
+			strings.HasPrefix(trimmed, "type ") ||
+			strings.HasPrefix(trimmed, "const ") ||
+			strings.HasPrefix(trimmed, "var ") ||
+			strings.HasPrefix(trimmed, "class ") ||
+			strings.HasPrefix(trimmed, "def ")
+		if !isDecl {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		for _, term := range terms {
+			if strings.Contains(lower, term) {
+				out = append(out, i+1)
+				break
+			}
+		}
+		if len(out) >= max {
+			return out
+		}
+	}
+	return out
+}
+
+func centeredLineWindow(line int, total int, size int) (int, int) {
+	if total <= 0 {
+		return 1, 1
+	}
+	if size <= 0 {
+		size = scopedImplementationBoundedReadWindowLines
+	}
+	if size > total {
+		size = total
+	}
+	start := line - size/3
+	if start < 1 {
+		start = 1
+	}
+	end := start + size - 1
+	if end > total {
+		end = total
+		start = end - size + 1
+		if start < 1 {
+			start = 1
+		}
+	}
+	return start, end
+}
+
 // maxToolStepsExhaustedReason mirrors OpenCode's max-steps.txt: when the
 // per-turn tool-step budget is spent, tools are disabled and the model must
 // synthesize a text-only reply now from the evidence already gathered. The
@@ -1954,7 +2270,7 @@ func (r *Runner) renderStepInstruction(policy RunPolicy, messages []llama.ChatMe
 		Lane:           r.agentName(),
 		Phase:          runnerLivePhase(brief, req, result, results),
 		Step:           step,
-		EvidencePaths:  promptEvidencePathsFromToolResults(results, 6),
+		EvidencePaths:  runnerEvidencePathsForBrief(brief, results, 6),
 		ChangedPaths:   mapKeys(changedPathsFromToolResults(results)),
 		Constraints:    mergeRunnerStateStrings(brief.Constraints, guidance.Constraints),
 		LastTool:       util.FirstNonEmpty(strings.TrimSpace(req.Tool), strings.TrimSpace(result.Tool)),
@@ -1963,7 +2279,7 @@ func (r *Runner) renderStepInstruction(policy RunPolicy, messages []llama.ChatMe
 		NextActions:    mergeRunnerStateStrings(brief.RequiredNext, guidance.ValidNext),
 		InvalidActions: mergeRunnerStateStrings(brief.InvalidActions, guidance.InvalidNext),
 	}
-	if !strings.HasPrefix(strings.TrimSpace(r.agentName()), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
+	if !runnerBriefRequiresMutation(brief) && !strings.HasPrefix(strings.TrimSpace(r.agentName()), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
 		state.EvidencePaths = postChildClosureEvidencePaths(brief.Objective, results, 6)
 	}
 	// After step 3 the static scaffolding (tool_manifest, allowed/forbidden
@@ -1997,7 +2313,7 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 			MaxContextChars:    policy.MaxContextChars,
 		}
 	}
-	brief.EvidencePaths = mergeRunnerStateStrings(brief.EvidencePaths, promptEvidencePathsFromToolResults(results, 8))
+	brief.EvidencePaths = mergeRunnerStateStrings(brief.EvidencePaths, runnerEvidencePathsForBrief(brief, results, 8))
 	brief.ChangedPaths = mergeRunnerStateStrings(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
 	brief = runnerBriefWithPhaseHints(brief, results)
 	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
@@ -2628,6 +2944,7 @@ func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief
 		"required edit paths define the implementation scope",
 		"prefer context, language, and declared read-only project discovery tools for named edit-safety gaps before raw source reads",
 		"raw source reads are only for exact anchor confirmation on required paths or explicit evidence paths",
+		"large range-less raw source reads on required/evidence paths are bounded by the harness; request start_line/end_line or a symbol for follow-up",
 	}, brief.SearchPolicy)
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
@@ -2728,7 +3045,7 @@ func buildRunnerNextActionState(agent string, step int, reason string, req works
 		ResultSummary:     truncateRunnerStateText(result.Summary, 220),
 		ResultError:       truncateRunnerStateText(result.Error, 260),
 		ResultOutputChars: len(result.Output),
-		EvidencePaths:     promptEvidencePathsFromToolResults(results, 6),
+		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
 	}
 	if status := scratchpadDeliverableFailedEvidenceStatus(brief, results); status != "" {
 		state.EvidenceStatus = []string{status}
@@ -2736,7 +3053,7 @@ func buildRunnerNextActionState(agent string, step int, reason string, req works
 	if strings.HasPrefix(strings.TrimSpace(agent), "child:") && delegatedReadOnlyClosureReady(agent, brief, results) {
 		state.EvidencePaths = delegatedClosureEvidencePaths(brief.Objective, results, 6)
 	}
-	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
+	if !runnerBriefRequiresMutation(brief) && !strings.HasPrefix(strings.TrimSpace(agent), "child:") && postChildPacketClosureReadyWithBrief(brief, results) {
 		state.EvidencePaths = postChildClosureEvidencePaths(brief.Objective, results, 6)
 	}
 	state.Constraints = mergeRunnerStateStrings(brief.Constraints, guidance.Constraints)
@@ -3319,7 +3636,7 @@ func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, poli
 		RetainedMessages: len(compacted),
 		MaxHistory:       policy.MaxContextMessages,
 		MaxChars:         policy.MaxContextChars,
-		PinnedPaths:      promptEvidencePathsFromToolResults(results, 8),
+		PinnedPaths:      runnerPinnedPathsForBrief(r.RuntimeBrief, results, 8),
 		PinnedMemoryKind: "runner_task_state",
 		Strategy:         "retain_system_and_user_objective_with_task_ledger_recent_tools_and_blockers",
 	})
@@ -3353,7 +3670,7 @@ func (r *Runner) runnerCompactionSummary(policy RunPolicy, ledger *taskLedgerSta
 		b.WriteString(ledger.render())
 		b.WriteString("\n")
 	}
-	if paths := promptEvidencePathsFromToolResults(results, 8); len(paths) > 0 {
+	if paths := runnerPinnedPathsForBrief(r.RuntimeBrief, results, 8); len(paths) > 0 {
 		b.WriteString("\nPinned paths:\n")
 		for _, path := range paths {
 			b.WriteString("- ")
@@ -3506,6 +3823,64 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*6)...)
 	paths = prioritizedClosureEvidencePaths(paths, results, max*3)
 	return limitRunnerStrings(uniqueDelegatedDiscoveryPaths(append(directPaths, closurePromptEvidencePaths(paths, max*2)...)), max)
+}
+
+func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	if !runnerBriefRequiresMutation(brief) {
+		return promptEvidencePathsFromToolResults(results, max)
+	}
+	scope := mutationEvidenceScope(brief, results)
+	paths := changedPathListFromToolResults(results)
+	for _, path := range directProbePathsFromToolResults(results, max*2) {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || !scope[normalized] {
+			continue
+		}
+		paths = append(paths, normalized)
+	}
+	for _, path := range brief.EvidencePaths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || !scope[normalized] {
+			continue
+		}
+		paths = append(paths, normalized)
+	}
+	return closurePromptEvidencePathsPreservingTests(paths, max)
+}
+
+func runnerPinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	if !runnerBriefRequiresMutation(brief) {
+		return promptEvidencePathsFromToolResults(results, max)
+	}
+	paths := append([]string{}, brief.RequiredEditPaths...)
+	paths = append(paths, mapKeys(changedPathsFromToolResults(results))...)
+	paths = append(paths, runnerEvidencePathsForBrief(brief, results, max*2)...)
+	return closurePromptEvidencePathsPreservingTests(paths, max)
+}
+
+func mutationEvidenceScope(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) map[string]bool {
+	scope := map[string]bool{}
+	for _, values := range [][]string{
+		brief.RequiredEditPaths,
+		brief.TargetRefs,
+		brief.ChangedPaths,
+		brief.EvidencePaths,
+		mapKeys(changedPathsFromToolResults(results)),
+	} {
+		for _, raw := range values {
+			path := normalizeRunnerPath(raw)
+			if path != "" {
+				scope[path] = true
+			}
+		}
+	}
+	return scope
 }
 
 func postChildClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {

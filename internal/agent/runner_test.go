@@ -3238,6 +3238,95 @@ func TestWriteReadyPacketRejectsTaskLedgerDetourBeforeFirstWrite(t *testing.T) {
 	}
 }
 
+func TestScopedImplementationHiddenBroadToolFallsThroughAfterOneRecovery(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"search_content","path":".","pattern":"before","named_gap":"find implementation context","why_not_answering":"need context"}`,
+		`{"tool":"search_content","path":".","pattern":"after","named_gap":"find implementation context","why_not_answering":"need context"}`,
+		`{"tool":"write_file","path":"a.txt","content":"after\n","description":"update from packet"}`,
+		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var scopedRecoveryEvents int
+	var hiddenToolResults int
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			TargetPacket:         []string{"prompt_context:verified_current_state"},
+			EvidencePaths:        []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_scoped_tool_recovery" {
+				scopedRecoveryEvents++
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt from the packet."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Summary == "Tool hidden by active contract" {
+				hiddenToolResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if scopedRecoveryEvents != 1 {
+		t.Fatalf("expected exactly one scoped recovery before hidden-tool handling, got %d", scopedRecoveryEvents)
+	}
+	if hiddenToolResults != 1 {
+		t.Fatalf("expected repeated broad tool to fall through to hidden-tool handling, got %d hidden result(s)", hiddenToolResults)
+	}
+	if !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected final answer to report changed path, got %q", answer)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a: %v", err)
+	}
+	if string(content) != "after\n" {
+		t.Fatalf("a.txt content = %q", string(content))
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
 func TestWriteReadyPacketAllowsNamedGapProbeBeforeFirstWrite(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{"a.txt", "b.txt"} {
@@ -9729,6 +9818,54 @@ func TestPromptEvidencePathsFromToolResultsKeepsDirectTestProbePath(t *testing.T
 	}
 }
 
+func TestRunnerEvidencePathsForMutationDoNotPinOutputMentionedFixturePaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"internal/productworkflow/coverage_gate.go",
+			"internal/productworkflow/coverage_gate_test.go",
+			"cmd/idiom/product_workflow_test.go",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-338",
+			Output: strings.Join([]string{
+				`record("ears", requireBehavior, earsPass, "...", "tdd.json", "coverage_ears_incomplete")`,
+				`record("evidence_acceptance", true, evidencePass, "...", "evidence/traceability_matrix.json", "coverage_evidence_acceptance_incomplete")`,
+			}, "\n"),
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output: strings.Join([]string{
+				"internal/productworkflow/analysis_agents.go",
+				"internal/productworkflow/implementation.go",
+				"cmd/idiom/implementation.go",
+			}, "\n"),
+		},
+	}
+
+	evidence := runnerEvidencePathsForBrief(brief, results, 8)
+	if !reflect.DeepEqual(evidence, []string{"internal/productworkflow/coverage_gate.go"}) {
+		t.Fatalf("expected mutation evidence to keep only direct scoped probes, got %#v", evidence)
+	}
+	pinned := runnerPinnedPathsForBrief(brief, results, 8)
+	for _, want := range brief.RequiredEditPaths {
+		if !slices.Contains(pinned, want) {
+			t.Fatalf("expected pinned mutation paths to retain required path %q, got %#v", want, pinned)
+		}
+	}
+	for _, forbidden := range []string{"internal/productworkflow/analysis_agents.go", "internal/productworkflow/implementation.go", "cmd/idiom/implementation.go", "tdd.json", "evidence/traceability_matrix.json"} {
+		if slices.Contains(evidence, forbidden) || slices.Contains(pinned, forbidden) {
+			t.Fatalf("did not expect output-mentioned fixture path %q in mutation evidence=%#v pinned=%#v", forbidden, evidence, pinned)
+		}
+	}
+}
+
 func TestPostChildClosureEvidencePathsPreservesMultiFilePacketCoverage(t *testing.T) {
 	got := postChildClosureEvidencePaths("Explain how this harness uses subagents.", []workspace.ToolResult{{
 		Tool: "task",
@@ -11218,6 +11355,218 @@ func TestDiscoveryRedirectFallsBackOnSecondCall(t *testing.T) {
 	events, _ := runRedirectScenario(t, replies)
 	if got := countEventsByRole(events, "discovery_redirect"); got != 1 {
 		t.Fatalf("expected exactly 1 discovery_redirect, got %d", got)
+	}
+}
+
+func TestDiscoveryRedirectSkipsScopedImplementationRequiredPathRead(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.test\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	source := "package main\n\nfunc main() {}\n" + strings.Repeat("// pad\n", 500)
+	if err := writeTestFile(root, "main.go", source); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"main.go"}`,
+		`{"tool":"write_file","path":"main.go","content":"package main\n\nfunc main() { println(\"ok\") }\n","description":"update required path"}`,
+		"Changed paths:\n- main.go\nVerification: not required for this test fixture.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var readFileResults int
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		Policy:    RunPolicy{MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"main.go"},
+			EvidencePaths:        []string{"main.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	_, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update main.go"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "read_file" && event.Result.Error == "" && strings.Contains(event.Result.Output, "func main()") {
+				readFileResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "discovery_redirect"); got != 0 {
+		t.Fatalf("required-path source reads should not redirect in scoped implementation, got %d", got)
+	}
+	if readFileResults != 1 {
+		t.Fatalf("expected direct read_file result for required path, got %d", readFileResults)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
+func TestScopedImplementationLargeRequiredPathReadReturnsBoundedSourcePacket(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.test\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	lines := make([]string, 1200)
+	lines[0] = "package main"
+	lines[1] = ""
+	for i := 2; i < len(lines); i++ {
+		lines[i] = fmt.Sprintf("// filler %d", i+1)
+	}
+	lines[909] = "func ProductWorkflowCoverageGate() bool { return true }"
+	source := strings.Join(lines, "\n")
+	if err := writeTestFile(root, "main.go", source); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"main.go"}`,
+		`{"tool":"read_file","path":"main.go","start_line":900,"end_line":920}`,
+		`{"tool":"write_file","path":"main.go","content":"package main\n\nfunc ProductWorkflowCoverageGate() bool { return false }\n","description":"update required path"}`,
+		"Changed paths:\n- main.go\nVerification: not required for this test fixture.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var readResults []workspace.ToolResult
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		Policy:    RunPolicy{MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Objective:            "update ProductWorkflowCoverageGate behavior",
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"main.go"},
+			EvidencePaths:        []string{"main.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	_, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update ProductWorkflowCoverageGate behavior"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "read_file" {
+				readResults = append(readResults, event.Result)
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "discovery_redirect"); got != 0 {
+		t.Fatalf("large required-path source read should not use discovery redirect, got %d", got)
+	}
+	if got := countEventsByRole(events, "scoped_bounded_source_read"); got != 1 {
+		t.Fatalf("expected one bounded source event, got %d", got)
+	}
+	if len(readResults) < 2 {
+		t.Fatalf("expected bounded read and explicit range read, got %d", len(readResults))
+	}
+	first := readResults[0]
+	if !strings.Contains(first.Summary, "bounded large required-path source") {
+		t.Fatalf("expected bounded source summary, got %q", first.Summary)
+	}
+	if strings.Contains(first.Output, "1200:// filler 1200") {
+		t.Fatalf("bounded read leaked tail of large file:\n%s", first.Output)
+	}
+	if !strings.Contains(first.Output, "ProductWorkflowCoverageGate") {
+		t.Fatalf("bounded read should prioritize task-relevant source over generic file header:\n%s", first.Output)
+	}
+	if !strings.Contains(first.Output, `"start_line"`) || !strings.Contains(first.Output, `"end_line"`) {
+		t.Fatalf("bounded read should include concrete follow-up range guidance:\n%s", first.Output)
+	}
+	if !strings.Contains(readResults[1].Summary, "lines 900-920") {
+		t.Fatalf("explicit bounded range should execute normally, summary=%q", readResults[1].Summary)
+	}
+	if !runner.Workspace.HasObservedPath("main.go") {
+		t.Fatalf("bounded source packet should mark the path observed for subsequent edits")
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
+func TestScopedImplementationBoundedSourcePacketCapsByteLargeLines(t *testing.T) {
+	root := t.TempDir()
+	longLine := strings.Repeat("x", scopedImplementationLargeReadByteThreshold+1024)
+	if err := writeTestFile(root, "main.go", strings.Join([]string{
+		"package main",
+		"func ByteLargeTarget() string {",
+		longLine,
+		"}",
+	}, "\n")); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Objective:            "update ByteLargeTarget behavior",
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			RequiredEditPaths:    []string{"main.go"},
+			EvidencePaths:        []string{"main.go"},
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationPlan:     nil,
+			VerificationContract: "not_required_for_text_mutations",
+		},
+	}
+
+	intercept := runner.preflightScopedImplementationBoundedSourceRead(workspace.ToolRequest{Tool: "read_file", Path: "main.go"}, nil)
+	if !intercept.Intercepted {
+		t.Fatalf("expected byte-large range-less read to be bounded")
+	}
+	if !strings.Contains(intercept.Result.Output, "[truncated ") {
+		t.Fatalf("expected long source line to be capped, output length=%d", len(intercept.Result.Output))
+	}
+	if strings.Contains(intercept.Result.Output, longLine) {
+		t.Fatalf("bounded source packet leaked the full long line")
 	}
 }
 

@@ -127,6 +127,16 @@ instead of using its normal editing capability.
 
 ## Review And Validation
 
+- Every non-trivial behavior fix needs an explicit decision record before it is
+  considered complete: the verified root cause, the north-star alignment, the
+  reason it does not create a new rabbit hole, and the evidence that similar
+  nearby failure modes were checked. Prefer the smallest contract/authority
+  correction that removes the cause over another late nudge or budget.
+- Run that decision record by an independent reviewer before applying or
+  finalizing the fix. The reviewer should challenge whether the diagnosis is
+  log/test-backed, whether the harness is enforcing a real invariant rather than
+  picking model strategy, whether the change preserves valid lanes and CLI/TUI
+  parity, and whether it is likely to cause follow-on compensating fixes.
 - Before replacing or reverting non-trivial behavior, inspect the relevant
   commit/blame/symbol history when current intent is ambiguous. History is not
   a veto, but it is evidence: preserve still-valid rationale and call out when

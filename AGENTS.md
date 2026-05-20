@@ -54,6 +54,11 @@ For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or 
 - Keep actor and contract names stable across prompts, gates, logs, and UI. A plan-execute planner does not "implement"; it produces a `submit_plan` artifact, a `Decision: source-satisfied` closeout, or a typed blocker. The executor implements accepted plan edits. Rejected `submit_plan` calls are invalid attempts, not successful plan artifacts.
 - Separate similarly named obligations in prompt and gate language: `required_edit_paths` are mutation scope, source-body obligations are evidence prerequisites, and `submit_plan` coverage is the requirement that every required path appear in a valid edit entry or terminal source-satisfied evidence. Do not use one term as shorthand for all three.
 - Treat source evidence as a hierarchy. Path/packet evidence scopes work; outline and search hits localize candidate anchors; only source-body reads such as `code_navigate` `read_symbol` / `extract_body` or bounded `read_file` satisfy source-body obligations.
+- Before landing a non-trivial behavior fix, state the root cause, why the fix is
+  north-star aligned, and why it does not start a new rabbit hole. Get an
+  independent reviewer to check that analysis before applying or finalizing the
+  fix; if reviewer feedback changes the diagnosis, narrow or redesign the patch
+  before proceeding.
 - Search for authority leaks, not only direct wording. Distinguish instructions from evidence, telemetry, generated context, and source text.
 - For required-path implementation failures, distinguish exact-anchor write-first contracts from abstract scope-ready packets. Check both what tells the model to write and which bounded read/search affordances remain visible.
 - Prefer removing conflicting affordances or encoding a typed contract over adding another prompt reminder.

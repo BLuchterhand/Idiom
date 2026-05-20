@@ -190,6 +190,11 @@ failure patterns that have cost time in real Idiom/Colony runs.
   that sounded advisory, omitted the executable action sequence, or contradicted
   the gate's evidence ordering. Root-cause from the first prompt the model saw,
   then keep deterministic recovery as the backstop.
+- **Unreviewed root-cause claims**: a behavior fix is incomplete until an
+  independent reviewer has challenged the diagnosis, north-star alignment, and
+  follow-on risk. Do not land a patch solely because it fixes the latest live
+  run; record why it removes the cause without opening a new compensating-fix
+  chain.
 - **Rerunning the same failed atom repeatedly**: after two harness-shaped
   failures, write a focused regression test from the logged failure shape before
   more live runs.
@@ -216,3 +221,5 @@ Before calling an Idiom harness change complete, check:
    reading the whole transcript?
 7. Did the change add regression coverage for the bad behavior and a valid
    allowed path?
+8. Did an independent reviewer check the root cause, north-star alignment, and
+   rabbit-hole risk before the fix was finalized?
