@@ -129,6 +129,19 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
+		if reason := planExecuteRequestedTestEditRejectionReason(prompt, autoExact.AppliedPaths); reason != "" {
+			message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+			progress.Status = ProgressStatusFailed
+			progress.FailureKind = reason
+			progress.FailureReason = sanitizeProgressReason(message)
+			_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
+				"reason":        reason,
+				"applied_paths": autoExact.AppliedPaths,
+			})
+			fmt.Fprintln(stderr, message)
+			return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: reason, FailureReason: sanitizeProgressReason(message)}
+		}
 		answer = planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths)
 		progress.Phase = ProgressPhaseComplete
 		progress.Status = ProgressStatusCompleted
@@ -220,11 +233,27 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 
 	planPath, err := FindLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
-		sourceSatisfiedPaths := requiredEditPaths
-		if len(sourceSatisfiedPaths) == 0 {
-			sourceSatisfiedPaths = allowedEditPaths
-		}
+		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
 		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
+			if reason := planExecuteRequestedTestEditRejectionReason(prompt, sourceSatisfiedPaths); reason != "" {
+				message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+				progress.Status = ProgressStatusFailed
+				progress.FailureKind = reason
+				progress.FailureReason = sanitizeProgressReason(message)
+				if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+					if savedPath != "" {
+						progressPath = savedPath
+					}
+					fmt.Fprintln(stderr, saveErr)
+				}
+				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
+					"reason":              reason,
+					"required_edit_paths": requiredEditPaths,
+					"allowed_edit_paths":  allowedEditPaths,
+				})
+				fmt.Fprintln(stderr, message)
+				return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: reason, FailureReason: sanitizeProgressReason(message)}
+			}
 			progress.Phase = ProgressPhaseComplete
 			progress.Status = ProgressStatusCompleted
 			_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
@@ -329,10 +358,38 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"edits":   len(plan.Edits),
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
+	changedPaths := planChangedPaths(plan)
+	if reason := planExecuteRequestedTestEditRejectionReason(prompt, changedPaths); reason != "" {
+		message := reason + ": original prompt requested test edits, but submitted plan changed no test path"
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
+			"path":          planPath,
+			"reason":        reason,
+			"changed_paths": changedPaths,
+		})
+		progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, ReviewRepairBaseline{})
+		progress.Status = ProgressStatusFailed
+		progress.FailureKind = reason
+		progress.FailureReason = sanitizeProgressReason(message)
+		if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+			if savedPath != "" {
+				progressPath = savedPath
+			}
+			fmt.Fprintln(stderr, saveErr)
+		}
+		fmt.Fprintln(stderr, message)
+		return RunResult{
+			ExitCode:        1,
+			SessionID:       sessionID,
+			ResumeStatePath: progressPath,
+			FailureKind:     reason,
+			FailureReason:   sanitizeProgressReason(message),
+			PlannerAnswer:   answer,
+		}
+	}
 	if emitPhase != nil {
 		emitPhase("planning", fmt.Sprintf("Plan created with %d edit(s)", len(plan.Edits)))
 	}
-	reviewBaseline := CaptureReviewRepairBaseline(cfg.Workspace.Root, planChangedPaths(plan))
+	reviewBaseline := CaptureReviewRepairBaseline(cfg.Workspace.Root, changedPaths)
 	progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, reviewBaseline)
 	progressPath, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil {

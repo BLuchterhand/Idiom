@@ -1,6 +1,8 @@
 package workspace
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -20,16 +22,68 @@ import (
 // of the shapes; submit_plan validates this before persisting the
 // plan.
 type PlanEdit struct {
-	Path       string `json:"path"`
-	OldText    string `json:"old_text,omitempty"`
-	NewText    string `json:"new_text,omitempty"`
-	NewTextRef string `json:"new_text_ref,omitempty"`
-	StartLine  int    `json:"start_line,omitempty"`
-	EndLine    int    `json:"end_line,omitempty"`
-	Content    string `json:"content,omitempty"`
-	ContentRef string `json:"content_ref,omitempty"`
-	ReplaceAll bool   `json:"replace_all,omitempty"`
-	Purpose    string `json:"purpose,omitempty"`
+	Path             string                    `json:"path"`
+	OldText          string                    `json:"old_text,omitempty"`
+	NewText          string                    `json:"new_text"`
+	NewTextRef       string                    `json:"new_text_ref,omitempty"`
+	StartLine        int                       `json:"start_line,omitempty"`
+	EndLine          int                       `json:"end_line,omitempty"`
+	Content          string                    `json:"content,omitempty"`
+	ContentRef       string                    `json:"content_ref,omitempty"`
+	ReplaceAll       bool                      `json:"replace_all,omitempty"`
+	Purpose          string                    `json:"purpose,omitempty"`
+	AnchorProvenance *PlanEditAnchorProvenance `json:"anchor_provenance,omitempty"`
+
+	decodedFromJSON bool
+	newTextSet      bool
+}
+
+func (edit *PlanEdit) UnmarshalJSON(data []byte) error {
+	type planEditAlias PlanEdit
+	var decoded planEditAlias
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	var fields map[string]json.RawMessage
+	_ = json.Unmarshal(data, &fields)
+	*edit = PlanEdit(decoded)
+	edit.decodedFromJSON = true
+	_, edit.newTextSet = fields["new_text"]
+	return nil
+}
+
+// PlanEditHasExplicitReplacementText reports whether a substring edit includes
+// the replacement half of the old_text/new_text contract. JSON-decoded tool
+// requests can distinguish omitted new_text from explicit empty new_text, which
+// is required for deletion edits. Programmatic tests and internal constructors
+// cannot carry that field-presence bit, so they retain the historical Go struct
+// behavior.
+func PlanEditHasExplicitReplacementText(edit PlanEdit) bool {
+	if strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "" {
+		return true
+	}
+	if edit.decodedFromJSON {
+		return edit.newTextSet
+	}
+	return true
+}
+
+// PlanEditAnchorProvenance is harness-authored evidence that a
+// substring edit was validated against specific current file bytes.
+// Planners may submit old_text/new_text; submit_plan overwrites this
+// field before persisting so executors can reject stale plans even
+// when old_text still appears somewhere in a changed file.
+type PlanEditAnchorProvenance struct {
+	SchemaVersion string `json:"schema_version"`
+	Source        string `json:"source"`
+	Path          string `json:"path"`
+	FileSHA256    string `json:"file_sha256"`
+	AnchorSHA256  string `json:"anchor_sha256"`
+	StartByte     int    `json:"start_byte"`
+	EndByte       int    `json:"end_byte"`
+	StartLine     int    `json:"start_line"`
+	EndLine       int    `json:"end_line"`
+	MatchCount    int    `json:"match_count"`
 }
 
 // PlanArtifact is the persisted shape of a submit_plan call. It
@@ -74,7 +128,11 @@ type PlanArtifact struct {
 
 // PlanArtifactSchemaVersion is the version stamp written to every
 // plan artifact. Bump when the field set changes.
-const PlanArtifactSchemaVersion = "idiom.plan.v2"
+const PlanArtifactSchemaVersion = "idiom.plan.v3"
+
+const PlanArtifactPreviousSchemaVersion = "idiom.plan.v2"
+
+const PlanEditAnchorProvenanceSchemaVersion = "idiom.plan_edit_anchor.v1"
 
 const planInlineTextSpillThreshold = 4096
 
@@ -106,6 +164,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if len(artifact.Edits) == 0 {
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
 	}
+	m.repairPlanArtifactOldTextAnchors(&artifact)
 	validationArtifact := artifact
 	validationArtifact.Edits = append([]PlanEdit(nil), artifact.Edits...)
 	if err := hydratePlanArtifactRefs(m.planArtifactDir(), &validationArtifact); err != nil {
@@ -125,6 +184,10 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		if err := m.validatePlanEditAgainstWorkspace(edit); err != nil {
 			return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: fmt.Sprintf("edits[%d]: %s", i, err.Error())}
 		}
+	}
+	artifact.Edits, err = AttachPlanEditAnchorProvenance(m.cfg.Root, artifact.Edits)
+	if err != nil {
+		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
 	}
 	if err := ValidatePlanArtifact(artifact); err != nil {
 		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
@@ -174,12 +237,18 @@ func validatePlanEdit(edit PlanEdit) error {
 	if strings.TrimSpace(edit.Path) == "" {
 		return fmt.Errorf("path is required")
 	}
+	if err := validatePlanEditAnchorProvenanceShape(edit.AnchorProvenance); err != nil {
+		return err
+	}
 	hasOldText := strings.TrimSpace(edit.OldText) != ""
 	hasNewText := strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != ""
 	hasContent := strings.TrimSpace(edit.Content) != "" || strings.TrimSpace(edit.ContentRef) != ""
-	hasSubstring := hasOldText
+	hasSubstring := hasOldText && PlanEditHasExplicitReplacementText(edit)
 	hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
 	hasReplace := hasNewText && edit.ReplaceAll
+	if hasOldText && !hasSubstring {
+		return fmt.Errorf("substring edits require `new_text` or `new_text_ref`; use explicit empty `new_text` to delete old_text")
+	}
 	if (edit.StartLine > 0 || edit.EndLine > 0) && !hasContent {
 		return fmt.Errorf("line-range edits require non-empty content; to delete text, use old_text with empty new_text instead")
 	}
@@ -190,6 +259,191 @@ func validatePlanEdit(edit PlanEdit) error {
 		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidance)
 	}
 	return nil
+}
+
+// AttachPlanEditAnchorProvenance returns a copy of edits with
+// harness-owned provenance attached to substring edits. Existing
+// provenance is ignored and overwritten; non-substring edits get nil
+// provenance so the executor treats them according to their own
+// edit-shape validation.
+func AttachPlanEditAnchorProvenance(workspaceRoot string, edits []PlanEdit) ([]PlanEdit, error) {
+	out := append([]PlanEdit(nil), edits...)
+	for i, edit := range out {
+		if strings.TrimSpace(edit.OldText) == "" {
+			out[i].AnchorProvenance = nil
+			continue
+		}
+		provenance, err := buildPlanEditAnchorProvenance(workspaceRoot, edit)
+		if err != nil {
+			return nil, fmt.Errorf("edits[%d]: %w", i, err)
+		}
+		out[i].AnchorProvenance = &provenance
+	}
+	return out, nil
+}
+
+// ValidatePlanEditAnchorProvenance verifies that a persisted substring
+// edit still targets the same file bytes submit_plan validated. Missing
+// provenance is accepted for legacy artifacts; malformed or stale
+// provenance is rejected before executor writes.
+func ValidatePlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) error {
+	provenance := edit.AnchorProvenance
+	if provenance == nil || strings.TrimSpace(edit.OldText) == "" {
+		return nil
+	}
+	if err := validatePlanEditAnchorProvenanceShape(provenance); err != nil {
+		return err
+	}
+	abs, rel, err := planEditWorkspacePath(workspaceRoot, edit.Path)
+	if err != nil {
+		return err
+	}
+	if provenance.Path != rel {
+		return fmt.Errorf("anchor provenance path mismatch: edit path %s, provenance path %s", rel, provenance.Path)
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		return fmt.Errorf("anchor provenance stale for %s: could not read current file: %w", rel, err)
+	}
+	currentFileDigest := planEditSHA256(body)
+	if provenance.FileSHA256 != currentFileDigest {
+		return fmt.Errorf("anchor provenance stale for %s: file fingerprint changed since submit_plan validation", rel)
+	}
+	if provenance.AnchorSHA256 != planEditSHA256([]byte(edit.OldText)) {
+		return fmt.Errorf("anchor provenance stale for %s: old_text fingerprint changed since submit_plan validation", rel)
+	}
+	current := string(body)
+	if provenance.StartByte < 0 || provenance.EndByte < provenance.StartByte || provenance.EndByte > len(current) {
+		return fmt.Errorf("anchor provenance stale for %s: byte range is outside current file", rel)
+	}
+	if current[provenance.StartByte:provenance.EndByte] != edit.OldText {
+		return fmt.Errorf("anchor provenance stale for %s: anchored byte range no longer matches old_text", rel)
+	}
+	matchCount := strings.Count(current, edit.OldText)
+	if matchCount != provenance.MatchCount {
+		return fmt.Errorf("anchor provenance stale for %s: old_text match count changed from %d to %d", rel, provenance.MatchCount, matchCount)
+	}
+	return nil
+}
+
+func buildPlanEditAnchorProvenance(workspaceRoot string, edit PlanEdit) (PlanEditAnchorProvenance, error) {
+	abs, rel, err := planEditWorkspacePath(workspaceRoot, edit.Path)
+	if err != nil {
+		return PlanEditAnchorProvenance{}, err
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not read %s: %w", rel, err)
+	}
+	current := string(body)
+	matchCount := strings.Count(current, edit.OldText)
+	if matchCount == 0 {
+		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance could not find old_text in %s", rel)
+	}
+	if matchCount > 1 && !edit.ReplaceAll {
+		return PlanEditAnchorProvenance{}, fmt.Errorf("anchor provenance found %d matches in %s; exact substring edits must be unique unless replace_all=true", matchCount, rel)
+	}
+	startByte := strings.Index(current, edit.OldText)
+	endByte := startByte + len(edit.OldText)
+	startLine := planEditLineNumberAtByte(current, startByte)
+	endLine := startLine
+	if endByte > startByte {
+		endLine = planEditLineNumberAtByte(current, endByte-1)
+	}
+	return PlanEditAnchorProvenance{
+		SchemaVersion: PlanEditAnchorProvenanceSchemaVersion,
+		Source:        "submit_plan",
+		Path:          rel,
+		FileSHA256:    planEditSHA256(body),
+		AnchorSHA256:  planEditSHA256([]byte(edit.OldText)),
+		StartByte:     startByte,
+		EndByte:       endByte,
+		StartLine:     startLine,
+		EndLine:       endLine,
+		MatchCount:    matchCount,
+	}, nil
+}
+
+func validatePlanEditAnchorProvenanceShape(provenance *PlanEditAnchorProvenance) error {
+	if provenance == nil {
+		return nil
+	}
+	if provenance.SchemaVersion != PlanEditAnchorProvenanceSchemaVersion {
+		return fmt.Errorf("anchor_provenance schema_version must be %s", PlanEditAnchorProvenanceSchemaVersion)
+	}
+	if strings.TrimSpace(provenance.Source) != "submit_plan" {
+		return fmt.Errorf("anchor_provenance source must be submit_plan")
+	}
+	if !planArtifactPathIsSafe(provenance.Path) {
+		return fmt.Errorf("anchor_provenance path must stay relative to the workspace")
+	}
+	if !planEditDigestIsSHA256(provenance.FileSHA256) {
+		return fmt.Errorf("anchor_provenance file_sha256 must be a sha256 digest")
+	}
+	if !planEditDigestIsSHA256(provenance.AnchorSHA256) {
+		return fmt.Errorf("anchor_provenance anchor_sha256 must be a sha256 digest")
+	}
+	if provenance.StartByte < 0 || provenance.EndByte <= provenance.StartByte {
+		return fmt.Errorf("anchor_provenance byte range is invalid")
+	}
+	if provenance.StartLine <= 0 || provenance.EndLine < provenance.StartLine {
+		return fmt.Errorf("anchor_provenance line range is invalid")
+	}
+	if provenance.MatchCount <= 0 {
+		return fmt.Errorf("anchor_provenance match_count must be positive")
+	}
+	return nil
+}
+
+func planEditWorkspacePath(workspaceRoot string, rawPath string) (string, string, error) {
+	rel := strings.TrimSpace(rawPath)
+	rel = strings.ReplaceAll(rel, "\\", "/")
+	for strings.HasPrefix(rel, "./") {
+		rel = strings.TrimPrefix(rel, "./")
+	}
+	if !planArtifactPathIsSafe(rel) {
+		return "", "", fmt.Errorf("plan edit path must stay relative to the workspace: %q", rawPath)
+	}
+	root := strings.TrimSpace(workspaceRoot)
+	if root == "" {
+		return "", "", fmt.Errorf("workspace root is required for anchor provenance")
+	}
+	cleanRoot, err := filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("workspace root is invalid for anchor provenance: %w", err)
+	}
+	cleanAbs, err := filepath.Abs(filepath.Join(cleanRoot, filepath.FromSlash(rel)))
+	if err != nil {
+		return "", "", fmt.Errorf("plan edit path is invalid for anchor provenance: %w", err)
+	}
+	if cleanAbs != cleanRoot && !strings.HasPrefix(cleanAbs, cleanRoot+string(os.PathSeparator)) {
+		return "", "", fmt.Errorf("plan edit path must stay relative to the workspace: %q", rawPath)
+	}
+	return cleanAbs, rel, nil
+}
+
+func planEditSHA256(body []byte) string {
+	sum := sha256.Sum256(body)
+	return fmt.Sprintf("sha256:%x", sum)
+}
+
+func planEditDigestIsSHA256(value string) bool {
+	const prefix = "sha256:"
+	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+64 {
+		return false
+	}
+	_, err := hex.DecodeString(value[len(prefix):])
+	return err == nil
+}
+
+func planEditLineNumberAtByte(content string, offset int) int {
+	if offset <= 0 {
+		return 1
+	}
+	if offset > len(content) {
+		offset = len(content)
+	}
+	return strings.Count(content[:offset], "\n") + 1
 }
 
 func planRationaleClaimsNoEditsNeeded(rationale string) bool {
@@ -340,6 +594,9 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
 				return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 			}
+			if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
+				return fmt.Errorf("%s", strings.TrimSpace(rejected.Error))
+			}
 		} else {
 			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
 		}
@@ -370,10 +627,80 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 		if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
 			return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 		}
+		if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
+			return fmt.Errorf("%s", strings.TrimSpace(rejected.Error))
+		}
 	} else {
 		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
 	}
 	return nil
+}
+
+func (m *Manager) repairPlanArtifactOldTextAnchors(artifact *PlanArtifact) {
+	if m == nil || artifact == nil {
+		return
+	}
+	for i, edit := range artifact.Edits {
+		if strings.TrimSpace(edit.OldText) == "" || strings.Contains(edit.OldText, "\r") {
+			continue
+		}
+		path, err := m.resolvePath(edit.Path, "")
+		if err != nil {
+			continue
+		}
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		current := string(body)
+		if strings.Count(current, edit.OldText) > 0 {
+			continue
+		}
+		repaired, ok := uniqueLeadingWhitespaceInsensitiveAnchor(current, edit.OldText)
+		if !ok || strings.Count(current, repaired) != 1 {
+			continue
+		}
+		artifact.Edits[i].OldText = repaired
+	}
+}
+
+func uniqueLeadingWhitespaceInsensitiveAnchor(current string, oldText string) (string, bool) {
+	oldLines := strings.Split(oldText, "\n")
+	if len(oldLines) == 0 {
+		return "", false
+	}
+	currentLines := strings.Split(current, "\n")
+	if len(oldLines) > len(currentLines) {
+		return "", false
+	}
+	var match string
+	matches := 0
+	for start := 0; start+len(oldLines) <= len(currentLines); start++ {
+		if !leadingWhitespaceInsensitiveLinesMatch(currentLines[start:start+len(oldLines)], oldLines) {
+			continue
+		}
+		match = strings.Join(currentLines[start:start+len(oldLines)], "\n")
+		matches++
+		if matches > 1 {
+			return "", false
+		}
+	}
+	if matches != 1 {
+		return "", false
+	}
+	return match, true
+}
+
+func leadingWhitespaceInsensitiveLinesMatch(currentLines []string, oldLines []string) bool {
+	if len(currentLines) != len(oldLines) {
+		return false
+	}
+	for i := range oldLines {
+		if strings.TrimLeft(currentLines[i], " \t") != strings.TrimLeft(oldLines[i], " \t") {
+			return false
+		}
+	}
+	return true
 }
 
 // PreviewPlanEditContent applies one PlanEdit to current content without
@@ -530,10 +857,59 @@ func LoadPlanArtifact(path string) (PlanArtifact, error) {
 	if err := hydratePlanArtifactRefs(filepath.Dir(path), &artifact); err != nil {
 		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
+	if err := attachMissingLoadedPlanAnchorProvenance(path, &artifact); err != nil {
+		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
+	}
 	if err := ValidatePlanArtifact(artifact); err != nil {
 		return PlanArtifact{}, fmt.Errorf("plan artifact %q: %w", path, err)
 	}
 	return artifact, nil
+}
+
+func attachMissingLoadedPlanAnchorProvenance(planPath string, artifact *PlanArtifact) error {
+	if artifact == nil || artifact.SchemaVersion != PlanArtifactSchemaVersion || !planArtifactHasMissingAnchorProvenance(*artifact) {
+		return nil
+	}
+	root := workspaceRootFromPlanArtifactPath(planPath)
+	if root == "" {
+		return nil
+	}
+	for i, edit := range artifact.Edits {
+		if strings.TrimSpace(edit.OldText) == "" || edit.AnchorProvenance != nil {
+			continue
+		}
+		edits, err := AttachPlanEditAnchorProvenance(root, []PlanEdit{edit})
+		if err == nil && len(edits) == 1 {
+			artifact.Edits[i] = edits[0]
+		}
+	}
+	return nil
+}
+
+func planArtifactHasMissingAnchorProvenance(artifact PlanArtifact) bool {
+	for _, edit := range artifact.Edits {
+		if strings.TrimSpace(edit.OldText) != "" && edit.AnchorProvenance == nil {
+			return true
+		}
+	}
+	return false
+}
+
+func workspaceRootFromPlanArtifactPath(planPath string) string {
+	clean := filepath.Clean(planPath)
+	plansDir := filepath.Dir(clean)
+	if filepath.Base(plansDir) != "plans" {
+		return ""
+	}
+	idiomDir := filepath.Dir(plansDir)
+	if filepath.Base(idiomDir) != ".idiom" {
+		return ""
+	}
+	root := filepath.Dir(idiomDir)
+	if root == "." || root == string(filepath.Separator) {
+		return ""
+	}
+	return root
 }
 
 func hydratePlanArtifactRefs(baseDir string, artifact *PlanArtifact) error {

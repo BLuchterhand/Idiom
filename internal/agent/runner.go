@@ -97,6 +97,7 @@ func (r *Runner) Run(
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
+	planThenExecuteUnreadSourceNudgedFor := ""
 	delegatedReadOnlyAnswerReady := slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached")
 	delegatedReadOnlyPostReadyFollowups := 0
 	delegatedReadOnlyDiminishingNudgeStage := 0
@@ -745,6 +746,18 @@ func (r *Runner) Run(
 		}
 		recoveryReadAllowanceGrantedThisRequest := false
 		if implementationWriteOnlyRecoveryActive && !r.writeOnlyRecoveryToolIsWrite(req.Tool) {
+			if r.planThenExecutePlannerPhase() {
+				result := workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Plan-execute submit_plan required",
+					Error:   fmt.Sprintf("%s is not available while plan-execute planner recovery is waiting for a visible `submit_plan`. The next visible action must be a parser-readable `submit_plan` with one edit entry for every required_edit_path, `Decision: source-satisfied` with current-state evidence for every required path, or <<QUESTION>> with the exact path-specific blocker.", strings.TrimSpace(req.Tool)),
+				}
+				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+				opts = planThenExecuteReadyToSubmitChatOptions(opts, r.RuntimeBrief, collectedResults)
+				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: result.Error})
+				continue
+			}
 			if r.consumeRecoveryReadAllowance(req, recoveryReadAllowanceUsed, collectedResults) {
 				recoveryReadAllowanceGrantedThisRequest = true
 				r.emitEvent(RunEvent{
@@ -1573,6 +1586,15 @@ func (r *Runner) Run(
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
 		if !planThenExecuteReadinessNudged {
+			if nudge := planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, collectedResults); nudge != "" {
+				nextUnread := firstPlanThenExecuteUnreadRequiredPath(r.RuntimeBrief.RequiredEditPaths, planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults))
+				if nextUnread != "" && nextUnread != planThenExecuteUnreadSourceNudgedFor {
+					planThenExecuteUnreadSourceNudgedFor = nextUnread
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+					opts = planThenExecuteUnreadRequiredSourceChatOptions(opts, r.RuntimeBrief, collectedResults)
+					r.emitEvent(RunEvent{Role: "plan_then_execute_unread_source_nudge", Content: nudge})
+				}
+			}
 			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, collectedResults); nudge != "" {
 				planThenExecuteReadinessNudged = true
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
@@ -2240,6 +2262,7 @@ func (r *Runner) textualToolProtocolPrompt(brief workerruntime.WorkerRuntimeBrie
 	b.WriteString("Native tool calls are unavailable for this backend. Idiom will execute tools only when your entire reply is one textual JSON tool request.\n\n")
 	b.WriteString("When taking a tool action, reply with exactly this shape and no prose, markdown commentary, XML tags, or second JSON object:\n\n")
 	b.WriteString("```tool\n{\"tool\":\"tool_name\",\"field\":\"value\"}\n```\n\n")
+	b.WriteString("Keep structured fields structured: arrays and objects must be JSON arrays/objects, not quoted JSON strings. For `submit_plan`, `edits` must be an array and every edit object must include `path`.\n")
 	b.WriteString("Use the runtime brief's `tool_manifest` for allowed tools and fields. If the runtime brief requires a tool, do not answer in prose while that tool contract is still open.\n")
 	if len(entries) > 0 {
 		b.WriteString("\nCurrent required/allowed examples:\n")
@@ -5039,6 +5062,13 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	}
 	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
 		if r.planThenExecutePlannerPhase() {
+			if nudge := planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, results); nudge != "" {
+				return strings.Join([]string{
+					"The completion gate rejected a final answer before every required_edit_path produced source-body evidence.",
+					"Do not draft `submit_plan` from outline/search hits. The next visible message must be exactly one parser-readable source-body tool call for the unread required path, or <<QUESTION>> with the exact path-specific blocker.",
+					nudge,
+				}, "\n\n"), false, true
+			}
 			return fmt.Sprintf("The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) covered required edit path(s): %s. Read/search tools are hidden except for at most one bounded `read_file` on each remaining required path when an exact edit anchor is still missing. Your next visible message must be exactly one parser-readable action, not the same prose. Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. If the gathered evidence supports the requested changes, your next response must be a `submit_plan` tool call, not prose, with one edit entry for every remaining required path. For a new file or whole-file write use explicit replacement edit shapes: `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`. If a required missing source/test path has only behavior/helper requirements and no substantial inline body or explicit replacement shape, answer with <<QUESTION>> naming the missing body evidence. The other valid outcome is `Decision: source-satisfied` naming every path plus current-state evidence if the requested final state is already present. Do not repeat the final answer in prose.", strings.Join(missing, ", ")), true, true
 		}
 		if briefIsScratchpadDeliverableLane(r.RuntimeBrief) {
@@ -5509,7 +5539,7 @@ func reasoningSubmitPlanHasConcreteEdit(req workspace.ToolRequest) bool {
 		hasContent := strings.TrimSpace(edit.Content) != "" || strings.TrimSpace(edit.ContentRef) != ""
 		hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
 		hasReplace := edit.ReplaceAll && (strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "")
-		if hasOldText || hasRange || hasReplace {
+		if (hasOldText && workspace.PlanEditHasExplicitReplacementText(edit)) || hasRange || hasReplace {
 			return true
 		}
 	}
@@ -5517,11 +5547,10 @@ func reasoningSubmitPlanHasConcreteEdit(req workspace.ToolRequest) bool {
 }
 
 func reasoningSubmitPlanEdits(req workspace.ToolRequest) []workspace.PlanEdit {
-	edits := append([]workspace.PlanEdit(nil), req.Edits...)
-	if req.PlanArtifact != nil {
-		edits = append(edits, req.PlanArtifact.Edits...)
+	if req.PlanArtifact != nil && len(req.PlanArtifact.Edits) > 0 {
+		return append([]workspace.PlanEdit(nil), req.PlanArtifact.Edits...)
 	}
-	return edits
+	return append([]workspace.PlanEdit(nil), req.Edits...)
 }
 
 func (r *Runner) deterministicNoWriteRecoveryRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
@@ -5704,6 +5733,9 @@ func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief w
 	if !planThenExecutePlannerBrief(brief) {
 		return opts
 	}
+	if planThenExecuteUnreadRequiredSourceNudge(brief, results) != "" {
+		return planThenExecuteUnreadRequiredSourceChatOptions(opts, brief, results)
+	}
 	readEvidenceSeen := successfulToolSeen(results, "read_file") || lastNonGateTool(results) == "read_file" || len(readPathsFromResults(results)) > 0
 	if len(brief.RequiredEditPaths) > 0 {
 		if !readEvidenceSeen {
@@ -5787,6 +5819,19 @@ func planThenExecuteReadyToSubmitChatOptions(opts llama.ChatOptions, brief worke
 	opts.PreserveThinking = false
 	if opts.MaxTokens <= 0 || opts.MaxTokens > 2048 {
 		opts.MaxTokens = 2048
+	}
+	return opts
+}
+
+func planThenExecuteUnreadRequiredSourceChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	if planThenExecuteUnreadRequiredSourceNudge(brief, results) == "" {
+		return opts
+	}
+	thinkingOff := false
+	opts.EnableThinking = &thinkingOff
+	opts.PreserveThinking = false
+	if opts.MaxTokens <= 0 || opts.MaxTokens > 768 {
+		opts.MaxTokens = 768
 	}
 	return opts
 }

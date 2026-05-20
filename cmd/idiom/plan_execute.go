@@ -968,6 +968,9 @@ func planExecutePlannerNeedsLargeBodyBudget(root string, prompt string, required
 		if strings.Contains(lowerPath, "/new/") || strings.HasPrefix(base, "new_") {
 			return true
 		}
+		if planExecutePromptRequiresTestEdit(lower) && planExecutePathLooksLikeTest(path) && root != "" && planExecutePathMissing(root, path) {
+			return true
+		}
 		if planExecutePromptImpliesNewFilePath(lower, lowerPath) {
 			return true
 		}
@@ -994,6 +997,42 @@ func planExecutePromptImpliesNewFilePath(lowerPrompt string, lowerPath string) b
 	return strings.HasPrefix(lowerPrompt, "add "+lowerPath) ||
 		strings.HasPrefix(lowerPrompt, "add new ") ||
 		strings.HasPrefix(lowerPrompt, "add file ")
+}
+
+func planExecutePathLooksLikeTest(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+	base := filepath.Base(lower)
+	switch {
+	case strings.HasSuffix(base, "_test.go"),
+		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py"),
+		strings.HasSuffix(base, "_test.py"),
+		strings.HasSuffix(base, ".test.py"),
+		strings.HasSuffix(base, "_test.gd"),
+		strings.HasSuffix(base, ".test.gd"),
+		strings.HasSuffix(base, ".test.ts"),
+		strings.HasSuffix(base, ".test.tsx"),
+		strings.HasSuffix(base, ".test.js"),
+		strings.HasSuffix(base, ".test.jsx"),
+		strings.HasSuffix(base, ".spec.ts"),
+		strings.HasSuffix(base, ".spec.tsx"),
+		strings.HasSuffix(base, ".spec.js"),
+		strings.HasSuffix(base, ".spec.jsx"):
+		return true
+	case strings.HasPrefix(lower, "test/"),
+		strings.HasPrefix(lower, "tests/"),
+		strings.HasPrefix(lower, "testdata/"),
+		strings.HasPrefix(lower, "fixtures/"),
+		strings.Contains(lower, "/test/"),
+		strings.Contains(lower, "/tests/"),
+		strings.Contains(lower, "/testdata/"),
+		strings.Contains(lower, "/fixtures/"):
+		return true
+	default:
+		return false
+	}
 }
 
 func planExecutePromptMentionsPathCreation(lowerPrompt string, lowerPath string) bool {
@@ -2823,50 +2862,63 @@ func reviewLineContainsMissingCommandEvidenceClaim(line string) bool {
 func planExecutePromptRequiresTestEdit(prompt string) bool {
 	lower := strings.ToLower(prompt)
 	phrases := []string{
+		"add a regression test",
 		"add regression test",
 		"add regression tests",
+		"add a test",
 		"add test",
 		"add tests",
+		"add a unit test",
 		"add unit test",
 		"add unit tests",
+		"write a regression test",
 		"write regression test",
 		"write regression tests",
+		"write a test",
 		"write test",
 		"write tests",
+		"write a unit test",
+		"write unit test",
+		"write unit tests",
 		"regression tests proving",
+		"regression test proving",
 		"tests proving",
+		"test proving",
+		"test coverage",
 		"test coverage for",
 	}
 	for _, phrase := range phrases {
 		if strings.Contains(lower, phrase) {
-			return true
+			return !planExecutePromptForbidsTestEditAround(lower, phrase)
 		}
 	}
 	return false
 }
 
+func planExecutePromptForbidsTestEditAround(lower string, phrase string) bool {
+	idx := strings.Index(lower, phrase)
+	if idx < 0 {
+		return false
+	}
+	start := idx - 32
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(phrase) + 32
+	if end > len(lower) {
+		end = len(lower)
+	}
+	window := lower[start:end]
+	return strings.Contains(window, "do not "+phrase) ||
+		strings.Contains(window, "don't "+phrase) ||
+		strings.Contains(window, "dont "+phrase) ||
+		strings.Contains(window, "no "+phrase) ||
+		strings.Contains(window, "without "+phrase)
+}
+
 func planExecuteChangedPathsIncludeTest(paths []string) bool {
 	for _, path := range paths {
-		lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-		if lower == "" {
-			continue
-		}
-		base := filepath.Base(lower)
-		switch {
-		case strings.HasSuffix(base, "_test.go"),
-			strings.HasSuffix(base, ".test.ts"),
-			strings.HasSuffix(base, ".test.tsx"),
-			strings.HasSuffix(base, ".test.js"),
-			strings.HasSuffix(base, ".test.jsx"),
-			strings.HasSuffix(base, ".spec.ts"),
-			strings.HasSuffix(base, ".spec.tsx"),
-			strings.HasSuffix(base, ".spec.js"),
-			strings.HasSuffix(base, ".spec.jsx"):
-			return true
-		case strings.Contains(lower, "/test/"),
-			strings.Contains(lower, "/tests/"),
-			strings.Contains(lower, "/testdata/"),
-			strings.Contains(lower, "/fixtures/"):
+		if planExecutePathLooksLikeTest(path) {
 			return true
 		}
 	}
@@ -3567,6 +3619,11 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *plan
 			cache[abs] = body
 		}
 		current := string(body)
+		if plan.SchemaVersion == workspace.PlanArtifactSchemaVersion && edit.AnchorProvenance == nil {
+			if anchored, err := workspace.AttachPlanEditAnchorProvenance(workspaceRoot, []workspace.PlanEdit{edit}); err == nil && len(anchored) == 1 {
+				edit = anchored[0]
+			}
+		}
 		if err := workspace.ValidatePlanEditAnchorProvenance(workspaceRoot, edit); err != nil {
 			return &planEditPreflightMismatch{
 				Index:  i,

@@ -1371,15 +1371,93 @@ func TestSubmitPlanRejectsEditWithoutShape(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsJSONOldTextWithoutReplacementField(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "keep\n")
+	req, err := DecodeToolRequestJSON([]byte(`{"tool":"submit_plan","edits":[{"path":"x.txt","old_text":"keep"}]}`))
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON: %v", err)
+	}
+	result := mgr.Execute(context.Background(), req)
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("old_text-only JSON edit should be rejected")
+	}
+	if !strings.Contains(result.Error, "new_text") {
+		t.Fatalf("rejection should name the missing replacement field, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); err == nil || !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestLoadPlanArtifactAllowsLegacyDeletionWithoutNewTextField(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "legacy.plan.json")
+	body := []byte(`{"schema_version":"idiom.plan.v2","created":"2026-05-20T00:00:00Z","plan_id":"legacy-delete","task":{"summary":"delete obsolete line"},"contract":{"kind":"implementation"},"packet":{"status":"not_used"},"paths":{"editable":["x.txt"]},"evidence":[{"kind":"source","path":"x.txt","summary":"current source"}],"verification_obligations":[{"command":"go test ./...","reason":"default"}],"approval":{"status":"approved","scope_id":"all","execution_permission":"execute_all"},"handoff":{"id":"handoff-1","status":"ready","ready":true},"edits":[{"path":"x.txt","old_text":"obsolete\n","purpose":"delete obsolete line"}]}`)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write legacy artifact: %v", err)
+	}
+	artifact, err := LoadPlanArtifact(path)
+	if err != nil {
+		t.Fatalf("legacy deletion artifact should load: %v", err)
+	}
+	if artifact.SchemaVersion != PlanArtifactPreviousSchemaVersion {
+		t.Fatalf("loaded schema version = %q, want previous schema", artifact.SchemaVersion)
+	}
+	if len(artifact.Edits) != 1 || !PlanEditHasExplicitReplacementText(artifact.Edits[0]) {
+		t.Fatalf("legacy deletion edit should be normalized as explicit replacement: %#v", artifact.Edits)
+	}
+}
+
+func TestLoadPlanArtifactAttachesMissingCurrentAnchorProvenance(t *testing.T) {
+	root := t.TempDir()
+	writeSubmitPlanFixture(t, root, "x.txt", "old\n")
+	artifact := PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "current-no-provenance",
+		Created:       "2026-05-20T00:00:00Z",
+		Task:          PlanArtifactTask{Summary: "update x"},
+		Contract:      PlanArtifactContract{Kind: "implementation"},
+		Packet:        PlanArtifactPacket{Status: "not_used"},
+		Paths:         PlanArtifactPaths{Editable: []string{"x.txt"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "source", Path: "x.txt", Summary: "current source"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Command: "go test ./...",
+			Kind:    "command",
+		}},
+		Approval: PlanArtifactApproval{Status: "approved", ScopeID: "all", ExecutionPermission: "execute_all"},
+		Handoff:  PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:    []PlanEdit{{Path: "x.txt", OldText: "old", NewText: "new", Purpose: "update x"}},
+	}
+	body, err := json.Marshal(artifact)
+	if err != nil {
+		t.Fatalf("marshal artifact: %v", err)
+	}
+	planDir := filepath.Join(root, ".idiom", "plans")
+	if err := os.MkdirAll(planDir, 0o755); err != nil {
+		t.Fatalf("mkdir plans: %v", err)
+	}
+	path := filepath.Join(planDir, "current.plan.json")
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write plan: %v", err)
+	}
+	loaded, err := LoadPlanArtifact(path)
+	if err != nil {
+		t.Fatalf("current-schema artifact should load with repaired provenance: %v", err)
+	}
+	if len(loaded.Edits) != 1 || loaded.Edits[0].AnchorProvenance == nil {
+		t.Fatalf("loaded current artifact should have anchor provenance: %#v", loaded.Edits)
+	}
+}
+
 func TestSubmitPlanAcceptsSubstringDeletion(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "x.txt", "keep\nremove me\nkeep\n")
-	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool: "submit_plan",
-		Edits: []PlanEdit{
-			{Path: "x.txt", OldText: "remove me\n", NewText: "", Purpose: "delete obsolete line"},
-		},
-	})
+	req, err := DecodeToolRequestJSON([]byte(`{"tool":"submit_plan","edits":[{"path":"x.txt","old_text":"remove me\n","new_text":"","purpose":"delete obsolete line"}]}`))
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON: %v", err)
+	}
+	result := mgr.Execute(context.Background(), req)
 	if strings.TrimSpace(result.Error) != "" {
 		t.Fatalf("substring deletion should be a valid plan edit: %s", result.Error)
 	}

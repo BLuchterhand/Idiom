@@ -974,6 +974,20 @@ func TestImplementationDispatchPlanExecuteMaxTokensDoesNotDowngradeLargeNewFileP
 	}
 }
 
+func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForMissingRequestedTestPath(t *testing.T) {
+	root := t.TempDir()
+	got := implementationDispatchPlanExecuteMaxTokens(
+		root,
+		"add regression tests proving the parser rejects invalid routes",
+		[]string{"internal/parser/route_test.go"},
+		nil,
+		nil,
+	)
+	if got != 16384 {
+		t.Fatalf("missing requested test plan max tokens = %d, want 16384", got)
+	}
+}
+
 func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocNewFile(t *testing.T) {
 	got := implementationDispatchPlanExecuteMaxTokens(
 		"",
@@ -987,6 +1001,23 @@ func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocNewF
 	)
 	if got != 16384 {
 		t.Fatalf("plan-doc new-file budget = %d, want 16384", got)
+	}
+}
+
+func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocMissingTest(t *testing.T) {
+	root := t.TempDir()
+	got := implementationDispatchPlanExecuteMaxTokens(
+		root,
+		"implement docs/parser-plan.md",
+		nil,
+		nil,
+		[]implementationDispatchPlanDocument{{
+			Content:   "## Files To Modify\n\n- tests/parser_test.py\n\nAdd a regression test for invalid parser routes.",
+			EditPaths: []string{"tests/parser_test.py"},
+		}},
+	)
+	if got != 16384 {
+		t.Fatalf("plan-doc missing-test budget = %d, want 16384", got)
 	}
 }
 
@@ -1192,6 +1223,46 @@ func TestPlanExecutePlannerBlockedMessageHidesInternalCompletionGatePrompt(t *te
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("planner blocked message leaked internal completion-gate detail %q:\n%s", forbidden, answer)
 		}
+	}
+}
+
+func TestPlanExecutePlannerBlockedMessageCompactsCanonicalPlannerQuestion(t *testing.T) {
+	plannerAnswer := strings.Join([]string{
+		"<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.",
+		"",
+		"Changed paths: none",
+		"",
+		"Required edit paths not changed:",
+		"- cmd/idiom/product_workflow.go",
+		"- internal/productworkflow/coverage_gate.go",
+		"",
+		"Verification: not run or not detected.",
+		"",
+		"Blocker:",
+		"- Required edit path source read required: read source for internal/productworkflow/coverage_gate.go.",
+	}, "\n")
+	answer := humanPlanExecutePlannerBlockedMessage(implementationDispatchPlanExecuteFailure{
+		RequiredPaths: []string{"cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go"},
+		Result: planexecute.RunResult{
+			FailureReason: "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.",
+			PlannerAnswer: plannerAnswer,
+		},
+	}, implementationDispatchRecoveryDecision{
+		Decision: "surface",
+		Reason:   "automatic retry did not produce a plan",
+	})
+
+	if !strings.Contains(answer, "Planner detail:") {
+		t.Fatalf("expected compact planner detail section:\n%s", answer)
+	}
+	if strings.Contains(answer, "Planner answer:") {
+		t.Fatalf("canonical blocker should not repeat the full planner answer:\n%s", answer)
+	}
+	if strings.Count(answer, "Required edit paths not changed:") != 0 {
+		t.Fatalf("full planner changed-path list should be omitted because required paths are already listed:\n%s", answer)
+	}
+	if !strings.Contains(answer, "read source for internal/productworkflow/coverage_gate.go") {
+		t.Fatalf("compact detail should preserve the actionable blocker:\n%s", answer)
 	}
 }
 
@@ -2886,6 +2957,29 @@ func TestPlanExecutePromptRunnerRoutePreservesHostedExecutorThinkingFloor(t *tes
 	}
 }
 
+func TestPlanExecutePromptRunnerStatePreservesThinkingForHostedExecutorRoute(t *testing.T) {
+	executorSpec := config.LlamaServer{Kind: config.BackendZAI, Model: "glm-5.1", BaseURL: "https://api.z.ai/api/paas/v4"}
+	m := &Model{
+		client:            llama.NewClient("http://planner.invalid", time.Second),
+		implementerClient: &reachableListModelsClient{models: []llama.ModelInfo{{ID: "glm-5.1"}}},
+		plannerSpec:       config.LlamaServer{Model: "local-planner", BaseURL: "http://planner.invalid"},
+		executorSpec:      executorSpec,
+		modelID:           "local-planner",
+	}
+	restoreRoute := m.applyPlanExecutePromptRunnerRoute(context.Background())
+	restoreState := m.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
+	}, io.Discard)
+	if m.disableThinkingOverride {
+		t.Fatalf("hosted executor route must not inherit local planner no-thinking override")
+	}
+	restoreState()
+	restoreRoute()
+	if m.disableThinkingOverride || m.modelThinkingFloor {
+		t.Fatalf("plan-execute state/route should restore, disableThinking=%t floor=%t", m.disableThinkingOverride, m.modelThinkingFloor)
+	}
+}
+
 func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
@@ -4092,7 +4186,7 @@ func TestClassifyTurnRouteSkipsClassifierForHardDebugLogSignal(t *testing.T) {
 	}
 }
 
-func TestClassifyTurnRouteKeepsPlanExecuteRequiredPathSmokeWriteShaped(t *testing.T) {
+func TestClassifyTurnRouteKeepsPlanExecuteSourceSatisfiedSmokeWriteShaped(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -4119,7 +4213,46 @@ func TestClassifyTurnRouteKeepsPlanExecuteRequiredPathSmokeWriteShaped(t *testin
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 	if calls.Load() != 0 {
-		t.Fatalf("required-path plan-execute workflow is a hard contract signal, got classifier calls=%d", calls.Load())
+		t.Fatalf("source-satisfied plan-execute workflow is a hard contract signal, got classifier calls=%d", calls.Load())
+	}
+}
+
+func TestClassifyTurnRouteKeepsPlanExecuteHowToQuestionReadOnly(t *testing.T) {
+	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
+	plan := m.classifyTurnRoute(context.Background(), "How do I run plan-execute without changing files?", agent.BuildMode())
+	if isImplementationLikeFamily(plan.Family) {
+		t.Fatalf("plan-execute how-to question should stay read-only, got %#v", plan)
+	}
+}
+
+func TestClassifyTurnRouteKeepsPlanExecuteRequiredPathEditWriteShaped(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"architecture","initial_lane":"architecture","reason":"architecture_request","contract":"architecture_assessment"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	prompt := "Implement the durable TUI smoke fixture through the full PRD-to-plan-to-execute path. Required edit paths: internal/app/app.go, internal/agent/runner.go."
+	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("required-path plan-execute edit workflow is a hard contract signal, got classifier calls=%d", calls.Load())
 	}
 }
 

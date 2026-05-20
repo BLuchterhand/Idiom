@@ -116,6 +116,57 @@ func TestRunPlanExecuteMainKeepsLargeBudgetForCreatedNamedPath(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainKeepsLargeBudgetForMissingRequestedTestPath(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", "add regression tests proving the parser rejects invalid routes", "-required-edit-path", "internal/parser/route_test.go"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if gotOpts.MaxTokensOverride != 16384 {
+		t.Fatalf("MaxTokensOverride = %d, want missing requested-test budget 16384", gotOpts.MaxTokensOverride)
+	}
+}
+
+func TestPlanExecuteRequestedTestEditDetectionHandlesNegationAndCommonPaths(t *testing.T) {
+	for _, prompt := range []string{
+		"fix this, do not add tests",
+		"implement the parser change with no test changes",
+		"write code only without tests",
+	} {
+		if planExecutePromptRequiresTestEdit(prompt) {
+			t.Fatalf("prompt should not require test edits: %q", prompt)
+		}
+	}
+	for _, prompt := range []string{
+		"add a regression test for parser routes",
+		"write a test proving invalid routes fail",
+		"add a unit test for parser routes",
+		"add regression tests proving no tests are skipped",
+		"add tests and do not skip tests",
+	} {
+		if !planExecutePromptRequiresTestEdit(prompt) {
+			t.Fatalf("prompt should require test edits: %q", prompt)
+		}
+	}
+	for _, path := range []string{"tests/parser_test.py", "test/foo.py", "tests/panel_contract.gd"} {
+		if !planExecutePathLooksLikeTest(path) {
+			t.Fatalf("path should count as a test path: %s", path)
+		}
+	}
+}
+
 func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	var stdout, stderr bytes.Buffer

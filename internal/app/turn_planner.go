@@ -46,7 +46,7 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 
 func deterministicHardTurnRoute(prompt string, fallback turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
 	words := plannerWordText(prompt)
-	if hasImplementationWorkflowContract(prompt, words) {
+	if (hasImplementationWorkflowContract(prompt, words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && (hasEffectiveEditIntent(words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && !isExplanationOnlyCodeQuestion(words) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family: "implementation",
 			Reason: "workflow_contract",
@@ -315,7 +315,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	words := plannerWordText(prompt)
-	if hasImplementationWorkflowContract(prompt, words) && !isExplanationOnlyCodeQuestion(words) {
+	if (hasImplementationWorkflowContract(prompt, words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && (hasEffectiveEditIntent(words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && !isExplanationOnlyCodeQuestion(words) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family: "implementation",
 			Reason: "workflow_contract",
@@ -392,6 +392,8 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	case util.ContainsAny(words, " log ", " logs ", " jsonl ", " trace ") && util.ContainsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
 	case !editIntent && util.ContainsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
+	case !editIntent && util.ContainsAny(words, " smoke test ", " verify ", " test the ", " test this "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
 	case isSuggestionOnlyArchitectureQuestion(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
@@ -577,22 +579,8 @@ func hasEffectiveEditIntent(words string) bool {
 }
 
 func hasImplementationWorkflowContract(prompt string, words string) bool {
-	hasNamedRequiredPaths := len(pathparse.MentionedWorkspacePaths(prompt)) > 0 && util.ContainsAny(words,
-		" required edit paths ",
-		" required_edit_paths ",
-		" required path ",
-		" required paths ",
-	)
-	hasPlanExecuteWorkflow := util.ContainsAny(words,
-		" plan-execute ",
-		" plan execute ",
-		" prd-to-plan-to-execute ",
-		" prd to plan execute ",
-		" prd-to-adr-to-plan-execute ",
-		" prd to adr to plan execute ",
-		" implementation lane ",
-		" default implementation lane ",
-	)
+	hasNamedRequiredPaths := len(pathparse.MentionedWorkspacePaths(prompt)) > 0 && hasRequiredEditPathContractWords(words)
+	hasPlanExecuteWorkflow := hasPlanExecuteWorkflowWords(words)
 	if hasNamedRequiredPaths && hasPlanExecuteWorkflow {
 		return true
 	}
@@ -617,6 +605,33 @@ func hasImplementationWorkflowContract(prompt string, words string) bool {
 		return true
 	}
 	return false
+}
+
+func hasPlanExecuteSourceSatisfiedWorkflowContract(prompt string, words string) bool {
+	return util.ContainsAny(words, " source satisfied ") &&
+		hasPlanExecuteWorkflowWords(words) &&
+		(len(pathparse.MentionedWorkspacePaths(prompt)) > 0 || hasRequiredEditPathContractWords(words))
+}
+
+func hasRequiredEditPathContractWords(words string) bool {
+	return util.ContainsAny(words,
+		" required edit paths ",
+		" required edit path ",
+		" required paths ",
+		" required path ",
+	)
+}
+
+func hasPlanExecuteWorkflowWords(words string) bool {
+	return util.ContainsAny(words,
+		" plan execute ",
+		" prd to plan to execute ",
+		" prd to plan execute ",
+		" prd to adr to plan execute ",
+		" prd to adr to plan to execute ",
+		" implementation lane ",
+		" default implementation lane ",
+	)
 }
 
 func hasUILayoutMutationIntent(words string) bool {

@@ -166,6 +166,7 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 		if len(artifact.Edits) == 0 && len(req.Edits) > 0 {
 			artifact.Edits = append([]PlanEdit(nil), req.Edits...)
 		}
+		artifact.Edits = planEditsWithoutAnchorProvenance(artifact.Edits)
 		if strings.TrimSpace(artifact.Rationale) == "" {
 			artifact.Rationale = req.Rationale
 		}
@@ -185,7 +186,7 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 		Rationale:     sanitizePlanArtifactText(req.Rationale, 2000),
 		PackID:        strings.TrimSpace(req.PackID),
 		SessionID:     strings.TrimSpace(sessionID),
-		Edits:         append([]PlanEdit(nil), req.Edits...),
+		Edits:         planEditsWithoutAnchorProvenance(req.Edits),
 		Task: PlanArtifactTask{
 			Summary: sanitizePlanArtifactText(util.FirstNonEmpty(req.Rationale, "legacy submit_plan request"), 240),
 		},
@@ -221,8 +222,21 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 	return artifact, nil
 }
 
+func planEditsWithoutAnchorProvenance(edits []PlanEdit) []PlanEdit {
+	out := append([]PlanEdit(nil), edits...)
+	for i := range out {
+		out[i].AnchorProvenance = nil
+	}
+	return out
+}
+
 func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, created string, planID string, legacyRequest bool) PlanArtifact {
-	artifact.SchemaVersion = util.FirstNonEmpty(strings.TrimSpace(artifact.SchemaVersion), PlanArtifactSchemaVersion)
+	switch schemaVersion := strings.TrimSpace(artifact.SchemaVersion); schemaVersion {
+	case "", PlanArtifactPreviousSchemaVersion:
+		artifact.SchemaVersion = PlanArtifactSchemaVersion
+	default:
+		artifact.SchemaVersion = schemaVersion
+	}
 	artifact.PlanID = sanitizePlanArtifactID(util.FirstNonEmpty(artifact.PlanID, planID))
 	artifact.Created = util.FirstNonEmpty(strings.TrimSpace(artifact.Created), created)
 	artifact.SessionID = sanitizePlanArtifactID(util.FirstNonEmpty(artifact.SessionID, sessionID))
@@ -329,20 +343,39 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 }
 
 func NormalizeLoadedPlanArtifact(artifact PlanArtifact) PlanArtifact {
-	if artifact.SchemaVersion == PlanArtifactLegacySchemaVersion {
+	loadedSchemaVersion := strings.TrimSpace(artifact.SchemaVersion)
+	if loadedSchemaVersion == PlanArtifactLegacySchemaVersion || loadedSchemaVersion == PlanArtifactPreviousSchemaVersion {
+		artifact.Edits = markLegacyDeletionEditsExplicit(artifact.Edits)
+	}
+	if loadedSchemaVersion == PlanArtifactLegacySchemaVersion {
 		artifact.SchemaVersion = PlanArtifactLegacySchemaVersion
 		artifact = normalizePlanArtifactForSubmit(artifact, artifact.SessionID, artifact.Created, util.FirstNonEmpty(artifact.PlanID, "legacy-plan"), true)
 		return artifact
 	}
-	return normalizePlanArtifactForSubmit(artifact, artifact.SessionID, artifact.Created, artifact.PlanID, false)
+	artifact = normalizePlanArtifactForSubmit(artifact, artifact.SessionID, artifact.Created, artifact.PlanID, false)
+	if loadedSchemaVersion == PlanArtifactPreviousSchemaVersion {
+		artifact.SchemaVersion = PlanArtifactPreviousSchemaVersion
+	}
+	return artifact
+}
+
+func markLegacyDeletionEditsExplicit(edits []PlanEdit) []PlanEdit {
+	out := append([]PlanEdit(nil), edits...)
+	for i := range out {
+		if strings.TrimSpace(out[i].OldText) == "" || strings.TrimSpace(out[i].NewText) != "" || strings.TrimSpace(out[i].NewTextRef) != "" {
+			continue
+		}
+		out[i].newTextSet = true
+	}
+	return out
 }
 
 func ValidatePlanArtifact(artifact PlanArtifact) error {
 	var errs []PlanArtifactSchemaError
-	if artifact.SchemaVersion != PlanArtifactSchemaVersion && artifact.SchemaVersion != PlanArtifactLegacySchemaVersion {
+	if !planArtifactSchemaIsSupported(artifact.SchemaVersion) {
 		errs = appendPlanArtifactSchemaError(errs, "schema_version", "unsupported", "expected current or legacy plan artifact schema")
 	}
-	if artifact.SchemaVersion == PlanArtifactSchemaVersion {
+	if planArtifactSchemaIsStructured(artifact.SchemaVersion) {
 		if strings.TrimSpace(artifact.PlanID) == "" {
 			errs = appendPlanArtifactSchemaError(errs, "plan_id", "required", "plan id is required")
 		}
@@ -423,6 +456,19 @@ func ValidatePlanArtifact(artifact PlanArtifact) error {
 		return &PlanArtifactValidationError{Errors: errs}
 	}
 	return nil
+}
+
+func planArtifactSchemaIsSupported(version string) bool {
+	return planArtifactSchemaIsStructured(version) || version == PlanArtifactLegacySchemaVersion
+}
+
+func planArtifactSchemaIsStructured(version string) bool {
+	switch strings.TrimSpace(version) {
+	case PlanArtifactSchemaVersion, PlanArtifactPreviousSchemaVersion:
+		return true
+	default:
+		return false
+	}
 }
 
 func appendPlanArtifactSchemaError(errs []PlanArtifactSchemaError, field string, code string, detail string) []PlanArtifactSchemaError {

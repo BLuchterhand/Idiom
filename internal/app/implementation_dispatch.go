@@ -3072,8 +3072,8 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 		}
 	}
 	return func(cfg config.Config, prompt string, opts planexecute.RunOptions, stdout io.Writer) (string, error) {
-		restore := m.applyPlanExecutePromptRunnerState(cfg, opts, stdout)
 		restoreRoute := m.applyPlanExecutePromptRunnerRoute(ctx)
+		restore := m.applyPlanExecutePromptRunnerState(cfg, opts, stdout)
 
 		priorMessages := append([]llama.ChatMessage(nil), m.messages...)
 		priorReasoning := m.lastAssistantReasoningContent
@@ -3085,8 +3085,8 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 			m.messages = priorMessages
 			m.lastAssistantReasoningContent = priorReasoning
 			m.pinnedFiles = priorPinnedFiles
-			restoreRoute()
 			restore()
+			restoreRoute()
 		}()
 		return m.RunPromptOnce(ctx, prompt)
 	}
@@ -3560,6 +3560,9 @@ func implementationDispatchPlanExecuteNeedsLargeBodyBudget(root string, prompt s
 				if strings.Contains(base, "new") {
 					return true
 				}
+				if implementationDispatchPromptRequiresTestEdit(docText) && implementationDispatchPathLooksLikeTest(path) && root != "" && implementationDispatchPathMissing(root, path) {
+					return true
+				}
 			}
 		}
 	}
@@ -3572,6 +3575,9 @@ func implementationDispatchPlanExecuteNeedsLargeBodyBudget(root string, prompt s
 	for _, path := range append(append([]string(nil), requiredPaths...), allowedPaths...) {
 		lowerPath := strings.ToLower(filepath.ToSlash(path))
 		if strings.Contains(lowerPath, "/new/") || strings.Contains(filepath.Base(lowerPath), "new_") {
+			return true
+		}
+		if implementationDispatchPromptRequiresTestEdit(lower) && implementationDispatchPathLooksLikeTest(path) && root != "" && implementationDispatchPathMissing(root, path) {
 			return true
 		}
 		if implementationDispatchPromptImpliesNewFilePath(lower, lowerPath) {
@@ -3600,6 +3606,42 @@ func implementationDispatchPromptImpliesNewFilePath(lowerPrompt string, lowerPat
 	return strings.HasPrefix(lowerPrompt, "add "+lowerPath) ||
 		strings.HasPrefix(lowerPrompt, "add new ") ||
 		strings.HasPrefix(lowerPrompt, "add file ")
+}
+
+func implementationDispatchPathLooksLikeTest(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+	base := filepath.Base(lower)
+	switch {
+	case strings.HasSuffix(base, "_test.go"),
+		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py"),
+		strings.HasSuffix(base, "_test.py"),
+		strings.HasSuffix(base, ".test.py"),
+		strings.HasSuffix(base, "_test.gd"),
+		strings.HasSuffix(base, ".test.gd"),
+		strings.HasSuffix(base, ".test.ts"),
+		strings.HasSuffix(base, ".test.tsx"),
+		strings.HasSuffix(base, ".test.js"),
+		strings.HasSuffix(base, ".test.jsx"),
+		strings.HasSuffix(base, ".spec.ts"),
+		strings.HasSuffix(base, ".spec.tsx"),
+		strings.HasSuffix(base, ".spec.js"),
+		strings.HasSuffix(base, ".spec.jsx"):
+		return true
+	case strings.HasPrefix(lower, "test/"),
+		strings.HasPrefix(lower, "tests/"),
+		strings.HasPrefix(lower, "testdata/"),
+		strings.HasPrefix(lower, "fixtures/"),
+		strings.Contains(lower, "/test/"),
+		strings.Contains(lower, "/tests/"),
+		strings.Contains(lower, "/testdata/"),
+		strings.Contains(lower, "/fixtures/"):
+		return true
+	default:
+		return false
+	}
 }
 
 func implementationDispatchPromptMentionsPathCreation(lowerPrompt string, lowerPath string) bool {
@@ -4113,15 +4155,40 @@ func (m *Model) augmentImplementationAllowedPathsWithSiblingTests(paths []string
 func implementationDispatchPromptRequiresTestEdit(prompt string) bool {
 	lower := strings.ToLower(prompt)
 	for _, phrase := range []string{
-		"add regression test", "add regression tests", "add unit test", "add unit tests",
-		"write regression test", "write regression tests", "write unit test", "write unit tests",
-		"test coverage", "tests proving", "test proving", "regression tests proving",
+		"add a regression test", "add regression test", "add regression tests",
+		"add a test", "add test", "add tests",
+		"add a unit test", "add unit test", "add unit tests",
+		"write a regression test", "write regression test", "write regression tests",
+		"write a test", "write test", "write tests",
+		"write a unit test", "write unit test", "write unit tests",
+		"test coverage", "test coverage for", "tests proving", "test proving", "regression test proving", "regression tests proving",
 	} {
 		if strings.Contains(lower, phrase) {
-			return true
+			return !implementationDispatchPromptForbidsTestEditAround(lower, phrase)
 		}
 	}
 	return false
+}
+
+func implementationDispatchPromptForbidsTestEditAround(lower string, phrase string) bool {
+	idx := strings.Index(lower, phrase)
+	if idx < 0 {
+		return false
+	}
+	start := idx - 32
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(phrase) + 32
+	if end > len(lower) {
+		end = len(lower)
+	}
+	window := lower[start:end]
+	return strings.Contains(window, "do not "+phrase) ||
+		strings.Contains(window, "don't "+phrase) ||
+		strings.Contains(window, "dont "+phrase) ||
+		strings.Contains(window, "no "+phrase) ||
+		strings.Contains(window, "without "+phrase)
 }
 
 func (m *Model) implementationDispatchAllowedPathsFromPreloadedContextPack(prompt string, contextPackSection string) []string {
@@ -4686,9 +4753,10 @@ func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExe
 		b.WriteString("\n\nDecision: ")
 		b.WriteString(reason)
 	}
-	if summary := humanPlanExecutePlannerBlockerSummary(failure); summary != "" {
+	blockerSummary := humanPlanExecutePlannerBlockerSummary(failure)
+	if blockerSummary != "" {
 		b.WriteString("\n\nPlanner blocker: ")
-		b.WriteString(summary)
+		b.WriteString(blockerSummary)
 	}
 	if len(failure.RequiredPaths) > 0 {
 		b.WriteString("\n\nRequired edit paths still need a plan:")
@@ -4698,10 +4766,34 @@ func humanPlanExecutePlannerBlockedMessage(failure implementationDispatchPlanExe
 		}
 	}
 	if answer := strings.TrimSpace(failure.Result.PlannerAnswer); answer != "" && !planExecutePlannerAnswerIsInternalCompletionGate(answer) {
-		b.WriteString("\n\nPlanner answer:\n")
-		b.WriteString(truncateImplementationDispatchText(answer, 2000))
+		if detail, ok := humanPlanExecutePlannerAnswerDetail(answer); ok {
+			b.WriteString("\n\nPlanner detail:\n")
+			b.WriteString(truncateImplementationDispatchText(detail, 1200))
+		} else {
+			b.WriteString("\n\nPlanner answer:\n")
+			b.WriteString(truncateImplementationDispatchText(answer, 2000))
+		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func humanPlanExecutePlannerAnswerDetail(answer string) (string, bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return "", false
+	}
+	lower := strings.ToLower(answer)
+	if !strings.Contains(lower, "changed paths: none") ||
+		!strings.Contains(lower, "required edit paths not changed:") ||
+		!strings.Contains(lower, "blocker:") {
+		return "", false
+	}
+	idx := strings.Index(lower, "blocker:")
+	if idx < 0 {
+		return "", false
+	}
+	detail := strings.TrimSpace(answer[idx:])
+	return detail, detail != ""
 }
 
 func planExecuteFailureIsRepeatedCompletionGate(failure implementationDispatchPlanExecuteFailure) bool {

@@ -173,7 +173,8 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"5. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence. Re-read the target packet before any source read.",
 		"6. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
-		"7. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
+		"7. If the objective explicitly asks for new or updated tests, the plan must include the relevant test edit or stop with `<<QUESTION>>:` naming the missing test path/anchor; a production-only plan is incomplete.",
+		"8. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
 		lines = append(lines, "", checklist)
@@ -382,6 +383,18 @@ func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
+	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	if len(paths) > 0 {
+		return paths
+	}
+	paths = planExecuteUniqueRequiredPaths(allowedEditPaths)
+	if len(paths) > 0 {
+		return paths
+	}
+	return planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -1195,6 +1208,9 @@ func RunReviewRepairPhase(
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
+	if planExecutePromptRequiresTestEdit(originalPrompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
+		evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, "requested_test_edit_missing")
+	}
 	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
 	if reviewSessionID == "" {
 		reviewSessionID = newPlanExecuteSessionID()
@@ -1244,7 +1260,7 @@ func RunReviewRepairPhase(
 	}
 	if !found {
 		if reviewAnswerDeclaresPass(answer) && reviewTextHasVerificationChecklist(answer) {
-			if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+			if reason := reviewAnswerPassContractRejectionReason(originalPrompt, changedPaths, answer); reason != "" {
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
 					"reason": reason,
 				})
@@ -1267,6 +1283,18 @@ func RunReviewRepairPhase(
 	}
 	if !reviewTextHasVerificationChecklist(repairPlan.Rationale) {
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("review-repair plan %q is missing `Verification Checklist` in submit_plan rationale", planPath)
+	}
+	repairPaths := planChangedPaths(repairPlan)
+	combinedPaths := mergePlanExecutePaths(changedPaths, repairPaths)
+	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, combinedPaths); reason != "" {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_plan_rejected", map[string]any{
+			"reason":         reason,
+			"review_plan":    planPath,
+			"changed_paths":  changedPaths,
+			"repair_paths":   repairPaths,
+			"combined_paths": combinedPaths,
+		})
+		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
 	}
 	repairReport, err := RunExecutorPhaseScoped(cfg, repairPlan, nil, allowedRepairPaths, opts.JSONEvents, stdout)
 	if err != nil {
@@ -1343,6 +1371,7 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
 	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
 	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
+	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: the original task explicitly requested test edits, but this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
 	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
 	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
 	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
@@ -1812,6 +1841,23 @@ func reviewTextHasVerificationChecklist(text string) bool {
 	return strings.Contains(strings.ToLower(text), "verification checklist")
 }
 
+func reviewAnswerPassContractRejectionReason(originalPrompt string, changedPaths []string, answer string) string {
+	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+		return reason
+	}
+	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, changedPaths); reason != "" {
+		return reason
+	}
+	return ""
+}
+
+func planExecuteRequestedTestEditRejectionReason(prompt string, changedPaths []string) string {
+	if planExecutePromptRequiresTestEdit(prompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
+		return "missing_requested_test_edit"
+	}
+	return ""
+}
+
 func reviewAnswerPassContradictionReason(answer string) string {
 	for _, rawLine := range strings.Split(answer, "\n") {
 		line := normalizeReviewAnswerLine(rawLine)
@@ -1857,9 +1903,132 @@ func reviewAnswerPassContradictionReason(answer string) string {
 			return "unresolved_failure_claim"
 		case reviewLineContainsProjectedVerificationClaim(line):
 			return "unsupported_verification_projection"
+		case reviewLineContainsMissingCommandEvidenceClaim(line):
+			if reviewLineIsPlannerOwnedPending(line) {
+				continue
+			}
+			return "missing_command_evidence_claim"
 		}
 	}
 	return ""
+}
+
+func reviewLineContainsMissingCommandEvidenceClaim(line string) bool {
+	return reviewLineContainsAny(line,
+		"didn't run ",
+		"did not run ",
+		"haven't run ",
+		"hasn't run ",
+		"wasn't run",
+		"weren't run",
+		"was not run",
+		"were not run",
+		"not run ",
+		"no test command was run",
+		"no verification command was run",
+	)
+}
+
+func planExecutePromptRequiresTestEdit(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	phrases := []string{
+		"add a regression test",
+		"add regression test",
+		"add regression tests",
+		"add a test",
+		"add test",
+		"add tests",
+		"add a unit test",
+		"add unit test",
+		"add unit tests",
+		"write a regression test",
+		"write regression test",
+		"write regression tests",
+		"write a test",
+		"write test",
+		"write tests",
+		"write a unit test",
+		"write unit test",
+		"write unit tests",
+		"regression tests proving",
+		"regression test proving",
+		"tests proving",
+		"test proving",
+		"test coverage",
+		"test coverage for",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(lower, phrase) {
+			return !planExecutePromptForbidsTestEditAround(lower, phrase)
+		}
+	}
+	return false
+}
+
+func planExecutePromptForbidsTestEditAround(lower string, phrase string) bool {
+	idx := strings.Index(lower, phrase)
+	if idx < 0 {
+		return false
+	}
+	start := idx - 32
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(phrase) + 32
+	if end > len(lower) {
+		end = len(lower)
+	}
+	window := lower[start:end]
+	return strings.Contains(window, "do not "+phrase) ||
+		strings.Contains(window, "don't "+phrase) ||
+		strings.Contains(window, "dont "+phrase) ||
+		strings.Contains(window, "no "+phrase) ||
+		strings.Contains(window, "without "+phrase)
+}
+
+func planExecuteChangedPathsIncludeTest(paths []string) bool {
+	for _, path := range paths {
+		if planExecutePathLooksLikeTest(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutePathLooksLikeTest(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+	base := filepath.Base(lower)
+	switch {
+	case strings.HasSuffix(base, "_test.go"),
+		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py"),
+		strings.HasSuffix(base, "_test.py"),
+		strings.HasSuffix(base, ".test.py"),
+		strings.HasSuffix(base, "_test.gd"),
+		strings.HasSuffix(base, ".test.gd"),
+		strings.HasSuffix(base, ".test.ts"),
+		strings.HasSuffix(base, ".test.tsx"),
+		strings.HasSuffix(base, ".test.js"),
+		strings.HasSuffix(base, ".test.jsx"),
+		strings.HasSuffix(base, ".spec.ts"),
+		strings.HasSuffix(base, ".spec.tsx"),
+		strings.HasSuffix(base, ".spec.js"),
+		strings.HasSuffix(base, ".spec.jsx"):
+		return true
+	case strings.HasPrefix(lower, "test/"),
+		strings.HasPrefix(lower, "tests/"),
+		strings.HasPrefix(lower, "testdata/"),
+		strings.HasPrefix(lower, "fixtures/"),
+		strings.Contains(lower, "/test/"),
+		strings.Contains(lower, "/tests/"),
+		strings.Contains(lower, "/testdata/"),
+		strings.Contains(lower, "/fixtures/"):
+		return true
+	default:
+		return false
+	}
 }
 
 func reviewLineIsPlannerOwnedPending(line string) bool {
@@ -2503,6 +2672,18 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *Plan
 			cache[abs] = body
 		}
 		current := string(body)
+		if plan.SchemaVersion == workspace.PlanArtifactSchemaVersion && edit.AnchorProvenance == nil {
+			if anchored, err := workspace.AttachPlanEditAnchorProvenance(workspaceRoot, []workspace.PlanEdit{edit}); err == nil && len(anchored) == 1 {
+				edit = anchored[0]
+			}
+		}
+		if err := workspace.ValidatePlanEditAnchorProvenance(workspaceRoot, edit); err != nil {
+			return &PlanEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: err.Error(),
+			}
+		}
 		matchCount := strings.Count(current, edit.OldText)
 		if matchCount == 0 {
 			return &PlanEditPreflightMismatch{
