@@ -11,6 +11,7 @@ import (
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/planexecute"
 	"idiom/internal/util"
 )
 
@@ -48,14 +49,23 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	if m.workspace != nil {
 		m.workspace.PrimeDiscoveredPaths(pathparse.MentionedWorkspacePaths(prompt))
 	}
-	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
-	m.logMessage("user", prompt)
+	suppressTranscript := m.suppressPromptTranscript
+	if !suppressTranscript {
+		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
+		m.logMessage("user", prompt)
+	} else if m.debugLogger != nil {
+		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested prompt (%d chars)", len(prompt)))
+	}
 	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
 		m.logMessage("route_plan", summary)
 	}
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
-	reply, err := m.runAgentTurn(ctx, prompt, m.requestMessages(), chatOpts, plan)
+	history := m.requestMessages()
+	if suppressTranscript {
+		history = append(history, llama.ChatMessage{Role: "user", Content: prompt})
+	}
+	reply, err := m.runAgentTurn(ctx, prompt, history, chatOpts, plan)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
 		return "", err
@@ -65,6 +75,12 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 
 func (m *Model) finishPromptOnceReply(reply string) string {
 	m.takeLastAssistantReasoningContent()
+	if m.suppressPromptTranscript {
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogRunEvent("internal_assistant", fmt.Sprintf("suppressed nested assistant reply (%d chars)", len(reply)))
+		}
+		return reply
+	}
 	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
 	m.logMessage("assistant", reply)
 	m.emitJSONFinal(reply)
@@ -113,8 +129,13 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
 	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptContextEvidencePaths(prompt)...)
 	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
+	scopeContract, useTypedPlanExecuteScope := m.planExecuteRuntimeScopeContract(route)
 	allowed := allowedEditPathsFromPrompt(prompt)
 	required := requiredEditPathsFromPrompt(prompt)
+	if useTypedPlanExecuteScope {
+		required = scopeContract.RequiredCoveragePaths
+		allowed = scopeContract.AllowedCandidatePaths
+	}
 	implementationLike := isImplementationLikeFamily(route.Family)
 	if !implementationLike {
 		if len(required) > 0 {
@@ -122,19 +143,27 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		}
 		required = nil
 	}
-	if implementationLike && len(required) == 0 && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
-		required = appendUniqueBriefStrings(required, allowed...)
-		allowed = nil
+	if !useTypedPlanExecuteScope && implementationLike && len(required) == 0 && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
+		required = appendUniqueBriefStrings(required, requiredEditPayloadPathsFromPrompt(prompt, allowed)...)
 	}
 	if len(allowed) > 0 {
+		brief.AllowedEditPaths = appendUniqueBriefStrings(brief.AllowedEditPaths, allowed...)
 		brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, allowed...)
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
 			"treat allowed_edit_paths as candidate write scope, not required coverage obligations",
 		)
 	}
+	snippetScope := required
+	if !useTypedPlanExecuteScope && len(snippetScope) == 0 && implementationLike && len(allowed) > 0 && promptHasRequiredEditPayload(prompt) {
+		snippetScope = allowed
+	}
+	if useTypedPlanExecuteScope && len(snippetScope) == 0 && implementationLike && len(allowed) > 0 {
+		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, allowed)...)
+	} else if len(snippetScope) > 0 {
+		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, snippetScope)...)
+	}
 	if len(required) > 0 {
 		brief.RequiredEditPaths = appendUniqueBriefStrings(brief.RequiredEditPaths, required...)
-		brief.RequiredEditSnippets = appendRequiredEditSnippets(brief.RequiredEditSnippets, requiredEditSnippetsFromPrompt(prompt, brief.RequiredEditPaths)...)
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "required_edit_paths_define_write_scope")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
@@ -154,11 +183,11 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 			)
 		}
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_paths_reported")
-		if len(brief.RequiredEditSnippets) > 0 {
-			brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_snippets_present_or_blocked")
-			brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_snippets_satisfied")
-			brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_snippets_reported")
-		}
+	}
+	if len(brief.RequiredEditSnippets) > 0 {
+		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_snippets_present_or_blocked")
+		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_snippets_satisfied")
+		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_snippets_reported")
 	}
 	if plan := defaultVerificationPlan(m.projectRoot()); len(brief.VerificationPlan) == 0 {
 		brief.VerificationPlan = plan
@@ -206,13 +235,31 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 			)
 		}
 	}
-	if isImplementationLikeFamily(route.Family) && promptContainsExactEditAnchor(prompt) {
+	if useTypedPlanExecuteScope && isImplementationLikeFamily(route.Family) && len(brief.RequiredEditSnippets) > 0 {
+		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")
+		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "exact_edit_anchor")
+		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
+			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "preserve_exact_anchor_snippets_in_submit_plan_before_broad_discovery")
+			brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_exact_anchor_plan_attempt")
+		} else {
+			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
+			brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
+		}
+	} else if !useTypedPlanExecuteScope && isImplementationLikeFamily(route.Family) && promptContainsExactEditAnchor(prompt) {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "exact_edit_anchor")
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
 		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
 	}
 	return brief
+}
+
+func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (planexecute.PlanScopeContract, bool) {
+	if m == nil || !m.planExecuteActive || strings.TrimSpace(route.Family) != agent.PlanThenExecutePlannerTaskFamily {
+		return planexecute.PlanScopeContract{}, false
+	}
+	contract := m.planExecuteScopeContract.Normalized()
+	return contract, true
 }
 
 // RequiredEditPathsFromPrompt is the exported view of the brief-
@@ -222,7 +269,7 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 // runner saw — diverging implementations would produce different
 // allowlists for the same brief, which is a footgun.
 func RequiredEditPathsFromPrompt(prompt string) []string {
-	return requiredEditPathsFromPrompt(prompt)
+	return planexecute.RequiredEditPathsFromPrompt(prompt)
 }
 
 func promptHasRequiredEditPayload(prompt string) bool {
@@ -237,38 +284,62 @@ func promptHasRequiredEditPayload(prompt string) bool {
 	return false
 }
 
+func requiredEditPayloadPathsFromPrompt(prompt string, candidatePaths []string) []string {
+	if len(candidatePaths) == 0 || !promptHasRequiredEditPayload(prompt) {
+		return nil
+	}
+	var paths []string
+	for _, snippet := range requiredEditSnippetsFromPrompt(prompt, candidatePaths) {
+		if path := strings.TrimSpace(snippet.Path); path != "" {
+			paths = appendUniqueBriefStrings(paths, path)
+		}
+	}
+	return paths
+}
+
 // AllowedEditPathsFromPrompt returns explicit candidate write-scope paths from
 // prompts. Unlike RequiredEditPathsFromPrompt, these paths are not completion
 // coverage obligations.
 func AllowedEditPathsFromPrompt(prompt string) []string {
-	return allowedEditPathsFromPrompt(prompt)
+	return planexecute.AllowedEditPathsFromPrompt(prompt)
 }
 
 func requiredEditPathsFromPrompt(prompt string) []string {
-	// Scope to the brief body when the lane wrapper has wrapped it
-	// in IDIOM:BRIEF-BODY markers; otherwise scan the whole prompt
-	// (back-compat for chat / direct API). pathparse.ScopeToBriefBody
-	// is the authoritative helper.
-	prompt = pathparse.ScopeToBriefBody(prompt)
-	paths := requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings(), true)
-	paths = appendUniqueBriefStrings(paths, pathparse.FilterWorkspaceFilePaths(structuredRequiredEditPathsFromPrompt(prompt))...)
-	paths = appendUniqueBriefStrings(paths, inlineRequiredEditPathsFromPrompt(prompt)...)
-	return paths
+	return planexecute.RequiredEditPathsFromPrompt(prompt)
 }
 
 func allowedEditPathsFromPrompt(prompt string) []string {
-	prompt = pathparse.ScopeToBriefBody(prompt)
-	paths := requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings(), false)
-	paths = appendUniqueBriefStrings(paths, structuredAllowedEditPathsFromPrompt(prompt)...)
-	paths = appendUniqueBriefStrings(paths, inlineAllowedEditPathsFromPrompt(prompt)...)
-	return paths
+	return planexecute.AllowedEditPathsFromPrompt(prompt)
 }
 
 func inlineAllowedEditPathsFromPrompt(prompt string) []string {
 	text := pathparse.ScopeToBriefBody(prompt)
-	words := plannerWordText(text)
-	hasInlineScope := false
-	for _, phrase := range []string{
+	var paths []string
+	for _, line := range strings.Split(text, "\n") {
+		for _, segment := range inlineAllowedScopeSegments(line) {
+			words := plannerWordText(segment)
+			for _, phrase := range inlineAllowedScopePhrases() {
+				if strings.Contains(words, phrase) {
+					paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspacePaths(segment)...)
+					break
+				}
+			}
+		}
+	}
+	return paths
+}
+
+func inlineAllowedScopeSegments(line string) []string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer(". ", "\n", "? ", "\n", "! ", "\n")
+	return strings.Split(replacer.Replace(line), "\n")
+}
+
+func inlineAllowedScopePhrases() []string {
+	return []string{
 		" only edit ",
 		" only modify ",
 		" only change ",
@@ -279,16 +350,7 @@ func inlineAllowedEditPathsFromPrompt(prompt string) []string {
 		" restrict edits to ",
 		" limit changes to ",
 		" restrict changes to ",
-	} {
-		if strings.Contains(words, phrase) {
-			hasInlineScope = true
-			break
-		}
 	}
-	if !hasInlineScope {
-		return nil
-	}
-	return pathparse.MentionedWorkspacePaths(text)
 }
 
 func inlineRequiredEditPathsFromPrompt(prompt string) []string {
@@ -302,7 +364,6 @@ func inlineRequiredEditPathsFromPrompt(prompt string) []string {
 			"required files:",
 			"files to modify:",
 			"files to edit:",
-			"editable files:",
 		} {
 			idx := strings.Index(lower, prefix)
 			if idx < 0 {
@@ -324,7 +385,6 @@ func requiredEditPathHeadings() []string {
 		"files-to-modify",
 		"files to edit",
 		"edit files",
-		"editable files",
 		"required edit paths",
 		"required files",
 		"required paths",
@@ -337,6 +397,7 @@ func allowedEditPathHeadings() []string {
 		"candidate edit scope from target references",
 		"candidate paths",
 		"candidate files",
+		"editable files",
 		"files you may edit",
 		"files you may modify",
 		"files you can edit",
@@ -409,12 +470,12 @@ func structuredRequiredEditPathsFromPrompt(prompt string) []string {
 		"files_to_modify",
 		"files_to_edit",
 		"required_edit_paths",
-		"editable_files",
 	})
 }
 
 func structuredAllowedEditPathsFromPrompt(prompt string) []string {
 	return structuredEditPathsFromPrompt(prompt, []string{
+		"editable_files",
 		"allowed_edit_paths",
 		"allowed_files",
 		"write_scope",

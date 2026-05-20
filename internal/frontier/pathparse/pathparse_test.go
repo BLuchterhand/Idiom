@@ -104,9 +104,9 @@ func TestLooksLikeWorkspacePathTokenRejectsBackticks(t *testing.T) {
 }
 
 func TestLooksLikeWorkspacePathTokenRejectsSlashSeparatedSymbolProse(t *testing.T) {
-	for _, candidate := range []string{"RIVAL/NEMESIS", "LONER/GREGARIOUS", "API/V1"} {
+	for _, candidate := range []string{"RIVAL/NEMESIS", "LONER/GREGARIOUS", "API/V1", "exclusive/missing"} {
 		if LooksLikeWorkspacePathToken(candidate) {
-			t.Fatalf("LooksLikeWorkspacePathToken(%q) should be false for uppercase slash-separated prose", candidate)
+			t.Fatalf("LooksLikeWorkspacePathToken(%q) should be false for slash-separated prose", candidate)
 		}
 	}
 	if !LooksLikeWorkspacePathToken("internal/API.md") {
@@ -142,6 +142,43 @@ func TestMentionedWorkspacePathsNormalizesEscapedNewlinePrefix(t *testing.T) {
 	for i, value := range want {
 		if got[i] != value {
 			t.Fatalf("expected normalized paths %#v, got %#v", want, got)
+		}
+	}
+}
+
+func TestMentionedWorkspacePathsHandlesBacktickedPathBeforePeriod(t *testing.T) {
+	text := "`cmd/idiom/product_workflow_test.go`."
+	got := MentionedWorkspacePaths(text)
+	want := []string{"cmd/idiom/product_workflow_test.go"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("expected %#v, got %#v", want, got)
+	}
+}
+
+func TestMentionedWorkspacePathsInInlineListStopsAfterPathSentence(t *testing.T) {
+	text := "`cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`. Add tests for mutually exclusive/missing mode flags and run `go test ./cmd/idiom`."
+	got := MentionedWorkspacePathsInInlineList(text)
+	want := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
+	if len(got) != len(want) {
+		t.Fatalf("expected %#v, got %#v", want, got)
+	}
+	for i, value := range want {
+		if got[i] != value {
+			t.Fatalf("expected %#v, got %#v", want, got)
+		}
+	}
+}
+
+func TestMentionedWorkspaceFilesInInlineListRejectsDirectoryLikeTargets(t *testing.T) {
+	text := "`cmd/idiom`, `cmd/idiom/product_workflow.go`, `Makefile`. Run `go test ./cmd/idiom`."
+	got := MentionedWorkspaceFilesInInlineList(text)
+	want := []string{"cmd/idiom/product_workflow.go", "Makefile"}
+	if len(got) != len(want) {
+		t.Fatalf("expected file-only paths %#v, got %#v", want, got)
+	}
+	for i, value := range want {
+		if got[i] != value {
+			t.Fatalf("expected file-only paths %#v, got %#v", want, got)
 		}
 	}
 }

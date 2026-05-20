@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"idiom/internal/workspace"
@@ -117,6 +118,16 @@ func TestRunnerExecutionStateTracksPendingSearchInspection(t *testing.T) {
 	}
 	if !state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_files", Path: "internal", Pattern: "*task*"}) {
 		t.Fatal("expected follow-up search to be blocked until a concrete inspection happens")
+	}
+	searchFeedback := state.searchHitConsumptionError()
+	for _, want := range []string{
+		"Returned hit(s):",
+		"internal/agent/runner.go",
+		"internal/agent/runner_child_tasks.go",
+	} {
+		if !strings.Contains(searchFeedback, want) {
+			t.Fatalf("search feedback missing %q:\n%s", want, searchFeedback)
+		}
 	}
 
 	readReq := workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"}

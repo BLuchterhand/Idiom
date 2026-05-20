@@ -871,23 +871,34 @@ func MarkAllViewsStale(root string) (int, error) {
 
 // ViewStats aggregates graph_views table state for harness_audit.
 type ViewStats struct {
-	Rows                    int    `json:"rows"`
-	Fresh                   int    `json:"fresh"`
-	Stale                   int    `json:"stale"`
-	NonCurrent              int    `json:"non_current"`
-	CurrentIndexID          string `json:"current_index_id,omitempty"`
-	BytesStored             int64  `json:"bytes_stored"`
-	OldestCreated           string `json:"oldest_created,omitempty"`
-	NewestCreated           string `json:"newest_created,omitempty"`
-	WorkspaceStateKeyedRows int    `json:"workspace_state_keyed_rows"`
-	ContractRows            int    `json:"contract_rows"`
-	UnresolvedGapRows       int    `json:"unresolved_gap_rows"`
-	Hits                    int64  `json:"cache_hits"`
-	Misses                  int64  `json:"cache_misses"`
-	Writes                  int64  `json:"cache_writes"`
-	FreshnessHits           int64  `json:"freshness_hits"`
-	StalePreventions        int64  `json:"stale_preventions"`
-	StaleRowMisses          int64  `json:"stale_row_misses"`
+	Rows                                  int            `json:"rows"`
+	Fresh                                 int            `json:"fresh"`
+	Stale                                 int            `json:"stale"`
+	NonCurrent                            int            `json:"non_current"`
+	CurrentRows                           int            `json:"current_rows"`
+	CurrentFresh                          int            `json:"current_fresh"`
+	CurrentStale                          int            `json:"current_stale"`
+	HistoricalRows                        int            `json:"historical_rows"`
+	CurrentIndexID                        string         `json:"current_index_id,omitempty"`
+	BytesStored                           int64          `json:"bytes_stored"`
+	OldestCreated                         string         `json:"oldest_created,omitempty"`
+	NewestCreated                         string         `json:"newest_created,omitempty"`
+	WorkspaceStateKeyedRows               int            `json:"workspace_state_keyed_rows"`
+	ContractRows                          int            `json:"contract_rows"`
+	UnresolvedGapRows                     int            `json:"unresolved_gap_rows"`
+	FreshUnresolvedGapRows                int            `json:"fresh_unresolved_gap_rows"`
+	StaleUnresolvedGapRows                int            `json:"stale_unresolved_gap_rows"`
+	CurrentUnresolvedGapRows              int            `json:"current_unresolved_gap_rows"`
+	CurrentFreshUnresolvedGapRows         int            `json:"current_fresh_unresolved_gap_rows"`
+	UnresolvedGapReasonCounts             map[string]int `json:"unresolved_gap_reason_counts,omitempty"`
+	CurrentUnresolvedGapReasonCounts      map[string]int `json:"current_unresolved_gap_reason_counts,omitempty"`
+	CurrentFreshUnresolvedGapReasonCounts map[string]int `json:"current_fresh_unresolved_gap_reason_counts,omitempty"`
+	Hits                                  int64          `json:"cache_hits"`
+	Misses                                int64          `json:"cache_misses"`
+	Writes                                int64          `json:"cache_writes"`
+	FreshnessHits                         int64          `json:"freshness_hits"`
+	StalePreventions                      int64          `json:"stale_preventions"`
+	StaleRowMisses                        int64          `json:"stale_row_misses"`
 }
 
 // ReadViewStats returns aggregate counters over the graph_views table
@@ -942,48 +953,137 @@ func ReadViewStats(root string) (ViewStats, error) {
 		stats.NewestCreated = newest.String
 	}
 	if stats.CurrentIndexID != "" {
-		if err := db.QueryRow(`SELECT COALESCE(SUM(CASE WHEN COALESCE(index_id, '') <> ? THEN 1 ELSE 0 END), 0) FROM graph_views`, stats.CurrentIndexID).Scan(&stats.NonCurrent); err != nil {
+		err := db.QueryRow(`SELECT
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') <> ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND stale = 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND stale = 1 THEN 1 ELSE 0 END), 0)
+			FROM graph_views`,
+			stats.CurrentIndexID,
+			stats.CurrentIndexID,
+			stats.CurrentIndexID,
+			stats.CurrentIndexID,
+		).Scan(&stats.NonCurrent, &stats.CurrentRows, &stats.CurrentFresh, &stats.CurrentStale)
+		if err != nil {
 			return stats, err
 		}
+		stats.HistoricalRows = stats.Rows - stats.CurrentRows
+	} else {
+		stats.HistoricalRows = stats.Rows
 	}
-	contractRows, unresolvedGapRows, err := readViewContractStats(db)
+	contractStats, err := readViewContractStats(db, stats.CurrentIndexID)
 	if err != nil {
 		return stats, err
 	}
-	stats.ContractRows = contractRows
-	stats.UnresolvedGapRows = unresolvedGapRows
+	stats.ContractRows = contractStats.ContractRows
+	stats.UnresolvedGapRows = contractStats.UnresolvedGapRows
+	stats.FreshUnresolvedGapRows = contractStats.FreshUnresolvedGapRows
+	stats.StaleUnresolvedGapRows = contractStats.StaleUnresolvedGapRows
+	stats.CurrentUnresolvedGapRows = contractStats.CurrentUnresolvedGapRows
+	stats.CurrentFreshUnresolvedGapRows = contractStats.CurrentFreshUnresolvedGapRows
+	stats.UnresolvedGapReasonCounts = contractStats.UnresolvedGapReasonCounts
+	stats.CurrentUnresolvedGapReasonCounts = contractStats.CurrentUnresolvedGapReasonCounts
+	stats.CurrentFreshUnresolvedGapReasonCounts = contractStats.CurrentFreshUnresolvedGapReasonCounts
 	return stats, nil
 }
 
-func readViewContractStats(db *sql.DB) (contractRows int, unresolvedGapRows int, err error) {
-	rows, err := db.Query(`SELECT output_json FROM graph_views`)
+type viewContractStats struct {
+	ContractRows                          int
+	UnresolvedGapRows                     int
+	FreshUnresolvedGapRows                int
+	StaleUnresolvedGapRows                int
+	CurrentUnresolvedGapRows              int
+	CurrentFreshUnresolvedGapRows         int
+	UnresolvedGapReasonCounts             map[string]int
+	CurrentUnresolvedGapReasonCounts      map[string]int
+	CurrentFreshUnresolvedGapReasonCounts map[string]int
+}
+
+func readViewContractStats(db *sql.DB, currentIndexID string) (viewContractStats, error) {
+	var stats viewContractStats
+	rows, err := db.Query(`SELECT output_json, stale, COALESCE(index_id, '') FROM graph_views`)
 	if err != nil {
-		return 0, 0, err
+		return stats, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var output string
-		if err := rows.Scan(&output); err != nil {
-			return 0, 0, err
+		var stale int
+		var rowIndexID string
+		if err := rows.Scan(&output, &stale, &rowIndexID); err != nil {
+			return stats, err
 		}
 		var decoded struct {
 			Contract             *GraphViewResultContract `json:"contract"`
 			UnresolvedGapDetails []GraphUnresolvedGap     `json:"unresolved_gap_details"`
+			UnresolvedGaps       []string                 `json:"unresolved_gaps"`
 		}
 		if err := json.Unmarshal([]byte(output), &decoded); err != nil {
 			continue
 		}
 		if decoded.Contract != nil && decoded.Contract.SchemaVersion == GraphViewResultContractVersion {
-			contractRows++
+			stats.ContractRows++
 		}
-		if len(decoded.UnresolvedGapDetails) > 0 {
-			unresolvedGapRows++
+		gaps := decoded.UnresolvedGapDetails
+		if decoded.Contract != nil {
+			gaps = append(gaps, decoded.Contract.UnresolvedGaps...)
+		}
+		gaps = normalizedGapDetails(gaps, decoded.UnresolvedGaps)
+		if len(gaps) == 0 {
+			continue
+		}
+		current := strings.TrimSpace(currentIndexID) != "" && rowIndexID == currentIndexID
+		stats.UnresolvedGapRows++
+		if stale == 0 {
+			stats.FreshUnresolvedGapRows++
+		} else {
+			stats.StaleUnresolvedGapRows++
+		}
+		if current {
+			stats.CurrentUnresolvedGapRows++
+			if stale == 0 {
+				stats.CurrentFreshUnresolvedGapRows++
+			}
+		}
+		for _, reason := range uniqueViewGapReasons(gaps) {
+			incrementViewGapReason(&stats.UnresolvedGapReasonCounts, reason)
+			if current {
+				incrementViewGapReason(&stats.CurrentUnresolvedGapReasonCounts, reason)
+				if stale == 0 {
+					incrementViewGapReason(&stats.CurrentFreshUnresolvedGapReasonCounts, reason)
+				}
+			}
 		}
 	}
 	if err := rows.Err(); err != nil {
-		return 0, 0, err
+		return stats, err
 	}
-	return contractRows, unresolvedGapRows, nil
+	return stats, nil
+}
+
+func uniqueViewGapReasons(gaps []GraphUnresolvedGap) []string {
+	seen := make(map[string]struct{}, len(gaps))
+	reasons := make([]string, 0, len(gaps))
+	for _, gap := range gaps {
+		reason := strings.TrimSpace(gap.Reason)
+		if reason == "" {
+			reason = "unknown"
+		}
+		if _, ok := seen[reason]; ok {
+			continue
+		}
+		seen[reason] = struct{}{}
+		reasons = append(reasons, reason)
+	}
+	slices.Sort(reasons)
+	return reasons
+}
+
+func incrementViewGapReason(counts *map[string]int, reason string) {
+	if *counts == nil {
+		*counts = make(map[string]int)
+	}
+	(*counts)[reason]++
 }
 
 // ensureGraphViewsTable creates the graph_views table on a freshly-opened

@@ -71,24 +71,32 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}, rec, stdout, stderr)
 	defer queueRelease()
 
-	requiredEditPaths := planExecuteRequiredEditPaths(opts, prompt)
-	allowedEditPaths := planExecuteAllowedEditPaths(opts, prompt)
+	scopeContract := planExecuteScopeContract(opts, prompt)
+	requiredEditPaths := scopeContract.RequiredCoveragePaths
+	allowedEditPaths := scopeContract.AllowedCandidatePaths
+	editSetObligations := scopeContract.EditSetObligations
+	opts.ScopeContract = scopeContract
+	opts.EditSetObligations = editSetObligations
 	promptRequiredEditPaths := RequiredEditPathsFromPrompt(prompt)
 	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
-	explicitAllowedEditPaths := planExecuteUniqueRequiredPaths([]string(opts.AllowedEditPaths))
 	logCLIPhase(rec, "plan_execute_required_edit_paths", map[string]any{
-		"count":          len(requiredEditPaths),
-		"explicit_count": len(explicitRequiredEditPaths),
-		"prompt_count":   len(promptRequiredEditPaths),
-		"allowed_count":  len(allowedEditPaths),
+		"count":                     len(requiredEditPaths),
+		"explicit_count":            len(explicitRequiredEditPaths),
+		"prompt_count":              len(promptRequiredEditPaths),
+		"allowed_count":             len(allowedEditPaths),
+		"scope_contract_id":         scopeContract.ContractID,
+		"edit_set_obligation_count": len(editSetObligations),
 	})
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "required_edit_paths_resolved", map[string]any{
-		"count":               len(requiredEditPaths),
-		"explicit_count":      len(explicitRequiredEditPaths),
-		"prompt_count":        len(promptRequiredEditPaths),
-		"allowed_count":       len(explicitAllowedEditPaths),
-		"required_edit_paths": requiredEditPaths,
-		"allowed_edit_paths":  allowedEditPaths,
+		"count":                     len(requiredEditPaths),
+		"explicit_count":            len(explicitRequiredEditPaths),
+		"prompt_count":              len(promptRequiredEditPaths),
+		"allowed_count":             len(allowedEditPaths),
+		"required_edit_paths":       requiredEditPaths,
+		"allowed_edit_paths":        allowedEditPaths,
+		"scope_contract_id":         scopeContract.ContractID,
+		"edit_set_obligations":      editSetObligations,
+		"edit_set_obligation_count": len(editSetObligations),
 	})
 	decision := writerroute.NewDecisionFromParams(writerroute.DecisionParams{
 		Mode:              writerroute.ModePlanSubmission,
@@ -108,6 +116,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 
 	progress := NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
+	progress.EditSetObligations = editSetObligations
 	progressPath, err := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -115,7 +124,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 
 	plannerBrief := appendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
-	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths, allowedEditPaths) + "\n\n" + plannerBrief
+	plannerPrompt := planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, editSetObligations) + "\n\n" + plannerBrief
 	plannerMaxTokens := 16384
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
@@ -129,15 +138,20 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
-		if reason := planExecuteRequestedTestEditRejectionReason(prompt, autoExact.AppliedPaths); reason != "" {
-			message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+		if reason := editSetObligations.RejectionReason(autoExact.AppliedPaths); reason != "" {
+			message := EditSetObligationFailureMessage(reason)
 			progress.Status = ProgressStatusFailed
 			progress.FailureKind = reason
 			progress.FailureReason = sanitizeProgressReason(message)
 			_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
-				"reason":        reason,
-				"applied_paths": autoExact.AppliedPaths,
+				"reason":                          reason,
+				"applied_paths":                   autoExact.AppliedPaths,
+				"source_satisfied_evidence_paths": autoExact.AppliedPaths,
+				"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
+				"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths), requiredEditPaths),
+				"edit_set_obligations":            editSetObligations,
+				"edit_set_obligation_count":       len(editSetObligations),
 			})
 			fmt.Fprintln(stderr, message)
 			return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: reason, FailureReason: sanitizeProgressReason(message)}
@@ -147,17 +161,27 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		progress.Status = ProgressStatusCompleted
 		_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_source_satisfied", map[string]any{
-			"edits":               autoExact.EditCount,
-			"applied":             autoExact.AppliedCount,
-			"required_edit_paths": requiredEditPaths,
-			"allowed_edit_paths":  allowedEditPaths,
-			"applied_paths":       autoExact.AppliedPaths,
-			"reason":              autoExact.Reason,
+			"edits":                           autoExact.EditCount,
+			"applied":                         autoExact.AppliedCount,
+			"required_edit_paths":             requiredEditPaths,
+			"allowed_edit_paths":              allowedEditPaths,
+			"edit_set_obligations":            editSetObligations,
+			"edit_set_obligation_count":       len(editSetObligations),
+			"applied_paths":                   autoExact.AppliedPaths,
+			"source_satisfied_evidence_paths": autoExact.AppliedPaths,
+			"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
+			"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+			"reason":                          autoExact.Reason,
 		})
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
-			"required_edit_paths": requiredEditPaths,
-			"allowed_edit_paths":  allowedEditPaths,
-			"reason":              autoExact.Reason,
+			"required_edit_paths":             requiredEditPaths,
+			"allowed_edit_paths":              allowedEditPaths,
+			"source_satisfied_evidence_paths": autoExact.AppliedPaths,
+			"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
+			"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+			"edit_set_obligations":            editSetObligations,
+			"edit_set_obligation_count":       len(editSetObligations),
+			"reason":                          autoExact.Reason,
 		})
 		if !opts.JSONEvents {
 			fmt.Fprintln(stdout, answer)
@@ -214,7 +238,9 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			PlannerOwnedVerification: true,
 			MaxTokensOverride:        plannerMaxTokens,
 			DisableThinking:          opts.DisableThinking,
+			UseActiveModel:           opts.UseActiveModel,
 			Telemetry:                rec,
+			ScopeContract:            scopeContract,
 		}, stdout)
 		if err != nil {
 			progress.Status = ProgressStatusFailed
@@ -235,8 +261,8 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	if err != nil {
 		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
 		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
-			if reason := planExecuteRequestedTestEditRejectionReason(prompt, sourceSatisfiedPaths); reason != "" {
-				message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+			if reason := editSetObligations.RejectionReason(sourceSatisfiedPaths); reason != "" {
+				message := EditSetObligationFailureMessage(reason)
 				progress.Status = ProgressStatusFailed
 				progress.FailureKind = reason
 				progress.FailureReason = sanitizeProgressReason(message)
@@ -247,9 +273,14 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 					fmt.Fprintln(stderr, saveErr)
 				}
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
-					"reason":              reason,
-					"required_edit_paths": requiredEditPaths,
-					"allowed_edit_paths":  allowedEditPaths,
+					"reason":                          reason,
+					"required_edit_paths":             requiredEditPaths,
+					"allowed_edit_paths":              allowedEditPaths,
+					"source_satisfied_evidence_paths": sourceSatisfiedPaths,
+					"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
+					"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+					"edit_set_obligations":            editSetObligations,
+					"edit_set_obligation_count":       len(editSetObligations),
 				})
 				fmt.Fprintln(stderr, message)
 				return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: reason, FailureReason: sanitizeProgressReason(message)}
@@ -258,9 +289,14 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			progress.Status = ProgressStatusCompleted
 			_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
-				"required_edit_paths": requiredEditPaths,
-				"allowed_edit_paths":  allowedEditPaths,
-				"reason":              "planner reported requested final state already present",
+				"required_edit_paths":             requiredEditPaths,
+				"allowed_edit_paths":              allowedEditPaths,
+				"source_satisfied_evidence_paths": sourceSatisfiedPaths,
+				"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
+				"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+				"edit_set_obligations":            editSetObligations,
+				"edit_set_obligation_count":       len(editSetObligations),
+				"reason":                          "planner reported requested final state already present",
 			})
 			if !opts.JSONEvents {
 				fmt.Fprintln(stdout, answer)
@@ -359,12 +395,14 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	changedPaths := planChangedPaths(plan)
-	if reason := planExecuteRequestedTestEditRejectionReason(prompt, changedPaths); reason != "" {
-		message := reason + ": original prompt requested test edits, but submitted plan changed no test path"
+	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
+		message := EditSetObligationFailureMessage(reason)
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
-			"path":          planPath,
-			"reason":        reason,
-			"changed_paths": changedPaths,
+			"path":                      planPath,
+			"reason":                    reason,
+			"changed_paths":             changedPaths,
+			"edit_set_obligations":      editSetObligations,
+			"edit_set_obligation_count": len(editSetObligations),
 		})
 		progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, ReviewRepairBaseline{})
 		progress.Status = ProgressStatusFailed
@@ -489,6 +527,11 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: statePath}
 	}
 	requiredEditPaths := mergeProgressPaths(state.RequiredEditPaths, planExecuteRequiredEditPaths(opts, prompt))
+	allowedEditPaths := mergeProgressPaths(state.AllowedEditPaths, planExecuteAllowedEditPaths(opts, prompt))
+	if len(state.EditSetObligations) == 0 {
+		state.EditSetObligations = planExecuteEditSetObligations(opts, prompt)
+	}
+	state.EditSetObligations = state.EditSetObligations.Normalized()
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "resume_state_loaded", ProgressStateEventFields(state, statePath))
 	if opts.OnPhase != nil {
 		opts.OnPhase("reviewing", "Resuming review-repair from executor progress state...")
@@ -502,6 +545,10 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	}
 	reviewOpts := opts
 	reviewOpts.ReviewSessionID = reviewSessionID
+	reviewOpts.RequiredEditPaths = MultiFlag(requiredEditPaths)
+	reviewOpts.AllowedEditPaths = MultiFlag(allowedEditPaths)
+	reviewOpts.EditSetObligations = state.EditSetObligations
+	reviewOpts.ScopeContract = NewPlanScopeContract(requiredEditPaths, allowedEditPaths, state.EditSetObligations)
 	report := state.ExecutorPhaseReport()
 	reviewBaseline := state.ReviewBaseline
 	reviewReport, reviewErr := RunReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)

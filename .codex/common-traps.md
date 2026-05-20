@@ -19,6 +19,10 @@ failure patterns that have cost time in real Idiom/Colony runs.
   Stable behavior belongs in prompts; permissions, required paths, tool
   availability, completion gates, stale/source-satisfied classification, and
   verification requirements belong in typed runtime contracts or gates.
+- **Prompt text parsed as authority**: generated prompt layers, examples, tool
+  schema prose, context packets, transcript excerpts, and recovery nudges are
+  evidence or explanation. They must not become hard scope/coverage authority
+  unless the lane compiler turns them into typed contract fields first.
 - **Prompt reminders as contracts**: if a repeated failure is mechanically
   knowable, fix preflight, route metadata, runtime brief, tool schema, or a
   deterministic gate instead of adding another reminder.
@@ -57,6 +61,17 @@ failure patterns that have cost time in real Idiom/Colony runs.
   authorize mutation scope; source-body obligations prove current code; plan
   coverage means every required path has a valid edit entry or terminal
   source-satisfied evidence. A read path is not automatically a planned edit.
+- **Candidate scope promoted to hard obligations**: discovered paths, context
+  packet candidates, sibling source/test guesses, and recovery scopes are
+  candidate authority. Put them in `allowed_edit_paths`, not
+  `required_edit_paths`, unless a human or durable artifact explicitly made
+  every path mandatory. Encode "must include at least one test edit" or "must
+  include at least one non-test implementation edit" as typed edit-set
+  obligations, not by forcing a guessed file into required coverage.
+- **Lost typed obligations on retry/resume**: if recovery adds an edit-set
+  obligation, store it in the scope contract and progress state. Review-repair,
+  resume, UI retry, and audit should read the typed field, not re-infer the
+  obligation from the original prompt or latest recovery prose.
 - **Vague source evidence**: do not say a path has "evidence" when only an
   outline or search hit exists. Path/packet evidence scopes work, outline/search
   localizes anchors, and only source-body reads satisfy source-body obligations.
@@ -137,6 +152,15 @@ failure patterns that have cost time in real Idiom/Colony runs.
 
 ## Process Traps
 
+- **Rationale-free commits**: a commit subject that says what changed but not
+  why is weak repo memory. For non-trivial changes, include the failure,
+  requirement, or design pressure that made the change necessary; the chosen
+  contract or tradeoff; meaningful alternatives avoided; and verification. Do
+  not make future agents reconstruct intent from the diff alone.
+- **Churn without history**: before undoing or reshaping established behavior,
+  check focused git history, blame, or symbol history when the existing design
+  is not self-explanatory. If the old rationale still applies, preserve it or
+  explain why the new evidence supersedes it.
 - **Changing prompts without gates**: prompt cleanup is useful, but a contract
   invariant needs a deterministic backstop and tests.
 - **Changing gates without prompt parity**: the model should see the same

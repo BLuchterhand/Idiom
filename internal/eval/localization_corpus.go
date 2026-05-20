@@ -559,7 +559,11 @@ func normalizeLocalizationRelativePath(path string) (string, error) {
 		return "", fmt.Errorf("empty path")
 	}
 	normalized := strings.ReplaceAll(filepath.ToSlash(trimmed), "\\", "/")
-	if filepath.IsAbs(trimmed) || strings.HasPrefix(normalized, "/") || strings.Contains(normalized, ":") {
+	firstSegment := normalized
+	if slash := strings.Index(firstSegment, "/"); slash >= 0 {
+		firstSegment = firstSegment[:slash]
+	}
+	if filepath.IsAbs(trimmed) || strings.HasPrefix(normalized, "/") || strings.Contains(firstSegment, ":") {
 		return "", fmt.Errorf("absolute paths are not allowed")
 	}
 	cleaned := pathpkg.Clean(normalized)

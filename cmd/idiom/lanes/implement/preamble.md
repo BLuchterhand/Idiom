@@ -29,9 +29,10 @@ semantic/context/declared project discovery or a narrow source read inside the
 affected required edit path with `named_gap` to refresh the exact edit-safety
 fact, then retry the edit or stop with
 `<<QUESTION>>:` and name the blocker.
-Keep writes inside the brief's edit allowlist; idiom recognizes `Files To
-Modify`, `Files You May Edit`, and near-equivalent allowlist headings as
-`required_edit_paths` when present.
+Keep writes inside the brief's write scope. `Files To Modify` and explicit
+`required_edit_paths` are mandatory write coverage. `Files You May Edit`,
+candidate scope, write scope, and near-equivalent allowlist headings are
+allowed/candidate scope only; they do not require every listed path to be edited.
 
 Before any file read, re-read the brief packet. The brief is the authoritative
 source for required edits, anchors, and edit shapes; most "I need to look this

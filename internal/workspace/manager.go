@@ -1446,40 +1446,204 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 }
 
 // DecodeToolRequestJSON decodes a built-in tool request payload. It accepts a
-// small, safe repair surface for common model JSON-schema slips: numeric fields
-// emitted as decimal strings. Native tool-calls and fenced JSON requests both
-// route through this helper so repair behavior stays consistent.
+// small, safe repair surface for common model JSON-schema slips: typed fields
+// emitted as decimal/boolean strings, stringified non-plan structured fields,
+// and singleton values for array-only fields. Native tool-calls and fenced JSON
+// requests both route through this helper so repair behavior stays consistent.
 func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 	var req ToolRequest
-	if err := json.Unmarshal(payload, &req); err != nil {
-		if repaired, ok := repairStringifiedJSONToolFields(payload); ok {
-			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
-				normalizeToolRequestAliases(&req)
-				return req, nil
-			}
-			if repairedAgain, ok := repairNumericStringToolFields(repaired); ok {
-				if repairErr := json.Unmarshal(repairedAgain, &req); repairErr == nil {
-					normalizeToolRequestAliases(&req)
-					return req, nil
-				}
+	stringifiedFields := stringifiedStructuredToolFields(payload)
+	if _, ok := stringifiedFields["edits"]; ok {
+		if repaired, ok := repairToolRequestJSONPayload(payload); ok {
+			var repairedReq ToolRequest
+			if repairErr := json.Unmarshal(repaired, &repairedReq); repairErr == nil && !toolRequestLostStringifiedStructuredField(repairedReq, stringifiedFields) {
+				normalizeToolRequestAliases(&repairedReq)
+				repairEmbeddedQwenXMLToolParameters(&repairedReq)
+				return repairedReq, nil
 			}
 		}
-		if repaired, ok := repairNumericStringToolFields(payload); ok {
+		return ToolRequest{}, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit")
+	}
+	if err := json.Unmarshal(payload, &req); err != nil {
+		if repaired, ok := repairToolRequestJSONPayload(payload); ok {
 			if repairErr := json.Unmarshal(repaired, &req); repairErr == nil {
-				normalizeToolRequestAliases(&req)
-				return req, nil
-			}
-			if repairedAgain, ok := repairStringifiedJSONToolFields(repaired); ok {
-				if repairErr := json.Unmarshal(repairedAgain, &req); repairErr == nil {
-					normalizeToolRequestAliases(&req)
-					return req, nil
+				if toolRequestLostStringifiedStructuredField(req, stringifiedFields) {
+					return ToolRequest{}, err
 				}
+				normalizeToolRequestAliases(&req)
+				repairEmbeddedQwenXMLToolParameters(&req)
+				return req, nil
 			}
 		}
 		return ToolRequest{}, err
 	}
+	if repaired, ok := repairToolRequestJSONPayload(payload); ok {
+		var repairedReq ToolRequest
+		if repairErr := json.Unmarshal(repaired, &repairedReq); repairErr == nil {
+			if !toolRequestLostStringifiedStructuredField(repairedReq, stringifiedFields) {
+				req = repairedReq
+			}
+		}
+	}
 	normalizeToolRequestAliases(&req)
+	repairEmbeddedQwenXMLToolParameters(&req)
 	return req, nil
+}
+
+func stringifiedStructuredToolFields(payload []byte) map[string]string {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil
+	}
+	out := make(map[string]string)
+	for _, field := range []string{
+		"edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths",
+		"declarations", "moves", "todos", "items", "plan_artifact",
+	} {
+		raw, ok := obj[field]
+		if !ok {
+			continue
+		}
+		var encoded string
+		if err := json.Unmarshal(raw, &encoded); err == nil && strings.TrimSpace(encoded) != "" {
+			out[field] = strings.TrimSpace(encoded)
+		}
+	}
+	return out
+}
+
+func toolRequestLostStringifiedStructuredField(req ToolRequest, fields map[string]string) bool {
+	if len(fields) == 0 {
+		return false
+	}
+	if _, ok := fields["edits"]; ok && len(req.Edits) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("edits", fields["edits"])
+	}
+	if _, ok := fields["required_tests"]; ok && len(req.RequiredTests) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("required_tests", fields["required_tests"])
+	}
+	if _, ok := fields["required_edit_paths"]; ok && len(req.RequiredEditPaths) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("required_edit_paths", fields["required_edit_paths"])
+	}
+	if _, ok := fields["forbidden_paths"]; ok && len(req.ForbiddenPaths) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("forbidden_paths", fields["forbidden_paths"])
+	}
+	if _, ok := fields["declarations"]; ok && len(req.Declarations) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("declarations", fields["declarations"])
+	}
+	if _, ok := fields["moves"]; ok && len(req.Moves) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("moves", fields["moves"])
+	}
+	if _, ok := fields["todos"]; ok && len(req.Todos) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("todos", fields["todos"])
+	}
+	if _, ok := fields["items"]; ok && len(req.Items) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("items", fields["items"])
+	}
+	if _, ok := fields["plan_artifact"]; ok && req.PlanArtifact == nil {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("plan_artifact", fields["plan_artifact"])
+	}
+	return false
+}
+
+func stringifiedStructuredFieldRepresentsEmptyValue(field string, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	switch field {
+	case "plan_artifact":
+		var obj map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(value), &obj); err != nil {
+			return false
+		}
+		return len(obj) == 0
+	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+		var arr []json.RawMessage
+		if err := json.Unmarshal([]byte(value), &arr); err != nil {
+			return false
+		}
+		return len(arr) == 0
+	default:
+		return false
+	}
+}
+
+func repairEmbeddedQwenXMLToolParameters(req *ToolRequest) {
+	if req == nil || strings.TrimSpace(req.Rationale) == "" || !strings.Contains(req.Rationale, "<parameter=") {
+		return
+	}
+	for _, param := range qwenXMLParameterPattern.FindAllStringSubmatch(req.Rationale, -1) {
+		if len(param) != 3 {
+			continue
+		}
+		name := strings.TrimSpace(param[1])
+		raw, err := qwenXMLParameterRaw(name, param[2])
+		if err != nil {
+			continue
+		}
+		switch name {
+		case "edits":
+			if len(req.Edits) == 0 {
+				var edits []PlanEdit
+				if err := json.Unmarshal(raw, &edits); err == nil {
+					req.Edits = edits
+				}
+			}
+		case "required_tests":
+			if len(req.RequiredTests) == 0 {
+				var values []string
+				if err := json.Unmarshal(raw, &values); err == nil {
+					req.RequiredTests = values
+				}
+			}
+		case "required_edit_paths":
+			if len(req.RequiredEditPaths) == 0 {
+				var values []string
+				if err := json.Unmarshal(raw, &values); err == nil {
+					req.RequiredEditPaths = values
+				}
+			}
+		case "rationale":
+			var value string
+			if err := json.Unmarshal(raw, &value); err == nil && strings.TrimSpace(value) != "" {
+				req.Rationale = strings.TrimSpace(value)
+			}
+		}
+	}
+	if idx := strings.Index(req.Rationale, "<parameter="); idx >= 0 {
+		req.Rationale = strings.TrimSpace(req.Rationale[:idx])
+	}
+}
+
+func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
+	current := payload
+	repaired := false
+	for range 4 {
+		stepRepaired := false
+		for _, repair := range []func([]byte) ([]byte, bool){
+			repairStringifiedJSONToolFields,
+			repairSingletonArrayToolFields,
+			repairStringArrayToolFields,
+			repairNumericStringToolFields,
+			repairBoolStringToolFields,
+		} {
+			next, ok := repair(current)
+			if !ok {
+				continue
+			}
+			current = next
+			repaired = true
+			stepRepaired = true
+		}
+		if !stepRepaired {
+			break
+		}
+	}
+	if !repaired {
+		return nil, false
+	}
+	return current, true
 }
 
 func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {
@@ -1501,10 +1665,291 @@ func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {
 			continue
 		}
 		decoded := strings.TrimSpace(encoded)
-		if decoded == "" || !json.Valid([]byte(decoded)) {
+		if decoded == "" {
 			continue
 		}
-		obj[field] = json.RawMessage(decoded)
+		if json.Valid([]byte(decoded)) {
+			obj[field] = json.RawMessage(decoded)
+			repaired = true
+			continue
+		}
+		if escaped, ok := repairStringifiedJSONControlChars(decoded); ok {
+			obj[field] = escaped
+			repaired = true
+			continue
+		}
+		if stringifiedStructuredFieldHasTopLevelJSONStart(field, decoded) {
+			if extracted, ok := extractLeadingStringifiedJSONToolFieldValue(field, decoded); ok {
+				obj[field] = extracted
+				repaired = true
+			}
+			continue
+		}
+		if extracted, ok := extractStringifiedJSONToolFieldValue(field, decoded); ok {
+			obj[field] = extracted
+			repaired = true
+		}
+	}
+	if !repaired {
+		return nil, false
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func stringifiedStructuredFieldHasTopLevelJSONStart(field string, value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	switch field {
+	case "plan_artifact":
+		return value[0] == '{'
+	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+		return value[0] == '[' || value[0] == '{'
+	default:
+		return false
+	}
+}
+
+func extractLeadingStringifiedJSONToolFieldValue(field string, value string) (json.RawMessage, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil, false
+	}
+	allowedStarts := "{"
+	switch field {
+	case "plan_artifact":
+		allowedStarts = "{"
+	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+		allowedStarts = "[{"
+	default:
+		return nil, false
+	}
+	if !strings.ContainsRune(allowedStarts, rune(value[0])) {
+		return nil, false
+	}
+	end, ok := balancedJSONEnd(value, 0)
+	if !ok || !safeTrailingStringifiedJSONText(value[end:]) {
+		return nil, false
+	}
+	candidate := strings.TrimSpace(value[:end])
+	if json.Valid([]byte(candidate)) {
+		return json.RawMessage(candidate), true
+	}
+	if escaped, ok := repairStringifiedJSONControlChars(candidate); ok {
+		return escaped, true
+	}
+	return nil, false
+}
+
+func safeTrailingStringifiedJSONText(tail string) bool {
+	if strings.TrimSpace(tail) == "" {
+		return true
+	}
+	return strings.HasPrefix(tail, "\n\n") || strings.HasPrefix(strings.TrimSpace(tail), "```")
+}
+
+func extractStringifiedJSONToolFieldValue(field string, value string) (json.RawMessage, bool) {
+	switch field {
+	case "plan_artifact":
+		return extractBalancedJSONToolValue(value, "{")
+	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+		return extractBalancedJSONToolValue(value, "[{")
+	default:
+		return nil, false
+	}
+}
+
+func extractBalancedJSONToolValue(value string, allowedStarts string) (json.RawMessage, bool) {
+	for i := 0; i < len(value); i++ {
+		if !strings.ContainsRune(allowedStarts, rune(value[i])) {
+			continue
+		}
+		end, ok := balancedJSONEnd(value, i)
+		if !ok {
+			continue
+		}
+		candidate := strings.TrimSpace(value[i:end])
+		if json.Valid([]byte(candidate)) {
+			return json.RawMessage(candidate), true
+		}
+		if escaped, ok := repairStringifiedJSONControlChars(candidate); ok {
+			return escaped, true
+		}
+	}
+	return nil, false
+}
+
+func repairStringifiedJSONControlChars(value string) (json.RawMessage, bool) {
+	repaired := escapeRawControlCharsInJSONStringLiterals(value)
+	if repaired == value {
+		return nil, false
+	}
+	repaired = strings.TrimSpace(repaired)
+	if !json.Valid([]byte(repaired)) {
+		return nil, false
+	}
+	return json.RawMessage(repaired), true
+}
+
+func escapeRawControlCharsInJSONStringLiterals(value string) string {
+	var b strings.Builder
+	b.Grow(len(value))
+	inString := false
+	escaped := false
+	changed := false
+	for _, r := range value {
+		if !inString {
+			if r == '"' {
+				inString = true
+			}
+			b.WriteRune(r)
+			continue
+		}
+		if escaped {
+			escaped = false
+			b.WriteRune(r)
+			continue
+		}
+		switch r {
+		case '\\':
+			escaped = true
+			b.WriteRune(r)
+		case '"':
+			inString = false
+			b.WriteRune(r)
+		case '\n':
+			b.WriteString(`\n`)
+			changed = true
+		case '\r':
+			b.WriteString(`\r`)
+			changed = true
+		case '\t':
+			b.WriteString(`\t`)
+			changed = true
+		default:
+			if r >= 0 && r < 0x20 {
+				b.WriteString(fmt.Sprintf(`\u%04x`, r))
+				changed = true
+				continue
+			}
+			b.WriteRune(r)
+		}
+	}
+	if !changed {
+		return value
+	}
+	return b.String()
+}
+
+func balancedJSONEnd(value string, start int) (int, bool) {
+	if start < 0 || start >= len(value) {
+		return 0, false
+	}
+	var stack []byte
+	inString := false
+	escaped := false
+	for i := start; i < len(value); i++ {
+		ch := value[i]
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch ch {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch ch {
+		case '"':
+			inString = true
+		case '[', '{':
+			stack = append(stack, ch)
+		case ']':
+			if len(stack) == 0 || stack[len(stack)-1] != '[' {
+				return 0, false
+			}
+			stack = stack[:len(stack)-1]
+		case '}':
+			if len(stack) == 0 || stack[len(stack)-1] != '{' {
+				return 0, false
+			}
+			stack = stack[:len(stack)-1]
+		}
+		if len(stack) == 0 {
+			return i + 1, true
+		}
+	}
+	return 0, false
+}
+
+func repairSingletonArrayToolFields(payload []byte) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false
+	}
+	repaired := false
+	for _, field := range []string{"edits", "moves", "todos", "items"} {
+		raw, ok := obj[field]
+		if !ok {
+			continue
+		}
+		trimmed := bytes.TrimSpace(raw)
+		if len(trimmed) == 0 || trimmed[0] != '{' {
+			continue
+		}
+		if !json.Valid(trimmed) {
+			continue
+		}
+		wrapped, err := json.Marshal([]json.RawMessage{trimmed})
+		if err != nil {
+			continue
+		}
+		obj[field] = wrapped
+		repaired = true
+	}
+	if !repaired {
+		return nil, false
+	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func repairStringArrayToolFields(payload []byte) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false
+	}
+	repaired := false
+	for _, field := range []string{"evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations"} {
+		raw, ok := obj[field]
+		if !ok {
+			continue
+		}
+		var value string
+		if err := json.Unmarshal(raw, &value); err != nil {
+			continue
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		wrapped, err := json.Marshal([]string{value})
+		if err != nil {
+			continue
+		}
+		obj[field] = wrapped
 		repaired = true
 	}
 	if !repaired {
@@ -1540,6 +1985,73 @@ func repairNumericStringToolFields(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return out, true
+}
+
+func repairBoolStringToolFields(payload []byte) ([]byte, bool) {
+	var value any
+	if err := json.Unmarshal(payload, &value); err != nil {
+		return nil, false
+	}
+	repaired, invalid := repairBoolStringToolValue(value)
+	if invalid || !repaired {
+		return nil, false
+	}
+	out, err := json.Marshal(value)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func repairBoolStringToolValue(value any) (bool, bool) {
+	switch typed := value.(type) {
+	case map[string]any:
+		repaired := false
+		for key, raw := range typed {
+			if boolToolField(key) {
+				text, ok := raw.(string)
+				if !ok {
+					continue
+				}
+				parsed, ok := parseStrictBoolString(text)
+				if !ok {
+					return repaired, true
+				}
+				typed[key] = parsed
+				repaired = true
+				continue
+			}
+			childRepaired, invalid := repairBoolStringToolValue(raw)
+			if invalid {
+				return repaired, true
+			}
+			repaired = repaired || childRepaired
+		}
+		return repaired, false
+	case []any:
+		repaired := false
+		for _, item := range typed {
+			childRepaired, invalid := repairBoolStringToolValue(item)
+			if invalid {
+				return repaired, true
+			}
+			repaired = repaired || childRepaired
+		}
+		return repaired, false
+	default:
+		return false, false
+	}
+}
+
+func parseStrictBoolString(text string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(text)) {
+	case "true":
+		return true, true
+	case "false":
+		return false, true
+	default:
+		return false, false
+	}
 }
 
 func repairNumericStringToolValue(value any) (bool, bool) {
@@ -1583,6 +2095,15 @@ func repairNumericStringToolValue(value any) (bool, bool) {
 		return repaired, false
 	default:
 		return false, false
+	}
+}
+
+func boolToolField(field string) bool {
+	switch field {
+	case "replace_all", "recursive", "include_evidence", "include_source", "include_files", "refresh":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1741,6 +2262,9 @@ func extractQwenXMLToolPayload(text string) (string, bool, error) {
 	if !ok {
 		return "", false, nil
 	}
+	if strings.HasPrefix(strings.TrimSpace(envelope), "<function=") {
+		return extractQwenXMLFunctionPayload(envelope)
+	}
 	if object, ok := extractFirstJSONObject(envelope); ok {
 		payload, err := normalizeQwenJSONToolPayload(object)
 		if err != nil {
@@ -1748,13 +2272,18 @@ func extractQwenXMLToolPayload(text string) (string, bool, error) {
 		}
 		return payload, true, nil
 	}
+	return extractQwenXMLFunctionPayload(envelope)
+}
+
+func extractQwenXMLFunctionPayload(envelope string) (string, bool, error) {
+	envelope = strings.TrimSpace(envelope)
 	match := qwenXMLFunctionPattern.FindStringSubmatch(envelope)
 	if len(match) != 3 {
-		return trimmed, true, fmt.Errorf("malformed qwen XML tool request")
+		return envelope, true, fmt.Errorf("malformed qwen XML tool request")
 	}
 	tool := strings.TrimSpace(match[1])
 	if tool == "" {
-		return trimmed, true, fmt.Errorf("qwen XML tool request is missing function name")
+		return envelope, true, fmt.Errorf("qwen XML tool request is missing function name")
 	}
 	fields := map[string]json.RawMessage{}
 	toolRaw, _ := json.Marshal(tool)
@@ -1769,13 +2298,13 @@ func extractQwenXMLToolPayload(text string) (string, bool, error) {
 		}
 		raw, err := qwenXMLParameterRaw(name, param[2])
 		if err != nil {
-			return trimmed, true, err
+			return envelope, true, err
 		}
 		fields[name] = raw
 	}
 	data, err := json.Marshal(fields)
 	if err != nil {
-		return trimmed, true, err
+		return envelope, true, err
 	}
 	return string(data), true, nil
 }
@@ -1856,6 +2385,11 @@ func qwenJSONToolArguments(fields map[string]json.RawMessage) (map[string]json.R
 			return map[string]json.RawMessage{}, true, nil
 		}
 		if err := json.Unmarshal([]byte(encoded), &args); err != nil {
+			if escaped, ok := repairStringifiedJSONControlChars(encoded); ok {
+				if err := json.Unmarshal(escaped, &args); err == nil {
+					return args, true, nil
+				}
+			}
 			return nil, true, fmt.Errorf("qwen JSON tool arguments must decode to an object: %w", err)
 		}
 		return args, true, nil
@@ -1885,6 +2419,9 @@ func qwenXMLParameterRaw(name string, value string) (json.RawMessage, error) {
 			return json.RawMessage("[]"), nil
 		}
 		if !json.Valid([]byte(trimmed)) {
+			if escaped, ok := repairStringifiedJSONControlChars(trimmed); ok {
+				return escaped, nil
+			}
 			return nil, fmt.Errorf("qwen XML parameter %q must be valid JSON array/object content", name)
 		}
 		return json.RawMessage(trimmed), nil
@@ -1893,6 +2430,9 @@ func qwenXMLParameterRaw(name string, value string) (json.RawMessage, error) {
 			return json.RawMessage("null"), nil
 		}
 		if !json.Valid([]byte(trimmed)) {
+			if escaped, ok := repairStringifiedJSONControlChars(trimmed); ok {
+				return escaped, nil
+			}
 			return nil, fmt.Errorf("qwen XML parameter %q must be valid JSON object content", name)
 		}
 		return json.RawMessage(trimmed), nil
@@ -3432,28 +3972,46 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 	}
 
 	lines := make([]string, 0, len(files))
+	failures := make([]string, 0)
 	if m.goplsBinary() != "" {
+		compiled := make(map[string]struct{})
 		for _, rel := range files {
 			output, err := m.runGoPLSCommand(ctx, "check", rel)
-			if err != nil {
-				lines = append(lines, fmt.Sprintf("%s: %s", rel, err.Error()))
-				if strings.TrimSpace(output) != "" {
-					lines = append(lines, m.formatGoLocationOutput(output))
-				}
-				continue
-			}
 			output = m.formatGoLocationOutput(output)
-			if strings.TrimSpace(output) == "" {
+			if err != nil {
+				line := fmt.Sprintf("%s: %s", rel, err.Error())
+				if strings.TrimSpace(output) != "" {
+					line += "\n" + output
+				}
+				lines = append(lines, line)
+				failures = append(failures, line)
+			} else if strings.TrimSpace(output) == "" {
 				lines = append(lines, fmt.Sprintf("%s: no warnings or errors", rel))
-				continue
+			} else {
+				lines = append(lines, output)
+				failures = append(failures, output)
 			}
-			lines = append(lines, output)
+			if pkg, ok := goTestCompilePackageForDiagnosticFile(rel); ok {
+				if _, seen := compiled[pkg]; seen {
+					continue
+				}
+				compiled[pkg] = struct{}{}
+				line, compileErr := m.goTestCompileDiagnostic(ctx, pkg)
+				lines = append(lines, line)
+				if compileErr != nil {
+					failures = append(failures, line)
+				}
+			}
 		}
-		return ToolResult{
+		result := ToolResult{
 			Tool:    "go_diagnostics",
 			Summary: fmt.Sprintf("Collected Go diagnostics for %d file(s).", len(files)),
 			Output:  strings.Join(lines, "\n"),
 		}
+		if len(failures) > 0 {
+			result.Error = strings.Join(failures, "\n")
+		}
+		return result
 	}
 
 	output, err := m.runCommand(ctx, m.cfg.Root, "go", "build", "./...")
@@ -3465,7 +4023,67 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 	if err != nil {
 		result.Error = err.Error()
 	}
+	for _, pkg := range goTestCompilePackagesForDiagnosticFiles(files) {
+		line, compileErr := m.goTestCompileDiagnostic(ctx, pkg)
+		if strings.TrimSpace(result.Output) == "" {
+			result.Output = line
+		} else {
+			result.Output += "\n" + line
+		}
+		if compileErr != nil {
+			if strings.TrimSpace(result.Error) == "" {
+				result.Error = line
+			} else {
+				result.Error += "\n" + line
+			}
+		}
+	}
 	return result
+}
+
+func goTestCompilePackagesForDiagnosticFiles(files []string) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, file := range files {
+		pkg, ok := goTestCompilePackageForDiagnosticFile(file)
+		if !ok {
+			continue
+		}
+		if _, exists := seen[pkg]; exists {
+			continue
+		}
+		seen[pkg] = struct{}{}
+		out = append(out, pkg)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func goTestCompilePackageForDiagnosticFile(file string) (string, bool) {
+	file = filepath.ToSlash(strings.TrimSpace(file))
+	if !strings.HasSuffix(strings.ToLower(filepath.Base(file)), "_test.go") {
+		return "", false
+	}
+	dir := filepath.ToSlash(filepath.Dir(file))
+	if dir == "" || dir == "." {
+		return ".", true
+	}
+	return "./" + strings.TrimPrefix(dir, "./"), true
+}
+
+func (m *Manager) goTestCompileDiagnostic(ctx context.Context, pkg string) (string, error) {
+	output, err := m.runCommand(ctx, m.cfg.Root, "go", "test", pkg, "-run", "^$")
+	output = strings.TrimSpace(output)
+	if err != nil {
+		if output == "" {
+			output = err.Error()
+		}
+		return fmt.Sprintf("%s: go test compile failed\n%s", pkg, output), err
+	}
+	if output == "" {
+		output = "ok"
+	}
+	return fmt.Sprintf("%s: go test compile passed\n%s", pkg, output), nil
 }
 
 func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, goplsCommand string, req ToolRequest, successSummary string) ToolResult {
@@ -5349,7 +5967,8 @@ func (m *Manager) runCommandDetailed(parent context.Context, dir, name string, a
 }
 
 func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, extraEnv []string, name string, args ...string) (string, string, error) {
-	timeout := timeDurationSeconds(m.cfg.CommandTimeoutSeconds)
+	timeoutSeconds := workspaceCommandTimeoutSeconds(m.cfg.CommandTimeoutSeconds)
+	timeout := timeDurationSeconds(timeoutSeconds)
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
@@ -5364,12 +5983,19 @@ func (m *Manager) runCommandDetailedWithEnv(parent context.Context, dir string, 
 
 	err := cmd.Run()
 	if ctx.Err() == context.DeadlineExceeded {
-		return stdout.String(), stderr.String(), fmt.Errorf("command timed out after %ds", m.cfg.CommandTimeoutSeconds)
+		return stdout.String(), stderr.String(), fmt.Errorf("command timed out after %ds", timeoutSeconds)
 	}
 	if err != nil {
 		return stdout.String(), stderr.String(), fmt.Errorf("command failed: %w", err)
 	}
 	return stdout.String(), stderr.String(), nil
+}
+
+func workspaceCommandTimeoutSeconds(seconds int) int {
+	if seconds <= 0 {
+		return 120
+	}
+	return seconds
 }
 
 func envWithCanonicalPWD(base []string, dir string, extra []string) []string {

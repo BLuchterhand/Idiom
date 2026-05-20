@@ -324,7 +324,14 @@ func TestModelCloseoutWritesImplementTelemetryAndOneSessionSummary(t *testing.T)
 	}
 	records := readMainTelemetryRecords(t, onlyTelemetryFile(t, filepath.Join(root, "telemetry")))
 	closeouts := 0
+	modelCloseouts := 0
 	for _, record := range records {
+		if record["type"] == "model_session_closeout" {
+			modelCloseouts++
+			if record["summary_event"] != "session_summary" || record["session_id"] == "" || record["model_closed"] != true {
+				t.Fatalf("model closeout should carry completed session summary metadata: %#v", record)
+			}
+		}
 		if record["type"] == "implement_session_closeout" {
 			closeouts++
 			if record["summary_event"] != "session_summary" || record["session_id"] == "" {
@@ -334,6 +341,9 @@ func TestModelCloseoutWritesImplementTelemetryAndOneSessionSummary(t *testing.T)
 	}
 	if closeouts != 1 {
 		t.Fatalf("expected one implement_session_closeout, got %d in %#v", closeouts, records)
+	}
+	if modelCloseouts != 1 {
+		t.Fatalf("expected one model_session_closeout, got %d in %#v", modelCloseouts, records)
 	}
 }
 

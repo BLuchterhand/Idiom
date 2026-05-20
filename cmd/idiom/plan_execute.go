@@ -33,17 +33,19 @@ import (
 
 // planExecuteOptions configures `idiom plan-execute`.
 type planExecuteOptions struct {
-	ConfigPath        string
-	Prompt            string
-	PromptFile        string
-	Model             string
-	Resume            string
-	ReviewSessionID   string
-	JSONEvents        bool
-	DisableThinking   bool
-	MaxTokens         int
-	RequiredEditPaths multiFlag
-	AllowedEditPaths  multiFlag
+	ConfigPath         string
+	Prompt             string
+	PromptFile         string
+	Model              string
+	Resume             string
+	ReviewSessionID    string
+	JSONEvents         bool
+	DisableThinking    bool
+	MaxTokens          int
+	RequiredEditPaths  multiFlag
+	AllowedEditPaths   multiFlag
+	EditSetObligations planexecute.EditSetObligations
+	ScopeContract      planexecute.PlanScopeContract
 	// PlannerOwnedVerification is accepted for compatibility with
 	// `idiom implement` invocations that pass the flag. Plan-execute
 	// always treats verification as planner-owned (the executor phase
@@ -68,9 +70,9 @@ type planExecuteOptions struct {
 // and the harness-intercept lane): the planner runs FIRST with no
 // per-edit write tools, emits a structured plan via submit_plan, and
 // the orchestrator's executor phase iterates that plan and dispatches
-// each edit deterministically against the workspace. The model only
-// thinks once — about WHAT to change, end-to-end — and never has to
-// hold "what's done vs. what's left" in working memory across N edits.
+// each edit deterministically against the workspace. The planner owns
+// WHAT to change; the harness owns the plan contract and deterministic
+// handoff to the executor.
 func runPlanExecuteMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
 	return runPlanExecuteMainWithTelemetry(args, stdout, stderr, promptRun, nil)
 }
@@ -144,24 +146,32 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	queueRelease := planExecuteAcquireQueueSlot(cfg, opts, sessionID, rec, stdout, stderr)
 	defer queueRelease()
 
-	requiredEditPaths := planExecuteRequiredEditPaths(opts, prompt)
-	allowedEditPaths := planExecuteAllowedEditPaths(opts, prompt)
-	promptRequiredEditPaths := app.RequiredEditPathsFromPrompt(prompt)
+	scopeContract := planExecuteScopeContract(opts, prompt)
+	requiredEditPaths := scopeContract.RequiredCoveragePaths
+	allowedEditPaths := scopeContract.AllowedCandidatePaths
+	editSetObligations := scopeContract.EditSetObligations
+	opts.ScopeContract = scopeContract
+	opts.EditSetObligations = editSetObligations
+	promptRequiredEditPaths := planexecute.RequiredEditPathsFromPrompt(prompt)
 	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
-	explicitAllowedEditPaths := planExecuteUniqueRequiredPaths([]string(opts.AllowedEditPaths))
 	logCLIPhase(rec, "plan_execute_required_edit_paths", map[string]any{
-		"count":          len(requiredEditPaths),
-		"explicit_count": len(explicitRequiredEditPaths),
-		"prompt_count":   len(promptRequiredEditPaths),
-		"allowed_count":  len(allowedEditPaths),
+		"count":                     len(requiredEditPaths),
+		"explicit_count":            len(explicitRequiredEditPaths),
+		"prompt_count":              len(promptRequiredEditPaths),
+		"allowed_count":             len(allowedEditPaths),
+		"scope_contract_id":         scopeContract.ContractID,
+		"edit_set_obligation_count": len(editSetObligations),
 	})
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "required_edit_paths_resolved", map[string]any{
-		"count":               len(requiredEditPaths),
-		"explicit_count":      len(explicitRequiredEditPaths),
-		"prompt_count":        len(promptRequiredEditPaths),
-		"allowed_count":       len(explicitAllowedEditPaths),
-		"required_edit_paths": requiredEditPaths,
-		"allowed_edit_paths":  allowedEditPaths,
+		"count":                     len(requiredEditPaths),
+		"explicit_count":            len(explicitRequiredEditPaths),
+		"prompt_count":              len(promptRequiredEditPaths),
+		"allowed_count":             len(allowedEditPaths),
+		"required_edit_paths":       requiredEditPaths,
+		"allowed_edit_paths":        allowedEditPaths,
+		"scope_contract_id":         scopeContract.ContractID,
+		"edit_set_obligations":      editSetObligations,
+		"edit_set_obligation_count": len(editSetObligations),
 	})
 	decision := buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
 		Mode:              writerroute.ModePlanSubmission,
@@ -180,6 +190,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	}
 
 	progress := planexecute.NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
+	progress.EditSetObligations = editSetObligations
 	if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
@@ -191,7 +202,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// because that lane already has the right read-side guards and
 	// brief audit; only the tool surface differs.
 	plannerBrief := planExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
-	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths, allowedEditPaths) + "\n\n" + plannerBrief
+	plannerPrompt := planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, editSetObligations) + "\n\n" + plannerBrief
 	plannerMaxTokens := planExecutePlannerMaxTokens(cfg.Workspace.Root, prompt, requiredEditPaths, allowedEditPaths)
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
@@ -204,15 +215,20 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	}
 	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
-		if reason := planExecuteRequestedTestEditRejectionReason(prompt, autoExact.AppliedPaths); reason != "" {
-			message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+		if reason := editSetObligations.RejectionReason(autoExact.AppliedPaths); reason != "" {
+			message := planexecute.EditSetObligationFailureMessage(reason)
 			progress.Status = planexecute.ProgressStatusFailed
 			progress.FailureKind = reason
 			progress.FailureReason = truncatePlanExecuteProgressReason(message)
 			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
-				"reason":        reason,
-				"applied_paths": autoExact.AppliedPaths,
+				"reason":                          reason,
+				"applied_paths":                   autoExact.AppliedPaths,
+				"source_satisfied_evidence_paths": autoExact.AppliedPaths,
+				"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
+				"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths), requiredEditPaths),
+				"edit_set_obligations":            editSetObligations,
+				"edit_set_obligation_count":       len(editSetObligations),
 			})
 			fmt.Fprintln(stderr, message)
 			return 1
@@ -222,15 +238,27 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		progress.Status = planexecute.ProgressStatusCompleted
 		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_source_satisfied", map[string]any{
-			"edits":               autoExact.EditCount,
-			"applied":             autoExact.AppliedCount,
-			"required_edit_paths": requiredEditPaths,
-			"applied_paths":       autoExact.AppliedPaths,
-			"reason":              autoExact.Reason,
+			"edits":                           autoExact.EditCount,
+			"applied":                         autoExact.AppliedCount,
+			"required_edit_paths":             requiredEditPaths,
+			"allowed_edit_paths":              allowedEditPaths,
+			"edit_set_obligations":            editSetObligations,
+			"edit_set_obligation_count":       len(editSetObligations),
+			"applied_paths":                   autoExact.AppliedPaths,
+			"source_satisfied_evidence_paths": autoExact.AppliedPaths,
+			"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
+			"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+			"reason":                          autoExact.Reason,
 		})
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
-			"required_edit_paths": requiredEditPaths,
-			"reason":              autoExact.Reason,
+			"required_edit_paths":             requiredEditPaths,
+			"allowed_edit_paths":              allowedEditPaths,
+			"source_satisfied_evidence_paths": autoExact.AppliedPaths,
+			"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
+			"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+			"edit_set_obligations":            editSetObligations,
+			"edit_set_obligation_count":       len(editSetObligations),
+			"reason":                          autoExact.Reason,
 		})
 		if !opts.JSONEvents {
 			fmt.Fprintln(stdout, answer)
@@ -297,6 +325,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			MaxTokensOverride: plannerMaxTokens,
 			DisableThinking:   opts.DisableThinking,
 			Telemetry:         rec,
+			ScopeContract:     scopeContract,
 		}, stdout)
 		if err != nil {
 			progress.Status = planexecute.ProgressStatusFailed
@@ -316,8 +345,8 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	if err != nil {
 		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
 		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
-			if reason := planExecuteRequestedTestEditRejectionReason(prompt, sourceSatisfiedPaths); reason != "" {
-				message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+			if reason := editSetObligations.RejectionReason(sourceSatisfiedPaths); reason != "" {
+				message := planexecute.EditSetObligationFailureMessage(reason)
 				progress.Status = planexecute.ProgressStatusFailed
 				progress.FailureKind = reason
 				progress.FailureReason = truncatePlanExecuteProgressReason(message)
@@ -325,9 +354,14 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 					fmt.Fprintln(stderr, saveErr)
 				}
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
-					"reason":              reason,
-					"required_edit_paths": requiredEditPaths,
-					"allowed_edit_paths":  allowedEditPaths,
+					"reason":                          reason,
+					"required_edit_paths":             requiredEditPaths,
+					"allowed_edit_paths":              allowedEditPaths,
+					"source_satisfied_evidence_paths": sourceSatisfiedPaths,
+					"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
+					"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+					"edit_set_obligations":            editSetObligations,
+					"edit_set_obligation_count":       len(editSetObligations),
 				})
 				fmt.Fprintln(stderr, message)
 				return 1
@@ -336,9 +370,14 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			progress.Status = planexecute.ProgressStatusCompleted
 			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
-				"required_edit_paths": requiredEditPaths,
-				"allowed_edit_paths":  allowedEditPaths,
-				"reason":              "planner reported requested final state already present",
+				"required_edit_paths":             requiredEditPaths,
+				"allowed_edit_paths":              allowedEditPaths,
+				"source_satisfied_evidence_paths": sourceSatisfiedPaths,
+				"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
+				"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+				"edit_set_obligations":            editSetObligations,
+				"edit_set_obligation_count":       len(editSetObligations),
+				"reason":                          "planner reported requested final state already present",
 			})
 			if !opts.JSONEvents {
 				fmt.Fprintln(stdout, answer)
@@ -417,12 +456,14 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	changedPaths := planChangedPaths(plan)
-	if reason := planExecuteRequestedTestEditRejectionReason(prompt, changedPaths); reason != "" {
-		message := reason + ": original prompt requested test edits, but submitted plan changed no test path"
+	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
+		message := planexecute.EditSetObligationFailureMessage(reason)
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
-			"path":          planPath,
-			"reason":        reason,
-			"changed_paths": changedPaths,
+			"path":                      planPath,
+			"reason":                    reason,
+			"changed_paths":             changedPaths,
+			"edit_set_obligations":      editSetObligations,
+			"edit_set_obligation_count": len(editSetObligations),
 		})
 		progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, planexecute.ReviewRepairBaseline{})
 		progress.Status = planexecute.ProgressStatusFailed
@@ -532,6 +573,11 @@ func runPlanExecuteResumeReviewRepair(
 	if len(state.RequiredEditPaths) > 0 {
 		requiredEditPaths = append([]string(nil), state.RequiredEditPaths...)
 	}
+	allowedEditPaths := mergePlanExecutePaths(state.AllowedEditPaths, planExecuteAllowedEditPaths(opts, prompt))
+	if len(state.EditSetObligations) == 0 {
+		state.EditSetObligations = planExecuteScopeContract(opts, prompt).EditSetObligations
+	}
+	state.EditSetObligations = state.EditSetObligations.Normalized()
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "resume_state_loaded", planexecute.ProgressStateEventFields(state, statePath))
 	reviewSessionID := newPlanExecuteSessionID()
 	state.MarkReviewStarted(reviewSessionID)
@@ -541,6 +587,10 @@ func runPlanExecuteResumeReviewRepair(
 	}
 	reviewOpts := opts
 	reviewOpts.ReviewSessionID = reviewSessionID
+	reviewOpts.RequiredEditPaths = multiFlag(requiredEditPaths)
+	reviewOpts.AllowedEditPaths = multiFlag(allowedEditPaths)
+	reviewOpts.EditSetObligations = state.EditSetObligations
+	reviewOpts.ScopeContract = planexecute.NewPlanScopeContract(requiredEditPaths, allowedEditPaths, state.EditSetObligations)
 	reviewBaseline := fromSharedReviewRepairBaseline(state.ReviewBaseline)
 	executorReport := fromSharedExecutorPhaseReport(state.ExecutorPhaseReport())
 	reviewReport, reviewErr := runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, executorReport, reviewOpts, stdout, promptRun, rec)
@@ -762,7 +812,7 @@ func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOption
 	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id before running")
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
 	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this planner run")
-	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override planner max_tokens for this run; 0 uses plan-execute default (16384)")
+	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override planner max_tokens for this run; 0 uses the shape-aware plan-execute default")
 	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "compatibility flag: plan-execute always treats verification as planner-owned; this is a no-op")
 	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: plan-execute does not run builds or tests; this is a no-op")
 	fs.BoolVar(&opts.SkipReviewRepair, "skip-review-repair", false, "skip the post-execute review-repair planner pass")
@@ -804,17 +854,31 @@ func planExecutePrompt(opts planExecuteOptions) (string, error) {
 }
 
 func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []string {
-	paths := make([]string, 0, len(opts.RequiredEditPaths))
-	paths = append(paths, []string(opts.RequiredEditPaths)...)
-	paths = append(paths, app.RequiredEditPathsFromPrompt(prompt)...)
-	return planExecuteUniqueRequiredPaths(paths)
+	return planExecuteScopeContract(opts, prompt).RequiredCoveragePaths
 }
 
 func planExecuteAllowedEditPaths(opts planExecuteOptions, prompt string) []string {
-	paths := make([]string, 0, len(opts.AllowedEditPaths))
-	paths = append(paths, []string(opts.AllowedEditPaths)...)
-	paths = append(paths, app.AllowedEditPathsFromPrompt(prompt)...)
-	return planExecuteUniqueRequiredPaths(paths)
+	return planExecuteScopeContract(opts, prompt).AllowedCandidatePaths
+}
+
+func planExecuteScopeContract(opts planExecuteOptions, prompt string) planexecute.PlanScopeContract {
+	scope := opts.ScopeContract
+	required := append([]string(nil), scope.RequiredCoveragePaths...)
+	required = append(required, []string(opts.RequiredEditPaths)...)
+	required = append(required, planexecute.RequiredEditPathsFromPrompt(prompt)...)
+	allowed := append([]string(nil), scope.AllowedCandidatePaths...)
+	allowed = append(allowed, []string(opts.AllowedEditPaths)...)
+	allowed = append(allowed, planexecute.AllowedEditPathsFromPrompt(prompt)...)
+	promptObligations := planexecute.EditSetObligationsFromPrompt(prompt)
+	if scope.HasContent() || len(opts.EditSetObligations.Normalized()) > 0 {
+		promptObligations = nil
+	}
+	obligations := planexecute.MergeEditSetObligations(
+		scope.EditSetObligations.WithDefaultSource("scope_contract"),
+		opts.EditSetObligations.WithDefaultSource("options"),
+		promptObligations,
+	)
+	return planexecute.NewPlanScopeContract(required, allowed, obligations)
 }
 
 func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
@@ -917,12 +981,15 @@ func patchPlanArtifactPackID(path string, packID string) error {
 }
 
 // planExecutePlannerSystemAddendum is prepended to the brief in the
-// planner phase. Kept tight by design — the 35B planner has a fixed
-// thinking-token budget, and verbose addendums starve it of output
-// budget before it can emit submit_plan. Every rule earned its place
-// from a real failure mode; if you add another, compress an existing
-// rule to make room.
+// planner phase. Kept tight by design: local text-tool backends need
+// enough visible output budget to emit a parser-readable submit_plan.
+// Every rule earned its place from a real failure mode; if you add
+// another, compress an existing rule to make room.
 func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
+	return planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
+}
+
+func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations planexecute.EditSetObligations) string {
 	lines := []string{
 		"# Plan-then-execute (planner phase)",
 		"",
@@ -931,25 +998,25 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		"",
 		"Visible response protocol — choose exactly one action per turn:",
 		"1. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
-		"2. Once every existing required_edit_path has satisfied its source-body obligation, call `submit_plan` as the next visible action. Do not answer in prose first.",
+		"2. Once every existing required_edit_path has satisfied its source-body obligation, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
 		"3. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path.",
 		"4. If the plan cannot be produced from available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.",
 		"",
 		"Plan artifact rules:",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
-		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`old_text`+`new_text`; empty `new_text` deletes `old_text` | `start_line`+`end_line`+non-empty `content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Prefer substring/range edits; large bodies are spilled to artifact refs after submit_plan.",
+		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`start_line`+`end_line`+non-empty `content` | `old_text`+`new_text`; empty `new_text` deletes `old_text` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Prefer numeric line-range edits for existing source/test changes that span more than a few lines or contain quotes, raw strings, struct tags, or large function bodies; large bodies are spilled to artifact refs after submit_plan.",
 		"3. Each edit body must be executable final content. Do not submit placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, prose descriptions, or invented symbols in `old_text`, `new_text`, or `content`.",
-		"4. `old_text` is exact current text copied from source-body evidence. Line-range `content` is the complete replacement for the inclusive range. Whole-file/new-file `new_text` is the complete file body.",
+		"4. Line-range `content` is the complete replacement for the inclusive range. `old_text` is exact current text copied from source-body evidence. Whole-file/new-file `new_text` is the complete file body.",
 		"5. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
-		"6. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
+		"6. Substring-anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before using any multi-line substring anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"7. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence can identify the intended edit, but required existing paths still need source-body obligations satisfied before submit_plan unless the run short-circuits as source-satisfied or exact-plan-ready before planner execution.",
 		"8. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
-		"9. If the objective explicitly asks for new or updated tests, the plan must include the relevant test edit or stop with `<<QUESTION>>:` naming the missing test path/anchor; a production-only plan is incomplete.",
+		"9. If the objective asks for new or updated tests, the plan must include the relevant test edit; if it asks to implement/fix/add feature behavior, the plan must include a non-test implementation edit. Stop with `<<QUESTION>>:` when the needed path/anchor is missing; partial test-only or production-only plans are incomplete.",
 		"10. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. Rejected `submit_plan` calls are invalid attempts, not successful plan artifacts. No post-plan verification reads.",
 		"",
 		"Canonical `submit_plan` shape (use real paths and source text, never placeholders):",
 		"```tool",
-		`{"tool":"submit_plan","rationale":"one sentence explaining why the edit set satisfies the request","edits":[{"path":"path/from/required_edit_paths","old_text":"exact current text copied from source evidence","new_text":"replacement text","purpose":"replace the confirmed source text"}]}`,
+		`{"tool":"submit_plan","rationale":"one sentence explaining why the edit set satisfies the request","edits":[{"path":"path/from/required_edit_paths","start_line":10,"end_line":20,"content":"complete replacement lines\n","purpose":"replace the confirmed line range"}]}`,
 		"```",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
@@ -959,6 +1026,26 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 	} else {
 		lines = append(lines, "", "No required edit paths were provided. Use the objective's candidate/target refs as the planning scope: you still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
 	}
+	if checklist := planExecuteEditSetObligationChecklist(obligations); checklist != "" {
+		lines = append(lines, "", checklist)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func planExecuteEditSetObligationChecklist(obligations planexecute.EditSetObligations) string {
+	obligations = obligations.Normalized()
+	if len(obligations) == 0 {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, fmt.Sprintf("Requested edit-set obligations for this run: %d obligation(s).", len(obligations)))
+	if obligations.Has(planexecute.EditSetObligationKindTestEdit) {
+		lines = append(lines, "- `test_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real test edit or test-path evidence.")
+	}
+	if obligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
+		lines = append(lines, "- `implementation_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real non-test implementation edit or implementation-path evidence.")
+	}
+	lines = append(lines, "These obligations do not add or promote `required_edit_paths`; candidate and allowed paths remain scope only.")
 	return strings.Join(lines, "\n")
 }
 
@@ -1269,11 +1356,33 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	if len(paths) > 0 {
 		return paths
 	}
-	paths = planExecuteUniqueRequiredPaths(allowedEditPaths)
-	if len(paths) > 0 {
-		return paths
+	evidencePaths := planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
+	allowed := planExecutePathSet(allowedEditPaths)
+	if len(allowed) == 0 {
+		return evidencePaths
 	}
-	return planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
+	var scoped []string
+	for _, path := range evidencePaths {
+		if _, ok := allowed[path]; ok {
+			scoped = append(scoped, path)
+		}
+	}
+	return scoped
+}
+
+func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
+	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	if len(required) == 0 {
+		return nil
+	}
+	lowerAnswer := strings.ToLower(answer)
+	var missing []string
+	for _, path := range required {
+		if !strings.Contains(lowerAnswer, strings.ToLower(path)) {
+			missing = append(missing, path)
+		}
+	}
+	return missing
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -2150,9 +2259,9 @@ func runReviewRepairPhase(
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
-	if planExecutePromptRequiresTestEdit(originalPrompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, "requested_test_edit_missing")
-	}
+	editSetObligations := planExecuteScopeContract(opts, originalPrompt).EditSetObligations
+	evidence.PhaseEvidence.EditSetObligations = editSetObligations
+	evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, editSetObligations.MissingOpenObligations(changedPaths)...)
 	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
 	if reviewSessionID == "" {
 		reviewSessionID = newPlanExecuteSessionID()
@@ -2161,10 +2270,12 @@ func runReviewRepairPhase(
 	reviewCfg.Workspace.SessionID = reviewSessionID
 	reviewStart := time.Now().Add(-1 * time.Second)
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_start", map[string]any{
-		"session_id":     reviewSessionID,
-		"changed_paths":  changedPaths,
-		"allowed_paths":  allowedRepairPaths,
-		"phase_evidence": phaseEvidenceTelemetry(evidence.PhaseEvidence),
+		"session_id":                reviewSessionID,
+		"changed_paths":             changedPaths,
+		"allowed_paths":             allowedRepairPaths,
+		"edit_set_obligations":      editSetObligations,
+		"edit_set_obligation_count": len(editSetObligations),
+		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
 	})
 	prompt := planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
 	reviewMaxTokens := opts.MaxTokens
@@ -2202,9 +2313,15 @@ func runReviewRepairPhase(
 	}
 	if !found {
 		if reviewAnswerDeclaresPass(answer) && reviewTextHasVerificationChecklist(answer) {
-			if reason := reviewAnswerPassContractRejectionReason(originalPrompt, changedPaths, answer); reason != "" {
+			reason := reviewAnswerPassContradictionReason(answer)
+			if reason == "" {
+				reason = editSetObligations.RejectionReason(changedPaths)
+			}
+			if reason != "" {
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
-					"reason": reason,
+					"reason":                    reason,
+					"edit_set_obligations":      editSetObligations,
+					"edit_set_obligation_count": len(editSetObligations),
 				})
 				return reviewRepairPhaseReport{Status: "failed", ChecklistFound: true}, fmt.Errorf("review-repair phase rejected contradictory `Decision: pass`: %s", reason)
 			}
@@ -2228,13 +2345,15 @@ func runReviewRepairPhase(
 	}
 	repairPaths := planChangedPaths(repairPlan)
 	combinedPaths := mergePlanExecutePaths(changedPaths, repairPaths)
-	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, combinedPaths); reason != "" {
+	if reason := editSetObligations.RejectionReason(combinedPaths); reason != "" {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_plan_rejected", map[string]any{
-			"reason":         reason,
-			"review_plan":    planPath,
-			"changed_paths":  changedPaths,
-			"repair_paths":   repairPaths,
-			"combined_paths": combinedPaths,
+			"reason":                    reason,
+			"review_plan":               planPath,
+			"changed_paths":             changedPaths,
+			"repair_paths":              repairPaths,
+			"combined_paths":            combinedPaths,
+			"edit_set_obligations":      editSetObligations,
+			"edit_set_obligation_count": len(editSetObligations),
 		})
 		return reviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
 	}
@@ -2310,11 +2429,12 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("- Test or command evidence available now, plus any planner-owned verification that still must run outside this lane.\n\n")
 	b.WriteString("Outcomes:\n\n")
 	b.WriteString("- If any checklist item fails and the repair is inside Allowed Repair Paths, call `submit_plan` once with corrective edits only. The `submit_plan.rationale` must start with `Verification Checklist:` and include the checklist plus the failing item each edit addresses.\n")
-	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. `old_text` is exact current text from the diff/source evidence; line-range `content` is the complete replacement for the inclusive range; whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
+	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. Prefer line-range `content` for non-trivial source/test repairs; it is the complete replacement for the inclusive range. Use `old_text` only for tiny exact snippets copied from diff/source evidence. Whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
 	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
 	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
 	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
 	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: the original task explicitly requested test edits, but this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
+	b.WriteString("If Phase Evidence lists `requested_implementation_edit_missing`, `Decision: pass` is invalid: the original task requested implementation behavior, but this run changed only test paths. Submit a corrective implementation edit if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing source-edit scope.\n\n")
 	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
 	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
 	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
@@ -2790,15 +2910,24 @@ func reviewAnswerPassContractRejectionReason(originalPrompt string, changedPaths
 	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
 		return reason
 	}
-	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, changedPaths); reason != "" {
+	if reason := planExecuteRequestedEditCoverageRejectionReason(originalPrompt, changedPaths); reason != "" {
 		return reason
 	}
 	return ""
 }
 
+func planExecuteRequestedEditCoverageRejectionReason(prompt string, changedPaths []string) string {
+	return planexecute.EditSetObligationsFromPrompt(prompt).RejectionReason(changedPaths)
+}
+
+func planExecuteRequestedEditCoverageFailureMessage(reason string) string {
+	return planexecute.EditSetObligationFailureMessage(reason)
+}
+
 func planExecuteRequestedTestEditRejectionReason(prompt string, changedPaths []string) string {
-	if planExecutePromptRequiresTestEdit(prompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		return "missing_requested_test_edit"
+	obligations := planexecute.EditSetObligationsFromPrompt(prompt)
+	if obligations.Has(planexecute.EditSetObligationKindTestEdit) && !planExecuteChangedPathsIncludeTest(changedPaths) {
+		return planexecute.EditSetFailureMissingRequestedTestEdit
 	}
 	return ""
 }

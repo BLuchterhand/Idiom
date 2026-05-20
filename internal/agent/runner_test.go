@@ -1837,6 +1837,36 @@ func TestRequiredPathRecoveryNudgeDoesNotAnswerFirst(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteRequiredPathRecoveryNudgeNamesSubmitPlan(t *testing.T) {
+	nudge := buildRejectionRecoveryNudge(
+		workspace.ToolRequest{Tool: "read_file", Path: "native/tests/test_energy.cpp"},
+		nil,
+		nil,
+		workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{
+				"native/src/energy.cpp",
+				"native/tests/test_energy.cpp",
+			},
+		},
+		"main",
+		false,
+		false,
+	)
+	for _, want := range []string{"plan-execute planner", "successful `submit_plan` edit entry", "`submit_plan` with one edit entry"} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("expected plan-execute recovery nudge to contain %q, got:\n%s", want, nudge)
+		}
+	}
+	for _, forbidden := range []string{"allowed write", "successful write:"} {
+		if strings.Contains(nudge, forbidden) {
+			t.Fatalf("plan-execute recovery nudge should not use generic implementation write wording %q, got:\n%s", forbidden, nudge)
+		}
+	}
+}
+
 func TestTargetInspectionRecoveryNudgeStaysInsideTarget(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "go_file_outline", Summary: "Outlined 15 top-level declaration(s) in internal/app/turn_planner.go.", Output: "package app"},
@@ -2304,6 +2334,16 @@ func TestCompletionGateRejectsUnresolvedProcessNarration(t *testing.T) {
 
 	if _, rejected := unresolvedProcessIntentCompletionRejection("Blocked: I cannot inspect the logs because the file is missing."); rejected {
 		t.Fatal("concrete blocker answer should not be rejected as process narration")
+	}
+}
+
+func TestCompletionGateRejectsFutureRefreshNarration(t *testing.T) {
+	result, rejected := unresolvedProcessIntentCompletionRejection("Both required edit paths are stale in the graph. I'll refresh them, then read the two files to verify the TUI smoke fixture.")
+	if !rejected {
+		t.Fatal("expected future refresh/read narration to be rejected")
+	}
+	if result.Tool != "completion_gate" || !strings.Contains(result.Error, "future search") {
+		t.Fatalf("unexpected rejection result: %#v", result)
 	}
 }
 
@@ -4305,6 +4345,82 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected read then submit_plan, got %d request(s)", requests)
+	}
+}
+
+func TestPlanExecutePlannerRejectsRepeatedReadBeyondKnownEOF(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "one\ntwo\nthree\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"target.txt","start_line":20,"end_line":30,"named_gap":"inspect tail before planning","why_not_answering":"need current source before submit_plan"}`,
+		`{"tool":"read_file","path":"target.txt","start_line":30,"end_line":40,"named_gap":"keep reading","why_not_answering":"need more source"}`,
+		`{"tool":"submit_plan","rationale":"Use the already gathered target.txt evidence instead of probing beyond EOF.","edits":[{"path":"target.txt","old_text":"one\n","new_text":"uno\n","purpose":"update first line"}]}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var clampedReadSeen bool
+	var eofRejectionSeen bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"target.txt"},
+			TargetRefs:        []string{"target.txt"},
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "plan target edit"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool != "read_file" || event.Request.Path != "target.txt" {
+				return
+			}
+			if strings.Contains(event.Result.Summary, "was clamped to file bounds") && strings.TrimSpace(event.Result.Error) == "" {
+				clampedReadSeen = true
+			}
+			if strings.Contains(event.Result.Error, "already established that target.txt has 4 lines total") {
+				eofRejectionSeen = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !clampedReadSeen {
+		t.Fatalf("expected first out-of-range read to clamp once, answer=%q", answer)
+	}
+	if !eofRejectionSeen {
+		t.Fatalf("expected second out-of-range read to be rejected before workspace dispatch, answer=%q", answer)
+	}
+	if !strings.Contains(answer, "Plan submitted") {
+		t.Fatalf("expected planner to recover by submitting the plan, got %q", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected read, rejected retry, then submit_plan, got %d request(s)", requests)
 	}
 }
 
@@ -9456,6 +9572,24 @@ func TestPromptEvidencePathsFromToolResultsPrefersExactProbePathsOverEarlyScaffo
 		if slices.Contains(got, forbidden) {
 			t.Fatalf("expected prompt scaffolding path %q to be deprioritized, got %#v", forbidden, got)
 		}
+	}
+}
+
+func TestPromptEvidencePathsFromToolResultsKeepsDirectTestProbePath(t *testing.T) {
+	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f5 cmd/idiom/product_workflow_test.go lines 1-6721",
+			Output: strings.Join([]string{
+				"1:package main",
+				"25:internal/productworkflow/scope.go",
+				"26:internal/productworkflow/validate.go",
+				"27:cmd/idiom/product_workflow.go",
+			}, "\n"),
+		},
+	}, 4)
+	if len(got) == 0 || got[0] != "cmd/idiom/product_workflow_test.go" {
+		t.Fatalf("expected direct test-file probe path to stay pinned first, got %#v", got)
 	}
 }
 

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 
 	"idiom/internal/llama"
@@ -62,7 +61,7 @@ func TestParseToolCall_BuiltinRepairsNumericStringFields(t *testing.T) {
 	}
 }
 
-func TestParseToolCall_BuiltinRejectsStringifiedMultilineEdits(t *testing.T) {
+func TestParseToolCall_BuiltinRepairsStringifiedMultilineEdits(t *testing.T) {
 	inner := `[{"path":"a.go","old_text":"line one
 line two","new_text":"line one
 line three","purpose":"update a"}]`
@@ -80,14 +79,15 @@ line three","purpose":"update a"}]`
 			Arguments: rawArgs,
 		},
 	}
-	_, _, err = parseToolCall(call)
-	if err == nil {
-		t.Fatalf("expected stringified submit_plan edits to be rejected")
+	req, ok, err := parseToolCall(call)
+	if err != nil {
+		t.Fatalf("parseToolCall: %v", err)
 	}
-	for _, want := range []string{"edits", "string"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("rejection should include %q, got %v", want, err)
-		}
+	if !ok {
+		t.Fatal("expected parsed tool call")
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "a.go" {
+		t.Fatalf("expected stringified submit_plan edits to repair into typed edits, got %#v", req.Edits)
 	}
 }
 

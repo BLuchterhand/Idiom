@@ -48,17 +48,11 @@ func planExecutePrompt(opts Options) (string, error) {
 }
 
 func planExecuteRequiredEditPaths(opts Options, prompt string) []string {
-	paths := make([]string, 0, len(opts.RequiredEditPaths))
-	paths = append(paths, []string(opts.RequiredEditPaths)...)
-	paths = append(paths, RequiredEditPathsFromPrompt(prompt)...)
-	return planExecuteUniqueRequiredPaths(paths)
+	return planExecuteScopeContract(opts, prompt).RequiredCoveragePaths
 }
 
 func planExecuteAllowedEditPaths(opts Options, prompt string) []string {
-	paths := make([]string, 0, len(opts.AllowedEditPaths))
-	paths = append(paths, []string(opts.AllowedEditPaths)...)
-	paths = append(paths, AllowedEditPathsFromPrompt(prompt)...)
-	return planExecuteUniqueRequiredPaths(paths)
+	return planExecuteScopeContract(opts, prompt).AllowedCandidatePaths
 }
 
 func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
@@ -161,6 +155,10 @@ func patchPlanArtifactPackID(path string, packID string) error {
 }
 
 func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
+	return planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
+}
+
+func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations EditSetObligations) string {
 	lines := []string{
 		"# Plan-then-execute (planner phase)",
 		"",
@@ -169,25 +167,25 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		"",
 		"Visible response protocol — choose exactly one action per turn:",
 		"1. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
-		"2. Once every existing required_edit_path has satisfied its source-body obligation, call `submit_plan` as the next visible action. Do not answer in prose first.",
+		"2. Once every existing required_edit_path has satisfied its source-body obligation, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
 		"3. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path.",
 		"4. If the plan cannot be produced from available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.",
 		"",
 		"Plan artifact rules:",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
-		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`old_text`+`new_text`; empty `new_text` deletes `old_text` | `start_line`+`end_line`+non-empty `content` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Prefer substring/range edits; large bodies are spilled to artifact refs after submit_plan.",
+		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`start_line`+`end_line`+non-empty `content` | `old_text`+`new_text`; empty `new_text` deletes `old_text` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Prefer numeric line-range edits for existing source/test changes that span more than a few lines or contain quotes, raw strings, struct tags, or large function bodies; large bodies are spilled to artifact refs after submit_plan.",
 		"3. Each edit body must be executable final content. Do not submit placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, prose descriptions, or invented symbols in `old_text`, `new_text`, or `content`.",
-		"4. `old_text` is exact current text copied from source-body evidence. Line-range `content` is the complete replacement for the inclusive range. Whole-file/new-file `new_text` is the complete file body.",
+		"4. Line-range `content` is the complete replacement for the inclusive range. `old_text` is exact current text copied from source-body evidence. Whole-file/new-file `new_text` is the complete file body.",
 		"5. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
-		"6. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
+		"6. Substring-anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before using any multi-line substring anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"7. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence can identify the intended edit, but required existing paths still need source-body obligations satisfied before submit_plan unless the run short-circuits as source-satisfied or exact-plan-ready before planner execution.",
 		"8. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
-		"9. If the objective explicitly asks for new or updated tests, the plan must include the relevant test edit or stop with `<<QUESTION>>:` naming the missing test path/anchor; a production-only plan is incomplete.",
+		"9. If the objective asks for new or updated tests, the plan must include the relevant test edit; if it asks to implement/fix/add feature behavior, the plan must include a non-test implementation edit. Stop with `<<QUESTION>>:` when the needed path/anchor is missing; partial test-only or production-only plans are incomplete.",
 		"10. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. Rejected `submit_plan` calls are invalid attempts, not successful plan artifacts. No post-plan verification reads.",
 		"",
 		"Canonical `submit_plan` shape (use real paths and source text, never placeholders):",
 		"```tool",
-		`{"tool":"submit_plan","rationale":"one sentence explaining why the edit set satisfies the request","edits":[{"path":"path/from/required_edit_paths","old_text":"exact current text copied from source evidence","new_text":"replacement text","purpose":"replace the confirmed source text"}]}`,
+		`{"tool":"submit_plan","rationale":"one sentence explaining why the edit set satisfies the request","edits":[{"path":"path/from/required_edit_paths","start_line":10,"end_line":20,"content":"complete replacement lines\n","purpose":"replace the confirmed line range"}]}`,
 		"```",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
@@ -197,6 +195,26 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 	} else {
 		lines = append(lines, "", "No required edit paths were provided. Use the objective's candidate/target refs as the planning scope: you still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
 	}
+	if checklist := planExecuteEditSetObligationChecklist(obligations); checklist != "" {
+		lines = append(lines, "", checklist)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func planExecuteEditSetObligationChecklist(obligations EditSetObligations) string {
+	obligations = obligations.Normalized()
+	if len(obligations) == 0 {
+		return ""
+	}
+	var lines []string
+	lines = append(lines, fmt.Sprintf("Requested edit-set obligations for this run: %d obligation(s).", len(obligations)))
+	if obligations.Has(EditSetObligationKindTestEdit) {
+		lines = append(lines, "- `test_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real test edit or test-path evidence.")
+	}
+	if obligations.Has(EditSetObligationKindImplementationEdit) {
+		lines = append(lines, "- `implementation_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real non-test implementation edit or implementation-path evidence.")
+	}
+	lines = append(lines, "These obligations do not add or promote `required_edit_paths`; candidate and allowed paths remain scope only.")
 	return strings.Join(lines, "\n")
 }
 
@@ -404,11 +422,33 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	if len(paths) > 0 {
 		return paths
 	}
-	paths = planExecuteUniqueRequiredPaths(allowedEditPaths)
-	if len(paths) > 0 {
-		return paths
+	evidencePaths := planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
+	allowed := planExecutePathSet(allowedEditPaths)
+	if len(allowed) == 0 {
+		return evidencePaths
 	}
-	return planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
+	var scoped []string
+	for _, path := range evidencePaths {
+		if _, ok := allowed[path]; ok {
+			scoped = append(scoped, path)
+		}
+	}
+	return scoped
+}
+
+func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
+	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	if len(required) == 0 {
+		return nil
+	}
+	lowerAnswer := strings.ToLower(answer)
+	var missing []string
+	for _, path := range required {
+		if !strings.Contains(lowerAnswer, strings.ToLower(path)) {
+			missing = append(missing, path)
+		}
+	}
+	return missing
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -764,6 +804,10 @@ func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 
 func PlanExecutePlannerSystemAddendum(requiredEditPaths []string) string {
 	return planExecutePlannerSystemAddendum(requiredEditPaths, nil)
+}
+
+func PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations EditSetObligations) string {
+	return planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, obligations)
 }
 
 func PlanExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -1222,9 +1266,9 @@ func RunReviewRepairPhase(
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
-	if planExecutePromptRequiresTestEdit(originalPrompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, "requested_test_edit_missing")
-	}
+	editSetObligations := planExecuteEditSetObligations(opts, originalPrompt)
+	evidence.PhaseEvidence.EditSetObligations = editSetObligations
+	evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, editSetObligations.MissingOpenObligations(changedPaths)...)
 	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
 	if reviewSessionID == "" {
 		reviewSessionID = newPlanExecuteSessionID()
@@ -1233,10 +1277,12 @@ func RunReviewRepairPhase(
 	reviewCfg.Workspace.SessionID = reviewSessionID
 	reviewStart := time.Now().Add(-1 * time.Second)
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_start", map[string]any{
-		"session_id":     reviewSessionID,
-		"changed_paths":  changedPaths,
-		"allowed_paths":  allowedRepairPaths,
-		"phase_evidence": phaseEvidenceTelemetry(evidence.PhaseEvidence),
+		"session_id":                reviewSessionID,
+		"changed_paths":             changedPaths,
+		"allowed_paths":             allowedRepairPaths,
+		"edit_set_obligations":      editSetObligations,
+		"edit_set_obligation_count": len(editSetObligations),
+		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
 	})
 	prompt := planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
 	reviewMaxTokens := opts.MaxTokens
@@ -1274,9 +1320,15 @@ func RunReviewRepairPhase(
 	}
 	if !found {
 		if reviewAnswerDeclaresPass(answer) && reviewTextHasVerificationChecklist(answer) {
-			if reason := reviewAnswerPassContractRejectionReason(originalPrompt, changedPaths, answer); reason != "" {
+			reason := reviewAnswerPassContradictionReason(answer)
+			if reason == "" {
+				reason = editSetObligations.RejectionReason(changedPaths)
+			}
+			if reason != "" {
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
-					"reason": reason,
+					"reason":                    reason,
+					"edit_set_obligations":      editSetObligations,
+					"edit_set_obligation_count": len(editSetObligations),
 				})
 				return ReviewRepairPhaseReport{Status: "failed", ChecklistFound: true}, fmt.Errorf("review-repair phase rejected contradictory `Decision: pass`: %s", reason)
 			}
@@ -1300,13 +1352,15 @@ func RunReviewRepairPhase(
 	}
 	repairPaths := planChangedPaths(repairPlan)
 	combinedPaths := mergePlanExecutePaths(changedPaths, repairPaths)
-	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, combinedPaths); reason != "" {
+	if reason := editSetObligations.RejectionReason(combinedPaths); reason != "" {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_plan_rejected", map[string]any{
-			"reason":         reason,
-			"review_plan":    planPath,
-			"changed_paths":  changedPaths,
-			"repair_paths":   repairPaths,
-			"combined_paths": combinedPaths,
+			"reason":                    reason,
+			"review_plan":               planPath,
+			"changed_paths":             changedPaths,
+			"repair_paths":              repairPaths,
+			"combined_paths":            combinedPaths,
+			"edit_set_obligations":      editSetObligations,
+			"edit_set_obligation_count": len(editSetObligations),
 		})
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
 	}
@@ -1382,11 +1436,12 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("- Test or command evidence available now, plus any planner-owned verification that still must run outside this lane.\n\n")
 	b.WriteString("Outcomes:\n\n")
 	b.WriteString("- If any checklist item fails and the repair is inside Allowed Repair Paths, call `submit_plan` once with corrective edits only. The `submit_plan.rationale` must start with `Verification Checklist:` and include the checklist plus the failing item each edit addresses.\n")
-	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. `old_text` is exact current text from the diff/source evidence; line-range `content` is the complete replacement for the inclusive range; whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
+	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. Prefer line-range `content` for non-trivial source/test repairs; it is the complete replacement for the inclusive range. Use `old_text` only for tiny exact snippets copied from diff/source evidence. Whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
 	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
 	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
 	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
 	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: the original task explicitly requested test edits, but this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
+	b.WriteString("If Phase Evidence lists `requested_implementation_edit_missing`, `Decision: pass` is invalid: the original task requested implementation behavior, but this run changed only test paths. Submit a corrective implementation edit if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing source-edit scope.\n\n")
 	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
 	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
 	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
@@ -1860,15 +1915,24 @@ func reviewAnswerPassContractRejectionReason(originalPrompt string, changedPaths
 	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
 		return reason
 	}
-	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, changedPaths); reason != "" {
+	if reason := planExecuteRequestedEditCoverageRejectionReason(originalPrompt, changedPaths); reason != "" {
 		return reason
 	}
 	return ""
 }
 
+func planExecuteRequestedEditCoverageRejectionReason(prompt string, changedPaths []string) string {
+	return EditSetObligationsFromPrompt(prompt).RejectionReason(changedPaths)
+}
+
+func planExecuteRequestedEditCoverageFailureMessage(reason string) string {
+	return EditSetObligationFailureMessage(reason)
+}
+
 func planExecuteRequestedTestEditRejectionReason(prompt string, changedPaths []string) string {
-	if planExecutePromptRequiresTestEdit(prompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		return "missing_requested_test_edit"
+	obligations := EditSetObligationsFromPrompt(prompt)
+	if obligations.Has(EditSetObligationKindTestEdit) && !planExecuteChangedPathsIncludeTest(changedPaths) {
+		return EditSetFailureMissingRequestedTestEdit
 	}
 	return ""
 }
@@ -1980,6 +2044,102 @@ func planExecutePromptRequiresTestEdit(prompt string) bool {
 	return false
 }
 
+func planExecutePromptRequiresImplementationEdit(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	if planExecutePromptRequestsOnlyTestChanges(lower) {
+		return false
+	}
+	wordTriggers := []string{
+		"implement",
+		"fix",
+		"feature",
+		"enhancement",
+		"wire",
+		"fallback",
+		"surface",
+		"handle",
+		"harden",
+		"prevent",
+		"reject",
+	}
+	for _, word := range wordTriggers {
+		if planExecuteTextContainsWord(lower, word) {
+			return true
+		}
+	}
+	phraseTriggers := []string{
+		"then implement",
+		"add support",
+		"add a flag",
+		"add flag",
+		"fail closed",
+		"stop accepting",
+		"no longer allow",
+		"should include",
+		"should fail",
+		"should show",
+		"should return",
+		"should handle",
+	}
+	for _, phrase := range phraseTriggers {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutePromptRequestsOnlyTestChanges(lower string) bool {
+	phrases := []string{
+		"tests only",
+		"test-only",
+		"only add tests",
+		"add only tests",
+		"write tests only",
+		"write test only",
+		"test coverage only",
+		"add regression coverage",
+		"add test coverage",
+		"regression coverage for",
+		"coverage for existing",
+		"tests for existing",
+		"test for existing",
+		"do not change source",
+		"don't change source",
+		"dont change source",
+		"without source changes",
+		"no production code",
+		"do not change production code",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecuteTextContainsWord(text string, word string) bool {
+	word = strings.TrimSpace(strings.ToLower(word))
+	if word == "" {
+		return false
+	}
+	start := -1
+	for i, r := range text {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '_' {
+			if start < 0 {
+				start = i
+			}
+			continue
+		}
+		if start >= 0 && text[start:i] == word {
+			return true
+		}
+		start = -1
+	}
+	return start >= 0 && text[start:] == word
+}
+
 func planExecutePromptForbidsTestEditAround(lower string, phrase string) bool {
 	idx := strings.Index(lower, phrase)
 	if idx < 0 {
@@ -2008,6 +2168,63 @@ func planExecuteChangedPathsIncludeTest(paths []string) bool {
 		}
 	}
 	return false
+}
+
+func planExecuteChangedPathsIncludeImplementation(paths []string) bool {
+	for _, path := range paths {
+		if planExecutePathLooksLikeImplementation(path) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecuteChangedPathsAreOnlyTests(paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if !planExecutePathLooksLikeTest(path) {
+			return false
+		}
+	}
+	return true
+}
+
+func planExecutePathLooksLikeImplementation(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" || planExecutePathLooksLikeTest(lower) {
+		return false
+	}
+	base := filepath.Base(lower)
+	ext := filepath.Ext(base)
+	if strings.HasPrefix(lower, "docs/") ||
+		strings.Contains(lower, "/docs/") ||
+		strings.HasPrefix(lower, "doc/") ||
+		strings.Contains(lower, "/doc/") ||
+		strings.HasPrefix(lower, "examples/") ||
+		strings.Contains(lower, "/examples/") {
+		return false
+	}
+	switch strings.ToLower(base) {
+	case "readme.md", "changelog.md", "license", "license.md":
+		return false
+	}
+	switch ext {
+	case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".swift",
+		".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash",
+		".zsh", ".sql", ".proto", ".graphql", ".gd", ".mjs", ".cjs", ".kts",
+		".css", ".scss", ".sass", ".html", ".vue", ".svelte":
+		return true
+	case ".md":
+		return strings.HasPrefix(lower, "prompts/") ||
+			strings.Contains(lower, "/prompts/") ||
+			strings.Contains(lower, "/lanes/") ||
+			strings.Contains(lower, "/profiles/") ||
+			strings.Contains(lower, "/rules/")
+	default:
+		return false
+	}
 }
 
 func planExecutePathLooksLikeTest(path string) bool {
@@ -3215,7 +3432,8 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 	fmt.Fprintf(&b, "schema: %s\nphase: %s\n", bundle.SchemaVersion, bundle.Phase)
 	fmt.Fprintf(&b, "changed_paths: %s\n", formatInlineList(bundle.ChangedPaths))
 	fmt.Fprintf(&b, "required_paths: %s\n", formatInlineList(bundle.RequiredPaths))
-	fmt.Fprintf(&b, "allowed_repair_paths: %s\n\n", formatInlineList(bundle.AllowedPaths))
+	fmt.Fprintf(&b, "allowed_repair_paths: %s\n", formatInlineList(bundle.AllowedPaths))
+	fmt.Fprintf(&b, "edit_set_obligations: %s\n\n", formatInlineList(bundle.EditSetObligations.Kinds()))
 	fmt.Fprintf(&b, "context_packet: status=%s", bundle.Packet.Status)
 	if bundle.Packet.PackID != "" {
 		fmt.Fprintf(&b, " pack_id=%s", bundle.Packet.PackID)
@@ -3287,19 +3505,21 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 
 func phaseEvidenceTelemetry(bundle PhaseEvidenceBundle) map[string]any {
 	return map[string]any{
-		"schema_version":         bundle.SchemaVersion,
-		"phase":                  bundle.Phase,
-		"changed_paths":          cappedStrings(bundle.ChangedPaths, 16),
-		"required_paths":         cappedStrings(bundle.RequiredPaths, 16),
-		"allowed_paths":          cappedStrings(bundle.AllowedPaths, 16),
-		"packet_status":          bundle.Packet.Status,
-		"pack_id":                bundle.Packet.PackID,
-		"executor_packet_state":  bundle.ExecutorHandoff.PacketState,
-		"executor_packet_reason": bundle.ExecutorHandoff.Reason,
-		"executor_handoff_id":    bundle.ExecutorHandoff.HandoffID,
-		"candidate_files":        len(bundle.Packet.CandidateFiles),
-		"candidate_file_paths":   phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
-		"candidate_symbols":      len(bundle.Packet.CandidateSymbols),
+		"schema_version":            bundle.SchemaVersion,
+		"phase":                     bundle.Phase,
+		"changed_paths":             cappedStrings(bundle.ChangedPaths, 16),
+		"required_paths":            cappedStrings(bundle.RequiredPaths, 16),
+		"allowed_paths":             cappedStrings(bundle.AllowedPaths, 16),
+		"edit_set_obligations":      bundle.EditSetObligations.Kinds(),
+		"edit_set_obligation_count": len(bundle.EditSetObligations.Normalized()),
+		"packet_status":             bundle.Packet.Status,
+		"pack_id":                   bundle.Packet.PackID,
+		"executor_packet_state":     bundle.ExecutorHandoff.PacketState,
+		"executor_packet_reason":    bundle.ExecutorHandoff.Reason,
+		"executor_handoff_id":       bundle.ExecutorHandoff.HandoffID,
+		"candidate_files":           len(bundle.Packet.CandidateFiles),
+		"candidate_file_paths":      phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
+		"candidate_symbols":         len(bundle.Packet.CandidateSymbols),
 		"candidate_symbol_names": phaseEvidenceTelemetrySymbolNames(
 			bundle.Packet.CandidateSymbols,
 			8,

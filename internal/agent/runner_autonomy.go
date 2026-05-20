@@ -113,7 +113,7 @@ func runnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.Wor
 			Criteria:               runnerAutonomyCompletionCriteria(brief),
 			BlockOnOpenObligations: true,
 		},
-		Readiness: runnerAutonomyReadiness(brief),
+		Readiness: runnerAutonomyReadiness(brief, obligations),
 		Metadata:  autonomy.DefaultContractMetadata("p1.5", "runner_gate_contracts"),
 	})
 	if err != nil {
@@ -334,7 +334,7 @@ func runnerAutonomyCompletionCriteria(brief workerruntime.WorkerRuntimeBrief) []
 	return criteria
 }
 
-func runnerAutonomyReadiness(brief workerruntime.WorkerRuntimeBrief) autonomy.ReadinessRequirement {
+func runnerAutonomyReadiness(brief workerruntime.WorkerRuntimeBrief, obligations []autonomy.Obligation) autonomy.ReadinessRequirement {
 	if brief.Readiness == nil {
 		return autonomy.ReadinessRequirement{}
 	}
@@ -343,10 +343,69 @@ func runnerAutonomyReadiness(brief workerruntime.WorkerRuntimeBrief) autonomy.Re
 		ReadyToWrite:        brief.Readiness.ReadyToWrite,
 		ReadyToVerify:       brief.Readiness.ReadyToVerify,
 		ClosedClaims:        append([]string(nil), brief.Readiness.ClosedClaims...),
-		OpenObligationRefs:  append([]string(nil), brief.Readiness.OpenObligations...),
+		OpenObligationRefs:  runnerAutonomyReadinessOpenObligationRefs(brief.Readiness.OpenObligations, obligations),
 		EvidenceRefs:        append([]string(nil), brief.Readiness.EvidenceSources...),
 		FurtherReadsRequire: brief.Readiness.FurtherReadsRequire,
 	}
+}
+
+func runnerAutonomyReadinessOpenObligationRefs(refs []string, obligations []autonomy.Obligation) []string {
+	if len(refs) == 0 || len(obligations) == 0 {
+		return nil
+	}
+	obligationsByID := make(map[string]autonomy.Obligation, len(obligations))
+	for _, obligation := range obligations {
+		obligationID := strings.TrimSpace(obligation.ObligationID)
+		if obligationID != "" {
+			obligationsByID[obligationID] = obligation
+		}
+	}
+	seen := make(map[string]struct{})
+	var out []string
+	addID := func(id string) {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			return
+		}
+		if obligation, ok := obligationsByID[id]; !ok || obligation.Status != autonomy.ObligationOpen {
+			return
+		}
+		if _, ok := seen[id]; ok {
+			return
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	addKind := func(kind autonomy.ObligationKind) {
+		for _, obligation := range obligations {
+			if obligation.Kind == kind {
+				addID(obligation.ObligationID)
+			}
+		}
+	}
+	for _, ref := range refs {
+		trimmed := strings.TrimSpace(ref)
+		normalized := strings.ToLower(trimmed)
+		if trimmed == "" {
+			continue
+		}
+		addID(trimmed)
+		switch {
+		case strings.Contains(normalized, "required_edit") || strings.Contains(normalized, "write"):
+			addKind(autonomy.ObligationWrite)
+		case strings.Contains(normalized, "verify") || strings.Contains(normalized, "verification"):
+			addKind(autonomy.ObligationVerify)
+		case strings.Contains(normalized, "evidence") || strings.Contains(normalized, "discovery"):
+			addKind(autonomy.ObligationEvidence)
+		case strings.Contains(normalized, "final") || strings.Contains(normalized, "answer") || strings.Contains(normalized, "completion"):
+			addKind(autonomy.ObligationFinalAnswer)
+		case strings.Contains(normalized, "budget"):
+			addKind(autonomy.ObligationBudget)
+		case strings.Contains(normalized, "loop"):
+			addKind(autonomy.ObligationLoop)
+		}
+	}
+	return out
 }
 
 func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerRuntimeBrief) {
@@ -354,12 +413,25 @@ func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerR
 		return
 	}
 	a.ensureObligationState()
-	a.emitNewEvent(autonomy.NewContractCompiledEvent(a.contract, a.nextTime(), a.nextSequence()))
+	compiledEvent, compiledErr := autonomy.NewContractCompiledEvent(a.contract, a.nextTime(), a.nextSequence())
+	a.emitNewEvent(compiledEvent, compiledErr)
 	for _, obligation := range a.obligations {
-		if obligation.Status == autonomy.ObligationOpen {
-			a.openObligations[obligation.ObligationID] = obligation
-			a.emitNewEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationOpened, a.contract, obligation, a.nextTime(), a.nextSequence()))
-		} else {
+		opened := obligation
+		opened.Status = autonomy.ObligationOpen
+		opened.SourceEvent = ""
+		opened.EvidenceRef = ""
+		a.emitNewEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationOpened, a.contract, opened, a.nextTime(), a.nextSequence()))
+		switch obligation.Status {
+		case autonomy.ObligationOpen:
+			a.openObligations[obligation.ObligationID] = opened
+		case autonomy.ObligationResolved:
+			obligation.SourceEvent = util.FirstNonEmpty(strings.TrimSpace(obligation.SourceEvent), compiledEvent.EventID)
+			obligation.EvidenceRef = util.FirstNonEmpty(strings.TrimSpace(obligation.EvidenceRef), compiledEvent.EventID)
+			a.emitNewEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationResolved, a.contract, obligation, a.nextTime(), a.nextSequence()))
+			a.closedObligations[obligation.ObligationID] = struct{}{}
+		case autonomy.ObligationWaived:
+			obligation.SourceEvent = util.FirstNonEmpty(strings.TrimSpace(obligation.SourceEvent), compiledEvent.EventID)
+			a.emitNewEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationWaived, a.contract, obligation, a.nextTime(), a.nextSequence()))
 			a.closedObligations[obligation.ObligationID] = struct{}{}
 		}
 	}
@@ -369,7 +441,7 @@ func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerR
 			ReadyToWrite:        brief.Readiness.ReadyToWrite,
 			ReadyToVerify:       brief.Readiness.ReadyToVerify,
 			ClosedClaims:        append([]string(nil), brief.Readiness.ClosedClaims...),
-			OpenObligations:     append([]string(nil), brief.Readiness.OpenObligations...),
+			OpenObligations:     a.openObligationIDsForRefs(a.contract.Readiness.OpenObligationRefs),
 			EvidenceRefs:        append([]string(nil), brief.Readiness.EvidenceSources...),
 			FurtherReadsRequire: brief.Readiness.FurtherReadsRequire,
 		}, a.nextTime(), a.nextSequence()))
@@ -399,7 +471,7 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 	if runnerAutonomyGateClosesObligations(input.Gate, input.Decision) {
 		gate.ResolvedObligations, gate.OpenObligations = a.resolvedAndOpenObligationsForGate(input, gate.ObligationRefs)
 	} else {
-		gate.OpenObligations = append([]string(nil), gate.ObligationRefs...)
+		gate.OpenObligations = a.openObligationIDsForRefs(gate.ObligationRefs)
 	}
 	gateEvent, err := autonomy.NewGateDecisionEvent(a.contract, gate, a.nextTime(), a.nextSequence())
 	a.emitNewEvent(gateEvent, err)
@@ -419,10 +491,37 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 }
 
 func (a *runnerAutonomyRecorder) resolvedAndOpenObligationsForGate(input runnerAutonomyGateDecision, obligationRefs []string) (resolved []string, open []string) {
-	if a == nil || input.Gate != autonomy.GateWrite {
-		return append([]string(nil), obligationRefs...), nil
+	if a == nil {
+		return nil, nil
+	}
+	if input.Gate != autonomy.GateWrite {
+		return a.openObligationIDsForRefs(obligationRefs), nil
 	}
 	return a.writeGateResolvedAndOpenObligations(input.ChangedPaths)
+}
+
+func (a *runnerAutonomyRecorder) openObligationIDsForRefs(refs []string) []string {
+	if a == nil || len(refs) == 0 {
+		return nil
+	}
+	a.ensureObligationState()
+	seen := make(map[string]struct{}, len(refs))
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if _, ok := a.openObligations[ref]; !ok {
+			continue
+		}
+		if _, ok := seen[ref]; ok {
+			continue
+		}
+		seen[ref] = struct{}{}
+		out = append(out, ref)
+	}
+	return out
 }
 
 func (a *runnerAutonomyRecorder) writeGateResolvedAndOpenObligations(changedPaths []string) (resolved []string, open []string) {

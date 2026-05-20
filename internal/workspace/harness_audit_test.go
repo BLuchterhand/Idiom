@@ -189,6 +189,84 @@ func TestRankerLearningQuestionsMentionDormantSources(t *testing.T) {
 	}
 }
 
+func TestRankerLearningIdleFindingExplainsExpectedFreshState(t *testing.T) {
+	findings := rankerLearningFindings(&harnessAuditRankerLearning{})
+	finding := harnessAuditFindingByID(findings, "ranker_learning_idle")
+	if finding == nil {
+		t.Fatalf("expected idle ranker finding, got %#v", findings)
+	}
+	if !strings.Contains(finding.Evidence, "expected before") || !strings.Contains(finding.Recommendation, "no action needed") {
+		t.Fatalf("idle ranker finding should not imply a broken system: %#v", finding)
+	}
+}
+
+func TestContextCacheFindingsTreatHistoricalStaleRowsAsHistory(t *testing.T) {
+	findings := contextCacheFindings(&harnessAuditContextCache{
+		Rows:              10,
+		Fresh:             1,
+		Stale:             9,
+		CurrentRows:       1,
+		CurrentFresh:      1,
+		CurrentStale:      0,
+		HistoricalRows:    9,
+		StaleRatio:        0.9,
+		CurrentStaleRatio: 0,
+	})
+	if harnessAuditFindingByID(findings, "context_cache_mostly_stale") != nil {
+		t.Fatalf("historical stale rows should not report active cache as mostly stale: %#v", findings)
+	}
+	finding := harnessAuditFindingByID(findings, "context_cache_historical_stale_rows")
+	if finding == nil {
+		t.Fatalf("expected historical stale row finding, got %#v", findings)
+	}
+	if !strings.Contains(finding.Evidence, "historical") || !strings.Contains(finding.Evidence, "current-index rows: fresh=1 stale=0") {
+		t.Fatalf("historical stale finding should explain active cache state: %#v", finding)
+	}
+}
+
+func TestContextCacheFindingsReportCurrentStaleRowsAsActionable(t *testing.T) {
+	findings := contextCacheFindings(&harnessAuditContextCache{
+		Rows:              4,
+		Fresh:             1,
+		Stale:             3,
+		CurrentRows:       4,
+		CurrentFresh:      1,
+		CurrentStale:      3,
+		StaleRatio:        0.75,
+		CurrentStaleRatio: 0.75,
+	})
+	finding := harnessAuditFindingByID(findings, "context_cache_mostly_stale")
+	if finding == nil {
+		t.Fatalf("expected active stale cache finding, got %#v", findings)
+	}
+	if finding.Severity != "low" || !strings.Contains(finding.Evidence, "current-index") {
+		t.Fatalf("current stale finding should be scoped to current rows: %#v", finding)
+	}
+}
+
+func TestContextCacheFindingsExplainCurrentUnresolvedGapReasons(t *testing.T) {
+	findings := contextCacheFindings(&harnessAuditContextCache{
+		Rows:                                  8,
+		Fresh:                                 2,
+		Stale:                                 6,
+		CurrentRows:                           2,
+		CurrentFresh:                          2,
+		UnresolvedGapRows:                     8,
+		CurrentUnresolvedGapRows:              2,
+		CurrentFreshUnresolvedGapRows:         2,
+		UnresolvedGapReasonCounts:             map[string]int{"stale_runtime_trace": 8},
+		CurrentUnresolvedGapReasonCounts:      map[string]int{"stale_runtime_trace": 2},
+		CurrentFreshUnresolvedGapReasonCounts: map[string]int{"stale_runtime_trace": 2},
+	})
+	finding := harnessAuditFindingByID(findings, "context_cache_unresolved_gaps")
+	if finding == nil {
+		t.Fatalf("expected current unresolved gap finding, got %#v", findings)
+	}
+	if !strings.Contains(finding.Evidence, "current fresh") || !strings.Contains(finding.Evidence, "stale_runtime_trace=2") {
+		t.Fatalf("unresolved gap finding should explain current reason counts: %#v", finding)
+	}
+}
+
 func TestBuildContextCacheAuditReportsNonCurrentRows(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/auditcache\n\ngo 1.22\n"), 0o644); err != nil {
@@ -216,4 +294,16 @@ func TestBuildContextCacheAuditReportsNonCurrentRows(t *testing.T) {
 	if cache.Rows != 2 || cache.Fresh != 2 || cache.Stale != 0 || cache.NonCurrent != 1 || cache.CurrentIndexID != build.IndexID {
 		t.Fatalf("expected one non-current row in cache audit, got %#v", cache)
 	}
+	if cache.CurrentRows != 1 || cache.CurrentFresh != 1 || cache.CurrentStale != 0 || cache.HistoricalRows != 1 {
+		t.Fatalf("expected current/historical rows in cache audit, got %#v", cache)
+	}
+}
+
+func harnessAuditFindingByID(findings []harnessAuditFinding, id string) *harnessAuditFinding {
+	for i := range findings {
+		if findings[i].ID == id {
+			return &findings[i]
+		}
+	}
+	return nil
 }

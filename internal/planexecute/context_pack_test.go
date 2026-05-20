@@ -151,6 +151,89 @@ func TestPlanExecuteAllowedEditPathsIncludesPromptAllowedScope(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteAllowedEditPathsIncludesInlineNaturalLanguageScope(t *testing.T) {
+	prompt := "Implement the behavior, but only edit pkg/feature.go and pkg/feature_test.go. Use pkg/evidence.go as read-only evidence."
+
+	required := planExecuteRequiredEditPaths(Options{}, prompt)
+	if len(required) != 0 {
+		t.Fatalf("inline candidate scope must not define required coverage, got %#v", required)
+	}
+	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing inline allowed path %q, got %#v", want, allowed)
+		}
+	}
+	if slices.Contains(allowed, "pkg/evidence.go") {
+		t.Fatalf("read-only evidence sentence must not become allowed edit scope, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
+	prompt := `Editable Files:
+- pkg/feature.go
+- pkg/feature_test.go
+`
+	if required := planExecuteRequiredEditPaths(Options{}, prompt); len(required) != 0 {
+		t.Fatalf("editable files must not define required coverage, got %#v", required)
+	}
+	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("editable files heading missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+}
+
+func TestPlanScopeContractIDTracksNormalizedContent(t *testing.T) {
+	contract := NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil)
+	originalID := contract.ContractID
+	contract.ContractID = "stale"
+	contract.RequiredCoveragePaths = []string{"pkg/b.go"}
+	contract = contract.Normalized()
+
+	if contract.ContractID == "" || contract.ContractID == "stale" || contract.ContractID == originalID {
+		t.Fatalf("contract id should be regenerated from normalized content, got %q original=%q", contract.ContractID, originalID)
+	}
+}
+
+func TestPlanExecuteEditSetObligationsDoNotPromoteAllowedPathsToRequiredPaths(t *testing.T) {
+	prompt := `Implement the feature and add tests.
+
+	allowed_edit_paths:
+- pkg/feature.go
+- pkg/feature_test.go
+`
+	required := planExecuteRequiredEditPaths(Options{}, prompt)
+	if len(required) != 0 {
+		t.Fatalf("edit-set obligations and allowed scope must not define required paths, got %#v", required)
+	}
+	allowed := planExecuteAllowedEditPaths(Options{}, prompt)
+	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+	obligations := planExecuteEditSetObligations(Options{}, prompt)
+	if !obligations.Has(EditSetObligationKindTestEdit) {
+		t.Fatalf("expected test edit obligation, got %#v", obligations)
+	}
+	if !obligations.Has(EditSetObligationKindImplementationEdit) {
+		t.Fatalf("expected implementation edit obligation, got %#v", obligations)
+	}
+}
+
+func TestPlanExecuteSourceSatisfiedUsesNamedAllowedEvidenceOnly(t *testing.T) {
+	answer := strings.Join([]string{
+		"Decision: source-satisfied",
+		"- pkg/feature.go: requested final state is already present.",
+	}, "\n")
+	paths := planExecuteSourceSatisfiedEvidencePaths(answer, nil, []string{"pkg/feature.go", "pkg/feature_test.go"})
+	if len(paths) != 1 || paths[0] != "pkg/feature.go" {
+		t.Fatalf("allowed scope must not become source-satisfied coverage obligations, got %#v", paths)
+	}
+}
+
 func TestAppendPlanExecuteScopeToBriefBodyMakesAllowedPathsParseable(t *testing.T) {
 	prompt := ComposePlannerPromptWithContextPack("# Objective\n\nUpdate banner.", "## Context Pack\n\n- `noise.go`")
 	got := appendPlanExecuteScopeToBriefBody(prompt, nil, []string{"internal/app/rendering.go"})

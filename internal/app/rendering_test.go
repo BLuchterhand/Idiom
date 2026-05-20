@@ -31,6 +31,13 @@ func TestRenderMessagesWrapsLongContentInsideViewport(t *testing.T) {
 	}
 }
 
+func TestProtectControlMarkersForMarkdownPreservesQuestionMarker(t *testing.T) {
+	got := protectControlMarkersForMarkdown("<<QUESTION>>: missing exact anchor")
+	if !strings.Contains(got, "`<<QUESTION>>`:") {
+		t.Fatalf("question marker should be protected from markdown HTML parsing, got %q", got)
+	}
+}
+
 func TestViewOmitsCompactContextFooterBelowInput(t *testing.T) {
 	cfg := config.Default()
 	cfg.Chat.DebugLogDir = ""

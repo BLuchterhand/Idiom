@@ -183,25 +183,25 @@ func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		// disappears, signalling the panel is no longer interactive.
 		m.history.focused = false
 		m.renderSessionsPanelContent()
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyUp:
 		if m.sessions.cursor > 0 {
 			m.sessions.cursor--
 			m.renderSessionsPanelContent()
 		}
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyDown:
 		if m.sessions.cursor < len(m.sessions.list)-1 {
 			m.sessions.cursor++
 			m.renderSessionsPanelContent()
 		}
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyEnter:
 		if len(m.sessions.list) == 0 {
-			return true, waitForEvent(m.events)
+			return true, m.waitForEventCmd()
 		}
 		if m.sessions.cursor < 0 || m.sessions.cursor >= len(m.sessions.list) {
-			return true, waitForEvent(m.events)
+			return true, m.waitForEventCmd()
 		}
 		id := m.sessions.list[m.sessions.cursor].ID
 		if err := m.ResumeSession(id); err != nil {
@@ -213,7 +213,7 @@ func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.panelTab = panelTabHistory
 			m.rerenderActivePanel()
 		}
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	}
 	return false, nil
 }

@@ -247,7 +247,7 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 		if msg.Type == tea.KeyEsc {
 			m.closePlanDiffOverlay()
 			m.renderPlanPanelContent()
-			return true, waitForEvent(m.events)
+			return true, m.waitForEventCmd()
 		}
 		return false, nil
 	}
@@ -257,26 +257,26 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 			m.plan.cursor--
 			m.renderPlanPanelContent()
 		}
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyDown:
 		items := m.currentPlanItems()
 		if m.plan.cursor < len(items)-1 {
 			m.plan.cursor++
 			m.renderPlanPanelContent()
 		}
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyEnter:
 		if m.openPlanDiffOverlay() {
 			m.renderPlanPanelContent()
 			m.planViewport.GotoTop()
-			return true, waitForEvent(m.events)
+			return true, m.waitForEventCmd()
 		}
 		m.status = "No diff attached to this item."
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyEsc:
 		m.history.focused = false
 		m.renderPlanPanelContent()
-		return true, waitForEvent(m.events)
+		return true, m.waitForEventCmd()
 	case tea.KeyRunes:
 		switch string(msg.Runes) {
 		case "j":
@@ -285,13 +285,13 @@ func (m *Model) handlePlanPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 				m.plan.cursor++
 				m.renderPlanPanelContent()
 			}
-			return true, waitForEvent(m.events)
+			return true, m.waitForEventCmd()
 		case "k":
 			if m.plan.cursor > 0 {
 				m.plan.cursor--
 				m.renderPlanPanelContent()
 			}
-			return true, waitForEvent(m.events)
+			return true, m.waitForEventCmd()
 		}
 	}
 	return false, nil

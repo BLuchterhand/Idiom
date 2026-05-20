@@ -84,6 +84,23 @@ func TestFinishPromptOnceReplyReturnsReplyVerbatim(t *testing.T) {
 	}
 }
 
+func TestFinishPromptOnceReplySuppressesNestedPlanExecuteTranscript(t *testing.T) {
+	m := &Model{
+		suppressPromptTranscript: true,
+		messages: []llama.ChatMessage{
+			{Role: "user", Content: "outer request"},
+		},
+	}
+
+	got := m.finishPromptOnceReply("internal planner blocker")
+	if got != "internal planner blocker" {
+		t.Fatalf("finishPromptOnceReply = %q", got)
+	}
+	if len(m.messages) != 1 || m.messages[0].Content != "outer request" {
+		t.Fatalf("suppressed nested reply should not append to visible transcript: %#v", m.messages)
+	}
+}
+
 // renderMessages spinner behaviour — the second half of the fix.
 
 func newRenderModel(t *testing.T) *Model {

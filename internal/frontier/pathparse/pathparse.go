@@ -43,7 +43,8 @@ func looksLikeSlashSeparatedSymbolToken(candidate string) bool {
 	if len(parts) < 2 {
 		return false
 	}
-	sawLetter := false
+	allSymbolChars := true
+	sawUppercase := false
 	for _, part := range parts {
 		if part == "" {
 			return false
@@ -51,15 +52,31 @@ func looksLikeSlashSeparatedSymbolToken(candidate string) bool {
 		for _, r := range part {
 			switch {
 			case r >= 'A' && r <= 'Z':
-				sawLetter = true
+				sawUppercase = true
+			case r >= 'a' && r <= 'z':
 			case r >= '0' && r <= '9':
 			case r == '_' || r == '-':
 			default:
-				return false
+				allSymbolChars = false
 			}
 		}
 	}
-	return sawLetter
+	if !allSymbolChars {
+		return false
+	}
+	if sawUppercase {
+		return true
+	}
+	return len(parts) == 2 && !knownExtensionlessWorkspaceRoot(parts[0])
+}
+
+func knownExtensionlessWorkspaceRoot(root string) bool {
+	switch strings.ToLower(root) {
+	case "app", "apps", "backend", "bin", "cmd", "client", "docs", "examples", "frontend", "internal", "lib", "native", "package", "packages", "pkg", "script", "scripts", "server", "service", "services", "src", "test", "tests", "tool", "tools", "vendor", "web":
+		return true
+	default:
+		return false
+	}
 }
 
 func HasWorkspaceFileExtension(candidate string) bool {
@@ -77,6 +94,53 @@ func HasWorkspaceFileExtension(candidate string) bool {
 	default:
 		return false
 	}
+}
+
+func LooksLikeWorkspaceFilePath(candidate string) bool {
+	candidate = strings.TrimSpace(candidate)
+	if candidate == "" {
+		return false
+	}
+	if HasWorkspaceFileExtension(candidate) {
+		return true
+	}
+	switch filepath.Base(candidate) {
+	case "BUILD", "BUCK", "Dockerfile", "Gemfile", "LICENSE", "Makefile", "NOTICE", "Procfile", "README", "WORKSPACE", "go.mod", "go.sum":
+		return true
+	default:
+		return false
+	}
+}
+
+func MentionedWorkspaceFiles(text string) []string {
+	return FilterWorkspaceFilePaths(MentionedWorkspacePaths(text))
+}
+
+func MentionedWorkspaceFilesInInlineList(text string) []string {
+	return FilterWorkspaceFilePaths(MentionedWorkspacePathsInInlineList(text))
+}
+
+func MentionedWorkspaceFilesInMarkdownTableFirstCell(line string) []string {
+	return FilterWorkspaceFilePaths(MentionedWorkspacePathsInMarkdownTableFirstCell(line))
+}
+
+func FilterWorkspaceFilePaths(paths []string) []string {
+	if len(paths) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(paths))
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		if !LooksLikeWorkspaceFilePath(path) {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
 }
 
 func MentionedWorkspacePathsUnderHeadings(text string, headings ...string) []string {
@@ -254,6 +318,37 @@ func MentionedWorkspacePaths(text string) []string {
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
+	return mentionedWorkspacePathsFromTokens(strings.Fields(text), WorkspacePathFieldCandidates(text))
+}
+
+func MentionedWorkspacePathsInInlineList(text string) []string {
+	text = ScopeToBriefBody(text)
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	var tokens []string
+	sawPath := false
+	for _, token := range strings.Fields(text) {
+		tokens = append(tokens, token)
+		if len(mentionedWorkspacePathsFromTokens([]string{token}, nil)) > 0 {
+			sawPath = true
+		}
+		if sawPath && inlineListTokenEndsPathSentence(token) {
+			return mentionedWorkspacePathsFromTokens(tokens, nil)
+		}
+	}
+	return mentionedWorkspacePathsFromTokens(tokens, nil)
+}
+
+func inlineListTokenEndsPathSentence(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	return strings.HasSuffix(token, ".") || strings.HasSuffix(token, ";")
+}
+
+func mentionedWorkspacePathsFromTokens(tokens []string, fieldCandidates []string) []string {
 	seen := make(map[string]struct{})
 	paths := make([]string, 0, 4)
 	addCandidate := func(token string) {
@@ -267,10 +362,10 @@ func MentionedWorkspacePaths(text string) []string {
 		seen[candidate] = struct{}{}
 		paths = append(paths, candidate)
 	}
-	for _, token := range strings.Fields(text) {
+	for _, token := range tokens {
 		addCandidate(token)
 	}
-	for _, token := range WorkspacePathFieldCandidates(text) {
+	for _, token := range fieldCandidates {
 		addCandidate(token)
 	}
 	return paths
@@ -291,13 +386,11 @@ func WorkspacePathFieldCandidates(text string) []string {
 }
 
 func NormalizeWorkspacePathToken(token string) (string, bool) {
-	candidate := strings.TrimSpace(token)
-	candidate = strings.NewReplacer(`\n`, "\n", `\r`, "\r", `\t`, "\t").Replace(candidate)
-	candidate = strings.TrimSpace(candidate)
-	candidate = strings.Trim(candidate, "`'\"\\()[]{}<>,:;!?")
+	candidate := strings.NewReplacer(`\n`, "\n", `\r`, "\r", `\t`, "\t").Replace(token)
+	candidate = trimWorkspacePathTokenEdges(candidate)
 	candidate = strings.TrimPrefix(candidate, "@")
 	candidate = strings.TrimSpace(strings.TrimPrefix(candidate, "./"))
-	candidate = strings.TrimRight(candidate, ".")
+	candidate = trimWorkspacePathTokenEdges(candidate)
 	if candidate == "" {
 		return "", false
 	}
@@ -311,10 +404,9 @@ func NormalizeWorkspacePathToken(token string) (string, bool) {
 			lowerPrefix := strings.ToLower(strings.Trim(candidate[:colon], "`'\"\\ "))
 			switch lowerPrefix {
 			case "path", "file", "source":
-				candidate = strings.TrimSpace(candidate[colon+1:])
-				candidate = strings.Trim(candidate, "`'\"\\()[]{}<>,:;!?")
+				candidate = trimWorkspacePathTokenEdges(candidate[colon+1:])
 				candidate = strings.TrimSpace(strings.TrimPrefix(candidate, "./"))
-				candidate = strings.TrimRight(candidate, ".")
+				candidate = trimWorkspacePathTokenEdges(candidate)
 			default:
 				return "", false
 			}
@@ -334,6 +426,20 @@ func NormalizeWorkspacePathToken(token string) (string, bool) {
 		return "", false
 	}
 	return candidate, true
+}
+
+func trimWorkspacePathTokenEdges(token string) string {
+	candidate := strings.TrimSpace(token)
+	for {
+		before := candidate
+		candidate = strings.TrimSpace(candidate)
+		candidate = strings.Trim(candidate, "`'\"\\()[]{}<>,:;!?")
+		candidate = strings.TrimRight(candidate, ".")
+		candidate = strings.Trim(candidate, "`'\"\\()[]{}<>,:;!?")
+		if candidate == before {
+			return candidate
+		}
+	}
 }
 
 func StripPathLocationSuffix(candidate string) string {

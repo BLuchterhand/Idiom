@@ -348,6 +348,28 @@ func TestCompletionGateRecoveryKeepsScratchpadDeliverableOutputBudget(t *testing
 	}
 }
 
+func TestAutoSalvageSkipsPlanExecutePlannerPhase(t *testing.T) {
+	dir := t.TempDir()
+	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})
+	r := &Runner{
+		Workspace: mgr,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"draft.md"},
+		},
+	}
+	reply := "# Proposed Plan\n\n" +
+		"## Files To Modify\n\n| File | Change |\n|------|--------|\n| `draft.md` | NEW FILE |\n\n" +
+		"## Required Edits\n\n1. Write this markdown file.\n\n" +
+		"## Acceptance\n\n- Review the generated content.\n"
+	if r.tryAutoSalvageMarkdownDeliverable(reply) {
+		t.Fatal("plan-execute planner phase must not run markdown deliverable auto-salvage")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "draft.md")); !os.IsNotExist(err) {
+		t.Fatalf("draft.md should not exist after skipped plan-execute salvage, stat err=%v", err)
+	}
+}
+
 func TestExtractStructuredMarkdownFromReasoningRejectsUnfilledTemplate(t *testing.T) {
 	// Real shape observed in v10 dispatch: the model emits 0 visible
 	// content and its reasoning contains a copy of the meta-brief

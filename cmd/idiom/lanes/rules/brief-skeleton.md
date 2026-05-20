@@ -8,10 +8,13 @@ this shape; lane actors treat what they receive as ground truth.
 Required sections:
 
 - **Title + Summary** — what's being changed and why, in 1-3 lines.
-- **Files To Modify** — table or list of paths the lane is allowed to
-  write. The runner recognizes "Files To Modify" and "Files You May
-  Edit" (and near-equivalents) as `required_edit_paths`. Writes outside
-  this list are rejected.
+- **Files To Modify** — table or list of paths the lane must cover with
+  edits or a typed blocker. The runner treats this and explicit
+  `required_edit_paths` as mandatory coverage.
+- **Files You May Edit** / **Candidate Edit Scope** — optional table or list
+  of paths the lane may write when the objective needs them. These headings
+  are allowed/candidate scope only; they do not require every listed path to
+  be edited. Writes outside the active required or allowed scope are rejected.
 - **Verified Current State** — exact source snippets (with `file:line`
   references) that match the code today. These are source anchors for
   implementation writes or plan-execute `submit_plan` edit entries. If a

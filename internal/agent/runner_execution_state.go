@@ -18,6 +18,7 @@ type runnerExecutionState struct {
 	pendingSearchInspection          bool
 	pendingSearchTool                string
 	pendingSearchSummary             string
+	pendingSearchOutput              string
 	checkpointCreated                bool
 	writesSinceVerification          int
 	consecutiveMissingPathListErrors int
@@ -102,10 +103,12 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.pendingSearchInspection = true
 		s.pendingSearchTool = strings.TrimSpace(req.Tool)
 		s.pendingSearchSummary = truncForRetryReason(result.Summary)
+		s.pendingSearchOutput = truncForRetryReason(result.Output)
 	case isConcreteInspectionTool(req.Tool) || (toolResultMadeProgress(req, result) && isWriteTool(req)):
 		s.pendingSearchInspection = false
 		s.pendingSearchTool = ""
 		s.pendingSearchSummary = ""
+		s.pendingSearchOutput = ""
 	}
 	if requestBudget != nil {
 		if currentFingerprint != "" && strings.TrimSpace(result.Error) == "" && workerruntime.IsZeroHitSearchResult(result) {
@@ -192,11 +195,18 @@ func (s *runnerExecutionState) searchHitConsumptionError() string {
 		return "you already have a successful search result with concrete hits. Inspect one returned file or symbol now before doing another search."
 	}
 	base := "you already have a successful search result with concrete hits. Inspect one returned file or symbol now before doing another search."
-	if s.pendingSearchTool != "" && s.pendingSearchSummary != "" {
-		return fmt.Sprintf("%s The last useful %s result was: %s", base, s.pendingSearchTool, s.pendingSearchSummary)
+	detail := strings.TrimSpace(s.pendingSearchSummary)
+	if output := strings.TrimSpace(s.pendingSearchOutput); output != "" {
+		if detail != "" {
+			detail += ". "
+		}
+		detail += "Returned hit(s): " + output
 	}
-	if s.pendingSearchSummary != "" {
-		return fmt.Sprintf("%s The last useful result was: %s", base, s.pendingSearchSummary)
+	if s.pendingSearchTool != "" && detail != "" {
+		return fmt.Sprintf("%s The last useful %s result was: %s", base, s.pendingSearchTool, detail)
+	}
+	if detail != "" {
+		return fmt.Sprintf("%s The last useful result was: %s", base, detail)
 	}
 	return base
 }

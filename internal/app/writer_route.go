@@ -16,7 +16,12 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	taskFamily := strings.TrimSpace(plan.route.Family)
 	reasonCodes := []string{"route.read_only_question"}
 	verificationOwner := ""
-	if dispatchToPlanExecute {
+	if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
+		mode = writerroute.ModePlanSubmission
+		lane = "plan-execute"
+		reasonCodes = []string{"route.plan_execute_planner"}
+		verificationOwner = "planner_owned"
+	} else if dispatchToPlanExecute {
 		mode = writerroute.ModePlanSubmission
 		lane = "plan-execute"
 		taskFamily = agent.PlanThenExecutePlannerTaskFamily

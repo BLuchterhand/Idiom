@@ -323,6 +323,10 @@ Tasks:
 - Triage existing backlog items into thesis-aligned and parity-chasing buckets.
 - Stop adding prompt reminders when the failure should be represented as route
   metadata, tool schema, runtime brief, gate logic, or audit output.
+- Treat prompt-derived authority as a bug unless it is compiled into a typed
+  contract field. Required coverage, candidate scope, exact snippets,
+  edit-kind obligations, recovery attempts, and resume state should be
+  inspectable in logs without rereading prompt prose.
 
 Acceptance:
 

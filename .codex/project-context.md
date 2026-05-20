@@ -32,6 +32,9 @@ The durable rules to preserve are:
 
 - Model owns strategy.
 - Harness owns contracts.
+- Route authority must be typed: prompts explain required coverage, candidate
+  scope, exact snippets, edit-set obligations, and recovery state, but the
+  harness carries those as structured contract fields.
 - Prefer nudges over forced strategy when a safe, contract-compliant path is still open.
 - Force only invariants: permissions, safety boundaries, protocol correctness, verification, completion/readiness, loop breaks, and post-budget cutoffs.
 - After readiness, either answer now or take one exact probe for one exact missing claim.
@@ -51,6 +54,14 @@ drift.
 - Do not guess file paths.
 - Prefer this repo's discovery tooling before generic search. Use the most specific applicable tool first: language-aware symbol/navigation tools, `discovery_query`, then other structured discovery tools such as `structural_search`, `dependency_graph`, `history_range`, `history_symbol`, `blame_range`, `ctags_symbols`, `semgrep_scan`, or `joern_scan`. Fall back to raw text search or broad file reads only when the discovery path does not land.
 - Treat zero-result searches as evidence, not as permission to invent a new path.
+- Use git history as part of repo memory. Before replacing, reverting, or
+  reshaping established behavior, inspect the relevant line/symbol/file history
+  when the reason for the current shape is not obvious, and preserve any valid
+  rationale in the new design.
+- Commit messages should preserve decision context, not only diff summaries:
+  state why the change was needed, which failure or requirement it addresses,
+  what tradeoff was chosen, and which verification supports it. This keeps
+  future reviews from re-litigating intentional decisions as accidental churn.
 - Keep tool and prompt guidance generic; do not encode topic-specific recipes unless they are truly format- or contract-driven.
 - Treat summaries and evidence packets as observations only. Strategy guidance belongs in prompts/control rails, not inside tool-result payloads.
 - When touching prompts, runner policies, final-answer shaping, or discovery behavior, check nearby tests and docs for parity.

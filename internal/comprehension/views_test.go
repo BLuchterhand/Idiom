@@ -275,6 +275,67 @@ func TestReadViewStatsReportsNonCurrentRows(t *testing.T) {
 	}
 }
 
+func TestReadViewStatsSeparatesCurrentFreshRowsFromHistoricalStaleGaps(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/viewstatsgaps\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "x.go"), "package viewstatsgaps\n\nfunc X() string { return \"x\" }\n")
+	writeFile(t, filepath.Join(root, "old.go"), "package viewstatsgaps\n\nfunc Old() string { return \"old\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	current := ViewKey{IndexID: build.IndexID, Task: "current", Mode: "plan"}
+	currentResult := PackResult{
+		PackID:         current.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "x.go"}},
+		UnresolvedGapDetails: []GraphUnresolvedGap{{
+			Reason: "stale_runtime_trace",
+			State:  "stale",
+		}},
+	}
+	AttachPackResultContract(&currentResult)
+	if err := SaveView(root, current, currentResult); err != nil {
+		t.Fatalf("save current: %v", err)
+	}
+	old := ViewKey{IndexID: "old-index", Task: "old", Mode: "plan"}
+	oldResult := PackResult{
+		PackID:         old.ID(),
+		IndexID:        "old-index",
+		CandidateFiles: []PackFile{{Path: "old.go"}},
+		UnresolvedGapDetails: []GraphUnresolvedGap{{
+			Reason: "no_graph_matches",
+			State:  "unavailable",
+		}},
+	}
+	AttachPackResultContract(&oldResult)
+	if err := SaveView(root, old, oldResult); err != nil {
+		t.Fatalf("save old: %v", err)
+	}
+	if staled, err := MarkViewsStale(root, []string{"old.go"}); err != nil || staled != 1 {
+		t.Fatalf("MarkViewsStale staled=%d err=%v", staled, err)
+	}
+	stats, err := ReadViewStats(root)
+	if err != nil {
+		t.Fatalf("ReadViewStats: %v", err)
+	}
+	if stats.Rows != 2 || stats.Fresh != 1 || stats.Stale != 1 || stats.NonCurrent != 1 {
+		t.Fatalf("expected one fresh current row and one stale historical row, got %+v", stats)
+	}
+	if stats.CurrentRows != 1 || stats.CurrentFresh != 1 || stats.CurrentStale != 0 || stats.HistoricalRows != 1 {
+		t.Fatalf("current/historical counters did not isolate active rows: %+v", stats)
+	}
+	if stats.UnresolvedGapRows != 2 || stats.FreshUnresolvedGapRows != 1 || stats.StaleUnresolvedGapRows != 1 || stats.CurrentFreshUnresolvedGapRows != 1 {
+		t.Fatalf("unresolved gap freshness counters missing: %+v", stats)
+	}
+	if stats.UnresolvedGapReasonCounts["stale_runtime_trace"] != 1 ||
+		stats.UnresolvedGapReasonCounts["no_graph_matches"] != 1 ||
+		stats.CurrentFreshUnresolvedGapReasonCounts["stale_runtime_trace"] != 1 ||
+		stats.CurrentFreshUnresolvedGapReasonCounts["no_graph_matches"] != 0 {
+		t.Fatalf("unresolved gap reason counts should distinguish current fresh rows: %+v", stats)
+	}
+}
+
 func TestPackHitsCacheOnIdenticalSecondCall(t *testing.T) {
 	ResetViewCacheCounters()
 	root := t.TempDir()

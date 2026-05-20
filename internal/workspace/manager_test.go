@@ -38,7 +38,7 @@ func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, CommandTimeoutSeconds: 30})
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: "native/tests/test_energy.cpp"})
 
 	if result.Tool != "source_sanity" {
@@ -67,6 +67,34 @@ func TestSourceSanityRoutesKnownLanguagesThroughDiagnosticsTool(t *testing.T) {
 	}
 	if !sourceSanityCoversPath("scripts/demo.gd") {
 		t.Fatal("source_sanity should cover gdscript through generic fallback")
+	}
+}
+
+func TestSourceSanityCompilesGoTestFiles(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/source-sanity\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "pkg", "feature.go")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testSource := filepath.Join(root, "pkg", "feature_test.go")
+	if err := os.WriteFile(testSource, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tmissingHelper()\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, CommandTimeoutSeconds: 30})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: filepath.Join("pkg", "feature_test.go")})
+
+	if result.Error == "" {
+		t.Fatalf("expected source_sanity to fail on _test.go compile error, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "go test compile failed") || !strings.Contains(result.Error, "missingHelper") {
+		t.Fatalf("expected go test compile diagnostics, output=\n%s\nerror=\n%s", result.Output, result.Error)
 	}
 }
 

@@ -30,10 +30,22 @@ func normalizeHistoryRole(role string) string {
 	}
 }
 
+type eventMsg struct {
+	msg tea.Msg
+}
+
 func waitForEvent(ch <-chan tea.Msg) tea.Cmd {
 	return func() tea.Msg {
-		return <-ch
+		return eventMsg{msg: <-ch}
 	}
+}
+
+func (m *Model) waitForEventCmd() tea.Cmd {
+	if m == nil || m.eventWaitArmed {
+		return nil
+	}
+	m.eventWaitArmed = true
+	return waitForEvent(m.events)
 }
 
 func normalizeGuardedPath(path string) string {

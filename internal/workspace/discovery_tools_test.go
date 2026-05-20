@@ -2080,6 +2080,67 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 	}
 }
 
+func TestHarnessAuditContractCoverageSortsEventsBeforeAuditing(t *testing.T) {
+	root := t.TempDir()
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind:  autonomy.InvocationLane,
+			Lane:            "implement",
+			RuntimeContract: "implementation_result",
+		},
+		Obligations: []autonomy.Obligation{
+			{ObligationID: "obl-write-file", Kind: autonomy.ObligationWrite, Status: autonomy.ObligationOpen, Owner: autonomy.OwnerLane, RequiredBy: "required_edit_paths"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	occurredAt := time.Date(2026, 5, 13, 21, 0, 0, 0, time.UTC)
+	compiled := mustWorkspaceAutonomyEvent(autonomy.NewContractCompiledEvent(contract, occurredAt, 1))
+	opened := mustWorkspaceAutonomyEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationOpened, contract, autonomy.Obligation{
+		ObligationID: "obl-write-file",
+		Kind:         autonomy.ObligationWrite,
+		Status:       autonomy.ObligationOpen,
+		Owner:        autonomy.OwnerLane,
+		RequiredBy:   "required_edit_paths",
+	}, occurredAt.Add(time.Second), 2))
+	resolved := mustWorkspaceAutonomyEvent(autonomy.NewObligationStateEvent(autonomy.EventObligationResolved, contract, autonomy.Obligation{
+		ObligationID: "obl-write-file",
+		Kind:         autonomy.ObligationWrite,
+		Status:       autonomy.ObligationResolved,
+		Owner:        autonomy.OwnerLane,
+		RequiredBy:   "required_edit_paths",
+		EvidenceRef:  "event-write",
+	}, occurredAt.Add(2*time.Second), 3))
+	openPath := filepath.Join(root, "logs", "telemetry", "open.jsonl")
+	resolvePath := filepath.Join(root, "logs", "telemetry", "resolve.jsonl")
+	writeWorkspaceFile(t, openPath, strings.Join([]string{
+		mustMarshalWorkspaceAutonomyEvent(t, compiled),
+		mustMarshalWorkspaceAutonomyEvent(t, opened),
+		"",
+	}, "\n"))
+	writeWorkspaceFile(t, resolvePath, strings.Join([]string{
+		mustMarshalWorkspaceAutonomyEvent(t, resolved),
+		mustMarshalWorkspaceAutonomyEvent(t, resolved),
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	report, warnings := mgr.auditContractEventCoverage([]string{resolvePath, openPath})
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	if report == nil {
+		t.Fatal("expected contract coverage report")
+	}
+	if len(report.ObligationCoverage.UnmatchedObligations) != 0 {
+		t.Fatalf("out-of-order and duplicate autonomy events should not create unmatched obligations: %#v", report.ObligationCoverage.UnmatchedObligations)
+	}
+	if report.TotalEvents != 3 || report.ObligationCoverage.Resolved != 1 {
+		t.Fatalf("expected sorted/deduped event coverage, got %#v", report)
+	}
+}
+
 func TestHarnessAuditBehaviorRejectsInvalidAutonomyEvents(t *testing.T) {
 	root := t.TempDir()
 	lines := []string{
@@ -2117,6 +2178,15 @@ func mustWorkspaceAutonomyEvent(event autonomy.Event, err error) autonomy.Event 
 		panic(err)
 	}
 	return event
+}
+
+func mustMarshalWorkspaceAutonomyEvent(t *testing.T, event autonomy.Event) string {
+	t.Helper()
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal event: %v", err)
+	}
+	return string(encoded)
 }
 
 func TestHarnessAuditBehaviorDefaultIncludesIdiomConversationLogs(t *testing.T) {
@@ -2264,6 +2334,43 @@ func TestHarnessAuditFlagsIncompleteImplementLifecycle(t *testing.T) {
 	}
 }
 
+func TestHarnessAuditAcceptsModelCloseoutTelemetryAsSessionSummaryEvidence(t *testing.T) {
+	root := t.TempDir()
+	conversationPath := filepath.Join(root, ".idiom", "logs", "conversations", "session.jsonl")
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "implement.jsonl")
+	writeWorkspaceFile(t, conversationPath, strings.Join([]string{
+		`{"type":"session_start","workspace_root":"` + root + `"}`,
+		`{"type":"message","role":"control_rails","content":"{\"contract\":\"implementation_result\",\"task_family\":\"implementation\"}"}`,
+		"",
+	}, "\n"))
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"implement","workspace_root":"` + root + `"}`,
+		fmt.Sprintf(`{"type":"process_start","command":"implement","pid":%d,"workspace_root":"%s"}`, harnessAuditTestStoppedPID(t), root),
+		`{"type":"model_session","session_id":"session","debug_log_path":"` + conversationPath + `"}`,
+		`{"type":"model_session_closeout","session_id":"session","debug_log_path":"` + conversationPath + `","summary_event":"session_summary","model_closed":true}`,
+		`{"type":"process_exit","command":"implement","exit_code":0}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior != nil && len(report.LogBehavior.IncompleteSessions) != 0 {
+		t.Fatalf("closeout telemetry should satisfy session-summary lifecycle evidence, got %#v", report.LogBehavior.IncompleteSessions)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "incomplete_implement_session_lifecycle"
+	}) {
+		t.Fatalf("expected no incomplete lifecycle finding with model closeout telemetry, got %#v", report.Findings)
+	}
+}
+
 func harnessAuditTestStoppedPID(t *testing.T) int {
 	t.Helper()
 	for pid := 999999; pid > 900000; pid-- {
@@ -2354,6 +2461,81 @@ func TestHarnessAuditClassifiesActiveTUIImplementationConversationAsInProgress(t
 		return finding.ID == "incomplete_implement_session_lifecycle"
 	}) {
 		t.Fatalf("expected no incomplete lifecycle finding for active TUI process, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditLinksStoppedTUIImplementationConversationToTelemetryLifecycle(t *testing.T) {
+	root := t.TempDir()
+	conversationPath := filepath.Join(root, "logs", "conversations", "20260520-090102.111.jsonl")
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "20260520-090101.999-tui-123.jsonl")
+	writeWorkspaceFile(t, conversationPath, strings.Join([]string{
+		`{"type":"session_start","workspace_root":"` + root + `"}`,
+		`{"type":"message","role":"control_rails","content":"{\"contract\":\"implementation_result\",\"task_family\":\"implementation\"}"}`,
+		"",
+	}, "\n"))
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"tui","workspace_root":"` + root + `"}`,
+		fmt.Sprintf(`{"type":"process_start","command":"tui","pid":%d,"workspace_root":"%s"}`, harnessAuditTestStoppedPID(t), root),
+		`{"type":"model_session","session_id":"20260520-090102.111","debug_log_path":"` + conversationPath + `"}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/conversations", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior == nil || len(report.LogBehavior.IncompleteSessions) != 1 {
+		t.Fatalf("expected one incomplete TUI-backed implementation session, got %#v", report.LogBehavior)
+	}
+	session := report.LogBehavior.IncompleteSessions[0]
+	if session.TelemetryLog != "logs/telemetry/20260520-090101.999-tui-123.jsonl" ||
+		session.ConversationLog != "logs/conversations/20260520-090102.111.jsonl" ||
+		session.Command != "tui" ||
+		!slices.Contains(session.Missing, "process_exit") ||
+		!slices.Contains(session.Missing, "session_summary") {
+		t.Fatalf("unexpected stopped TUI lifecycle session: %#v", session)
+	}
+}
+
+func TestHarnessAuditAcceptsTUIModelCloseoutTelemetryAsSessionSummaryEvidence(t *testing.T) {
+	root := t.TempDir()
+	conversationPath := filepath.Join(root, "logs", "conversations", "closed-tui.jsonl")
+	telemetryPath := filepath.Join(root, "logs", "telemetry", "closed-tui.jsonl")
+	writeWorkspaceFile(t, conversationPath, strings.Join([]string{
+		`{"type":"session_start","workspace_root":"` + root + `"}`,
+		`{"type":"message","role":"control_rails","content":"{\"contract\":\"implementation_result\",\"task_family\":\"implementation\"}"}`,
+		"",
+	}, "\n"))
+	writeWorkspaceFile(t, telemetryPath, strings.Join([]string{
+		`{"type":"session_start","command":"tui","workspace_root":"` + root + `"}`,
+		fmt.Sprintf(`{"type":"process_start","command":"tui","pid":%d,"workspace_root":"%s"}`, harnessAuditTestStoppedPID(t), root),
+		`{"type":"model_session","session_id":"closed-tui","debug_log_path":"` + conversationPath + `"}`,
+		`{"type":"model_session_closeout","session_id":"closed-tui","debug_log_path":"` + conversationPath + `","summary_event":"session_summary","model_closed":true}`,
+		`{"type":"process_exit","command":"tui","exit_code":0}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	if report.LogBehavior != nil && len(report.LogBehavior.IncompleteSessions) != 0 {
+		t.Fatalf("TUI closeout telemetry should satisfy session-summary lifecycle evidence, got %#v", report.LogBehavior.IncompleteSessions)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "incomplete_implement_session_lifecycle"
+	}) {
+		t.Fatalf("expected no incomplete lifecycle finding with TUI model closeout telemetry, got %#v", report.Findings)
 	}
 }
 

@@ -203,12 +203,7 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 	}
 
 	ordered := append([]Event(nil), events...)
-	slices.SortStableFunc(ordered, func(a, b Event) int {
-		return cmp.Or(
-			cmp.Compare(a.Sequence, b.Sequence),
-			cmp.Compare(a.EventID, b.EventID),
-		)
-	})
+	slices.SortStableFunc(ordered, compareEventAuditOrder)
 	state.report.TotalEvents = len(ordered)
 	for i := range ordered {
 		event := copyEvent(ordered[i])
@@ -217,6 +212,27 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 	}
 	state.finish()
 	return state.report
+}
+
+func compareEventAuditOrder(a, b Event) int {
+	if !a.OccurredAt.Equal(b.OccurredAt) {
+		if a.OccurredAt.IsZero() {
+			return 1
+		}
+		if b.OccurredAt.IsZero() {
+			return -1
+		}
+		if a.OccurredAt.Before(b.OccurredAt) {
+			return -1
+		}
+		return 1
+	}
+	return cmp.Or(
+		cmp.Compare(a.ContractID, b.ContractID),
+		cmp.Compare(a.Sequence, b.Sequence),
+		cmp.Compare(string(a.Type), string(b.Type)),
+		cmp.Compare(a.EventID, b.EventID),
+	)
 }
 
 func (s *eventAuditState) addEvent(event Event) {

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"sort"
@@ -95,8 +96,8 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	if !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != "submit_plan" {
 		return verificationInterceptResult{}
 	}
-	required := normalizedRequiredEditPathSet(r.RuntimeBrief.RequiredEditPaths)
-	if len(required) == 0 {
+	scope := r.planThenExecuteRequiredEditScope()
+	if len(scope.coverage) == 0 && len(scope.allowedExact) == 0 && len(scope.directoryScopes) == 0 {
 		return verificationInterceptResult{}
 	}
 	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
@@ -110,26 +111,41 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 			continue
 		}
 		planned[path] = struct{}{}
-		if _, ok := required[path]; !ok {
+		if !scope.allowsPlanPath(path) {
 			outside = append(outside, path)
 		}
 	}
 	var missing []string
-	for _, path := range r.RuntimeBrief.RequiredEditPaths {
-		normalized := normalizeRunnerPath(path)
-		if normalized == "" {
-			continue
+	for _, path := range scope.coverage {
+		if _, ok := planned[path]; !ok {
+			missing = append(missing, path)
 		}
-		if _, ok := planned[normalized]; !ok {
-			missing = append(missing, normalized)
-		}
+	}
+	if len(scope.coverage) == 0 && len(scope.directoryScopes) > 0 && len(planned) == 0 {
+		missing = append(missing, scope.directoryScopes...)
 	}
 	missingSnippets := r.missingSubmitPlanRequiredEditSnippets(req, planned)
 	invalidAnchors := r.invalidSubmitPlanAnchors(req)
-	if len(missing) == 0 && len(outside) == 0 && len(missingSnippets) == 0 && len(invalidAnchors) == 0 {
+	placeholderBodies := planThenExecutePlaceholderEditBodies(edits)
+	if len(missing) == 0 && len(outside) == 0 && len(missingSnippets) == 0 && len(invalidAnchors) == 0 && len(placeholderBodies) == 0 {
 		return verificationInterceptResult{}
 	}
+	details := planThenExecuteSubmitPlanCoverageDetails{
+		Code:                    "plan_then_execute_submit_plan_coverage_mismatch",
+		MissingRequiredPaths:    append([]string(nil), missing...),
+		MissingPathEdits:        append([]string(nil), missingPathEdits...),
+		OutsideRequiredPaths:    append([]string(nil), outside...),
+		MissingRequiredSnippets: append([]string(nil), missingSnippets...),
+		InvalidAnchors:          append([]string(nil), invalidAnchors...),
+		PlaceholderEditBodies:   append([]string(nil), placeholderBodies...),
+	}
 	var parts []string
+	scopeName := "required_edit_paths"
+	outsideLabel := "path(s) outside required_edit_paths: "
+	if scope.allowedOnly {
+		scopeName = "allowed_edit_paths"
+		outsideLabel = "path(s) outside allowed_edit_paths: "
+	}
 	if len(missing) > 0 {
 		parts = append(parts, "missing required edit path(s): "+quotedRunnerStrings(missing))
 	}
@@ -137,7 +153,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 		parts = append(parts, "edit entry missing `path`: "+quotedRunnerStrings(missingPathEdits))
 	}
 	if len(outside) > 0 {
-		parts = append(parts, "path(s) outside required_edit_paths: "+quotedRunnerStrings(outside))
+		parts = append(parts, outsideLabel+quotedRunnerStrings(outside))
 	}
 	if len(missingSnippets) > 0 {
 		parts = append(parts, "missing required edit snippet(s): "+quotedRunnerStrings(missingSnippets))
@@ -145,17 +161,233 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	if len(invalidAnchors) > 0 {
 		parts = append(parts, "invalid edit anchor(s): "+quotedRunnerStrings(invalidAnchors))
 	}
+	if len(placeholderBodies) > 0 {
+		parts = append(parts, "placeholder edit body path(s): "+quotedRunnerStrings(placeholderBodies))
+	}
 	return verificationInterceptResult{
 		Intercepted: true,
 		Result: workspace.ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
-			Error: "submit_plan must include at least one edit entry for every required_edit_paths entry, no edits outside that scope, and coverage for every required_edit_snippets final-state snippet; " +
+			Output:  planThenExecuteSubmitPlanCoverageDetailsJSON(details),
+			Error: "submit_plan must include at least one edit entry for every required_edit_paths coverage entry when required paths are present, no edits outside " + scopeName + ", and coverage for every required_edit_snippets final-state snippet; " +
 				strings.Join(parts, "; ") +
-				". Submit a corrected plan with `edits` as a JSON array, not a quoted string, and include `path` on every edit. Edit bodies must be complete executable source text, not placeholders, ellipses, or prose; answer `Decision: source-satisfied` when current source already contains the requested final state, or answer with <<QUESTION>> and name the exact blocker for each skipped requirement.",
+				". Submit a corrected plan with `edits` as a JSON array, not a quoted string, and include `path` on every edit. Prefer numeric line-range edits when exact source text contains quotes, raw strings, struct tags, or large function bodies. Edit bodies must be complete executable source text, not placeholders, ellipses, or prose; answer `Decision: source-satisfied` when current source already contains the requested final state, or answer with <<QUESTION>> and name the exact blocker for each skipped requirement.",
 		},
 		Reason: "plan-then-execute planner phase: submit_plan edits did not satisfy required path/snippet coverage",
 	}
+}
+
+type planThenExecuteRequiredEditScope struct {
+	coverage        []string
+	allowedExact    map[string]struct{}
+	directoryScopes []string
+	allowedOnly     bool
+}
+
+func (r *Runner) planThenExecuteRequiredEditScope() planThenExecuteRequiredEditScope {
+	root := ""
+	if r != nil && r.Workspace != nil {
+		root = strings.TrimSpace(r.Workspace.Root())
+	}
+	if r == nil {
+		return planThenExecuteRequiredEditScopeFromPaths(nil, root)
+	}
+	if len(normalizedRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths)) == 0 && len(r.RuntimeBrief.AllowedEditPaths) > 0 {
+		return planThenExecuteAllowedEditScopeFromPaths(r.RuntimeBrief.AllowedEditPaths, root)
+	}
+	return planThenExecuteRequiredEditScopeFromPaths(r.RuntimeBrief.RequiredEditPaths, root)
+}
+
+func planThenExecuteRequiredCoveragePaths(required []string, root string) []string {
+	return planThenExecuteRequiredEditScopeFromPaths(required, root).coverage
+}
+
+func planThenExecuteRequiredEditScopeFromPaths(required []string, root string) planThenExecuteRequiredEditScope {
+	scope := planThenExecuteRequiredEditScope{
+		allowedExact: make(map[string]struct{}),
+	}
+	normalizedRequired := normalizedRequiredEditPaths(required)
+	seenCoverage := make(map[string]struct{}, len(normalizedRequired))
+	seenDirectories := make(map[string]struct{})
+	for _, path := range normalizedRequired {
+		scope.allowedExact[path] = struct{}{}
+		if planThenExecuteRequiredPathIsDirectoryScope(path, normalizedRequired, root) {
+			if _, seen := seenDirectories[path]; !seen {
+				scope.directoryScopes = append(scope.directoryScopes, path)
+				seenDirectories[path] = struct{}{}
+			}
+			continue
+		}
+		if _, seen := seenCoverage[path]; seen {
+			continue
+		}
+		scope.coverage = append(scope.coverage, path)
+		seenCoverage[path] = struct{}{}
+	}
+	return scope
+}
+
+func planThenExecuteAllowedEditScopeFromPaths(allowed []string, root string) planThenExecuteRequiredEditScope {
+	scope := planThenExecuteRequiredEditScope{
+		allowedExact: make(map[string]struct{}),
+		allowedOnly:  true,
+	}
+	normalizedAllowed := normalizedRequiredEditPaths(allowed)
+	seenDirectories := make(map[string]struct{})
+	for _, path := range normalizedAllowed {
+		if planThenExecuteRequiredPathIsDirectoryScope(path, normalizedAllowed, root) {
+			if _, seen := seenDirectories[path]; !seen {
+				scope.directoryScopes = append(scope.directoryScopes, path)
+				seenDirectories[path] = struct{}{}
+			}
+			continue
+		}
+		scope.allowedExact[path] = struct{}{}
+	}
+	return scope
+}
+
+func normalizedRequiredEditPaths(required []string) []string {
+	out := make([]string, 0, len(required))
+	seen := make(map[string]struct{}, len(required))
+	for _, raw := range required {
+		path := normalizeRunnerPath(raw)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		out = append(out, path)
+		seen[path] = struct{}{}
+	}
+	return out
+}
+
+func planThenExecuteRequiredPathIsDirectoryScope(path string, all []string, root string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || filepath.IsAbs(path) {
+		return false
+	}
+	if root != "" {
+		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err == nil && info.IsDir() {
+			return true
+		}
+	}
+	if pathparse.HasWorkspaceFileExtension(path) {
+		return false
+	}
+	prefix := strings.TrimSuffix(path, "/") + "/"
+	for _, other := range all {
+		if other != path && strings.HasPrefix(other, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func (scope planThenExecuteRequiredEditScope) allowsPlanPath(path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	for _, required := range scope.coverage {
+		if path == required {
+			return true
+		}
+	}
+	for _, dir := range scope.directoryScopes {
+		prefix := strings.TrimSuffix(dir, "/") + "/"
+		if strings.HasPrefix(path, prefix) {
+			return true
+		}
+	}
+	if _, ok := scope.allowedExact[path]; ok {
+		return true
+	}
+	return false
+}
+
+type planThenExecuteSubmitPlanCoverageDetails struct {
+	Code                    string   `json:"code,omitempty"`
+	MissingRequiredPaths    []string `json:"missing_required_paths,omitempty"`
+	MissingPathEdits        []string `json:"missing_path_edits,omitempty"`
+	OutsideRequiredPaths    []string `json:"outside_required_paths,omitempty"`
+	MissingRequiredSnippets []string `json:"missing_required_snippets,omitempty"`
+	InvalidAnchors          []string `json:"invalid_anchors,omitempty"`
+	PlaceholderEditBodies   []string `json:"placeholder_edit_bodies,omitempty"`
+}
+
+func planThenExecuteSubmitPlanCoverageDetailsJSON(details planThenExecuteSubmitPlanCoverageDetails) string {
+	body, err := json.Marshal(details)
+	if err != nil {
+		return ""
+	}
+	return string(body)
+}
+
+func planThenExecuteSubmitPlanCoverageDetailsFromResult(result workspace.ToolResult) (planThenExecuteSubmitPlanCoverageDetails, bool) {
+	var details planThenExecuteSubmitPlanCoverageDetails
+	if strings.TrimSpace(result.Output) == "" {
+		return details, false
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Output)), &details); err != nil {
+		return details, false
+	}
+	return details, strings.TrimSpace(details.Code) == "plan_then_execute_submit_plan_coverage_mismatch"
+}
+
+func planThenExecutePlaceholderEditBodies(edits []workspace.PlanEdit) []string {
+	var out []string
+	for i, edit := range edits {
+		path := normalizeRunnerPath(edit.Path)
+		if path == "" {
+			path = planThenExecuteSubmitPlanEditName(i, edit)
+		}
+		if field, marker := planThenExecutePlanEditPlaceholderField(edit); field != "" {
+			out = append(out, path+": "+field+" contains placeholder marker "+strconv.Quote(marker))
+		}
+	}
+	return out
+}
+
+func planThenExecutePlanEditPlaceholderField(edit workspace.PlanEdit) (string, string) {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "old_text", value: edit.OldText},
+		{name: "new_text", value: edit.NewText},
+		{name: "content", value: edit.Content},
+	}
+	for _, field := range fields {
+		if marker := planThenExecutePlanEditPlaceholderMarker(field.value); marker != "" {
+			return field.name, marker
+		}
+	}
+	return "", ""
+}
+
+func planThenExecutePlanEditPlaceholderMarker(value string) string {
+	text := strings.ToLower(value)
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	for _, marker := range []string{
+		"... existing code ...",
+		"omitted for brevity",
+		"rest of file unchanged",
+		"remaining code",
+		"unchanged code",
+		"<todo",
+		"todo: fill",
+	} {
+		if strings.Contains(text, marker) {
+			return marker
+		}
+	}
+	return ""
 }
 
 func planThenExecuteSubmitPlanEditName(index int, edit workspace.PlanEdit) string {
@@ -454,9 +686,18 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 	}
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
+		missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
 		target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 		required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
 		_, inRequiredScope := required[target]
+		if target != "" &&
+			inRequiredScope &&
+			submitPlanInvalidAnchorPathsAllowsRead(missingPlanPaths, target) &&
+			planThenExecuteSourceBodyReadRequest(req) &&
+			!successfulSourceBodyReadPathBefore(results, rejectedAt, target) &&
+			!successfulReadPathAfter(results, rejectedAt, target) {
+			return "", "", false
+		}
 		if submitPlanRejectionHasInvalidAnchor(rejected) &&
 			target != "" &&
 			inRequiredScope &&
@@ -465,31 +706,150 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			!successfulReadPathAfter(results, rejectedAt, target) {
 			return "", "", false
 		}
+		refreshNote := planThenExecutePostSubmitRejectionRefreshNote(brief, results, rejected, rejectedAt)
 		return "Corrected submit_plan required",
-			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected) + "Submit a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required_edit_path with valid anchors or line ranges from existing source-body evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. Textual-tool backends must emit exactly one visible JSON object like {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}. If the rejection named a stale edit anchor, at most one bounded source-body read on that required path is allowed to refresh exact current text.",
+			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected) + "Submit a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required_edit_path with valid anchors or line ranges from existing source-body evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. " + planThenExecuteSubmitPlanVisibleJSONInstruction() + " " + refreshNote,
 			true
 	}
 	return "Plan submission required",
-		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. Textual-tool backends must emit exactly one visible JSON object like {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}.",
+		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
 		true
 }
 
+func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) string {
+	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
+	missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
+	refreshable := make([]string, 0, 2)
+	for _, rawPath := range brief.RequiredEditPaths {
+		path := normalizeRunnerPath(rawPath)
+		if path == "" {
+			continue
+		}
+		if _, invalid := invalidAnchorPaths[path]; invalid && !successfulReadPathAfter(results, rejectedAt, path) {
+			refreshable = append(refreshable, path)
+			continue
+		}
+		if _, missing := missingPlanPaths[path]; missing &&
+			!successfulSourceBodyReadPathBefore(results, rejectedAt, path) &&
+			!successfulReadPathAfter(results, rejectedAt, path) {
+			refreshable = append(refreshable, path)
+		}
+	}
+	if len(refreshable) == 0 {
+		return "No further read/search/discovery action is currently allowed for this rejected plan; use the existing source-body evidence to submit corrected edits or report a path-specific blocker."
+	}
+	return "The only remaining read exception is one bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshable, 4), ", ") + ". Otherwise do not call read/search/discovery before the corrected `submit_plan`."
+}
+
+func planThenExecuteRejectedPlanSourceRefreshAllowed(req workspace.ToolRequest, requiredCoveragePaths []string, results []workspace.ToolResult) bool {
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok || successfulSubmitPlanResultCount(results) > 0 {
+		return false
+	}
+	if !planThenExecuteSourceBodyReadRequest(req) {
+		return false
+	}
+	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	if target == "" {
+		return false
+	}
+	required := normalizedRequiredEditPathSet(requiredCoveragePaths)
+	if _, ok := required[target]; !ok {
+		return false
+	}
+	if successfulReadPathAfter(results, rejectedAt, target) {
+		return false
+	}
+	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
+	if submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) {
+		return true
+	}
+	missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
+	if !submitPlanInvalidAnchorPathsAllowsRead(missingPlanPaths, target) {
+		return false
+	}
+	return !successfulSourceBodyReadPathBefore(results, rejectedAt, target)
+}
+
 func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
+	if details, ok := planThenExecuteSubmitPlanCoverageDetailsFromResult(result); ok {
+		return len(details.InvalidAnchors) > 0
+	}
 	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Error))
 	return strings.Contains(text, "invalid edit anchor") ||
 		strings.Contains(text, "old_text not found") ||
-		strings.Contains(text, "line range outside current source")
+		strings.Contains(text, "line range outside current source") ||
+		strings.Contains(text, "preflight syntax validation failed")
 }
 
 func submitPlanInvalidAnchorPaths(result workspace.ToolResult) map[string]struct{} {
+	out := submitPlanSyntaxValidationPaths(result)
+	if details, ok := planThenExecuteSubmitPlanCoverageDetailsFromResult(result); ok {
+		for path := range submitPlanPathMapFromDiagnostics(details.InvalidAnchors, true) {
+			out[path] = struct{}{}
+		}
+		return out
+	}
 	text := result.Summary + "\n" + result.Error
+	for path := range submitPlanPathMapFromDiagnostics(strings.Split(text, "`"), true) {
+		out[path] = struct{}{}
+	}
+	return out
+}
+
+func submitPlanSyntaxValidationPaths(result workspace.ToolResult) map[string]struct{} {
 	out := make(map[string]struct{})
-	for _, segment := range strings.Split(text, "`") {
-		segment = strings.TrimSpace(segment)
-		if segment == "" || !strings.Contains(segment, ":") {
+	text := strings.Join([]string{result.Summary, result.Error, result.Output}, "\n")
+	if !strings.Contains(strings.ToLower(text), "preflight syntax validation failed") {
+		return out
+	}
+	for _, path := range pathparse.MentionedWorkspaceFiles(text) {
+		path = normalizeRunnerPath(path)
+		if path == "" {
 			continue
 		}
-		path := normalizeRunnerPath(strings.SplitN(segment, ":", 2)[0])
+		out[path] = struct{}{}
+	}
+	return out
+}
+
+func submitPlanMissingRequiredPaths(result workspace.ToolResult) map[string]struct{} {
+	if details, ok := planThenExecuteSubmitPlanCoverageDetailsFromResult(result); ok {
+		return submitPlanPathMapFromDiagnostics(details.MissingRequiredPaths, false)
+	}
+	text := result.Summary + "\n" + result.Error
+	lower := strings.ToLower(text)
+	idx := strings.Index(lower, "missing required edit path")
+	if idx < 0 {
+		return nil
+	}
+	section := text[idx:]
+	sectionLower := lower[idx:]
+	for _, marker := range []string{"invalid edit anchor", "path(s) outside", "required edit snippet", ". submit", ". answer"} {
+		if cut := strings.Index(sectionLower, marker); cut > 0 {
+			section = section[:cut]
+			sectionLower = sectionLower[:cut]
+		}
+	}
+	return submitPlanPathMapFromDiagnostics(strings.Split(section, "`"), false)
+}
+
+func submitPlanPathMapFromDiagnostics(segments []string, allowColon bool) map[string]struct{} {
+	out := make(map[string]struct{})
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" {
+			continue
+		}
+		if strings.Contains(segment, ":") {
+			if !allowColon {
+				continue
+			}
+			segment = strings.SplitN(segment, ":", 2)[0]
+		} else if allowColon {
+			continue
+		}
+		path := normalizeRunnerPath(segment)
 		if path != "" {
 			out[path] = struct{}{}
 		}
@@ -524,6 +884,50 @@ func successfulReadPathAfter(results []workspace.ToolResult, index int, path str
 	return false
 }
 
+func successfulReadFilePathBefore(results []workspace.ToolResult, index int, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if index > len(results) {
+		index = len(results)
+	}
+	for i := 0; i < index; i++ {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, readPath := range readPathsFromToolResult(result) {
+			if normalizeRunnerPath(readPath) == path {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func successfulSourceBodyReadPathBefore(results []workspace.ToolResult, index int, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if index > len(results) {
+		index = len(results)
+	}
+	for i := 0; i < index; i++ {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, readPath := range readPathsFromToolResult(result) {
+			if normalizeRunnerPath(readPath) == path {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (workspace.ToolResult, int, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
@@ -541,6 +945,9 @@ func planThenExecuteSubmitPlanRejectedForCorrection(req workspace.ToolRequest, r
 func planThenExecuteSubmitPlanRejectedResult(result workspace.ToolResult) bool {
 	if strings.TrimSpace(result.Tool) != "submit_plan" {
 		return false
+	}
+	if _, ok := planThenExecuteSubmitPlanCoverageDetailsFromResult(result); ok {
+		return true
 	}
 	return strings.Contains(result.Summary, "submit_plan rejected") || strings.Contains(result.Error, "submit_plan must include")
 }
@@ -563,16 +970,13 @@ func lastSubmitPlanRejectionBrief(result workspace.ToolResult) string {
 
 func planThenExecuteUnreadRequiredPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) map[string]struct{} {
 	read := readPathsFromResults(results)
-	unread := make(map[string]struct{}, len(brief.RequiredEditPaths))
-	for _, path := range brief.RequiredEditPaths {
-		normalized := normalizeRunnerPath(path)
-		if normalized == "" {
+	required := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
+	unread := make(map[string]struct{}, len(required))
+	for _, path := range required {
+		if _, ok := read[path]; ok {
 			continue
 		}
-		if _, ok := read[normalized]; ok {
-			continue
-		}
-		unread[normalized] = struct{}{}
+		unread[path] = struct{}{}
 	}
 	return unread
 }
@@ -1154,7 +1558,7 @@ func (r *Runner) planThenExecuteSourceSatisfiedAnswerCovers(reply string, result
 	if r == nil || !r.planThenExecutePlannerPhase() {
 		return false
 	}
-	missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+	missing := missingRequiredEditPaths(r.requiredEditCoveragePaths(), changedPathsFromToolResults(results))
 	if len(missing) == 0 {
 		missing = PlanThenExecuteSourceSatisfiedEvidencePaths(reply)
 	}
@@ -1222,7 +1626,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
 		return ""
 	}
-	required := brief.RequiredEditPaths
+	required := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
 	if successfulSubmitPlanResultCount(results) > 0 {
 		// Plan already submitted — the gate-exemption path will close
 		// the runner cleanly; nothing to nudge.
@@ -1233,7 +1637,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		return ""
 	}
 	if len(required) == 0 {
-		if unread := unreadRecoveryEvidencePathsForObjective(brief.Objective, results, 2); len(unread) > 0 {
+		if unread := unreadPlanThenExecuteCandidateScopePaths(brief, results, 4); len(unread) > 0 {
 			return ""
 		}
 		paths := make([]string, 0, len(read))
@@ -1265,7 +1669,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		"PLANNER READINESS REACHED: every required_edit_path has been read at least once in this turn. State is sufficient to submit the plan or close as source-satisfied.",
 		"",
 		"Next action MUST be one of:",
-		"  1. A parser-readable `submit_plan` request with the full ordered edits[] array (substring, line-range, or whole-file/new-file shape, plus a one-sentence purpose per edit). Textual-tool backends must emit exactly one visible JSON object like {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}. For a missing/new source or test file, the brief must provide a substantial inline body or explicit replacement edit shape.",
+		"  1. A parser-readable `submit_plan` request with the full ordered edits[] array (substring, line-range, or whole-file/new-file shape, plus a one-sentence purpose per edit). " + planThenExecuteSubmitPlanVisibleJSONInstruction() + " For a missing/new source or test file, the brief must provide a substantial inline body or explicit replacement edit shape.",
 		"  2. `Decision: source-satisfied` naming every required path and the observed current-state evidence when the requested final state is already present.",
 		"  3. `<<QUESTION>>:` with the exact path-specific blocker that prevents you from drafting the plan.",
 		"",
@@ -1273,6 +1677,10 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		"",
 		"Default to submitting now. Only read again if you can name one exact new edit-safety fact that is still missing after the required path reads.",
 	}, "\n")
+}
+
+func planThenExecuteSubmitPlanVisibleJSONInstruction() string {
+	return "Textual-tool backends must emit exactly one visible JSON object with top-level `edits` as a JSON array, not a quoted string, for example {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"start_line\":10,\"end_line\":20,\"content\":\"complete replacement lines\\n\",\"purpose\":\"replace the confirmed line range\"}]}. For existing source/test edits after source-body reads, prefer numeric `start_line`/`end_line` plus complete `content` when the replacement spans more than a few lines or contains quotes, raw strings, struct tags, or large function bodies; use `old_text`/`new_text` only for tiny exact snippets."
 }
 
 func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
@@ -1286,7 +1694,7 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 	if len(unread) == 0 {
 		return ""
 	}
-	next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
+	next := firstPlanThenExecuteUnreadRequiredPath(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, ""), unread)
 	if next == "" {
 		return ""
 	}
@@ -1420,6 +1828,10 @@ func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
 }
 
 func readPathsFromToolResult(r workspace.ToolResult) []string {
+	tool := strings.TrimSpace(r.Tool)
+	if (tool == "code_navigate" || tool == "read_only_capability") && !routedSourceReadOutputHasBody(r.Output) {
+		return nil
+	}
 	seen := map[string]struct{}{}
 	var paths []string
 	for _, candidate := range []string{
@@ -1439,6 +1851,46 @@ func readPathsFromToolResult(r workspace.ToolResult) []string {
 		paths = append(paths, candidate)
 	}
 	return paths
+}
+
+func routedSourceReadOutputHasBody(output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+	if !strings.Contains(output, "route_summary:") {
+		return true
+	}
+	seenRouteSummary := false
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "route_summary:") {
+			seenRouteSummary = true
+			continue
+		}
+		if !seenRouteSummary || line == "" {
+			continue
+		}
+		if routedSourceReadOutputHeaderLine(line) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func routedSourceReadOutputHeaderLine(line string) bool {
+	for _, prefix := range []string{
+		"capability:",
+		"language:",
+		"routed_tool:",
+		"fallback_reason:",
+	} {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // extractReadPathFromSummary parses canonical source-body read summary

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -113,6 +114,25 @@ Add the required policy gate.
 	}
 }
 
+func TestParseToolRequestRecoversEmbeddedQwenParametersInRationale(t *testing.T) {
+	req, _, ok, err := ParseToolRequest(`{"tool":"submit_plan","rationale":"Add the required policy gate.\n<parameter=edits>\n[{\"path\":\"target.txt\",\"old_text\":\"old\",\"new_text\":\"new\",\"purpose\":\"replace target\"}]\n</parameter>"}`)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "submit_plan" {
+		t.Fatalf("unexpected tool: %q", req.Tool)
+	}
+	if req.Rationale != "Add the required policy gate." {
+		t.Fatalf("rationale = %q", req.Rationale)
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "target.txt" || req.Edits[0].OldText != "old" || req.Edits[0].NewText != "new" {
+		t.Fatalf("embedded edits were not recovered: %#v", req.Edits)
+	}
+}
+
 func TestParseToolRequestAcceptsQwenJSONToolCallEnvelope(t *testing.T) {
 	req, raw, ok, err := ParseToolRequest(`<tool_call>
 {"tool":"read_file","path":"README.md","start_line":1,"end_line":20}
@@ -180,7 +200,7 @@ func TestParseToolRequestReportsMalformedQwenXMLObjectParameter(t *testing.T) {
 	_, _, ok, err := ParseToolRequest(`<function=submit_plan>
 <parameter=edits>
 [{"path":"a.py","old_text":"def f():
-    pass"}]
+    pass"}
 </parameter>
 </function>`)
 	if !ok || err == nil || !strings.Contains(err.Error(), "edits") {
@@ -262,19 +282,218 @@ func TestParseToolRequestRepairsNumericStringFields(t *testing.T) {
 }
 
 func TestParseToolRequestRepairsStringifiedStructuredFields(t *testing.T) {
-	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"submit_plan\",\"rationale\":\"plan\",\"edits\":\"[{\\\"path\\\":\\\"a.py\\\",\\\"start_line\\\":\\\"10\\\",\\\"end_line\\\":\\\"12\\\",\\\"content\\\":\\\"updated\\\\n\\\",\\\"purpose\\\":\\\"update a\\\"}]\"}\n```")
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"context_pack\",\"task\":\"plan tests\",\"required_tests\":\"[\\\"go test ./cmd/idiom\\\"]\"}\n```")
 	if err != nil {
 		t.Fatalf("ParseToolRequest: %v", err)
 	}
 	if !ok {
 		t.Fatal("expected tool request")
 	}
-	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
+	if req.Tool != "context_pack" || len(req.RequiredTests) != 1 {
 		t.Fatalf("unexpected request: %#v", req)
 	}
-	edit := req.Edits[0]
-	if edit.Path != "a.py" || edit.StartLine != 10 || edit.EndLine != 12 || edit.Content != "updated\n" {
-		t.Fatalf("unexpected repaired edit: %#v", edit)
+	if req.RequiredTests[0] != "go test ./cmd/idiom" {
+		t.Fatalf("unexpected repaired tests: %#v", req.RequiredTests)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsNativeStringifiedSubmitPlanEdits(t *testing.T) {
+	inner := `[{"path":"cmd/idiom/product_workflow.go","old_text":"func runProductTDD() {
+	return 0
+}","new_text":"func runProductTDD() {
+	return 1
+}","purpose":"replace the confirmed function body"}]`
+	payload, err := json.Marshal(map[string]any{
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON: %v", err)
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("expected stringified submit_plan edits to repair into typed edits, got %#v", req.Edits)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsStringifiedSubmitPlanEditsWithTrailingProse(t *testing.T) {
+	inner := `[{"path":"cmd/idiom/product_workflow.go","start_line":10,"end_line":12,"content":"updated\n","purpose":"replace the confirmed line range"}]
+
+This is only explanatory prose after the structured edit array.`
+	payload, err := json.Marshal(map[string]any{
+		"tool":      "submit_plan",
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON: %v", err)
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "cmd/idiom/product_workflow.go" || req.Edits[0].Content != "updated\n" {
+		t.Fatalf("expected trailing prose repair to preserve the edit array, got %#v", req.Edits)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsStringifiedEmptySubmitPlanEdits(t *testing.T) {
+	req, err := DecodeToolRequestJSON([]byte(`{"tool":"submit_plan","rationale":"empty plan","edits":"[]"}`))
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should parse stringified empty edits and leave validation to submit_plan: %v", err)
+	}
+	if req.Tool != "submit_plan" {
+		t.Fatalf("unexpected tool after repair: %#v", req)
+	}
+	if len(req.Edits) != 0 {
+		t.Fatalf("expected empty repaired edits, got %#v", req.Edits)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsStringifiedEmptyStructuredArrays(t *testing.T) {
+	payload := []byte(`{"tool":"context_pack","task":"localize","evidence":"[]","required_tests":"[]","required_edit_paths":"[]","forbidden_paths":"[]","declarations":"[]","moves":"[]","todos":"[]","items":"[]"}`)
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should repair stringified empty arrays: %v", err)
+	}
+	if req.Tool != "context_pack" || req.Task != "localize" {
+		t.Fatalf("unexpected repaired request: %#v", req)
+	}
+	if len(req.Evidence) != 0 ||
+		len(req.RequiredTests) != 0 ||
+		len(req.RequiredEditPaths) != 0 ||
+		len(req.ForbiddenPaths) != 0 ||
+		len(req.Declarations) != 0 ||
+		len(req.Moves) != 0 ||
+		len(req.Todos) != 0 ||
+		len(req.Items) != 0 {
+		t.Fatalf("expected all stringified empty arrays to decode as empty typed fields: %#v", req)
+	}
+}
+
+func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEdits(t *testing.T) {
+	payload, err := json.Marshal(map[string]any{
+		"rationale": "plan",
+		"edits": `[{"path":"cmd/idiom/product_workflow.go","old_text":"fs := flag.NewFlagSet("idiom product tdd", flag.ContinueOnError)
+","new_text":"fs := flag.NewFlagSet("idiom product tdd", flag.ContinueOnError)
+// updated
+","purpose":"replace the confirmed function body"}]`,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	_, err = DecodeToolRequestJSON(payload)
+	if err == nil || !strings.Contains(err.Error(), "ToolRequest.edits") {
+		t.Fatalf("expected malformed stringified edits to remain a decode error, got %v", err)
+	}
+}
+
+func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEditsWithoutDroppingTail(t *testing.T) {
+	inner := `[{"path":"a.go","old_text":"func a() {
+	return 1
+}","new_text":"func a() {
+	return 2
+}","purpose":"replace a"},{"path":"b.go","old_text":"fmt.Println("badly escaped")
+","new_text":"fmt.Println("still badly escaped")
+","purpose":"replace b"}]`
+	payload, err := json.Marshal(map[string]any{
+		"tool":      "submit_plan",
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	_, err = DecodeToolRequestJSON(payload)
+	if err == nil || !strings.Contains(err.Error(), "ToolRequest.edits") {
+		t.Fatalf("expected malformed stringified edits to remain a decode error, got %v", err)
+	}
+}
+
+func TestParseToolRequestRepairsStringifiedMultilineStructuredFields(t *testing.T) {
+	inner := `["old line
+second line"]`
+	payload, err := json.Marshal(map[string]any{
+		"tool":     "harness_feedback",
+		"category": "bug",
+		"evidence": inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, _, ok, err := ParseToolRequest("```tool\n" + string(payload) + "\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "harness_feedback" || len(req.Evidence) != 1 {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if req.Evidence[0] != "old line\nsecond line" {
+		t.Fatalf("unexpected repaired evidence: %#v", req.Evidence)
+	}
+}
+
+func TestParseToolRequestRepairsBoolStringFields(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"context_query\",\"query\":\"what calls Run\",\"resolution\":\"symbol\",\"include_evidence\":\"true\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if !req.IncludeEvidence {
+		t.Fatalf("include_evidence was not repaired: %#v", req)
+	}
+}
+
+func TestParseToolRequestRepairsCombinedNumericAndBoolStringFields(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"read_file\",\"path\":\"a.py\",\"start_line\":\"10\",\"end_line\":\"12\",\"include_source\":\"true\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "read_file" {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if req.Path != "a.py" || req.StartLine != 10 || req.EndLine != 12 || !req.IncludeSource {
+		t.Fatalf("unexpected repaired request: %#v", req)
+	}
+}
+
+func TestParseToolRequestRepairsSingletonArrayFields(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"submit_plan\",\"rationale\":\"plan\",\"required_edit_paths\":\"a.py\",\"edits\":{\"path\":\"a.py\",\"old_text\":\"old\",\"new_text\":\"new\",\"purpose\":\"update a\"}}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if len(req.RequiredEditPaths) != 1 || req.RequiredEditPaths[0] != "a.py" {
+		t.Fatalf("unexpected required edit paths: %#v", req.RequiredEditPaths)
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "a.py" {
+		t.Fatalf("unexpected singleton edit repair: %#v", req.Edits)
+	}
+}
+
+func TestParseToolRequestRepairsEmbeddedStringifiedSubmitPlanEdits(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"submit_plan\",\"rationale\":\"plan\",\"edits\":\"Here are the edits:\\n```json\\n[{\\\"path\\\":\\\"a.py\\\",\\\"old_text\\\":\\\"old\\\",\\\"new_text\\\":\\\"new\\\",\\\"purpose\\\":\\\"update a\\\"}]\\n```\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "a.py" {
+		t.Fatalf("expected embedded stringified edits to repair into typed edits, got %#v", req.Edits)
 	}
 }
 
@@ -282,6 +501,13 @@ func TestParseToolRequestRejectsUnsafeNumericStringFields(t *testing.T) {
 	_, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":\"ten\"}\n```")
 	if !ok || err == nil || !strings.Contains(err.Error(), "cannot unmarshal string") {
 		t.Fatalf("expected original decode error for unsafe numeric string, ok=%t err=%v", ok, err)
+	}
+}
+
+func TestParseToolRequestRejectsUnsafeBoolStringFields(t *testing.T) {
+	_, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"context_query\",\"query\":\"what calls Run\",\"include_evidence\":\"maybe\"}\n```")
+	if !ok || err == nil || !strings.Contains(err.Error(), "cannot unmarshal string") {
+		t.Fatalf("expected original decode error for unsafe bool string, ok=%t err=%v", ok, err)
 	}
 }
 

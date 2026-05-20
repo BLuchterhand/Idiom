@@ -10,6 +10,11 @@ a repeated failure looks like "the model should have known," first ask whether
 idiom could have classified the state deterministically before model dispatch.
 Prefer executable contracts over prompt reminders.
 
+For route authority, "executable" means typed. Required coverage paths,
+candidate write scope, exact snippets, edit-kind obligations, evidence paths,
+and recovery/resume state must be fields on a contract or durable progress
+record, not facts rediscovered from generated prompt prose.
+
 ## Deterministic Gates
 
 - Classify artifacts before dispatch: `dispatchable`, `source-satisfied`,
@@ -62,6 +67,10 @@ Prefer executable contracts over prompt reminders.
 
 - For a phase-contract bug, prefer one typed state transition plus a focused
   gate over scattered prompt text.
+- If a prompt or recovery packet currently acts as authority, extract the
+  authority into a typed contract first, then make the prompt describe that
+  contract. Prompt text, examples, tool schemas, and context packets may explain
+  or localize; they should not be parsed as the source of hard obligations.
 - When prompt text is the right fix, change the earliest phase-specific lead-in
   that owns the contract, not only the recovery nudge that catches the failure.
   The lead-in and gate must describe the same state machine in the same order.
@@ -74,6 +83,14 @@ Prefer executable contracts over prompt reminders.
   into one "required paths" phrase. Prompts and rejections should distinguish
   `required_edit_paths`, source-body obligations, and `submit_plan.edits[]`
   coverage so the model cannot treat a read as a planned edit.
+- Keep candidate scope and coverage separate end to end. Discovered paths,
+  context-packet candidates, sibling test/source guesses, and `editable files`
+  headings belong in allowed/candidate scope unless a durable artifact
+  explicitly made every path mandatory.
+- Store edit-kind obligations in the run contract and progress state. A retry
+  that requires "at least one test edit" or "at least one implementation-shaped
+  edit" must carry that typed obligation through planner retry, executor,
+  review-repair, resume, telemetry, and audit.
 - When a `submit_plan` is rejected, recovery is a contract-correction state.
   Align prose and tool availability: the next model-visible surface should be a
   corrected native `submit_plan`, source-satisfied evidence, or a typed blocker,
@@ -89,6 +106,10 @@ Prefer executable contracts over prompt reminders.
 
 ## Review And Validation
 
+- Before replacing or reverting non-trivial behavior, inspect the relevant
+  commit/blame/symbol history when current intent is ambiguous. History is not
+  a veto, but it is evidence: preserve still-valid rationale and call out when
+  new logs, tests, or product requirements supersede it.
 - Add regression tests for both sides of a boundary: the bad artifact must be
   blocked, and a valid artifact must remain dispatchable.
 - Validate with the narrow package tests first, then `go test ./...` for shared
@@ -97,3 +118,8 @@ Prefer executable contracts over prompt reminders.
 - Before calling a fix complete, inspect the diff for duplicated phase
   authority, privacy leaks in logs, stale documentation, and false-positive
   blocking of legitimate dispatchable work.
+- When committing, include why the change exists, not just what files changed:
+  the observed failure or requirement, the contract/design decision, important
+  alternatives avoided, and the verification evidence. Commit history should be
+  useful enough for a future maintainer to distinguish intentional design from
+  accidental churn.

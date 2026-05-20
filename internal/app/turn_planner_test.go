@@ -884,7 +884,7 @@ func TestImplementationDispatchFallbackSearchPatternSkipsProcessWords(t *testing
 	}
 }
 
-func TestImplementationDispatchMissingTestRetryUsesSubmittedPlanPathBeforeStaleAllowedScope(t *testing.T) {
+func TestImplementationDispatchMissingTestRetryPreservesCandidateScope(t *testing.T) {
 	root := t.TempDir()
 	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
 	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
@@ -941,10 +941,234 @@ func TestImplementationDispatchMissingTestRetryUsesSubmittedPlanPathBeforeStaleA
 
 	want := []string{
 		"internal/productworkflow/migration_apply.go",
+		"cmd/idiom/product_workflow_test.go",
+		"internal/workspace/capabilities_test.go",
+		"internal/app/lifecycle.go",
 		"internal/productworkflow/migration_apply_test.go",
 	}
 	if !slices.Equal(paths, want) {
 		t.Fatalf("missing-test retry scope = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchMissingImplementationRetryPreservesCandidateScope(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "internal", "productworkflow", "migration_apply.go")
+	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	if err := os.WriteFile(sourcePath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling source: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling test: %v", err)
+	}
+	stateDir := filepath.Join(root, ".idiom", "plan-execute", "sessions")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	state := planexecute.ProgressState{
+		SchemaVersion: planexecute.ProgressStateSchemaVersion,
+		SessionID:     "missing-implementation-retry",
+		ChangedPaths:  []string{"internal/productworkflow/migration_apply_test.go"},
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "missing-implementation-retry.json"), body, 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	paths := model.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(implementationDispatchPlanExecuteFailure{
+		Prompt: "Implement migration apply behavior. Start by adding failing tests, then implement.",
+		AllowedPaths: []string{
+			"cmd/idiom/product_workflow_test.go",
+			"internal/app/lifecycle.go",
+		},
+		Result: planexecute.RunResult{
+			SessionID:   "missing-implementation-retry",
+			FailureKind: "missing_requested_implementation_edit",
+		},
+	})
+
+	want := []string{
+		"internal/productworkflow/migration_apply_test.go",
+		"internal/productworkflow/migration_apply.go",
+		"cmd/idiom/product_workflow_test.go",
+		"internal/app/lifecycle.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("missing-implementation retry scope = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAndContextCandidatesAllowed(t *testing.T) {
+	root := t.TempDir()
+	sourcePath := filepath.Join(root, "cmd", "idiom", "product_workflow.go")
+	testPath := filepath.Join(root, "cmd", "idiom", "product_workflow_test.go")
+	statusPath := filepath.Join(root, "internal", "productworkflow", "status.go")
+	for _, path := range []string{sourcePath, testPath, statusPath} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", path, err)
+		}
+		if err := os.WriteFile(path, []byte("package productworkflow\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	stateDir := filepath.Join(root, ".idiom", "plan-execute", "sessions")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	state := planexecute.ProgressState{
+		SchemaVersion: planexecute.ProgressStateSchemaVersion,
+		SessionID:     "product-workflow-missing-implementation",
+		ChangedPaths:  []string{"cmd/idiom/product_workflow_test.go"},
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "product-workflow-missing-implementation.json"), body, 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	failure := implementationDispatchPlanExecuteFailure{
+		Prompt: "Implement product workflow status behavior after adding tests.",
+		Options: planexecute.Options{
+			Prompt: strings.Join([]string{
+				"## Context Pack",
+				"",
+				"### Candidate Files",
+				"",
+				"- `internal/productworkflow/status.go` (editable, score=4.20): matched task terms",
+			}, "\n"),
+		},
+		Result: planexecute.RunResult{
+			SessionID:   "product-workflow-missing-implementation",
+			FailureKind: "missing_requested_implementation_edit",
+		},
+	}
+	allowedPaths := model.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure)
+	for _, want := range []string{
+		"cmd/idiom/product_workflow_test.go",
+		"cmd/idiom/product_workflow.go",
+		"internal/productworkflow/status.go",
+	} {
+		if !slices.Contains(allowedPaths, want) {
+			t.Fatalf("missing-implementation candidate scope missing %q, got %#v", want, allowedPaths)
+		}
+	}
+
+	retryOptions := implementationDispatchRetryOptionsWithCandidateScope(failure.Options, allowedPaths)
+	retryOptions = implementationDispatchRetryOptionsWithEditSetObligation(retryOptions, planexecute.EditSetObligationKindImplementationEdit)
+	if len(retryOptions.RequiredEditPaths) != 0 {
+		t.Fatalf("retry required paths must remain empty for candidate-only recovery, got %#v", []string(retryOptions.RequiredEditPaths))
+	}
+	for _, want := range []string{
+		"cmd/idiom/product_workflow_test.go",
+		"cmd/idiom/product_workflow.go",
+		"internal/productworkflow/status.go",
+	} {
+		if !slices.Contains([]string(retryOptions.AllowedEditPaths), want) {
+			t.Fatalf("retry allowed paths missing %q, got %#v", want, []string(retryOptions.AllowedEditPaths))
+		}
+	}
+	if !retryOptions.EditSetObligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
+		t.Fatalf("retry options missing implementation edit obligation: %#v", retryOptions.EditSetObligations)
+	}
+}
+
+func TestImplementationDispatchMissingEditRetryKeepsCandidateScopeAllowed(t *testing.T) {
+	opts := implementationDispatchRetryOptionsWithCandidateScope(planexecute.Options{
+		RequiredEditPaths: []string{"pkg/explicit.go"},
+		AllowedEditPaths:  []string{"pkg/existing_candidate.go"},
+	}, []string{
+		"pkg/feature_test.go",
+		"pkg/feature.go",
+	})
+
+	wantRequired := []string{"pkg/explicit.go"}
+	if !slices.Equal([]string(opts.RequiredEditPaths), wantRequired) {
+		t.Fatalf("retry required paths = %#v, want %#v", []string(opts.RequiredEditPaths), wantRequired)
+	}
+	wantAllowed := []string{"pkg/existing_candidate.go", "pkg/feature_test.go", "pkg/feature.go"}
+	if !slices.Equal([]string(opts.AllowedEditPaths), wantAllowed) {
+		t.Fatalf("retry allowed paths = %#v, want %#v", []string(opts.AllowedEditPaths), wantAllowed)
+	}
+	if !slices.Equal(opts.ScopeContract.RequiredCoveragePaths, wantRequired) {
+		t.Fatalf("retry scope required coverage = %#v, want %#v", opts.ScopeContract.RequiredCoveragePaths, wantRequired)
+	}
+	if !slices.Equal(opts.ScopeContract.AllowedCandidatePaths, wantAllowed) {
+		t.Fatalf("retry scope allowed candidates = %#v, want %#v", opts.ScopeContract.AllowedCandidatePaths, wantAllowed)
+	}
+}
+
+func TestImplementationDispatchRecoveryLoopGuardIgnoresPromptObligations(t *testing.T) {
+	promptOpts := planexecute.Options{
+		EditSetObligations: planexecute.EditSetObligations{}.With(planexecute.EditSetObligationKindTestEdit, "prompt"),
+	}
+	if implementationDispatchOptionsAlreadyCarriedEditSetObligation(promptOpts, planexecute.EditSetObligationKindTestEdit) {
+		t.Fatalf("initial prompt-derived obligations should still allow one recovery retry")
+	}
+
+	retryOpts := implementationDispatchRetryOptionsWithEditSetObligation(promptOpts, planexecute.EditSetObligationKindTestEdit)
+	if !implementationDispatchOptionsAlreadyCarriedEditSetObligation(retryOpts, planexecute.EditSetObligationKindTestEdit) {
+		t.Fatalf("recovery-added obligations should trip the loop guard")
+	}
+}
+
+func TestMissingRequestedImplementationAddendumMarksPathsAsCandidateScope(t *testing.T) {
+	got := appendMissingRequestedImplementationEditRecoveryAddendum("Implement feature.", []string{
+		"pkg/feature_test.go",
+		"pkg/feature.go",
+	})
+	for _, want := range []string{
+		"candidate scope, not mandatory coverage",
+		"typed obligation is at least one real non-test implementation edit",
+		"allowed_edit_paths:",
+		"pkg/feature_test.go",
+		"pkg/feature.go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("implementation recovery addendum missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "required_edit_paths:") {
+		t.Fatalf("implementation recovery addendum must not promote candidates to required paths:\n%s", got)
+	}
+}
+
+func TestMissingRequestedTestAddendumMarksPathsAsCandidateScope(t *testing.T) {
+	got := appendMissingRequestedTestEditRecoveryAddendum("Implement feature and add tests.", []string{
+		"pkg/feature.go",
+		"pkg/feature_test.go",
+	})
+	for _, want := range []string{
+		"candidate scope, not mandatory coverage",
+		"typed obligation is at least one real test edit",
+		"allowed_edit_paths:",
+		"pkg/feature.go",
+		"pkg/feature_test.go",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("test recovery addendum missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "required_edit_paths:") {
+		t.Fatalf("test recovery addendum must not promote candidates to required paths:\n%s", got)
 	}
 }
 
@@ -1341,6 +1565,13 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 		t.Fatalf("expected invalid submit_plan with exact scope to retry on active model")
 	}
 
+	failure.Result.FailureReason = "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged."
+	failure.Result.PlannerAnswer = ""
+	failure.Stdout = "Blocker:\n- Plan submission required: every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path."
+	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+		t.Fatalf("expected post-readiness discovery loop with exact scope to retry on active model")
+	}
+
 	failure.Options.UseActiveModel = true
 	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
 		t.Fatalf("active-model retry must not recursively retry on active model")
@@ -1350,6 +1581,28 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 	failure.RequiredPaths = nil
 	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
 		t.Fatalf("unscoped planner blocker should not use active-model fallback")
+	}
+}
+
+func TestPlanExecutePlannerBlockedMessageDoesNotClaimUnreadSourcesAfterSourceSatisfied(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		RequiredPaths: []string{"cmd/idiom/product_workflow.go"},
+		Result: planexecute.RunResult{
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.",
+		},
+		Stdout: "Blocker:\n- Plan submission required: every required_edit_path has satisfied its source-body obligation. Submit one parser-readable `submit_plan` request.",
+	}
+	answer := humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+		Decision: "surface",
+		Reason:   "the planner failed because it lacks the current source code for the required edit paths",
+		Message:  "Planner blocked: the planner cannot generate a valid `submit_plan` because it has not read the current state of the required files. Please allow the planner to read these files.",
+	})
+	if strings.Contains(strings.ToLower(answer), "has not read") || strings.Contains(strings.ToLower(answer), "please allow the planner to read") {
+		t.Fatalf("source-satisfied failure must not surface contradictory unread-source guidance:\n%s", answer)
+	}
+	if !strings.Contains(answer, "kept choosing discovery instead of emitting a `submit_plan`") {
+		t.Fatalf("expected source-satisfied blocker summary, got:\n%s", answer)
 	}
 }
 
@@ -1448,6 +1701,24 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 	}
 }
 
+func TestPlanExecutePlannerRecoveryInstructionKeepsAllowedCandidatesNonMandatory(t *testing.T) {
+	got := planExecutePlannerRecoveryRetryInstruction(implementationDispatchPlanExecuteFailure{
+		AllowedPaths: []string{"internal/app/rendering.go", "internal/app/rendering_test.go"},
+	})
+	for _, want := range []string{
+		"allowed candidate paths",
+		"edit allowlist",
+		"do not treat every candidate path as mandatory coverage",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("allowed-scope retry instruction missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "whose edits include at least one real edit for each required path") {
+		t.Fatalf("allowed candidate retry must not use required-path coverage wording:\n%s", got)
+	}
+}
+
 func TestImplementationDispatchRecoveryMessageIsInternalWithQuotedSubmitPlanToolCall(t *testing.T) {
 	msg := "Respond with a valid `submit_plan` tool call only; do not narrate completion."
 	if !implementationDispatchRecoveryMessageIsInternal(msg) {
@@ -1468,9 +1739,9 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 		forbidden      []string
 	}{
 		{
-			name: "planner source-satisfied missing allowed test path surfaces without recovery model",
+			name: "planner source-satisfied missing required test path surfaces without recovery model",
 			failure: implementationDispatchPlanExecuteFailure{
-				AllowedPaths: []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
+				RequiredPaths: []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
 				Result: planexecute.RunResult{
 					ExitCode:      1,
 					FailureKind:   "plan_artifact_missing",
@@ -1525,6 +1796,18 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			recovery:       true,
 			sourceMismatch: false,
 		},
+		{
+			name: "missing requested implementation edit is recoverable",
+			failure: implementationDispatchPlanExecuteFailure{
+				Result: planexecute.RunResult{
+					ExitCode:      1,
+					FailureKind:   "missing_requested_implementation_edit",
+					FailureReason: "original prompt requested implementation behavior, but plan named only test paths",
+				},
+			},
+			recovery:       true,
+			sourceMismatch: false,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -1546,6 +1829,42 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestPlanExecuteSourceSatisfiedCoverageIgnoresAllowedCandidatePaths(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		AllowedPaths: []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
+		Result: planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   "plan_artifact_missing",
+			FailureReason: "source-satisfied evidence named one candidate path",
+			PlannerAnswer: "Decision: source-satisfied\n- internal/productworkflow/migration_apply.go: no changes needed.",
+		},
+	}
+
+	answer, ok := humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(failure)
+	if ok {
+		t.Fatalf("allowed candidate paths must not be promoted to source-satisfied coverage obligations:\n%s", answer)
+	}
+}
+
+func TestHandleStreamDoneClearsPlanPhaseOnTerminalPlannerFailure(t *testing.T) {
+	m := &Model{
+		streaming:     true,
+		planPhaseText: "Planning: Analyzing objective and creating plan...",
+	}
+
+	m.handleStreamDone(streamDoneMsg{err: errors.New("planner phase reported a blocker before submitting a plan")})
+
+	if m.streaming {
+		t.Fatal("streaming should be false after terminal planner failure")
+	}
+	if m.planPhaseText != "" {
+		t.Fatalf("terminal planner failure must not leave active plan phase text, got %q", m.planPhaseText)
+	}
+	if !strings.Contains(m.status, "Chat failed: planner phase reported a blocker") {
+		t.Fatalf("expected terminal error status, got %q", m.status)
 	}
 }
 
@@ -3064,7 +3383,7 @@ func TestPlanExecutePromptRunnerStatePreservesThinkingForHostedExecutorRoute(t *
 	}
 }
 
-func TestPlanExecutePromptRunnerStatePreservesThinkingForActiveModelFallback(t *testing.T) {
+func TestPlanExecutePromptRunnerStateDisablesLocalThinkingForActiveModelFallback(t *testing.T) {
 	thinkingOn := true
 	m := &Model{
 		cfg: config.Config{
@@ -3077,8 +3396,8 @@ func TestPlanExecutePromptRunnerStatePreservesThinkingForActiveModelFallback(t *
 		TaskFamily:     agent.PlanThenExecutePlannerTaskFamily,
 		UseActiveModel: true,
 	}, io.Discard)
-	if m.disableThinkingOverride {
-		t.Fatalf("active-model fallback should preserve the active model thinking setting")
+	if !m.disableThinkingOverride {
+		t.Fatalf("active-model fallback should still disable local thinking for strict plan-execute tool emission")
 	}
 	restoreState()
 	if m.disableThinkingOverride {
@@ -3544,8 +3863,8 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	if !sawRetryPrompt.Load() {
 		t.Fatalf("expected second plan-execute attempt with recovery addendum")
 	}
-	if firstPlannerReplies.Load() != 2 {
-		t.Fatalf("expected one failed planner reply, one deterministic target-read retry, then recovery decision; got %d planner replies", firstPlannerReplies.Load())
+	if firstPlannerReplies.Load() != 1 {
+		t.Fatalf("expected visible prose planner reply to block without hidden deterministic retry before recovery decision; got %d planner replies", firstPlannerReplies.Load())
 	}
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
@@ -3637,7 +3956,7 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t 
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
 	if !sawMissingTestRetry.Load() {
-		t.Fatalf("expected automatic missing-test retry")
+		t.Fatalf("expected automatic missing-test retry; answer=%s", answer)
 	}
 	if plannerRequests.Load() == 0 {
 		t.Fatalf("expected initial production-only planner request")
@@ -3754,7 +4073,7 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSati
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
 	if !sawMissingTestRetry.Load() {
-		t.Fatalf("expected automatic missing-test retry")
+		t.Fatalf("expected automatic missing-test retry; answer=%s", answer)
 	}
 	if !strings.Contains(answer, "source-satisfied") {
 		t.Fatalf("expected source-satisfied retry closeout, got %q", answer)

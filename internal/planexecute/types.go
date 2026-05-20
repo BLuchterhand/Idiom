@@ -18,8 +18,10 @@ type RunOptions struct {
 	PlannerOwnedVerification bool
 	MaxTokensOverride        int
 	DisableThinking          bool
+	UseActiveModel           bool
 	Telemetry                *telemetry.Recorder
 	ConfigSourcePath         string
+	ScopeContract            PlanScopeContract
 }
 
 type MultiFlag []string
@@ -49,9 +51,12 @@ type Options struct {
 	ReviewSessionID          string
 	JSONEvents               bool
 	DisableThinking          bool
+	UseActiveModel           bool
 	MaxTokens                int
 	RequiredEditPaths        MultiFlag
 	AllowedEditPaths         MultiFlag
+	EditSetObligations       EditSetObligations
+	ScopeContract            PlanScopeContract
 	PlannerOwnedVerification bool
 	AllowBuildTests          bool
 	SkipReviewRepair         bool
@@ -169,21 +174,22 @@ type ReviewRepairEvidence struct {
 const PhaseEvidenceSchemaVersion = "idiom.phase_evidence.v1"
 
 type PhaseEvidenceBundle struct {
-	SchemaVersion    string                 `json:"schema_version"`
-	Phase            string                 `json:"phase"`
-	GeneratedAt      string                 `json:"generated_at"`
-	ChangedPaths     []string               `json:"changed_paths,omitempty"`
-	RequiredPaths    []string               `json:"required_paths,omitempty"`
-	AllowedPaths     []string               `json:"allowed_paths,omitempty"`
-	Packet           PhaseEvidencePacket    `json:"packet"`
-	ExecutorHandoff  phaseEvidenceHandoff   `json:"executor_handoff"`
-	SubmittedPlan    []PhaseEvidenceCheck   `json:"submitted_plan_state,omitempty"`
-	SourceSanity     []PhaseEvidenceCheck   `json:"source_sanity,omitempty"`
-	PatchHygiene     PhaseEvidenceCheck     `json:"patch_hygiene"`
-	SuggestedTests   []PhaseEvidenceTest    `json:"suggested_tests,omitempty"`
-	UnresolvedGaps   []string               `json:"unresolved_gaps,omitempty"`
-	OpenObligations  []string               `json:"open_obligations,omitempty"`
-	DecisionEvidence []phaseEvidenceSummary `json:"decision_evidence,omitempty"`
+	SchemaVersion      string                 `json:"schema_version"`
+	Phase              string                 `json:"phase"`
+	GeneratedAt        string                 `json:"generated_at"`
+	ChangedPaths       []string               `json:"changed_paths,omitempty"`
+	RequiredPaths      []string               `json:"required_paths,omitempty"`
+	AllowedPaths       []string               `json:"allowed_paths,omitempty"`
+	EditSetObligations EditSetObligations     `json:"edit_set_obligations,omitempty"`
+	Packet             PhaseEvidencePacket    `json:"packet"`
+	ExecutorHandoff    phaseEvidenceHandoff   `json:"executor_handoff"`
+	SubmittedPlan      []PhaseEvidenceCheck   `json:"submitted_plan_state,omitempty"`
+	SourceSanity       []PhaseEvidenceCheck   `json:"source_sanity,omitempty"`
+	PatchHygiene       PhaseEvidenceCheck     `json:"patch_hygiene"`
+	SuggestedTests     []PhaseEvidenceTest    `json:"suggested_tests,omitempty"`
+	UnresolvedGaps     []string               `json:"unresolved_gaps,omitempty"`
+	OpenObligations    []string               `json:"open_obligations,omitempty"`
+	DecisionEvidence   []phaseEvidenceSummary `json:"decision_evidence,omitempty"`
 }
 
 type PhaseEvidencePacket struct {

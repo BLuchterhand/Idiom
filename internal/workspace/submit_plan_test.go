@@ -1541,8 +1541,8 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 	}
 }
 
-func TestSubmitPlanRejectsStringifiedMultilineEditsBeforeValidation(t *testing.T) {
-	_, root := newSubmitPlanTestManager(t)
+func TestSubmitPlanRepairsStringifiedMultilineEditsBeforeValidation(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "x.txt", "keep\nsecond\n")
 	inner := `[{"path":"x.txt","old_text":"keep
 second
@@ -1557,14 +1557,19 @@ second
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	_, err = DecodeToolRequestJSON(payload)
-	if err == nil {
-		t.Fatalf("expected stringified edits to be rejected before submit_plan validation")
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should repair stringified edits: %v", err)
 	}
-	for _, want := range []string{"edits", "string"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("rejection should include %q, got %v", want, err)
-		}
+	if len(req.Edits) != 1 || req.Edits[0].Path != "x.txt" {
+		t.Fatalf("unexpected repaired edits: %#v", req.Edits)
+	}
+	result := mgr.Execute(context.Background(), req)
+	if result.Error == "" {
+		t.Fatalf("submit_plan should still reject the repaired no-op edit")
+	}
+	if !strings.Contains(result.Error, "old_text and new_text are identical") {
+		t.Fatalf("no-op validation should run after repair, got %q", result.Error)
 	}
 	if _, statErr := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(statErr) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", statErr)

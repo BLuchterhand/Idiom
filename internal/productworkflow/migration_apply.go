@@ -162,6 +162,23 @@ func ApplyProductStatusMigration(options ProductStatusMigrationApplyOptions) Pro
 	workflowTemp := filepath.Join(state.absEffortRoot, "workflow_state.json.status-migration.tmp")
 	eventsTemp := filepath.Join(state.absEffortRoot, filepath.FromSlash(state.eventsPath)+".status-migration.tmp")
 	indexPath := filepath.Join(state.absEffortsRoot, "index.json")
+	indexTemp := indexPath + ".status-migration.tmp"
+
+	if err := rejectProductStatusMigrationTempSymlink(workflowTemp); err != nil {
+		plan.addBlocker("unsafe_workflow_state_temp_symlink", "workflow_state.json", err.Error())
+		plan.Status = "blocked"
+		return plan
+	}
+	if err := rejectProductStatusMigrationTempSymlink(eventsTemp); err != nil {
+		plan.addBlocker("unsafe_events_temp_symlink", state.eventsPath, err.Error())
+		plan.Status = "blocked"
+		return plan
+	}
+	if err := rejectProductStatusMigrationTempSymlink(indexTemp); err != nil {
+		plan.addBlocker("unsafe_effort_index_temp_symlink", "efforts/index.json", err.Error())
+		plan.Status = "blocked"
+		return plan
+	}
 
 	if err := writeMigrationTempFile(workflowTemp, updatedWorkflowBytes); err != nil {
 		plan.addBlocker("workflow_state_stage_error", "workflow_state.json", err.Error())
@@ -535,6 +552,9 @@ func writeMigrationTempFile(path string, data []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
+	if err := rejectProductStatusMigrationTempSymlink(path); err != nil {
+		return err
+	}
 	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
@@ -558,6 +578,20 @@ func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
 	}
 	if err := syncDirBestEffort(filepath.Dir(path)); err != nil {
 		return err
+	}
+	return nil
+}
+
+func rejectProductStatusMigrationTempSymlink(path string) error {
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("temp path %q must not be a symlink", filepath.Base(path))
 	}
 	return nil
 }

@@ -17,6 +17,8 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 		"submit_plan.edits was emitted as a quoted string",
 		"JSON array value, not a string",
 		`"edits":[`,
+		`"start_line":10`,
+		"Prefer start_line/end_line+content",
 		"complete executable source text",
 		"not placeholders or prose",
 	} {
@@ -98,6 +100,43 @@ func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	}
 	if len(turnMessages) != 1 {
 		t.Fatalf("turn messages = %d, want 1", len(turnMessages))
+	}
+}
+
+func TestRunnerTurnControllerRecordRejectedResultRecordsRejectionFingerprint(t *testing.T) {
+	collected := []workspace.ToolResult{}
+	turnMessages := []llama.ChatMessage{}
+	lastToolKey := ""
+	var lastToolResult *workspace.ToolResult
+	consecutiveRejected := 0
+	consecutiveNoProgress := 0
+	metrics := &runnerMetrics{}
+	requestBudget := newRunnerRequestBudgetState(2)
+	currentFingerprint := "harness_feedback|{}"
+	recorder := runnerTurnRecorder{
+		collectedResults:          &collected,
+		turnMessages:              &turnMessages,
+		lastToolKey:               &lastToolKey,
+		lastToolResult:            &lastToolResult,
+		consecutiveRejectedAction: &consecutiveRejected,
+		consecutiveNoProgress:     &consecutiveNoProgress,
+		metrics:                   metrics,
+	}
+	controller := runnerTurnController{
+		requestBudget:      &requestBudget,
+		recorder:           &recorder,
+		currentFingerprint: &currentFingerprint,
+	}
+
+	req := workspace.ToolRequest{Tool: "harness_feedback"}
+	controller.recordRejectedResult(3, nil, req, workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: "Tool unavailable on current surface",
+		Error:   "harness_feedback is not available now",
+	}, "tool_rejected")
+
+	if got := requestBudget.fingerprint.rejected[currentFingerprint]; got != "Tool unavailable on current surface" {
+		t.Fatalf("rejected fingerprint = %q, want recorded summary", got)
 	}
 }
 

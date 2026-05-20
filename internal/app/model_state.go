@@ -20,6 +20,7 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/llama"
 	"idiom/internal/mcp"
+	"idiom/internal/planexecute"
 	"idiom/internal/promptstack"
 	"idiom/internal/transcript"
 	"idiom/internal/util"
@@ -151,6 +152,7 @@ type Model struct {
 	mcpRegistry           *mcp.Registry
 	runner                *agent.Runner
 	events                chan tea.Msg
+	eventWaitArmed        bool
 
 	width    int
 	height   int
@@ -183,10 +185,12 @@ type Model struct {
 	lastAssistantReasoningContent string
 	agentModeName                 string
 	forcedTaskFamily              string
+	suppressPromptTranscript      bool
 	plannerOwnedVerification      bool
 	maxTokensOverride             int
 	disableThinkingOverride       bool
 	planExecuteActive             bool
+	planExecuteScopeContract      planexecute.PlanScopeContract
 	modelThinkingFloor            bool
 	modelSwapped                  bool
 	traceMode                     traceDisplayMode
@@ -940,6 +944,17 @@ func (m *Model) contextSourceNames() []string {
 }
 
 func (m *Model) logMessage(role, content string) {
+	if m != nil && m.suppressPromptTranscript {
+		if m.debugLogger != nil {
+			redacted := content
+			switch strings.TrimSpace(role) {
+			case "user", "assistant":
+				redacted = fmt.Sprintf("suppressed nested %s message (%d chars)", strings.TrimSpace(role), len(content))
+			}
+			_ = m.debugLogger.LogRunEvent("internal_"+strings.TrimSpace(role), redacted)
+		}
+		return
+	}
 	m.emitJSONMessage(role, content)
 	if m.debugLogger == nil {
 		return
@@ -1345,6 +1360,11 @@ func (m *Model) SetMaxTokensOverride(maxTokens int) {
 
 func (m *Model) SetDisableThinkingOverride(disabled bool) {
 	m.disableThinkingOverride = disabled
+}
+
+func (m *Model) SetPlanExecuteScopeContract(contract planexecute.PlanScopeContract) {
+	m.planExecuteActive = true
+	m.planExecuteScopeContract = contract.Normalized()
 }
 
 func (m *Model) clearContextError() {

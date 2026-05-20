@@ -188,6 +188,67 @@ func TestAuditEventsFlagsGateOpenObligationRefsNotOpenAtGateSequence(t *testing.
 	}
 }
 
+func TestAuditEventsOrdersRepeatedContractRunsByOccurrenceBeforeSequence(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	firstRun := time.Date(2026, 5, 13, 18, 55, 0, 0, time.UTC)
+	secondRun := firstRun.Add(time.Hour)
+	openObligation := func(at time.Time, seq int64) Event {
+		return mustAutonomyEvent(NewObligationStateEvent(EventObligationOpened, contract, Obligation{
+			ObligationID: "obl-evidence",
+			Kind:         ObligationEvidence,
+			Status:       ObligationOpen,
+			Owner:        OwnerSidecar,
+			RequiredBy:   "sidecar_request",
+		}, at, seq))
+	}
+	resolveObligation := func(at time.Time, seq int64) Event {
+		return mustAutonomyEvent(NewObligationStateEvent(EventObligationResolved, contract, Obligation{
+			ObligationID: "obl-evidence",
+			Kind:         ObligationEvidence,
+			Status:       ObligationResolved,
+			Owner:        OwnerSidecar,
+			RequiredBy:   "sidecar_request",
+			EvidenceRef:  "event-context-pack-result",
+		}, at, seq))
+	}
+	firstCompiled := mustAutonomyEvent(NewContractCompiledEvent(contract, firstRun, 1))
+	firstOpened := openObligation(firstRun.Add(time.Second), 2)
+	firstResolved := resolveObligation(firstRun.Add(2*time.Second), 3)
+	secondCompiled := mustAutonomyEvent(NewContractCompiledEvent(contract, secondRun, 1))
+	secondOpened := openObligation(secondRun.Add(time.Second), 2)
+	secondGate := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:            GateReadOnly,
+		Decision:        PolicyReject,
+		InvariantID:     "sidecar.read_only_profile",
+		ReasonCode:      "read_only_contract",
+		ToolName:        "context_pack",
+		ObligationRefs:  []string{"obl-evidence"},
+		OpenObligations: []string{"obl-evidence"},
+		Source:          "audit_test",
+	}, secondRun.Add(2*time.Second), 4))
+	secondResolved := resolveObligation(secondRun.Add(3*time.Second), 5)
+
+	report := AuditEvents([]Event{
+		secondGate,
+		firstResolved,
+		secondOpened,
+		firstOpened,
+		secondResolved,
+		secondCompiled,
+		firstCompiled,
+	}, EventAuditOptions{})
+
+	if len(report.GateCoverage.InconsistentOpenObligationRefs) != 0 {
+		t.Fatalf("restarted sequence numbers from a later run should not make open refs inconsistent: %#v", report.GateCoverage.InconsistentOpenObligationRefs)
+	}
+	if len(report.ObligationCoverage.UnmatchedObligations) != 0 {
+		t.Fatalf("restarted sequence numbers from a later run should not make resolutions unmatched: %#v", report.ObligationCoverage.UnmatchedObligations)
+	}
+	if len(report.ObligationCoverage.UnresolvedObligations) != 0 || !report.AllClear {
+		t.Fatalf("expected all-clear repeated-run audit, all_clear=%v obligations=%#v findings=%#v", report.AllClear, report.ObligationCoverage, report.Findings)
+	}
+}
+
 func TestAuditEventsReportsMissingContractID(t *testing.T) {
 	event := Event{
 		SchemaVersion: EventSchemaVersion,

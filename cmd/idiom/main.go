@@ -22,6 +22,7 @@ import (
 	"idiom/internal/app"
 	"idiom/internal/config"
 	"idiom/internal/llama"
+	"idiom/internal/planexecute"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
@@ -34,6 +35,7 @@ type runOptions struct {
 	MaxTokensOverride        int
 	DisableThinking          bool
 	Telemetry                *telemetry.Recorder
+	ScopeContract            planexecute.PlanScopeContract
 }
 
 type promptRunner func(config.Config, string, runOptions, io.Writer) (string, error)
@@ -715,6 +717,9 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	model.SetDisableThinkingOverride(opts.DisableThinking)
+	if strings.TrimSpace(opts.TaskFamily) == "plan_then_execute_planner" {
+		model.SetPlanExecuteScopeContract(opts.ScopeContract)
+	}
 	logModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())
 
 	if opts.Resume != "" {
@@ -789,20 +794,22 @@ func modelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskF
 					sessionID = sessionIDFromPath(debugLogPath)
 				}
 			}
-			if strings.TrimSpace(taskFamily) == "implementation" {
-				fields := map[string]any{
-					"mode":          mode,
-					"task_family":   taskFamily,
-					"session_id":    sessionID,
-					"summary_event": "session_summary",
-				}
-				if strings.TrimSpace(debugLogPath) != "" {
-					fields["debug_log_path"] = filepath.Clean(debugLogPath)
-				}
-				logCLIPhase(rec, "implement_session_closeout", fields)
+			fields := map[string]any{
+				"mode":          mode,
+				"task_family":   taskFamily,
+				"session_id":    sessionID,
+				"summary_event": "session_summary",
+			}
+			if strings.TrimSpace(debugLogPath) != "" {
+				fields["debug_log_path"] = filepath.Clean(debugLogPath)
 			}
 			if model != nil {
 				model.Close()
+				fields["model_closed"] = true
+			}
+			logCLIPhase(rec, "model_session_closeout", fields)
+			if strings.TrimSpace(taskFamily) == "implementation" {
+				logCLIPhase(rec, "implement_session_closeout", fields)
 			}
 		})
 	}

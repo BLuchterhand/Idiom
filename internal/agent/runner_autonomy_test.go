@@ -67,6 +67,13 @@ func TestRunnerAutonomyContractMapsMutationGatesToObligations(t *testing.T) {
 		len(contract.Metadata.ProductSignals) != len(autonomy.DefaultProductSignals()) {
 		t.Fatalf("contract should carry generic client/product metadata: %#v", contract.Metadata)
 	}
+	writeID := runnerAutonomyObligationID(autonomy.ObligationWrite, "internal/agent/runner.go")
+	if !slices.Contains(contract.Readiness.OpenObligationRefs, writeID) {
+		t.Fatalf("readiness should map abstract write obligation to typed obligation id %q: %#v", writeID, contract.Readiness.OpenObligationRefs)
+	}
+	if slices.Contains(contract.Readiness.OpenObligationRefs, "write") {
+		t.Fatalf("readiness must not expose abstract obligation names as refs: %#v", contract.Readiness.OpenObligationRefs)
+	}
 }
 
 func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *testing.T) {
@@ -442,6 +449,65 @@ func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *
 	}
 }
 
+func TestRunnerAutonomyRecorderOpensBeforeInitialResolvedObligations(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "explore",
+		TaskFamily:        "analysis",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"read_file"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read README.md lines 1-20", Output: "README.md"},
+		{Tool: "read_file", Summary: "Read docs/decisioning-north-star.md lines 1-20", Output: "docs/decisioning-north-star.md"},
+	}
+	if !readOnlyAnalysisReadyFromEvidence(results) {
+		t.Fatal("read-only evidence fixture should start with the evidence obligation resolved")
+	}
+	policy := RunPolicy{MaxToolSteps: 5, MaxModelCalls: 2}
+	recorder := newRunnerAutonomyRecorder(runner, policy, brief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+
+	recorder.emitContractStarted(brief)
+	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", results)
+	recorder.emitLoopCloseout("completed")
+	recorder.emitBudgetGate(policy, runnerMetrics{ToolCalls: 2, ModelCalls: 1}, "completed", false)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	const evidenceID = "obl-evidence-read-only"
+	openedSeq, resolvedSeq := int64(0), int64(0)
+	for _, event := range events {
+		if event.Obligation == nil || event.Obligation.ObligationID != evidenceID {
+			continue
+		}
+		switch event.Type {
+		case autonomy.EventObligationOpened:
+			openedSeq = event.Sequence
+		case autonomy.EventObligationResolved:
+			resolvedSeq = event.Sequence
+		}
+	}
+	if openedSeq == 0 || resolvedSeq == 0 || openedSeq >= resolvedSeq {
+		t.Fatalf("initially resolved obligation must emit opened before resolved, opened=%d resolved=%d events=%#v", openedSeq, resolvedSeq, events)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.ObligationCoverage.UnmatchedObligations) != 0 {
+		t.Fatalf("initially resolved obligation should have a matching opened event: %#v", report.ObligationCoverage.UnmatchedObligations)
+	}
+	if !report.AllClear {
+		t.Fatalf("expected all-clear read-only lifecycle audit, all_clear=%v obligations=%#v findings=%#v", report.AllClear, report.ObligationCoverage, report.Findings)
+	}
+}
+
 func TestRunnerAutonomyRecorderWriteGateResolvesOnlyChangedRequiredPath(t *testing.T) {
 	root := t.TempDir()
 	var runEvents []RunEvent
@@ -568,6 +634,51 @@ func TestRunnerAutonomyRecorderRejectedGateKeepsObligationUnresolved(t *testing.
 	}
 	if hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, writeObligationID) {
 		t.Fatalf("rejected write gate must not emit obligation_resolved for %q", writeObligationID)
+	}
+}
+
+func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligations(t *testing.T) {
+	root := t.TempDir()
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:                 "implement",
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"internal/agent/runner.go"},
+		AllowedTools:         []string{"write_file", "shell"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+
+	recorder.emitContractStarted(brief)
+	recorder.emitWriteGate(workspace.ToolRequest{Tool: "write_file", Path: "internal/agent/runner.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/agent/runner.go"})
+	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", []workspace.ToolResult{
+		{Tool: "write_file", Summary: "Wrote internal/agent/runner.go"},
+	})
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	writeID := runnerAutonomyObligationID(autonomy.ObligationWrite, "internal/agent/runner.go")
+	if slices.Contains(report.GateCoverage.OpenObligationRefs, writeID) {
+		t.Fatalf("completion gate must not report resolved write obligation %q as open: %#v", writeID, report.GateCoverage.OpenObligationRefs)
+	}
+	if len(report.GateCoverage.InconsistentOpenObligationRefs) != 0 {
+		t.Fatalf("completion gate reported non-open obligations as open: %#v", report.GateCoverage.InconsistentOpenObligationRefs)
 	}
 }
 

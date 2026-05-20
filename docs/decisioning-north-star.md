@@ -154,6 +154,51 @@ Good: run metadata or a command mode declares the contract; the model receives a
 
 Bad: a strategy prompt or atom spec includes a magic phrase that a harness component parses to override route classification.
 
+## Typed Authority Contracts
+
+Prompts may explain a contract, but they are not the contract's source of
+truth. When a lane needs authority or obligations, compile them once into a
+typed route/runtime contract and carry that contract through CLI, TUI, runner,
+executor, review, resume, recovery, telemetry, and audit.
+
+Keep these fields distinct:
+
+- required coverage paths: every path must be edited, source-satisfied, or
+  explicitly blocked
+- allowed candidate paths: safe write/search scope, not mandatory coverage
+- exact edit snippets: source/current-state anchors that must survive into the
+  edit or `submit_plan`
+- edit-set obligations: run-level requirements such as at least one test edit
+  or at least one implementation-shaped edit
+- evidence paths: facts observed in packets, logs, commands, or source reads
+- recovery state: which typed obligation already failed and which retry is
+  still allowed
+
+Do not infer hard authority from generated prompt text, examples, tool schemas,
+context packets, transcript excerpts, recovery prose, or headings such as
+`editable files`. Those may localize or explain work, but they must enter the
+typed contract as candidate scope unless a human, command mode, durable
+artifact, or explicit structured field makes them required coverage. If a
+recovery retry adds a new obligation, store it in the typed contract and progress
+state before the next model call; do not rely on the retry addendum to be
+rediscovered later.
+
+## Git History As Decision Evidence
+
+Repository history is part of Idiom's memory substrate. Before changing,
+reverting, or simplifying established behavior, use focused history evidence
+when the existing rationale is not obvious: line history, symbol history, blame,
+or a narrow `git log` over affected paths. Old rationale is not a veto, but it
+must be considered as evidence alongside current logs, tests, audits, and
+product requirements.
+
+Commits should preserve the decision context needed by future agents. For
+non-trivial changes, the commit body should explain why the change was needed,
+which failure or requirement it addresses, what contract or tradeoff was chosen,
+what meaningful alternatives or reversions were avoided, and what verification
+supports the result. A diff tells what changed; the commit should tell why this
+change should survive.
+
 ## Prompt Surface Ownership
 
 Prompting has a proper place: stable working style, domain norms, and

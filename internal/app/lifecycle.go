@@ -389,7 +389,7 @@ func (m *Model) Init() tea.Cmd {
 	return tea.Batch(
 		textarea.Blink,
 		m.spinner.Tick,
-		waitForEvent(m.events),
+		m.waitForEventCmd(),
 		func() tea.Msg {
 			go m.bootstrap()
 			return nil
@@ -399,6 +399,12 @@ func (m *Model) Init() tea.Cmd {
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	rearmEventWait := false
+	if wrapped, ok := msg.(eventMsg); ok {
+		m.eventWaitArmed = false
+		msg = wrapped.msg
+		rearmEventWait = true
+	}
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -527,7 +533,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.ready && m.syncInputHeight() != oldInputHeight {
 		m.resize()
 	}
-	cmds = append(cmds, inputCmd, waitForEvent(m.events))
+	cmds = append(cmds, inputCmd)
+	if rearmEventWait {
+		cmds = append(cmds, m.waitForEventCmd())
+	}
 	return m, tea.Batch(cmds...)
 }
 

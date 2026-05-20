@@ -33,6 +33,7 @@ type WorkerRuntimeBrief struct {
 	PermissionProfile    string                `json:"permission_profile,omitempty"`
 	TargetRefs           []string              `json:"target_refs,omitempty"`
 	RequiredEditPaths    []string              `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths     []string              `json:"allowed_edit_paths,omitempty"`
 	RequiredEditSnippets []RequiredEditSnippet `json:"required_edit_snippets,omitempty"`
 	EvidencePaths        []string              `json:"evidence_paths,omitempty"`
 	ChangedPaths         []string              `json:"changed_paths,omitempty"`
@@ -106,6 +107,7 @@ type RunState struct {
 	Permission           string              `json:"permission_profile,omitempty"`
 	TargetRefs           []string            `json:"target_refs,omitempty"`
 	RequiredEditPaths    []string            `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths     []string            `json:"allowed_edit_paths,omitempty"`
 	EvidencePaths        []string            `json:"evidence_paths,omitempty"`
 	ChangedPaths         []string            `json:"changed_paths,omitempty"`
 	Constraints          []string            `json:"constraints,omitempty"`
@@ -734,6 +736,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state = MergeRuntimeBriefIntoState(WorkerRuntimeBrief{}, state)
 	state.TargetRefs = uniqueNonEmpty(state.TargetRefs)
 	state.RequiredEditPaths = uniqueNonEmpty(state.RequiredEditPaths)
+	state.AllowedEditPaths = uniqueNonEmpty(state.AllowedEditPaths)
 	state.EvidencePaths = uniqueNonEmpty(state.EvidencePaths)
 	state.ChangedPaths = uniqueNonEmpty(state.ChangedPaths)
 	state.Constraints = uniqueNonEmpty(state.Constraints)
@@ -872,6 +875,9 @@ func MergeRuntimeBriefIntoStateDelta(brief WorkerRuntimeBrief, state RunState) R
 	if len(state.RequiredEditPaths) == 0 {
 		state.RequiredEditPaths = append([]string(nil), brief.RequiredEditPaths...)
 	}
+	if len(state.AllowedEditPaths) == 0 {
+		state.AllowedEditPaths = append([]string(nil), brief.AllowedEditPaths...)
+	}
 	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
 	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
 	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
@@ -908,6 +914,9 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	}
 	if len(state.RequiredEditPaths) == 0 {
 		state.RequiredEditPaths = append([]string(nil), brief.RequiredEditPaths...)
+	}
+	if len(state.AllowedEditPaths) == 0 {
+		state.AllowedEditPaths = append([]string(nil), brief.AllowedEditPaths...)
 	}
 	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
 	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
@@ -974,6 +983,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.VerificationContract = strings.TrimSpace(brief.VerificationContract)
 	brief.TargetRefs = uniqueNonEmpty(brief.TargetRefs)
 	brief.RequiredEditPaths = uniqueNonEmpty(brief.RequiredEditPaths)
+	brief.AllowedEditPaths = uniqueNonEmpty(brief.AllowedEditPaths)
 	brief.RequiredEditSnippets = normalizeRequiredEditSnippets(brief.RequiredEditSnippets)
 	brief.EvidencePaths = uniqueNonEmpty(brief.EvidencePaths)
 	brief.ChangedPaths = uniqueNonEmpty(brief.ChangedPaths)
@@ -1173,6 +1183,7 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		brief.Objective != "" ||
 		len(brief.TargetRefs) > 0 ||
 		len(brief.RequiredEditPaths) > 0 ||
+		len(brief.AllowedEditPaths) > 0 ||
 		len(brief.RequiredEditSnippets) > 0 ||
 		len(brief.AllowedTools) > 0 ||
 		len(brief.ForbiddenTools) > 0 ||

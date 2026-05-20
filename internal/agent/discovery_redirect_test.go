@@ -63,6 +63,23 @@ func newGoTestWorkspace(t *testing.T) *workspace.Manager {
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
 }
 
+func newGoWorkspaceWithLargeTestFile(t *testing.T) *workspace.Manager {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.test\n"), 0o644); err != nil {
+		t.Fatalf("go.mod: %v", err)
+	}
+	testPath := filepath.Join(root, "cmd", "idiom", "product_workflow_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	body := "package main\n\nfunc TestProductWorkflow(t *testing.T) {}\n" + strings.Repeat("\n", smallFileRedirectThreshold+25)
+	if err := os.WriteFile(testPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("product_workflow_test.go: %v", err)
+	}
+	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
+}
+
 func newTestWorkspaceWithFiles(t *testing.T, files map[string]string) *workspace.Manager {
 	t.Helper()
 	root := t.TempDir()
@@ -76,6 +93,25 @@ func newTestWorkspaceWithFiles(t *testing.T, files map[string]string) *workspace
 		}
 	}
 	return workspace.NewManager(config.Workspace{Root: root, CWD: root})
+}
+
+func TestReadFileRedirectsLargeTestFileToOutline(t *testing.T) {
+	ws := newGoWorkspaceWithLargeTestFile(t)
+	d := NewDiscoveryRedirect()
+
+	decision := d.Consider(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "cmd/idiom/product_workflow_test.go",
+	}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatal("expected large unbounded test-file read to redirect")
+	}
+	if decision.Capability != workspace.CapFileOutline {
+		t.Fatalf("capability: want %s, got %s", workspace.CapFileOutline, decision.Capability)
+	}
+	if !strings.Contains(decision.Result.Output, `"tool":"go_file_outline"`) {
+		t.Fatalf("expected outline candidate request, got:\n%s", decision.Result.Output)
+	}
 }
 
 // TestSearchContentRoutesByPathScope locks in the decision: when the
@@ -274,10 +310,10 @@ func TestRedirectRoutesCppReadFile(t *testing.T) {
 	}
 }
 
-func TestRedirectSkipsTestLikeReadFileOutline(t *testing.T) {
+func TestRedirectSkipsSmallTestLikeReadFileOutline(t *testing.T) {
 	ws := newTestWorkspaceWithFiles(t, map[string]string{
-		"native/tests/test_item_lifecycle_system.cpp": strings.Repeat("TEST_CASE(\"[REC-027] captures previous band\") {}\n", 420),
-		"pkg/widget_test.go":                          strings.Repeat("func TestWidget(t *testing.T) {}\n", 420),
+		"native/tests/test_item_lifecycle_system.cpp": strings.Repeat("TEST_CASE(\"[REC-027] captures previous band\") {}\n", 20),
+		"pkg/widget_test.go":                          strings.Repeat("func TestWidget(t *testing.T) {}\n", 20),
 	})
 
 	for _, path := range []string{
@@ -288,7 +324,7 @@ func TestRedirectSkipsTestLikeReadFileOutline(t *testing.T) {
 			d := NewDiscoveryRedirect()
 			decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: path}, ws)
 			if decision.ShouldRedirect {
-				t.Fatalf("test-like source read should execute directly, got redirect to %s", decision.Capability)
+				t.Fatalf("small test-like source read should execute directly, got redirect to %s", decision.Capability)
 			}
 		})
 	}
@@ -336,6 +372,24 @@ func TestRedirectResultNamesReplacementTool(t *testing.T) {
 	}
 	if strings.Contains(output, "Try:") || strings.Contains(output, "Next step:") {
 		t.Fatalf("redirect output should avoid imperative strategy menu text: %q", output)
+	}
+}
+
+func TestRedirectResultUsesCodeNavigateWhenDirectToolHidden(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+	d.SetAllowedTools([]string{"search_content", "read_file", "code_navigate", "submit_plan"})
+
+	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: "main.go"}, ws)
+	if !decision.ShouldRedirect {
+		t.Fatalf("expected redirect")
+	}
+	output := decision.Result.Output
+	if !strings.Contains(output, `"tool":"code_navigate"`) || !strings.Contains(output, `"capability":"file_outline"`) {
+		t.Fatalf("redirect should point at code_navigate file_outline candidate, got: %q", output)
+	}
+	if strings.Contains(output, `"tool":"go_file_outline"`) || strings.Contains(output, "via go_read_symbol") {
+		t.Fatalf("redirect leaked hidden direct Go tools into candidate guidance: %q", output)
 	}
 }
 

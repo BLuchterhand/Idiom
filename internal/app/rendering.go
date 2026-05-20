@@ -272,7 +272,7 @@ func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss
 	b.WriteString(label)
 	b.WriteString("\n")
 	if useGlamour && m.mdRenderer != nil {
-		rendered, err := m.mdRenderer.Render(content)
+		rendered, err := m.mdRenderer.Render(protectControlMarkersForMarkdown(content))
 		if err == nil {
 			b.WriteString(strings.TrimRight(rendered, "\n"))
 		} else {
@@ -282,6 +282,13 @@ func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss
 		b.WriteString(msgBodyStyle.Render(content))
 	}
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func protectControlMarkersForMarkdown(content string) string {
+	replacer := strings.NewReplacer(
+		"<<QUESTION>>", "`<<QUESTION>>`",
+	)
+	return replacer.Replace(content)
 }
 
 func messageRenderFingerprint(messages []llama.ChatMessage) uint64 {

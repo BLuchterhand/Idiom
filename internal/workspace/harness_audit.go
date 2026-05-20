@@ -47,25 +47,37 @@ type harnessAuditReport struct {
 // The eval suite's "fewer broad reads / fewer repeated searches"
 // success criteria are otherwise unmeasurable.
 type harnessAuditContextCache struct {
-	Rows                    int     `json:"rows"`
-	Fresh                   int     `json:"fresh"`
-	Stale                   int     `json:"stale"`
-	NonCurrent              int     `json:"non_current"`
-	CurrentIndexID          string  `json:"current_index_id,omitempty"`
-	BytesStored             int64   `json:"bytes_stored"`
-	OldestCreated           string  `json:"oldest_created,omitempty"`
-	NewestCreated           string  `json:"newest_created,omitempty"`
-	WorkspaceStateKeyedRows int     `json:"workspace_state_keyed_rows"`
-	ContractRows            int     `json:"contract_rows"`
-	UnresolvedGapRows       int     `json:"unresolved_gap_rows"`
-	SessionHits             int64   `json:"session_hits"`
-	SessionMisses           int64   `json:"session_misses"`
-	SessionWrites           int64   `json:"session_writes"`
-	FreshnessHits           int64   `json:"freshness_hits"`
-	StalePreventions        int64   `json:"stale_preventions"`
-	StaleRowMisses          int64   `json:"stale_row_misses"`
-	HitRate                 float64 `json:"hit_rate,omitempty"`
-	StaleRatio              float64 `json:"stale_ratio,omitempty"`
+	Rows                                  int            `json:"rows"`
+	Fresh                                 int            `json:"fresh"`
+	Stale                                 int            `json:"stale"`
+	NonCurrent                            int            `json:"non_current"`
+	CurrentRows                           int            `json:"current_rows"`
+	CurrentFresh                          int            `json:"current_fresh"`
+	CurrentStale                          int            `json:"current_stale"`
+	HistoricalRows                        int            `json:"historical_rows"`
+	CurrentIndexID                        string         `json:"current_index_id,omitempty"`
+	BytesStored                           int64          `json:"bytes_stored"`
+	OldestCreated                         string         `json:"oldest_created,omitempty"`
+	NewestCreated                         string         `json:"newest_created,omitempty"`
+	WorkspaceStateKeyedRows               int            `json:"workspace_state_keyed_rows"`
+	ContractRows                          int            `json:"contract_rows"`
+	UnresolvedGapRows                     int            `json:"unresolved_gap_rows"`
+	FreshUnresolvedGapRows                int            `json:"fresh_unresolved_gap_rows"`
+	StaleUnresolvedGapRows                int            `json:"stale_unresolved_gap_rows"`
+	CurrentUnresolvedGapRows              int            `json:"current_unresolved_gap_rows"`
+	CurrentFreshUnresolvedGapRows         int            `json:"current_fresh_unresolved_gap_rows"`
+	UnresolvedGapReasonCounts             map[string]int `json:"unresolved_gap_reason_counts,omitempty"`
+	CurrentUnresolvedGapReasonCounts      map[string]int `json:"current_unresolved_gap_reason_counts,omitempty"`
+	CurrentFreshUnresolvedGapReasonCounts map[string]int `json:"current_fresh_unresolved_gap_reason_counts,omitempty"`
+	SessionHits                           int64          `json:"session_hits"`
+	SessionMisses                         int64          `json:"session_misses"`
+	SessionWrites                         int64          `json:"session_writes"`
+	FreshnessHits                         int64          `json:"freshness_hits"`
+	StalePreventions                      int64          `json:"stale_preventions"`
+	StaleRowMisses                        int64          `json:"stale_row_misses"`
+	HitRate                               float64        `json:"hit_rate,omitempty"`
+	StaleRatio                            float64        `json:"stale_ratio,omitempty"`
+	CurrentStaleRatio                     float64        `json:"current_stale_ratio,omitempty"`
 }
 
 type harnessAuditFreshnessHealth struct {
@@ -878,8 +890,55 @@ func (m *Manager) auditContractEventCoverage(paths []string) (*autonomy.EventAud
 	if len(events) == 0 {
 		return nil, warnings
 	}
+	events = dedupeAndSortHarnessAuditAutonomyEvents(events)
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	return &report, warnings
+}
+
+func dedupeAndSortHarnessAuditAutonomyEvents(events []autonomy.Event) []autonomy.Event {
+	if len(events) < 2 {
+		return events
+	}
+	out := make([]autonomy.Event, 0, len(events))
+	seen := make(map[string]struct{}, len(events))
+	for _, event := range events {
+		eventID := strings.TrimSpace(event.EventID)
+		if eventID != "" {
+			if _, ok := seen[eventID]; ok {
+				continue
+			}
+			seen[eventID] = struct{}{}
+		}
+		out = append(out, event)
+	}
+	slices.SortStableFunc(out, func(a, b autonomy.Event) int {
+		if !a.OccurredAt.Equal(b.OccurredAt) {
+			if a.OccurredAt.IsZero() {
+				return 1
+			}
+			if b.OccurredAt.IsZero() {
+				return -1
+			}
+			if a.OccurredAt.Before(b.OccurredAt) {
+				return -1
+			}
+			return 1
+		}
+		if cmp := strings.Compare(a.ContractID, b.ContractID); cmp != 0 {
+			return cmp
+		}
+		if a.Sequence < b.Sequence {
+			return -1
+		}
+		if a.Sequence > b.Sequence {
+			return 1
+		}
+		if cmp := strings.Compare(string(a.Type), string(b.Type)); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.EventID, b.EventID)
+	})
+	return out
 }
 
 type harnessAuditLogFacts struct {
@@ -891,6 +950,7 @@ type harnessAuditLogFacts struct {
 	HasProcessStart         bool
 	HasProcessExit          bool
 	HasModelSession         bool
+	HasModelSessionCloseout bool
 	HasSessionSummary       bool
 	IsImplementConversation bool
 }
@@ -906,6 +966,7 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 	}
 	logs := make([]auditedLog, 0, len(paths))
 	activeConversationLogs := make(map[string]harnessAuditInProgressSession)
+	telemetryByConversationLog := make(map[string]auditedLog)
 
 	for _, path := range paths {
 		facts, err := readHarnessAuditLogFacts(path)
@@ -914,9 +975,24 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 			continue
 		}
 		displayPath := m.displayPath(path)
-		logs = append(logs, auditedLog{path: path, displayPath: displayPath, facts: facts})
+		log := auditedLog{path: path, displayPath: displayPath, facts: facts}
+		logs = append(logs, log)
+		conversationPath := ""
+		if facts.HasModelSession {
+			conversationPath = m.auditConversationPathFromTelemetry(facts)
+			if conversationPath != "" {
+				if _, ok := telemetryByConversationLog[filepath.Clean(conversationPath)]; !ok {
+					telemetryByConversationLog[filepath.Clean(conversationPath)] = log
+				}
+				if displayConversation := m.displayPath(conversationPath); displayConversation != "" {
+					if _, ok := telemetryByConversationLog[displayConversation]; !ok {
+						telemetryByConversationLog[displayConversation] = log
+					}
+				}
+			}
+		}
 		if facts.HasProcessStart && facts.HasModelSession && !facts.HasProcessExit && processIDAppearsRunning(facts.PID) {
-			if conversationPath := m.auditConversationPathFromTelemetry(facts); conversationPath != "" {
+			if conversationPath != "" {
 				session := harnessAuditInProgressSession{
 					TelemetryLog:    displayPath,
 					ConversationLog: m.displayPath(conversationPath),
@@ -939,6 +1015,61 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 		}
 		seenInProgress[key] = struct{}{}
 		inProgress = append(inProgress, session)
+	}
+	lookupTelemetryForConversation := func(conversationPath string, conversationFacts harnessAuditLogFacts) (auditedLog, bool) {
+		prefix := harnessAuditSessionTimestampPrefix(conversationFacts.SessionID)
+		if prefix == "" {
+			prefix = harnessAuditSessionTimestampPrefix(strings.TrimSuffix(filepath.Base(conversationPath), filepath.Ext(conversationPath)))
+		}
+		if prefix == "" {
+			return auditedLog{}, false
+		}
+		prefixes := []string{prefix}
+		if len(prefix) > len("20060102-1504") {
+			prefixes = append(prefixes, prefix[:len("20060102-1504")])
+		}
+		prefixes = util.UniqueNonEmpty(prefixes)
+		displayConversationPath := m.displayPath(conversationPath)
+		var candidates []string
+		for _, base := range util.UniqueNonEmpty([]string{m.cfg.CWD, m.cfg.Root}) {
+			for _, dir := range []string{
+				filepath.Join(base, "logs", "telemetry"),
+				filepath.Join(base, ".idiom", "logs", "telemetry"),
+			} {
+				for _, candidatePrefix := range prefixes {
+					matches, err := filepath.Glob(filepath.Join(dir, candidatePrefix+"*.jsonl"))
+					if err != nil {
+						warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: telemetry lookup failed: %v", displayConversationPath, err))
+						continue
+					}
+					candidates = append(candidates, matches...)
+				}
+			}
+		}
+		candidates = util.UniqueNonEmpty(candidates)
+		sortAuditLogPaths(candidates)
+		cleanConversationPath := filepath.Clean(conversationPath)
+		for _, candidate := range candidates {
+			candidateFacts, err := readHarnessAuditLogFacts(candidate)
+			if err != nil {
+				warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", m.displayPath(candidate), err))
+				continue
+			}
+			if !candidateFacts.HasModelSession {
+				continue
+			}
+			candidateConversationPath := m.auditConversationPathFromTelemetry(candidateFacts)
+			sameConversation := candidateConversationPath != "" &&
+				(filepath.Clean(candidateConversationPath) == cleanConversationPath ||
+					m.displayPath(candidateConversationPath) == displayConversationPath)
+			sameSession := strings.TrimSpace(conversationFacts.SessionID) != "" &&
+				strings.TrimSpace(conversationFacts.SessionID) == strings.TrimSpace(candidateFacts.SessionID)
+			if !sameConversation && !sameSession {
+				continue
+			}
+			return auditedLog{path: candidate, displayPath: m.displayPath(candidate), facts: candidateFacts}, true
+		}
+		return auditedLog{}, false
 	}
 
 	for _, log := range logs {
@@ -974,12 +1105,12 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					conversationFacts, err := readHarnessAuditLogFacts(conversationPath)
 					if err != nil {
 						warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: %v", session.ConversationLog, err))
-					} else if !conversationFacts.HasSessionSummary {
+					} else if !conversationFacts.HasSessionSummary && !facts.HasModelSessionCloseout {
 						session.Missing = append(session.Missing, "session_summary")
 					}
 				} else if strings.TrimSpace(facts.DebugLogPath) != "" {
 					warnings = append(warnings, fmt.Sprintf("%s lifecycle audit: debug log path %q is outside the audited workspace root or does not exist", displayPath, facts.DebugLogPath))
-				} else {
+				} else if !facts.HasModelSessionCloseout {
 					session.Missing = append(session.Missing, "session_summary")
 				}
 			}
@@ -1002,6 +1133,49 @@ func (m *Manager) auditIncompleteImplementSessions(paths []string) ([]harnessAud
 					activeSession.Command = "tui"
 				}
 				appendInProgress(activeSession)
+				continue
+			}
+			telemetryLog, ok := telemetryByConversationLog[filepath.Clean(log.path)]
+			if !ok {
+				telemetryLog, ok = telemetryByConversationLog[displayPath]
+			}
+			if !ok {
+				telemetryLog, ok = lookupTelemetryForConversation(log.path, facts)
+			}
+			if ok {
+				telemetryFacts := telemetryLog.facts
+				if telemetryFacts.HasProcessStart && !telemetryFacts.HasProcessExit && processIDAppearsRunning(telemetryFacts.PID) {
+					appendInProgress(harnessAuditInProgressSession{
+						TelemetryLog:    telemetryLog.displayPath,
+						ConversationLog: displayPath,
+						SessionID:       util.FirstNonEmpty(strings.TrimSpace(facts.SessionID), strings.TrimSpace(telemetryFacts.SessionID)),
+						Command:         util.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
+						PID:             telemetryFacts.PID,
+					})
+					continue
+				}
+				missing := make([]string, 0, 2)
+				if telemetryFacts.HasProcessStart && !telemetryFacts.HasProcessExit {
+					missing = append(missing, "process_exit")
+				}
+				if !telemetryFacts.HasModelSessionCloseout {
+					missing = append(missing, "session_summary")
+				}
+				if len(missing) == 0 {
+					continue
+				}
+				session := harnessAuditIncompleteSession{
+					TelemetryLog:    telemetryLog.displayPath,
+					ConversationLog: displayPath,
+					SessionID:       util.FirstNonEmpty(strings.TrimSpace(facts.SessionID), strings.TrimSpace(telemetryFacts.SessionID)),
+					Command:         util.FirstNonEmpty(strings.TrimSpace(telemetryFacts.Command), "tui"),
+					Missing:         missing,
+				}
+				key := session.TelemetryLog + "|" + session.ConversationLog
+				if _, ok := seenIncomplete[key]; !ok {
+					seenIncomplete[key] = struct{}{}
+					incomplete = append(incomplete, session)
+				}
 				continue
 			}
 			session := harnessAuditIncompleteSession{
@@ -1049,6 +1223,25 @@ func (m *Manager) auditConversationPathFromTelemetry(facts harnessAuditLogFacts)
 	return ""
 }
 
+func harnessAuditSessionTimestampPrefix(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if idx := strings.Index(sessionID, "."); idx > 0 {
+		sessionID = sessionID[:idx]
+	}
+	if len(sessionID) != len("20060102-150405") || sessionID[8] != '-' {
+		return ""
+	}
+	for i, r := range sessionID {
+		if i == 8 {
+			continue
+		}
+		if r < '0' || r > '9' {
+			return ""
+		}
+	}
+	return sessionID
+}
+
 func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -1083,6 +1276,10 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 			facts.DebugLogPath = util.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		case "session_summary":
 			facts.HasSessionSummary = true
+		case "model_session_closeout", "implement_session_closeout":
+			facts.HasModelSessionCloseout = true
+			facts.SessionID = util.FirstNonEmpty(facts.SessionID, auditStringField(record, "session_id"))
+			facts.DebugLogPath = util.FirstNonEmpty(facts.DebugLogPath, auditStringField(record, "debug_log_path"))
 		}
 		if role == "control_rails" || eventType == "control_rails" {
 			if auditControlRailsIndicateImplementation(record) {
@@ -1651,8 +1848,8 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 		findings = append(findings, harnessAuditFinding{
 			ID:             "incomplete_implement_session_lifecycle",
 			Severity:       "high",
-			Evidence:       fmt.Sprintf("%d implement session(s) missing process/session lifecycle event(s)", len(incompleteSessions)),
-			Recommendation: "Inspect termination reasons and keep lifecycle closeout generic: every implement run should end with process_exit telemetry and a session_summary conversation event.",
+			Evidence:       fmt.Sprintf("%d implementation-backed session(s) missing process/session lifecycle event(s)", len(incompleteSessions)),
+			Recommendation: "Inspect termination reasons and keep lifecycle closeout generic: every implementation-backed run should end with process_exit telemetry and a session_summary conversation event.",
 			Tools:          []string{"harness_audit"},
 		})
 	}
@@ -2215,8 +2412,8 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 		findings = append(findings, harnessAuditFinding{
 			ID:             "ranker_learning_idle",
 			Severity:       "info",
-			Evidence:       "no .idiom/ranker/weights.json or learning_log.jsonl present",
-			Recommendation: "ranker learning needs at least one observed trigger source before weight signals can accumulate",
+			Evidence:       "ranker learning is idle: no .idiom/ranker/weights.json or learning_log.jsonl present; expected before an eval, CLI, feedback, or recovery trigger records evidence",
+			Recommendation: "no action needed unless learned ranker state was expected; run or wire an observed trigger source before expecting weight signals",
 		})
 		return findings
 	}
@@ -2288,29 +2485,43 @@ func buildContextCacheAudit(root string) *harnessAuditContextCache {
 		return nil
 	}
 	cache := &harnessAuditContextCache{
-		Rows:                    stats.Rows,
-		Fresh:                   stats.Fresh,
-		Stale:                   stats.Stale,
-		NonCurrent:              stats.NonCurrent,
-		CurrentIndexID:          stats.CurrentIndexID,
-		BytesStored:             stats.BytesStored,
-		OldestCreated:           stats.OldestCreated,
-		NewestCreated:           stats.NewestCreated,
-		WorkspaceStateKeyedRows: stats.WorkspaceStateKeyedRows,
-		ContractRows:            stats.ContractRows,
-		UnresolvedGapRows:       stats.UnresolvedGapRows,
-		SessionHits:             stats.Hits,
-		SessionMisses:           stats.Misses,
-		SessionWrites:           stats.Writes,
-		FreshnessHits:           stats.FreshnessHits,
-		StalePreventions:        stats.StalePreventions,
-		StaleRowMisses:          stats.StaleRowMisses,
+		Rows:                                  stats.Rows,
+		Fresh:                                 stats.Fresh,
+		Stale:                                 stats.Stale,
+		NonCurrent:                            stats.NonCurrent,
+		CurrentRows:                           stats.CurrentRows,
+		CurrentFresh:                          stats.CurrentFresh,
+		CurrentStale:                          stats.CurrentStale,
+		HistoricalRows:                        stats.HistoricalRows,
+		CurrentIndexID:                        stats.CurrentIndexID,
+		BytesStored:                           stats.BytesStored,
+		OldestCreated:                         stats.OldestCreated,
+		NewestCreated:                         stats.NewestCreated,
+		WorkspaceStateKeyedRows:               stats.WorkspaceStateKeyedRows,
+		ContractRows:                          stats.ContractRows,
+		UnresolvedGapRows:                     stats.UnresolvedGapRows,
+		FreshUnresolvedGapRows:                stats.FreshUnresolvedGapRows,
+		StaleUnresolvedGapRows:                stats.StaleUnresolvedGapRows,
+		CurrentUnresolvedGapRows:              stats.CurrentUnresolvedGapRows,
+		CurrentFreshUnresolvedGapRows:         stats.CurrentFreshUnresolvedGapRows,
+		UnresolvedGapReasonCounts:             stats.UnresolvedGapReasonCounts,
+		CurrentUnresolvedGapReasonCounts:      stats.CurrentUnresolvedGapReasonCounts,
+		CurrentFreshUnresolvedGapReasonCounts: stats.CurrentFreshUnresolvedGapReasonCounts,
+		SessionHits:                           stats.Hits,
+		SessionMisses:                         stats.Misses,
+		SessionWrites:                         stats.Writes,
+		FreshnessHits:                         stats.FreshnessHits,
+		StalePreventions:                      stats.StalePreventions,
+		StaleRowMisses:                        stats.StaleRowMisses,
 	}
 	if total := stats.Hits + stats.Misses; total > 0 {
 		cache.HitRate = float64(stats.Hits) / float64(total)
 	}
 	if stats.Rows > 0 {
 		cache.StaleRatio = float64(stats.Stale) / float64(stats.Rows)
+	}
+	if stats.CurrentRows > 0 {
+		cache.CurrentStaleRatio = float64(stats.CurrentStale) / float64(stats.CurrentRows)
 	}
 	return cache
 }
@@ -2406,9 +2617,8 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 }
 
 // contextCacheFindings surfaces low-effort signals about cache health.
-// "info"-level only — the cache is opportunistic; an empty or stale
-// cache is not a defect, just a hint that the comprehension graph
-// hasn't been exercised yet for this workspace.
+// Historical stale rows are informational cache history; current-index
+// stale rows are stronger evidence that active cache rehydration will miss.
 func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding {
 	if cache == nil {
 		return nil
@@ -2423,12 +2633,19 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 		})
 		return findings
 	}
-	if cache.Rows > 0 && cache.StaleRatio > 0.5 {
+	if cache.CurrentRows > 0 && cache.CurrentStaleRatio > 0.5 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_mostly_stale",
+			Severity:       "low",
+			Evidence:       fmt.Sprintf("%d of %d current-index graph_views rows are stale (%.0f%%)", cache.CurrentStale, cache.CurrentRows, cache.CurrentStaleRatio*100),
+			Recommendation: fmt.Sprintf("reason=context_cache_mostly_stale current_stale_ratio=%.2f stale_result=cache_miss_recompute", cache.CurrentStaleRatio),
+		})
+	} else if cache.Stale > 0 && cache.StaleRatio > 0.5 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "context_cache_historical_stale_rows",
 			Severity:       "info",
-			Evidence:       fmt.Sprintf("%d of %d graph_views rows are stale (%.0f%%)", cache.Stale, cache.Rows, cache.StaleRatio*100),
-			Recommendation: fmt.Sprintf("reason=context_cache_mostly_stale stale_ratio=%.2f", cache.StaleRatio),
+			Evidence:       fmt.Sprintf("%d stale historical graph_views row(s) retained; current-index rows: fresh=%d stale=%d", cache.Stale, cache.CurrentFresh, cache.CurrentStale),
+			Recommendation: fmt.Sprintf("reason=context_cache_historical_stale_rows stale_ratio=%.2f active_cache_state=current_fresh=%d,current_stale=%d", cache.StaleRatio, cache.CurrentFresh, cache.CurrentStale),
 		})
 	}
 	if cache.Rows > 0 && cache.ContractRows < cache.Rows {
@@ -2439,12 +2656,19 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: fmt.Sprintf("reason=context_cache_contract_gap contract_rows=%d rows=%d", cache.ContractRows, cache.Rows),
 		})
 	}
-	if cache.UnresolvedGapRows > 0 {
+	if cache.CurrentFreshUnresolvedGapRows > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_unresolved_gaps",
 			Severity:       "info",
-			Evidence:       fmt.Sprintf("%d graph_views row(s) carry structured unresolved gaps", cache.UnresolvedGapRows),
-			Recommendation: fmt.Sprintf("reason=context_cache_unresolved_gaps rows=%d", cache.UnresolvedGapRows),
+			Evidence:       fmt.Sprintf("%d current fresh graph_views row(s) report unresolved context evidence gaps%s", cache.CurrentFreshUnresolvedGapRows, auditCountSummarySuffix(cache.CurrentFreshUnresolvedGapReasonCounts, 3)),
+			Recommendation: fmt.Sprintf("reason=context_cache_unresolved_gaps current_fresh_rows=%d gap_reasons=%s", cache.CurrentFreshUnresolvedGapRows, auditCountSummary(cache.CurrentFreshUnresolvedGapReasonCounts, 3)),
+		})
+	} else if cache.UnresolvedGapRows > 0 {
+		findings = append(findings, harnessAuditFinding{
+			ID:             "context_cache_historical_unresolved_gaps",
+			Severity:       "info",
+			Evidence:       fmt.Sprintf("%d stale or historical graph_views row(s) retain unresolved context evidence gaps%s", cache.UnresolvedGapRows, auditCountSummarySuffix(cache.UnresolvedGapReasonCounts, 3)),
+			Recommendation: fmt.Sprintf("reason=context_cache_historical_unresolved_gaps rows=%d gap_reasons=%s", cache.UnresolvedGapRows, auditCountSummary(cache.UnresolvedGapReasonCounts, 3)),
 		})
 	}
 	if cache.SessionHits+cache.SessionMisses >= 5 && cache.HitRate < 0.1 {
@@ -2456,4 +2680,24 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 		})
 	}
 	return findings
+}
+
+func auditCountSummarySuffix(values map[string]int, limit int) string {
+	summary := auditCountSummary(values, limit)
+	if summary == "" {
+		return ""
+	}
+	return "; reasons=" + summary
+}
+
+func auditCountSummary(values map[string]int, limit int) string {
+	counts := auditTopCounts(values, limit)
+	if len(counts) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(counts))
+	for _, count := range counts {
+		parts = append(parts, fmt.Sprintf("%s=%d", count.Name, count.Count))
+	}
+	return strings.Join(parts, ",")
 }

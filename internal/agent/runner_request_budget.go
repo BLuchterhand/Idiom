@@ -167,6 +167,16 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			RejectStopReason: "zero_hit_retry_budget_exhausted",
 		}
 	}
+	if decision := s.rejectedFingerprintDecision(req, currentFingerprint); decision.Handled {
+		return decision
+	}
+	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
+	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
+		return runnerRequestBudgetDecision{}
+	}
 	if priorSummary, seen := s.fingerprint.rejected[currentFingerprint]; seen {
 		if isRecoverablePostReadinessGapRejection(priorSummary) && postReadinessGap(req) != "" {
 			delete(s.fingerprint.rejected, currentFingerprint)
@@ -181,6 +191,30 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 		}
 	}
 	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) earlyRejectedFingerprintDecision(req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
+	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
+		return runnerRequestBudgetDecision{}
+	}
+	priorSummary, seen := s.fingerprint.rejected[currentFingerprint]
+	if !seen || !earlyRejectedFingerprintSummary(priorSummary) {
+		return runnerRequestBudgetDecision{}
+	}
+	return s.rejectedFingerprintDecision(req, currentFingerprint)
+}
+
+func earlyRejectedFingerprintSummary(summary string) bool {
+	summary = strings.TrimSpace(summary)
+	switch summary {
+	case "Plan-execute submit_plan required",
+		"Tool not available in current runtime contract",
+		"Tool hidden by active contract",
+		"Write-only recovery blocked non-write tool":
+		return true
+	default:
+		return false
+	}
 }
 
 func isRecoverablePostReadinessGapRejection(summary string) bool {

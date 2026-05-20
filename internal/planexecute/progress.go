@@ -31,27 +31,28 @@ const (
 )
 
 type ProgressState struct {
-	SchemaVersion     string               `json:"schema_version"`
-	SessionID         string               `json:"session_id"`
-	CreatedAt         string               `json:"created_at"`
-	UpdatedAt         string               `json:"updated_at"`
-	PromptSHA256      string               `json:"prompt_sha256,omitempty"`
-	PromptFile        string               `json:"prompt_file,omitempty"`
-	Phase             string               `json:"phase"`
-	Status            string               `json:"status"`
-	FailureKind       string               `json:"failure_kind,omitempty"`
-	FailureReason     string               `json:"failure_reason,omitempty"`
-	PlanPath          string               `json:"plan_path,omitempty"`
-	PlanID            string               `json:"plan_id,omitempty"`
-	PackID            string               `json:"pack_id,omitempty"`
-	RequiredEditPaths []string             `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths  []string             `json:"allowed_edit_paths,omitempty"`
-	ChangedPaths      []string             `json:"changed_paths,omitempty"`
-	TotalEdits        int                  `json:"total_edits,omitempty"`
-	Edits             []ProgressEdit       `json:"edits,omitempty"`
-	Executor          ProgressExecutor     `json:"executor,omitempty"`
-	Review            ProgressReviewRepair `json:"review_repair,omitempty"`
-	ReviewBaseline    ReviewRepairBaseline `json:"review_baseline,omitempty"`
+	SchemaVersion      string               `json:"schema_version"`
+	SessionID          string               `json:"session_id"`
+	CreatedAt          string               `json:"created_at"`
+	UpdatedAt          string               `json:"updated_at"`
+	PromptSHA256       string               `json:"prompt_sha256,omitempty"`
+	PromptFile         string               `json:"prompt_file,omitempty"`
+	Phase              string               `json:"phase"`
+	Status             string               `json:"status"`
+	FailureKind        string               `json:"failure_kind,omitempty"`
+	FailureReason      string               `json:"failure_reason,omitempty"`
+	PlanPath           string               `json:"plan_path,omitempty"`
+	PlanID             string               `json:"plan_id,omitempty"`
+	PackID             string               `json:"pack_id,omitempty"`
+	RequiredEditPaths  []string             `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths   []string             `json:"allowed_edit_paths,omitempty"`
+	EditSetObligations EditSetObligations   `json:"edit_set_obligations,omitempty"`
+	ChangedPaths       []string             `json:"changed_paths,omitempty"`
+	TotalEdits         int                  `json:"total_edits,omitempty"`
+	Edits              []ProgressEdit       `json:"edits,omitempty"`
+	Executor           ProgressExecutor     `json:"executor,omitempty"`
+	Review             ProgressReviewRepair `json:"review_repair,omitempty"`
+	ReviewBaseline     ReviewRepairBaseline `json:"review_baseline,omitempty"`
 }
 
 type ProgressEdit struct {
@@ -378,6 +379,10 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	if state.Review.Repairs > 0 {
 		fields["review_repairs"] = state.Review.Repairs
 	}
+	if obligations := state.EditSetObligations.Normalized(); len(obligations) > 0 {
+		fields["edit_set_obligations"] = obligations
+		fields["edit_set_obligation_count"] = len(obligations)
+	}
 	return fields
 }
 
@@ -429,6 +434,7 @@ func progressRelPath(root string, path string) string {
 
 func sanitizeProgressState(state *ProgressState) {
 	state.FailureReason = sanitizeProgressReason(state.FailureReason)
+	state.EditSetObligations = state.EditSetObligations.Normalized()
 	state.Executor.Failures = sanitizeProgressReasons(state.Executor.Failures)
 	state.Review.Error = sanitizeProgressReason(state.Review.Error)
 	for i := range state.Executor.SourceSanity {

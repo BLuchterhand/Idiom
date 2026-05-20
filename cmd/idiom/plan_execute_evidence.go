@@ -9,27 +9,29 @@ import (
 	"time"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/planexecute"
 	"idiom/internal/workspace"
 )
 
 const phaseEvidenceSchemaVersion = "idiom.phase_evidence.v1"
 
 type phaseEvidenceBundle struct {
-	SchemaVersion    string                 `json:"schema_version"`
-	Phase            string                 `json:"phase"`
-	GeneratedAt      string                 `json:"generated_at"`
-	ChangedPaths     []string               `json:"changed_paths,omitempty"`
-	RequiredPaths    []string               `json:"required_paths,omitempty"`
-	AllowedPaths     []string               `json:"allowed_paths,omitempty"`
-	Packet           phaseEvidencePacket    `json:"packet"`
-	ExecutorHandoff  phaseEvidenceHandoff   `json:"executor_handoff"`
-	SubmittedPlan    []phaseEvidenceCheck   `json:"submitted_plan_state,omitempty"`
-	SourceSanity     []phaseEvidenceCheck   `json:"source_sanity,omitempty"`
-	PatchHygiene     phaseEvidenceCheck     `json:"patch_hygiene"`
-	SuggestedTests   []phaseEvidenceTest    `json:"suggested_tests,omitempty"`
-	UnresolvedGaps   []string               `json:"unresolved_gaps,omitempty"`
-	OpenObligations  []string               `json:"open_obligations,omitempty"`
-	DecisionEvidence []phaseEvidenceSummary `json:"decision_evidence,omitempty"`
+	SchemaVersion      string                         `json:"schema_version"`
+	Phase              string                         `json:"phase"`
+	GeneratedAt        string                         `json:"generated_at"`
+	ChangedPaths       []string                       `json:"changed_paths,omitempty"`
+	RequiredPaths      []string                       `json:"required_paths,omitempty"`
+	AllowedPaths       []string                       `json:"allowed_paths,omitempty"`
+	EditSetObligations planexecute.EditSetObligations `json:"edit_set_obligations,omitempty"`
+	Packet             phaseEvidencePacket            `json:"packet"`
+	ExecutorHandoff    phaseEvidenceHandoff           `json:"executor_handoff"`
+	SubmittedPlan      []phaseEvidenceCheck           `json:"submitted_plan_state,omitempty"`
+	SourceSanity       []phaseEvidenceCheck           `json:"source_sanity,omitempty"`
+	PatchHygiene       phaseEvidenceCheck             `json:"patch_hygiene"`
+	SuggestedTests     []phaseEvidenceTest            `json:"suggested_tests,omitempty"`
+	UnresolvedGaps     []string                       `json:"unresolved_gaps,omitempty"`
+	OpenObligations    []string                       `json:"open_obligations,omitempty"`
+	DecisionEvidence   []phaseEvidenceSummary         `json:"decision_evidence,omitempty"`
 }
 
 type phaseEvidencePacket struct {
@@ -452,7 +454,8 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 	fmt.Fprintf(&b, "schema: %s\nphase: %s\n", bundle.SchemaVersion, bundle.Phase)
 	fmt.Fprintf(&b, "changed_paths: %s\n", formatInlineList(bundle.ChangedPaths))
 	fmt.Fprintf(&b, "required_paths: %s\n", formatInlineList(bundle.RequiredPaths))
-	fmt.Fprintf(&b, "allowed_repair_paths: %s\n\n", formatInlineList(bundle.AllowedPaths))
+	fmt.Fprintf(&b, "allowed_repair_paths: %s\n", formatInlineList(bundle.AllowedPaths))
+	fmt.Fprintf(&b, "edit_set_obligations: %s\n\n", formatInlineList(bundle.EditSetObligations.Kinds()))
 	fmt.Fprintf(&b, "context_packet: status=%s", bundle.Packet.Status)
 	if bundle.Packet.PackID != "" {
 		fmt.Fprintf(&b, " pack_id=%s", bundle.Packet.PackID)
@@ -524,19 +527,21 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 
 func phaseEvidenceTelemetry(bundle phaseEvidenceBundle) map[string]any {
 	return map[string]any{
-		"schema_version":         bundle.SchemaVersion,
-		"phase":                  bundle.Phase,
-		"changed_paths":          cappedStrings(bundle.ChangedPaths, 16),
-		"required_paths":         cappedStrings(bundle.RequiredPaths, 16),
-		"allowed_paths":          cappedStrings(bundle.AllowedPaths, 16),
-		"packet_status":          bundle.Packet.Status,
-		"pack_id":                bundle.Packet.PackID,
-		"executor_packet_state":  bundle.ExecutorHandoff.PacketState,
-		"executor_packet_reason": bundle.ExecutorHandoff.Reason,
-		"executor_handoff_id":    bundle.ExecutorHandoff.HandoffID,
-		"candidate_files":        len(bundle.Packet.CandidateFiles),
-		"candidate_file_paths":   phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
-		"candidate_symbols":      len(bundle.Packet.CandidateSymbols),
+		"schema_version":            bundle.SchemaVersion,
+		"phase":                     bundle.Phase,
+		"changed_paths":             cappedStrings(bundle.ChangedPaths, 16),
+		"required_paths":            cappedStrings(bundle.RequiredPaths, 16),
+		"allowed_paths":             cappedStrings(bundle.AllowedPaths, 16),
+		"edit_set_obligations":      bundle.EditSetObligations.Kinds(),
+		"edit_set_obligation_count": len(bundle.EditSetObligations.Normalized()),
+		"packet_status":             bundle.Packet.Status,
+		"pack_id":                   bundle.Packet.PackID,
+		"executor_packet_state":     bundle.ExecutorHandoff.PacketState,
+		"executor_packet_reason":    bundle.ExecutorHandoff.Reason,
+		"executor_handoff_id":       bundle.ExecutorHandoff.HandoffID,
+		"candidate_files":           len(bundle.Packet.CandidateFiles),
+		"candidate_file_paths":      phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
+		"candidate_symbols":         len(bundle.Packet.CandidateSymbols),
 		"candidate_symbol_names": phaseEvidenceTelemetrySymbolNames(
 			bundle.Packet.CandidateSymbols,
 			8,

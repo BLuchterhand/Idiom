@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,6 +18,7 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/planexecute"
 	"idiom/internal/promptstack"
 )
 
@@ -589,6 +591,95 @@ newRuntimeBrief()
 	}
 }
 
+func TestPlanExecuteRuntimeBriefUsesTypedCandidateScopeInsteadOfPromptSchema(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
+		ScopeContract: planexecute.NewPlanScopeContract(nil, []string{
+			"internal/app/rendering.go",
+			"internal/productworkflow/status.go",
+		}, nil),
+	}, io.Discard)
+	defer restore()
+
+	prompt := `
+# Plan-then-execute planner phase
+
+allowed_edit_paths:
+- internal/app/rendering.go
+- internal/productworkflow/status.go
+
+The planner schema supports edit entries with old_text and new_text fields.
+Each submit_plan edit may include old_text/new_text copied from source evidence.
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if len(plan.runtimeBrief.RequiredEditPaths) != 0 {
+		t.Fatalf("typed plan-execute candidate scope must not become required coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	for _, want := range []string{"internal/app/rendering.go", "internal/productworkflow/status.go"} {
+		if !slices.Contains(plan.runtimeBrief.AllowedEditPaths, want) {
+			t.Fatalf("typed plan-execute allowed paths missing %q, got %#v", want, plan.runtimeBrief.AllowedEditPaths)
+		}
+		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
+			t.Fatalf("typed plan-execute target refs missing %q, got %#v", want, plan.runtimeBrief.TargetRefs)
+		}
+	}
+	if slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
+		t.Fatalf("generated schema text must not add exact-anchor constraints in typed plan-execute scope, got %#v", plan.runtimeBrief.Constraints)
+	}
+}
+
+func TestPlanExecuteRuntimeBriefKeepsRealCandidateScopeExactSnippets(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
+		ScopeContract: planexecute.NewPlanScopeContract(nil, []string{
+			"native/src/feature.cpp",
+		}, nil),
+	}, io.Discard)
+	defer restore()
+
+	prompt := `
+# Plan-then-execute planner phase
+
+allowed_edit_paths:
+- native/src/feature.cpp
+
+## Required Edits
+
+In native/src/feature.cpp, preserve this exact replacement body:
+` + "```cpp" + `
+bool Hardened() {
+	return true;
+}
+` + "```" + `
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if len(plan.runtimeBrief.RequiredEditPaths) != 0 {
+		t.Fatalf("candidate scope snippets must not promote required paths, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 1 {
+		t.Fatalf("expected one candidate-scope exact snippet, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	}
+	if plan.runtimeBrief.RequiredEditSnippets[0].Path != "native/src/feature.cpp" {
+		t.Fatalf("snippet path = %q, want candidate source path", plan.runtimeBrief.RequiredEditSnippets[0].Path)
+	}
+	if !slices.Contains(plan.runtimeBrief.Constraints, "exact_anchor_implementation") {
+		t.Fatalf("real candidate-scope snippets should keep exact-anchor constraint, got %#v", plan.runtimeBrief.Constraints)
+	}
+	if !slices.Contains(plan.runtimeBrief.SearchPolicy, "preserve_exact_anchor_snippets_in_submit_plan_before_broad_discovery") {
+		t.Fatalf("plan-execute exact snippet should use submit_plan search policy, got %#v", plan.runtimeBrief.SearchPolicy)
+	}
+}
+
 func TestBuildPromptExecutionPlanSkipsClassifierWhenTaskFamilyForced(t *testing.T) {
 	var classifierCalls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1041,6 +1132,23 @@ Evidence:
 	allowed := structuredAllowedEditPathsFromPrompt(prompt)
 	if len(allowed) != 1 || allowed[0] != "native/tests/test_transport_system.cpp" {
 		t.Fatalf("expected YAML-style write_scope candidate path only, got %#v", allowed)
+	}
+}
+
+func TestEditableFilesHeadingIsCandidateScopeOnly(t *testing.T) {
+	prompt := `
+Editable Files:
+- native/tests/test_transport_system.cpp
+- native/src/simulation/transport/route_graph.cpp
+`
+	if got := RequiredEditPathsFromPrompt(prompt); len(got) != 0 {
+		t.Fatalf("editable files must not define required edit coverage, got %#v", got)
+	}
+	allowed := AllowedEditPathsFromPrompt(prompt)
+	for _, want := range []string{"native/tests/test_transport_system.cpp", "native/src/simulation/transport/route_graph.cpp"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("editable files missing allowed path %q, got %#v", want, allowed)
+		}
 	}
 }
 
@@ -1510,6 +1618,75 @@ Implement the patch in the named files only.
 		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
 			t.Fatalf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
 		}
+		if !slices.Contains(plan.runtimeBrief.AllowedEditPaths, want) {
+			t.Fatalf("expected allowed edit scope %q, got %#v", want, plan.runtimeBrief.AllowedEditPaths)
+		}
+	}
+}
+
+func TestAllowedEditPathsFromPromptKeepsInlineScopeSentenceBounded(t *testing.T) {
+	prompt := "Implement the behavior, but only edit pkg/feature.go and pkg/feature_test.go. Use pkg/evidence.go as read-only evidence."
+
+	allowed := AllowedEditPathsFromPrompt(prompt)
+	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("missing inline allowed path %q, got %#v", want, allowed)
+		}
+	}
+	if slices.Contains(allowed, "pkg/evidence.go") {
+		t.Fatalf("read-only evidence sentence must not become allowed edit scope, got %#v", allowed)
+	}
+}
+
+func TestBuildPromptExecutionPlanPromotesOnlyPayloadPathFromCandidateScope(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `
+# IMPLEMENTATION REQUEST
+
+## Files You May Edit
+
+- native/src/a.cpp
+- native/src/b.cpp
+
+## Required Edits
+
+In ` + "`native/src/a.cpp`" + `, replace the source line.
+
+old_text:
+
+` + "```text" + `
+int before();
+` + "```" + `
+
+new_text:
+
+` + "```text" + `
+int after();
+` + "```" + `
+`
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+
+	if !slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/src/a.cpp") {
+		t.Fatalf("payload path should become required edit coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	if slices.Contains(plan.runtimeBrief.RequiredEditPaths, "native/src/b.cpp") {
+		t.Fatalf("candidate-only path must not become required edit coverage, got %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	for _, want := range []string{"native/src/a.cpp", "native/src/b.cpp"} {
+		if !slices.Contains(plan.runtimeBrief.TargetRefs, want) {
+			t.Fatalf("expected candidate target ref %q, got %#v", want, plan.runtimeBrief.TargetRefs)
+		}
+	}
+	if got := len(plan.runtimeBrief.RequiredEditSnippets); got != 1 {
+		t.Fatalf("expected one payload snippet, got %d: %#v", got, plan.runtimeBrief.RequiredEditSnippets)
+	}
+	if plan.runtimeBrief.RequiredEditSnippets[0].Path != "native/src/a.cpp" {
+		t.Fatalf("snippet should bind to explicit payload path, got %#v", plan.runtimeBrief.RequiredEditSnippets[0])
 	}
 }
 

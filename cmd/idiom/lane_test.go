@@ -925,6 +925,7 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		t.Fatalf("expected exit 0, got %d (stderr=%s)", got, stderr.String())
 	}
 	prompt := fake.calledPrompt
+	normalizedPrompt := strings.Join(strings.Fields(prompt), " ")
 	required := []string{
 		"Plan-Then-Execute Lane Brief",
 		"You are the PLANNER",
@@ -941,7 +942,7 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		"complete replacement for the inclusive",
 	}
 	for _, marker := range required {
-		if !strings.Contains(prompt, marker) {
+		if !strings.Contains(normalizedPrompt, strings.Join(strings.Fields(marker), " ")) {
 			t.Fatalf("plan-execute composed prompt missing canonical preamble marker %q; head=%s", marker, prompt[:min(400, len(prompt))])
 		}
 	}
@@ -950,7 +951,7 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		"Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence",
 		"if the location is known from the packet, plan it directly",
 	} {
-		if strings.Contains(prompt, forbidden) {
+		if strings.Contains(normalizedPrompt, strings.Join(strings.Fields(forbidden), " ")) {
 			t.Fatalf("plan-execute composed prompt retained ambiguous source-evidence phrase %q:\n%s", forbidden, prompt)
 		}
 	}
@@ -1155,6 +1156,33 @@ func TestCanonicalPlanExecutePreambleDoesNotRepeatSourceBodyRule(t *testing.T) {
 	}
 }
 
+func TestCanonicalLanePromptsKeepCandidateScopeSeparateFromRequiredEditPaths(t *testing.T) {
+	paths := []string{
+		filepath.Join("lanes", "plan-execute", "preamble.md"),
+		filepath.Join("lanes", "implement", "preamble.md"),
+		filepath.Join("lanes", "rules", "brief-skeleton.md"),
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		text := string(body)
+		normalized := strings.Join(strings.Fields(text), " ")
+		for _, forbidden := range []string{
+			"Files You May Edit`, and near-equivalent allowlist headings as `required_edit_paths`",
+			"Files You May Edit\" (and near-equivalents) as `required_edit_paths`",
+		} {
+			if strings.Contains(normalized, strings.Join(strings.Fields(forbidden), " ")) {
+				t.Fatalf("%s promotes candidate scope to required_edit_paths:\n%s", path, text)
+			}
+		}
+		if strings.Contains(text, "Files You May Edit") && !strings.Contains(normalized, "allowed/candidate scope only") {
+			t.Fatalf("%s mentions Files You May Edit without candidate-scope-only wording:\n%s", path, text)
+		}
+	}
+}
+
 func TestCanonicalProfileSeedsStayInSync(t *testing.T) {
 	for _, name := range []string{"coding.md", "claude-qwen-worker.md"} {
 		canonical, err := os.ReadFile(filepath.Join("..", "..", "prompts", "profiles", name))
@@ -1177,16 +1205,26 @@ func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
 		t.Fatalf("read claude-qwen profile: %v", err)
 	}
 	text := string(body)
+	normalizedText := strings.Join(strings.Fields(text), " ")
 	for _, want := range []string{
+		"The model owns strategy and proposed content",
+		"Hidden reasoning is not a tool call",
+		"Use `old_text` + `new_text` only for a tiny exact snippet",
 		"Every edit body must be",
 		"executable final content",
-		"not a quoted string containing JSON",
-		"`old_text` is exact current text",
-		"complete replacement for the inclusive range",
+		"quoted string containing",
+		"Line-range `content` is",
+		"replacement for the inclusive range",
 	} {
-		if !strings.Contains(text, want) {
+		if !strings.Contains(normalizedText, strings.Join(strings.Fields(want), " ")) {
 			t.Fatalf("claude-qwen profile missing submit_plan quality bar %q:\n%s", want, text)
 		}
+	}
+	if strings.Index(text, "**Line-range**") < 0 || strings.Index(text, "**Substring**") < 0 {
+		t.Fatalf("claude-qwen profile missing edit-shape headings:\n%s", text)
+	}
+	if strings.Index(text, "**Line-range**") > strings.Index(text, "**Substring**") {
+		t.Fatalf("claude-qwen profile should present line-range before substring to avoid old_text-first bias:\n%s", text)
 	}
 }
 

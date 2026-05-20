@@ -718,6 +718,44 @@ func productStatusMigrationUsageResult(code, path, message, targetStatus string)
 	}
 }
 
+type productStatusUsageJSONResult struct {
+	Status          string                      `json:"status"`
+	Blockers        []productStatusUsageBlocker `json:"blockers"`
+	NextValidAction string                      `json:"next_valid_action"`
+}
+
+type productStatusUsageBlocker struct {
+	Code    string `json:"code"`
+	Path    string `json:"path,omitempty"`
+	Message string `json:"message"`
+}
+
+func productStatusUsageResult(code, path, message string) productStatusUsageJSONResult {
+	return productUsageResult(code, path, message, "rerun with --effort-root <effort-root>")
+}
+
+func productUsageResult(code, path, message, nextValidAction string) productStatusUsageJSONResult {
+	return productStatusUsageJSONResult{
+		Status: "blocked",
+		Blockers: []productStatusUsageBlocker{{
+			Code:    code,
+			Path:    path,
+			Message: message,
+		}},
+		NextValidAction: nextValidAction,
+	}
+}
+
+func writeProductUsageJSON(stdout io.Writer, stderr io.Writer, command string, result productStatusUsageJSONResult) int {
+	enc := json.NewEncoder(stdout)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(result); err != nil {
+		fmt.Fprintf(stderr, "%s: encode JSON: %v\n", command, err)
+		return 1
+	}
+	return 2
+}
+
 func productStatusMigrationArgsRequestJSON(args []string) bool {
 	for _, arg := range args {
 		if arg == "--json" || arg == "-json" || strings.HasPrefix(arg, "--json=") || strings.HasPrefix(arg, "-json=") {
@@ -792,6 +830,16 @@ func runProductStatus(args []string, stdout io.Writer, stderr io.Writer, rec *te
 		return 2
 	}
 	if strings.TrimSpace(effortRoot) == "" {
+		if jsonOutput {
+			result := productStatusUsageResult("missing-argument", "--effort-root", "--effort-root is required")
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode(result); err != nil {
+				fmt.Fprintf(stderr, "product status: encode JSON: %v\n", err)
+				return 1
+			}
+			return 2
+		}
 		fmt.Fprintln(stderr, "product status: --effort-root is required")
 		return 2
 	}
@@ -1348,6 +1396,10 @@ func runProductADR(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	fs := flag.NewFlagSet("idiom product tdd", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	jsonRequested := productStatusMigrationArgsRequestJSON(args)
+	if jsonRequested {
+		fs.SetOutput(io.Discard)
+	}
 	var effortRoot string
 	var planObligations bool
 	var evaluateCoverage bool
@@ -1360,18 +1412,54 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		if err == flag.ErrHelp {
 			return 0
 		}
+		if jsonOutput || jsonRequested {
+			return writeProductUsageJSON(stdout, stderr, "product tdd", productUsageResult(
+				"tdd_flag_parse_error",
+				"flags",
+				err.Error(),
+				"rerun with valid product tdd flags",
+			))
+		}
 		return 2
 	}
 	if planObligations == evaluateCoverage {
+		if jsonOutput {
+			code := "tdd_missing_mode_flag"
+			if planObligations && evaluateCoverage {
+				code = "tdd_multiple_mode_flags"
+			}
+			return writeProductUsageJSON(stdout, stderr, "product tdd", productUsageResult(
+				code,
+				"mode",
+				"exactly one of --plan-obligations or --evaluate-coverage is required",
+				"rerun with exactly one of --plan-obligations or --evaluate-coverage",
+			))
+		}
 		fmt.Fprintln(stderr, "product tdd: exactly one of --plan-obligations or --evaluate-coverage is required")
 		return 2
 	}
 	if strings.TrimSpace(effortRoot) == "" {
+		if jsonOutput {
+			return writeProductUsageJSON(stdout, stderr, "product tdd", productUsageResult(
+				"tdd_missing_effort_root",
+				"--effort-root",
+				"--effort-root is required",
+				"rerun with --effort-root <effort-root>",
+			))
+		}
 		fmt.Fprintln(stderr, "product tdd: --effort-root is required")
 		return 2
 	}
 	absRoot, err := filepath.Abs(effortRoot)
 	if err != nil {
+		if jsonOutput {
+			return writeProductUsageJSON(stdout, stderr, "product tdd", productUsageResult(
+				"tdd_invalid_effort_root",
+				"--effort-root",
+				"resolve effort root: "+err.Error(),
+				"rerun with a valid --effort-root <effort-root>",
+			))
+		}
 		fmt.Fprintf(stderr, "product tdd: resolve effort root: %v\n", err)
 		return 2
 	}

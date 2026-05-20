@@ -386,6 +386,47 @@ func TestDetectCompletionGateReopenedDiscoveryIgnoresImmediateWrite(t *testing.T
 	}
 }
 
+func TestDetectCompletionGateReopenedDiscoveryIgnoresRequiredPathSourceRead(t *testing.T) {
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "completion_gate",
+			"step":    3,
+			"summary": "Plan-execute completion gate rejected final answer",
+			"error":   "required edit path internal/agent/runner.go needs source evidence before submit_plan",
+		}},
+		{Type: "tool_request", Data: map[string]any{
+			"tool": "read_file",
+			"path": "internal/agent/runner.go",
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "read_file",
+			"summary": "Read internal/agent/runner.go",
+			"error":   "",
+		}},
+	}
+	rep := analyzeRecords("test", records)
+	if hasPattern(rep, "completion_gate_reopened_discovery") {
+		t.Fatalf("required-path source read should not count as reopened discovery: %#v", rep.AntiPatterns)
+	}
+}
+
+func TestDetectRedirectStormDistinguishesSoftGuidanceFromHardReject(t *testing.T) {
+	softOnly := analyzeRecords("test", []Record{
+		{Type: "run_event", Data: map[string]any{"role": "discovery_redirect", "content": "read_file -> go (go_file_outline)"}},
+		{Type: "run_event", Data: map[string]any{"role": "discovery_redirect", "content": "read_file -> go (go_file_outline)"}},
+	})
+	if hasPattern(softOnly, "redirect_storm") {
+		t.Fatalf("two soft redirects should not be a storm: %#v", softOnly.AntiPatterns)
+	}
+
+	hardReject := analyzeRecords("test", []Record{
+		{Type: "run_event", Data: map[string]any{"role": "discovery_redirect", "content": "read_file -> go (go_file_outline) HARD_REJECT"}},
+	})
+	if !hasPattern(hardReject, "redirect_storm") {
+		t.Fatalf("hard redirect should be reported: %#v", hardReject.AntiPatterns)
+	}
+}
+
 func TestDetectRequiredPathsBlockedWithoutWrite(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "implement the brief"}},

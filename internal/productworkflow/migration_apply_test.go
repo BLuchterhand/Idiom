@@ -319,6 +319,60 @@ func TestProductStatusMigrationApplyRejectsSymlinkedEffortRoot(t *testing.T) {
 	}
 }
 
+func TestProductStatusMigrationApplyRejectsPreExistingTempSymlinksWithoutPartialMutation(t *testing.T) {
+	cases := []struct {
+		name     string
+		tempPath func(fixture *migrationApplyFixture) string
+		blocker  string
+	}{
+		{
+			name: "workflow temp symlink",
+			tempPath: func(fixture *migrationApplyFixture) string {
+				return filepath.Join(fixture.sourceRoot, "workflow_state.json.status-migration.tmp")
+			},
+			blocker: "unsafe_workflow_state_temp_symlink",
+		},
+		{
+			name: "events temp symlink",
+			tempPath: func(fixture *migrationApplyFixture) string {
+				return filepath.Join(fixture.sourceRoot, "events.jsonl.status-migration.tmp")
+			},
+			blocker: "unsafe_events_temp_symlink",
+		},
+		{
+			name: "index temp symlink",
+			tempPath: func(fixture *migrationApplyFixture) string {
+				return filepath.Join(fixture.effortsRoot, "index.json.status-migration.tmp")
+			},
+			blocker: "unsafe_effort_index_temp_symlink",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fixture := newMigrationApplyFixture(t)
+			externalTemp := filepath.Join(fixture.root, strings.ReplaceAll(tc.name, " ", "-")+".external")
+			writeMigrationApplyText(t, externalTemp, "external-original\n")
+			if err := os.Symlink(externalTemp, tc.tempPath(fixture)); err != nil {
+				t.Skipf("symlink unavailable: %v", err)
+			}
+			before := snapshotMigrationApplyTree(t, fixture.root)
+
+			opts := fixture.options("closed")
+			opts.ExpectedStateRevision = 7
+			result := ApplyProductStatusMigration(opts)
+			if result.Status != "blocked" || !migrationTestHasBlocker(result, tc.blocker) {
+				t.Fatalf("expected %s blocker, got %#v", tc.blocker, result)
+			}
+
+			after := snapshotMigrationApplyTree(t, fixture.root)
+			if !reflect.DeepEqual(before, after) {
+				t.Fatalf("expected temp symlink rejection without partial mutation, before=%#v after=%#v", before, after)
+			}
+		})
+	}
+}
+
 func TestProductStatusMigrationApplyRollsBackAfterFolderRenameFailure(t *testing.T) {
 	fixture := newMigrationApplyFixture(t)
 	before := snapshotMigrationApplyTree(t, fixture.root)

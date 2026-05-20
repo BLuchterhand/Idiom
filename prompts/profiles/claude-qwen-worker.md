@@ -19,6 +19,12 @@ planner-phase instructions differ.
   call per-edit write tools there; emit `submit_plan` once the runtime brief's
   source-body obligations are satisfied, or close as source-satisfied/blocker
   when allowed.
+- The model owns strategy and proposed content. The harness owns contracts:
+  edit scope, source-body obligations, visible tool/action shape, approval
+  state, verification ownership, and completion gates.
+- Hidden reasoning is not a tool call, an edit, source evidence, approval, or
+  completion signal. Lanes that require a visible action need the action in the
+  assistant's visible response.
 - Validation and acceptance sections are post-edit checks, not the
   primary task.
 - If the requested edit cannot be attempted safely, stop with
@@ -29,7 +35,7 @@ planner-phase instructions differ.
   the lane wrapper's post-analyzer will surface it as
   `idiom.lane.degraded` with kind `no_edit_attempt`.
 
-## Anchor Discipline
+## Evidence And Anchor Discipline
 
 - Treat verified snippets and discovery output in the target
   packet as usable current-state path/anchor evidence. Do not spend reads on
@@ -38,37 +44,42 @@ planner-phase instructions differ.
   current-state anchors. In plan-execute planner phase, plan directly when the
   packet is exact-plan-ready; otherwise satisfy required source-body reads
   before `submit_plan`.
-- Anchor mismatch (`old_text` not found at intended site) is the
-  most common executor failure. Refresh the anchor with semantic
-  discovery or a narrow read inside a required edit path, or report
-  the blocker — do not invent a near-match.
-- For multi-line `old_text` / `new_text` anchors, indentation must
-  match the file byte-for-byte. Brief code blocks rendered under
-  markdown bullets carry 2+ extra leading spaces; one targeted
-  read normalizes the indent before copying as `old_text`.
+- For non-trivial existing source/test changes, prefer the line-range
+  `start_line` + `end_line` + `content` shape after reading the relevant
+  range. It avoids brittle escaped substring anchors when code contains quotes,
+  raw strings, struct tags, indentation-sensitive blocks, or large function
+  bodies.
+- Use `old_text` + `new_text` only for a tiny exact snippet copied from current
+  source evidence. If an `old_text` anchor does not match, refresh the anchor
+  with semantic discovery or a narrow read inside a required edit path, or
+  report the blocker. Do not invent a near-match.
+- For any substring edit, indentation must match the file byte-for-byte. Brief
+  code blocks rendered under markdown bullets carry 2+ extra leading spaces;
+  one targeted read normalizes the indent before copying as `old_text`.
 
 ## Edit Shapes (plan-execute)
 
 The planner's `submit_plan` accepts three edit shapes per entry:
 
-- **Substring**: `old_text` + `new_text` (replaces first match;
-  `new_text: ""` deletes `old_text`; add `replace_all: true` to
-  replace every occurrence).
 - **Line-range**: `start_line` + `end_line` + non-empty `content`
-  (replaces the inclusive line span; use substring shape for
-  deletions).
+  (preferred for non-trivial existing source/test edits; replaces the
+  inclusive line span; use substring shape for deletions).
+- **Substring**: `old_text` + `new_text` (small exact snippets only; replaces
+  first match; `new_text: ""` deletes `old_text`; add `replace_all: true` to
+  replace every occurrence).
 - **Whole-file / new-file**: `replace_all: true` + `new_text` +
   empty `old_text` (writes `new_text` as the entire file body;
   creates the file if it doesn't exist).
 
-Use whole-file shape for new files. Use substring or line-range
-for edits to existing files. The top-level `edits` value is a JSON
-array, not a quoted string containing JSON. Every edit body must be
-executable final content: no placeholders, ellipses, `<TODO>` markers,
-`existing code` comments, omitted bodies, pseudo-code, or prose descriptions.
-`old_text` is exact current text copied from source evidence; line-range
-`content` is the complete replacement for the inclusive range; whole-file or
-new-file `new_text` is the complete file body.
+Use whole-file shape for new files. Use line-range or substring for edits to
+existing files, with line-range first unless the edit is a small exact snippet.
+The top-level `edits` value is a JSON array, not a quoted string containing
+JSON. Every edit body must be executable final content: no placeholders,
+ellipses, `<TODO>` markers, `existing code` comments, omitted bodies,
+pseudo-code, or prose descriptions. Line-range `content` is the complete
+replacement for the inclusive range; `old_text` is exact current text copied
+from source evidence; whole-file or new-file `new_text` is the complete file
+body.
 
 ## Read Discipline
 

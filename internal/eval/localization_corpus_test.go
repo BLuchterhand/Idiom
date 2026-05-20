@@ -285,6 +285,24 @@ func TestValidateLocalizationCorpusRejectsInvalidCompetitiveConditionEvidence(t 
 	}
 }
 
+func TestLocalizationRelativePathAllowsTelemetryToolColonFilenames(t *testing.T) {
+	path, err := normalizeLocalizationRelativePath("logs/telemetry/20260513-080646.439-tool:context_pack-59782.jsonl")
+	if err != nil {
+		t.Fatalf("expected telemetry filename colon to be allowed: %v", err)
+	}
+	if path != "logs/telemetry/20260513-080646.439-tool:context_pack-59782.jsonl" {
+		t.Fatalf("unexpected normalized path %q", path)
+	}
+}
+
+func TestLocalizationRelativePathRejectsSchemeOrDriveColon(t *testing.T) {
+	for _, path := range []string{"file:logs/telemetry/sample.jsonl", "C:/logs/telemetry/sample.jsonl"} {
+		if _, err := normalizeLocalizationRelativePath(path); err == nil {
+			t.Fatalf("expected %q to be rejected", path)
+		}
+	}
+}
+
 func validLocalizationCorpusForTest() LocalizationCorpus {
 	return LocalizationCorpus{
 		Name:         "test-localization",

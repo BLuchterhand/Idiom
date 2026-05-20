@@ -36,6 +36,12 @@ type DiscoveryRedirect struct {
 	// logs, where each fresh fingerprint got its own redirect without
 	// the model internalizing the guidance.
 	kindFireCount map[string]int
+	// allowedTools is the active lane/runtime surface. When a
+	// language-specific direct tool is present in the workspace manager
+	// but hidden by the lane contract, redirects must point at an
+	// advertised wrapper such as code_navigate instead of leaking the
+	// hidden direct tool name as the next candidate request.
+	allowedTools []string
 }
 
 // smallFileRedirectThreshold is the line count below which read_file on
@@ -64,6 +70,13 @@ func NewDiscoveryRedirect() *DiscoveryRedirect {
 		decisionTablesShown: make(map[string]bool),
 		kindFireCount:       make(map[string]int),
 	}
+}
+
+func (d *DiscoveryRedirect) SetAllowedTools(tools []string) {
+	if d == nil {
+		return
+	}
+	d.allowedTools = append(d.allowedTools[:0], tools...)
 }
 
 // RedirectDecision is the outcome of a Consider call. When ShouldRedirect
@@ -125,6 +138,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	if replacement == "" {
 		return RedirectDecision{}
 	}
+	adapter := d.redirectAdapter(replacement)
 	fp := redirectFingerprint(req)
 	kind := lang.Name + "|" + string(cap)
 	priorKindFires := d.kindFireCount[kind]
@@ -159,13 +173,13 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	// the third fire cuts the tail.
 	hardReject := cap == workspace.CapFileOutline && d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
 
-	summary := redirectSummary(req, replacement)
+	summary := redirectSummary(req, adapter.Tool)
 	if hardReject {
-		summary = fmt.Sprintf("Raw %s on %s code blocked — use %s instead", req.Tool, lang.Name, replacement)
+		summary = fmt.Sprintf("Raw %s on %s code blocked — use %s instead", req.Tool, lang.Name, adapter.Tool)
 	}
-	msg := redirectMessage(req, lang, cap, replacement)
+	msg := redirectMessage(req, lang, cap, replacement, adapter)
 	if priorKindFires >= 1 {
-		msg = escalateRedirectMessage(msg, lang, cap, replacement, priorKindFires+1)
+		msg = escalateRedirectMessage(msg, lang, cap, adapter.Label(), priorKindFires+1)
 	}
 	result := workspace.ToolResult{
 		Tool:    req.Tool,
@@ -190,6 +204,46 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	}
 }
 
+type redirectAdapter struct {
+	Tool       string
+	Underlying string
+}
+
+func (a redirectAdapter) Label() string {
+	if strings.TrimSpace(a.Tool) == "code_navigate" {
+		return "code_navigate"
+	}
+	if strings.TrimSpace(a.Underlying) != "" && strings.TrimSpace(a.Underlying) != strings.TrimSpace(a.Tool) {
+		return fmt.Sprintf("%s (underlying %s)", strings.TrimSpace(a.Tool), strings.TrimSpace(a.Underlying))
+	}
+	return strings.TrimSpace(a.Tool)
+}
+
+func (d *DiscoveryRedirect) redirectAdapter(replacement string) redirectAdapter {
+	replacement = strings.TrimSpace(replacement)
+	adapter := redirectAdapter{Tool: replacement}
+	if replacement == "" || len(d.allowedTools) == 0 || redirectToolAllowed(d.allowedTools, replacement) {
+		return adapter
+	}
+	if redirectToolAllowed(d.allowedTools, "code_navigate") {
+		return redirectAdapter{Tool: "code_navigate", Underlying: replacement}
+	}
+	return adapter
+}
+
+func redirectToolAllowed(tools []string, tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+	for _, candidate := range tools {
+		if strings.TrimSpace(candidate) == tool {
+			return true
+		}
+	}
+	return false
+}
+
 func redirectSummary(req workspace.ToolRequest, replacement string) string {
 	replacement = strings.TrimSpace(replacement)
 	path := strings.TrimSpace(req.Path)
@@ -211,46 +265,77 @@ func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap wo
 	return preface + base
 }
 
-func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability, replacement string) string {
+func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, adapter redirectAdapter) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "The request targets %s code. Capability route: %s via adapter %s instead of raw %s.\n",
-		lang.Name, cap, replacement, req.Tool)
+		lang.Name, cap, adapter.Label(), req.Tool)
 	switch cap {
 	case workspace.CapFileOutline:
-		fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"path\":%q}\n", replacement, req.Path)
+		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, "")
 		readSym := lang.Tool(workspace.CapReadSymbol)
-		fmt.Fprintf(&b, "related_capability: read_symbol via %s returns one declaration body by name.\n", readSym)
+		fmt.Fprintf(&b, "related_capability: read_symbol via %s returns one declaration body by name.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		b.WriteString("raw_range_fallback: read_file with start_line/end_line remains appropriate for ranges a single declaration cannot cover.\n")
 	case workspace.CapWorkspaceSymbol, workspace.CapFindSymbol:
-		if cap == workspace.CapFindSymbol && strings.TrimSpace(req.Path) != "" {
-			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, req.Path)
-		} else {
-			fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q}\n", replacement, req.Pattern)
-		}
+		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, req.Pattern)
 		b.WriteString("The structured result includes file, line, kind, and qualified name.\n")
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {
-			fmt.Fprintf(&b, "related_capability: read_symbol via %s returns a hit's body by pattern and path; raw range fallback remains for context beyond a single declaration.\n", readSym)
+			fmt.Fprintf(&b, "related_capability: read_symbol via %s returns a hit's body by pattern and path; raw range fallback remains for context beyond a single declaration.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		}
 	case workspace.CapReferences:
 		path := req.Path
 		if strings.TrimSpace(path) == "" {
 			path = "."
 		}
-		fmt.Fprintf(&b, "candidate_request: {\"tool\":%q,\"pattern\":%q,\"path\":%q}\n", replacement, req.Pattern, path)
+		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, path, req.Pattern)
 		readSym := lang.Tool(workspace.CapReadSymbol)
 		if readSym != "" {
-			fmt.Fprintf(&b, "related_capability: read_symbol via %s can inspect each hit's enclosing declaration; raw range fallback remains for surrounding context.\n", readSym)
+			fmt.Fprintf(&b, "related_capability: read_symbol via %s can inspect each hit's enclosing declaration; raw range fallback remains for surrounding context.\n", relatedRedirectAdapterLabel(adapter, readSym))
 		}
 	default:
 		// Generic hint for capabilities that don't have a bespoke
 		// template above. Adding a new Capability should not silently
 		// degrade this message — the hint always names the tool so the
 		// model can construct the call from its schema.
-		fmt.Fprintf(&b, "candidate_adapter: %s with equivalent arguments from the rejected request.\n", replacement)
+		fmt.Fprintf(&b, "candidate_adapter: %s with equivalent arguments from the rejected request.\n", adapter.Label())
 	}
 	b.WriteString("direct_tool_fallback: if the capability route returns nothing, the original request remains available.")
 	return strings.TrimSpace(b.String())
+}
+
+func relatedRedirectAdapterLabel(primary redirectAdapter, directRelated string) string {
+	if strings.TrimSpace(primary.Tool) == "code_navigate" {
+		return "code_navigate"
+	}
+	return strings.TrimSpace(directRelated)
+}
+
+func writeRedirectCandidateRequest(b *strings.Builder, adapter redirectAdapter, cap workspace.Capability, language, path, pattern string) {
+	if b == nil {
+		return
+	}
+	if strings.TrimSpace(adapter.Tool) == "code_navigate" {
+		fmt.Fprintf(b, "candidate_request: {\"tool\":\"code_navigate\",\"capability\":%q", string(cap))
+		if strings.TrimSpace(path) != "" {
+			fmt.Fprintf(b, ",\"path\":%q", path)
+		}
+		if strings.TrimSpace(pattern) != "" {
+			fmt.Fprintf(b, ",\"pattern\":%q", pattern)
+		}
+		if strings.TrimSpace(language) != "" {
+			fmt.Fprintf(b, ",\"language\":%q", language)
+		}
+		b.WriteString("}\n")
+		return
+	}
+	fmt.Fprintf(b, "candidate_request: {\"tool\":%q", adapter.Tool)
+	if strings.TrimSpace(pattern) != "" {
+		fmt.Fprintf(b, ",\"pattern\":%q", pattern)
+	}
+	if strings.TrimSpace(path) != "" {
+		fmt.Fprintf(b, ",\"path\":%q", path)
+	}
+	b.WriteString("}\n")
 }
 
 func normalizeRedirectRequest(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability) workspace.ToolRequest {
@@ -314,15 +399,15 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if lang.Tool(workspace.CapFileOutline) == "" {
 			return workspace.LanguageSupport{}, "", false
 		}
-		if pathLooksTestLike(path) {
-			return workspace.LanguageSupport{}, "", false
-		}
 		// Small files short-circuit the outline detour. A typical
 		// outline+read_symbol loop costs two tool calls plus a chunk
 		// of prompt context for the outline table; below this
 		// threshold, reading the whole file directly is cheaper AND
-		// more informative (the model needs the bodies anyway). The
-		// threshold is deliberately generous — outline is still the
+		// more informative (the model needs the bodies anyway). This
+		// applies to tests too: small tests are cheap to read, but a
+		// multi-thousand-line test file needs an outline before a raw
+		// dump can blow the planner context budget.
+		// The threshold is deliberately generous — outline is still the
 		// right answer for 500-line files with many decls.
 		if n, ok := ws.FileLineCount(path); ok && n > 0 && n <= smallFileRedirectThreshold {
 			return workspace.LanguageSupport{}, "", false

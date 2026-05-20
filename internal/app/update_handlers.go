@@ -36,33 +36,33 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 				m.history.expanded = false
 				m.renderHistoryPanelContent()
 			}
-			return waitForEvent(m.events), true
+			return m.waitForEventCmd(), true
 		case tea.KeyDown:
 			if m.history.selected < len(m.history.entries)-1 {
 				m.history.selected++
 				m.history.expanded = false
 				m.renderHistoryPanelContent()
 			}
-			return waitForEvent(m.events), true
+			return m.waitForEventCmd(), true
 		case tea.KeyEnter:
 			m.history.expanded = !m.history.expanded
 			m.renderHistoryPanelContent()
-			return waitForEvent(m.events), true
+			return m.waitForEventCmd(), true
 		case tea.KeyEsc:
 			m.history.focused = false
 			m.renderHistoryPanelContent()
-			return waitForEvent(m.events), true
+			return m.waitForEventCmd(), true
 		case tea.KeyPgUp, tea.KeyPgDown:
 			m.history.viewport, _ = m.history.viewport.Update(msg)
-			return waitForEvent(m.events), true
+			return m.waitForEventCmd(), true
 		case tea.KeyRunes:
 			switch string(msg.Runes) {
 			case "j":
 				m.history.viewport.ScrollDown(1)
-				return waitForEvent(m.events), true
+				return m.waitForEventCmd(), true
 			case "k":
 				m.history.viewport.ScrollUp(1)
-				return waitForEvent(m.events), true
+				return m.waitForEventCmd(), true
 			}
 		}
 	}
@@ -87,7 +87,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		} else {
 			m.status = "Panel closed."
 		}
-		return waitForEvent(m.events), true
+		return m.waitForEventCmd(), true
 	case tea.KeyCtrlT:
 		if !m.history.panelOpen {
 			m.setHistoryPanelOpen(true)
@@ -97,13 +97,13 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			m.refreshSessionsList()
 		}
 		m.rerenderActivePanel()
-		return waitForEvent(m.events), true
+		return m.waitForEventCmd(), true
 	case tea.KeyTab:
 		if m.history.panelOpen {
 			m.history.focused = !m.history.focused
 			m.rerenderActivePanel()
 		}
-		return waitForEvent(m.events), true
+		return m.waitForEventCmd(), true
 	case tea.KeyEnter:
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
@@ -135,7 +135,7 @@ func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
 	} else {
 		m.updateViewport(msg)
 	}
-	return waitForEvent(m.events), true
+	return m.waitForEventCmd(), true
 }
 
 func (m *Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Cmd, bool) {
@@ -174,6 +174,7 @@ func (m *Model) handleServerStatus(msg serverStatusMsg) (tea.Cmd, bool) {
 func (m *Model) handleStreamDone(msg streamDoneMsg) (tea.Cmd, bool) {
 	m.streaming = false
 	m.workingFrame = 0
+	m.planPhaseText = ""
 	if msg.err != nil {
 		m.failAgentHistoryTurn(msg.err)
 		m.setRuntimeError("Chat failed: " + msg.err.Error())

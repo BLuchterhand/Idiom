@@ -157,7 +157,7 @@ func toolParseErrorFeedback(raw string, parseErr error) string {
 	message := parseErr.Error()
 	lower := strings.ToLower(message + "\n" + raw)
 	if strings.Contains(lower, "toolrequest.edits") && strings.Contains(lower, "string") {
-		return message + ". submit_plan.edits was emitted as a quoted string. Emit edits as a JSON array value, not a string: {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/to/file\",\"old_text\":\"exact current text\",\"new_text\":\"complete replacement text\",\"purpose\":\"one sentence\"}]}. For native tool-call backends, the submit_plan arguments object is {\"rationale\":\"...\",\"edits\":[...]} with no quoted array. Edit bodies must be complete executable source text, not placeholders or prose."
+		return message + ". submit_plan.edits was emitted as a quoted string. Emit edits as a JSON array value, not a string: {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/to/file\",\"start_line\":10,\"end_line\":20,\"content\":\"complete replacement lines\\n\",\"purpose\":\"one sentence\"}]}. Prefer start_line/end_line+content for existing code edits that span more than a few lines; use old_text/new_text only for tiny exact snippets. For native tool-call backends, the submit_plan arguments object is {\"rationale\":\"...\",\"edits\":[...]} with no quoted array. Edit bodies must be complete executable source text, not placeholders or prose."
 	}
 	return message + ". Emit exactly one valid tool call or answer normally."
 }
@@ -165,6 +165,9 @@ func toolParseErrorFeedback(raw string, parseErr error) string {
 func (c *runnerTurnController) recordRejectedResult(step int, activeToolCall *llama.ToolCall, req workspace.ToolRequest, result workspace.ToolResult, reason string) {
 	if c == nil || c.recorder == nil {
 		return
+	}
+	if c.requestBudget != nil && c.currentFingerprint != nil && strings.TrimSpace(*c.currentFingerprint) != "" {
+		c.requestBudget.fingerprint.rejected[*c.currentFingerprint] = truncForRetryReason(result.Summary)
 	}
 	c.recorder.activeToolCall = activeToolCall
 	c.recorder.recordWithOptions(step, req, result, reason, runnerRecordOptions{

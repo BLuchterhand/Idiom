@@ -165,6 +165,24 @@ func TestPlanExecuteRequestedTestEditDetectionHandlesNegationAndCommonPaths(t *t
 			t.Fatalf("path should count as a test path: %s", path)
 		}
 	}
+	if reason := planExecuteRequestedEditCoverageRejectionReason("Implement the feature and add tests.", []string{"pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
+		t.Fatalf("test-only feature plan should require implementation edit, got %q", reason)
+	}
+	if reason := planExecuteRequestedEditCoverageRejectionReason("Add tests only for the existing parser.", []string{"pkg/parser_test.go"}); reason != "" {
+		t.Fatalf("tests-only prompt should allow test-only changes, got %q", reason)
+	}
+	if reason := planExecuteRequestedEditCoverageRejectionReason("Implement the feature and add tests.", []string{"pkg/feature.go", "pkg/feature_test.go"}); reason != "" {
+		t.Fatalf("source+test plan should satisfy edit coverage, got %q", reason)
+	}
+	if reason := planExecuteRequestedEditCoverageRejectionReason("Harden temp symlink writes and add regression tests.", []string{"pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
+		t.Fatalf("behavior verbs plus tests should require implementation edit, got %q", reason)
+	}
+	if reason := planExecuteRequestedEditCoverageRejectionReason("Add regression coverage for an existing parser fix.", []string{"pkg/parser_test.go"}); reason != "" {
+		t.Fatalf("coverage-only prompt should not infer implementation edit, got %q", reason)
+	}
+	if reason := (planexecute.EditSetObligations{}).With(planexecute.EditSetObligationKindImplementationEdit, "test").RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
+		t.Fatalf("docs plus tests should not satisfy implementation edit obligation, got %q", reason)
+	}
 }
 
 func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
@@ -271,6 +289,85 @@ func TestPlanExecuteScopeToBriefBodyInsertsAllowedPathsInsideMarkers(t *testing.
 	}
 	if allowed := app.AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/app/rendering.go" {
 		t.Fatalf("allowed paths were not parseable from scoped prompt: %#v\n%s", allowed, got)
+	}
+}
+
+func TestPlanExecuteEditSetObligationsDoNotPromoteAllowedPathsToRequiredPaths(t *testing.T) {
+	prompt := `Implement the feature and add tests.
+
+allowed_edit_paths:
+- pkg/feature.go
+- pkg/feature_test.go
+`
+	required := planExecuteRequiredEditPaths(planExecuteOptions{}, prompt)
+	if len(required) != 0 {
+		t.Fatalf("edit-set obligations and allowed scope must not define required paths, got %#v", required)
+	}
+	allowed := planExecuteAllowedEditPaths(planExecuteOptions{}, prompt)
+	for _, want := range []string{"pkg/feature.go", "pkg/feature_test.go"} {
+		if !containsString(allowed, want) {
+			t.Fatalf("missing allowed path %q, got %#v", want, allowed)
+		}
+	}
+	obligations := planexecute.EditSetObligationsFromPrompt(prompt)
+	if !obligations.Has(planexecute.EditSetObligationKindTestEdit) {
+		t.Fatalf("expected test edit obligation, got %#v", obligations)
+	}
+	if !obligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
+		t.Fatalf("expected implementation edit obligation, got %#v", obligations)
+	}
+}
+
+func TestPlanExecuteScopeContractDoesNotReinferPromptObligationsWhenTypedScopePresent(t *testing.T) {
+	prompt := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"Generated context mentions feature fallback and add tests.",
+		"",
+		pathparse.WrapBriefBody("# Objective\n\nImplement the feature and add tests."),
+	}, "\n")
+	opts := planExecuteOptions{
+		ScopeContract: planexecute.NewPlanScopeContract(nil, []string{"pkg/feature.go", "pkg/feature_test.go"}, nil),
+	}
+
+	contract := planExecuteScopeContract(opts, prompt)
+	if len(contract.EditSetObligations) != 0 {
+		t.Fatalf("typed scope owns edit-set obligations; prompt prose must not re-infer them: %#v", contract.EditSetObligations)
+	}
+}
+
+func TestPlanExecuteScopeContractPreservesTypedObligationSources(t *testing.T) {
+	opts := planExecuteOptions{
+		ScopeContract: planexecute.PlanScopeContract{
+			EditSetObligations: planexecute.EditSetObligations{{Kind: planexecute.EditSetObligationKindTestEdit}},
+		},
+		EditSetObligations: planexecute.EditSetObligations{{Kind: planexecute.EditSetObligationKindImplementationEdit}},
+	}
+
+	contract := planExecuteScopeContract(opts, "")
+	got := map[planexecute.EditSetObligationKind]string{}
+	for _, obligation := range contract.EditSetObligations {
+		got[obligation.Kind] = obligation.Source
+	}
+	if got[planexecute.EditSetObligationKindTestEdit] != "scope_contract" {
+		t.Fatalf("scope contract obligation source = %q, want scope_contract; obligations=%#v", got[planexecute.EditSetObligationKindTestEdit], contract.EditSetObligations)
+	}
+	if got[planexecute.EditSetObligationKindImplementationEdit] != "options" {
+		t.Fatalf("options obligation source = %q, want options; obligations=%#v", got[planexecute.EditSetObligationKindImplementationEdit], contract.EditSetObligations)
+	}
+}
+
+func TestPlanExecuteSourceSatisfiedUsesNamedAllowedEvidenceOnly(t *testing.T) {
+	answer := strings.Join([]string{
+		"Decision: source-satisfied",
+		"- pkg/feature.go: requested final state is already present.",
+	}, "\n")
+	paths := planExecuteSourceSatisfiedEvidencePaths(answer, nil, []string{"pkg/feature.go", "pkg/feature_test.go"})
+	if len(paths) != 1 || paths[0] != "pkg/feature.go" {
+		t.Fatalf("allowed scope must not become source-satisfied coverage obligations, got %#v", paths)
+	}
+	if !agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, paths) {
+		t.Fatalf("source-satisfied answer should cover named allowed evidence path")
 	}
 }
 
@@ -663,6 +760,45 @@ func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop
 	}
 }
 
+func TestRunPlanExecuteMainRejectsSourceSatisfiedWhenRequestedImplementationEditMissing(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	prompt := "Implement the feature and add tests."
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-json"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "Decision: source-satisfied\n- pkg/feature_test.go: feature tests are already present.", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected missing implementation edit rejection, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if !strings.Contains(stderr.String(), planexecute.EditSetFailureMissingRequestedImplementationEdit) {
+		t.Fatalf("expected %s stderr, got %s", planexecute.EditSetFailureMissingRequestedImplementationEdit, stderr.String())
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.source_satisfied_rejected")
+	if !ok {
+		t.Fatalf("expected source_satisfied_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != planexecute.EditSetFailureMissingRequestedImplementationEdit {
+		t.Fatalf("expected missing implementation reason, got %#v", event)
+	}
+	if got, _ := event["edit_set_obligations"].([]any); len(got) == 0 {
+		t.Fatalf("expected edit_set_obligations metadata, got %#v", event)
+	}
+	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 1 || got[0] != "pkg/feature_test.go" {
+		t.Fatalf("expected rejected source-satisfied evidence path, got %#v", event)
+	}
+	if got, _ := event["missing_edit_set_obligations"].([]any); len(got) == 0 {
+		t.Fatalf("expected missing edit-set obligations in rejection telemetry, got %#v", event)
+	}
+}
+
 func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEvidence(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
@@ -934,6 +1070,62 @@ func TestRunPlanExecuteMainRejectsInitialPlanWhenRequestedTestEditMissingBeforeW
 	}
 	if event["reason"] != "missing_requested_test_edit" {
 		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
+	}
+}
+
+func TestRunPlanExecuteMainRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "feature.go"), []byte("package demo\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
+		t.Fatalf("seed feature.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("seed feature_test.go: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", "Implement the feature. Start by adding failing tests, then implement.",
+			"-json",
+			"-skip-review-repair",
+		},
+		&stdout,
+		&stderr,
+		func(cfg config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+			}
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "test-only plan",
+				Edits: []workspace.PlanEdit{
+					{Path: "feature_test.go", OldText: "func TestEnabled(t *testing.T) {}\n", NewText: "func TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n", Purpose: "add feature test"},
+				},
+			})
+			return "submitted test-only plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected missing implementation edit rejection, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing_requested_implementation_edit") {
+		t.Fatalf("expected missing_requested_implementation_edit stderr, got %s", stderr.String())
+	}
+	if got := readFileString(t, filepath.Join(root, "feature_test.go")); strings.Contains(got, "t.Fatal") {
+		t.Fatalf("test-only edit must not be applied after plan rejection, got:\n%s", got)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.planner_plan_rejected")
+	if !ok {
+		t.Fatalf("expected planner_plan_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "missing_requested_implementation_edit" {
+		t.Fatalf("expected missing_requested_implementation_edit reason, got %#v", event)
 	}
 }
 
@@ -1921,6 +2113,54 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.
 	}
 }
 
+func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatalf("seed feature_test.go: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "feature_test.go", OldText: "func TestEnabled(t *testing.T) {}\n", NewText: "func TestEnabled(t *testing.T) {\n\tif !Enabled() {\n\t\tt.Fatal(\"disabled\")\n\t}\n}\n", Purpose: "add feature test"},
+		},
+	}
+	var stdout bytes.Buffer
+	var gotPrompt string
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Implement the feature. Start by adding failing tests, then implement.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, prompt string, _ runOptions, _ io.Writer) (string, error) {
+			gotPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: test coverage was added.\n- Scope safety: diff is limited to one test file.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected missing requested implementation edit to reject review pass")
+	}
+	if !strings.Contains(err.Error(), "missing_requested_implementation_edit") {
+		t.Fatalf("expected missing implementation edit rejection, got %v", err)
+	}
+	if !strings.Contains(gotPrompt, "requested_implementation_edit_missing") {
+		t.Fatalf("review prompt should expose requested implementation edit obligation, got:\n%s", gotPrompt)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_pass_rejected")
+	if !ok {
+		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "missing_requested_implementation_edit" {
+		t.Fatalf("expected missing_requested_implementation_edit reason, got %#v", event)
+	}
+}
+
 func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMissing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
@@ -2154,6 +2394,79 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 	}
 	if got := readFileString(t, filepath.Join(root, "a.txt")); got != "new\n" {
 		t.Fatalf("resume should not reapply executor edits, got %q", got)
+	}
+}
+
+func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("seed feature_test.go: %v", err)
+	}
+	prompt := "Add coverage for existing feature behavior."
+	var firstStdout, firstStderr bytes.Buffer
+	plannerSessionID := ""
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt},
+		&firstStdout,
+		&firstStderr,
+		func(cfg config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			switch opts.TaskFamily {
+			case agent.PlanThenExecutePlannerTaskFamily:
+				plannerSessionID = cfg.Workspace.SessionID
+				writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+					SchemaVersion: workspace.PlanArtifactSchemaVersion,
+					Created:       time.Now().UTC().Format(time.RFC3339Nano),
+					SessionID:     cfg.Workspace.SessionID,
+					Rationale:     "test-only coverage plan",
+					Edits: []workspace.PlanEdit{
+						{Path: "feature_test.go", OldText: "func TestFeature(t *testing.T) {}\n", NewText: "func TestFeature(t *testing.T) {\n\tt.Helper()\n}\n", Purpose: "add coverage detail"},
+					},
+				})
+				return "submitted test-only plan", nil
+			case agent.PlanThenExecuteReviewRepairTaskFamily:
+				return "Decision: pass\nNo checklist.", nil
+			default:
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+				return "", nil
+			}
+		},
+	)
+	if code != 1 {
+		t.Fatalf("first run should fail review checklist gate, got %d stdout=%s stderr=%s", code, firstStdout.String(), firstStderr.String())
+	}
+	state, _, err := planexecute.LoadProgressState(root, plannerSessionID)
+	if err != nil {
+		t.Fatalf("load progress state: %v", err)
+	}
+	state.EditSetObligations = planexecute.EditSetObligations{}.With(planexecute.EditSetObligationKindImplementationEdit, "persisted_retry")
+	if _, err := planexecute.SaveProgressState(root, &state); err != nil {
+		t.Fatalf("save progress state: %v", err)
+	}
+
+	var resumedStdout, resumedStderr bytes.Buffer
+	resumedPrompt := ""
+	code = runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt, "-resume", plannerSessionID, "-json"},
+		&resumedStdout,
+		&resumedStderr,
+		func(_ config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+				t.Fatalf("resume should run review-repair only, got task family %q", opts.TaskFamily)
+			}
+			resumedPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: test coverage is present.\n- Scope safety: no corrective edit needed.", nil
+		},
+	)
+	if code != 1 {
+		t.Fatalf("resume should reject pass against persisted implementation obligation, got %d stdout=%s stderr=%s", code, resumedStdout.String(), resumedStderr.String())
+	}
+	if !strings.Contains(resumedStderr.String(), planexecute.EditSetFailureMissingRequestedImplementationEdit) {
+		t.Fatalf("expected persisted implementation obligation rejection, stderr=%s", resumedStderr.String())
+	}
+	if !strings.Contains(resumedPrompt, "requested_implementation_edit_missing") {
+		t.Fatalf("review prompt should expose persisted implementation obligation, got:\n%s", resumedPrompt)
 	}
 }
 

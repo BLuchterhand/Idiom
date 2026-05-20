@@ -2,6 +2,7 @@ package planexecute
 
 import (
 	"strings"
+	"unicode"
 
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/util"
@@ -17,18 +18,113 @@ func AllowedEditPathsFromPrompt(prompt string) []string {
 
 func requiredEditPathsFromPrompt(prompt string) []string {
 	prompt = pathparse.ScopeToBriefBody(prompt)
-	return appendUniqueBriefStrings(
-		requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings()),
-		structuredRequiredEditPathsFromPrompt(prompt)...,
-	)
+	paths := requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings(), true)
+	paths = appendUniqueBriefStrings(paths, pathparse.FilterWorkspaceFilePaths(structuredRequiredEditPathsFromPrompt(prompt))...)
+	paths = appendUniqueBriefStrings(paths, inlineRequiredEditPathsFromPrompt(prompt)...)
+	return paths
 }
 
 func allowedEditPathsFromPrompt(prompt string) []string {
 	prompt = pathparse.ScopeToBriefBody(prompt)
-	return appendUniqueBriefStrings(
-		requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings()),
+	paths := appendUniqueBriefStrings(
+		requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings(), false),
 		structuredAllowedEditPathsFromPrompt(prompt)...,
 	)
+	paths = appendUniqueBriefStrings(paths, inlineAllowedEditPathsFromPrompt(prompt)...)
+	return paths
+}
+
+func inlineAllowedEditPathsFromPrompt(prompt string) []string {
+	text := pathparse.ScopeToBriefBody(prompt)
+	var paths []string
+	for _, line := range strings.Split(text, "\n") {
+		for _, segment := range inlineAllowedScopeSegments(line) {
+			words := promptWordText(segment)
+			for _, phrase := range inlineAllowedScopePhrases() {
+				if strings.Contains(words, phrase) {
+					paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspacePaths(segment)...)
+					break
+				}
+			}
+		}
+	}
+	return paths
+}
+
+func inlineAllowedScopeSegments(line string) []string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer(". ", "\n", "? ", "\n", "! ", "\n")
+	return strings.Split(replacer.Replace(line), "\n")
+}
+
+func inlineAllowedScopePhrases() []string {
+	return []string{
+		" only edit ",
+		" only modify ",
+		" only change ",
+		" edit only ",
+		" modify only ",
+		" change only ",
+		" limit edits to ",
+		" restrict edits to ",
+		" limit changes to ",
+		" restrict changes to ",
+	}
+}
+
+func inlineRequiredEditPathsFromPrompt(prompt string) []string {
+	text := pathparse.ScopeToBriefBody(prompt)
+	var paths []string
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		lower := strings.ToLower(line)
+		for _, prefix := range []string{
+			"required edit paths:",
+			"required files:",
+			"files to modify:",
+			"files to edit:",
+		} {
+			idx := strings.Index(lower, prefix)
+			if idx < 0 {
+				continue
+			}
+			value := strings.TrimSpace(line[idx+len(prefix):])
+			if value == "" {
+				continue
+			}
+			paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspaceFilesInInlineList(value)...)
+		}
+	}
+	return paths
+}
+
+func promptWordText(prompt string) string {
+	prompt = strings.TrimSpace(strings.ToLower(prompt))
+	if prompt == "" {
+		return " "
+	}
+	var b strings.Builder
+	b.Grow(len(prompt) + 2)
+	b.WriteByte(' ')
+	lastSpace := true
+	for _, r := range prompt {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+			lastSpace = false
+			continue
+		}
+		if !lastSpace {
+			b.WriteByte(' ')
+			lastSpace = true
+		}
+	}
+	if !lastSpace {
+		b.WriteByte(' ')
+	}
+	return b.String()
 }
 
 func requiredEditPathHeadings() []string {
@@ -37,7 +133,6 @@ func requiredEditPathHeadings() []string {
 		"files-to-modify",
 		"files to edit",
 		"edit files",
-		"editable files",
 		"required edit paths",
 		"required files",
 		"required paths",
@@ -50,6 +145,7 @@ func allowedEditPathHeadings() []string {
 		"candidate edit scope from target references",
 		"candidate paths",
 		"candidate files",
+		"editable files",
 		"files you may edit",
 		"files you may modify",
 		"files you can edit",
@@ -65,7 +161,7 @@ func allowedEditPathHeadings() []string {
 	}
 }
 
-func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []string {
+func requiredEditPathsUnderPromptHeadings(prompt string, headings []string, fileOnly bool) []string {
 	headingSet := promptHeadingSet(headings)
 	var paths []string
 	active := false
@@ -88,6 +184,9 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 		}
 		if strings.HasPrefix(line, "|") && strings.Count(line, "|") >= 2 {
 			linePaths := pathparse.MentionedWorkspacePathsInMarkdownTableFirstCell(line)
+			if fileOnly {
+				linePaths = pathparse.FilterWorkspaceFilePaths(linePaths)
+			}
 			if len(linePaths) > 0 {
 				sawPath = true
 				paths = appendUniqueBriefStrings(paths, linePaths...)
@@ -95,6 +194,9 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 			continue
 		}
 		linePaths := promptPacketWorkspacePaths(line)
+		if fileOnly {
+			linePaths = pathparse.FilterWorkspaceFilePaths(linePaths)
+		}
 		if len(linePaths) > 0 {
 			sawPath = true
 			paths = appendUniqueBriefStrings(paths, linePaths...)
@@ -116,12 +218,12 @@ func structuredRequiredEditPathsFromPrompt(prompt string) []string {
 		"files_to_modify",
 		"files_to_edit",
 		"required_edit_paths",
-		"editable_files",
 	})
 }
 
 func structuredAllowedEditPathsFromPrompt(prompt string) []string {
 	return structuredEditPathsFromPrompt(prompt, []string{
+		"editable_files",
 		"allowed_edit_paths",
 		"allowed_files",
 		"write_scope",

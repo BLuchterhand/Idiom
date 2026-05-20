@@ -3198,6 +3198,37 @@ func TestProductStatusUsageErrors(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected code 2 for missing --effort-root, got %d", code)
 	}
+	if stdout.Len() != 0 {
+		t.Fatalf("expected no stdout for text usage error, got %q", stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "product status: --effort-root is required") {
+		t.Fatalf("expected missing effort root usage error, got %q", stderr.String())
+	}
+}
+
+func TestProductStatusJSONUsageErrorsAreTyped(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	code := runProductStatus([]string{"--json"}, &stdout, &stderr, nil)
+	if code != 2 {
+		t.Fatalf("expected code 2 for JSON missing --effort-root, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if strings.TrimSpace(stderr.String()) != "" {
+		t.Fatalf("expected JSON usage error to keep stderr empty, got %q", stderr.String())
+	}
+	var result productStatusUsageJSONResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("usage error output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "blocked" || len(result.Blockers) != 1 {
+		t.Fatalf("expected blocked status with one blocker, got %#v", result)
+	}
+	blocker := result.Blockers[0]
+	if blocker.Code != "missing-argument" || blocker.Path != "--effort-root" || blocker.Message != "--effort-root is required" {
+		t.Fatalf("unexpected usage blocker: %#v", blocker)
+	}
+	if !strings.Contains(result.NextValidAction, "--effort-root") {
+		t.Fatalf("expected next valid action to mention --effort-root, got %q", result.NextValidAction)
+	}
 }
 
 func TestProductStatusHelp(t *testing.T) {
@@ -5177,6 +5208,50 @@ func TestProductTDDPlanObligationsUsageErrors(t *testing.T) {
 	if code != 2 {
 		t.Fatalf("expected code 2 without --plan-obligations, got %d", code)
 	}
+}
+
+func TestProductTDDJSONUsageErrors(t *testing.T) {
+	assertUsageError := func(t *testing.T, args []string, wantCode string, wantPath string, wantMessage string) {
+		t.Helper()
+		var stdout, stderr bytes.Buffer
+		code := runProductTDD(args, &stdout, &stderr, nil)
+		if code != 2 {
+			t.Fatalf("expected code 2 for args %v, got %d stdout=%s stderr=%s", args, code, stdout.String(), stderr.String())
+		}
+		if strings.TrimSpace(stderr.String()) != "" {
+			t.Fatalf("expected JSON usage error to keep stderr empty, got %q", stderr.String())
+		}
+		var result productStatusUsageJSONResult
+		if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+			t.Fatalf("usage error output should be valid JSON: %v\n%s", err, stdout.String())
+		}
+		if result.Status != "blocked" || len(result.Blockers) != 1 {
+			t.Fatalf("expected blocked status with one blocker, got %#v", result)
+		}
+		blocker := result.Blockers[0]
+		if blocker.Code != wantCode || blocker.Path != wantPath || blocker.Message != wantMessage {
+			t.Fatalf("unexpected usage blocker: %#v", blocker)
+		}
+		if strings.TrimSpace(result.NextValidAction) == "" {
+			t.Fatalf("expected next valid action, got %#v", result)
+		}
+	}
+
+	t.Run("missing effort-root", func(t *testing.T) {
+		assertUsageError(t, []string{"--json", "--plan-obligations"}, "tdd_missing_effort_root", "--effort-root", "--effort-root is required")
+	})
+
+	t.Run("missing mode flag", func(t *testing.T) {
+		assertUsageError(t, []string{"--json", "--effort-root", "."}, "tdd_missing_mode_flag", "mode", "exactly one of --plan-obligations or --evaluate-coverage is required")
+	})
+
+	t.Run("multiple mode flags", func(t *testing.T) {
+		assertUsageError(t, []string{"--json", "--effort-root", ".", "--plan-obligations", "--evaluate-coverage"}, "tdd_multiple_mode_flags", "mode", "exactly one of --plan-obligations or --evaluate-coverage is required")
+	})
+
+	t.Run("flag parse error", func(t *testing.T) {
+		assertUsageError(t, []string{"--json", "--unknown-flag"}, "tdd_flag_parse_error", "flags", "flag provided but not defined: -unknown-flag")
+	})
 }
 
 func TestProductTDDCoverageGatePassesDeterministicFixture(t *testing.T) {

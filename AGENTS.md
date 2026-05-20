@@ -29,7 +29,15 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 - The preferred order is: language-aware symbol/navigation tools, `discovery_query`, other structured discovery tools such as `structural_search`, `dependency_graph`, `history_*`, `blame_range`, `ctags_symbols`, `semgrep_scan`, or `joern_scan`, and only then generic `search_content` / `read_file` style inspection.
 - External agents (opencode, Codex, Claude, etc.) can invoke idiom's workspace tools directly via the CLI without starting an inference session. Use `idiom tool <tool-name> --input '<json>'` or pipe JSON on stdin. Run `idiom tool help` for usage and `idiom tool list` for all available tools.
 - Keep edits targeted. Preserve user changes and do not widen scope without cause.
+- Before changing or reverting established behavior, inspect relevant git history
+  with `history_range`, `history_symbol`, `blame_range`, or focused `git log`
+  when the prior rationale is not obvious. Treat commit messages as evidence of
+  why a decision exists, not as unquestionable authority.
 - For non-trivial write work, keep a short explicit plan/checklist so the intended edits and verification stay visible.
+- When committing, make the commit body useful future evidence: explain the
+  problem or failure that forced the change, the chosen contract/design, any
+  meaningful alternatives or reversions avoided, and the verification run. Do
+  not leave future agents guessing whether a later edit is progress or churn.
 - Treat prompt files, runner policy, control rails, and eval fixtures as one system. Changes in one layer often require updates or tests in another.
 - If the available evidence is thin, say so and gather more. Do not smooth over uncertainty with confident prose.
 

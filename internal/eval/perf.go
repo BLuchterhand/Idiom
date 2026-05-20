@@ -880,18 +880,25 @@ func detectTruncatedSearch(rep *PerfReport, records []Record) {
 }
 
 func detectRedirectStorm(rep *PerfReport, records []Record) {
-	redirects := 0
+	softRedirects := 0
+	hardRedirects := 0
 	for _, rec := range records {
 		role, _ := rec.Data["role"].(string)
 		if role == "discovery_redirect" {
-			redirects++
+			content := strings.ToLower(stringField(rec.Data, "content"))
+			if strings.Contains(content, "hard_reject") {
+				hardRedirects++
+			} else {
+				softRedirects++
+			}
 		}
 	}
-	if redirects >= 2 {
+	redirects := softRedirects + hardRedirects
+	if hardRedirects > 0 || redirects >= 3 {
 		rep.AntiPatterns = append(rep.AntiPatterns, AntiPattern{
 			Name:        "redirect_storm",
 			Count:       redirects,
-			Description: "multiple discovery_redirect events — model kept reaching for raw read_file on code files",
+			Description: "repeated discovery_redirect events or a hard redirect — model kept reaching for raw reads after structured guidance",
 		})
 	}
 }
@@ -1191,6 +1198,7 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 	reopened := 0
 	var examples []string
 	armedStep := 0
+	var armedGate map[string]any
 	for _, rec := range records {
 		switch rec.Type {
 		case "tool_result":
@@ -1200,10 +1208,12 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 				if armedStep == 0 {
 					armedStep = 1
 				}
+				armedGate = rec.Data
 				continue
 			}
 			if armedStep > 0 && workspaceWriteToolName(tool) && stringField(rec.Data, "error") == "" {
 				armedStep = 0
+				armedGate = nil
 			}
 		case "tool_request":
 			if armedStep == 0 {
@@ -1212,9 +1222,15 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 			tool := stringField(rec.Data, "tool")
 			if workspaceWriteToolName(tool) {
 				armedStep = 0
+				armedGate = nil
 				continue
 			}
 			if !toolLooksLikeReadOrDiscovery(tool) {
+				continue
+			}
+			if completionGateExpectedSourceRecovery(armedGate, rec.Data) {
+				armedStep = 0
+				armedGate = nil
 				continue
 			}
 			reopened++
@@ -1223,6 +1239,7 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 				examples = append(examples, fmt.Sprintf("after completion gate step %d: %s %s", armedStep, tool, target))
 			}
 			armedStep = 0
+			armedGate = nil
 		}
 	}
 	if reopened > 0 {
@@ -1233,6 +1250,36 @@ func detectCompletionGateReopenedDiscovery(rep *PerfReport, records []Record) {
 			Examples:    examples,
 		})
 	}
+}
+
+func completionGateExpectedSourceRecovery(gateData map[string]any, requestData map[string]any) bool {
+	gateText := strings.ToLower(strings.TrimSpace(
+		stringField(gateData, "summary") + " " +
+			stringField(gateData, "error") + " " +
+			stringField(gateData, "content"),
+	))
+	if !strings.Contains(gateText, "required edit path") &&
+		!strings.Contains(gateText, "required_edit_path") &&
+		!strings.Contains(gateText, "source evidence") &&
+		!strings.Contains(gateText, "source-body") {
+		return false
+	}
+	tool := strings.TrimSpace(stringField(requestData, "tool"))
+	if tool != "read_file" && tool != "code_navigate" && tool != "read_only_capability" &&
+		!strings.HasSuffix(tool, "_read_symbol") && !strings.HasSuffix(tool, "_extract_body") {
+		return false
+	}
+	target := strings.ToLower(strings.TrimSpace(util.FirstNonEmpty(
+		stringField(requestData, "path"),
+		targetFromAction(stringField(requestData, "action")),
+		stringField(requestData, "handle"),
+		stringField(requestData, "id"),
+	)))
+	target = strings.TrimPrefix(target, "file://")
+	if target == "" || target == "." {
+		return false
+	}
+	return strings.Contains(gateText, target)
 }
 
 func detectRequiredPathsBlockedWithoutWrite(rep *PerfReport, records []Record) {
