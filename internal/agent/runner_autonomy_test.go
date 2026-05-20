@@ -682,6 +682,64 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 	}
 }
 
+func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t *testing.T) {
+	root := t.TempDir()
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:                 "implement",
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"internal/agent/runner.go"},
+		AllowedTools:         []string{"write_file", "source_sanity"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+
+	results := []workspace.ToolResult{
+		{Tool: "write_file", Summary: "Wrote internal/agent/runner.go"},
+		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "internal/agent/runner.go:12: undefined: missingSymbol"},
+	}
+	recorder.emitContractStarted(brief)
+	recorder.emitWriteGate(workspace.ToolRequest{Tool: "write_file", Path: "internal/agent/runner.go"}, autonomy.PolicyAllow, "write_result_completed", []string{"internal/agent/runner.go"})
+	recorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", results)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if hasAutonomyObligationEvent(events, autonomy.EventObligationResolved, "obl-verify-post-write") {
+		t.Fatalf("failed verification must not emit resolved obligation for verify: %#v", events)
+	}
+	if !hasUnresolvedAutonomyObligation(report, "obl-verify-post-write") {
+		t.Fatalf("failed verification should remain unresolved: %#v", report.ObligationCoverage)
+	}
+	foundFailedCompletion := false
+	for _, event := range events {
+		if event.Type == autonomy.EventCompletionGateDecision &&
+			event.Completion != nil &&
+			event.Completion.VerificationStatus == "failed" &&
+			slices.Contains(event.Completion.RemainingObligations, "obl-verify-post-write") {
+			foundFailedCompletion = true
+		}
+	}
+	if !foundFailedCompletion {
+		t.Fatalf("completion gate decision should carry failed verification and open verify obligation: %#v", events)
+	}
+}
+
 func decodeRunnerAutonomyEventsForTest(t *testing.T, runEvents []RunEvent) []autonomy.Event {
 	t.Helper()
 	var events []autonomy.Event

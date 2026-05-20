@@ -4535,18 +4535,25 @@ func TestPartialRequiredEditsCompletionGateUsesBoundedRecovery(t *testing.T) {
 	var requests int
 	var recoveryPrompt string
 	var secondRequestMaxTokens int
+	var secondRequestForcedNoThinking bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
 		var body struct {
-			MaxTokens int `json:"max_tokens"`
+			MaxTokens          int `json:"max_tokens"`
+			ChatTemplateKwargs *struct {
+				EnableThinking *bool `json:"enable_thinking"`
+			} `json:"chat_template_kwargs,omitempty"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode request body: %v", err)
 		}
 		if requests == 2 {
 			secondRequestMaxTokens = body.MaxTokens
+			secondRequestForcedNoThinking = body.ChatTemplateKwargs != nil &&
+				body.ChatTemplateKwargs.EnableThinking != nil &&
+				!*body.ChatTemplateKwargs.EnableThinking
 		}
 		reply := replies[requests]
 		requests++
@@ -4600,12 +4607,20 @@ func TestPartialRequiredEditsCompletionGateUsesBoundedRecovery(t *testing.T) {
 		t.Fatalf("expected one recovery retry after partial edit, got %d request(s)", requests)
 	}
 	if !strings.Contains(recoveryPrompt, "b.txt") ||
-		!strings.Contains(recoveryPrompt, "semantic/context/declared project discovery") ||
-		strings.Contains(recoveryPrompt, "Read/search tools are hidden") {
+		!strings.Contains(recoveryPrompt, "parser-readable action") ||
+		!strings.Contains(recoveryPrompt, "Actions written only in hidden reasoning") ||
+		!strings.Contains(recoveryPrompt, "edit_file") ||
+		!strings.Contains(recoveryPrompt, "write_file") ||
+		!strings.Contains(recoveryPrompt, "Prefer the first unread required path now") ||
+		!strings.Contains(recoveryPrompt, "\"path\":\"b.txt\"") ||
+		strings.Contains(recoveryPrompt, "Read/search/discovery tools are hidden") {
 		t.Fatalf("expected recovery prompt to target remaining required path, got %q", recoveryPrompt)
 	}
-	if secondRequestMaxTokens != 1024 {
-		t.Fatalf("expected completion-gate recovery retry to cap max_tokens at 1024, got %d", secondRequestMaxTokens)
+	if secondRequestMaxTokens != 4096 {
+		t.Fatalf("expected completion-gate recovery retry to cap max_tokens at 4096, got %d", secondRequestMaxTokens)
+	}
+	if secondRequestForcedNoThinking {
+		t.Fatalf("direct required-path recovery should not force no-thinking for local implementation retries")
 	}
 	if completion.BlockerKind != "completion_gate_required_paths_remaining_repeated" {
 		t.Fatalf("unexpected completion status: %#v", completion)

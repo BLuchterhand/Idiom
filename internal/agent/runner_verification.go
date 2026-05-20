@@ -100,6 +100,59 @@ func sourceEditsAreSemanticallyVerified(brief workerruntime.WorkerRuntimeBrief, 
 	return ok && !verificationResultIsPatchHygieneOnly(latest)
 }
 
+func failedVerificationAfterLatestWrite(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolResult, bool) {
+	if verificationContractSkipsGate(brief.VerificationContract) {
+		return workspace.ToolResult{}, false
+	}
+	docLane := briefIsDocDeliverableLane(brief)
+	pending := false
+	failed := false
+	var latestFailed workspace.ToolResult
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" && workspace.IsWorkspaceWriteTool(result.Tool) {
+			if docLane && (writeTouchesOnlyNonSourcePaths(result) || mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
+				continue
+			}
+			pending = true
+			failed = false
+			latestFailed = workspace.ToolResult{}
+			continue
+		}
+		if !pending || !resultIsVerificationAttempt(result) {
+			continue
+		}
+		if strings.TrimSpace(result.Error) == "" && resultCountsAsSuccessfulVerification(result) {
+			pending = false
+			failed = false
+			latestFailed = workspace.ToolResult{}
+			continue
+		}
+		if strings.TrimSpace(result.Error) != "" {
+			failed = true
+			latestFailed = result
+		}
+	}
+	if !pending || !failed {
+		return workspace.ToolResult{}, false
+	}
+	return latestFailed, true
+}
+
+func resultIsVerificationAttempt(result workspace.ToolResult) bool {
+	tool := strings.TrimSpace(result.Tool)
+	if tool == "source_sanity" || isDiagnosticsVerificationTool(tool) {
+		return true
+	}
+	if tool != "shell" {
+		return false
+	}
+	command := shellCommandFromToolResult(result)
+	if command != "" && isVerificationRequest(workspace.ToolRequest{Tool: "shell", Command: command}) {
+		return true
+	}
+	return isVerificationCommandText(result.Output) || isVerificationCommandText(result.Summary)
+}
+
 func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if !runnerBriefRequiresMutation(brief) || verificationContractSkipsGate(brief.VerificationContract) {
 		return false

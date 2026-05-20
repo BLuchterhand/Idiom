@@ -54,7 +54,11 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	requireContract := tierRequiresContractCoverage(out.CoverageTier)
 
 	tddIDs := knownTDDObligationIDs(ledger, knownTDDIDs...)
-	evidencePass := evaluateEvidenceAndAcceptanceCoverage(prd, adrIndex, adrs, tddIDs, traceability)
+	prdTDDLinkErrs := ValidatePRDTDDObligationCrossLinks(prd.Requirements, tddIDs)
+	adrTDDLinkErrs := ValidateADRCrossLinks(acceptedParsedADRs(adrs), nil, nil, tddIDs)
+	appendPRDTDDObligationLinkBlockers(&out, prdTDDLinkErrs)
+	appendADRTDDObligationLinkBlockers(&out, adrTDDLinkErrs)
+	evidencePass := len(prdTDDLinkErrs) == 0 && len(adrTDDLinkErrs) == 0 && evaluateEvidenceAndAcceptanceCoverage(prd, adrIndex, adrs, traceability)
 	record("evidence_acceptance", true, evidencePass, "all requirements and accepted artifacts must map evidence and traceability", "evidence/traceability_matrix.json", "coverage_evidence_acceptance_incomplete")
 
 	earsPass := ledger.Coverage.EARSTotal > 0 && ledger.Coverage.EARSMapped == ledger.Coverage.EARSTotal
@@ -142,6 +146,73 @@ func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
 	return strings.EqualFold(strings.TrimSpace(eval.Status), "blocked") || len(eval.Blockers) > 0
 }
 
+func appendPRDTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []PRDTDDObligationLinkError) {
+	if out == nil || len(errs) == 0 {
+		return
+	}
+	out.Status = "blocked"
+	for _, linkErr := range errs {
+		reqID := strings.TrimSpace(linkErr.RequirementID)
+		tddID := strings.TrimSpace(linkErr.TDDObligation)
+		message := strings.TrimSpace(linkErr.Message)
+		if message == "" {
+			message = fmt.Sprintf("PRD must-priority requirement %s references TDD obligation %q not found in current or historical TDD obligation IDs", reqID, tddID)
+		}
+		out.Findings = append(out.Findings, CoverageGateFinding{
+			Kind:      "coverage_prd_tdd_obligation_unknown",
+			Criterion: "evidence_acceptance",
+			Message:   message,
+			File:      "prd.md",
+			Severity:  "error",
+		})
+		out.Blockers = append(out.Blockers, CoverageGateBlocker{
+			Kind:      "coverage_prd_tdd_obligation_unknown",
+			Criterion: "evidence_acceptance",
+			Message:   message,
+			File:      "prd.md",
+		})
+	}
+}
+
+func appendADRTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []ADRCrossLinkError) {
+	if out == nil || len(errs) == 0 {
+		return
+	}
+	out.Status = "blocked"
+	for _, linkErr := range errs {
+		if strings.TrimSpace(linkErr.Field) != "tdd_obligations" {
+			continue
+		}
+		message := strings.TrimSpace(linkErr.Message)
+		if message == "" {
+			message = fmt.Sprintf("ADR %s: tdd_obligation %q not found in parsed TDD obligation IDs", strings.TrimSpace(linkErr.ADRPath), strings.TrimSpace(linkErr.Value))
+		}
+		out.Findings = append(out.Findings, CoverageGateFinding{
+			Kind:      "coverage_adr_tdd_obligation_unknown",
+			Criterion: "evidence_acceptance",
+			Message:   message,
+			File:      strings.TrimSpace(linkErr.ADRPath),
+			Severity:  "error",
+		})
+		out.Blockers = append(out.Blockers, CoverageGateBlocker{
+			Kind:      "coverage_adr_tdd_obligation_unknown",
+			Criterion: "evidence_acceptance",
+			Message:   message,
+			File:      strings.TrimSpace(linkErr.ADRPath),
+		})
+	}
+}
+
+func acceptedParsedADRs(adrs []ParsedADR) []ParsedADR {
+	out := make([]ParsedADR, 0, len(adrs))
+	for _, adr := range adrs {
+		if isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
+			out = append(out, adr)
+		}
+	}
+	return out
+}
+
 func tierRequiresBehaviorCoverage(tier string) bool {
 	switch strings.TrimSpace(strings.ToLower(tier)) {
 	case "behavior_standard", "contract_high", "formal_optional":
@@ -202,7 +273,7 @@ func knownTDDObligationIDs(ledger TDDLedger, extra ...map[string]bool) map[strin
 	return ids
 }
 
-func evaluateEvidenceAndAcceptanceCoverage(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, knownTDDIDs map[string]bool, traceability TraceabilityMatrix) bool {
+func evaluateEvidenceAndAcceptanceCoverage(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, traceability TraceabilityMatrix) bool {
 	if !isAcceptedArtifact(prd.FrontMatter.Status) {
 		return false
 	}
@@ -242,12 +313,6 @@ func evaluateEvidenceAndAcceptanceCoverage(prd PRDDocument, adrIndex ADRIndex, a
 		if len(req.TDDObligations) == 0 {
 			return false
 		}
-		for _, obligationRef := range req.TDDObligations {
-			ref := strings.TrimSpace(obligationRef)
-			if ref != "" && !knownTDDIDs[ref] {
-				return false
-			}
-		}
 		if !traceReqs[reqID] {
 			return false
 		}
@@ -259,12 +324,6 @@ func evaluateEvidenceAndAcceptanceCoverage(prd PRDDocument, adrIndex ADRIndex, a
 		}
 		if !traceADRs[adrID] {
 			return false
-		}
-		for _, obligationRef := range adr.Doc.FrontMatter.TDDObligations {
-			ref := strings.TrimSpace(obligationRef)
-			if ref != "" && !knownTDDIDs[ref] {
-				return false
-			}
 		}
 	}
 	return true

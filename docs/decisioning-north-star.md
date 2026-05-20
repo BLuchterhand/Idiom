@@ -95,6 +95,16 @@ to make the structured contract clearer at its canonical owner: route metadata,
 runtime brief, tool result, step-state packet, or one prompt surface. Do not add
 the same rule to every prompt layer.
 
+Do not confuse harness-induced degradation with model incapability. When a
+model that is normally capable of multi-file editing or planning starts
+producing shallow prose, malformed artifacts, omitted paths, or repeated
+contract misses, first compare the actual runtime against the intended one:
+role selection, model route, thinking mode, context budget, prompt lead-in,
+available tools, recovery state, and completion gate. If the harness changes a
+semantic editing task into a brittle serialization task, or routes a planning
+contract through an actor configured for a different role, the right fix is to
+realign the lane contract or actor boundary before tightening prompts.
+
 ## Workflow Transition Contracts
 
 Long-running agent workflows should be modeled as bounded, auditable state

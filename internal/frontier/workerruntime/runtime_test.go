@@ -312,6 +312,41 @@ func TestBuildRecoveryPlanDoesNotTreatOptionListVerificationAsRequirement(t *tes
 	}
 }
 
+func TestBuildRecoveryPlanTreatsFailedSourceSanityAsRepairObligation(t *testing.T) {
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:       "tool_result",
+		Request:      workspace.ToolRequest{Tool: "source_sanity", Path: "internal/productworkflow/coverage_gate.go"},
+		Constraints:  []string{"required_edit_paths_define_write_scope"},
+		WriteCapable: true,
+		Result: workspace.ToolResult{
+			Tool:    "source_sanity",
+			Summary: "Source sanity failed for 1 of 1 file(s)",
+			Error:   "internal/productworkflow/coverage_gate.go:242: req.Must undefined",
+		},
+	})
+	if plan.FailureClass != "verification_failed" {
+		t.Fatalf("failure class = %q, want verification_failed; plan=%#v", plan.FailureClass, plan)
+	}
+	joinedRequired := strings.Join(plan.RequiredNext, "\n")
+	if !strings.Contains(joinedRequired, "repair the failed verification") {
+		t.Fatalf("expected repair required_next, got %#v", plan.RequiredNext)
+	}
+	joinedValid := strings.Join(plan.ValidNext, "\n")
+	for _, want := range []string{
+		"repair the failing changed or required path",
+		"one narrow source read or language/context lookup",
+		"rerun verification after the repair write",
+		"answer with <<QUESTION>> only for an external",
+	} {
+		if !strings.Contains(joinedValid, want) {
+			t.Fatalf("expected valid_next to contain %q, got %#v", want, plan.ValidNext)
+		}
+	}
+	if strings.Contains(joinedValid, "answer from the current evidence if it already resolves the task") {
+		t.Fatalf("failed verification should not fall back to generic answer-ready guidance, got %#v", plan.ValidNext)
+	}
+}
+
 func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:      "tool_result",

@@ -74,6 +74,9 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 	update := runnerExecutionUpdate{}
 	if isVerificationRequest(req) {
 		s.verificationAttempted = true
+		// Any verification attempt closes the "run verification before more
+		// inspection" guard. A failed verifier opens a repair path instead;
+		// completion readiness is still enforced from ToolResult evidence.
 		s.writesSinceVerification = 0
 		if requestBudget != nil {
 			requestBudget.noteVerification()

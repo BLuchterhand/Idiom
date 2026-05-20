@@ -115,6 +115,34 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 	}
 }
 
+func TestWriteToolManifestExamplesIncludeRequiredDescription(t *testing.T) {
+	writeTools := map[string]bool{
+		"edit_file":   true,
+		"write_file":  true,
+		"append_file": true,
+		"apply_patch": true,
+	}
+	seen := make(map[string]int, len(writeTools))
+	for _, entry := range BuildToolManifest(nil) {
+		if !writeTools[entry.Tool] {
+			continue
+		}
+		seen[entry.Tool]++
+		var request map[string]any
+		if err := json.Unmarshal([]byte(entry.Request), &request); err != nil {
+			t.Fatalf("%s manifest request is not valid JSON: %v\n%s", entry.Tool, err, entry.Request)
+		}
+		if got, _ := request["description"].(string); strings.TrimSpace(got) == "" {
+			t.Fatalf("%s manifest request must include non-empty description because the write guard requires it: %s", entry.Tool, entry.Request)
+		}
+	}
+	for tool := range writeTools {
+		if seen[tool] == 0 {
+			t.Fatalf("missing manifest example for %s", tool)
+		}
+	}
+}
+
 func TestBuildToolSchemaExportNormalizesAllowedToolNames(t *testing.T) {
 	export, err := BuildToolSchemaExport([]string{" read_file ", "", "\tcontext_pack\n"})
 	if err != nil {

@@ -883,13 +883,14 @@ func ValidateADRCrossLinks(
 ) []ADRCrossLinkError {
 	var errs []ADRCrossLinkError
 	for _, a := range adrs {
+		adrRef := adrCrossLinkReference(a)
 		for _, ref := range a.Doc.FrontMatter.PRDRefs {
 			if prdRequirementIDs != nil && !prdRequirementIDs[ref] {
 				errs = append(errs, ADRCrossLinkError{
 					ADRPath: a.RelPath,
 					Field:   "prd_refs",
 					Value:   ref,
-					Message: fmt.Sprintf("ADR %s: prd_ref %q not found in parsed PRD requirement IDs", a.RelPath, ref),
+					Message: fmt.Sprintf("ADR %s: prd_ref %q not found in parsed PRD requirement IDs", adrRef, ref),
 				})
 			}
 		}
@@ -899,7 +900,7 @@ func ValidateADRCrossLinks(
 					ADRPath: a.RelPath,
 					Field:   "evidence_refs",
 					Value:   ref,
-					Message: fmt.Sprintf("ADR %s: evidence_ref %q not found in parsed evidence card IDs", a.RelPath, ref),
+					Message: fmt.Sprintf("ADR %s: evidence_ref %q not found in parsed evidence card IDs", adrRef, ref),
 				})
 			}
 		}
@@ -909,12 +910,22 @@ func ValidateADRCrossLinks(
 					ADRPath: a.RelPath,
 					Field:   "tdd_obligations",
 					Value:   ref,
-					Message: fmt.Sprintf("ADR %s: tdd_obligation %q not found in parsed TDD obligation IDs", a.RelPath, ref),
+					Message: fmt.Sprintf("ADR %s: tdd_obligation %q not found in parsed TDD obligation IDs", adrRef, ref),
 				})
 			}
 		}
 	}
 	return errs
+}
+
+func adrCrossLinkReference(adr ParsedADR) string {
+	if ref := strings.TrimSpace(adr.RelPath); ref != "" {
+		return ref
+	}
+	if ref := strings.TrimSpace(adr.Doc.FrontMatter.ADRID); ref != "" {
+		return ref
+	}
+	return "(unknown)"
 }
 
 type PRDTDDObligationLinkError struct {

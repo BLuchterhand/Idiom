@@ -3330,6 +3330,23 @@ func (r *Runner) runnerCompactionSummary(policy RunPolicy, ledger *taskLedgerSta
 			b.WriteString("\n")
 		}
 	}
+	if failed, ok := failedVerificationAfterLatestWrite(results, r.RuntimeBrief); ok {
+		b.WriteString("\nOpen failed verification repair packet:\n")
+		b.WriteString("- tool: ")
+		b.WriteString(strings.TrimSpace(failed.Tool))
+		b.WriteString("\n")
+		if summary := strings.TrimSpace(failed.Summary); summary != "" {
+			b.WriteString("- summary: ")
+			b.WriteString(summary)
+			b.WriteString("\n")
+		}
+		if detail := strings.TrimSpace(failed.Error); detail != "" {
+			b.WriteString("- error: ")
+			b.WriteString(truncateRunnerStateText(detail, 500))
+			b.WriteString("\n")
+		}
+		b.WriteString("- required next: repair the failing changed/required path, gather one exact edit-safety fact, rerun verification after repair, or answer <<QUESTION>> only for an external blocker.\n")
+	}
 	if len(results) > 0 {
 		b.WriteString("\nRecent tool evidence:\n")
 		for _, result := range tailToolResults(results, 8) {
@@ -5282,9 +5299,9 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			return fmt.Sprintf("The completion gate rejected a final answer while non-source deliverable path(s) remain unwritten: %s. The deliverable-write contract requires full corrected content with gathered evidence plus any missing, stale, ambiguous, or out-of-scope source fact recorded as `Source verification pending:` or `## Scope Correction Required`. Answer with <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty.", strings.Join(missing, ", ")), false, true
 		}
 		if implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) {
-			return fmt.Sprintf("The completion gate rejected a final answer while exact-anchor required edit path(s) remain unchanged: %s. Read/search tools are hidden for this turn. The available contract outcomes are exact-anchor write capability or <<QUESTION>> naming the stale or missing anchor for each remaining path.", strings.Join(missing, ", ")), true, true
+			return r.implementationRequiredPathCompletionRecoveryPrompt(missing, results, true), true, true
 		}
-		return fmt.Sprintf("The completion gate rejected a final answer while required edit path(s) remain unchanged: %s. The available contract outcomes are a write capability on each remaining required path, semantic/context/declared project discovery or a narrow raw read inside a remaining required path with named_gap for the exact edit-safety fact, or <<QUESTION>> naming the exact blocker for that path. Do not perform broad discovery or task planning.", strings.Join(missing, ", ")), false, true
+		return r.implementationRequiredPathCompletionRecoveryPrompt(missing, results, false), false, true
 	}
 	if missing := r.missingRequiredEditSnippets(results); len(missing) > 0 {
 		return fmt.Sprintf("The completion gate rejected a final answer while required edit snippet(s) are still missing: %s. Read/search tools are hidden for this turn. The available contract outcomes are snippet-backed write capability or <<QUESTION>> naming the exact blocker for each missing snippet; do not perform additional discovery.", strings.Join(missing, ", ")), true, true
@@ -5356,6 +5373,9 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			"The only non-tool closeout is `<<QUESTION>>:` naming the exact blocker, such as no resolvable edit target, missing permission, or missing body evidence. Do not repeat a final answer without a tool-backed write.",
 		}, "\n\n"), false, true
 	}
+	if failed, ok := failedVerificationAfterLatestWrite(results, r.RuntimeBrief); ok {
+		return postWriteVerificationFailedRecoveryPrompt(failed, plannerOwnsVerification(r.RuntimeBrief)), false, true
+	}
 	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
 		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 		if plannerOwnsVerification(r.RuntimeBrief) {
@@ -5364,6 +5384,78 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 		return "The completion gate rejected a final answer because post-write verification is still unresolved. Required evidence is source-sanity for source edits, one relevant source-aware test/build/check, or the concrete verification blocker. Do not repeat the same final answer.", false, true
 	}
 	return "", false, false
+}
+
+func (r *Runner) implementationRequiredPathCompletionRecoveryPrompt(missing []string, results []workspace.ToolResult, writeOnly bool) string {
+	missing = nonEmptyRunnerStrings(missing, 12)
+	target := "the remaining required edit path(s)"
+	if len(missing) > 0 {
+		target = strings.Join(missing, ", ")
+	}
+
+	var b strings.Builder
+	if writeOnly {
+		b.WriteString("The completion gate rejected a final answer while exact-anchor required edit path(s) remain unchanged: ")
+	} else {
+		b.WriteString("The completion gate rejected a final answer while required edit path(s) remain unchanged: ")
+	}
+	b.WriteString(target)
+	b.WriteString(".\n\n")
+	b.WriteString("Your next visible message must be exactly one parser-readable action, not prose and not an implementation summary. Do not include analysis before or after the action.\n\n")
+	b.WriteString("Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. The write, bounded read/discovery, or <<QUESTION>> outcome must appear in visible content or a native tool call.\n\n")
+	b.WriteString("If the current evidence supports the requested change, call one write capability now for a remaining required path: `edit_file`, `write_file`, `append_file`, or `apply_patch`. Use real current text, complete replacement text, or a valid patch; do not copy placeholders or ellipses.\n\n")
+
+	readPaths := readPathsFromResults(results)
+	unread := make([]string, 0, len(missing))
+	for _, path := range missing {
+		if _, ok := readPaths[normalizeRunnerPath(path)]; ok {
+			continue
+		}
+		unread = append(unread, path)
+	}
+	if writeOnly {
+		b.WriteString("Read/search/discovery tools are hidden for this turn because the packet already claimed exact write anchors. If an anchor is stale or missing, answer `<<QUESTION>>:` and name the stale or missing anchor for each blocked remaining path.\n")
+	} else if len(unread) > 0 {
+		path := unread[0]
+		b.WriteString("If one edit-safety fact is still missing, call exactly one bounded discovery/read action for a remaining required path or declared project symbol. Prefer the first unread required path now:\n\n")
+		b.WriteString("```tool\n")
+		b.WriteString(fmt.Sprintf("{\"tool\":\"read_file\",\"path\":\"%s\",\"start_line\":1,\"end_line\":220,\"named_gap\":\"exact current source needed before editing this required path\",\"why_not_answering\":\"need current source evidence before the write\"}\n", path))
+		b.WriteString("```\n\n")
+		b.WriteString("Do not perform broad discovery or task planning. A semantic/context lookup is valid only when it names the exact edit-safety fact needed before writing a remaining required path.\n")
+	} else {
+		b.WriteString("Every remaining required path already has source-body read evidence. Do not restart broad discovery or task planning. Call a write capability, or answer `<<QUESTION>>:` with the exact path-specific blocker that prevents the write.\n")
+	}
+	b.WriteString("\nThe only non-tool closeout is `<<QUESTION>>:` with one concrete blocker reason for every remaining required path.")
+	return b.String()
+}
+
+func postWriteVerificationFailedRecoveryPrompt(result workspace.ToolResult, plannerOwned bool) string {
+	summary := strings.TrimSpace(result.Summary)
+	detail := strings.TrimSpace(result.Error)
+	if detail == "" {
+		detail = strings.TrimSpace(result.Output)
+	}
+	if detail != "" {
+		detail = truncateRunnerStateText(detail, 320)
+	}
+	var b strings.Builder
+	if plannerOwned {
+		b.WriteString("Post-write lane sanity failed after the required edits. Treat the failed sanity output as repair evidence, not as successful completion.\n\n")
+	} else {
+		b.WriteString("Post-write verification failed after the required edits. Treat the failed verification output as repair evidence, not as successful completion.\n\n")
+	}
+	if summary != "" {
+		b.WriteString("Failed check: ")
+		b.WriteString(summary)
+		b.WriteString("\n")
+	}
+	if detail != "" {
+		b.WriteString("Failure detail: ")
+		b.WriteString(detail)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nNext action must be one parser-readable action. If the failure names a changed or required path, line, symbol, or type error, repair the affected in-scope file with a write tool. If exactly one edit-safety fact is missing, use one narrow read/language/context lookup for that fact, then repair. Rerun verification only after a repair write or when the failure is clearly environmental. Answer `<<QUESTION>>:` only for an external, permission, or environment blocker that prevents repair.")
+	return b.String()
 }
 
 func contextPackUnavailableForRecovery(results []workspace.ToolResult) bool {
@@ -6258,6 +6350,15 @@ func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerrunti
 	if planThenExecutePlannerBrief(brief) {
 		return planThenExecuteCandidatePostReadChatOptions(opts, brief, results)
 	}
+	if runnerBriefRequiresMutation(brief) && len(brief.RequiredEditPaths) > 0 &&
+		len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) > 0 {
+		opts = implementationRequiredPathForceVisibleActionChatOptions(opts)
+		limit := implementationRequiredPathRecoveryTokenLimit(brief, results)
+		if opts.MaxTokens <= 0 || opts.MaxTokens < limit || opts.MaxTokens > limit {
+			opts.MaxTokens = limit
+		}
+		return opts
+	}
 	limit := 1536
 	if runnerBriefRequiresMutation(brief) {
 		limit = 1024
@@ -6281,6 +6382,35 @@ func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerrunti
 		opts.MaxTokens = limit
 	}
 	return opts
+}
+
+func implementationRequiredPathForceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
+	opts.PreserveThinking = false
+	opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
+	return opts
+}
+
+func implementationRequiredPathRecoveryTokenLimit(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) int {
+	if implementationRequiredPathRecoveryNeedsLargeBodyBudget(brief, results) {
+		return 16384
+	}
+	return 4096
+}
+
+func implementationRequiredPathRecoveryNeedsLargeBodyBudget(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	var resultText strings.Builder
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == "completion_gate" {
+			continue
+		}
+		resultText.WriteString(result.Summary)
+		resultText.WriteByte('\n')
+		resultText.WriteString(result.Error)
+		resultText.WriteByte('\n')
+		resultText.WriteString(result.Output)
+		resultText.WriteByte('\n')
+	}
+	return recoveryNeedsLargeBodyBudgetText(brief, resultText.String())
 }
 
 func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
@@ -6324,10 +6454,14 @@ func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief w
 }
 
 func planThenExecuteRecoveryNeedsLargeBodyBudget(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return recoveryNeedsLargeBodyBudgetText(brief, planThenExecuteRecoveryResultText(results))
+}
+
+func recoveryNeedsLargeBodyBudgetText(brief workerruntime.WorkerRuntimeBrief, resultText string) bool {
 	text := strings.ToLower(strings.Join([]string{
 		brief.Objective,
 		strings.Join(brief.RequiredEditPaths, "\n"),
-		planThenExecuteRecoveryResultText(results),
+		resultText,
 	}, "\n"))
 	for _, phrase := range []string{"create new file", "add new file", "write new file", "whole-file", "replace_all", "full file body", "new file", "missing parent"} {
 		if strings.Contains(text, phrase) {
@@ -6595,6 +6729,10 @@ func planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts llama.ChatOptions,
 }
 
 func planThenExecuteForceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
+	return forceVisibleActionChatOptions(opts)
+}
+
+func forceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
 	thinkingOff := false
 	opts.EnableThinking = &thinkingOff
 	opts.ChatTemplateKwargs = true
@@ -7617,6 +7755,10 @@ func (r *Runner) shouldForceAnswerForPostCompletionVerification(req workspace.To
 		return false
 	}
 	if len(r.remainingRequiredEditPaths(results)) > 0 {
+		return false
+	}
+	if hasPendingVerificationAfterWrites(results, r.RuntimeBrief) ||
+		sourceEditsNeedSemanticVerification(r.RuntimeBrief, results) {
 		return false
 	}
 	if workspace.IsWorkspaceWriteTool(req.Tool) {
@@ -12372,6 +12514,9 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 }
 
 func pendingVerificationAfterWritesRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	if failed, ok := failedVerificationAfterLatestWrite(in.results, in.brief); ok {
+		return postWriteVerificationFailedRecoveryPrompt(failed, plannerOwnsVerification(in.brief)) + "\n", true
+	}
 	if !hasPendingVerificationAfterWrites(in.results, in.brief) {
 		return "", false
 	}

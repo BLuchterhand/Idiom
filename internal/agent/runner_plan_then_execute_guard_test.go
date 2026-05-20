@@ -3174,6 +3174,54 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWrite(t *testing
 	}
 }
 
+func TestCompletionGateRecoveryPromptForDirectRequiredPathImplementationNoWrite(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"internal/productworkflow/coverage_gate.go", "internal/productworkflow/coverage_gate_test.go"},
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read internal/productworkflow/coverage_gate.go lines 1-220"},
+		{Tool: "context_query", Summary: "Answered query for ValidatePRDTDDObligationCrossLinks"},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt for direct required-path implementation")
+	}
+	if hideReads {
+		t.Fatalf("semantic required-path implementation recovery should leave bounded reads visible")
+	}
+	for _, want := range []string{
+		"required edit path(s) remain unchanged",
+		"internal/productworkflow/coverage_gate.go",
+		"internal/productworkflow/coverage_gate_test.go",
+		"parser-readable action",
+		"not prose",
+		"Actions written only in hidden reasoning",
+		"edit_file",
+		"write_file",
+		"append_file",
+		"apply_patch",
+		"Prefer the first unread required path now",
+		`"tool":"read_file"`,
+		`"path":"internal/productworkflow/coverage_gate_test.go"`,
+		"named_gap",
+		"why_not_answering",
+		"semantic/context lookup",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("direct required-path recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "submit_plan") {
+		t.Fatalf("direct implementation recovery must not point at planner-phase submit_plan:\n%s", prompt)
+	}
+}
+
 func TestCompletionGateRecoveryPromptUsesSearchContentEvidencePath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -3325,6 +3373,46 @@ func TestCompletionGateRecoveryChatOptionsForcesVisibleToolAfterConcreteRead(t *
 	}
 	if opts.MaxTokens != 1024 {
 		t.Fatalf("post-read mutation recovery MaxTokens = %d, want 1024", opts.MaxTokens)
+	}
+}
+
+func TestCompletionGateRecoveryChatOptionsPreservesCurrentThinkingForDirectRequiredPaths(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		MaxTokens:          16384,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "edit_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "write_file"}},
+		},
+		ToolChoice: "required",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/productworkflow/coverage_gate.go", "internal/productworkflow/coverage_gate_test.go"},
+	}, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read internal/productworkflow/coverage_gate.go lines 1-220"},
+		{Tool: "context_query", Summary: "Answered query for ValidatePRDTDDObligationCrossLinks"},
+	})
+
+	if opts.EnableThinking == nil || !*opts.EnableThinking {
+		t.Fatalf("direct required-path recovery should keep current-response thinking available, got %#v", opts.EnableThinking)
+	}
+	if opts.PreserveThinking {
+		t.Fatalf("direct required-path recovery should drop prior hidden reasoning")
+	}
+	if opts.ChatTemplateKwargs {
+		t.Fatalf("direct required-path recovery should not force request-level no-thinking kwargs")
+	}
+	if opts.ToolChoice != "auto" {
+		t.Fatalf("direct required-path recovery should allow text blockers alongside tools, got %q", opts.ToolChoice)
+	}
+	if opts.MaxTokens != 4096 {
+		t.Fatalf("direct required-path recovery MaxTokens = %d, want 4096", opts.MaxTokens)
 	}
 }
 

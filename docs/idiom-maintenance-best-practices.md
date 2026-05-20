@@ -15,6 +15,16 @@ candidate write scope, exact snippets, edit-kind obligations, evidence paths,
 and recovery/resume state must be fields on a contract or durable progress
 record, not facts rediscovered from generated prompt prose.
 
+When a capable model suddenly appears weak, repetitive, or unable to complete a
+task shape it normally handles, treat that as an alignment symptom before
+blaming model quality. Inspect the runtime configuration, selected role/model,
+thinking settings, token budget, prompt lead-in, visible tool surface, lane
+contract, and completion gate as one system. Local models often degrade when a
+route silently changes actors, when thinking is disabled for a phase that
+depends on synthesis, when prompts ask for one role while gates enforce
+another, or when the harness asks the model to serialize an unnatural artifact
+instead of using its normal editing capability.
+
 ## Deterministic Gates
 
 - Classify artifacts before dispatch: `dispatchable`, `source-satisfied`,
@@ -39,6 +49,12 @@ record, not facts rediscovered from generated prompt prose.
 - Start behavior debugging from the compact run ledger, conversation JSONL,
   telemetry JSONL, and `harness_audit`; do not reconstruct the story from
   memory.
+- For live TUI tests, keep the TUI attached to a detached PTY (`tmux`, `screen`,
+  or an equivalent controller) and treat conversation/telemetry JSONL as the
+  primary monitor. Do not poll the raw alternate-screen terminal as the normal
+  status channel; spinner redraws and full-screen refreshes consume reviewer
+  context without adding evidence. Use bounded, sanitized pane captures only for
+  user-visible rendering claims.
 - Every run should leave enough structured evidence to answer: artifact/spec
   id, intake state, selected pool, required paths, tool/model calls, token
   usage, final state, writes attempted, files changed, and failure reason.
@@ -47,6 +63,11 @@ record, not facts rediscovered from generated prompt prose.
 - Keep logged evidence bounded and privacy-safe: aggregate counts, paths,
   command ids, state names, and session ids are useful; raw prompts, file
   bodies, customer names, secrets, and long transcript excerpts are not.
+- For "degraded intelligence" failures, log and compare the selected
+  planner/executor/classifier model, role aliases, thinking/preserve-thinking
+  settings, max-token override, active fallback state, prompt family, and
+  exposed tools. If the model actor or prompt contract changed, fix that
+  alignment before adding more recovery nudges.
 
 ## Avoid Low-Value Loops
 

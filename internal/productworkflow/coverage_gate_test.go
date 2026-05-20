@@ -1,6 +1,9 @@
 package productworkflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 	mutation := 90.0
@@ -150,11 +153,12 @@ func TestCoverageGateBlocksWhenPRDOrADRReferencesUnknownTDDObligation(t *testing
 		PRDDocument{
 			FrontMatter: PRDFrontMatter{Status: "accepted"},
 			Requirements: []PRDRequirement{
-				{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-MISSING"}},
+				{ID: "REQ-1", Priority: "must", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-MISSING"}},
 			},
 		},
 		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
 		[]ParsedADR{{
+			RelPath: "adrs/ADR-1.md",
 			Doc: ADRDocument{
 				FrontMatter: ADRFrontMatter{
 					ADRID:          "ADR-1",
@@ -175,6 +179,228 @@ func TestCoverageGateBlocksWhenPRDOrADRReferencesUnknownTDDObligation(t *testing
 	)
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+}
+
+func TestCoverageGateDoesNotBlockWhenNonMustPRDReferencesUnknownTDDObligation(t *testing.T) {
+	eval := EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Priority: "should", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-MISSING"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-1"},
+				},
+			},
+		}},
+		TDDLedger{
+			CoverageTier: "unit",
+			Coverage:     TDDCoverage{MutationMinScore: 80},
+			Obligations:  []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-MISSING"}},
+		},
+	)
+	if eval.Status != "pass" {
+		t.Fatalf("expected pass, got %q", eval.Status)
+	}
+	for _, blocker := range eval.Blockers {
+		if blocker.Kind == "coverage_prd_tdd_obligation_unknown" {
+			t.Fatalf("non-must PRD unknown TDD ref must not produce PRD TDD blocker: %#v", eval.Blockers)
+		}
+	}
+}
+
+func TestCoverageGateBlocksWhenMustPRDReferencesUnknownTDDObligation(t *testing.T) {
+	eval := EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Priority: "must", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-MISSING"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-1"},
+				},
+			},
+		}},
+		TDDLedger{
+			CoverageTier: "unit",
+			Coverage:     TDDCoverage{MutationMinScore: 80},
+			Obligations:  []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-MISSING"}},
+		},
+	)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	found := false
+	for _, blocker := range eval.Blockers {
+		if blocker.Kind == "coverage_prd_tdd_obligation_unknown" &&
+			strings.Contains(blocker.Message, "REQ-1") &&
+			strings.Contains(blocker.Message, "TDD-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected typed PRD TDD blocker naming requirement and obligation, got %#v", eval.Blockers)
+	}
+	found = false
+	for _, finding := range eval.Findings {
+		if finding.Kind == "coverage_prd_tdd_obligation_unknown" &&
+			strings.Contains(finding.Message, "REQ-1") &&
+			strings.Contains(finding.Message, "TDD-MISSING") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected typed PRD TDD finding naming requirement and obligation, got %#v", eval.Findings)
+	}
+}
+
+func TestCoverageGateBlocksWhenAcceptedADRReferencesUnknownTDDObligation(t *testing.T) {
+	eval := EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Priority: "should", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-MISSING"},
+				},
+			},
+		}},
+		TDDLedger{
+			CoverageTier: "unit",
+			Coverage:     TDDCoverage{MutationMinScore: 80},
+			Obligations:  []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
+		},
+	)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+
+	foundBlocker := false
+	foundFinding := false
+	for _, blocker := range eval.Blockers {
+		if blocker.Kind == "coverage_adr_tdd_obligation_unknown" {
+			foundBlocker = true
+			if !strings.Contains(blocker.Message, "ADR-1") || !strings.Contains(blocker.Message, "TDD-MISSING") {
+				t.Fatalf("blocker message should contain ADR and TDD ID, got: %s", blocker.Message)
+			}
+			break
+		}
+	}
+	if !foundBlocker {
+		t.Fatalf("expected typed ADR TDD blocker, got %#v", eval.Blockers)
+	}
+
+	for _, finding := range eval.Findings {
+		if finding.Kind == "coverage_adr_tdd_obligation_unknown" {
+			foundFinding = true
+			if !strings.Contains(finding.Message, "ADR-1") || !strings.Contains(finding.Message, "TDD-MISSING") {
+				t.Fatalf("finding message should contain ADR and TDD ID, got: %s", finding.Message)
+			}
+			break
+		}
+	}
+	if !foundFinding {
+		t.Fatalf("expected typed ADR TDD finding, got %#v", eval.Findings)
+	}
+}
+
+// TestCoverageGateRegressionForADRWithoutRelPath tests that ADRs without RelPath
+// but with ADRID still generate typed coverage blockers/findings with both IDs in the message.
+func TestCoverageGateRegressionForADRWithoutRelPath(t *testing.T) {
+	eval := EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Priority: "should", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-MISSING"},
+				},
+				// Note: No RelPath field (this would be the regression case)
+			},
+		}},
+		TDDLedger{
+			CoverageTier: "unit",
+			Coverage:     TDDCoverage{MutationMinScore: 80},
+			Obligations:  []TDDObligation{{ID: "TDD-1"}},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
+		},
+	)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+
+	foundBlocker := false
+	foundFinding := false
+	for _, blocker := range eval.Blockers {
+		if blocker.Kind == "coverage_adr_tdd_obligation_unknown" {
+			foundBlocker = true
+			// Verify both ADR ID and TDD ID are in the message
+			if !strings.Contains(blocker.Message, "ADR-1") || !strings.Contains(blocker.Message, "TDD-MISSING") {
+				t.Fatalf("blocker message should contain ADR and TDD ID, got: %s", blocker.Message)
+			}
+			break
+		}
+	}
+	if !foundBlocker {
+		t.Fatalf("expected typed ADR TDD blocker, got %#v", eval.Blockers)
+	}
+
+	for _, finding := range eval.Findings {
+		if finding.Kind == "coverage_adr_tdd_obligation_unknown" {
+			foundFinding = true
+			// Verify both ADR ID and TDD ID are in the message
+			if !strings.Contains(finding.Message, "ADR-1") || !strings.Contains(finding.Message, "TDD-MISSING") {
+				t.Fatalf("finding message should contain ADR and TDD ID, got: %s", finding.Message)
+			}
+			break
+		}
+	}
+	if !foundFinding {
+		t.Fatalf("expected typed ADR TDD finding, got %#v", eval.Findings)
 	}
 }
 

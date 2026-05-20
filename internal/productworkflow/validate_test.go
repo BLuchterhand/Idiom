@@ -3029,6 +3029,30 @@ func TestADRCrossLinkValidationDetectsMissingTDDObligation(t *testing.T) {
 	}
 }
 
+func TestADRCrossLinkValidationMessageFallsBackToADRIDWhenPathMissing(t *testing.T) {
+	adrs := []ParsedADR{
+		{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					TDDObligations: []string{"TDD-MISSING"},
+				},
+			},
+		},
+	}
+	errs := ValidateADRCrossLinks(adrs,
+		map[string]bool{"REQ-1": true},
+		map[string]bool{"EV-1": true},
+		map[string]bool{"TDD-1": true},
+	)
+	if len(errs) != 1 || errs[0].Field != "tdd_obligations" {
+		t.Fatalf("expected one tdd_obligations error, got %v", errs)
+	}
+	if !strings.Contains(errs[0].Message, "ADR-1") || !strings.Contains(errs[0].Message, "TDD-MISSING") {
+		t.Fatalf("expected message to mention ADR-1 and TDD-MISSING, got %q", errs[0].Message)
+	}
+}
+
 func TestADRCrossLinkValidationPassesWhenAllRefsPresent(t *testing.T) {
 	adrs := []ParsedADR{
 		{

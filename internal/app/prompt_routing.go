@@ -44,6 +44,8 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
 	m.lastAssistantReasoningContent = ""
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
+	restoreRoute := m.applyDirectImplementationPromptRoute(ctx, prompt, plan)
+	defer restoreRoute()
 	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
 	chatOpts = applyMaxTokensOverride(chatOpts, m.maxTokensOverride)
 	if m.workspace != nil {
@@ -71,6 +73,22 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		return "", err
 	}
 	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt string, plan promptExecutionPlan) func() {
+	if m == nil {
+		return func() {}
+	}
+	if !isImplementationLikeFamily(plan.route.Family) {
+		return func() {}
+	}
+	if strings.TrimSpace(plan.route.Family) == agent.PlanThenExecutePlannerTaskFamily {
+		return func() {}
+	}
+	if shouldDispatchImplementationToPlanExecute(plan, plan.mode, m.cfg, prompt) {
+		return func() {}
+	}
+	return m.applyExecutorPromptRoute(ctx, "implementation direct runner", false)
 }
 
 func (m *Model) finishPromptOnceReply(reply string) string {

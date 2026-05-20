@@ -19,6 +19,7 @@ const runnerAutonomyEventRole = "autonomy_event"
 
 type runnerAutonomyRecorder struct {
 	runner            *Runner
+	brief             workerruntime.WorkerRuntimeBrief
 	contract          autonomy.AutonomyContract
 	sequence          int64
 	occurredAt        time.Time
@@ -65,6 +66,7 @@ func newRunnerAutonomyRecorder(r *Runner, policy RunPolicy, brief workerruntime.
 	}
 	return &runnerAutonomyRecorder{
 		runner:            r,
+		brief:             workerruntime.NormalizeRuntimeBrief(brief),
 		contract:          contract,
 		occurredAt:        time.Now().UTC(),
 		obligations:       obligations,
@@ -494,10 +496,39 @@ func (a *runnerAutonomyRecorder) resolvedAndOpenObligationsForGate(input runnerA
 	if a == nil {
 		return nil, nil
 	}
-	if input.Gate != autonomy.GateWrite {
+	switch input.Gate {
+	case autonomy.GateWrite:
+		return a.writeGateResolvedAndOpenObligations(input.ChangedPaths)
+	case autonomy.GateCompletion:
+		return a.completionGateResolvedAndOpenObligations(input, obligationRefs)
+	case autonomy.GateVerification:
+		if strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "passed") ||
+			strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "observed") {
+			return a.openObligationIDsForRefs(obligationRefs), nil
+		}
+		return nil, a.openObligationIDsForRefs(obligationRefs)
+	default:
 		return a.openObligationIDsForRefs(obligationRefs), nil
 	}
-	return a.writeGateResolvedAndOpenObligations(input.ChangedPaths)
+}
+
+func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input runnerAutonomyGateDecision, refs []string) (resolved []string, open []string) {
+	a.ensureObligationState()
+	for _, ref := range refs {
+		ref = strings.TrimSpace(ref)
+		if ref == "" {
+			continue
+		}
+		if _, ok := a.openObligations[ref]; !ok {
+			continue
+		}
+		if ref == "obl-verify-post-write" && !strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "passed") {
+			open = append(open, ref)
+			continue
+		}
+		resolved = append(resolved, ref)
+	}
+	return resolved, open
 }
 
 func (a *runnerAutonomyRecorder) openObligationIDsForRefs(refs []string) []string {
@@ -762,7 +793,7 @@ func (a *runnerAutonomyRecorder) emitCompletionGate(decision autonomy.ToolPolicy
 		InvariantID:        "completion.readiness",
 		ReasonCode:         reasonCode,
 		ChangedPaths:       changed,
-		VerificationStatus: runnerAutonomyVerificationStatus(results),
+		VerificationStatus: runnerAutonomyVerificationStatus(results, a.brief),
 		TargetRefs:         runnerAutonomyRequiredPathStatus(a.contract, results),
 		Source:             "runner_completion_gate",
 	})
@@ -1018,9 +1049,17 @@ func (a *runnerAutonomyRecorder) obligationsForGate(gate autonomy.GateKind) []au
 	return obligations
 }
 
-func runnerAutonomyVerificationStatus(results []workspace.ToolResult) string {
-	if hasSuccessfulVerificationResult(results) {
-		return "passed"
+func runnerAutonomyVerificationStatus(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) string {
+	if runnerBriefRequiresMutation(brief) && !verificationContractSkipsGate(brief.VerificationContract) {
+		if _, failed := failedVerificationAfterLatestWrite(results, brief); failed {
+			return "failed"
+		}
+		if hasPendingVerificationAfterWrites(results, brief) || sourceEditsNeedSemanticVerification(brief, results) {
+			return "pending"
+		}
+		if hasSuccessfulVerificationResult(results) {
+			return "passed"
+		}
 	}
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]

@@ -126,6 +126,145 @@ func TestShouldForceAnswerForPostCompletionVerificationCountsAndCutsOff(t *testi
 	}
 }
 
+func TestShouldForceAnswerForPostCompletionVerificationWaitsForSourceVerification(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.go"}}
+	counter := 0
+	read := workspace.ToolRequest{Tool: "read_file", Path: "a.go"}
+	for i := 0; i < postCompletionVerificationCutoff*3; i++ {
+		if runner.shouldForceAnswerForPostCompletionVerification(read, results, &counter) {
+			t.Fatalf("force-answer must not fire while source verification is pending (iter %d)", i)
+		}
+		if counter != 0 {
+			t.Fatalf("pending verification must not increment cutoff counter, got %d", counter)
+		}
+	}
+}
+
+func TestShouldForceAnswerForPostCompletionVerificationWaitsAfterFailedVerification(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "a.go:12: undefined: missingSymbol"},
+	}
+	counter := 0
+	read := workspace.ToolRequest{Tool: "read_file", Path: "a.go"}
+	for i := 0; i < postCompletionVerificationCutoff*3; i++ {
+		if runner.shouldForceAnswerForPostCompletionVerification(read, results, &counter) {
+			t.Fatalf("force-answer must not fire after failed verification (iter %d)", i)
+		}
+		if counter != 0 {
+			t.Fatalf("failed verification must not increment cutoff counter, got %d", counter)
+		}
+	}
+}
+
+func TestShouldForceAnswerForPostCompletionVerificationCountsAfterSuccessfulSourceVerification(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "source_sanity", Summary: "Source sanity passed"},
+	}
+	counter := 0
+	read := workspace.ToolRequest{Tool: "read_file", Path: "a.go"}
+	for i := 1; i <= postCompletionVerificationCutoff; i++ {
+		if runner.shouldForceAnswerForPostCompletionVerification(read, results, &counter) {
+			t.Fatalf("force-answer fired prematurely on call %d", i)
+		}
+	}
+	if !runner.shouldForceAnswerForPostCompletionVerification(read, results, &counter) {
+		t.Fatalf("force-answer should fire after successful source verification and repeated non-write calls")
+	}
+}
+
+func TestCompletionGateRecoveryPromptAfterFailedVerificationRequiresRepair(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "a.go:12: undefined: missingSymbol"},
+	}
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
+	if !ok {
+		t.Fatalf("expected failed verification recovery prompt")
+	}
+	if hideReads {
+		t.Fatalf("failed verification repair should keep narrow read/discovery available")
+	}
+	for _, want := range []string{
+		"Post-write verification failed",
+		"repair evidence",
+		"repair the affected in-scope file",
+		"one narrow read/language/context lookup",
+		"Rerun verification only after a repair write",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected prompt to contain %q, got:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestRunnerCompactionSummaryPreservesFailedVerificationRepairPacket(t *testing.T) {
+	runner := &Runner{
+		AgentName: "main",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{"a.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited a.go"},
+		{Tool: "source_sanity", Summary: "Source sanity failed", Error: "a.go:12: undefined: missingSymbol"},
+	}
+	summary := runner.runnerCompactionSummary(RunPolicy{}, nil, results)
+	for _, want := range []string{
+		"Open failed verification repair packet",
+		"source_sanity",
+		"Source sanity failed",
+		"undefined: missingSymbol",
+		"repair the failing changed/required path",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("expected compaction summary to contain %q, got:\n%s", want, summary)
+		}
+	}
+}
+
 func TestShouldForceAnswerForPostCompletionVerificationIgnoresWrites(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

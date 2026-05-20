@@ -143,9 +143,11 @@ type Model struct {
 	plannerSpec  config.LlamaServer
 	executorSpec config.LlamaServer
 	// implementerClient + implementerController are set only when the
-	// config has a separate Implementer llama-server. Nil when the app
-	// runs in single-model mode. Used by runChildTask to route write-
-	// enabled child work onto the implementation model.
+	// config has a separate executor/implementer llama-server. Nil when
+	// the app runs in single-model mode. Direct implementation turns,
+	// plan-execute execution, and write-enabled child work use this route
+	// when the executor is reachable; otherwise they fall back to the
+	// active model.
 	implementerClient     llama.LLMClient
 	implementerController *llama.ServerController
 	workspace             *workspace.Manager

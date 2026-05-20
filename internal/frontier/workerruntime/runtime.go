@@ -269,6 +269,14 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		}
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> naming the exact edit-safety fact if no safe edit can be attempted")
 	}
+	if verificationToolFailure(tool, statusCombined, input.Result) {
+		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "final answer treating failed verification as completion")
+		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "same verification retry before a repair write unless the failure is environmental")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "repair the failing changed or required path when the diagnostic identifies a code or test issue")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "one narrow source read or language/context lookup for the exact line, symbol, or type named by the failure if needed before repair")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "rerun verification after the repair write")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer with <<QUESTION>> only for an external, permission, or environment blocker")
+	}
 	if requiredPathsRemaining {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "edit each remaining required path")
 		if !exactAnchorPacket {
@@ -636,6 +644,10 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 	if containsAny(combined, "malformed tool", "tool_parse") {
 		plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
 	}
+	if verificationToolFailure(tool, combined, input.Result) {
+		plan.FailureClass = "verification_failed"
+		plan.RequiredNext = appendUnique(plan.RequiredNext, "repair the failed verification or report an external blocker before final answer")
+	}
 	if exactAnchorWriteFailure(input.Constraints, tool, combined) {
 		plan.FailureClass = "exact_anchor_write_failure"
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "read/search after an exact-anchor write failed")
@@ -670,6 +682,8 @@ func ClassifyFailure(reason string, req workspace.ToolRequest, result workspace.
 		return "guard_rejection"
 	case containsAny(combined, "completion gate", "final answer rejected"):
 		return "completion_gate"
+	case verificationToolFailure(tool, combined, result):
+		return "verification_failed"
 	case isActualVerificationRecoverySignal(combined):
 		return "verification_unresolved"
 	case containsAny(combined, "same tool request", "repeated tool request", "replayed", "already failed earlier", "repeated dead-end"):
@@ -697,6 +711,9 @@ func isActualVerificationRecoverySignal(combined string) bool {
 		return false
 	}
 	return containsAny(combined,
+		"source sanity failed",
+		"source_sanity failed",
+		"diagnostics failed",
 		"verification failed",
 		"verification result",
 		"verification status",
@@ -709,6 +726,25 @@ func isActualVerificationRecoverySignal(combined string) bool {
 		"post-edit verification",
 		"resolve verification",
 	)
+}
+
+func verificationToolFailure(tool string, combined string, result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) == "" {
+		return false
+	}
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		tool = strings.TrimSpace(result.Tool)
+	}
+	switch tool {
+	case "source_sanity", "go_diagnostics", "cpp_diagnostics":
+		return true
+	case "shell":
+		return isActualVerificationRecoverySignal(combined) ||
+			containsAny(strings.ToLower(combined), "test failed", "tests failed", "build failed")
+	default:
+		return isActualVerificationRecoverySignal(combined)
+	}
 }
 
 func ClassifyPhase(req workspace.ToolRequest, result workspace.ToolResult) string {

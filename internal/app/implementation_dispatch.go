@@ -94,6 +94,9 @@ func shouldDispatchImplementationToPlanExecute(plan promptExecutionPlan, mode ag
 	if implementationDispatchPromptIsRefineScratchpad(prompt) {
 		return false
 	}
+	if !implementationDispatchHasPlanExecuteReadyHandoff(prompt, plan, cfg) {
+		return false
+	}
 	return true
 }
 
@@ -112,6 +115,25 @@ func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecu
 		len(allowedPaths) > 0 ||
 		len(planDocuments) > 0 ||
 		len(blockers) > 0
+}
+
+func implementationDispatchHasPlanExecuteReadyHandoff(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
+	requiredPaths, allowedPaths, planDocuments, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	if len(planDocuments) > 0 || len(blockers) > 0 {
+		return true
+	}
+	if implementationDispatchPromptHasExecutablePlanEdits(prompt, requiredPaths) {
+		return true
+	}
+	return len(requiredPaths) == 0 && implementationDispatchPromptHasExecutablePlanEdits(prompt, allowedPaths)
+}
+
+func implementationDispatchPromptHasExecutablePlanEdits(prompt string, paths []string) bool {
+	if len(paths) == 0 {
+		return false
+	}
+	edits, _ := planexecute.PlanExecuteExactPlanEdits(prompt, paths)
+	return len(edits) > 0
 }
 
 func composeImplementationBrief(prompt string, plan promptExecutionPlan, cfg config.Config) string {
@@ -3096,18 +3118,26 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 }
 
 func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts planexecute.RunOptions) func() {
+	return m.applyExecutorPromptRoute(ctx, "plan-execute in-process runner", opts.UseActiveModel)
+}
+
+func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string, useActiveModel bool) func() {
 	if m == nil || m.implementerClient == nil {
 		return func() {}
 	}
-	if opts.UseActiveModel {
-		m.logMessage("dispatch_route", fmt.Sprintf("plan-execute in-process runner using active model %s for fallback", strings.TrimSpace(m.modelID)))
+	routeLabel = strings.TrimSpace(routeLabel)
+	if routeLabel == "" {
+		routeLabel = "executor route"
+	}
+	if useActiveModel {
+		m.logMessage("dispatch_route", fmt.Sprintf("%s using active model %s for fallback", routeLabel, strings.TrimSpace(m.modelID)))
 		return func() {}
 	}
 	if sameLlamaTarget(m.executorSpec, m.plannerSpec) {
 		return func() {}
 	}
-	if !m.planExecuteExecutorRouteReachable(ctx) {
-		m.logMessage("dispatch_route", fmt.Sprintf("plan-execute in-process runner falling back to active model %s because executor model %s is not reachable", strings.TrimSpace(m.modelID), strings.TrimSpace(m.executorSpec.Model)))
+	if !m.executorPromptRouteReachable(ctx) {
+		m.logMessage("dispatch_route", fmt.Sprintf("%s falling back to active model %s because executor model %s is not reachable", routeLabel, strings.TrimSpace(m.modelID), strings.TrimSpace(m.executorSpec.Model)))
 		return func() {}
 	}
 
@@ -3121,7 +3151,7 @@ func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts plan
 	m.modelID = resolveModelID(m.executorSpec, m.executorSpec.Model)
 	m.modelThinkingFloor = m.executorSpec.IsHosted()
 	m.invalidateComposedPrompt()
-	m.logMessage("dispatch_route", fmt.Sprintf("plan-execute in-process runner using executor model %s", strings.TrimSpace(m.modelID)))
+	m.logMessage("dispatch_route", fmt.Sprintf("%s using executor model %s", routeLabel, strings.TrimSpace(m.modelID)))
 
 	return func() {
 		m.client = priorClient
@@ -3132,7 +3162,7 @@ func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts plan
 	}
 }
 
-func (m *Model) planExecuteExecutorRouteReachable(ctx context.Context) bool {
+func (m *Model) executorPromptRouteReachable(ctx context.Context) bool {
 	if m == nil || m.implementerClient == nil {
 		return false
 	}

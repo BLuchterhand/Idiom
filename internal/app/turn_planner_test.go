@@ -624,7 +624,24 @@ func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 		},
 	}
 
-	decision := m.writerRouteDecisionForPrompt("modify internal/app/writer_route.go", plan)
+	prompt := strings.Join([]string{
+		"Apply the exact writer route edit.",
+		"",
+		"Required edit paths: internal/app/writer_route.go",
+		"",
+		"## Required Edits",
+		"",
+		"old_text:",
+		"```text",
+		"old writer route",
+		"```",
+		"",
+		"new_text:",
+		"```text",
+		"new writer route",
+		"```",
+	}, "\n")
+	decision := m.writerRouteDecisionForPrompt(prompt, plan)
 
 	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
 		t.Fatalf("unexpected writer route decision: %#v", decision)
@@ -637,21 +654,66 @@ func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 	}
 }
 
-func TestWriterRouteDecisionForPromptDispatchesUnscopedImplementationToPlanExecute(t *testing.T) {
+func TestWriterRouteDecisionForPromptKeepsSemanticImplementationOnGuardedLane(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
 	m := &Model{cfg: cfg}
 	plan := promptExecutionPlan{
-		mode:         agent.BuildMode(),
-		route:        turnRoutePlan{Family: "implementation"},
-		runtimeBrief: workerruntime.WorkerRuntimeBrief{},
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"internal/productworkflow/coverage_gate.go", "internal/productworkflow/coverage_gate_test.go"},
+		},
 	}
 
-	decision := m.writerRouteDecisionForPrompt("remove the busy mode trace ctx footer from the TUI input area", plan)
+	decision := m.writerRouteDecisionForPrompt("Implement a TDD coverage-gate fix. Required edit paths: internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go.", plan)
+
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("semantic TDD implementation should stay on guarded implement lane, got %#v", decision)
+	}
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
+		t.Fatalf("semantic implementation reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestWriterRouteDecisionForPromptDispatchesExactEditPacketToPlanExecute(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"internal/app/writer_route.go"},
+		},
+	}
+	prompt := strings.Join([]string{
+		"Apply the exact edit.",
+		"",
+		"Required edit paths: internal/app/writer_route.go",
+		"",
+		"## Required Edits",
+		"",
+		"old_text:",
+		"```text",
+		"old route",
+		"```",
+		"",
+		"new_text:",
+		"```text",
+		"new route",
+		"```",
+	}, "\n")
+
+	decision := m.writerRouteDecisionForPrompt(prompt, plan)
 
 	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
-		t.Fatalf("unscoped TUI implementation should dispatch to plan-execute, got %#v", decision)
+		t.Fatalf("exact edit packet should dispatch to plan-execute, got %#v", decision)
 	}
 	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
@@ -1373,6 +1435,237 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 	answer, err := model.RunPromptOnce(context.Background(), "update target.txt")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if string(got) != "new\n" {
+		t.Fatalf("target content = %q, want new", string(got))
+	}
+}
+
+func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfigured(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst Covered = false\n"), 0o644); err != nil {
+		t.Fatalf("write feature test: %v", err)
+	}
+
+	var plannerChatRequests atomic.Int64
+	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "planner-model"}},
+			})
+		case "/v1/chat/completions":
+			plannerChatRequests.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": "planner should not handle direct implementation"},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer plannerServer.Close()
+
+	var executorChatRequests atomic.Int64
+	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "executor-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read request: %v", err)
+			}
+			requestText := string(body)
+			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
+				t.Fatalf("semantic TDD prompt should not enter exact plan-execute planner:\n%s", requestText)
+			}
+			if !strings.Contains(requestText, `"model":"executor-model"`) {
+				t.Fatalf("direct implementation should send executor model id, got request:\n%s", requestText)
+			}
+			reply := ""
+			switch executorChatRequests.Add(1) {
+			case 1:
+				reply = `<tool_call>
+{"tool":"write_file","path":"pkg/feature.go","content":"package pkg\n\nfunc Enabled() bool { return true }\n","description":"implement feature behavior"}`
+			case 2:
+				reply = `<tool_call>
+{"tool":"write_file","path":"pkg/feature_test.go","content":"package pkg\n\nconst Covered = true\n","description":"add regression coverage marker"}`
+			default:
+				reply = "Updated pkg/feature.go and pkg/feature_test.go."
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer executorServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner","classifier"]},
+		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
+	]}}}`, plannerServer.URL, executorServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = plannerServer.URL
+	cfg.LlamaServer.Model = "planner-model"
+	cfg.RouteClassifier.Enabled = false
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "Implement a semantic TDD feature fix. Required edit paths: pkg/feature.go, pkg/feature_test.go. Add or adjust tests.")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	if plannerChatRequests.Load() != 0 {
+		t.Fatalf("direct implementation should not use planner chat when executor is reachable, got %d request(s)", plannerChatRequests.Load())
+	}
+	if executorChatRequests.Load() == 0 {
+		t.Fatalf("expected direct implementation to use executor chat")
+	}
+	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(gotSource), "return true") {
+		t.Fatalf("source was not updated:\n%s", string(gotSource))
+	}
+	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
+	if err != nil {
+		t.Fatalf("read test: %v", err)
+	}
+	if !strings.Contains(string(gotTest), "Covered = true") {
+		t.Fatalf("test was not updated:\n%s", string(gotTest))
+	}
+}
+
+func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUnavailable(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "target.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	var plannerChatRequests atomic.Int64
+	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "planner-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read planner request: %v", err)
+			}
+			if !strings.Contains(string(body), `"model":"planner-model"`) {
+				t.Fatalf("active-model fallback should send planner model id, got request:\n%s", string(body))
+			}
+			reply := "Updated target.txt."
+			if plannerChatRequests.Add(1) == 1 {
+				reply = `<tool_call>
+{"tool":"write_file","path":"target.txt","content":"new\n","description":"update target through active-model fallback"}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer plannerServer.Close()
+
+	var executorChatRequests atomic.Int64
+	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			http.Error(w, "executor not ready", http.StatusServiceUnavailable)
+		case "/v1/chat/completions":
+			executorChatRequests.Add(1)
+			http.Error(w, "executor should not receive chat", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer executorServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner","classifier"]},
+		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
+	]}}}`, plannerServer.URL, executorServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = plannerServer.URL
+	cfg.LlamaServer.Model = "planner-model"
+	cfg.RouteClassifier.Enabled = false
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "Implement a semantic fix. Required edit paths: target.txt.")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	if plannerChatRequests.Load() == 0 {
+		t.Fatalf("expected active-model fallback to use planner chat")
+	}
+	if executorChatRequests.Load() != 0 {
+		t.Fatalf("unreachable executor should not receive chat, got %d request(s)", executorChatRequests.Load())
 	}
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
@@ -3881,14 +4174,35 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+	allowImplementationDispatchPlanDocumentPreflight(t)
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
 		t.Fatalf("write source: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst RegressionCovered = false\n"), 0o644); err != nil {
 		t.Fatalf("write test: %v", err)
+	}
+	planDoc := strings.Join([]string{
+		"# Feature hardening plan",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/feature.go | Harden feature behavior. |",
+		"| pkg/feature_test.go | Add regression coverage. |",
+		"",
+		"## Required Behavior",
+		"",
+		"Harden the feature behavior and add regression tests proving the edge case is rejected.",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
+		t.Fatalf("write plan doc: %v", err)
 	}
 
 	var sawMissingTestRetry atomic.Bool
@@ -3951,7 +4265,7 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t 
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement pkg/feature.go hardening and add regression tests in pkg/feature_test.go proving the edge case is rejected.")
+	answer, err := model.RunPromptOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -3983,8 +4297,12 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t 
 func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSatisfied(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
+	allowImplementationDispatchPlanDocumentPreflight(t)
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
 	}
 	sourceBody := "package pkg\n\nfunc Hardened() bool { return true }\n"
 	testBody := "package pkg\n\nconst RegressionCovered = true\n"
@@ -3993,6 +4311,23 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSati
 	}
 	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte(testBody), 0o644); err != nil {
 		t.Fatalf("write test: %v", err)
+	}
+	planDoc := strings.Join([]string{
+		"# Feature hardening plan",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| pkg/feature.go | Harden feature behavior. |",
+		"| pkg/feature_test.go | Add regression coverage. |",
+		"",
+		"## Required Behavior",
+		"",
+		"Harden the feature behavior and add regression tests proving the edge case is rejected.",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "plan.md"), []byte(planDoc), 0o644); err != nil {
+		t.Fatalf("write plan doc: %v", err)
 	}
 
 	var sawMissingTestRetry atomic.Bool
@@ -4068,7 +4403,7 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSati
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement pkg/feature.go hardening and add regression tests in pkg/feature_test.go proving the edge case is rejected.")
+	answer, err := model.RunPromptOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}

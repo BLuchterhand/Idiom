@@ -41,6 +41,13 @@ failure patterns that have cost time in real Idiom/Colony runs.
   or runtime brief fields.
 - **Project-specific repairs in generic prompts**: a project run can be the
   reproducer, but reusable Idiom fixes must be generic and evidence-shaped.
+- **Mistaking harness misalignment for weak model capability**: assume the
+  model may be capable until the logs prove otherwise. If a model that usually
+  handles multi-file edits starts emitting shallow prose, malformed structured
+  artifacts, missing paths, or repeated contract failures, inspect the selected
+  model/role, thinking settings, token budget, prompt lead-in, visible tool
+  surface, lane contract, and completion gate before adding reminders. A route
+  or prompt mismatch can make a strong model look unintelligent.
 
 ## Plan-Execute And Implementation Traps
 
@@ -56,6 +63,13 @@ failure patterns that have cost time in real Idiom/Colony runs.
   source-satisfied, or reports a typed blocker. UI/log/recovery text should say
   "failed to produce a valid `submit_plan`" rather than "failed to implement"
   when the planner never reached the executor.
+- **Semantic editing forced into brittle serialization**: exact-edit
+  `submit_plan` is a good fit for exact anchors, full-body packets, and
+  deterministic patch handoff. It is a poor fit for open-ended semantic
+  multi-file implementation unless the brief already contains executable edit
+  bodies. When that mismatch appears, prefer changing the actor boundary or
+  lane contract over asking the model to serialize larger JSON patches more
+  carefully.
 - **Overloaded required-path language**: keep `required_edit_paths`,
   source-body obligations, and `submit_plan` coverage distinct. Required paths
   authorize mutation scope; source-body obligations prove current code; plan
@@ -134,6 +148,11 @@ failure patterns that have cost time in real Idiom/Colony runs.
   conversation JSONL, telemetry JSONL, and `harness_audit`. If the cause cannot
   be seen without hand-reconstructing prose, improve structured logs/audit as
   part of the fix.
+- **Raw TUI PTY polling**: live TUI testing should exercise the real alternate
+  screen, but repeated PTY reads can dump spinner redraw frames into the agent
+  context. Run the TUI in a detached PTY such as `tmux`, send input through the
+  PTY controller, and monitor conversation/telemetry JSONL first. Capture only
+  small sanitized pane snippets when UI state itself is the claim under test.
 - **Missing final-state telemetry**: terminal outcomes such as source-satisfied,
   stale, failed-refine, dirty-scope, no-edit-attempt, and verification-blocked
   should be typed events or ledger states, not only words in the transcript.
