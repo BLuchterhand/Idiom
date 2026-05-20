@@ -106,6 +106,10 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerruntime.WorkerRuntimeBrief {
 	mode := m.currentMode()
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
+	brief.Objective = strings.TrimSpace(pathparse.ScopeToBriefBody(prompt))
+	if brief.Objective == "" {
+		brief.Objective = strings.TrimSpace(prompt)
+	}
 	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
 	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptContextEvidencePaths(prompt)...)
 	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
@@ -228,15 +232,15 @@ func requiredEditPathsFromPrompt(prompt string) []string {
 	// (back-compat for chat / direct API). pathparse.ScopeToBriefBody
 	// is the authoritative helper.
 	prompt = pathparse.ScopeToBriefBody(prompt)
-	return appendUniqueBriefStrings(
-		requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings()),
-		structuredRequiredEditPathsFromPrompt(prompt)...,
-	)
+	paths := requiredEditPathsUnderPromptHeadings(prompt, requiredEditPathHeadings(), true)
+	paths = appendUniqueBriefStrings(paths, pathparse.FilterWorkspaceFilePaths(structuredRequiredEditPathsFromPrompt(prompt))...)
+	paths = appendUniqueBriefStrings(paths, inlineRequiredEditPathsFromPrompt(prompt)...)
+	return paths
 }
 
 func allowedEditPathsFromPrompt(prompt string) []string {
 	prompt = pathparse.ScopeToBriefBody(prompt)
-	paths := requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings())
+	paths := requiredEditPathsUnderPromptHeadings(prompt, allowedEditPathHeadings(), false)
 	paths = appendUniqueBriefStrings(paths, structuredAllowedEditPathsFromPrompt(prompt)...)
 	paths = appendUniqueBriefStrings(paths, inlineAllowedEditPathsFromPrompt(prompt)...)
 	return paths
@@ -267,6 +271,33 @@ func inlineAllowedEditPathsFromPrompt(prompt string) []string {
 		return nil
 	}
 	return pathparse.MentionedWorkspacePaths(text)
+}
+
+func inlineRequiredEditPathsFromPrompt(prompt string) []string {
+	text := pathparse.ScopeToBriefBody(prompt)
+	var paths []string
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		lower := strings.ToLower(line)
+		for _, prefix := range []string{
+			"required edit paths:",
+			"required files:",
+			"files to modify:",
+			"files to edit:",
+			"editable files:",
+		} {
+			idx := strings.Index(lower, prefix)
+			if idx < 0 {
+				continue
+			}
+			value := strings.TrimSpace(line[idx+len(prefix):])
+			if value == "" {
+				continue
+			}
+			paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspaceFilesInInlineList(value)...)
+		}
+	}
+	return paths
 }
 
 func requiredEditPathHeadings() []string {
@@ -303,7 +334,7 @@ func allowedEditPathHeadings() []string {
 	}
 }
 
-func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []string {
+func requiredEditPathsUnderPromptHeadings(prompt string, headings []string, fileOnly bool) []string {
 	headingSet := promptHeadingSet(headings)
 	var paths []string
 	active := false
@@ -326,6 +357,9 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 		}
 		if strings.HasPrefix(line, "|") && strings.Count(line, "|") >= 2 {
 			linePaths := pathparse.MentionedWorkspacePathsInMarkdownTableFirstCell(line)
+			if fileOnly {
+				linePaths = pathparse.FilterWorkspaceFilePaths(linePaths)
+			}
 			if len(linePaths) > 0 {
 				sawPath = true
 				paths = appendUniqueBriefStrings(paths, linePaths...)
@@ -333,6 +367,9 @@ func requiredEditPathsUnderPromptHeadings(prompt string, headings []string) []st
 			continue
 		}
 		linePaths := promptPacketWorkspacePaths(line)
+		if fileOnly {
+			linePaths = pathparse.FilterWorkspaceFilePaths(linePaths)
+		}
 		if len(linePaths) > 0 {
 			sawPath = true
 			paths = appendUniqueBriefStrings(paths, linePaths...)
@@ -1275,6 +1312,16 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	profile := strings.TrimSpace(plan.runtimeBrief.PermissionProfile)
 	contract := strings.TrimSpace(plan.runtimeBrief.Contract)
 	taskFamily := strings.TrimSpace(plan.runtimeBrief.TaskFamily)
+	if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
+		opts.Temperature = 0
+		opts.TopP = 1
+		if !opts.ModelThinkingFloor {
+			thinkingOff := false
+			opts.EnableThinking = &thinkingOff
+			opts.PreserveThinking = false
+			opts.ChatTemplateKwargs = true
+		}
+	}
 	readOnly := profile == "conversation_only" || profile == "read_only_workspace" || profile == "read_only_verification_shell"
 	if readOnly && !opts.ModelThinkingFloor {
 		thinkingOff := false
@@ -1286,7 +1333,6 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	// now disables Qwen thinking for read-only routes without requiring
 	// a separate nothink server. Older MLX builds may ignore the field;
 	// launcher-level --chat-template-args remains the fallback there.
-	_ = taskFamily
 	switch contract {
 	case "direct_answer":
 		if opts.ModelThinkingFloor {

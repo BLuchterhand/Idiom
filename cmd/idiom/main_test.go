@@ -866,7 +866,9 @@ func slicesContainsString(values []string, want string) bool {
 
 func writeMainConfig(t *testing.T) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "config.json")
+	root := t.TempDir()
+	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
+	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
@@ -875,6 +877,7 @@ func writeMainConfig(t *testing.T) string {
 
 func writeMainConfigRoot(t *testing.T, root string) string {
 	t.Helper()
+	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
 	path := filepath.Join(t.TempDir(), "config.json")
 	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
 	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {

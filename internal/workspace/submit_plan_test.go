@@ -103,9 +103,37 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 	if len(schema.Properties.Edits.Items.AnyOf) == 0 {
 		t.Fatalf("edit items should require a concrete edit shape")
 	}
-	if !submitPlanTestContains(schema.Properties.PlanArtifact.Required, "edits") || schema.Properties.PlanArtifact.Properties.Edits.MinItems != 1 {
+	if !submitPlanTestAnyOfRequires(schema.Properties.Edits.Items.AnyOf, "old_text", "new_text") {
+		t.Fatalf("substring edit schema should require old_text and new_text together, got %#v", schema.Properties.Edits.Items.AnyOf)
+	}
+	for _, field := range []string{"task", "contract", "verification_obligations", "edits"} {
+		if !submitPlanTestContains(schema.Properties.PlanArtifact.Required, field) {
+			t.Fatalf("plan_artifact should require %q so structured callers do not emit an edits-only wrapper, got %#v", field, schema.Properties.PlanArtifact.Required)
+		}
+	}
+	if schema.Properties.PlanArtifact.Properties.Edits.MinItems != 1 {
 		t.Fatalf("plan_artifact should require nonempty edits, got %#v", schema.Properties.PlanArtifact)
 	}
+}
+
+func submitPlanTestAnyOfRequires(anyOf []map[string][]string, fields ...string) bool {
+	for _, clause := range anyOf {
+		required := clause["required"]
+		if len(required) != len(fields) {
+			continue
+		}
+		matched := true
+		for _, field := range fields {
+			if !submitPlanTestContains(required, field) {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			return true
+		}
+	}
+	return false
 }
 
 func assertSubmitPlanNoSensitiveMarkers(t *testing.T, root string, result ToolResult, forbidden []string) PlanArtifact {
@@ -202,6 +230,22 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	if len(artifact.Edits) != 2 {
 		t.Fatalf("expected 2 edits, got %d", len(artifact.Edits))
 	}
+	provenance := artifact.Edits[0].AnchorProvenance
+	if provenance == nil {
+		t.Fatalf("substring edit should persist harness-owned anchor provenance")
+	}
+	if provenance.SchemaVersion != PlanEditAnchorProvenanceSchemaVersion || provenance.Source != "submit_plan" {
+		t.Fatalf("unexpected anchor provenance identity: %#v", provenance)
+	}
+	if provenance.Path != "a.txt" || provenance.MatchCount != 1 || provenance.StartLine != 1 || provenance.EndLine != 1 {
+		t.Fatalf("unexpected anchor provenance location: %#v", provenance)
+	}
+	if !strings.HasPrefix(provenance.FileSHA256, "sha256:") || !strings.HasPrefix(provenance.AnchorSHA256, "sha256:") {
+		t.Fatalf("anchor provenance should include file and old_text digests: %#v", provenance)
+	}
+	if artifact.Edits[1].AnchorProvenance != nil {
+		t.Fatalf("line-range edit should not carry substring anchor provenance: %#v", artifact.Edits[1].AnchorProvenance)
+	}
 	if artifact.Rationale == "" {
 		t.Fatalf("rationale should be persisted")
 	}
@@ -238,6 +282,168 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	}
 	if !json.Valid(pointer) {
 		t.Fatalf("last.plan.json is not valid JSON")
+	}
+}
+
+func TestValidatePlanEditAnchorProvenanceRejectsStaleFileState(t *testing.T) {
+	root := t.TempDir()
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	edits, err := AttachPlanEditAnchorProvenance(root, []PlanEdit{
+		{Path: "a.txt", OldText: "before", NewText: "after"},
+	})
+	if err != nil {
+		t.Fatalf("attach anchor provenance: %v", err)
+	}
+	writeSubmitPlanFixture(t, root, "a.txt", "prefix\nbefore\n")
+	err = ValidatePlanEditAnchorProvenance(root, edits[0])
+	if err == nil {
+		t.Fatalf("expected stale anchor provenance rejection")
+	}
+	if !strings.Contains(err.Error(), "anchor provenance stale") || !strings.Contains(err.Error(), "file fingerprint changed") {
+		t.Fatalf("expected stale file fingerprint error, got %v", err)
+	}
+}
+
+func TestSubmitPlanOverwritesModelSuppliedAnchorProvenance(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "update a",
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			AnchorProvenance: &PlanEditAnchorProvenance{
+				SchemaVersion: "model.supplied",
+				Source:        "model",
+				Path:          "../escape.txt",
+			},
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan should ignore model-supplied anchor provenance and attach its own: %s", result.Error)
+	}
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load plan: %v", err)
+	}
+	provenance := plan.Edits[0].AnchorProvenance
+	if provenance == nil {
+		t.Fatalf("expected harness-owned provenance")
+	}
+	if provenance.SchemaVersion != PlanEditAnchorProvenanceSchemaVersion || provenance.Source != "submit_plan" || provenance.Path != "a.txt" {
+		t.Fatalf("expected harness-owned provenance to replace model input, got %#v", provenance)
+	}
+	if err := ValidatePlanEditAnchorProvenance(root, plan.Edits[0]); err != nil {
+		t.Fatalf("harness-owned provenance should validate: %v", err)
+	}
+}
+
+func TestPlanEditAnchorProvenanceShapeRejectsMalformedDigest(t *testing.T) {
+	err := validatePlanEditAnchorProvenanceShape(&PlanEditAnchorProvenance{
+		SchemaVersion: PlanEditAnchorProvenanceSchemaVersion,
+		Source:        "submit_plan",
+		Path:          "a.txt",
+		FileSHA256:    "sha256:" + strings.Repeat("z", 64),
+		AnchorSHA256:  "sha256:" + strings.Repeat("0", 64),
+		StartByte:     1,
+		EndByte:       2,
+		StartLine:     1,
+		EndLine:       1,
+		MatchCount:    1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "file_sha256") {
+		t.Fatalf("expected malformed file digest rejection, got %v", err)
+	}
+}
+
+func TestSubmitPlanRepairsUniqueLeadingWhitespaceAnchor(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	current := strings.Join([]string{
+		"package main",
+		"",
+		"func run() {",
+		"\tif strings.TrimSpace(effortRoot) == \"\" {",
+		"\t\tfmt.Fprintln(stderr, \"product status: --effort-root is required\")",
+		"\t\treturn 2",
+		"\t}",
+		"}",
+	}, "\n")
+	writeSubmitPlanFixture(t, root, "status.go", current)
+
+	anchorWithoutOuterIndent := strings.Join([]string{
+		"if strings.TrimSpace(effortRoot) == \"\" {",
+		"\tfmt.Fprintln(stderr, \"product status: --effort-root is required\")",
+		"\treturn 2",
+		"}",
+	}, "\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add JSON status usage error",
+		Edits: []PlanEdit{{
+			Path:    "status.go",
+			OldText: anchorWithoutOuterIndent,
+			NewText: strings.Join([]string{
+				"\tif strings.TrimSpace(effortRoot) == \"\" {",
+				"\t\treturn writeStatusUsageError()",
+				"\t}",
+			}, "\n"),
+			Purpose: "Update status usage error handling.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan should repair unique indentation-only anchor mismatch, got: %s", result.Error)
+	}
+
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load plan: %v", err)
+	}
+	if len(plan.Edits) != 1 {
+		t.Fatalf("expected one edit, got %d", len(plan.Edits))
+	}
+	if !strings.HasPrefix(plan.Edits[0].OldText, "\tif strings.TrimSpace") {
+		t.Fatalf("expected persisted old_text to preserve source indentation, got %q", plan.Edits[0].OldText)
+	}
+}
+
+func TestSubmitPlanRejectsLineRangeEditThatBreaksGoSyntax(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "pkg/feature_test.go", strings.Join([]string{
+		"package pkg",
+		"",
+		"import \"testing\"",
+		"",
+		"func TestExisting(t *testing.T) {",
+		"\tt.Helper()",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add regression coverage",
+		Edits: []PlanEdit{{
+			Path:      "pkg/feature_test.go",
+			StartLine: 7,
+			EndLine:   7,
+			Content: "\nfunc TestAdded(t *testing.T) {\n" +
+				"\tt.Helper()\n" +
+				"}",
+			Purpose: "add a second test",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("expected submit_plan to reject syntax-breaking line range edit")
+	}
+	for _, want := range []string{"preflight syntax validation failed", "pkg/feature_test.go"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("submit_plan error missing %q:\n%s", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("syntax-rejected submit_plan should not write last.plan.json, stat err=%v", err)
 	}
 }
 
@@ -1198,6 +1404,41 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op rejection should include %q, got %q", want, result.Error)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRepairsStringifiedMultilineNoOpEditBeforeValidation(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "keep\nsecond\n")
+	inner := `[{"path":"x.txt","old_text":"keep
+second
+","new_text":"keep
+second
+","purpose":"no edit needed"}]`
+	payload, err := json.Marshal(map[string]any{
+		"tool":      "submit_plan",
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON: %v", err)
+	}
+	if len(req.Edits) != 1 {
+		t.Fatalf("expected repaired edit before submit_plan validation, got %#v", req.Edits)
+	}
+	result := mgr.Execute(context.Background(), req)
+	if !strings.Contains(result.Error, "old_text and new_text are identical") {
+		t.Fatalf("expected no-op edit guidance, got summary=%q error=%q", result.Summary, result.Error)
+	}
+	if strings.Contains(result.Error, "requires at least one edit") {
+		t.Fatalf("stringified edits should not degrade to empty-plan rejection: %q", result.Error)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)

@@ -83,7 +83,8 @@ shape plus a one-sentence `purpose`: `old_text`+`new_text` (substring shape;
 `new_text: ""` deletes `old_text`), `start_line`+`end_line`+non-empty
 `content` (line-range shape) for an existing path, or `replace_all:true` with
 empty `old_text` and `new_text` as the full body for a new file or intentional
-whole-file write. The
+whole-file write. The `edits` field itself is a JSON array, not a quoted JSON
+string. The
 executor phase will dispatch them in the order you list. Builds/tests listed
 in Acceptance are planner-owned and idiom enforces that contract; do not run
 build, test, shell, git, or source-sanity commands from the brief. Do not

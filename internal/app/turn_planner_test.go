@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -657,6 +658,32 @@ func TestWriterRouteDecisionForPromptDispatchesUnscopedImplementationToPlanExecu
 	}
 }
 
+func TestWriterRouteDecisionForPromptReportsPlanExecutePlannerFamily(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"internal/app/app.go", "internal/agent/runner.go"},
+		},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("planner phase", plan)
+
+	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+		t.Fatalf("plan-execute planner should report plan-submission route, got %#v", decision)
+	}
+	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
+		t.Fatalf("plan-execute planner reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
 func TestImplementationDispatchFallbackSearchRanksUIRenderPath(t *testing.T) {
 	output := strings.Join([]string{
 		`f11 internal/agent/runner.go:5174: return containsAny(lowerObjective, "banner")`,
@@ -695,6 +722,284 @@ func TestAppendDiscoveredCandidateScopeStaysInsideBriefBody(t *testing.T) {
 	}
 	if allowed := AllowedEditPathsFromPrompt(got); len(allowed) != 1 || allowed[0] != "internal/app/rendering.go" {
 		t.Fatalf("discovered candidate scope is not parseable as allowed paths: %#v\n%s", allowed, got)
+	}
+}
+
+func TestImplementationDispatchContextPackScopeUsesCandidateFiles(t *testing.T) {
+	prompt := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"### Candidate Files",
+		"- `internal/productworkflow/migration_apply.go` (editable, matched task terms)",
+		"- `docs/product-status.md` (read_only_evidence, related docs)",
+		"- `internal/productworkflow/migration_apply_test.go` (test, inferred from Go candidate file)",
+		"",
+		"### Candidate Symbols",
+		"- `ignored.go` (editable)",
+	}, "\n")
+
+	paths := implementationDispatchAllowedPathsFromContextPack(prompt, 8)
+
+	want := []string{
+		"internal/productworkflow/migration_apply.go",
+		"internal/productworkflow/migration_apply_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("context-pack scope = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchContextPackScopeAddsSiblingTestForTestObjective(t *testing.T) {
+	root := t.TempDir()
+	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling test: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	paths := model.augmentImplementationAllowedPathsWithSiblingTests(
+		[]string{"internal/productworkflow/migration_apply.go"},
+		"reject symlinks and add regression tests proving no partial mutation",
+	)
+
+	want := []string{
+		"internal/productworkflow/migration_apply.go",
+		"internal/productworkflow/migration_apply_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("augmented scope = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchContextPackTestPathsUsesCandidateTests(t *testing.T) {
+	prompt := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"### Candidate Tests",
+		"- `go test ./internal/productworkflow` - internal/productworkflow/migration_apply_test.go",
+		"- `go test ./internal/productworkflow` - internal/productworkflow/efforts_test.go",
+		"",
+		"### Context Gaps",
+		"- ignored",
+	}, "\n")
+
+	paths := implementationDispatchTestPathsFromContextPack(prompt, 8)
+
+	want := []string{
+		"internal/productworkflow/migration_apply_test.go",
+		"internal/productworkflow/efforts_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("context-pack test paths = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchPreloadedContextPackBecomesInitialAllowedScope(t *testing.T) {
+	root := t.TempDir()
+	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling test: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	contextPack := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"### Candidate Files",
+		"- `internal/productworkflow/migration_apply.go` (editable, matched task terms)",
+		"",
+		"### Candidate Tests",
+		"- `go test ./internal/productworkflow` - internal/productworkflow/migration_apply_test.go",
+	}, "\n")
+
+	paths := model.implementationDispatchAllowedPathsFromPreloadedContextPack(
+		"status migration apply must reject temp symlinks and add regression tests proving no partial mutation",
+		contextPack,
+	)
+	want := []string{
+		"internal/productworkflow/migration_apply.go",
+		"internal/productworkflow/migration_apply_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("preloaded context-pack scope = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchPreloadedContextPackRejectsIrrelevantCandidateScope(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.Root = t.TempDir()
+	cfg.Workspace.CWD = cfg.Workspace.Root
+	model := New(cfg)
+	defer model.Close()
+
+	contextPack := strings.Join([]string{
+		"## Context Pack",
+		"",
+		"### Candidate Files",
+		"- `cmd/idiom/product_workflow_test.go` (editable, matched task terms)",
+		"- `internal/workspace/capabilities_test.go` (test, matched task terms)",
+		"- `internal/app/prompt_runtime_test.go` (test, matched task terms)",
+		"",
+		"### Candidate Tests",
+		"- `go test ./cmd/idiom` - cmd/idiom/product_workflow_test.go",
+	}, "\n")
+
+	paths := model.implementationDispatchAllowedPathsFromPreloadedContextPack(
+		"status migration apply must harden predictable temp-path writes against pre-existing symlinks and add regression tests",
+		contextPack,
+	)
+	if len(paths) != 0 {
+		t.Fatalf("irrelevant preloaded context-pack scope should be ignored, got %#v", paths)
+	}
+}
+
+func TestImplementationDispatchFallbackSearchPatternSkipsProcessWords(t *testing.T) {
+	pattern := implementationDispatchFallbackSearchPattern("We are continuing TDD completion work from docs/design-prd-adr-brief-research-workflow.md. Implement one bounded topic only: status migration apply must harden predictable temp-path writes against pre-existing symlinks.")
+	want := "status|migration|apply|harden"
+	if pattern != want {
+		t.Fatalf("fallback pattern = %q, want %q", pattern, want)
+	}
+	patterns := implementationDispatchFallbackFilePatterns("status migration apply must harden temp path writes")
+	if len(patterns) < 2 || patterns[0] != "status_migration_apply" || patterns[1] != "migration_apply_harden" {
+		t.Fatalf("fallback file patterns = %#v", patterns)
+	}
+	paths := implementationDispatchPathsFromSearchFilesOutput("f1 internal/productworkflow/migration_apply.go\nf2 internal/productworkflow/migration_apply_test.go\n", 4)
+	wantPaths := []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"}
+	if !slices.Equal(paths, wantPaths) {
+		t.Fatalf("search_files paths = %#v, want %#v", paths, wantPaths)
+	}
+}
+
+func TestImplementationDispatchMissingTestRetryUsesSubmittedPlanPathBeforeStaleAllowedScope(t *testing.T) {
+	root := t.TempDir()
+	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
+	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
+		t.Fatalf("mkdir test dir: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
+		t.Fatalf("write sibling test: %v", err)
+	}
+	stateDir := filepath.Join(root, ".idiom", "plan-execute", "sessions")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	state := planexecute.ProgressState{
+		SchemaVersion: planexecute.ProgressStateSchemaVersion,
+		SessionID:     "missing-test-retry",
+		ChangedPaths:  []string{"internal/productworkflow/migration_apply.go"},
+	}
+	body, err := json.Marshal(state)
+	if err != nil {
+		t.Fatalf("marshal state: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "missing-test-retry.json"), body, 0o600); err != nil {
+		t.Fatalf("write state: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	model := New(cfg)
+	defer model.Close()
+
+	paths := model.implementationDispatchAllowedPathsForMissingRequestedTestEdit(implementationDispatchPlanExecuteFailure{
+		Prompt: "Add regression tests proving pre-existing workflow/index/events temp symlinks are rejected without partial durable mutation.",
+		AllowedPaths: []string{
+			"cmd/idiom/product_workflow_test.go",
+			"internal/workspace/capabilities_test.go",
+			"internal/app/lifecycle.go",
+		},
+		Options: planexecute.Options{
+			Prompt: strings.Join([]string{
+				"## Candidate Edit Scope From Target References",
+				"- cmd/idiom/product_workflow_test.go",
+				"- internal/workspace/capabilities_test.go",
+				"- internal/app/lifecycle.go",
+				"",
+				"### Candidate Tests",
+				"- `go test ./internal/productworkflow` - internal/productworkflow/migration_apply_test.go",
+			}, "\n"),
+		},
+		Result: planexecute.RunResult{
+			SessionID:   "missing-test-retry",
+			FailureKind: "missing_requested_test_edit",
+		},
+	})
+
+	want := []string{
+		"internal/productworkflow/migration_apply.go",
+		"internal/productworkflow/migration_apply_test.go",
+	}
+	if !slices.Equal(paths, want) {
+		t.Fatalf("missing-test retry scope = %#v, want %#v", paths, want)
+	}
+}
+
+func TestImplementationDispatchPlanExecuteMaxTokensMatchesCLIPlannerDefault(t *testing.T) {
+	got := implementationDispatchPlanExecuteMaxTokens(
+		"",
+		"reject temp symlinks and add regression tests proving no partial mutation",
+		nil,
+		[]string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
+		nil,
+	)
+	if got != 8192 {
+		t.Fatalf("bounded existing-file plan max tokens = %d, want tighter existing-file budget 8192", got)
+	}
+}
+
+func TestImplementationDispatchPlanExecuteMaxTokensDoesNotDowngradeLargeNewFilePlans(t *testing.T) {
+	got := implementationDispatchPlanExecuteMaxTokens(
+		"",
+		"create new file with the full file body",
+		[]string{"internal/productworkflow/new_feature.go"},
+		nil,
+		nil,
+	)
+	if got != 16384 {
+		t.Fatalf("new-file plan max tokens = %d, want CLI default 16384", got)
+	}
+}
+
+func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocNewFile(t *testing.T) {
+	got := implementationDispatchPlanExecuteMaxTokens(
+		"",
+		"implement the referenced plan",
+		[]string{"internal/writerroute/decision.go"},
+		nil,
+		[]implementationDispatchPlanDocument{{
+			Content:   "## Files To Modify\n\n- internal/writerroute/decision.go — NEW FILE\n\nUse replace_all:true with the full file body.",
+			EditPaths: []string{"internal/writerroute/decision.go"},
+		}},
+	)
+	if got != 16384 {
+		t.Fatalf("plan-doc new-file budget = %d, want 16384", got)
+	}
+}
+
+func TestAppendMissingRequestedTestEditRecoveryAddendumStaysInsideBriefBody(t *testing.T) {
+	prompt := pathparse.WrapBriefBody("# Objective\n\nUpdate the banner and add regression tests.")
+	got := appendMissingRequestedTestEditRecoveryAddendum(prompt, []string{"internal/app/rendering.go", "internal/app/rendering_test.go"})
+	scoped := pathparse.ScopeToBriefBody(got)
+
+	if !strings.Contains(scoped, "Missing Requested Test Edit Recovery") || !strings.Contains(scoped, "internal/app/rendering_test.go") {
+		t.Fatalf("missing-test recovery scope was not inserted inside brief body:\n%s", got)
+	}
+	if allowed := AllowedEditPathsFromPrompt(got); !slices.Contains(allowed, "internal/app/rendering_test.go") {
+		t.Fatalf("missing-test recovery scope is not parseable as allowed paths: %#v\n%s", allowed, got)
 	}
 }
 
@@ -757,6 +1062,7 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 
 	var chatRequests atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Logf("request path=%s auth=%q", r.URL.Path, r.Header.Get("Authorization"))
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -886,6 +1192,205 @@ func TestPlanExecutePlannerBlockedMessageHidesInternalCompletionGatePrompt(t *te
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("planner blocked message leaked internal completion-gate detail %q:\n%s", forbidden, answer)
 		}
+	}
+}
+
+func TestPlanExecutePlannerBlockedMessageNamesExecutorRejectedSubmittedPlan(t *testing.T) {
+	answer := humanPlanExecutePlannerBlockedMessage(implementationDispatchPlanExecuteFailure{
+		Result: planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   "executor_failed",
+			FailureReason: "executor phase aborted on edit 0 (pkg/feature_test.go): preflight syntax validation failed",
+		},
+	}, implementationDispatchRecoveryDecision{
+		Decision: "surface",
+		Reason:   "automatic missing-test retry submitted a plan, but the executor rejected an edit",
+	})
+
+	for _, want := range []string{
+		"automatic missing-test retry submitted a plan, but the executor rejected an edit",
+		"executor phase aborted on edit 0",
+		"pkg/feature_test.go",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("executor failure message missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		Result: planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.",
+			PlannerAnswer: "Missing completion evidence: gate retry 3/3 requires a successful submit_plan tool result",
+		},
+	}
+	if !planExecuteFailureIsRepeatedCompletionGate(failure) {
+		t.Fatalf("expected repeated completion gate classifier to match")
+	}
+	answer := humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+		Decision: "surface",
+		Reason:   "planner stopped before emitting `submit_plan`, `Decision: source-satisfied`, or a concrete blocker after repeated completion-gate rejection",
+		Message:  "The system rejected the response 3 times. Manually invoke the submit_plan tool.",
+	})
+	for _, want := range []string{
+		"Plan-execute could not produce a plan artifact",
+		"planner stopped before emitting",
+		"planner stopped before emitting a `submit_plan` tool call",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("deterministic repeated-gate message missing %q:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"Manually invoke", "system rejected", "submit_plan tool"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("deterministic repeated-gate message leaked %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		Brief:         "# Brief\n\nImplement typed JSON usage errors.",
+		RequiredPaths: []string{"cmd/idiom/product_workflow.go"},
+		Options: planexecute.Options{
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow_test.go"},
+		},
+		Result: planexecute.RunResult{
+			FailureReason: "completion gate rejected final answer before submit_plan",
+		},
+	}
+	decision := implementationDispatchRecoveryDecision{
+		Decision: "retry",
+		Reason:   "the brief has exact scope",
+		RetryAddendum: "CRITICAL: You MUST produce a valid `submit_plan` tool call. " +
+			"It must contain exactly two edit entries. Each entry must have `Decision: source-satisfied` and include the full file content.",
+	}
+
+	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, `{"decision":"retry"}`)
+	for _, want := range []string{
+		"Produce one valid `submit_plan` call",
+		"cmd/idiom/product_workflow.go",
+		"cmd/idiom/product_workflow_test.go",
+		"`old_text`+`new_text`",
+		"`Decision: source-satisfied` with current-state evidence",
+		"`<<QUESTION>>:` with the exact path-specific blocker",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("recovery addendum missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"Each entry must have `Decision: source-satisfied`",
+		"include the full file content",
+		"Recovery controller observation",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("recovery addendum leaked controller contract text %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestImplementationDispatchRecoveryMessageIsInternalWithQuotedSubmitPlanToolCall(t *testing.T) {
+	msg := "Respond with a valid `submit_plan` tool call only; do not narrate completion."
+	if !implementationDispatchRecoveryMessageIsInternal(msg) {
+		t.Fatalf("expected quoted submit_plan tool-call instruction to be internal")
+	}
+	if observation := planExecutePlannerRecoveryObservation(msg); observation != "" {
+		t.Fatalf("expected internal retry addendum to be suppressed, got %q", observation)
+	}
+}
+
+func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
+	tests := []struct {
+		name           string
+		failure        implementationDispatchPlanExecuteFailure
+		recovery       bool
+		sourceMismatch bool
+		want           []string
+		forbidden      []string
+	}{
+		{
+			name: "planner source-satisfied missing allowed test path surfaces without recovery model",
+			failure: implementationDispatchPlanExecuteFailure{
+				AllowedPaths: []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
+				Result: planexecute.RunResult{
+					ExitCode:      1,
+					FailureKind:   "plan_artifact_missing",
+					FailureReason: "source-satisfied evidence named no test path",
+					PlannerAnswer: "Decision: source-satisfied\n- internal/productworkflow/migration_apply.go: no changes needed.",
+				},
+			},
+			recovery:       true,
+			sourceMismatch: true,
+			want: []string{
+				"terminal evidence mismatch",
+				"internal/productworkflow/migration_apply.go",
+				"internal/productworkflow/migration_apply_test.go",
+				"will not stack another recovery prompt",
+			},
+			forbidden: []string{"planner_blocked decision", "automatic retry"},
+		},
+		{
+			name: "planner blocked with discovered scope remains recoverable",
+			failure: implementationDispatchPlanExecuteFailure{
+				AllowedPaths: []string{"internal/app/rendering.go"},
+				Result: planexecute.RunResult{
+					ExitCode:      1,
+					FailureKind:   planexecute.RunFailurePlannerBlocked,
+					FailureReason: "completion gate rejected final answer before submit_plan",
+				},
+			},
+			recovery:       true,
+			sourceMismatch: false,
+		},
+		{
+			name: "executor failed is not a planner recovery case",
+			failure: implementationDispatchPlanExecuteFailure{
+				Result: planexecute.RunResult{
+					ExitCode:      1,
+					FailureKind:   "executor_failed",
+					FailureReason: "edit failed",
+				},
+			},
+			recovery:       false,
+			sourceMismatch: false,
+		},
+		{
+			name: "missing requested test edit is recoverable",
+			failure: implementationDispatchPlanExecuteFailure{
+				Result: planexecute.RunResult{
+					ExitCode:      1,
+					FailureKind:   "missing_requested_test_edit",
+					FailureReason: "original prompt requested test edits, but plan named no test path",
+				},
+			},
+			recovery:       true,
+			sourceMismatch: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := implementationDispatchPlanExecuteFailureCanUseRecovery(tt.failure.Result); got != tt.recovery {
+				t.Fatalf("recovery eligibility = %t, want %t", got, tt.recovery)
+			}
+			answer, ok := humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(tt.failure)
+			if ok != tt.sourceMismatch {
+				t.Fatalf("source-satisfied mismatch = %t, want %t; answer=%q", ok, tt.sourceMismatch, answer)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(answer, want) {
+					t.Fatalf("answer missing %q:\n%s", want, answer)
+				}
+			}
+			for _, forbidden := range tt.forbidden {
+				if strings.Contains(answer, forbidden) {
+					t.Fatalf("answer leaked %q:\n%s", forbidden, answer)
+				}
+			}
+		})
 	}
 }
 
@@ -2336,7 +2841,7 @@ func TestPlanExecutePromptRunnerIsolatesInteractiveHistoryAndPinnedFiles(t *test
 	}
 }
 
-func TestPlanExecutePlannerThinkingPolicyDoesNotForceLocalNoThink(t *testing.T) {
+func TestPlanExecutePlannerThinkingPolicyDisablesLocalThinkingOnly(t *testing.T) {
 	thinkingOn := true
 	qwen := &Model{
 		cfg: config.Config{
@@ -2345,8 +2850,8 @@ func TestPlanExecutePlannerThinkingPolicyDoesNotForceLocalNoThink(t *testing.T) 
 		},
 		modelID: "qwen3.6-35b",
 	}
-	if qwen.shouldDisableThinkingForPlanExecutePlanner() {
-		t.Fatalf("local Qwen planner should keep the active thinking policy for plan-execute")
+	if !qwen.shouldDisableThinkingForPlanExecutePlanner() {
+		t.Fatalf("local Qwen planner should disable thinking for strict plan-execute tool emission")
 	}
 
 	hosted := &Model{
@@ -2359,6 +2864,107 @@ func TestPlanExecutePlannerThinkingPolicyDoesNotForceLocalNoThink(t *testing.T) 
 	}
 	if hosted.shouldDisableThinkingForPlanExecutePlanner() {
 		t.Fatalf("thinking-floor hosted planner should preserve thinking")
+	}
+}
+
+func TestPlanExecutePromptRunnerRoutePreservesHostedExecutorThinkingFloor(t *testing.T) {
+	executorSpec := config.LlamaServer{Kind: config.BackendZAI, Model: "glm-5.1", BaseURL: "https://api.z.ai/api/paas/v4"}
+	m := &Model{
+		client:            llama.NewClient("http://planner.invalid", time.Second),
+		implementerClient: &reachableListModelsClient{models: []llama.ModelInfo{{ID: "glm-5.1"}}},
+		plannerSpec:       config.LlamaServer{Model: "local-planner", BaseURL: "http://planner.invalid"},
+		executorSpec:      executorSpec,
+		modelID:           "local-planner",
+	}
+	restore := m.applyPlanExecutePromptRunnerRoute(context.Background())
+	if !m.modelThinkingFloor {
+		t.Fatalf("hosted executor route should set modelThinkingFloor during in-process plan-execute")
+	}
+	restore()
+	if m.modelThinkingFloor {
+		t.Fatalf("modelThinkingFloor should restore after in-process plan-execute route")
+	}
+}
+
+func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+
+	var plannerChat atomic.Int64
+	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "planner-model"}}})
+		case "/v1/chat/completions":
+			plannerChat.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "planner route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer plannerServer.Close()
+
+	var executorChat atomic.Int64
+	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "executor-model"}}})
+		case "/v1/chat/completions":
+			executorChat.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "executor route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer executorServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner"]},
+		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
+	]}}}`, plannerServer.URL, executorServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = plannerServer.URL
+	cfg.LlamaServer.Model = "planner-model"
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.RouteClassifier.Enabled = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+	model.modelID = "planner-model"
+
+	answer, err := model.newPlanExecutePromptRunner(context.Background())(cfg, "answer directly", planexecute.RunOptions{
+		TaskFamily:        "direct_question",
+		MaxTokensOverride: 128,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("prompt runner: %v", err)
+	}
+	if strings.TrimSpace(answer) != "executor route" {
+		t.Fatalf("answer = %q, want executor route", answer)
+	}
+	if executorChat.Load() == 0 {
+		t.Fatalf("expected executor chat request")
+	}
+	if plannerChat.Load() != 0 {
+		t.Fatalf("plan-execute prompt runner should not use planner chat when executor is reachable, got %d", plannerChat.Load())
+	}
+	if model.modelID != "planner-model" {
+		t.Fatalf("modelID was not restored after prompt runner: %q", model.modelID)
 	}
 }
 
@@ -2670,6 +3276,222 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	}
 }
 
+func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst RegressionCovered = false\n"), 0o644); err != nil {
+		t.Fatalf("write test: %v", err)
+	}
+
+	var sawMissingTestRetry atomic.Bool
+	var plannerRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "mock-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read request: %v", err)
+			}
+			requestText := string(body)
+			reply := ""
+			switch {
+			case strings.Contains(requestText, "Allowed Repair Paths"):
+				reply = "Decision: pass\n\nVerification Checklist:\n- pkg/feature.go contains the hardening.\n- pkg/feature_test.go contains regression coverage.\n- No out-of-scope paths were changed."
+			case strings.Contains(requestText, "Plan submitted with"):
+				reply = "Plan submitted."
+			case strings.Contains(requestText, "Missing Requested Test Edit Recovery"):
+				sawMissingTestRetry.Store(true)
+				if !strings.Contains(requestText, "pkg/feature_test.go") {
+					t.Fatalf("missing-test retry prompt did not expose test path:\n%s", requestText)
+				}
+				reply = "<tool_call>\n" +
+					`{"tool":"submit_plan","rationale":"Retry with the required regression test edit included.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"},{"path":"pkg/feature_test.go","old_text":"const RegressionCovered = false","new_text":"const RegressionCovered = true","purpose":"cover the hardening regression"}]}`
+			default:
+				plannerRequests.Add(1)
+				reply = "<tool_call>\n" +
+					`{"tool":"submit_plan","rationale":"Production-only hardening plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"}]}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = server.URL
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "Implement pkg/feature.go hardening and add regression tests in pkg/feature_test.go proving the edge case is rejected.")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	if !sawMissingTestRetry.Load() {
+		t.Fatalf("expected automatic missing-test retry")
+	}
+	if plannerRequests.Load() == 0 {
+		t.Fatalf("expected initial production-only planner request")
+	}
+	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(gotSource), "return true") {
+		t.Fatalf("source was not hardened:\n%s", string(gotSource))
+	}
+	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
+	if err != nil {
+		t.Fatalf("read test: %v", err)
+	}
+	if !strings.Contains(string(gotTest), "RegressionCovered = true") {
+		t.Fatalf("test was not updated:\n%s", string(gotTest))
+	}
+	if !strings.Contains(answer, "plan-then-execute summary") {
+		t.Fatalf("expected successful retry summary, got %q", answer)
+	}
+}
+
+func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSatisfied(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
+		t.Fatalf("mkdir pkg: %v", err)
+	}
+	sourceBody := "package pkg\n\nfunc Hardened() bool { return true }\n"
+	testBody := "package pkg\n\nconst RegressionCovered = true\n"
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte(sourceBody), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte(testBody), 0o644); err != nil {
+		t.Fatalf("write test: %v", err)
+	}
+
+	var sawMissingTestRetry atomic.Bool
+	var retryTurns atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "mock-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read request: %v", err)
+			}
+			requestText := string(body)
+			reply := ""
+			switch {
+			case strings.Contains(requestText, "Plan submitted with"):
+				reply = "Plan submitted."
+			case strings.Contains(requestText, "Missing Requested Test Edit Recovery"):
+				sawMissingTestRetry.Store(true)
+				for _, want := range []string{
+					"Decision: source-satisfied",
+					"pkg/feature.go",
+					"pkg/feature_test.go",
+				} {
+					if !strings.Contains(requestText, want) {
+						t.Fatalf("missing-test retry prompt missing %q:\n%s", want, requestText)
+					}
+				}
+				switch retryTurns.Add(1) {
+				case 1:
+					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature.go","start_line":1,"end_line":3}`
+				case 2:
+					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature_test.go","start_line":1,"end_line":3}`
+				default:
+					reply = strings.Join([]string{
+						"Decision: source-satisfied",
+						"- pkg/feature.go: requested final state is already present.",
+						"- pkg/feature_test.go: current tests already contain the requested regression evidence.",
+					}, "\n")
+				}
+			default:
+				reply = "<tool_call>\n" +
+					`{"tool":"submit_plan","rationale":"Production-only stale plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return true","new_text":"return false","purpose":"stale production-only edit"}]}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = server.URL
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "Implement pkg/feature.go hardening and add regression tests in pkg/feature_test.go proving the edge case is rejected.")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	if !sawMissingTestRetry.Load() {
+		t.Fatalf("expected automatic missing-test retry")
+	}
+	if !strings.Contains(answer, "source-satisfied") {
+		t.Fatalf("expected source-satisfied retry closeout, got %q", answer)
+	}
+	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if string(gotSource) != sourceBody {
+		t.Fatalf("source changed during source-satisfied retry:\n%s", string(gotSource))
+	}
+	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
+	if err != nil {
+		t.Fatalf("read test: %v", err)
+	}
+	if string(gotTest) != testBody {
+		t.Fatalf("test changed during source-satisfied retry:\n%s", string(gotTest))
+	}
+}
+
 func loadOnlyTimestampedPlanArtifactForTest(t *testing.T, root string) workspace.PlanArtifact {
 	t.Helper()
 
@@ -2733,6 +3555,137 @@ func TestImplementationDispatchInlineOnlyEditMarkdownTargetIsNotPlanDocument(t *
 	}
 }
 
+func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "internal", "productworkflow"), 0o755); err != nil {
+		t.Fatalf("mkdir productworkflow: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "productworkflow", "migration_apply.go"), []byte("package productworkflow\n\nconst TempPolicy = \"weak\"\n"), 0o644); err != nil {
+		t.Fatalf("write migration file: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go"), []byte("package productworkflow\n\nconst TempPolicyTested = false\n"), 0o644); err != nil {
+		t.Fatalf("write migration test file: %v", err)
+	}
+	designDoc := strings.Join([]string{
+		"# Product Workflow Design",
+		"",
+		"Open delivery blockers from review: status migration apply must harden predictable temp-path writes against pre-existing symlinks.",
+		"",
+		"Phase 6 and Phase 7 also contain unrelated continuation and sidecar work.",
+		"",
+	}, "\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "design.md"), []byte(designDoc), 0o644); err != nil {
+		t.Fatalf("write design doc: %v", err)
+	}
+
+	var preflightCalls atomic.Int64
+	stubImplementationDispatchPlanDocumentPreflight(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentPreflightResult {
+		preflightCalls.Add(1)
+		return implementationDispatchPlanDocumentPreflightResult{
+			Path:     doc.Path,
+			OK:       false,
+			Blockers: []string{"reference-only design doc must not run dispatch preflight"},
+		}
+	})
+	stubImplementationDispatchPlanDocumentRefine(t, func(_ context.Context, _ config.Config, doc implementationDispatchPlanDocument) implementationDispatchPlanDocumentRefineResult {
+		return implementationDispatchPlanDocumentRefineResult{
+			OriginalPath: doc.Path,
+			ExitCode:     1,
+			Stderr:       "reference-only design doc must not run refine",
+		}
+	})
+
+	var plannerRequests atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "mock-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read request: %v", err)
+			}
+			requestText := string(body)
+			reply := ""
+			switch {
+			case strings.Contains(requestText, "Allowed Repair Paths"):
+				reply = "Decision: pass\n\nVerification Checklist:\n- internal/productworkflow/migration_apply.go contains the hardened temp policy.\n- No out-of-scope paths were changed.\n- Planner-owned focused tests remain pending outside this mocked lane."
+			case strings.Contains(requestText, "Plan submitted with"):
+				reply = "Plan submitted."
+			default:
+				plannerRequests.Add(1)
+				for _, want := range []string{
+					"Implement one bounded topic from docs/design.md",
+					"## Referenced Plan Documents",
+					"status migration apply must harden predictable temp-path writes",
+				} {
+					if !strings.Contains(requestText, want) {
+						t.Fatalf("planner prompt lost reference-only design-doc context %q:\n%s", want, requestText)
+					}
+				}
+				reply = "<tool_call>\n" +
+					`{"tool":"submit_plan","rationale":"Harden the migration temp policy requested by the referenced design document and add regression coverage.","edits":[{"path":"internal/productworkflow/migration_apply.go","old_text":"const TempPolicy = \"weak\"\n","new_text":"const TempPolicy = \"hardened\"\n","purpose":"harden migration temp path policy"},{"path":"internal/productworkflow/migration_apply_test.go","old_text":"const TempPolicyTested = false\n","new_text":"const TempPolicyTested = true\n","purpose":"cover migration temp path policy"}]}`
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]string{"content": reply},
+				}},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = server.URL
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+
+	answer, err := model.RunPromptOnce(context.Background(), "Implement one bounded topic from docs/design.md: status migration apply must harden predictable temp-path writes against pre-existing symlinks. Add regression tests proving temp symlinks are rejected.")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "internal", "productworkflow", "migration_apply.go"))
+	if err != nil {
+		t.Fatalf("read migration file: %v", err)
+	}
+	if string(got) != "package productworkflow\n\nconst TempPolicy = \"hardened\"\n" {
+		t.Fatalf("migration file content = %q, want hardened policy", string(got))
+	}
+	gotTest, err := os.ReadFile(filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go"))
+	if err != nil {
+		t.Fatalf("read migration test file: %v", err)
+	}
+	if string(gotTest) != "package productworkflow\n\nconst TempPolicyTested = true\n" {
+		t.Fatalf("migration test file content = %q, want regression coverage marker", string(gotTest))
+	}
+	if preflightCalls.Load() != 0 {
+		t.Fatalf("reference-only design doc should skip plan-document preflight, got %d call(s)", preflightCalls.Load())
+	}
+	if plannerRequests.Load() == 0 {
+		t.Fatalf("expected plan-execute planner request")
+	}
+}
+
 func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
@@ -2789,6 +3742,50 @@ func TestComposeImplementationBriefTreatsDesignDocScopeAsCandidatePaths(t *testi
 	}
 	if got := allowedEditPathsFromPrompt(brief); !slices.Contains(got, "target.txt") {
 		t.Fatalf("design-doc scope must become candidate edit paths, got %#v\n%s", got, brief)
+	}
+}
+
+func TestComposeImplementationBriefExcerptsLongReferenceDocument(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "docs"), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	var doc strings.Builder
+	doc.WriteString("# Long Design\n\n")
+	doc.WriteString("Status migration apply must harden predictable temp-path writes against pre-existing workflow/index/events temp symlinks.\n\n")
+	for i := 0; i < 500; i++ {
+		fmt.Fprintf(&doc, "## Unrelated Section %03d\n\nThis section discusses unrelated operator UX material and filler details that should not dominate the implementation brief.\n\n", i)
+	}
+	doc.WriteString("## Relevant Regression Coverage\n\nAdd regression tests proving pre-existing workflow/index/events temp symlinks are rejected without partial durable mutation.\n\n")
+	if err := os.WriteFile(filepath.Join(root, "docs", "long-design.md"), []byte(doc.String()), 0o644); err != nil {
+		t.Fatalf("write design doc: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	plan := promptExecutionPlan{
+		route:        turnRoutePlan{Family: "docs_edit"},
+		runtimeBrief: runtimeBriefForTest(nil),
+	}
+	prompt := "Implement status migration apply temp symlink hardening and add regression tests."
+	brief := composeImplementationBrief(prompt+" docs/long-design.md", plan, cfg)
+
+	if len(brief) > 18000 {
+		t.Fatalf("long reference doc should be compacted, got %d bytes", len(brief))
+	}
+	lowerBrief := strings.ToLower(brief)
+	for _, want := range []string{
+		"[excerpted from long referenced document",
+		"status migration apply must harden predictable temp-path writes",
+		"add regression tests proving pre-existing workflow/index/events temp symlinks",
+	} {
+		if !strings.Contains(lowerBrief, strings.ToLower(want)) {
+			t.Fatalf("compacted brief missing %q:\n%s", want, brief)
+		}
+	}
+	if strings.Contains(brief, "Unrelated Section 001") || strings.Contains(brief, "Unrelated Section 499") {
+		t.Fatalf("compacted brief retained unrelated tail:\n%s", brief)
 	}
 }
 
@@ -2879,6 +3876,74 @@ func TestComposeImplementationBriefKeepsAtomScopeAsRequiredPaths(t *testing.T) {
 	}
 }
 
+func TestImplementationDispatchInlineRequiredPathsBecomePlanExecuteRequiredScope(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte("package main\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	plan := promptExecutionPlan{runtimeBrief: runtimeBriefForTest(nil)}
+	prompt := "Implement JSON usage-error parity. Required edit paths: cmd/idiom/product_workflow.go, cmd/idiom/product_workflow_test.go"
+	required, allowed, _, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	if len(blockers) != 0 {
+		t.Fatalf("unexpected blockers: %#v", blockers)
+	}
+	for _, want := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
+		if !slices.Contains(required, want) {
+			t.Fatalf("missing required path %q, got required=%#v allowed=%#v", want, required, allowed)
+		}
+		if slices.Contains(allowed, want) {
+			t.Fatalf("inline required path %q must not be demoted to allowed scope: required=%#v allowed=%#v", want, required, allowed)
+		}
+	}
+}
+
+func TestImplementationDispatchInlineRequiredPathsIgnoreTrailingSlashProse(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"} {
+		abs := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(abs, []byte("package main\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	plan := promptExecutionPlan{runtimeBrief: runtimeBriefForTest(nil)}
+	prompt := "Implement JSON usage-error parity. Required edit paths: `cmd/idiom/product_workflow.go`, `cmd/idiom/product_workflow_test.go`. Add focused tests for missing `--effort-root` and mutually exclusive/missing mode flags under JSON output."
+	required, allowed, _, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	if len(blockers) != 0 {
+		t.Fatalf("unexpected blockers: %#v", blockers)
+	}
+	want := []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"}
+	if len(required) != len(want) {
+		t.Fatalf("required paths = %#v, want %#v", required, want)
+	}
+	for _, path := range want {
+		if !slices.Contains(required, path) {
+			t.Fatalf("missing required path %q, got required=%#v allowed=%#v", path, required, allowed)
+		}
+	}
+	for _, forbidden := range []string{"exclusive/missing", "cmd/idiom"} {
+		if slices.Contains(required, forbidden) || slices.Contains(allowed, forbidden) {
+			t.Fatalf("slash prose or truncated directory leaked into scope: required=%#v allowed=%#v", required, allowed)
+		}
+	}
+}
+
 func runtimeBriefForTest(targetRefs []string) workerruntime.WorkerRuntimeBrief {
 	return workerruntime.WorkerRuntimeBrief{TargetRefs: targetRefs}
 }
@@ -2943,7 +4008,7 @@ func TestShouldPreferFallbackRoutePreventsModelDowngradeToDirectQuestion(t *test
 		t.Fatalf("fallback family = %q, want debug_logs", fallback.Family)
 	}
 	planned := normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, agent.BuildMode())
-	if !shouldPreferFallbackRoute(fallback, planned) {
+	if !shouldPreferFallbackRoute(fallback, planned, "Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?") {
 		t.Fatal("expected specialized fallback to override a generic direct-question model route")
 	}
 }
@@ -2973,7 +4038,34 @@ func TestClassifyTurnRouteLetsModelUpgradeDirectQuestionFallback(t *testing.T) {
 	}
 }
 
-func TestClassifyTurnRouteSkipsModelForDecisiveFallback(t *testing.T) {
+func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"docs_edit","initial_lane":"implement","reason":"direct_implementation","contract":"implementation_result"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	plan := m.classifyTurnRoute(context.Background(), "Update the README docs for the new workflow.", agent.BuildMode())
+	if plan.Family != "docs_edit" {
+		t.Fatalf("family = %q, want docs_edit", plan.Family)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("implementation-like prose should go through classifier first, got %d calls", calls.Load())
+	}
+}
+
+func TestClassifyTurnRouteSkipsClassifierForHardDebugLogSignal(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -2991,12 +4083,43 @@ func TestClassifyTurnRouteSkipsModelForDecisiveFallback(t *testing.T) {
 		},
 		client: llama.NewClient(server.URL, time.Second),
 	}
-	plan := m.classifyTurnRoute(context.Background(), "Update the README docs for the new workflow.", agent.BuildMode())
-	if plan.Family != "docs_edit" {
-		t.Fatalf("family = %q, want docs_edit", plan.Family)
+	plan := m.classifyTurnRoute(context.Background(), "Check the most recent logs and explain why it failed.", agent.BuildMode())
+	if plan.Family != "debug_logs" {
+		t.Fatalf("family = %q, want debug_logs", plan.Family)
 	}
 	if calls.Load() != 0 {
-		t.Fatalf("deterministic route should skip classifier model call, got %d calls", calls.Load())
+		t.Fatalf("hard log signal should skip classifier model call, got %d calls", calls.Load())
+	}
+}
+
+func TestClassifyTurnRouteKeepsPlanExecuteRequiredPathSmokeWriteShaped(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"architecture","initial_lane":"architecture","reason":"architecture_request","contract":"architecture_assessment"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	prompt := "Smoke test the default implementation lane through the full PRD-to-plan-to-execute path without changing files. Requirement: verify the durable TUI smoke fixture is already satisfied by the current repository and answer source-satisfied with evidence. Required edit paths: internal/app/app.go, internal/agent/runner.go. Do not write files unless the evidence proves a real missing fixture."
+	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation", plan.Family)
+	}
+	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("required-path plan-execute workflow is a hard contract signal, got classifier calls=%d", calls.Load())
 	}
 }
 

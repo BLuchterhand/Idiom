@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/agent"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
@@ -539,6 +540,9 @@ func TestRunLaneMainPlanExecuteJSONEmitsWriterRouteDecision(t *testing.T) {
 	}
 	if event["writer_mode"] != "plan_submission" || event["lane"] != "plan-execute" || event["verification_owner"] != "planner_owned" {
 		t.Fatalf("unexpected plan-execute lane route event: %#v", event)
+	}
+	if event["task_family"] != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("plan-execute lane route event should carry task_family, got %#v", event)
 	}
 	if !jsonEventStringSliceContains(event["reason_codes"], "route.multi_file_plan_execute") {
 		t.Fatalf("plan-execute lane route should explain multi-file plan-execute dispatch: %#v", event)

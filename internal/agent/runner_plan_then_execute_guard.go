@@ -4,8 +4,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
@@ -97,9 +99,10 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	if len(required) == 0 {
 		return verificationInterceptResult{}
 	}
-	planned := make(map[string]struct{}, len(req.Edits))
+	edits := planThenExecuteSubmitPlanEdits(req)
+	planned := make(map[string]struct{}, len(edits))
 	var outside []string
-	for _, edit := range req.Edits {
+	for _, edit := range edits {
 		path := normalizeRunnerPath(edit.Path)
 		if path == "" {
 			continue
@@ -120,7 +123,8 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 		}
 	}
 	missingSnippets := r.missingSubmitPlanRequiredEditSnippets(req, planned)
-	if len(missing) == 0 && len(outside) == 0 && len(missingSnippets) == 0 {
+	invalidAnchors := r.invalidSubmitPlanAnchors(req)
+	if len(missing) == 0 && len(outside) == 0 && len(missingSnippets) == 0 && len(invalidAnchors) == 0 {
 		return verificationInterceptResult{}
 	}
 	var parts []string
@@ -132,6 +136,9 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	}
 	if len(missingSnippets) > 0 {
 		parts = append(parts, "missing required edit snippet(s): "+quotedRunnerStrings(missingSnippets))
+	}
+	if len(invalidAnchors) > 0 {
+		parts = append(parts, "invalid edit anchor(s): "+quotedRunnerStrings(invalidAnchors))
 	}
 	return verificationInterceptResult{
 		Intercepted: true,
@@ -146,6 +153,41 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	}
 }
 
+func (r *Runner) invalidSubmitPlanAnchors(req workspace.ToolRequest) []string {
+	if r == nil || r.Workspace == nil {
+		return nil
+	}
+	root := strings.TrimSpace(r.Workspace.Root())
+	if root == "" {
+		return nil
+	}
+	var invalid []string
+	contentCache := make(map[string]string)
+	for _, edit := range planThenExecuteSubmitPlanEdits(req) {
+		path := normalizeRunnerPath(edit.Path)
+		if path == "" || filepath.IsAbs(path) {
+			continue
+		}
+		content, ok := contentCache[path]
+		if !ok {
+			content = readPlanProjectionBase(root, path)
+			contentCache[path] = content
+		}
+		if edit.OldText != "" {
+			if !strings.Contains(content, edit.OldText) {
+				invalid = append(invalid, path+": old_text not found in current source")
+			}
+			continue
+		}
+		if edit.StartLine > 0 || edit.EndLine > 0 {
+			if _, ok := applyPlanProjectionRange(content, edit.StartLine, edit.EndLine, edit.Content); !ok {
+				invalid = append(invalid, path+": line range outside current source")
+			}
+		}
+	}
+	return invalid
+}
+
 func (r *Runner) missingSubmitPlanRequiredEditSnippets(req workspace.ToolRequest, planned map[string]struct{}) []string {
 	if r == nil {
 		return nil
@@ -158,7 +200,7 @@ func (r *Runner) missingSubmitPlanRequiredEditSnippets(req workspace.ToolRequest
 	if r.Workspace != nil {
 		root = strings.TrimSpace(r.Workspace.Root())
 	}
-	projectedContent := projectedPlanContentByPath(root, req.Edits)
+	projectedContent := projectedPlanContentByPath(root, planThenExecuteSubmitPlanEdits(req))
 	var missing []string
 	for i, snippet := range brief.RequiredEditSnippets {
 		candidates := requiredEditSnippetCandidatePaths(snippet, brief.RequiredEditPaths, planned)
@@ -187,6 +229,14 @@ func projectedPlanContentByPath(root string, edits []workspace.PlanEdit) map[str
 		out[path] = applyPlanProjectionEdit(content, edit)
 	}
 	return out
+}
+
+func planThenExecuteSubmitPlanEdits(req workspace.ToolRequest) []workspace.PlanEdit {
+	edits := append([]workspace.PlanEdit(nil), req.Edits...)
+	if req.PlanArtifact != nil {
+		edits = append(edits, req.PlanArtifact.Edits...)
+	}
+	return edits
 }
 
 func readPlanProjectionBase(root string, path string) string {
@@ -262,6 +312,171 @@ func planThenExecuteRequiredSnippetCovered(candidates []string, snippet string, 
 	return false
 }
 
+func planThenExecuteRequiredPathDiscoveryRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return "", "", false
+	}
+	if len(brief.RequiredEditPaths) == 0 || successfulSubmitPlanResultCount(results) > 0 {
+		return "", "", false
+	}
+	if strings.TrimSpace(req.Tool) == "submit_plan" || !isReadClassTool(req) {
+		return "", "", false
+	}
+	unread := planThenExecuteUnreadRequiredPaths(brief, results)
+	if len(unread) == 0 {
+		return "", "", false
+	}
+	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
+	if target != "" {
+		if _, ok := required[target]; ok {
+			if _, missing := unread[target]; missing {
+				return "", "", false
+			}
+			next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
+			return "Required edit path source read required",
+				"this required path already has source evidence. Before more discovery on " + target + ", read the next unread required_edit_path with `read_file`: " + next + ". Then submit_plan, source-satisfied, or <<QUESTION>> with the exact blocker.",
+				true
+		}
+	}
+	next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
+	if next == "" {
+		return "", "", false
+	}
+	return "Required edit path source read required",
+		"required_edit_paths define the write scope, but not every required path has source evidence yet. Do not use broad context/search discovery here. Read the next unread required_edit_path with `read_file`: " + next + ". After all required paths are read once, submit_plan, source-satisfied, or <<QUESTION>> with the exact path-specific blocker.",
+		true
+}
+
+func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, string, bool) {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return "", "", false
+	}
+	if len(brief.RequiredEditPaths) == 0 || successfulSubmitPlanResultCount(results) > 0 {
+		return "", "", false
+	}
+	if strings.TrimSpace(req.Tool) == "submit_plan" || !isReadClassTool(req) {
+		return "", "", false
+	}
+	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
+		return "", "", false
+	}
+	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
+		if submitPlanRejectionHasInvalidAnchor(rejected) &&
+			strings.TrimSpace(req.Tool) == "read_file" &&
+			readRequestTargetsRequiredEditPath(req, brief.RequiredEditPaths) &&
+			!successfulReadPathAfter(results, rejectedAt, req.Path) {
+			return "", "", false
+		}
+		return "Corrected submit_plan required",
+			"every required_edit_path already has source evidence, and the previous submit_plan was rejected. Submit a corrected `submit_plan` covering every required path with valid anchors or line ranges from the existing source evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. If the rejection named a stale edit anchor, at most one bounded `read_file` on that required path is allowed to refresh exact current text.",
+			true
+	}
+	return "Plan submission required",
+		"every required_edit_path already has source evidence. Do not use more read/search discovery. Submit one `submit_plan` covering every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
+		true
+}
+
+func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Error))
+	return strings.Contains(text, "invalid edit anchor") ||
+		strings.Contains(text, "old_text not found") ||
+		strings.Contains(text, "line range outside current source")
+}
+
+func successfulReadPathAfter(results []workspace.ToolResult, index int, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	for i := index + 1; i < len(results); i++ {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, readPath := range readPathsFromToolResult(result) {
+			if normalizeRunnerPath(readPath) == path {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (workspace.ToolResult, int, bool) {
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != "submit_plan" {
+			continue
+		}
+		if strings.Contains(result.Summary, "submit_plan rejected") || strings.Contains(result.Error, "submit_plan must include") {
+			return result, i, true
+		}
+	}
+	return workspace.ToolResult{}, -1, false
+}
+
+func planThenExecuteUnreadRequiredPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) map[string]struct{} {
+	read := readPathsFromResults(results)
+	unread := make(map[string]struct{}, len(brief.RequiredEditPaths))
+	for _, path := range brief.RequiredEditPaths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := read[normalized]; ok {
+			continue
+		}
+		unread[normalized] = struct{}{}
+	}
+	return unread
+}
+
+func firstPlanThenExecuteUnreadRequiredPath(required []string, unread map[string]struct{}) string {
+	for _, path := range required {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := unread[normalized]; ok {
+			return normalized
+		}
+	}
+	return ""
+}
+
+func planThenExecuteRequestTargetPath(req workspace.ToolRequest) string {
+	for _, candidate := range []string{req.Path, req.Destination, req.Workdir} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate != "" && candidate != "." {
+			return candidate
+		}
+	}
+	if path := pathFromPlanThenExecuteHandle(req.Handle); path != "" {
+		return path
+	}
+	if path := pathFromPlanThenExecuteHandle(req.ID); path != "" {
+		return path
+	}
+	return ""
+}
+
+func pathFromPlanThenExecuteHandle(handle string) string {
+	handle = strings.TrimSpace(handle)
+	switch {
+	case strings.HasPrefix(handle, "file://"):
+		return strings.TrimPrefix(handle, "file://")
+	case strings.HasPrefix(handle, "symbol://"):
+		rest := strings.TrimPrefix(handle, "symbol://")
+		if path, _, ok := strings.Cut(rest, "#"); ok {
+			return path
+		}
+		return rest
+	default:
+		return ""
+	}
+}
+
 // preflightPlanThenExecutePlannerToolGuard keeps verification and shell
 // affordances out of the planner phase. The planner can gather bounded
 // source evidence and submit a plan, report source-satisfied evidence, or
@@ -285,6 +500,129 @@ func (r *Runner) preflightPlanThenExecutePlannerToolGuard(req workspace.ToolRequ
 		},
 		Reason: "plan-then-execute planner phase: verification/shell tool " + tool + " is outside the planner contract",
 	}
+}
+
+func (r *Runner) planThenExecuteClampedEOFReadRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
+	if !r.planThenExecutePlannerPhase() || strings.TrimSpace(req.Tool) != "read_file" {
+		return "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || req.StartLine <= 0 {
+		return "", "", false
+	}
+	totalLines, ok := priorClampedEOFReadLineCount(path, results)
+	if !ok || req.StartLine <= totalLines {
+		return "", "", false
+	}
+	return "Out-of-range read_file rejected",
+		"previous read_file evidence already established that " + path + " has " + strconv.Itoa(totalLines) +
+			" lines total, so start_line " + strconv.Itoa(req.StartLine) + " is beyond EOF and cannot add new evidence. " +
+			"Do not request another out-of-range window. If the gathered source evidence is sufficient, call submit_plan. " +
+			"If the source already satisfies the requested change, answer `Decision: source-satisfied` with per-path evidence. " +
+			"Otherwise answer <<QUESTION>> and name the exact missing fact.",
+		true
+}
+
+func (r *Runner) shouldHideToolAfterDiscoveryHardRedirect(req workspace.ToolRequest) bool {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		return false
+	}
+	if tool == "read_file" && r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) > 0 {
+		return false
+	}
+	return true
+}
+
+func priorClampedEOFReadLineCount(path string, results []workspace.ToolResult) (int, bool) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return 0, false
+	}
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		total, ok := clampedEOFReadLineCountForPath(result.Summary, path)
+		if ok {
+			return total, true
+		}
+	}
+	return 0, false
+}
+
+func clampedEOFReadLineCountForPath(summary string, path string) (int, bool) {
+	summary = strings.TrimSpace(summary)
+	path = normalizeRunnerPath(path)
+	const prefix = "Read "
+	const linesMarker = " lines "
+	const clampMarker = " was clamped to file bounds; file has "
+	if !strings.HasPrefix(summary, prefix) || !strings.Contains(summary, clampMarker) {
+		return 0, false
+	}
+	rest := strings.TrimPrefix(summary, prefix)
+	linesIdx := strings.Index(rest, linesMarker)
+	if linesIdx < 0 {
+		return 0, false
+	}
+	description := strings.TrimSpace(rest[:linesIdx])
+	if !readFileSummaryDescriptionMatchesPath(description, path) {
+		return 0, false
+	}
+	clampIdx := strings.Index(summary, clampMarker)
+	if clampIdx < 0 {
+		return 0, false
+	}
+	tail := strings.TrimSpace(summary[clampIdx+len(clampMarker):])
+	fields := strings.Fields(tail)
+	if len(fields) == 0 {
+		return 0, false
+	}
+	total, err := strconv.Atoi(fields[0])
+	if err != nil || total <= 0 {
+		return 0, false
+	}
+	return total, true
+}
+
+func readFileSummaryDescriptionMatchesPath(description string, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	for _, candidate := range readFileSummaryPathCandidates(description) {
+		if normalizeRunnerPath(candidate) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func readFileSummaryPathCandidates(description string) []string {
+	description = strings.TrimSpace(description)
+	if description == "" {
+		return nil
+	}
+	candidates := []string{description}
+	fields := strings.Fields(description)
+	if len(fields) > 1 && looksLikeWorkspacePathHandle(fields[0]) {
+		candidates = append(candidates, strings.TrimSpace(strings.TrimPrefix(description, fields[0])))
+	}
+	return candidates
+}
+
+func looksLikeWorkspacePathHandle(text string) bool {
+	text = strings.TrimSpace(text)
+	if len(text) < 2 || text[0] != 'f' {
+		return false
+	}
+	for _, r := range text[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (r *Runner) preflightPlanThenExecuteReviewRepairNoopSubmitPlanGuard(req workspace.ToolRequest) verificationInterceptResult {
@@ -440,6 +778,147 @@ func planThenExecuteShortCircuitAnswer(brief workerruntime.WorkerRuntimeBrief, r
 	return strings.Join(body, "\n"), true
 }
 
+func planThenExecuteNoopSubmitPlanSourceSatisfiedAnswer(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) (string, bool) {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return "", false
+	}
+	if strings.TrimSpace(req.Tool) != "submit_plan" || strings.TrimSpace(result.Tool) != "submit_plan" {
+		return "", false
+	}
+	if !planThenExecuteNoopSubmitPlanRejection(result) {
+		return "", false
+	}
+	paths := planThenExecuteSubmitPlanRequestPaths(req)
+	if len(paths) == 0 {
+		return "", false
+	}
+	requiresTest := planThenExecuteObjectiveRequiresTestEdit(strings.Join([]string{brief.Objective, req.Rationale}, "\n"))
+	noOpPathSet := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		noOpPathSet[normalizeRunnerPath(path)] = struct{}{}
+	}
+	if !planThenExecutePathsIncludeTest(paths) {
+		paths = append(paths, planThenExecuteReadTestPaths(results)...)
+		paths = uniquePlanThenExecutePaths(paths)
+	}
+	if requiresTest && !planThenExecutePathsIncludeTest(paths) {
+		return "", false
+	}
+	var b strings.Builder
+	b.WriteString("Decision: source-satisfied\n")
+	b.WriteString("The planner attempted `submit_plan`, but the plan was rejected because the proposed edit would not change the current workspace; no changes needed.\n\n")
+	b.WriteString("Current-state evidence paths:\n")
+	for _, path := range paths {
+		b.WriteString("- ")
+		b.WriteString(path)
+		if _, ok := noOpPathSet[normalizeRunnerPath(path)]; ok {
+			b.WriteString(": submit_plan validation compared the proposed edit against the workspace and reported it as a no-op.\n")
+			continue
+		}
+		b.WriteString(": planner read this path before the no-op plan rejection; current-state evidence was already available, so no separate test edit was needed.\n")
+	}
+	return strings.TrimSpace(b.String()), true
+}
+
+func planThenExecuteNoopSubmitPlanRejection(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) == "" {
+		return false
+	}
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Error))
+	return strings.Contains(text, "old_text and new_text are identical") ||
+		strings.Contains(text, "edit would not change") ||
+		strings.Contains(text, "replacement text already appears") ||
+		strings.Contains(text, "source-satisfied rationale") ||
+		strings.Contains(text, "requested final state is already present") ||
+		strings.Contains(text, "verification-only edits")
+}
+
+func planThenExecuteSubmitPlanRequestPaths(req workspace.ToolRequest) []string {
+	var paths []string
+	for _, edit := range req.Edits {
+		paths = append(paths, edit.Path)
+	}
+	if req.PlanArtifact != nil {
+		for _, edit := range req.PlanArtifact.Edits {
+			paths = append(paths, edit.Path)
+		}
+	}
+	return uniquePlanThenExecutePaths(paths)
+}
+
+func uniquePlanThenExecutePaths(paths []string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = filepath.ToSlash(strings.TrimSpace(path))
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func planThenExecuteObjectiveRequiresTestEdit(objective string) bool {
+	lower := strings.ToLower(objective)
+	for _, phrase := range []string{
+		"add regression test",
+		"add regression tests",
+		"add test",
+		"add tests",
+		"add unit test",
+		"add unit tests",
+		"write regression test",
+		"write regression tests",
+		"write test",
+		"write tests",
+		"regression tests proving",
+		"tests proving",
+		"test coverage for",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func planThenExecutePathsIncludeTest(paths []string) bool {
+	for _, path := range paths {
+		lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+		if strings.Contains(lower, "/test/") ||
+			strings.Contains(lower, "/tests/") ||
+			strings.HasSuffix(lower, "_test.go") ||
+			strings.HasSuffix(lower, ".test.ts") ||
+			strings.HasSuffix(lower, ".test.tsx") ||
+			strings.HasSuffix(lower, ".spec.ts") ||
+			strings.HasSuffix(lower, ".spec.tsx") ||
+			strings.Contains(lower, "test") {
+			return true
+		}
+	}
+	return false
+}
+
+func planThenExecuteReadTestPaths(results []workspace.ToolResult) []string {
+	read := readPathsFromResults(results)
+	if len(read) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(read))
+	for path := range read {
+		if planThenExecutePathsIncludeTest([]string{path}) {
+			paths = append(paths, path)
+		}
+	}
+	return uniquePlanThenExecutePaths(paths)
+}
+
 // successfulSubmitPlanResultCount returns the number of successful
 // submit_plan tool results in the lane's recorded history. The
 // completion gate uses this as the "the planner did its job" signal
@@ -482,6 +961,17 @@ func PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer string, requiredPath
 	return true
 }
 
+// PlanThenExecuteSourceSatisfiedEvidencePaths extracts concrete path evidence
+// from a source-satisfied answer. It is intentionally narrower than generic
+// path parsing: the answer must first use the exact plan-execute closeout
+// decision shape so blocker text that merely mentions the remedy is ignored.
+func PlanThenExecuteSourceSatisfiedEvidencePaths(answer string) []string {
+	if !planThenExecuteSourceSatisfiedAnswerIntent(answer) {
+		return nil
+	}
+	return uniquePlanThenExecutePaths(pathparse.MentionedWorkspacePaths(answer))
+}
+
 func planThenExecuteSourceSatisfiedAnswerIntent(answer string) bool {
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
@@ -496,7 +986,23 @@ func planThenExecuteSourceSatisfiedAnswerIntent(answer string) bool {
 		return false
 	}
 	lower := strings.ToLower(trimmed)
-	return containsAny(lower, "no change", "no changes", "nothing to change", "no-op", "no op", "stale spec", "stale anchor", "stale old_text")
+	return containsAny(lower,
+		"already contains",
+		"already implemented",
+		"already present",
+		"already satisf",
+		"current-state",
+		"current state",
+		"final state",
+		"no change",
+		"no changes",
+		"no-op",
+		"no op",
+		"nothing to change",
+		"stale anchor",
+		"stale old_text",
+		"stale spec",
+	)
 }
 
 func (r *Runner) planThenExecuteSourceSatisfiedAnswerCovers(reply string, results []workspace.ToolResult) bool {
@@ -504,6 +1010,9 @@ func (r *Runner) planThenExecuteSourceSatisfiedAnswerCovers(reply string, result
 		return false
 	}
 	missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
+	if len(missing) == 0 {
+		missing = PlanThenExecuteSourceSatisfiedEvidencePaths(reply)
+	}
 	if !PlanThenExecuteSourceSatisfiedAnswerCoversPaths(reply, missing) {
 		return false
 	}
@@ -579,6 +1088,9 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		return ""
 	}
 	if len(required) == 0 {
+		if unread := unreadRecoveryEvidencePathsForObjective(brief.Objective, results, 2); len(unread) > 0 {
+			return ""
+		}
 		paths := make([]string, 0, len(read))
 		for path := range read {
 			paths = append(paths, path)
@@ -612,8 +1124,84 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		"  2. `Decision: source-satisfied` naming every required path and the observed current-state evidence when the requested final state is already present.",
 		"  3. `<<QUESTION>>:` with the exact path-specific blocker that prevents you from drafting the plan.",
 		"",
+		"Hidden reasoning is not executable evidence. The next action must be visible content or a native tool call.",
+		"",
 		"Default to submitting now. Only read again if you can name one exact new edit-safety fact that is still missing after the required path reads.",
 	}, "\n")
+}
+
+func planThenExecuteExplicitSourceSatisfiedAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return "", false
+	}
+	if len(brief.RequiredEditPaths) == 0 || successfulSubmitPlanResultCount(results) > 0 {
+		return "", false
+	}
+	if !explicitSourceSatisfiedNoWriteObjective(brief.Objective) {
+		return "", false
+	}
+	read := readPathsFromResults(results)
+	for _, path := range brief.RequiredEditPaths {
+		if _, ok := read[normalizeRunnerPath(path)]; !ok {
+			return "", false
+		}
+	}
+	evidence := readEvidenceSummariesByPath(results)
+	lines := []string{"Decision: source-satisfied", "", "No file changes were made. The objective explicitly requested a no-write/source-satisfied closeout, and every required edit path has current-state evidence from this planner turn.", "", "Required path evidence:"}
+	for _, path := range brief.RequiredEditPaths {
+		normalized := normalizeRunnerPath(path)
+		summary := strings.Join(evidence[normalized], "; ")
+		if summary == "" {
+			summary = "current-state source evidence gathered"
+		}
+		lines = append(lines, "- "+path+": "+summary)
+	}
+	lines = append(lines, "", "Changed paths: none.", "Verification: not run; no edits were planned or applied.")
+	return strings.Join(lines, "\n"), true
+}
+
+func explicitSourceSatisfiedNoWriteObjective(objective string) bool {
+	words := " " + strings.ToLower(strings.Join(strings.Fields(objective), " ")) + " "
+	if !containsAny(words, " source-satisfied ", " source satisfied ") {
+		return false
+	}
+	return containsAny(words,
+		" without changing files ",
+		" without file changes ",
+		" without editing files ",
+		" do not write files ",
+		" no file changes ",
+		" no files changed ",
+	)
+}
+
+func readEvidenceSummariesByPath(results []workspace.ToolResult) map[string][]string {
+	evidence := make(map[string][]string)
+	seen := make(map[string]map[string]struct{})
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		summary := strings.TrimSpace(result.Summary)
+		if summary == "" {
+			summary = strings.TrimSpace(result.Tool)
+		}
+		for _, path := range readPathsFromToolResult(result) {
+			normalized := normalizeRunnerPath(path)
+			if normalized == "" {
+				continue
+			}
+			if seen[normalized] == nil {
+				seen[normalized] = make(map[string]struct{})
+			}
+			if _, ok := seen[normalized][summary]; ok {
+				continue
+			}
+			seen[normalized][summary] = struct{}{}
+			evidence[normalized] = append(evidence[normalized], summary)
+		}
+	}
+	return evidence
 }
 
 // readPathsFromResults returns the set of paths that have been
@@ -626,36 +1214,57 @@ func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
 		if strings.TrimSpace(r.Error) != "" {
 			continue
 		}
-		path := strings.TrimSpace(extractReadPathFromSummary(r.Summary))
-		if path == "" {
-			continue
+		for _, path := range readPathsFromToolResult(r) {
+			paths[normalizeRunnerPath(path)] = struct{}{}
 		}
-		paths[normalizeRunnerPath(path)] = struct{}{}
 	}
 	return paths
 }
 
-// extractReadPathFromSummary parses the canonical "Read ..." summary
-// shapes that read_file and the language-symbol read tools emit to
-// recover the path. Recognized shapes:
+func readPathsFromToolResult(r workspace.ToolResult) []string {
+	seen := map[string]struct{}{}
+	var paths []string
+	for _, candidate := range []string{
+		extractReadPathFromSummary(r.Summary),
+		extractReadPathFromSummary(r.Output),
+		extractRoutedReadPathFromOutput(r.Output),
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		normalized := normalizeRunnerPath(candidate)
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		paths = append(paths, candidate)
+	}
+	return paths
+}
+
+// extractReadPathFromSummary parses canonical source-body read summary
+// shapes that read_file and language-symbol tools emit to recover the
+// path. Recognized shapes:
 //
 //   - "Read fXX path/to/file lines A-B"  (read_file)
 //   - "Read <symbol> in path/to/file lines A-B"  (cpp_read_symbol /
 //     go_read_symbol / etc.)
 //
 // Returns "" for anything else; the caller falls back to skipping
-// that result. code_navigate's wrap summary ("Code navigation routed
-// read_symbol via cpp_read_symbol") does not carry the path —
-// callers that want to count code_navigate reads should also
-// inspect the wrap's Output, but in practice plan-execute uses
-// read_file as the dominant evidence-gathering tool.
+// that result. Outlines are intentionally not counted as source-body
+// reads: they orient the model, but they do not provide safe edit
+// anchors for plan-execute readiness.
 func extractReadPathFromSummary(summary string) string {
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
 		return ""
 	}
 	fields := strings.Fields(summary)
-	if len(fields) < 3 || fields[0] != "Read" {
+	if len(fields) < 3 {
+		return ""
+	}
+	if fields[0] != "Read" {
 		return ""
 	}
 	// "Read <symbol> in <path> ..." — language-symbol shape.
@@ -664,4 +1273,15 @@ func extractReadPathFromSummary(summary string) string {
 	}
 	// "Read fXX path lines A-B" — read_file shape.
 	return fields[2]
+}
+
+func extractRoutedReadPathFromOutput(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "route_summary:") {
+			continue
+		}
+		return extractReadPathFromSummary(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:")))
+	}
+	return ""
 }

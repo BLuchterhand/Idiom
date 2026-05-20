@@ -31,12 +31,12 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 		return fallbackTurnRoute(prompt, mode)
 	}
 	fallback := fallbackTurnRoute(prompt, mode)
-	if deterministicTurnRouteIsDecisive(fallback, prompt, mode) {
-		return fallback
+	if plan, ok := deterministicHardTurnRoute(prompt, fallback, mode); ok {
+		return plan
 	}
 	if planned, ok := m.classifyTurnRouteWithModel(ctx, prompt, mode); ok {
 		planned = correctTurnRoutePlanForPrompt(planned, prompt, mode)
-		if shouldPreferFallbackRoute(fallback, planned) {
+		if shouldPreferFallbackRoute(fallback, planned, prompt) {
 			return fallback
 		}
 		return planned
@@ -44,17 +44,36 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 	return fallback
 }
 
+func deterministicHardTurnRoute(prompt string, fallback turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
+	words := plannerWordText(prompt)
+	if hasImplementationWorkflowContract(prompt, words) {
+		return normalizeTurnRoutePlan(turnRoutePlan{
+			Family: "implementation",
+			Reason: "workflow_contract",
+		}, mode), true
+	}
+	if deterministicTurnRouteIsDecisive(fallback, prompt, mode) {
+		return fallback, true
+	}
+	return turnRoutePlan{}, false
+}
+
 func deterministicTurnRouteIsDecisive(plan turnRoutePlan, prompt string, mode agent.Mode) bool {
 	plan = normalizeTurnRoutePlan(plan, mode)
 	family := strings.TrimSpace(plan.Family)
-	if family == "" || family == "direct_question" || family == "multi_turn_state" {
+	if family == "" || family == "direct_question" || family == "multi_turn_state" || isImplementationLikeFamily(family) {
 		return false
 	}
 	words := plannerWordText(prompt)
 	if isAnalysisContinuationPrompt(words) {
 		return false
 	}
-	return true
+	switch family {
+	case "debug_logs", "verification_only", "locate":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode agent.Mode) (turnRoutePlan, bool) {
@@ -296,6 +315,12 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	words := plannerWordText(prompt)
+	if hasImplementationWorkflowContract(prompt, words) && !isExplanationOnlyCodeQuestion(words) {
+		return normalizeTurnRoutePlan(turnRoutePlan{
+			Family: "implementation",
+			Reason: "workflow_contract",
+		}, mode)
+	}
 	if plan.Family == "verification_only" && hasEffectiveEditIntent(words) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family: "implementation",
@@ -343,11 +368,15 @@ func isAnalysisContinuationPrompt(words string) bool {
 	)
 }
 
-func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan) bool {
+func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, prompt string) bool {
 	fallbackFamily := strings.TrimSpace(fallback.Family)
 	plannedFamily := strings.TrimSpace(planned.Family)
 	if fallbackFamily == "" || plannedFamily == "" || fallbackFamily == plannedFamily {
 		return false
+	}
+	words := plannerWordText(prompt)
+	if isImplementationLikeFamily(fallbackFamily) && !isImplementationLikeFamily(plannedFamily) && !isExplanationOnlyCodeQuestion(words) {
+		return true
 	}
 	return fallbackFamily != "direct_question" && plannedFamily == "direct_question"
 }
@@ -547,6 +576,49 @@ func hasEffectiveEditIntent(words string) bool {
 	return (hasEditIntent(words) || hasUILayoutMutationIntent(words)) && !explicitlyForbidsEdits(words)
 }
 
+func hasImplementationWorkflowContract(prompt string, words string) bool {
+	hasNamedRequiredPaths := len(pathparse.MentionedWorkspacePaths(prompt)) > 0 && util.ContainsAny(words,
+		" required edit paths ",
+		" required_edit_paths ",
+		" required path ",
+		" required paths ",
+	)
+	hasPlanExecuteWorkflow := util.ContainsAny(words,
+		" plan-execute ",
+		" plan execute ",
+		" prd-to-plan-to-execute ",
+		" prd to plan execute ",
+		" prd-to-adr-to-plan-execute ",
+		" prd to adr to plan execute ",
+		" implementation lane ",
+		" default implementation lane ",
+	)
+	if hasNamedRequiredPaths && hasPlanExecuteWorkflow {
+		return true
+	}
+	if hasNamedRequiredPaths && util.ContainsAny(words,
+		" implementation ",
+		" implement ",
+		" source-satisfied ",
+		" source satisfied ",
+		" smoke test ",
+		" tdd ",
+	) {
+		return true
+	}
+	if hasPlanExecuteWorkflow && util.ContainsAny(words,
+		" smoke test ",
+		" run ",
+		" try ",
+		" verify ",
+		" tdd ",
+		" through ",
+	) {
+		return true
+	}
+	return false
+}
+
 func hasUILayoutMutationIntent(words string) bool {
 	if !util.ContainsAny(words,
 		" input field ",
@@ -712,6 +784,9 @@ func renderTurnRoutePlan(plan turnRoutePlan) string {
 	}
 	if plan.Contract != "" {
 		parts = append(parts, "contract="+plan.Contract)
+	}
+	if plan.Family != "" {
+		parts = append(parts, "task_family="+plan.Family)
 	}
 	if plan.Thoroughness != "" {
 		parts = append(parts, "thoroughness="+plan.Thoroughness)

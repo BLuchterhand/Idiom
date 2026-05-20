@@ -47,13 +47,36 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 	}
 }
 
-func TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget(t *testing.T) {
+func TestRunPlanExecuteMainUsesTightExistingFilePlannerTokenBudget(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	var stdout, stderr bytes.Buffer
 	var gotOpts runOptions
 
 	code := runPlanExecuteMain(
-		[]string{"-config", configPath, "-prompt", "plan this"},
+		[]string{"-config", configPath, "-prompt", "plan this", "-required-edit-path", "internal/app/rendering.go"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if gotOpts.MaxTokensOverride != 8192 {
+		t.Fatalf("MaxTokensOverride = %d, want existing-file plan-execute budget 8192", gotOpts.MaxTokensOverride)
+	}
+}
+
+func TestRunPlanExecuteMainKeepsLargeBudgetForNewFilePlanner(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", "create new file with full file body", "-required-edit-path", "internal/app/new_feature.go"},
 		&stdout,
 		&stderr,
 		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
@@ -66,7 +89,30 @@ func TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget(t *testing.T) {
 		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
 	}
 	if gotOpts.MaxTokensOverride != 16384 {
-		t.Fatalf("MaxTokensOverride = %d, want plan-execute default 16384", gotOpts.MaxTokensOverride)
+		t.Fatalf("MaxTokensOverride = %d, want large-body plan-execute budget 16384", gotOpts.MaxTokensOverride)
+	}
+}
+
+func TestRunPlanExecuteMainKeepsLargeBudgetForCreatedNamedPath(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotOpts runOptions
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", "Create internal/writerroute/decision.go", "-required-edit-path", "internal/writerroute/decision.go"},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			gotOpts = opts
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if gotOpts.MaxTokensOverride != 16384 {
+		t.Fatalf("MaxTokensOverride = %d, want named create-path budget 16384", gotOpts.MaxTokensOverride)
 	}
 }
 
@@ -93,6 +139,9 @@ func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 	}
 	if event["writer_mode"] != "plan_submission" || event["lane"] != "plan-execute" || event["verification_owner"] != "planner_owned" {
 		t.Fatalf("unexpected direct plan-execute route event: %#v", event)
+	}
+	if event["task_family"] != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("direct plan-execute route event should carry task_family, got %#v", event)
 	}
 	if event["cost_tier"] != "local_first" || event["review_policy"] != "local_first" {
 		t.Fatalf("route event should carry local-first defaults: %#v", event)
@@ -535,6 +584,31 @@ func TestRunPlanExecuteMainTreatsSourceSatisfiedPlannerAnswerAsCleanNoop(t *test
 	}
 }
 
+func TestRunPlanExecuteMainTreatsUnscopedSourceSatisfiedPlannerAnswerAsCleanNoop(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	prompt := "Reject temp symlinks and add regression tests proving no partial mutation."
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{"-config", configPath, "-prompt", prompt},
+		&stdout,
+		&stderr,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "Decision: source-satisfied\n- internal/productworkflow/migration_apply.go: no changes needed.\n- internal/productworkflow/migration_apply_test.go: no changes needed.", nil
+		},
+	)
+
+	if code != 0 {
+		t.Fatalf("unscoped source-satisfied planner answer should exit 0, got %d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if strings.Contains(stderr.String(), "plan artifact") {
+		t.Fatalf("source-satisfied closeout should not report missing plan artifact, stderr=%s", stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "source-satisfied: executor skipped") {
+		t.Fatalf("source-satisfied closeout should be visible, stdout=%s", stdout.String())
+	}
+}
+
 func TestRunPlanExecuteMainStillFailsMissingArtifactWithoutSourceSatisfiedEvidence(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	prompt := "## Files To Modify\n\n| File | Change |\n|------|--------|\n| `a.go` | update existing behavior |\n| `b.go` | update existing test |\n"
@@ -756,9 +830,63 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainRejectsInitialPlanWhenRequestedTestEditMissingBeforeWrites(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	root := filepath.Dir(configPath)
+	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
+		t.Fatalf("seed pkg.go: %v", err)
+	}
+	var stdout, stderr bytes.Buffer
+
+	code := runPlanExecuteMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", "Implement the hardening and add regression tests proving the edge case is rejected.",
+			"-json",
+			"-skip-review-repair",
+		},
+		&stdout,
+		&stderr,
+		func(cfg config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+			}
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "production-only plan",
+				Edits: []workspace.PlanEdit{
+					{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "harden behavior"},
+				},
+			})
+			return "submitted production-only plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected missing test edit rejection, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "missing_requested_test_edit") {
+		t.Fatalf("expected missing_requested_test_edit stderr, got %s", stderr.String())
+	}
+	if got := readFileString(t, filepath.Join(root, "pkg.go")); strings.Contains(got, "return true") {
+		t.Fatalf("production edit must not be applied after plan rejection, got:\n%s", got)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.planner_plan_rejected")
+	if !ok {
+		t.Fatalf("expected planner_plan_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "missing_requested_test_edit" {
+		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
+	}
+}
+
 func writePlanExecuteConfig(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
+	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
 	path := filepath.Join(root, "config.json")
 	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
@@ -1645,6 +1773,155 @@ func TestRunReviewRepairPhaseRejectsContradictoryPass(t *testing.T) {
 	}
 }
 
+func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("after\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Implement behavior and run focused tests.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: diff looks scoped.\n- Test or command evidence: We didn't run `go test ./cmd/idiom`.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected missing command evidence admission to reject review pass")
+	}
+	if !strings.Contains(err.Error(), "missing_command_evidence_claim") {
+		t.Fatalf("expected missing command evidence rejection, got %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_pass_rejected")
+	if !ok {
+		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "missing_command_evidence_claim" {
+		t.Fatalf("expected missing_command_evidence_claim reason, got %#v", event)
+	}
+}
+
+func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return true }\n"), 0o644); err != nil {
+		t.Fatalf("seed pkg.go: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "harden behavior"},
+		},
+	}
+	var stdout bytes.Buffer
+	var gotPrompt string
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Implement the hardening and add regression tests proving the edge case is rejected.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, prompt string, _ runOptions, _ io.Writer) (string, error) {
+			gotPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: source diff contains the hardening.\n- Test or command evidence: diff evidence shows the code change.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected missing requested test edit to reject review pass")
+	}
+	if !strings.Contains(err.Error(), "missing_requested_test_edit") {
+		t.Fatalf("expected missing test edit rejection, got %v", err)
+	}
+	if !strings.Contains(gotPrompt, "requested_test_edit_missing") {
+		t.Fatalf("review prompt should expose requested test edit obligation, got:\n%s", gotPrompt)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_pass_rejected")
+	if !ok {
+		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "missing_requested_test_edit" {
+		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
+	}
+}
+
+func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMissing(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
+		t.Fatalf("seed pkg.go: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "harden behavior"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Implement the hardening and add regression tests proving the edge case is rejected.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(cfg config.Config, _ string, opts runOptions, _ io.Writer) (string, error) {
+			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+			}
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "Verification Checklist:\n- Required behavior: hardening is present.\n",
+				Edits: []workspace.PlanEdit{
+					{Path: "pkg.go", OldText: "return false", NewText: "return true", Purpose: "retry production-only hardening"},
+				},
+			})
+			return "submitted production-only repair", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected production-only repair plan rejection")
+	}
+	if !strings.Contains(err.Error(), "missing_requested_test_edit") {
+		t.Fatalf("expected missing_requested_test_edit, got %v", err)
+	}
+	if got := readFileString(t, filepath.Join(root, "pkg.go")); strings.Contains(got, "return true") {
+		t.Fatalf("repair rejection must happen before writes, got:\n%s", got)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_plan_rejected")
+	if !ok {
+		t.Fatalf("expected review_repair_plan_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "missing_requested_test_edit" {
+		t.Fatalf("expected missing_requested_test_edit reason, got %#v", event)
+	}
+}
+
 func TestReviewAnswerPassContradictionAllowsNegatedMissingCoverage(t *testing.T) {
 	answer := strings.Join([]string{
 		"Verification Checklist",
@@ -2373,6 +2650,36 @@ func TestPreflightPlanEditsAcceptsValidPlan(t *testing.T) {
 	}
 	if got := preflightPlanEdits(root, plan); got != nil {
 		t.Fatalf("preflight must accept a clean plan, got mismatch %#v", got)
+	}
+}
+
+func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("hello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("seed x.txt: %v", err)
+	}
+	edits, err := workspace.AttachPlanEditAnchorProvenance(root, []workspace.PlanEdit{
+		{Path: "x.txt", OldText: "hello", NewText: "HELLO"},
+	})
+	if err != nil {
+		t.Fatalf("attach anchor provenance: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("prefix\nhello\nworld\n"), 0o644); err != nil {
+		t.Fatalf("mutate x.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits:         edits,
+	}
+	got := preflightPlanEdits(root, plan)
+	if got == nil {
+		t.Fatalf("preflight must reject stale anchor provenance before writes")
+	}
+	if got.Index != 0 || got.Path != "x.txt" {
+		t.Fatalf("mismatch should point at edit 0 in x.txt, got %#v", got)
+	}
+	if !strings.Contains(got.Reason, "anchor provenance stale") || !strings.Contains(got.Reason, "file fingerprint changed") {
+		t.Fatalf("mismatch should report stale provenance, got %q", got.Reason)
 	}
 }
 

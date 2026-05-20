@@ -56,7 +56,8 @@ The planner's `submit_plan` accepts three edit shapes per entry:
   creates the file if it doesn't exist).
 
 Use whole-file shape for new files. Use substring or line-range
-for edits to existing files.
+for edits to existing files. The top-level `edits` value is a JSON
+array, not a quoted string containing JSON.
 
 ## Read Discipline
 

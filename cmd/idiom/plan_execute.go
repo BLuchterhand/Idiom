@@ -192,7 +192,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// brief audit; only the tool surface differs.
 	plannerBrief := planExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
 	plannerPrompt := planExecutePlannerSystemAddendum(requiredEditPaths, allowedEditPaths) + "\n\n" + plannerBrief
-	plannerMaxTokens := 16384
+	plannerMaxTokens := planExecutePlannerMaxTokens(cfg.Workspace.Root, prompt, requiredEditPaths, allowedEditPaths)
 	if opts.MaxTokens > 0 {
 		plannerMaxTokens = opts.MaxTokens
 	}
@@ -204,7 +204,20 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	}
 	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
 	if autoExact.SourceSatisfied {
-		answer = planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
+		if reason := planExecuteRequestedTestEditRejectionReason(prompt, autoExact.AppliedPaths); reason != "" {
+			message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+			progress.Status = planexecute.ProgressStatusFailed
+			progress.FailureKind = reason
+			progress.FailureReason = truncatePlanExecuteProgressReason(message)
+			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
+				"reason":        reason,
+				"applied_paths": autoExact.AppliedPaths,
+			})
+			fmt.Fprintln(stderr, message)
+			return 1
+		}
+		answer = planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths)
 		progress.Phase = planexecute.ProgressPhaseComplete
 		progress.Status = planexecute.ProgressStatusCompleted
 		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
@@ -266,7 +279,7 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			Resume:                   opts.Resume,
 			TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
 			PlannerOwnedVerification: true,
-			// max_tokens for the planner phase: 16384.
+			// max_tokens for the planner phase is sized by edit shape.
 			//
 			// Originally 4096 ("planner emits one submit_plan + short answer,
 			// 4096 is plenty"). That assumption broke when submit_plan's
@@ -277,10 +290,10 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 			// because the truncated JSON failed to parse as a valid tool
 			// call). See task-64b for the failure repro.
 			//
-			// submit_plan now spills large persisted bodies into sidecar refs,
-			// but the planner may still need enough output budget to emit a
-			// new-file body once. Keep this above the historical 4096 until
-			// planner-side content refs can avoid emitting those bytes at all.
+			// submit_plan now spills large persisted bodies into sidecar refs.
+			// Existing-file plans should stay tighter to reduce drift; new-file
+			// and whole-file plans keep the larger budget because they may need
+			// to emit a full body once before spilling can happen.
 			MaxTokensOverride: plannerMaxTokens,
 			DisableThinking:   opts.DisableThinking,
 			Telemetry:         rec,
@@ -301,11 +314,24 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 	// session's planner phase and dispatch its edits in order.
 	planPath, err := findLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
-		sourceSatisfiedPaths := requiredEditPaths
-		if len(sourceSatisfiedPaths) == 0 {
-			sourceSatisfiedPaths = allowedEditPaths
-		}
+		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
 		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
+			if reason := planExecuteRequestedTestEditRejectionReason(prompt, sourceSatisfiedPaths); reason != "" {
+				message := reason + ": original prompt requested test edits, but source-satisfied evidence named no test path"
+				progress.Status = planexecute.ProgressStatusFailed
+				progress.FailureKind = reason
+				progress.FailureReason = truncatePlanExecuteProgressReason(message)
+				if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+					fmt.Fprintln(stderr, saveErr)
+				}
+				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
+					"reason":              reason,
+					"required_edit_paths": requiredEditPaths,
+					"allowed_edit_paths":  allowedEditPaths,
+				})
+				fmt.Fprintln(stderr, message)
+				return 1
+			}
 			progress.Phase = planexecute.ProgressPhaseComplete
 			progress.Status = planexecute.ProgressStatusCompleted
 			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
@@ -390,7 +416,25 @@ func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.
 		"edits":   len(plan.Edits),
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
-	reviewBaseline := captureReviewRepairBaseline(cfg.Workspace.Root, planChangedPaths(plan))
+	changedPaths := planChangedPaths(plan)
+	if reason := planExecuteRequestedTestEditRejectionReason(prompt, changedPaths); reason != "" {
+		message := reason + ": original prompt requested test edits, but submitted plan changed no test path"
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
+			"path":          planPath,
+			"reason":        reason,
+			"changed_paths": changedPaths,
+		})
+		progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, planexecute.ReviewRepairBaseline{})
+		progress.Status = planexecute.ProgressStatusFailed
+		progress.FailureKind = reason
+		progress.FailureReason = truncatePlanExecuteProgressReason(message)
+		if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+			fmt.Fprintln(stderr, saveErr)
+		}
+		fmt.Fprintln(stderr, message)
+		return 1
+	}
+	reviewBaseline := captureReviewRepairBaseline(cfg.Workspace.Root, changedPaths)
 	progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, toSharedReviewRepairBaseline(reviewBaseline))
 	if _, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
 		fmt.Fprintln(stderr, err)
@@ -891,7 +935,8 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		"4. Anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before copying any multi-line anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"5. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence are sufficient planning evidence. Re-read the target packet before any source read.",
 		"6. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
-		"7. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
+		"7. If the objective explicitly asks for new or updated tests, the plan must include the relevant test edit or stop with `<<QUESTION>>:` naming the missing test path/anchor; a production-only plan is incomplete.",
+		"8. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. No post-plan verification reads.",
 	}
 	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
 		lines = append(lines, "", checklist)
@@ -901,6 +946,70 @@ func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPat
 		lines = append(lines, "", "No required edit paths were provided. You still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
 	}
 	return strings.Join(lines, "\n")
+}
+
+func planExecutePlannerMaxTokens(root string, prompt string, requiredEditPaths []string, allowedEditPaths []string) int {
+	if planExecutePlannerNeedsLargeBodyBudget(root, prompt, requiredEditPaths, allowedEditPaths) {
+		return 16384
+	}
+	return 8192
+}
+
+func planExecutePlannerNeedsLargeBodyBudget(root string, prompt string, requiredEditPaths []string, allowedEditPaths []string) bool {
+	lower := strings.ToLower(prompt)
+	for _, phrase := range []string{"create new file", "add new file", "write new file", "whole-file", "replace_all", "full file body"} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	for _, path := range append(append([]string(nil), requiredEditPaths...), allowedEditPaths...) {
+		lowerPath := strings.ToLower(filepath.ToSlash(path))
+		base := filepath.Base(lowerPath)
+		if strings.Contains(lowerPath, "/new/") || strings.HasPrefix(base, "new_") {
+			return true
+		}
+		if planExecutePromptImpliesNewFilePath(lower, lowerPath) {
+			return true
+		}
+		if root != "" && planExecutePathMissing(root, path) && planExecutePromptMentionsPathCreation(lower, lowerPath) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutePromptImpliesNewFilePath(lowerPrompt string, lowerPath string) bool {
+	if lowerPrompt == "" || lowerPath == "" || !strings.Contains(lowerPrompt, lowerPath) {
+		return false
+	}
+	if strings.Contains(lowerPrompt, " create ") ||
+		strings.HasPrefix(lowerPrompt, "create ") ||
+		strings.Contains(lowerPrompt, " write ") ||
+		strings.HasPrefix(lowerPrompt, "write ") {
+		return true
+	}
+	if strings.Contains(lowerPrompt, " add "+lowerPath) || strings.Contains(lowerPrompt, " add new") || strings.Contains(lowerPrompt, " add file") {
+		return true
+	}
+	return strings.HasPrefix(lowerPrompt, "add "+lowerPath) ||
+		strings.HasPrefix(lowerPrompt, "add new ") ||
+		strings.HasPrefix(lowerPrompt, "add file ")
+}
+
+func planExecutePromptMentionsPathCreation(lowerPrompt string, lowerPath string) bool {
+	if !planExecutePromptImpliesNewFilePath(lowerPrompt, lowerPath) {
+		return false
+	}
+	return strings.Contains(lowerPrompt, " file") || strings.Contains(lowerPrompt, lowerPath)
+}
+
+func planExecutePathMissing(root string, path string) bool {
+	path = strings.TrimSpace(path)
+	if root == "" || path == "" || filepath.IsAbs(path) {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
+	return os.IsNotExist(err)
 }
 
 func planExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
@@ -1100,6 +1209,18 @@ func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
+	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
+	if len(paths) > 0 {
+		return paths
+	}
+	paths = planExecuteUniqueRequiredPaths(allowedEditPaths)
+	if len(paths) > 0 {
+		return paths
+	}
+	return planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
@@ -1976,6 +2097,9 @@ func runReviewRepairPhase(
 		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
 	}
 	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
+	if planExecutePromptRequiresTestEdit(originalPrompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
+		evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, "requested_test_edit_missing")
+	}
 	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
 	if reviewSessionID == "" {
 		reviewSessionID = newPlanExecuteSessionID()
@@ -2025,7 +2149,7 @@ func runReviewRepairPhase(
 	}
 	if !found {
 		if reviewAnswerDeclaresPass(answer) && reviewTextHasVerificationChecklist(answer) {
-			if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+			if reason := reviewAnswerPassContractRejectionReason(originalPrompt, changedPaths, answer); reason != "" {
 				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
 					"reason": reason,
 				})
@@ -2048,6 +2172,18 @@ func runReviewRepairPhase(
 	}
 	if !reviewTextHasVerificationChecklist(repairPlan.Rationale) {
 		return reviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("review-repair plan %q is missing `Verification Checklist` in submit_plan rationale", planPath)
+	}
+	repairPaths := planChangedPaths(repairPlan)
+	combinedPaths := mergePlanExecutePaths(changedPaths, repairPaths)
+	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, combinedPaths); reason != "" {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_plan_rejected", map[string]any{
+			"reason":         reason,
+			"review_plan":    planPath,
+			"changed_paths":  changedPaths,
+			"repair_paths":   repairPaths,
+			"combined_paths": combinedPaths,
+		})
+		return reviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
 	}
 	repairReport, err := runExecutorPhaseScoped(cfg, repairPlan, nil, allowedRepairPaths, opts.JSONEvents, stdout)
 	if err != nil {
@@ -2124,6 +2260,7 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
 	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
 	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
+	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: the original task explicitly requested test edits, but this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
 	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
 	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
 	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
@@ -2595,6 +2732,23 @@ func reviewTextHasVerificationChecklist(text string) bool {
 	return strings.Contains(strings.ToLower(text), "verification checklist")
 }
 
+func reviewAnswerPassContractRejectionReason(originalPrompt string, changedPaths []string, answer string) string {
+	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
+		return reason
+	}
+	if reason := planExecuteRequestedTestEditRejectionReason(originalPrompt, changedPaths); reason != "" {
+		return reason
+	}
+	return ""
+}
+
+func planExecuteRequestedTestEditRejectionReason(prompt string, changedPaths []string) string {
+	if planExecutePromptRequiresTestEdit(prompt) && !planExecuteChangedPathsIncludeTest(changedPaths) {
+		return "missing_requested_test_edit"
+	}
+	return ""
+}
+
 func reviewAnswerPassContradictionReason(answer string) string {
 	for _, rawLine := range strings.Split(answer, "\n") {
 		line := normalizeReviewAnswerLine(rawLine)
@@ -2640,9 +2794,83 @@ func reviewAnswerPassContradictionReason(answer string) string {
 			return "unresolved_failure_claim"
 		case reviewLineContainsProjectedVerificationClaim(line):
 			return "unsupported_verification_projection"
+		case reviewLineContainsMissingCommandEvidenceClaim(line):
+			if reviewLineIsPlannerOwnedPending(line) {
+				continue
+			}
+			return "missing_command_evidence_claim"
 		}
 	}
 	return ""
+}
+
+func reviewLineContainsMissingCommandEvidenceClaim(line string) bool {
+	return reviewLineContainsAny(line,
+		"didn't run ",
+		"did not run ",
+		"haven't run ",
+		"hasn't run ",
+		"wasn't run",
+		"weren't run",
+		"was not run",
+		"were not run",
+		"not run ",
+		"no test command was run",
+		"no verification command was run",
+	)
+}
+
+func planExecutePromptRequiresTestEdit(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	phrases := []string{
+		"add regression test",
+		"add regression tests",
+		"add test",
+		"add tests",
+		"add unit test",
+		"add unit tests",
+		"write regression test",
+		"write regression tests",
+		"write test",
+		"write tests",
+		"regression tests proving",
+		"tests proving",
+		"test coverage for",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecuteChangedPathsIncludeTest(paths []string) bool {
+	for _, path := range paths {
+		lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+		if lower == "" {
+			continue
+		}
+		base := filepath.Base(lower)
+		switch {
+		case strings.HasSuffix(base, "_test.go"),
+			strings.HasSuffix(base, ".test.ts"),
+			strings.HasSuffix(base, ".test.tsx"),
+			strings.HasSuffix(base, ".test.js"),
+			strings.HasSuffix(base, ".test.jsx"),
+			strings.HasSuffix(base, ".spec.ts"),
+			strings.HasSuffix(base, ".spec.tsx"),
+			strings.HasSuffix(base, ".spec.js"),
+			strings.HasSuffix(base, ".spec.jsx"):
+			return true
+		case strings.Contains(lower, "/test/"),
+			strings.Contains(lower, "/tests/"),
+			strings.Contains(lower, "/testdata/"),
+			strings.Contains(lower, "/fixtures/"):
+			return true
+		}
+	}
+	return false
 }
 
 func reviewLineIsPlannerOwnedPending(line string) bool {
@@ -3339,6 +3567,13 @@ func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *plan
 			cache[abs] = body
 		}
 		current := string(body)
+		if err := workspace.ValidatePlanEditAnchorProvenance(workspaceRoot, edit); err != nil {
+			return &planEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: err.Error(),
+			}
+		}
 		matchCount := strings.Count(current, edit.OldText)
 		if matchCount == 0 {
 			return &planEditPreflightMismatch{
