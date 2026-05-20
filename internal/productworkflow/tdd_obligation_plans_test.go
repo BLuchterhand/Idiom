@@ -1,6 +1,9 @@
 package productworkflow
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestTDDObligationPlanSynthesizesFromAcceptedPRDAndADR(t *testing.T) {
 	prd := PRDDocument{
@@ -131,5 +134,140 @@ func TestTDDObligationPlanFindingsWhenPRDOrADRNotAccepted(t *testing.T) {
 	plan := PlanTDDObligations(prd, adrs, TDDLedger{}, nil)
 	if len(plan.Findings) == 0 {
 		t.Fatal("expected findings for unaccepted PRD/ADR")
+	}
+}
+
+func TestTDDObligationPlanBlocksContractTierWhenMissingTDDRefs(t *testing.T) {
+	for _, coverageTier := range []string{"contract_high", "formal_optional"} {
+		t.Run(coverageTier, func(t *testing.T) {
+			prd := PRDDocument{
+				FrontMatter: PRDFrontMatter{Status: "accepted"},
+				Requirements: []PRDRequirement{
+					{ID: "REQ-1", Priority: "must", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{" "}},
+				},
+			}
+			adrs := []ParsedADR{
+				{
+					RelPath: "adrs/ADR-1.md",
+					Doc: ADRDocument{
+						FrontMatter: ADRFrontMatter{
+							ADRID:          "ADR-1",
+							Status:         "accepted",
+							PRDRefs:        []string{"REQ-1"},
+							EvidenceRefs:   []string{"EV-2"},
+							TDDObligations: []string{"\t"},
+							CoverageTier:   coverageTier,
+						},
+					},
+				},
+			}
+			plan := PlanTDDObligations(prd, adrs, TDDLedger{CoverageTier: "unit"}, map[string]string{"ADR-1": "adrs/ADR-1.md"})
+			if len(plan.Findings) == 0 {
+				t.Fatalf("expected finding for missing TDD obligation references")
+			}
+			if plan.Findings[0].Kind != "missing_tdd_obligation_reference" {
+				t.Fatalf("expected missing_tdd_obligation_reference finding, got %q", plan.Findings[0].Kind)
+			}
+			if !strings.Contains(plan.Findings[0].Message, "REQ-1") || !strings.Contains(plan.Findings[0].Message, "ADR-1") {
+				t.Fatalf("expected finding message to name PRD and ADR refs, got %q", plan.Findings[0].Message)
+			}
+			if len(plan.Obligations) == 0 {
+				t.Fatalf("expected obligation with blocker reason")
+			}
+			obligation := plan.Obligations[0]
+			if obligation.BlockerReason == "" {
+				t.Fatalf("expected blocker reason for contract-tier obligation")
+			}
+			if obligation.SuggestedType != "contract" {
+				t.Fatalf("expected contract-tier suggested type, got %q", obligation.SuggestedType)
+			}
+			if !TDDObligationPlanHasBlockers(plan) {
+				t.Fatalf("expected plan to be blocked")
+			}
+		})
+	}
+}
+
+func TestTDDObligationPlanDoesNotBlockBehaviorStandardWhenMissingTDDRefs(t *testing.T) {
+	prd := PRDDocument{
+		FrontMatter: PRDFrontMatter{Status: "accepted"},
+		Requirements: []PRDRequirement{
+			{ID: "REQ-1", Priority: "must", EvidenceRefs: []string{"EV-1"}},
+		},
+	}
+	adrs := []ParsedADR{
+		{
+			RelPath: "adrs/ADR-1.md",
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					PRDRefs:        []string{"REQ-1"},
+					EvidenceRefs:   []string{"EV-2"},
+					TDDObligations: []string{}, // No TDD obligations in ADR
+					CoverageTier:   "behavior_standard",
+				},
+			},
+		},
+	}
+	plan := PlanTDDObligations(prd, adrs, TDDLedger{CoverageTier: "unit"}, map[string]string{"ADR-1": "adrs/ADR-1.md"})
+	if len(plan.Findings) > 0 {
+		t.Fatalf("expected no findings for behavior_standard tier")
+	}
+	if len(plan.Obligations) == 0 {
+		t.Fatalf("expected obligation for behavior_standard tier")
+	}
+	obligation := plan.Obligations[0]
+	if obligation.BlockerReason != "" {
+		t.Fatalf("expected no blocker reason for behavior_standard tier")
+	}
+	if TDDObligationPlanHasBlockers(plan) {
+		t.Fatalf("expected plan to not be blocked for behavior_standard tier")
+	}
+}
+
+func TestTDDObligationPlanDoesNotBlockContractTierWhenTDDRefsExist(t *testing.T) {
+	prd := PRDDocument{
+		FrontMatter: PRDFrontMatter{Status: "accepted"},
+		Requirements: []PRDRequirement{
+			{ID: "REQ-1", Priority: "must", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+		},
+	}
+	adrs := []ParsedADR{
+		{
+			RelPath: "adrs/ADR-1.md",
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:        "ADR-1",
+					Status:       "accepted",
+					PRDRefs:      []string{"REQ-1"},
+					EvidenceRefs: []string{"EV-2"},
+					CoverageTier: "contract_high",
+				},
+			},
+		},
+	}
+	ledger := TDDLedger{
+		CoverageTier: "contract_high",
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "property_based", Owner: "contract_test.go", Command: "go test ./internal/productworkflow -run TestContract"},
+		},
+	}
+	plan := PlanTDDObligations(prd, adrs, ledger, map[string]string{"ADR-1": "adrs/ADR-1.md"})
+	if len(plan.Findings) != 0 {
+		t.Fatalf("expected no findings when contract-tier TDD refs exist, got %#v", plan.Findings)
+	}
+	if len(plan.Obligations) != 1 {
+		t.Fatalf("expected one obligation, got %#v", plan.Obligations)
+	}
+	obligation := plan.Obligations[0]
+	if obligation.BlockerReason != "" {
+		t.Fatalf("expected no blocker when contract-tier TDD refs exist, got %#v", obligation)
+	}
+	if obligation.Command != "go test ./internal/productworkflow -run TestContract" {
+		t.Fatalf("expected existing ledger command to win, got %#v", obligation)
+	}
+	if obligation.SuggestedType != "property_based" {
+		t.Fatalf("expected existing ledger type to win, got %#v", obligation)
 	}
 }

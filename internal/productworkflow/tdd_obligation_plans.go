@@ -99,6 +99,27 @@ func PlanTDDObligations(prd PRDDocument, adrs []ParsedADR, ledger TDDLedger, adr
 			}
 			existingRefs := stableUniqueStrings(append(req.TDDObligations, adr.Doc.FrontMatter.TDDObligations...))
 			suggestedType, command := suggestedTDDPlanForTier(coverageTier)
+			if isContractTier(coverageTier) && len(existingRefs) == 0 {
+				message := fmt.Sprintf("PRD requirement %q and ADR %q do not name any tdd_obligations; contract-tier obligations must not be silently produced without TDD obligation references", req.ID, adr.Doc.FrontMatter.ADRID)
+				plan.Obligations = append(plan.Obligations, TDDObligationPlanItem{
+					PRDRequirementRef:      req.ID,
+					ADRRef:                 adr.Doc.FrontMatter.ADRID,
+					ExistingObligationRefs: existingRefs,
+					EvidenceRefs:           stableUniqueStrings(append(req.EvidenceRefs, adr.Doc.FrontMatter.EvidenceRefs...)),
+					CoverageTier:           coverageTier,
+					SuggestedType:          suggestedType,
+					OwnerPath:              ownerPath,
+					Command:                "",
+					BlockerReason:          message,
+				})
+				plan.Findings = append(plan.Findings, TDDObligationPlanFinding{
+					Kind:     "missing_tdd_obligation_reference",
+					Message:  message,
+					File:     "prd.md",
+					Severity: "error",
+				})
+				continue
+			}
 			if existingType, existingCommand := existingTDDPlan(existingRefs, obligationByID); existingCommand != "" {
 				if existingType != "" {
 					suggestedType = existingType
@@ -174,6 +195,15 @@ func suggestedTDDPlanForTier(coverageTier string) (string, string) {
 		return "contract", "go test ./..."
 	default:
 		return "acceptance", "go test ./..."
+	}
+}
+
+func isContractTier(coverageTier string) bool {
+	switch strings.ToLower(strings.TrimSpace(coverageTier)) {
+	case "contract_high", "formal_optional":
+		return true
+	default:
+		return false
 	}
 }
 

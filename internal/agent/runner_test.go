@@ -9541,6 +9541,60 @@ func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *
 	}
 }
 
+func TestEmitAcceptedAnswerSignalsImplementationEvidenceUsesChangedPaths(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "implement",
+			Contract:          "implementation_result",
+			TaskFamily:        "implementation",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Update TDD obligation planning.",
+		},
+	}
+	var readiness map[string]any
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role != "readiness_check" {
+			return
+		}
+		_ = json.Unmarshal([]byte(event.Content), &readiness)
+	}
+	runner.emitAcceptedAnswerSignals(
+		"Changed `internal/productworkflow/tdd_obligation_plans.go` and tests.",
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f2 internal/productworkflow/tdd_obligation_plans_test.go lines 1-220",
+				Output:  "RelPath: \"adrs/ADR-1.md\"\nFile: \"adrs/prd.md\"\nOwner: \"adrs/greeting.test.js\"",
+			},
+			{
+				Tool:    "edit_file",
+				Summary: "Edited internal/productworkflow/tdd_obligation_plans.go",
+			},
+			{
+				Tool:    "edit_file",
+				Summary: "Edited internal/productworkflow/tdd_obligation_plans_test.go",
+			},
+		},
+	)
+	rawPaths, _ := readiness["evidence_paths"].([]any)
+	got := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		if value, ok := raw.(string); ok {
+			got = append(got, value)
+		}
+	}
+	for _, want := range []string{"internal/productworkflow/tdd_obligation_plans.go", "internal/productworkflow/tdd_obligation_plans_test.go"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("expected implementation readiness paths to contain changed path %q, got %#v", want, got)
+		}
+	}
+	for _, forbidden := range []string{"adrs/ADR-1.md", "adrs/prd.md", "adrs/greeting.test.js"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("did not expect fixture path %q in implementation readiness evidence, got %#v", forbidden, got)
+		}
+	}
+}
+
 func TestReadOnlyExplanationCompletionRejectionRejectsMetaScopeSummary(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

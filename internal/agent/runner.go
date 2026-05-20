@@ -9666,6 +9666,11 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 }
 
 func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) []string {
+	if runnerBriefRequiresMutation(brief) {
+		if paths := acceptedImplementationEvidencePaths(results); len(paths) > 0 {
+			return paths
+		}
+	}
 	if readOnlyExplanationGateApplies(brief) {
 		paths := mergeRunnerStateStrings(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
 		paths = mergeRunnerStateStrings(paths, delegatedReadOnlyInspectedImplementationPaths(results))
@@ -9678,6 +9683,53 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 	paths := mergeRunnerStateStrings(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
 	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
 	return closurePromptEvidencePaths(paths, 8)
+}
+
+func acceptedImplementationEvidencePaths(results []workspace.ToolResult) []string {
+	paths := changedPathListFromToolResults(results)
+	paths = append(paths, directProbePathsFromToolResults(results, 8)...)
+	return closurePromptEvidencePathsPreservingTests(paths, 8)
+}
+
+func changedPathListFromToolResults(results []workspace.ToolResult) []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0, 4)
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, rawPath := range changedPathsFromToolResult(result) {
+			path := normalizeRunnerPath(rawPath)
+			if path == "" {
+				continue
+			}
+			if _, ok := seen[path]; ok {
+				continue
+			}
+			seen[path] = struct{}{}
+			paths = append(paths, path)
+		}
+	}
+	return paths
+}
+
+func closurePromptEvidencePathsPreservingTests(paths []string, max int) []string {
+	cleaned := make([]string, 0, len(paths))
+	for _, path := range uniqueDelegatedDiscoveryPaths(paths) {
+		path = normalizeDelegatedDiscoveryEvidencePath(path)
+		switch {
+		case path == "":
+			continue
+		case strings.HasPrefix(path, ".idiom/"), strings.HasPrefix(path, "idiom/"), strings.HasPrefix(path, ".codex/"), strings.HasPrefix(path, "codex/"), strings.HasPrefix(path, "."):
+			continue
+		case !delegatedDiscoveryLooksLikeEvidencePath(path):
+			continue
+		case !strings.Contains(path, "/") && !strings.HasSuffix(path, ".go"):
+			continue
+		}
+		cleaned = append(cleaned, path)
+	}
+	return limitRunnerStrings(cleaned, max)
 }
 
 func exactProbeEvidencePaths(results []workspace.ToolResult) []string {
