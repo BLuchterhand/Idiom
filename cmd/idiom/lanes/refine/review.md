@@ -12,7 +12,7 @@ specific `<<QUESTION>>:` blocker instead of guesswork.
 ## Artifact Output
 
 Path: `{{REVIEW_PATH}}`
-Contract: final-answer artifact; no tool calls, no file edits, no shell commands.
+Contract: final-answer artifact; no tool calls, no file edits, no executed shell commands. Textual acceptance commands may appear inside the artifact.
 
 ## Pre-loaded lint findings
 

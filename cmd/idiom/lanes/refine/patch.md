@@ -13,7 +13,7 @@ below. If a corrected draft is impossible, return the specific
 ## Artifact Output
 
 Path: `{{NEW_DRAFT_PATH}}`
-Contract: final-answer artifact; no tool calls, no file edits, no shell commands.
+Contract: final-answer artifact; no tool calls, no file edits, no executed shell commands. Textual acceptance commands may appear inside the artifact.
 
 ## Pre-loaded lint findings from previous draft
 

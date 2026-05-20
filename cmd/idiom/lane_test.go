@@ -932,7 +932,7 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		"replace_all:true",
 		"full body for a new file or intentional",
 		"missing body evidence",
-		"Existing required paths still need",
+		"required paths still need",
 		"source-body evidence",
 		"this does not waive the source-body obligation",
 		"exact-plan-ready/source-satisfied",
@@ -1103,11 +1103,51 @@ func TestCanonicalImplementPromptDoesNotMakeWriteTheLiteralFinalAction(t *testin
 		"before closeout",
 		"lane-owned sanity",
 		"do not make placeholder edits",
+		"runtime/preflight-accepted source-satisfied closeout",
 		"source_sanity",
 		"`git diff --check` is patch hygiene only",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("implement prompt missing clarified closeout language %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanModePromptDoesNotRequestWriteThroughGraphRefresh(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "prompts", "plan-mode.md"))
+	if err != nil {
+		t.Fatalf("read plan-mode prompt: %v", err)
+	}
+	prompt := string(body)
+	for _, want := range []string{
+		"fresh or report-only context-graph evidence",
+		"Do not request write-through graph refresh or index repair in plan mode",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("plan-mode prompt missing non-mutating context guidance %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "Refresh stale graph evidence only") {
+		t.Fatalf("plan-mode prompt still asks the model to refresh graph evidence in read-only mode:\n%s", prompt)
+	}
+}
+
+func TestCanonicalPlanExecutePreambleDoesNotRepeatSourceBodyRule(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("lanes", "plan-execute", "preamble.md"))
+	if err != nil {
+		t.Fatalf("read plan-execute preamble: %v", err)
+	}
+	prompt := string(body)
+	if strings.Contains(prompt, "Existing required paths still need source-body evidence; this does not waive") {
+		t.Fatalf("plan-execute preamble retained duplicate source-body sentence:\n%s", prompt)
+	}
+	normalized := strings.Join(strings.Fields(prompt), " ")
+	for _, want := range []string{
+		"Existing required paths still need source-body evidence in this planner turn",
+		"this does not waive the source-body obligation above",
+	} {
+		if !strings.Contains(normalized, want) {
+			t.Fatalf("plan-execute preamble missing source-body invariant %q:\n%s", want, prompt)
 		}
 	}
 }
@@ -1194,6 +1234,31 @@ func TestCanonicalRefinePromptsUseConditionalOutputLanguage(t *testing.T) {
 			if !strings.Contains(prompt, want) {
 				t.Fatalf("%s missing conditional refine contract language %q:\n%s", tc.path, want, prompt)
 			}
+		}
+	}
+}
+
+func TestCanonicalRefinePromptsDistinguishTextualCommandsFromExecution(t *testing.T) {
+	paths := []string{
+		filepath.Join("lanes", "refine", "draft.md"),
+		filepath.Join("lanes", "refine", "draft-markdown.md"),
+		filepath.Join("lanes", "refine", "review.md"),
+		filepath.Join("lanes", "refine", "patch.md"),
+	}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		prompt := string(body)
+		if !strings.Contains(prompt, "no executed shell commands") {
+			t.Fatalf("%s must prohibit execution, not textual acceptance command examples:\n%s", path, prompt)
+		}
+		if !strings.Contains(prompt, "Textual acceptance commands may appear inside the artifact.") {
+			t.Fatalf("%s must allow textual acceptance command examples inside artifacts:\n%s", path, prompt)
+		}
+		if strings.Contains(prompt, "Contract: final-answer artifact; no tool calls, no file edits, no shell commands.") {
+			t.Fatalf("%s retains ambiguous shell-command contract:\n%s", path, prompt)
 		}
 	}
 }

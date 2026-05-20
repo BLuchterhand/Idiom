@@ -25,8 +25,6 @@ before `submit_plan`, unless the run short-circuits as exact-plan-ready before
 planner execution or closes as `Decision: source-satisfied` with current-state
 evidence. Missing/new files with a substantial full body or explicit whole-file
 replacement shape do not need a file read.
-Existing required paths still need source-body evidence; this does not waive the
-source-body obligation.
 Copy those anchors into each edit's `old_text`/`new_text` (substring shape) or
 `start_line`/`end_line`/`content` (range shape). For a new file or intentional
 whole-file write, use `replace_all:true` with empty `old_text` and `new_text`

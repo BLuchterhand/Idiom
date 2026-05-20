@@ -10,7 +10,7 @@ the spec is too vague to draft from, return the specific
 ## Artifact Output
 
 Path: `{{DRAFT_PATH}}`
-Contract: final-answer artifact; no tool calls, no file edits, no shell commands.
+Contract: final-answer artifact; no tool calls, no file edits, no executed shell commands. Textual acceptance commands may appear inside the artifact.
 
 ## Spec
 
