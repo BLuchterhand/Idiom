@@ -936,6 +936,9 @@ func TestRunLaneMainEmbedsCanonicalPlanExecutePreamble(t *testing.T) {
 		"source-body evidence",
 		"this does not waive the source-body obligation",
 		"exact-plan-ready/source-satisfied",
+		"Every edit body must be executable final content",
+		"no placeholders",
+		"complete replacement for the inclusive",
 	}
 	for _, marker := range required {
 		if !strings.Contains(prompt, marker) {
@@ -1164,6 +1167,25 @@ func TestCanonicalProfileSeedsStayInSync(t *testing.T) {
 		}
 		if string(seed) != string(canonical) {
 			t.Fatalf("embedded profile seed %s drifted from prompts/profiles/%s", name, name)
+		}
+	}
+}
+
+func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "prompts", "profiles", "claude-qwen-worker.md"))
+	if err != nil {
+		t.Fatalf("read claude-qwen profile: %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"Every edit body must be",
+		"executable final content",
+		"not a quoted string containing JSON",
+		"`old_text` is exact current text",
+		"complete replacement for the inclusive range",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("claude-qwen profile missing submit_plan quality bar %q:\n%s", want, text)
 		}
 	}
 }

@@ -152,7 +152,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Error: "submit_plan must include at least one edit entry for every required_edit_paths entry, no edits outside that scope, and coverage for every required_edit_snippets final-state snippet; " +
 				strings.Join(parts, "; ") +
-				". Submit a corrected plan with `edits` as a JSON array, not a quoted string, and include `path` on every edit; answer `Decision: source-satisfied` when current source already contains the requested final state, or answer with <<QUESTION>> and name the exact blocker for each skipped requirement.",
+				". Submit a corrected plan with `edits` as a JSON array, not a quoted string, and include `path` on every edit. Edit bodies must be complete executable source text, not placeholders, ellipses, or prose; answer `Decision: source-satisfied` when current source already contains the requested final state, or answer with <<QUESTION>> and name the exact blocker for each skipped requirement.",
 		},
 		Reason: "plan-then-execute planner phase: submit_plan edits did not satisfy required path/snippet coverage",
 	}
@@ -466,11 +466,11 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			return "", "", false
 		}
 		return "Corrected submit_plan required",
-			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected) + "Submit a corrected native `submit_plan` whose `edits[]` coverage includes every required_edit_path with valid anchors or line ranges from existing source-body evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. If the rejection named a stale edit anchor, at most one bounded source-body read on that required path is allowed to refresh exact current text.",
+			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected) + "Submit a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required_edit_path with valid anchors or line ranges from existing source-body evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. Textual-tool backends must emit exactly one visible JSON object like {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}. If the rejection named a stale edit anchor, at most one bounded source-body read on that required path is allowed to refresh exact current text.",
 			true
 	}
 	return "Plan submission required",
-		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one native `submit_plan` whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
+		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. Textual-tool backends must emit exactly one visible JSON object like {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}.",
 		true
 }
 
@@ -1265,7 +1265,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		"PLANNER READINESS REACHED: every required_edit_path has been read at least once in this turn. State is sufficient to submit the plan or close as source-satisfied.",
 		"",
 		"Next action MUST be one of:",
-		"  1. `submit_plan` with the full ordered edits[] array (substring, line-range, or whole-file/new-file shape, plus a one-sentence purpose per edit), then a short final answer summarizing the planned edits. For a missing/new source or test file, the brief must provide a substantial inline body or explicit replacement edit shape.",
+		"  1. A parser-readable `submit_plan` request with the full ordered edits[] array (substring, line-range, or whole-file/new-file shape, plus a one-sentence purpose per edit). Textual-tool backends must emit exactly one visible JSON object like {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/from/required_edit_paths\",\"old_text\":\"exact current text\",\"new_text\":\"replacement text\",\"purpose\":\"one sentence\"}]}. For a missing/new source or test file, the brief must provide a substantial inline body or explicit replacement edit shape.",
 		"  2. `Decision: source-satisfied` naming every required path and the observed current-state evidence when the requested final state is already present.",
 		"  3. `<<QUESTION>>:` with the exact path-specific blocker that prevents you from drafting the plan.",
 		"",

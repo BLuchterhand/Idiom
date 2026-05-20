@@ -96,6 +96,8 @@ func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
 		"Update target.txt using the confirmed source anchor",
 		"`edits` must be an array",
 		"never placeholders",
+		"ellipses",
+		"`existing code` comments",
 		"no prose",
 		"XML tags",
 	} {
@@ -185,6 +187,8 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsEditWithoutPathExplicitly(
 		"edit entry missing `path`",
 		"edits[0] patch a required file",
 		"`edits` as a JSON array, not a quoted string",
+		"complete executable source text",
+		"not placeholders, ellipses, or prose",
 	} {
 		if !strings.Contains(got.Result.Error, want) {
 			t.Fatalf("rejection should contain %q, got %q", want, got.Result.Error)
@@ -653,7 +657,7 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsMoreSearch(t *testing.T) {
 	if summary != "Plan submission required" {
 		t.Fatalf("unexpected summary: %q", summary)
 	}
-	if !strings.Contains(errorText, "Submit one `submit_plan`") {
+	if !strings.Contains(errorText, "Submit one parser-readable `submit_plan`") {
 		t.Fatalf("rejection should force plan submission, got %q", errorText)
 	}
 }
@@ -1194,7 +1198,7 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 		t.Fatalf("planner-phase recovery should hide reads and leave submit_plan as the write surface")
 	}
 	for _, want := range []string{
-		"your next response must be a native `submit_plan` tool call, not prose",
+		"your next response must be a parser-readable `submit_plan` request, not prose",
 		"explicit replacement edit shapes",
 		"replace_all:true",
 		"empty `old_text`",
@@ -1250,7 +1254,7 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtFirstRequiredReadWhenNoE
 	for _, notWant := range []string{
 		"Every required path already has source-body evidence",
 		"read/search/discovery tools are hidden now",
-		"Your next response must be a native `submit_plan` tool call",
+		"Your next response must be a parser-readable `submit_plan` request",
 	} {
 		if strings.Contains(prompt, notWant) {
 			t.Fatalf("recovery prompt should not claim submit_plan readiness before source evidence (%q): %q", notWant, prompt)
@@ -1533,7 +1537,8 @@ func TestCompletionGateRecoveryPromptHidesReadsAfterCandidateScopeRead(t *testin
 		"Call `submit_plan` using exact source anchors",
 		"Do not request another read",
 		"Actions written only in hidden reasoning are ignored",
-		"Do not copy schema examples or placeholder text",
+		"complete executable source text",
+		"do not copy schema examples, placeholders, ellipses, or prose",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("post-read candidate recovery prompt missing %q:\n%s", want, prompt)
@@ -1889,7 +1894,7 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t
 		t.Fatalf("write-only plan-execute recovery should not force request-level thinking kwargs")
 	}
 	if opts.ToolChoice != "required" {
-		t.Fatalf("write-only plan-execute recovery should force a native tool call, got %q", opts.ToolChoice)
+		t.Fatalf("write-only plan-execute recovery should force a parser-readable tool request, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("write-only plan-execute recovery should expose only submit_plan, got %#v", opts.Tools)
@@ -1929,7 +1934,7 @@ func TestPlanExecuteRequiredWriteOnlyRecoveryForcesVisibleSubmitPlan(t *testing.
 		t.Fatalf("required-path recovery should not force request-level thinking kwargs")
 	}
 	if opts.ToolChoice != "required" {
-		t.Fatalf("required-path recovery should force a native submit_plan call, got %q", opts.ToolChoice)
+		t.Fatalf("required-path recovery should force a parser-readable submit_plan request, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("required-path recovery should expose only submit_plan, got %#v", opts.Tools)
@@ -1968,7 +1973,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsOnlyAnchorRefreshBeforeCorrectedP
 	})
 
 	if opts.ToolChoice != "required" {
-		t.Fatalf("anchor-refresh recovery should force a native tool call, got %q", opts.ToolChoice)
+		t.Fatalf("anchor-refresh recovery should force a parser-readable tool request, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 2 || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || chatOptionsExposeTool(opts, "search_content") || chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("anchor-refresh recovery should expose only source-body read tools, got %#v", opts.Tools)
@@ -2008,7 +2013,7 @@ func TestPlanExecutePostReadinessRecoveryForcesCorrectedSubmitPlanAfterAnchorRef
 	})
 
 	if opts.ToolChoice != "required" {
-		t.Fatalf("corrected-plan recovery should force a native submit_plan call, got %q", opts.ToolChoice)
+		t.Fatalf("corrected-plan recovery should force a parser-readable submit_plan request, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("corrected-plan recovery should expose only submit_plan after anchor refresh, got %#v", opts.Tools)
@@ -2273,7 +2278,7 @@ func TestPlanThenExecuteRequiredPathHintsUseSubmitPlanLanguage(t *testing.T) {
 	if !strings.Contains(joined, "read required_edit_path a.txt with source-body evidence before submit_plan") {
 		t.Fatalf("planner-phase hints must frontload unread required-path source evidence, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
 	}
-	if !strings.Contains(joined, "submit_plan before every existing required_edit_path has source-body evidence") {
+	if !strings.Contains(joined, "submit_plan before every existing required_edit_path has satisfied its source-body obligation") {
 		t.Fatalf("planner-phase hints must reject premature submit_plan, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
 	}
 	if !strings.Contains(joined, "source-satisfied") {

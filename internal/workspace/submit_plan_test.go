@@ -71,6 +71,11 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("expected submit_plan schema, got %d definitions", len(defs))
 	}
+	for _, want := range []string{"executable final content", "no placeholders", "not a quoted JSON string", "complete file body"} {
+		if !strings.Contains(defs[0].Description, want) {
+			t.Fatalf("submit_plan description missing %q:\n%s", want, defs[0].Description)
+		}
+	}
 	var schema struct {
 		AnyOf      []map[string][]string `json:"anyOf"`
 		Properties struct {
@@ -1352,6 +1357,54 @@ func TestSubmitPlanRejectsVerificationOnlyEditPurposes(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsPlaceholderEditBodies(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "package p\n\nfunc run() {\n}\n")
+	for _, tc := range []struct {
+		name string
+		edit PlanEdit
+		want string
+	}{
+		{
+			name: "substring replacement",
+			edit: PlanEdit{
+				Path:    "a.txt",
+				OldText: "func run() {\n}\n",
+				NewText: "func run() {\n\t// ... existing code ...\n}\n",
+				Purpose: "Update run.",
+			},
+			want: "existing code",
+		},
+		{
+			name: "line range content",
+			edit: PlanEdit{
+				Path:      "a.txt",
+				StartLine: 3,
+				EndLine:   4,
+				Content:   "func run() {\n\t<TODO: fill implementation>\n}\n",
+				Purpose:   "Update run.",
+			},
+			want: "<todo",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result := mgr.Execute(context.Background(), ToolRequest{
+				Tool:      "submit_plan",
+				Rationale: "Update executable source.",
+				Edits:     []PlanEdit{tc.edit},
+			})
+			if strings.TrimSpace(result.Error) == "" {
+				t.Fatalf("placeholder edit body should be rejected")
+			}
+			for _, want := range []string{"placeholder edit body", tc.want, "<<QUESTION>>"} {
+				if !strings.Contains(strings.ToLower(result.Error), strings.ToLower(want)) {
+					t.Fatalf("rejection should include %q, got %q", want, result.Error)
+				}
+			}
+		})
+	}
+}
+
 func TestSubmitPlanRejectsEditWithoutShape(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
 	result := mgr.Execute(context.Background(), ToolRequest{
@@ -1488,8 +1541,8 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 	}
 }
 
-func TestSubmitPlanRepairsStringifiedMultilineNoOpEditBeforeValidation(t *testing.T) {
-	mgr, root := newSubmitPlanTestManager(t)
+func TestSubmitPlanRejectsStringifiedMultilineEditsBeforeValidation(t *testing.T) {
+	_, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "x.txt", "keep\nsecond\n")
 	inner := `[{"path":"x.txt","old_text":"keep
 second
@@ -1504,22 +1557,17 @@ second
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	req, err := DecodeToolRequestJSON(payload)
-	if err != nil {
-		t.Fatalf("DecodeToolRequestJSON: %v", err)
+	_, err = DecodeToolRequestJSON(payload)
+	if err == nil {
+		t.Fatalf("expected stringified edits to be rejected before submit_plan validation")
 	}
-	if len(req.Edits) != 1 {
-		t.Fatalf("expected repaired edit before submit_plan validation, got %#v", req.Edits)
+	for _, want := range []string{"edits", "string"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("rejection should include %q, got %v", want, err)
+		}
 	}
-	result := mgr.Execute(context.Background(), req)
-	if !strings.Contains(result.Error, "old_text and new_text are identical") {
-		t.Fatalf("expected no-op edit guidance, got summary=%q error=%q", result.Summary, result.Error)
-	}
-	if strings.Contains(result.Error, "requires at least one edit") {
-		t.Fatalf("stringified edits should not degrade to empty-plan rejection: %q", result.Error)
-	}
-	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
-		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	if _, statErr := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(statErr) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", statErr)
 	}
 }
 

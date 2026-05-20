@@ -777,7 +777,9 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	if initialActionContractApplies(state) {
 		directive += " For guarded workspace write tasks, the first assistant response must be either exactly one tool call or an explicit blocker/no-op answer; narrative-only implementation summaries are invalid before a successful write, no-op, or blocker."
 	}
-	if implementationStateHasRequiredPathsForMutation(state) {
+	if planThenExecutePlannerState(state) && len(state.RequiredEditPaths) > 0 {
+		directive += " When required_edit_paths are present in plan-execute planner phase, they are submit_plan coverage scope, not permission for direct edit tools. The available contract menu is a required-path source-body read for exact edit-safety evidence, one parser-readable submit_plan with complete executable final edit bodies, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact blocker."
+	} else if implementationStateHasRequiredPathsForMutation(state) {
 		directive += " When required_edit_paths are present, treat the packet as the write scope. The available contract menu is an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker."
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
 		directive += " The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker."
@@ -793,6 +795,10 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		CurrentState: state,
 		Directive:    directive,
 	}
+}
+
+func planThenExecutePlannerState(state RunState) bool {
+	return strings.EqualFold(strings.TrimSpace(state.TaskFamily), "plan_then_execute_planner")
 }
 
 func initialActionContractApplies(state RunState) bool {

@@ -258,7 +258,48 @@ func validatePlanEdit(edit PlanEdit) error {
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
 		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidance)
 	}
+	if field, marker := planEditPlaceholderField(edit); field != "" {
+		return fmt.Errorf("%s contains placeholder edit body marker %q; submit complete executable source text, or answer <<QUESTION>> with the missing body/anchor blocker", field, marker)
+	}
 	return nil
+}
+
+func planEditPlaceholderField(edit PlanEdit) (string, string) {
+	fields := []struct {
+		name  string
+		value string
+	}{
+		{name: "old_text", value: edit.OldText},
+		{name: "new_text", value: edit.NewText},
+		{name: "content", value: edit.Content},
+	}
+	for _, field := range fields {
+		if marker := planEditPlaceholderMarker(field.value); marker != "" {
+			return field.name, marker
+		}
+	}
+	return "", ""
+}
+
+func planEditPlaceholderMarker(value string) string {
+	text := strings.ToLower(value)
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	for _, marker := range []string{
+		"... existing code ...",
+		"omitted for brevity",
+		"rest of file unchanged",
+		"remaining code",
+		"unchanged code",
+		"<todo",
+		"todo: fill",
+	} {
+		if strings.Contains(text, marker) {
+			return marker
+		}
+	}
+	return ""
 }
 
 // AttachPlanEditAnchorProvenance returns a copy of edits with

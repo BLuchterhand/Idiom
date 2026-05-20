@@ -140,7 +140,7 @@ func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llam
 	result := workspace.ToolResult{
 		Tool:    "tool_parse",
 		Summary: "Malformed tool request rejected",
-		Error:   parseErr.Error() + ". Emit exactly one valid tool call or answer normally.",
+		Error:   toolParseErrorFeedback(raw, parseErr),
 		Output:  strings.TrimSpace(raw),
 	}
 	c.recorder.activeToolCall = activeToolCall
@@ -148,6 +148,18 @@ func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llam
 		CountRejected:  true,
 		SetLastToolKey: false,
 	})
+}
+
+func toolParseErrorFeedback(raw string, parseErr error) string {
+	if parseErr == nil {
+		return "Emit exactly one valid tool call or answer normally."
+	}
+	message := parseErr.Error()
+	lower := strings.ToLower(message + "\n" + raw)
+	if strings.Contains(lower, "toolrequest.edits") && strings.Contains(lower, "string") {
+		return message + ". submit_plan.edits was emitted as a quoted string. Emit edits as a JSON array value, not a string: {\"tool\":\"submit_plan\",\"rationale\":\"...\",\"edits\":[{\"path\":\"path/to/file\",\"old_text\":\"exact current text\",\"new_text\":\"complete replacement text\",\"purpose\":\"one sentence\"}]}. For native tool-call backends, the submit_plan arguments object is {\"rationale\":\"...\",\"edits\":[...]} with no quoted array. Edit bodies must be complete executable source text, not placeholders or prose."
+	}
+	return message + ". Emit exactly one valid tool call or answer normally."
 }
 
 func (c *runnerTurnController) recordRejectedResult(step int, activeToolCall *llama.ToolCall, req workspace.ToolRequest, result workspace.ToolResult, reason string) {

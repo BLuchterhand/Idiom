@@ -62,8 +62,8 @@ failure patterns that have cost time in real Idiom/Colony runs.
   localizes anchors, and only source-body reads satisfy source-body obligations.
 - **Rejected plan as consumed plan**: a rejected `submit_plan` is an invalid
   attempt, not the single successful plan artifact. Correction recovery should
-  force a native corrected `submit_plan` surface, or a typed blocker when that
-  exact correction is impossible.
+  force one parser-readable corrected `submit_plan` request, or a typed blocker
+  when that exact correction is impossible.
 - **Stale anchors**: an `old_text` miss means the file is the authority. Refresh
   the exact anchor with semantic/context evidence or one narrow required-path
   read, then retry or block. Do not invent a near match.

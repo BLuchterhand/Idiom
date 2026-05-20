@@ -221,6 +221,9 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 		"candidate/target refs",
 		"No required edit paths were provided",
 		"real edits grounded in the objective/target refs",
+		"Each edit body must be executable final content",
+		"Do not submit placeholders, ellipses",
+		"complete replacement for the inclusive range",
 	} {
 		if !strings.Contains(addendum, want) {
 			t.Fatalf("planner addendum missing readiness-oriented wording %q:\n%s", want, addendum)
@@ -1589,6 +1592,9 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 		"_assert_true(true)",
 		"Decision: pass",
 		"submit_plan.rationale",
+		"executable final content",
+		"not review prose",
+		"not a quoted JSON string",
 		"Empty corrective plans are invalid",
 		"pending outside this lane unless Phase Evidence names the exact command as successful",
 		"Do not call `ask`",

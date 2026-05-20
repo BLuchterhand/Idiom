@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"idiom/internal/llama"
@@ -58,6 +59,35 @@ func TestParseToolCall_BuiltinRepairsNumericStringFields(t *testing.T) {
 	}
 	if string(req.Args) != rawArgs {
 		t.Fatalf("Args should preserve raw model arguments, got %q", string(req.Args))
+	}
+}
+
+func TestParseToolCall_BuiltinRejectsStringifiedMultilineEdits(t *testing.T) {
+	inner := `[{"path":"a.go","old_text":"line one
+line two","new_text":"line one
+line three","purpose":"update a"}]`
+	payload, err := json.Marshal(map[string]any{
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	rawArgs := string(payload)
+	call := llama.ToolCall{
+		Function: llama.ToolCallFunc{
+			Name:      "submit_plan",
+			Arguments: rawArgs,
+		},
+	}
+	_, _, err = parseToolCall(call)
+	if err == nil {
+		t.Fatalf("expected stringified submit_plan edits to be rejected")
+	}
+	for _, want := range []string{"edits", "string"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("rejection should include %q, got %v", want, err)
+		}
 	}
 }
 

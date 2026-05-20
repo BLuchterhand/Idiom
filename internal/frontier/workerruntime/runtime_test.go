@@ -730,6 +730,34 @@ func TestRenderFailureFeedbackPacketExplainsRequiredVsValid(t *testing.T) {
 	}
 }
 
+func TestRenderInitialRuntimeBriefUsesPlanExecuteSubmitPlanDirective(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        "plan_then_execute_planner",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "submit_plan"},
+		RequiredTools:     []string{"submit_plan"},
+		RequiredEditPaths: []string{"internal/app/rendering.go"},
+		SearchPolicy:      []string{"submit_plan_requires_executable_final_edits"},
+	})
+	for _, want := range []string{
+		"plan-execute planner phase",
+		"submit_plan coverage scope",
+		"not permission for direct edit tools",
+		"parser-readable submit_plan",
+		"complete executable final edit bodies",
+		"Decision: source-satisfied",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("plan-execute runtime brief missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "in-scope required-path edit") {
+		t.Fatalf("plan-execute runtime brief must not use implementation edit wording:\n%s", rendered)
+	}
+}
+
 func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.T) {
 	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
 		Lane:              "architecture",

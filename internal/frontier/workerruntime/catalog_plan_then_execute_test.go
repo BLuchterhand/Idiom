@@ -24,6 +24,9 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 	if !planThenExecuteToolListContains(spec.SearchPolicy, "required_existing_paths_need_source_body_before_submit_plan") {
 		t.Fatalf("planner phase search policy must name source-body-before-submit_plan, got %v", spec.SearchPolicy)
 	}
+	if !planThenExecuteToolListContains(spec.SearchPolicy, "submit_plan_requires_executable_final_edits") {
+		t.Fatalf("planner phase search policy must name executable submit_plan quality bar, got %v", spec.SearchPolicy)
+	}
 	if planThenExecuteToolListContains(spec.SearchPolicy, "trust_preloaded_current_state_anchors") {
 		t.Fatalf("planner phase search policy must not imply anchors satisfy source-body evidence, got %v", spec.SearchPolicy)
 	}
@@ -72,6 +75,9 @@ func TestRuntimeContractForPlanThenExecuteReviewRepairIsReviewShaped(t *testing.
 	}
 	if len(spec.RequiredTools) != 0 {
 		t.Fatalf("review-repair must not require unavailable decision tools, got %v", spec.RequiredTools)
+	}
+	if !planThenExecuteToolListContains(spec.SearchPolicy, "corrective_submit_plan_requires_executable_final_edits") {
+		t.Fatalf("review-repair search policy must name corrective submit_plan quality bar, got %v", spec.SearchPolicy)
 	}
 }
 

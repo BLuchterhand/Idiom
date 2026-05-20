@@ -71,6 +71,16 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 			t.Fatalf("manifest tool %q missing from export", name)
 		}
 	}
+	for _, entry := range BuildToolManifest([]string{"submit_plan"}) {
+		if entry.Tool != "submit_plan" {
+			continue
+		}
+		for _, want := range []string{"JSON array, not a quoted string", "complete final content", "not placeholders or prose"} {
+			if !strings.Contains(entry.Purpose, want) {
+				t.Fatalf("submit_plan manifest purpose missing %q:\n%s", want, entry.Purpose)
+			}
+		}
+	}
 
 	applyPatch := exported["apply_patch"]
 	if !slices.Contains(applyPatch.Policy.SideEffects, autonomy.SideEffectAdditive) ||

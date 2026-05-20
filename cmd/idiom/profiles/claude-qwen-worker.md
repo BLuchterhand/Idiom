@@ -63,7 +63,12 @@ The planner's `submit_plan` accepts three edit shapes per entry:
 
 Use whole-file shape for new files. Use substring or line-range
 for edits to existing files. The top-level `edits` value is a JSON
-array, not a quoted string containing JSON.
+array, not a quoted string containing JSON. Every edit body must be
+executable final content: no placeholders, ellipses, `<TODO>` markers,
+`existing code` comments, omitted bodies, pseudo-code, or prose descriptions.
+`old_text` is exact current text copied from source evidence; line-range
+`content` is the complete replacement for the inclusive range; whole-file or
+new-file `new_text` is the complete file body.
 
 ## Read Discipline
 

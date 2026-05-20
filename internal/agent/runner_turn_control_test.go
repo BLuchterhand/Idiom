@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -9,6 +10,21 @@ import (
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
 )
+
+func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
+	got := toolParseErrorFeedback(`{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit"))
+	for _, want := range []string{
+		"submit_plan.edits was emitted as a quoted string",
+		"JSON array value, not a string",
+		`"edits":[`,
+		"complete executable source text",
+		"not placeholders or prose",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("feedback missing %q:\n%s", want, got)
+		}
+	}
+}
 
 func TestRunnerTurnControllerRejectToolRecordsRejectionState(t *testing.T) {
 	collected := []workspace.ToolResult{}

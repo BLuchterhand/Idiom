@@ -98,8 +98,13 @@ shape plus a one-sentence `purpose`: `old_text`+`new_text` (substring shape;
 `content` (line-range shape) for an existing path, or `replace_all:true` with
 empty `old_text` and `new_text` as the full body for a new file or intentional
 whole-file write. The `edits` field itself is a JSON array, not a quoted JSON
-string. The
-executor phase will dispatch them in the order you list. Builds/tests listed
+string. Every edit body must be executable final content: no placeholders,
+ellipses, `<TODO>` markers, `existing code` comments, omitted bodies,
+pseudo-code, prose descriptions, or invented symbols in `old_text`, `new_text`,
+or `content`. `old_text` must be exact current text copied from source-body
+evidence; line-range `content` is the complete replacement for the inclusive
+range; whole-file/new-file `new_text` is the complete file body. The executor
+phase will dispatch them in the order you list. Builds/tests listed
 in Acceptance are planner-owned and idiom enforces that contract; do not run
 build, test, shell, git, or source-sanity commands from the brief. Do not
 stage, commit, stash, checkout, or revert unrelated work.
