@@ -567,9 +567,9 @@ newRuntimeBrief()
 	joinedInvalid := strings.Join(plan.runtimeBrief.InvalidActions, "\n")
 
 	for _, want := range []string{
-		"source-body evidence before submit_plan",
+		"source-body obligations before submit_plan",
 		"submit_plan scope",
-		"packet anchors establish scope but existing paths still need source-body evidence before submit_plan",
+		"packet anchors establish scope but existing paths still need source-body obligations satisfied before submit_plan",
 		"do not run build, test, shell, git, or source_sanity in the plan-execute planner phase",
 	} {
 		if !strings.Contains(joinedNext+"\n"+joinedPolicy, want) {

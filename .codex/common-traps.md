@@ -22,6 +22,12 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Prompt reminders as contracts**: if a repeated failure is mechanically
   knowable, fix preflight, route metadata, runtime brief, tool schema, or a
   deterministic gate instead of adding another reminder.
+- **Recovery nudges hiding a weak lead-in**: if the same recovery message fires
+  repeatedly, do not only strengthen the recovery text. First check whether the
+  phase's initial prompt tells the model, in execution order, what state it is
+  in, which evidence must be gathered before closeout, which exact tool/schema
+  shape satisfies the contract, and which terminal outcomes are valid. Nudges
+  should recover from drift, not teach the basic protocol after failure.
 - **Generated scratchpads as implementation lanes**: if a phase needs one
   generated markdown artifact and no workspace inspection, use `idiom artifact`
   or an equivalent host-materialized artifact path. Do not ask the model to
@@ -41,6 +47,23 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Planner/executor tool confusion**: plan-execute planner phases use
   `submit_plan`; implement phases use write tools. Do not blur these surfaces
   in prompts, recovery nudges, or examples.
+- **Planner/executor actor confusion**: the planner does not implement or
+  modify files. It emits one successful plan artifact, closes as
+  source-satisfied, or reports a typed blocker. UI/log/recovery text should say
+  "failed to produce a valid `submit_plan`" rather than "failed to implement"
+  when the planner never reached the executor.
+- **Overloaded required-path language**: keep `required_edit_paths`,
+  source-body obligations, and `submit_plan` coverage distinct. Required paths
+  authorize mutation scope; source-body obligations prove current code; plan
+  coverage means every required path has a valid edit entry or terminal
+  source-satisfied evidence. A read path is not automatically a planned edit.
+- **Vague source evidence**: do not say a path has "evidence" when only an
+  outline or search hit exists. Path/packet evidence scopes work, outline/search
+  localizes anchors, and only source-body reads satisfy source-body obligations.
+- **Rejected plan as consumed plan**: a rejected `submit_plan` is an invalid
+  attempt, not the single successful plan artifact. Correction recovery should
+  force a native corrected `submit_plan` surface, or a typed blocker when that
+  exact correction is impossible.
 - **Stale anchors**: an `old_text` miss means the file is the authority. Refresh
   the exact anchor with semantic/context evidence or one narrow required-path
   read, then retry or block. Do not invent a near match.
@@ -119,6 +142,11 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Changing gates without prompt parity**: the model should see the same
   contract the harness enforces. If a gate rejects an action, the prompt or
   runtime brief should make the valid alternatives visible.
+- **Fixing only the late symptom**: completion gates and recovery controllers
+  are often where a bug becomes visible, but the cause may be an earlier prompt
+  that sounded advisory, omitted the executable action sequence, or contradicted
+  the gate's evidence ordering. Root-cause from the first prompt the model saw,
+  then keep deterministic recovery as the backstop.
 - **Rerunning the same failed atom repeatedly**: after two harness-shaped
   failures, write a focused regression test from the logged failure shape before
   more live runs.
@@ -135,11 +163,13 @@ Before calling an Idiom harness change complete, check:
 
 1. Does one prompt layer contradict another, especially in the last postamble or
    recovery nudge the model sees?
-2. Is each invariant enforced by the harness rather than only by prose?
-3. Are all valid terminal states visible to both the model and the gate?
-4. Would source-satisfied, stale, dirty, or non-dispatchable work be classified
+2. Does the first phase-specific lead-in state the executable protocol before
+   the model can drift into prose or planning narration?
+3. Is each invariant enforced by the harness rather than only by prose?
+4. Are all valid terminal states visible to both the model and the gate?
+5. Would source-satisfied, stale, dirty, or non-dispatchable work be classified
    before a model spends tokens?
-5. Do logs/audits expose enough structured evidence to explain the run without
+6. Do logs/audits expose enough structured evidence to explain the run without
    reading the whole transcript?
-6. Did the change add regression coverage for the bad behavior and a valid
+7. Did the change add regression coverage for the bad behavior and a valid
    allowed path?

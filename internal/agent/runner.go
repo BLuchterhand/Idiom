@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -36,7 +37,8 @@ var (
 	codeShapedTokenPattern          = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
 	codeShapedSnakeCasePattern      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
 	codeShapedLineRangePattern      = regexp.MustCompile(`(?i)\blines?\s+\d+(?:\s*[-–]\s*\d+)?\b`)
-	fileOutlineDeclarationPattern   = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+\d+-\d+\b`)
+	fileOutlineDeclarationPattern   = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+(\d+)-(\d+)\b`)
+	fileOutlinePreviewPattern       = regexp.MustCompile(`preview declarations:\s*\[([^\]]*)\]`)
 )
 
 // delegatedReadOnlyProbeBudget is the soft cap disclosed to post-readiness
@@ -1058,6 +1060,12 @@ func (r *Runner) Run(
 			if done {
 				return finish(answer, err, "plan_then_execute_post_readiness_discovery_rejected", true)
 			}
+			if r.planThenExecutePlannerPhase() {
+				rebuildTools()
+				opts = planThenExecutePostReadinessRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
+				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: errorText})
+			}
 			continue
 		}
 		if summary, errorText, reject := declarationMoveConstraintRejection(req, declarationMovesForbidden); reject {
@@ -1581,6 +1589,14 @@ func (r *Runner) Run(
 			emitAcceptedAnswerSignalsOnce(answer)
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
+		if r.planThenExecutePlannerPhase() && planThenExecuteSubmitPlanRejectedForCorrection(req, result) {
+			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(result) + "The next visible action must be a corrected native `submit_plan` tool call whose `edits[]` coverage includes every required edit path, `Decision: source-satisfied` with per-path current-state evidence, or `<<QUESTION>>:` with the exact path-specific blocker. Do not call read_file, search_content, context_pack, context_query, code_navigate, or any other discovery tool unless the rejection named a stale anchor and the single next action is a bounded source-body refresh for that exact path."
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			rebuildTools()
+			opts = planThenExecutePostReadinessRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
+			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
+			continue
+		}
 		sourceSatisfiedBrief := r.runtimeBriefWithLiveState(policy, turnMessages, collectedResults)
 		if answer, ok := planThenExecuteExplicitSourceSatisfiedAnswer(sourceSatisfiedBrief, collectedResults); ok {
 			recorder.activeToolCall = activeToolCall
@@ -1604,6 +1620,7 @@ func (r *Runner) Run(
 			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, collectedResults); nudge != "" {
 				planThenExecuteReadinessNudged = true
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+				rebuildTools()
 				opts = planThenExecuteReadyToSubmitChatOptions(opts, r.RuntimeBrief, collectedResults)
 				r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
 			}
@@ -2170,13 +2187,13 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		}
 		if len(unread) > 0 {
 			next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
-			readInstruction := "read the next unread required_edit_path with source-body evidence before submit_plan; after every existing required_edit_path has source evidence, submit_plan with one ordered edit entry for every required path, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker"
+			readInstruction := "read the next unread required_edit_path with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan with one ordered edit entry for every required path, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker"
 			if next != "" {
-				readInstruction = fmt.Sprintf("read required_edit_path %s with source-body evidence before submit_plan; after every existing required_edit_path has source evidence, submit_plan with one ordered edit entry for every required path, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker", next)
+				readInstruction = fmt.Sprintf("read required_edit_path %s with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan with one ordered edit entry for every required path, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker", next)
 			}
 			brief.RequiredNext = mergeRunnerStateStrings([]string{readInstruction}, brief.RequiredNext)
 			brief.InvalidActions = mergeRunnerStateStrings([]string{
-				"submit_plan before every existing required_edit_path has source-body evidence",
+				"submit_plan before every existing required_edit_path has satisfied its source-body obligation",
 				"final answer before submit_plan succeeds unless it is a source-satisfied closeout with current-state evidence for every required path",
 				"prose final answer while required source evidence is pending",
 				"per-edit write tool in plan-execute planner phase",
@@ -5059,7 +5076,7 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 		return 2
 	}
 	if r != nil && r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) > 0 && successfulSubmitPlanResultCount(results) == 0 {
-		return 3
+		return 1
 	}
 	if r != nil && r.completionGateMutationRecoveryApplies(results) {
 		return 1
@@ -5689,7 +5706,24 @@ func (r *Runner) deterministicPlanExecuteOutlineFollowup(path string, results []
 			WhyNotAnswering: "need current declaration body before submit_plan can anchor the required edit",
 		}, true
 	}
-	return workspace.ToolRequest{}, false
+	if start, end, ok := planThenExecuteBestOutlineRange(path, r.RuntimeBrief.Objective, results); ok {
+		return workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       start,
+			EndLine:         end,
+			NamedGap:        "source-body evidence for required plan-execute edit path",
+			WhyNotAnswering: "outline did not produce a readable symbol; need bounded source before submit_plan can anchor the required edit",
+		}, true
+	}
+	return workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            path,
+		StartLine:       1,
+		EndLine:         180,
+		NamedGap:        "source-body evidence for required plan-execute edit path",
+		WhyNotAnswering: "outline did not expose usable declarations; need bounded source before submit_plan can anchor the required edit",
+	}, true
 }
 
 func planThenExecutePathSupportsCodeNavigate(path string) bool {
@@ -5761,8 +5795,70 @@ func planThenExecuteBestOutlineSymbol(path, objective string, results []workspac
 				best, bestScore = name, score
 			}
 		}
+		for _, name := range planThenExecutePreviewDeclarationNames(text) {
+			score := planThenExecuteSymbolScore(path, name, objectiveText, objectiveTokens)
+			if score > bestScore {
+				best, bestScore = name, score
+			}
+		}
 	}
 	return best
+}
+
+func planThenExecutePreviewDeclarationNames(text string) []string {
+	var names []string
+	seen := map[string]struct{}{}
+	for _, match := range fileOutlinePreviewPattern.FindAllStringSubmatch(text, -1) {
+		if len(match) < 2 {
+			continue
+		}
+		for _, raw := range strings.Split(match[1], ",") {
+			name := strings.TrimSpace(raw)
+			if name == "" || strings.HasPrefix(name, "...") || strings.Contains(name, " more") {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+func planThenExecuteBestOutlineRange(path, objective string, results []workspace.ToolResult) (int, int, bool) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return 0, 0, false
+	}
+	objectiveText := objective + " " + filepath.Base(path)
+	objectiveTokens := planThenExecuteSymbolScoreTokens(objectiveText)
+	bestStart, bestEnd, bestScore := 0, 0, 0
+	for _, result := range results {
+		text := result.Summary + "\n" + result.Output
+		if strings.TrimSpace(result.Error) != "" || !strings.Contains(strings.ToLower(text), strings.ToLower(path)) {
+			continue
+		}
+		for _, match := range fileOutlineDeclarationPattern.FindAllStringSubmatch(text, -1) {
+			if len(match) < 4 {
+				continue
+			}
+			start, startErr := strconv.Atoi(match[2])
+			end, endErr := strconv.Atoi(match[3])
+			if startErr != nil || endErr != nil || start <= 0 || end < start {
+				continue
+			}
+			score := planThenExecuteSymbolScore(path, strings.TrimSpace(match[1]), objectiveText, objectiveTokens)
+			if score > bestScore {
+				bestStart, bestEnd, bestScore = start, end, score
+			}
+		}
+	}
+	if bestScore <= 0 {
+		return 0, 0, false
+	}
+	return bestStart, bestEnd, true
 }
 
 func planThenExecuteSymbolScore(path, name, objective string, objectiveTokens map[string]int) int {
@@ -6123,6 +6219,7 @@ func planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts llama.ChatOptions
 		return opts
 	}
 	opts.PreserveThinking = false
+	opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
 	opts.ToolChoice = "required"
 	limit := planThenExecuteRecoveryTokenLimit(brief, results)
 	if opts.MaxTokens <= 0 || opts.MaxTokens > limit {
@@ -6138,6 +6235,44 @@ func planThenExecuteRecoveryTokenLimit(brief workerruntime.WorkerRuntimeBrief, r
 	return 4096
 }
 
+func planThenExecutePostReadinessRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	if planThenExecuteRejectedPlanNeedsAnchorRefresh(brief, results) {
+		thinkingOff := false
+		opts.EnableThinking = &thinkingOff
+		opts.PreserveThinking = false
+		if chatOptionsExposeAnyTool(opts, "read_file", "code_navigate") {
+			opts.Tools = filterChatOptionsTools(opts.Tools, "read_file", "code_navigate")
+			opts.ToolChoice = "required"
+		}
+		if opts.MaxTokens <= 0 || opts.MaxTokens > 768 {
+			opts.MaxTokens = 768
+		}
+		return opts
+	}
+	return planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts, brief, results)
+}
+
+func planThenExecuteRejectedPlanNeedsAnchorRefresh(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok || !submitPlanRejectionHasInvalidAnchor(rejected) {
+		return false
+	}
+	invalidPaths := submitPlanInvalidAnchorPaths(rejected)
+	if len(invalidPaths) == 0 {
+		return false
+	}
+	for _, path := range brief.RequiredEditPaths {
+		normalized := normalizeRunnerPath(path)
+		if _, ok := invalidPaths[normalized]; !ok {
+			continue
+		}
+		if !successfulReadPathAfter(results, rejectedAt, normalized) {
+			return true
+		}
+	}
+	return false
+}
+
 func planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
 	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) == 0 {
 		return opts
@@ -6149,6 +6284,7 @@ func planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts llama.ChatOptions,
 		return opts
 	}
 	opts.PreserveThinking = false
+	opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
 	opts.ToolChoice = "required"
 	limit := planThenExecuteRecoveryTokenLimit(brief, results)
 	if opts.MaxTokens <= 0 || opts.MaxTokens > limit {

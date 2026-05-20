@@ -466,11 +466,11 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			return "", "", false
 		}
 		return "Corrected submit_plan required",
-			"every required_edit_path already has source evidence, and the previous submit_plan was rejected. Submit a corrected `submit_plan` covering every required path with valid anchors or line ranges from the existing source evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. If the rejection named a stale edit anchor, at most one bounded source-body read on that required path is allowed to refresh exact current text.",
+			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected) + "Submit a corrected native `submit_plan` whose `edits[]` coverage includes every required_edit_path with valid anchors or line ranges from existing source-body evidence, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. If the rejection named a stale edit anchor, at most one bounded source-body read on that required path is allowed to refresh exact current text.",
 			true
 	}
 	return "Plan submission required",
-		"every required_edit_path already has source evidence. Do not use more read/search discovery. Submit one `submit_plan` covering every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
+		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one native `submit_plan` whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
 		true
 }
 
@@ -527,14 +527,38 @@ func successfulReadPathAfter(results []workspace.ToolResult, index int, path str
 func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (workspace.ToolResult, int, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if strings.TrimSpace(result.Tool) != "submit_plan" {
-			continue
-		}
-		if strings.Contains(result.Summary, "submit_plan rejected") || strings.Contains(result.Error, "submit_plan must include") {
+		if planThenExecuteSubmitPlanRejectedResult(result) {
 			return result, i, true
 		}
 	}
 	return workspace.ToolResult{}, -1, false
+}
+
+func planThenExecuteSubmitPlanRejectedForCorrection(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	return strings.TrimSpace(req.Tool) == "submit_plan" && planThenExecuteSubmitPlanRejectedResult(result)
+}
+
+func planThenExecuteSubmitPlanRejectedResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) != "submit_plan" {
+		return false
+	}
+	return strings.Contains(result.Summary, "submit_plan rejected") || strings.Contains(result.Error, "submit_plan must include")
+}
+
+func lastSubmitPlanRejectionBrief(result workspace.ToolResult) string {
+	text := strings.TrimSpace(result.Error)
+	if text == "" {
+		text = strings.TrimSpace(result.Summary)
+	}
+	if text == "" {
+		return ""
+	}
+	text = strings.Join(strings.Fields(text), " ")
+	const limit = 360
+	if len(text) > limit {
+		text = strings.TrimSpace(text[:limit]) + "..."
+	}
+	return "Last submit_plan rejection: " + text + " "
 }
 
 func planThenExecuteUnreadRequiredPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) map[string]struct{} {
@@ -1259,14 +1283,14 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 		return ""
 	}
 	unread := planThenExecuteUnreadRequiredPaths(brief, results)
-	if len(unread) == 0 || len(results) == 0 {
+	if len(unread) == 0 {
 		return ""
 	}
 	next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
 	if next == "" {
 		return ""
 	}
-	if !planThenExecutePathHasOutlineOnlyEvidence(next, results) && len(readPathsFromResults(results)) == 0 {
+	if planThenExecuteRequiredPathHasTerminalMissingFileEvidence(next, results) {
 		return ""
 	}
 	return strings.Join([]string{
@@ -1280,6 +1304,28 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 		"",
 		"Outline and search hits do not satisfy this contract by themselves. Do not call `submit_plan` until every required_edit_path has source-body evidence. Hidden reasoning is not executable evidence.",
 	}, "\n")
+}
+
+func planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path string, results []workspace.ToolResult) bool {
+	normalized := normalizeRunnerPath(path)
+	if normalized == "" {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{result.Summary, result.Error, result.Output}, "\n"))
+		if !strings.Contains(text, strings.ToLower(normalized)) {
+			continue
+		}
+		if strings.Contains(text, "new file") ||
+			strings.Contains(text, "does not exist yet") ||
+			strings.Contains(text, "missing parent") {
+			return true
+		}
+	}
+	return false
 }
 
 func planThenExecuteExplicitSourceSatisfiedAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {

@@ -140,10 +140,10 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
 		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
 			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
-				"for existing required paths, gather source-body evidence before submit_plan unless the packet is exact-plan-ready/source-satisfied; then call submit_plan, answer Decision: source-satisfied with per-path evidence, or report <<QUESTION>>",
+				"for existing required paths, satisfy source-body obligations before submit_plan unless the packet is exact-plan-ready/source-satisfied; then call submit_plan, answer Decision: source-satisfied with per-path evidence, or report <<QUESTION>>",
 			)
 			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy,
-				"treat required_edit_paths plus packet evidence as submit_plan scope; packet anchors establish scope but existing paths still need source-body evidence before submit_plan",
+				"treat required_edit_paths plus packet evidence as submit_plan scope; packet anchors establish scope but existing paths still need source-body obligations satisfied before submit_plan",
 			)
 		} else {
 			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,

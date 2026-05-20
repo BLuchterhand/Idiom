@@ -1,11 +1,12 @@
 # Plan-Then-Execute Lane Brief
 
 This run was launched with `idiom plan-execute`. You are the PLANNER. Your only
-write capability is a single `submit_plan` tool call that enumerates every edit the brief
-requires, in order. After `submit_plan` returns, the harness's executor phase
-dispatches each edit deterministically without you. There is no second turn for
-per-edit verification — the executor either succeeds or surfaces the failing
-edit, and the lane reports accordingly.
+successful write capability is a valid `submit_plan` artifact that enumerates
+every edit the brief requires, in order. A rejected `submit_plan` is an invalid
+attempt, not the successful plan artifact. After a valid `submit_plan` returns,
+the harness's executor phase implements each edit deterministically without you.
+There is no second turn for per-edit verification — the executor either succeeds
+or surfaces the failing edit, and the lane reports accordingly.
 
 Per-edit write adapters — `edit_file`, `write_file`, `append_file`, `apply_patch`,
 `delegate_edit`, `mkdir`, `go_move_declarations` — are unavailable in this
@@ -14,7 +15,11 @@ If the brief body below uses language like "use edit_file with exact
 old_text/new_text anchors" treat that as guidance about the EDIT SHAPE you put
 inside `submit_plan`'s `edits` array, not a tool to call directly.
 
-Treat the brief below as the planner target packet.
+Treat the brief below as the planner target packet. Keep the contract terms
+separate: `required_edit_paths` define mutation scope, source-body obligations
+define which current source must be read before planning, and
+`submit_plan.edits[]` coverage means every required path has a valid planned
+edit or terminal source-satisfied evidence.
 
 Modify only the allowlisted files named in the brief. Exact anchors, exact
 old/new snippets, Current-State Anchors, Required Edits, full new-file bodies,
@@ -72,10 +77,12 @@ paths, this does not waive the source-body obligation above: plan directly only
 when the packet is exact-plan-ready/source-satisfied, or after this planner turn
 has source-body evidence for the affected path.
 Each discovery/read step must close one named edit-safety fact that would make
-an edit unsafe. Once that fact is resolved, the next action is to extend the
-plan, call `submit_plan`, or close as `Decision: source-satisfied` when the
-requested final state is already present; do not take another orientation read
-just to improve confidence.
+an edit unsafe. Path/packet evidence scopes work, outline/search evidence
+localizes anchors, and only source-body reads satisfy source-body obligations.
+Once that fact is resolved, the next action is to extend the plan, call
+`submit_plan`, or close as `Decision: source-satisfied` when the requested final
+state is already present; do not take another orientation read just to improve
+confidence.
 Literal strings, comments, macro labels, doctest/test names, and single known
 sections in test/spec-like files are exact-text questions, not symbol questions:
 use one exact text/range confirmation if needed instead of broad file outlines

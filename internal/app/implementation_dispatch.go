@@ -3072,7 +3072,7 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 		}
 	}
 	return func(cfg config.Config, prompt string, opts planexecute.RunOptions, stdout io.Writer) (string, error) {
-		restoreRoute := m.applyPlanExecutePromptRunnerRoute(ctx)
+		restoreRoute := m.applyPlanExecutePromptRunnerRoute(ctx, opts)
 		restore := m.applyPlanExecutePromptRunnerState(cfg, opts, stdout)
 
 		priorMessages := append([]llama.ChatMessage(nil), m.messages...)
@@ -3092,8 +3092,12 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 	}
 }
 
-func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context) func() {
+func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts planexecute.RunOptions) func() {
 	if m == nil || m.implementerClient == nil {
+		return func() {}
+	}
+	if opts.UseActiveModel {
+		m.logMessage("dispatch_route", fmt.Sprintf("plan-execute in-process runner using active model %s for fallback", strings.TrimSpace(m.modelID)))
 		return func() {}
 	}
 	if sameLlamaTarget(m.executorSpec, m.plannerSpec) {
@@ -3152,7 +3156,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorEventStream := m.eventStream
 	priorPlanExecuteActive := m.planExecuteActive
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking ||
-		(strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily && m.shouldDisableThinkingForPlanExecutePlanner())
+		(!opts.UseActiveModel && strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily && m.shouldDisableThinkingForPlanExecutePlanner())
 	m.planExecuteActive = true
 	m.cfg.Workspace.SessionID = cfg.Workspace.SessionID
 	if m.workspace != nil {
@@ -3686,6 +3690,33 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		m.logMessage("dispatch_recovery", "surfacing source-satisfied coverage mismatch without retry")
 		return answer, true, nil
 	}
+	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+		retryOptions := failure.Options
+		retryOptions.UseActiveModel = true
+		retryOptions.Prompt = appendPlanExecuteActiveModelFallbackAddendum(failure.Options.Prompt)
+		m.logMessage("dispatch_recovery", "retrying plan-execute on active model after previous planner attempt failed to produce a valid submit_plan")
+		m.events <- infoMsg{text: "Retrying plan-execute on active model..."}
+		var retryOut, retryErr bytes.Buffer
+		retryResult := planexecute.Run(m.cfg, retryOptions, m.newPlanExecutePromptRunner(ctx), nil, &retryOut, &retryErr)
+		m.logMessage("dispatch_result", fmt.Sprintf("plan-execute active-model retry finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
+			retryResult.ExitCode, retryResult.SessionID, retryResult.ResumeStatePath, retryOut.Len(), retryErr.Len()))
+		if retryResult.ExitCode == 0 {
+			return strings.TrimSpace(retryOut.String()), true, nil
+		}
+		retryFailure := failure
+		retryFailure.Options = retryOptions
+		retryFailure.Result = retryResult
+		retryFailure.Stdout = retryOut.String()
+		retryFailure.Stderr = retryErr.String()
+		if strings.TrimSpace(retryResult.FailureKind) == "missing_requested_test_edit" {
+			m.logMessage("dispatch_recovery", "active-model retry produced a source-only plan; chaining to missing-test recovery")
+			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
+		}
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+			Decision: "surface",
+			Reason:   "active-model fallback did not produce a plan",
+		}), true, nil
+	}
 	if strings.TrimSpace(failure.Result.FailureKind) == "missing_requested_test_edit" {
 		allowedPaths := m.implementationDispatchAllowedPathsForMissingRequestedTestEdit(failure)
 		if len(allowedPaths) == 0 {
@@ -3761,6 +3792,42 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			Reason:   "automatic discovered-scope retry did not produce a plan",
 		}), true, nil
 	}
+	if path, ok := planExecuteRequiredSourceReadBlockerPath(failure); ok {
+		decision := implementationDispatchRecoveryDecision{
+			Decision:      "retry",
+			Reason:        "planner blocker names an unread required source path that a retry can satisfy with a source-body read",
+			RetryAddendum: fmt.Sprintf("First read source for `%s` using a source-body route, then submit the plan when every required path has source evidence.", path),
+		}
+		retryPrompt := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, "")
+		retryOptions := failure.Options
+		retryOptions.Prompt = retryPrompt
+		m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked decision=retry reason=required source read blocker for %s", path))
+		m.events <- infoMsg{text: "Retrying plan-execute after required source-read blocker..."}
+		var retryOut, retryErr bytes.Buffer
+		retryResult := planexecute.Run(m.cfg, retryOptions, m.newPlanExecutePromptRunner(ctx), nil, &retryOut, &retryErr)
+		m.logMessage("dispatch_result", fmt.Sprintf("plan-execute source-read retry finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
+			retryResult.ExitCode, retryResult.SessionID, retryResult.ResumeStatePath, retryOut.Len(), retryErr.Len()))
+		if retryResult.ExitCode == 0 {
+			return strings.TrimSpace(retryOut.String()), true, nil
+		}
+		retryFailure := failure
+		retryFailure.Result = retryResult
+		retryFailure.Options = retryOptions
+		retryFailure.Stdout = retryOut.String()
+		retryFailure.Stderr = retryErr.String()
+		if strings.TrimSpace(retryResult.FailureKind) == "missing_requested_test_edit" {
+			m.logMessage("dispatch_recovery", "source-read retry produced a source-only plan; chaining to missing-test recovery")
+			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
+		}
+		if planExecutePlannerBlockedCanRetryOnActiveModel(retryFailure) {
+			m.logMessage("dispatch_recovery", "source-read retry hit repeated submit_plan gate; chaining to active-model fallback")
+			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
+		}
+		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
+			Decision: "surface",
+			Reason:   "automatic source-read retry did not produce a plan",
+		}), true, nil
+	}
 	decision, raw, err := m.decidePlanExecutePlannerBlocked(ctx, failure)
 	if err != nil {
 		m.logMessage("dispatch_recovery", "recovery decision failed; surfacing planner blocker: "+err.Error())
@@ -3792,6 +3859,10 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			m.logMessage("dispatch_recovery", "planner-blocked retry produced a source-only plan; chaining to missing-test recovery")
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
+		if planExecutePlannerBlockedCanRetryOnActiveModel(retryFailure) {
+			m.logMessage("dispatch_recovery", "planner-blocked retry hit repeated submit_plan gate; chaining to active-model fallback")
+			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
+		}
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
 			Decision: "surface",
 			Reason:   "automatic retry did not produce a plan",
@@ -3799,6 +3870,58 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		}), true, nil
 	}
 	return humanPlanExecutePlannerBlockedMessage(failure, decision), true, nil
+}
+
+func planExecutePlannerBlockedCanRetryOnActiveModel(failure implementationDispatchPlanExecuteFailure) bool {
+	if failure.Options.UseActiveModel {
+		return false
+	}
+	if len(failure.RequiredPaths) == 0 {
+		return false
+	}
+	switch strings.TrimSpace(failure.Result.FailureKind) {
+	case planexecute.RunFailurePlannerBlocked, "plan_artifact_missing":
+	default:
+		return false
+	}
+	text := strings.ToLower(strings.Join([]string{
+		failure.Result.FailureKind,
+		failure.Result.FailureReason,
+		failure.Result.PlannerAnswer,
+		failure.Stdout,
+		failure.Stderr,
+	}, "\n"))
+	if !strings.Contains(text, "submit_plan") {
+		return false
+	}
+	if strings.Contains(text, "completion_gate_required_paths_remaining_repeated") {
+		return true
+	}
+	if strings.Contains(text, "submit_plan rejected") &&
+		(strings.Contains(text, "required edit path coverage mismatch") ||
+			strings.Contains(text, "missing required edit path") ||
+			strings.Contains(text, "invalid edit anchor")) {
+		return true
+	}
+	if strings.Contains(text, "required_edit_paths_remaining") && strings.Contains(text, "submit_plan") {
+		return true
+	}
+	return strings.Contains(text, "missing completion evidence") &&
+		(strings.Contains(text, "gate retry 3/3") ||
+			strings.Contains(text, "repeated") ||
+			strings.Contains(text, "last attempt before tools disable"))
+}
+
+func appendPlanExecuteActiveModelFallbackAddendum(prompt string) string {
+	section := strings.Join([]string{
+		"## Active Model Fallback",
+		"",
+		"The previous plan-execute planner attempt failed to produce a valid `submit_plan` artifact. It may have omitted required edit paths, used stale anchors, or emitted prose instead of a valid tool call. This retry is running on the active/default model with a fresh tool transcript. The required edit scope is still authoritative, but source-body evidence from the previous attempt is not executable evidence in this retry. Read or re-read any required path the gate reports as unread, then submit one `submit_plan` whose `edits[]` coverage includes every required edit path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer `<<QUESTION>>:` with the exact path-specific blocker. Do not repeat a prose final answer.",
+	}, "\n")
+	if end := strings.Index(prompt, pathparse.BriefBodyEndMarker); end >= 0 {
+		return strings.TrimSpace(prompt[:end]) + "\n\n" + section + "\n\n" + strings.TrimSpace(prompt[end:])
+	}
+	return strings.TrimSpace(prompt) + "\n\n" + section
 }
 
 func appendDiscoveredCandidateScopeAddendum(prompt string, allowedPaths []string) string {
@@ -4598,17 +4721,53 @@ func appendPlanExecutePlannerRecoveryAddendum(brief string, failure implementati
 func planExecutePlannerRecoveryRetryInstruction(failure implementationDispatchPlanExecuteFailure) string {
 	var b strings.Builder
 	paths := uniqueImplementationDispatchPaths(append(append([]string{}, failure.RequiredPaths...), failure.Options.RequiredEditPaths...))
-	switch {
-	case len(paths) > 0:
-		fmt.Fprintf(&b, "Produce one valid `submit_plan` call whose edits include at least one real edit for each required path listed above (%s), with no outside paths.", strings.Join(paths, ", "))
-	case len(failure.AllowedPaths) > 0 || len(failure.Options.AllowedEditPaths) > 0:
-		allowed := uniqueImplementationDispatchPaths(append(append([]string{}, failure.AllowedPaths...), failure.Options.AllowedEditPaths...))
-		fmt.Fprintf(&b, "Produce one valid `submit_plan` call scoped to the allowed paths listed above (%s).", strings.Join(allowed, ", "))
-	default:
-		b.WriteString("Produce one valid `submit_plan` call grounded in the objective and target references.")
+	if path, ok := planExecuteRequiredSourceReadBlockerPath(failure); ok {
+		fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range, then produce one valid `submit_plan` call", path)
+		if len(paths) > 0 {
+			fmt.Fprintf(&b, " whose edits include at least one real edit for each required path listed above (%s), with no outside paths.", strings.Join(paths, ", "))
+		} else {
+			b.WriteString(" grounded in the objective and target references.")
+		}
+	} else {
+		switch {
+		case len(paths) > 0:
+			fmt.Fprintf(&b, "After this retry has satisfied source-body obligations for every existing required path, produce one valid `submit_plan` call whose edits include at least one real edit for each required path listed above (%s), with no outside paths. Do not treat a source read as plan coverage.", strings.Join(paths, ", "))
+		case len(failure.AllowedPaths) > 0 || len(failure.Options.AllowedEditPaths) > 0:
+			allowed := uniqueImplementationDispatchPaths(append(append([]string{}, failure.AllowedPaths...), failure.Options.AllowedEditPaths...))
+			fmt.Fprintf(&b, "Produce one valid `submit_plan` call scoped to the allowed paths listed above (%s).", strings.Join(allowed, ", "))
+		default:
+			b.WriteString("Produce one valid `submit_plan` call grounded in the objective and target references.")
+		}
 	}
 	b.WriteString(" Each edit entry must include `path`, exactly one edit shape (`old_text`+`new_text`, `start_line`+`end_line`+`content`, or `replace_all:true`+`new_text`), and one-sentence `purpose`. If the current files already contain the requested final state, answer `Decision: source-satisfied` with current-state evidence for every relevant path instead of submitting stale edits. If the plan cannot be produced from the available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.")
 	return b.String()
+}
+
+func planExecuteRequiredSourceReadBlockerPath(failure implementationDispatchPlanExecuteFailure) (string, bool) {
+	if len(failure.RequiredPaths) == 0 && len(failure.Options.RequiredEditPaths) == 0 {
+		return "", false
+	}
+	text := strings.ToLower(strings.Join([]string{
+		failure.Result.FailureReason,
+		failure.Result.PlannerAnswer,
+		failure.Stdout,
+		failure.Stderr,
+	}, "\n"))
+	if !strings.Contains(text, "required edit path source read required") &&
+		!strings.Contains(text, "not every required path has source evidence") &&
+		!strings.Contains(text, "before attempting to submit_plan") {
+		return "", false
+	}
+	for _, path := range uniqueImplementationDispatchPaths(append(append([]string{}, failure.RequiredPaths...), failure.Options.RequiredEditPaths...)) {
+		normalized := filepath.ToSlash(strings.TrimSpace(path))
+		if normalized == "" {
+			continue
+		}
+		if strings.Contains(text, strings.ToLower(normalized)) {
+			return normalized, true
+		}
+	}
+	return "", false
 }
 
 func planExecutePlannerRecoveryObservation(addendum string) string {

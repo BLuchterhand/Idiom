@@ -1322,6 +1322,59 @@ func TestPlanExecuteRepeatedCompletionGateSurfacesDeterministicMessage(t *testin
 	}
 }
 
+func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		RequiredPaths: []string{"cmd/idiom/product_workflow.go"},
+		Result: planexecute.RunResult{
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "<<QUESTION>>: completion_gate_required_paths_remaining_repeated",
+			PlannerAnswer: "Missing completion evidence: plan-execute planner phase requires a successful submit_plan tool result before final answer.",
+		},
+	}
+	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+		t.Fatalf("expected repeated submit_plan completion failure with exact scope to retry on active model")
+	}
+
+	failure.Result.FailureReason = "<<QUESTION>>: required_edit_paths_remaining"
+	failure.Result.PlannerAnswer = "Planner failed after submit_plan rejected: required edit path coverage mismatch; missing required edit path(s): `cmd/idiom/product_workflow_test.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`."
+	if !planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+		t.Fatalf("expected invalid submit_plan with exact scope to retry on active model")
+	}
+
+	failure.Options.UseActiveModel = true
+	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+		t.Fatalf("active-model retry must not recursively retry on active model")
+	}
+
+	failure.Options.UseActiveModel = false
+	failure.RequiredPaths = nil
+	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
+		t.Fatalf("unscoped planner blocker should not use active-model fallback")
+	}
+}
+
+func TestPlanExecuteActiveModelFallbackAddendumInsertedBeforeBriefEnd(t *testing.T) {
+	prompt := "# Objective\n\nUpdate files.\n\n" + pathparse.BriefBodyEndMarker + "\n\n# Tooling"
+	got := appendPlanExecuteActiveModelFallbackAddendum(prompt)
+	if !strings.Contains(got, "## Active Model Fallback") {
+		t.Fatalf("fallback addendum missing:\n%s", got)
+	}
+	if strings.Index(got, "## Active Model Fallback") > strings.Index(got, pathparse.BriefBodyEndMarker) {
+		t.Fatalf("fallback addendum should stay inside brief body:\n%s", got)
+	}
+	if !strings.Contains(got, "fresh tool transcript") || !strings.Contains(got, "source-body evidence from the previous attempt is not executable evidence") {
+		t.Fatalf("fallback addendum should make source evidence freshness explicit:\n%s", got)
+	}
+	for _, forbidden := range []string{"already provided", "executor-role planner"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("fallback addendum must not use confusing stale wording %q:\n%s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "previous plan-execute planner attempt") {
+		t.Fatalf("fallback addendum should name the planner attempt without executor-role wording:\n%s", got)
+	}
+}
+
 func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *testing.T) {
 	failure := implementationDispatchPlanExecuteFailure{
 		Brief:         "# Brief\n\nImplement typed JSON usage errors.",
@@ -1342,7 +1395,8 @@ func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *test
 
 	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, `{"decision":"retry"}`)
 	for _, want := range []string{
-		"Produce one valid `submit_plan` call",
+		"After this retry has satisfied source-body obligations for every existing required path",
+		"produce one valid `submit_plan` call",
 		"cmd/idiom/product_workflow.go",
 		"cmd/idiom/product_workflow_test.go",
 		"`old_text`+`new_text`",
@@ -1357,10 +1411,40 @@ func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *test
 		"Each entry must have `Decision: source-satisfied`",
 		"include the full file content",
 		"Recovery controller observation",
+		"Produce one valid `submit_plan` call whose edits include at least one real edit for each required path",
 	} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("recovery addendum leaked controller contract text %q:\n%s", forbidden, got)
 		}
+	}
+}
+
+func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		Brief:         "# Brief\n\nImplement coverage gate.",
+		RequiredPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
+		Options: planexecute.Options{
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
+		},
+		Result: planexecute.RunResult{
+			FailureKind:   planexecute.RunFailurePlannerBlocked,
+			FailureReason: "Required edit path source read required: read source for cmd/idiom/product_workflow_test.go before attempting to submit_plan.",
+		},
+	}
+	path, ok := planExecuteRequiredSourceReadBlockerPath(failure)
+	if !ok || path != "cmd/idiom/product_workflow_test.go" {
+		t.Fatalf("source-read blocker path = %q, %v", path, ok)
+	}
+	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, implementationDispatchRecoveryDecision{
+		Decision:      "retry",
+		Reason:        "source read blocker",
+		RetryAddendum: "First read source for `cmd/idiom/product_workflow_test.go`.",
+	}, "")
+	if !strings.Contains(got, "First read source for `cmd/idiom/product_workflow_test.go`") {
+		t.Fatalf("recovery addendum should prioritize the required source read:\n%s", got)
+	}
+	if idxRead, idxSubmit := strings.Index(got, "First read source"), strings.Index(got, "then produce one valid `submit_plan`"); idxRead < 0 || idxSubmit < 0 || idxRead > idxSubmit {
+		t.Fatalf("source read instruction should precede submit_plan instruction:\n%s", got)
 	}
 }
 
@@ -2947,7 +3031,7 @@ func TestPlanExecutePromptRunnerRoutePreservesHostedExecutorThinkingFloor(t *tes
 		executorSpec:      executorSpec,
 		modelID:           "local-planner",
 	}
-	restore := m.applyPlanExecutePromptRunnerRoute(context.Background())
+	restore := m.applyPlanExecutePromptRunnerRoute(context.Background(), planexecute.RunOptions{})
 	if !m.modelThinkingFloor {
 		t.Fatalf("hosted executor route should set modelThinkingFloor during in-process plan-execute")
 	}
@@ -2966,7 +3050,7 @@ func TestPlanExecutePromptRunnerStatePreservesThinkingForHostedExecutorRoute(t *
 		executorSpec:      executorSpec,
 		modelID:           "local-planner",
 	}
-	restoreRoute := m.applyPlanExecutePromptRunnerRoute(context.Background())
+	restoreRoute := m.applyPlanExecutePromptRunnerRoute(context.Background(), planexecute.RunOptions{})
 	restoreState := m.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
 		TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
 	}, io.Discard)
@@ -2977,6 +3061,28 @@ func TestPlanExecutePromptRunnerStatePreservesThinkingForHostedExecutorRoute(t *
 	restoreRoute()
 	if m.disableThinkingOverride || m.modelThinkingFloor {
 		t.Fatalf("plan-execute state/route should restore, disableThinking=%t floor=%t", m.disableThinkingOverride, m.modelThinkingFloor)
+	}
+}
+
+func TestPlanExecutePromptRunnerStatePreservesThinkingForActiveModelFallback(t *testing.T) {
+	thinkingOn := true
+	m := &Model{
+		cfg: config.Config{
+			Chat:        config.Chat{EnableThinking: &thinkingOn, ModelFamily: "qwen"},
+			LlamaServer: config.LlamaServer{Model: "Qwen/Qwen3.6-35B"},
+		},
+		modelID: "qwen3.6-35b",
+	}
+	restoreState := m.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+		TaskFamily:     agent.PlanThenExecutePlannerTaskFamily,
+		UseActiveModel: true,
+	}, io.Discard)
+	if m.disableThinkingOverride {
+		t.Fatalf("active-model fallback should preserve the active model thinking setting")
+	}
+	restoreState()
+	if m.disableThinkingOverride {
+		t.Fatalf("plan-execute state should restore disableThinking=false")
 	}
 }
 
@@ -3056,6 +3162,89 @@ func TestPlanExecutePromptRunnerUsesExecutorRouteWhenAvailable(t *testing.T) {
 	}
 	if plannerChat.Load() != 0 {
 		t.Fatalf("plan-execute prompt runner should not use planner chat when executor is reachable, got %d", plannerChat.Load())
+	}
+	if model.modelID != "planner-model" {
+		t.Fatalf("modelID was not restored after prompt runner: %q", model.modelID)
+	}
+}
+
+func TestPlanExecutePromptRunnerUseActiveModelSkipsExecutorRoute(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+
+	var plannerChat atomic.Int64
+	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "planner-model"}}})
+		case "/v1/chat/completions":
+			plannerChat.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "planner route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer plannerServer.Close()
+
+	var executorChat atomic.Int64
+	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": []map[string]any{{"id": "executor-model"}}})
+		case "/v1/chat/completions":
+			executorChat.Add(1)
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "executor route"}}}})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer executorServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner"]},
+		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
+	]}}}`, plannerServer.URL, executorServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = plannerServer.URL
+	cfg.LlamaServer.Model = "planner-model"
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.RouteClassifier.Enabled = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+	model.modelID = "planner-model"
+
+	answer, err := model.newPlanExecutePromptRunner(context.Background())(cfg, "answer directly", planexecute.RunOptions{
+		TaskFamily:        "direct_question",
+		MaxTokensOverride: 128,
+		UseActiveModel:    true,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("prompt runner: %v", err)
+	}
+	if strings.TrimSpace(answer) != "planner route" {
+		t.Fatalf("answer = %q, want planner route", answer)
+	}
+	if plannerChat.Load() == 0 {
+		t.Fatalf("expected planner chat request")
+	}
+	if executorChat.Load() != 0 {
+		t.Fatalf("active-model fallback should not use executor chat, got %d", executorChat.Load())
 	}
 	if model.modelID != "planner-model" {
 		t.Fatalf("modelID was not restored after prompt runner: %q", model.modelID)

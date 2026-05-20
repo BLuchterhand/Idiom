@@ -53,11 +53,31 @@ Prefer executable contracts over prompt reminders.
   Fix the contract, artifact shape, or evidence timing.
 - Avoid adding the same nudge in prompts, runtime rails, decorators, and CLI
   wrappers unless each layer owns a distinct invariant.
+- Treat repeated recovery nudges as evidence that the initial phase contract may
+  be weak. Before adding another late message, inspect the first prompt the model
+  saw and make sure it frontloads the executable sequence: evidence prerequisite,
+  permitted tool action, schema shape, and terminal outcomes.
 
 ## Change Locality
 
 - For a phase-contract bug, prefer one typed state transition plus a focused
   gate over scattered prompt text.
+- When prompt text is the right fix, change the earliest phase-specific lead-in
+  that owns the contract, not only the recovery nudge that catches the failure.
+  The lead-in and gate must describe the same state machine in the same order.
+- Use one vocabulary for each phase contract across lead-ins, runtime briefs,
+  tool schemas, rejections, logs, and UI. In plan-execute, the planner produces
+  a valid `submit_plan` artifact, `Decision: source-satisfied`, or a typed
+  blocker; the executor implements edits. Do not call planner failure an
+  implementation failure unless execution actually started.
+- Do not collapse mutation scope, evidence prerequisites, and plan coverage
+  into one "required paths" phrase. Prompts and rejections should distinguish
+  `required_edit_paths`, source-body obligations, and `submit_plan.edits[]`
+  coverage so the model cannot treat a read as a planned edit.
+- When a `submit_plan` is rejected, recovery is a contract-correction state.
+  Align prose and tool availability: the next model-visible surface should be a
+  corrected native `submit_plan`, source-satisfied evidence, or a typed blocker,
+  not another broad discovery menu.
 - For generated scratchpad bugs, prefer host-owned artifact materialization plus
   validation over another "remember to write the file" prompt.
 - For an observability bug, update the event/ledger/audit schema and tests
