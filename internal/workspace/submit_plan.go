@@ -15,12 +15,11 @@ import (
 // planner emits these via the submit_plan tool; the executor phase
 // iterates and dispatches each one against the workspace.
 //
-// The edit shapes mirror edit_file's shapes plus the plan-execute
-// whole-file/new-file shape: substring (OldText/NewText; empty
-// NewText deletes OldText), range (StartLine/EndLine/Content), or
-// ReplaceAll with NewText and empty OldText. A spec must populate one
-// of the shapes; submit_plan validates this before persisting the
-// plan.
+// The edit shapes mirror edit_file's shapes plus plan-execute-only shapes:
+// substring (OldText/NewText; empty NewText deletes OldText), range
+// (StartLine/EndLine/Content), insertion (InsertAfterLine/Content), or
+// ReplaceAll with NewText and empty OldText. A spec must populate one of the
+// shapes; submit_plan validates this before persisting the plan.
 type PlanEdit struct {
 	Path             string                    `json:"path"`
 	OldText          string                    `json:"old_text,omitempty"`
@@ -28,6 +27,7 @@ type PlanEdit struct {
 	NewTextRef       string                    `json:"new_text_ref,omitempty"`
 	StartLine        int                       `json:"start_line,omitempty"`
 	EndLine          int                       `json:"end_line,omitempty"`
+	InsertAfterLine  int                       `json:"insert_after_line,omitempty"`
 	Content          string                    `json:"content,omitempty"`
 	ContentRef       string                    `json:"content_ref,omitempty"`
 	ReplaceAll       bool                      `json:"replace_all,omitempty"`
@@ -243,17 +243,36 @@ func validatePlanEdit(edit PlanEdit) error {
 	hasOldText := strings.TrimSpace(edit.OldText) != ""
 	hasNewText := strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != ""
 	hasContent := strings.TrimSpace(edit.Content) != "" || strings.TrimSpace(edit.ContentRef) != ""
+	hasInlineContent := strings.TrimSpace(edit.Content) != ""
 	hasSubstring := hasOldText && PlanEditHasExplicitReplacementText(edit)
 	hasRange := edit.StartLine > 0 && edit.EndLine >= edit.StartLine && hasContent
+	hasInsert := edit.InsertAfterLine > 0 && hasInlineContent
 	hasReplace := hasNewText && edit.ReplaceAll
+	if edit.InsertAfterLine < 0 {
+		return fmt.Errorf("insert_after_line must be >= 1")
+	}
+	if edit.InsertAfterLine > 0 {
+		if strings.TrimSpace(edit.ContentRef) != "" {
+			return fmt.Errorf("insert_after_line edits do not support content_ref in this submit_plan shape; inline non-empty content is required")
+		}
+		if !hasInlineContent {
+			return fmt.Errorf("insert_after_line edits require non-empty content")
+		}
+		if len(edit.Content) > planInlineTextSpillThreshold {
+			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema", planInlineTextSpillThreshold)
+		}
+		if hasOldText || strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "" || edit.StartLine > 0 || edit.EndLine > 0 || edit.ReplaceAll {
+			return fmt.Errorf("insert_after_line edits are mutually exclusive with old_text/new_text, start_line/end_line, and replace_all shapes")
+		}
+	}
 	if hasOldText && !hasSubstring {
 		return fmt.Errorf("substring edits require `new_text` or `new_text_ref`; use explicit empty `new_text` to delete old_text")
 	}
 	if (edit.StartLine > 0 || edit.EndLine > 0) && !hasContent {
 		return fmt.Errorf("line-range edits require non-empty content; to delete text, use old_text with empty new_text instead")
 	}
-	if !hasSubstring && !hasRange && !hasReplace {
-		return fmt.Errorf("requires one edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref")
+	if !hasSubstring && !hasRange && !hasInsert && !hasReplace {
+		return fmt.Errorf("requires one edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content for replacement, insert_after_line+non-empty content for insertion, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref except insert_after_line")
 	}
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
 		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidance)
@@ -624,6 +643,12 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 	}
 	oldText := edit.OldText
 	if strings.TrimSpace(oldText) == "" && err != nil {
+		if edit.InsertAfterLine > 0 {
+			return fmt.Errorf("insert_after_line preflight could not read existing %s: %w", edit.Path, err)
+		}
+		if edit.StartLine > 0 || edit.EndLine > 0 {
+			return fmt.Errorf("line-range preflight could not read existing %s: %w", edit.Path, err)
+		}
 		return nil
 	}
 	if strings.TrimSpace(oldText) == "" {
@@ -636,7 +661,11 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 				return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 			}
 			if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
-				return fmt.Errorf("%s", strings.TrimSpace(rejected.Error))
+				errorText := strings.TrimSpace(rejected.Error)
+				if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
+					errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
+				}
+				return fmt.Errorf("%s", errorText)
 			}
 		} else {
 			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
@@ -751,6 +780,10 @@ func PreviewPlanEditContent(current string, edit PlanEdit) (string, bool, error)
 	if planEditIsWholeFileWrite(edit) {
 		return edit.NewText, edit.NewText != current, nil
 	}
+	if edit.InsertAfterLine > 0 {
+		updated, err := previewPlanInsertAfterLineEdit(current, edit)
+		return updated, updated != current, err
+	}
 	if strings.TrimSpace(edit.OldText) != "" {
 		matchCount := strings.Count(current, edit.OldText)
 		if matchCount == 0 {
@@ -814,6 +847,51 @@ func previewPlanLineRangeEdit(current string, edit PlanEdit) (string, error) {
 	return current[:startOffset] + replacement + current[endOffset:], nil
 }
 
+func previewPlanInsertAfterLineEdit(current string, edit PlanEdit) (string, error) {
+	line := edit.InsertAfterLine
+	if line <= 0 {
+		return current, fmt.Errorf("insert_after_line must be >= 1 for %s", edit.Path)
+	}
+	if strings.TrimSpace(edit.Content) == "" {
+		return current, fmt.Errorf("insert_after_line content must be non-empty for %s", edit.Path)
+	}
+	spans := lineSpans(current)
+	if len(spans) == 0 {
+		return current, fmt.Errorf("cannot apply insert_after_line to empty %s", edit.Path)
+	}
+	if line > len(spans) {
+		return current, fmt.Errorf("insert_after_line %d is outside %s (file has %d lines)", line, edit.Path, len(spans))
+	}
+	offset := spans[line-1].end
+	insertion := normalizePlanInsertionContent(current, offset, edit.Content)
+	return current[:offset] + insertion + current[offset:], nil
+}
+
+func normalizePlanInsertionContent(current string, offset int, content string) string {
+	if content == "" {
+		return content
+	}
+	ending := preferredLineEnding(current)
+	insertion := content
+	if offset > 0 && offset <= len(current) && !strings.HasSuffix(current[:offset], "\n") && !strings.HasPrefix(insertion, "\n") && !strings.HasPrefix(insertion, "\r\n") {
+		insertion = ending + insertion
+	}
+	if offset < len(current) && !strings.HasSuffix(insertion, "\n") {
+		insertion += ending
+	}
+	if offset == len(current) && strings.HasSuffix(current, "\n") && !strings.HasSuffix(insertion, "\n") {
+		insertion += ending
+	}
+	return insertion
+}
+
+func preferredLineEnding(text string) string {
+	if strings.Contains(text, "\r\n") {
+		return "\r\n"
+	}
+	return "\n"
+}
+
 func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]PlanEdit, int, error) {
 	out := append([]PlanEdit(nil), edits...)
 	spilled := 0
@@ -829,6 +907,9 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 			spilled++
 		}
 		if shouldSpillPlanInlineText(out[i].Content) {
+			if out[i].InsertAfterLine > 0 {
+				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema", i, planInlineTextSpillThreshold)
+			}
 			ref, err := writePlanEditBodyRef(dir, stamp, i, "content", out[i].Content)
 			if err != nil {
 				cleanupPlanEditBodyRefs(dir, out)

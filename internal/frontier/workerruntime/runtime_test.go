@@ -134,6 +134,148 @@ func TestBuildActionGuidanceForExactAnchorHiddenPrewriteTool(t *testing.T) {
 	}
 }
 
+func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "read_file", Path: "cmd/idiom/product_workflow.go"}
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Plan-execute submit_plan required",
+		Error:   "read_file is not available because the plan-execute planner is source-ready and exposes only submit_plan",
+	}
+	guidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:      "tool_rejected",
+		Request:     req,
+		Result:      result,
+		Constraints: []string{"plan_then_execute_submit_plan_ready"},
+	})
+
+	if !slices.Contains(guidance.InvalidNext, "read/search/source-refresh after plan-execute submit_plan readiness") {
+		t.Fatalf("missing submit-ready invalid action: %#v", guidance.InvalidNext)
+	}
+	joined := strings.Join(guidance.ValidNext, "\n")
+	for _, want := range []string{
+		"submit_plan with one ordered edit entry",
+		"Decision: source-satisfied",
+		"<<QUESTION>>",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in submit-ready guidance, got %#v", want, guidance.ValidNext)
+		}
+	}
+	if strings.Contains(joined, "one exact tool-shaped follow-up") {
+		t.Fatalf("submit-ready guidance must not fall back to generic probe advice: %#v", guidance.ValidNext)
+	}
+
+	for _, tc := range []struct {
+		name   string
+		req    workspace.ToolRequest
+		result workspace.ToolResult
+	}{
+		{
+			name: "successful read_file",
+			req:  workspace.ToolRequest{Tool: "read_file", Path: "a.go", StartLine: 10, EndLine: 30},
+			result: workspace.ToolResult{
+				Tool:    "read_file",
+				Summary: "Read f1 a.go lines 10-30 (total lines: 40)",
+			},
+		},
+		{
+			name: "successful code_navigate",
+			req:  workspace.ToolRequest{Tool: "code_navigate", Path: "a.go", Capability: "read_symbol", Pattern: "Run"},
+			result: workspace.ToolResult{
+				Tool:    "code_navigate",
+				Summary: "Code navigation routed read_symbol via go_read_symbol",
+				Output:  "route_summary: Read Run in a.go lines 10-30\nfunc Run() {}\n",
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			guidance := BuildActionGuidance(ActionGuidanceInput{
+				Reason:      "tool_result",
+				Request:     tc.req,
+				Result:      tc.result,
+				Constraints: []string{"plan_then_execute_submit_plan_ready"},
+			})
+			joined := strings.Join(guidance.ValidNext, "\n")
+			for _, want := range []string{
+				"submit_plan with one ordered edit entry",
+				"Decision: source-satisfied",
+				"<<QUESTION>>",
+			} {
+				if !strings.Contains(joined, want) {
+					t.Fatalf("expected %q in submit-ready guidance, got %#v", want, guidance.ValidNext)
+				}
+			}
+			for _, forbidden := range []string{
+				"one exact missing claim",
+				"narrow range read",
+				"exact-text search",
+				"answer if the inspected body",
+				"one exact tool-shaped follow-up",
+			} {
+				if strings.Contains(joined, forbidden) {
+					t.Fatalf("submit-ready guidance leaked read/probe action %q: %#v", forbidden, guidance.ValidNext)
+				}
+			}
+		})
+	}
+
+	plan := BuildRecoveryPlan(RecoveryInput{
+		Reason:      "tool_rejected",
+		Request:     req,
+		Result:      result,
+		Constraints: []string{"plan_then_execute_submit_plan_ready"},
+	})
+	joinedPlan := strings.Join(plan.ValidNext, "\n")
+	if strings.Contains(joinedPlan, "one exact tool-shaped follow-up") {
+		t.Fatalf("submit-ready recovery must not suggest another probe: %#v", plan.ValidNext)
+	}
+	if !strings.Contains(joinedPlan, "submit_plan with one ordered edit entry") {
+		t.Fatalf("submit-ready recovery must keep submit_plan closeout, got %#v", plan.ValidNext)
+	}
+
+	parseGuidance := BuildActionGuidance(ActionGuidanceInput{
+		Reason:      "tool_parse_rejected",
+		Request:     workspace.ToolRequest{Tool: "tool_parse"},
+		Result:      workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "decode tool request"},
+		Constraints: []string{"plan_then_execute_submit_plan_ready"},
+	})
+	joinedParse := strings.Join(parseGuidance.ValidNext, "\n")
+	if !strings.Contains(joinedParse, "parser-readable submit_plan") {
+		t.Fatalf("submit-ready parse recovery should require parser-readable submit_plan, got %#v", parseGuidance.ValidNext)
+	}
+	if strings.Contains(joinedParse, "answer normally only if the task is complete") {
+		t.Fatalf("submit-ready parse recovery must not use generic parse fallback, got %#v", parseGuidance.ValidNext)
+	}
+	parsePlan := BuildRecoveryPlan(RecoveryInput{
+		Reason:      "tool_parse_rejected",
+		Request:     workspace.ToolRequest{Tool: "tool_parse"},
+		Result:      workspace.ToolResult{Tool: "tool_parse", Summary: "Malformed tool request rejected", Error: "decode tool request"},
+		Constraints: []string{"plan_then_execute_submit_plan_ready"},
+	})
+	joinedRequired := strings.Join(parsePlan.RequiredNext, "\n")
+	if !strings.Contains(joinedRequired, "parser-readable submit_plan") {
+		t.Fatalf("submit-ready recovery plan should require parser-readable submit_plan, got %#v", parsePlan.RequiredNext)
+	}
+	if strings.Contains(joinedRequired, "valid JSON tool object") {
+		t.Fatalf("submit-ready recovery plan must not use generic JSON recovery, got %#v", parsePlan.RequiredNext)
+	}
+}
+
+func TestBuildStepInstructionForPlanExecuteSubmitReady(t *testing.T) {
+	inst := BuildStepInstruction(RunState{
+		TaskFamily:        "plan_then_execute_planner",
+		Constraints:       []string{"plan_then_execute_submit_plan_ready"},
+		RequiredEditPaths: []string{"a.go", "a_test.go"},
+	})
+
+	if !strings.Contains(inst.Directive, "source obligations are closed") {
+		t.Fatalf("expected submit-ready directive, got %q", inst.Directive)
+	}
+	if strings.Contains(inst.Directive, "narrow required-path source read") {
+		t.Fatalf("submit-ready directive must not advertise source reads, got %q", inst.Directive)
+	}
+}
+
 func TestBuildActionGuidanceForWriteReadyImplementationPacket(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
 		Reason:       "tool_result",

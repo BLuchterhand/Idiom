@@ -1,5 +1,5 @@
 {
-  "_comment": "idiom's own backend config for self-hosted dispatch. It declares the same local Qwen lanes Colony uses while keeping idiom's existing 35B sampling defaults. qwen-pair remains the default stable stack: 35B planner/classifier plus coder executor. qwen-27b-pair is an opt-in planner/orchestrator eval stack: 27B-6bit planner/classifier plus the same coder executor. Refine uses the 35B lane with request-level --no-thinking instead of launching a duplicate 35B no-think process. `idiom backend start --profile qwen-pair` brings the default pair up; `idiom backend start --profile qwen-27b-pair` brings the 27B eval pair up. `idiom backend proxy --profile <profile>` runs the alias router on :47680.",
+  "_comment": "idiom's own backend config for self-hosted dispatch. It declares the same local Qwen lanes Colony uses while keeping idiom's existing 35B sampling defaults. qwen-pair currently routes planner/classifier/executor to 35B while TUI implementation-lane hardening is evaluated; the coder executor remains declared for comparison and opt-in routing. qwen-27b-pair is an opt-in planner/orchestrator eval stack: 27B-6bit planner/classifier plus the coder executor. Refine uses the 35B lane with request-level --no-thinking instead of launching a duplicate 35B no-think process. `idiom backend start --profile qwen-pair` brings the default pair up; `idiom backend start --profile qwen-27b-pair` brings the 27B eval pair up. `idiom backend proxy --profile <profile>` runs the alias router on :47680.",
   "default_profile": "qwen-pair",
   "profiles": {
     "qwen-pair": {
@@ -18,7 +18,7 @@
             "--top-k", "20",
             "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"
           ],
-          "roles": ["planner", "classifier"]
+          "roles": ["planner", "classifier", "executor"]
         },
         {
           "alias": "qwen3-coder-30b",
@@ -41,8 +41,8 @@
         "listen": 47680,
         "default_alias": "qwen3.6-35b",
         "default_planner": "qwen3.6-35b",
-        "default_executor": "qwen3-coder-30b",
-        "default_coder": "qwen3-coder-30b",
+        "default_executor": "qwen3.6-35b",
+        "default_coder": "qwen3.6-35b",
         "default_classifier": "qwen3.6-35b"
       }
     },

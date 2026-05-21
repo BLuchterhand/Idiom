@@ -15,6 +15,7 @@ import (
 	"unicode"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
@@ -93,6 +94,45 @@ type Runner struct {
 	LastAssistantMessage llama.ChatMessage
 }
 
+func (r *Runner) supportsNativeTools() bool {
+	return r == nil || r.Client == nil || r.Client.SupportsNativeTools()
+}
+
+func (r *Runner) supportsTerminalSubmitPlanNativeTools(results []workspace.ToolResult) bool {
+	if r == nil || r.Client == nil {
+		return true
+	}
+	if r.planThenExecutePlannerPhase() && planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
+		return false
+	}
+	if r.Client.SupportsNativeTools() {
+		return true
+	}
+	return strings.EqualFold(r.Client.Backend(), config.BackendMLX) &&
+		r.planThenExecutePlannerPhase() &&
+		planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results)
+}
+
+func (r *Runner) forceTerminalSubmitPlanNativeTools(opts *llama.ChatOptions, results []workspace.ToolResult) {
+	if r == nil || opts == nil || r.Client == nil || r.Client.SupportsNativeTools() {
+		return
+	}
+	if !strings.EqualFold(r.Client.Backend(), config.BackendMLX) ||
+		!r.planThenExecutePlannerPhase() ||
+		planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) ||
+		!planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results) {
+		return
+	}
+	opts.ForceNativeTools = true
+	if r.Workspace != nil && !chatOptionsExposeTool(*opts, "submit_plan") {
+		opts.Tools = buildLlamaTools(r.Workspace.BuildToolDefinitions([]string{"submit_plan"}))
+	}
+	if chatOptionsExposeTool(*opts, "submit_plan") {
+		opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
+		opts.ToolChoice = "required"
+	}
+}
+
 func (r *Runner) Run(
 	ctx context.Context,
 	messages []llama.ChatMessage,
@@ -126,6 +166,9 @@ func (r *Runner) Run(
 	// giving up. A path can be granted at most one read; subsequent reads
 	// fall back to the standard "answer with <<QUESTION>>" blocker.
 	recoveryReadAllowanceUsed := map[string]bool{}
+	planThenExecuteReadySourceRefreshes := 0
+	planThenExecuteNativeSubmitPlanNoCallFallbacks := 0
+	planThenExecuteNativeSubmitPlanDisabled := false
 	// postCompletionVerificationCalls counts non-write tool requests issued
 	// AFTER all required edit paths have been written. Models commonly use
 	// this phase to read the files they just wrote and confirm the edits
@@ -243,6 +286,29 @@ func (r *Runner) Run(
 				currentAllowedTools = append(currentAllowedTools, name)
 			}
 		}
+	}
+	terminalSubmitPlanNativeTools := func() bool {
+		return !planThenExecuteNativeSubmitPlanDisabled && r.supportsTerminalSubmitPlanNativeTools(collectedResults)
+	}
+	syncPlanThenExecuteRecoveryAllowedTools := func() {
+		if !planThenExecuteNativeSubmitPlanDisabled {
+			r.forceTerminalSubmitPlanNativeTools(&opts, collectedResults)
+		}
+		syncCurrentAllowedToolsFromOptions()
+		if !opts.ForceNativeTools &&
+			!terminalSubmitPlanNativeTools() &&
+			r.planThenExecutePlannerPhase() &&
+			len(opts.Tools) == 0 &&
+			planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, collectedResults) {
+			currentAllowedTools = append(currentAllowedTools[:0], "submit_plan")
+		}
+	}
+	refreshPlanThenExecuteTerminalSurface := func(reason string) {
+		if planThenExecuteNativeSubmitPlanDisabled {
+			r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&turnMessages, collectedResults, reason)
+			return
+		}
+		r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, reason)
 	}
 	if r.Workspace != nil {
 		if exactAnchorWriteOnlyActive {
@@ -453,6 +519,16 @@ func (r *Runner) Run(
 		requestMessages := chatMessagesForOptions(turnMessages, opts)
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 		if err != nil {
+			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, opts, collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
+				planThenExecuteNativeSubmitPlanNoCallFallbacks++
+				planThenExecuteNativeSubmitPlanDisabled = true
+				opts = planThenExecuteTextualSubmitPlanFallbackChatOptions(opts, r.RuntimeBrief, collectedResults)
+				currentAllowedTools = append(currentAllowedTools[:0], "submit_plan")
+				r.refreshPlanThenExecuteTerminalTextualFallbackSurface(&turnMessages, collectedResults, "native_required_no_tool_call")
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
+				continue
+			}
 			if answer, ok := r.modelErrorAfterPartialEditBlockerAnswer(err, collectedResults); ok {
 				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
 				return finish(answer, nil, "model_error_after_partial_edit", false)
@@ -490,13 +566,25 @@ func (r *Runner) Run(
 			}
 		}
 		if !ok && parseErr == nil {
-			if salvagedReq, salvagedRaw, salvaged := r.salvageToolRequestFromReasoning(assistantMessage, collectedResults); salvaged {
+			if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
+				req, raw, ok = salvagedReq, salvagedRaw, true
+				r.emitEvent(RunEvent{Role: "visible_tool_salvage", Content: fmt.Sprintf("model wrapped parser-readable %s request in prose; executing the request", req.Tool)})
+			} else if salvagedReq, salvagedRaw, salvaged := r.salvageToolRequestFromReasoning(assistantMessage, collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
 				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRejectedRequiredSourceRead(reply, collectedResults); recovered {
+				req, raw, ok = recoveredReq, recoveredRaw, true
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool planner text and issued source read for unread required edit path %s", req.Path)})
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRejectedRequiredPathRead(reply, collectedResults); recovered {
+				req, raw, ok = recoveredReq, recoveredRaw, true
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool implementation text and issued bounded read for unread required edit path %s", req.Path)})
 			} else if strings.TrimSpace(reply) == "" {
 				if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRequiredSourceRead(collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
 					r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing source read before another plan attempt", req.Path)})
+				} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRequiredPathRead(collectedResults); recovered {
+					req, raw, ok = recoveredReq, recoveredRaw, true
+					r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing bounded read before another implementation attempt", req.Path)})
 				} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryTargetRead(collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
 					r.emitEvent(RunEvent{Role: "completion_recovery_auto_target_read", Content: fmt.Sprintf("completion recovery found candidate target %s in the runtime brief; issuing bounded read before another plan attempt", req.Path)})
@@ -515,7 +603,12 @@ func (r *Runner) Run(
 		err = parseErr
 		if err != nil {
 			assistantToolTurn := assistantMessage
-			if activeToolCall == nil {
+			if activeToolCall != nil {
+				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, *activeToolCall)
+			} else if !r.supportsNativeTools() {
+				assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, workspace.ToolRequest{Tool: "tool_parse"}, raw, opts)
+				activeToolCall = nil
+			} else {
 				call := syntheticLegacyParseToolCall(stepNumber, raw)
 				activeToolCall = &call
 				assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
@@ -532,9 +625,10 @@ func (r *Runner) Run(
 				markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 				hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
 				rebuildTools()
-				opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-				opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-				syncCurrentAllowedToolsFromOptions()
+				opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				syncPlanThenExecuteRecoveryAllowedTools()
+				refreshPlanThenExecuteTerminalSurface("parse_recovery")
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_parse_recovery", Content: prompt})
 			}
@@ -596,9 +690,15 @@ func (r *Runner) Run(
 					result.Summary == "Completion gate rejected unresolved process narration" ||
 					(r.planThenExecutePlannerPhase() && result.Summary == "Plan-execute completion gate rejected final answer" && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
 					(r.planThenExecutePlannerPhase() && result.Summary == "Completion gate rejected non-specific submit_plan blocker" && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
+					(r.textualRequiredPathCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
 					(r.unscopedNoWriteCompletionRecoveryApplies(collectedResults) && priorGateRejections < r.completionGateRetryLimit(collectedResults))
 				if prompt, hideReads, ok := r.completionGateRecoveryPrompt(collectedResults); ok && shouldAttachRecoveryPrompt {
-					opts = completionGateRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
+					opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+					if implementationRequiredPathHiddenOnlyRecoveryStall(r.RuntimeBrief, collectedResults, assistantMessage, priorGateRejections, terminalSubmitPlanNativeTools()) {
+						opts = forceVisibleActionChatOptions(opts)
+						prompt = "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce the required visible tool JSON or a visible `<<QUESTION>>:` blocker now.\n\n" + prompt
+						r.emitEvent(RunEvent{Role: "required_edit_paths_visible_write_mode", Content: "anchor-ready textual recovery produced hidden-only output; retrying once with hidden thinking disabled for the terminal write/blocker action"})
+					}
 					if hideReads {
 						implementationWriteOnlyRecoveryActive = true
 						if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
@@ -607,10 +707,11 @@ func (r *Runner) Run(
 						markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
 						hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
 						rebuildTools()
-						opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-						opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-						syncCurrentAllowedToolsFromOptions()
+						opts = planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+						opts = planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+						syncPlanThenExecuteRecoveryAllowedTools()
 					}
+					refreshPlanThenExecuteTerminalSurface("completion_gate_recovery")
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 					r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
 				}
@@ -653,7 +754,12 @@ func (r *Runner) Run(
 			return finish(answer, err, "model_final", false)
 		}
 		assistantToolTurn := assistantMessage
-		if activeToolCall == nil {
+		if activeToolCall != nil {
+			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, *activeToolCall)
+		} else if !r.supportsNativeTools() {
+			assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, req, raw, opts)
+			activeToolCall = nil
+		} else {
 			call := syntheticLegacyToolCall(stepNumber, req, raw)
 			activeToolCall = &call
 			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
@@ -806,6 +912,14 @@ func (r *Runner) Run(
 			continue
 		}
 		recoveryReadAllowanceGrantedThisRequest := false
+		if r.planThenExecuteReadySourceRefreshAllowed(req, collectedResults, planThenExecuteReadySourceRefreshes) {
+			recoveryReadAllowanceGrantedThisRequest = true
+			planThenExecuteReadySourceRefreshes++
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_ready_source_refresh_allowed",
+				Content: fmt.Sprintf("allowed bounded %s source refresh %d/%d for required path %q after rejected submit_plan showed a stale or missing anchor", strings.TrimSpace(req.Tool), planThenExecuteReadySourceRefreshes, planThenExecuteReadySourceRefreshLimit, normalizeRunnerPath(planThenExecuteRequestTargetPath(req))),
+			})
+		}
 		if implementationWriteOnlyRecoveryActive && !r.writeOnlyRecoveryToolIsWrite(req.Tool) {
 			if r.planThenExecutePlannerPhase() {
 				if planThenExecuteRejectedPlanSourceRefreshAllowed(req, r.requiredEditCoveragePaths(), collectedResults) {
@@ -825,9 +939,10 @@ func (r *Runner) Run(
 						Error:   fmt.Sprintf("%s is not available while plan-execute planner recovery is waiting for a visible `submit_plan`. The next visible action must be a parser-readable `submit_plan` with one edit entry for every required_edit_path, `Decision: source-satisfied` with current-state evidence for every required path, or <<QUESTION>> with the exact path-specific blocker.%s", strings.TrimSpace(req.Tool), refreshNote),
 					}
 					controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+					refreshPlanThenExecuteTerminalSurface("submit_plan_recovery")
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
-					opts = planThenExecuteReadyToSubmitChatOptions(opts, r.RuntimeBrief, collectedResults)
-					syncCurrentAllowedToolsFromOptions()
+					opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+					syncPlanThenExecuteRecoveryAllowedTools()
 					r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: result.Error})
 					continue
 				}
@@ -911,6 +1026,19 @@ func (r *Runner) Run(
 			if done {
 				return finish(answer, err, "plan_then_execute_clamped_eof_read_rejected", true)
 			}
+			continue
+		}
+		if summary, errorText, prompt, reject := r.planThenExecuteSubmitPlanOnlySurfaceRejection(req, collectedResults, currentAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
+			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+			if done {
+				return finish(answer, err, "plan_then_execute_submit_plan_only_rejected", true)
+			}
+			refreshPlanThenExecuteTerminalSurface("submit_plan_only_rejection")
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			rebuildTools()
+			opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			syncPlanThenExecuteRecoveryAllowedTools()
+			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 			continue
 		}
 		if summary, errorText, reject := currentToolSurfaceRejection(req, currentAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
@@ -1074,12 +1202,12 @@ func (r *Runner) Run(
 		} else if res.shouldContinue {
 			continue
 		}
-		if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject {
+		if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(req, r.RuntimeBrief, collectedResults); reject && !recoveryReadAllowanceGrantedThisRequest {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 			if r.planThenExecutePlannerPhase() {
 				rebuildTools()
-				opts = planThenExecutePostReadinessRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-				syncCurrentAllowedToolsFromOptions()
+				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				syncPlanThenExecuteRecoveryAllowedTools()
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: errorText})
 			}
@@ -1579,6 +1707,12 @@ func (r *Runner) Run(
 				Role:    "scoped_bounded_source_read",
 				Content: intercept.Reason,
 			})
+		} else if intercept := r.preflightScopedImplementationLargeWriteFileReplacement(req, collectedResults); intercept.Intercepted {
+			result = intercept.Result
+			r.emitEvent(RunEvent{
+				Role:    "scoped_large_write_file_guard",
+				Content: intercept.Reason,
+			})
 		} else {
 			switch precheck := r.preflightApplyPatchAgainstChangedPaths(req, collectedResults); precheck.Action {
 			case applyPatchPreflightAllSkipped:
@@ -1618,6 +1752,11 @@ func (r *Runner) Run(
 			clearVerificationGateFingerprints(requestBudget.fingerprint.rejected)
 			clearRunnerStringIntMap(rejectedActions)
 			rebuildTools()
+		}
+		if !terminalSubmitPlanNativeTools() && len(r.remainingRequiredEditPaths(collectedResults)) > 0 &&
+			implementationRequiredPathAnchorsReady(r.RuntimeBrief, collectedResults) {
+			opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, false)
+			r.emitEvent(RunEvent{Role: "required_edit_paths_visible_write_mode", Content: "all remaining required edit paths have anchor-ready source evidence; textual backend recovery will disable hidden thinking and require visible write/blocker output"})
 		}
 		r.emitVerificationPhaseEvent(update.VerificationState, update.VerificationDetail)
 		if autonomyRecorder != nil && update.VerificationState != "" {
@@ -1667,12 +1806,19 @@ func (r *Runner) Run(
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteSubmitPlanRejectedForCorrection(req, result) {
+			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
 			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, result, len(collectedResults)-1)
 			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required edit path, `Decision: source-satisfied` with per-path current-state evidence, or `<<QUESTION>>:` with the exact path-specific blocker. " + planThenExecuteSubmitPlanVisibleJSONInstruction() + " " + refreshNote
+			if terminalSubmitPlanNativeTools() {
+				prompt = planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, result)
+			}
+			if !planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults) {
+				refreshPlanThenExecuteTerminalSurface("submit_plan_rejected")
+			}
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			rebuildTools()
-			opts = planThenExecutePostReadinessRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-			syncCurrentAllowedToolsFromOptions()
+			opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			syncPlanThenExecuteRecoveryAllowedTools()
 			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: prompt})
 			continue
 		}
@@ -1699,10 +1845,14 @@ func (r *Runner) Run(
 			}
 			if nudge := planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, collectedResults); nudge != "" {
 				planThenExecuteReadinessNudged = true
+				refreshPlanThenExecuteTerminalSurface("readiness")
+				if terminalSubmitPlanNativeTools() {
+					nudge = planThenExecuteNativeSubmitPlanNudge(r.RuntimeBrief)
+				}
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				rebuildTools()
-				opts = planThenExecuteReadyToSubmitChatOptions(opts, r.RuntimeBrief, collectedResults)
-				syncCurrentAllowedToolsFromOptions()
+				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				syncPlanThenExecuteRecoveryAllowedTools()
 				r.emitEvent(RunEvent{Role: "plan_then_execute_readiness_nudge", Content: nudge})
 			}
 		}
@@ -1711,15 +1861,19 @@ func (r *Runner) Run(
 			planThenExecuteReadinessNudged &&
 			strings.TrimSpace(result.Tool) != "submit_plan" &&
 			successfulSubmitPlanResultCount(collectedResults) == 0 {
-			if _, _, rejected := lastRejectedSubmitPlanCoverageResult(collectedResults); rejected &&
+			if rejectedResult, _, rejected := lastRejectedSubmitPlanCoverageResult(collectedResults); rejected &&
 				!planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults) &&
 				len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults)) == 0 {
 				planThenExecuteCorrectionAfterRefreshNudged = true
 				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. The next visible action must be a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required edit path, `Decision: source-satisfied` with per-path current-state evidence, or `<<QUESTION>>:` with the exact path-specific blocker. " + planThenExecuteSubmitPlanVisibleJSONInstruction()
+				refreshPlanThenExecuteTerminalSurface("submit_plan_after_refresh")
+				if terminalSubmitPlanNativeTools() {
+					prompt = planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, rejectedResult)
+				}
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 				rebuildTools()
-				opts = planThenExecutePostReadinessRecoveryChatOptions(opts, r.RuntimeBrief, collectedResults)
-				syncCurrentAllowedToolsFromOptions()
+				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				syncPlanThenExecuteRecoveryAllowedTools()
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_after_refresh", Content: prompt})
 			}
 		}
@@ -1848,6 +2002,96 @@ func implementationScopedReadFileRequestInExplicitScope(brief workerruntime.Work
 		return false
 	}
 	return readRequestTargetsRequiredEditPath(req, implementationScopedExplicitReadScope(brief))
+}
+
+func (r *Runner) preflightScopedImplementationLargeWriteFileReplacement(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil || r.Workspace == nil {
+		return verificationInterceptResult{}
+	}
+	if strings.TrimSpace(req.Tool) != "write_file" {
+		return verificationInterceptResult{}
+	}
+	if briefIsDocDeliverableLane(r.RuntimeBrief) {
+		return verificationInterceptResult{}
+	}
+	if !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) {
+		return verificationInterceptResult{}
+	}
+	relPath := scopedImplementationRequiredPath(req.Path, r.RuntimeBrief.RequiredEditPaths)
+	if relPath == "" || writePathIsNonSource(relPath) {
+		return verificationInterceptResult{}
+	}
+	absPath := filepath.Join(r.Workspace.Root(), filepath.FromSlash(relPath))
+	info, err := os.Stat(absPath)
+	if err != nil || info.IsDir() {
+		return verificationInterceptResult{}
+	}
+	lineCount := 0
+	byteCount := info.Size()
+	if byteCount <= scopedImplementationLargeReadByteThreshold {
+		data, readErr := os.ReadFile(absPath)
+		if readErr != nil {
+			return verificationInterceptResult{}
+		}
+		lineCount = countTextLines(data)
+		byteCount = int64(len(data))
+	}
+	if lineCount <= scopedImplementationLargeReadLineThreshold && byteCount <= scopedImplementationLargeReadByteThreshold {
+		return verificationInterceptResult{}
+	}
+	detail := fmt.Sprintf("%d bytes", byteCount)
+	if lineCount > 0 {
+		detail = fmt.Sprintf("%d lines, %d bytes", lineCount, byteCount)
+	}
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result: workspace.ToolResult{
+			Tool:    "write_file",
+			Summary: fmt.Sprintf("Rejected large existing write_file replacement for %s", relPath),
+			Error: fmt.Sprintf(
+				"write_file would replace existing large scoped source path %s (%s). Use apply_patch or edit_file with old_text/new_text or start_line/end_line/content for a bounded edit. write_file is reserved here for new files, small files, and non-source deliverables.",
+				relPath,
+				detail,
+			),
+		},
+		Reason: fmt.Sprintf("rejected range-less full-file replacement on large scoped source path %s", relPath),
+	}
+}
+
+func scopedImplementationRequiredPath(path string, required []string) string {
+	cleaned := cleanRelativeRunnerPath(path)
+	if cleaned == "" {
+		return ""
+	}
+	for _, candidate := range required {
+		if cleanRelativeRunnerPath(candidate) == cleaned {
+			return cleaned
+		}
+	}
+	return ""
+}
+
+func cleanRelativeRunnerPath(path string) string {
+	normalized := normalizeRunnerPath(path)
+	if normalized == "" || filepath.IsAbs(normalized) {
+		return ""
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(normalized))
+	if cleaned == "." || cleaned == ".." || strings.HasPrefix(cleaned, "../") {
+		return ""
+	}
+	return cleaned
+}
+
+func countTextLines(data []byte) int {
+	if len(data) == 0 {
+		return 0
+	}
+	lines := strings.Count(string(data), "\n")
+	if data[len(data)-1] != '\n' {
+		lines++
+	}
+	return lines
 }
 
 func (r *Runner) preflightScopedImplementationBoundedSourceRead(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
@@ -2383,13 +2627,33 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 	}
 
 	if runnerBriefRequiresMutation(brief) {
+		if planThenExecutePlannerBrief(brief) && len(brief.RequiredEditPaths) > 0 && successfulSubmitPlanResultCount(results) == 0 {
+			addSource("required_source_evidence_contract")
+			if pending := planThenExecutePendingRequiredSourceEvidenceSummary(brief, results, 6); pending != "" {
+				addOpen("pending_required_source_anchors: " + pending)
+				readiness.FurtherReadsRequire = "anchor-ready source evidence for pending required_edit_paths before submit_plan"
+			} else {
+				addClosed("required_source_anchors_ready")
+			}
+		} else if len(brief.RequiredEditPaths) > 0 {
+			addSource("required_source_evidence_contract")
+			if implementationRequiredPathAnchorsReady(brief, results) {
+				addClosed("required_source_anchors_ready")
+			} else if len(results) > 0 {
+				if pending := planThenExecutePendingRequiredSourceEvidenceSummary(brief, results, 6); pending != "" {
+					addOpen("pending_required_source_anchors: " + pending)
+				}
+			}
+		}
 		missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
 		switch {
 		case len(brief.RequiredEditPaths) > 0 && len(changed) == 0:
 			readiness.ReadyToAnswer = false
 			readiness.ReadyToWrite = true
 			addOpen("required_edit_paths_not_changed")
-			if exactAnchorPreWriteSurfaceActive(brief, results) {
+			if planThenExecutePlannerBrief(brief) && planThenExecutePendingRequiredSourceEvidenceSummary(brief, results, 1) != "" {
+				readiness.FurtherReadsRequire = "anchor-ready source evidence for pending required_edit_paths before submit_plan"
+			} else if exactAnchorPreWriteSurfaceActive(brief, results) {
 				readiness.FurtherReadsRequire = "no further reads before the first exact-anchor write; edit an in-scope required path or report <<QUESTION>> with the stale or missing exact anchor"
 			} else {
 				readiness.FurtherReadsRequire = "only semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact; otherwise edit an in-scope required path or report <<QUESTION>> with the exact path-specific blocker"
@@ -2607,7 +2871,8 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		}
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
 			"submit_plan with one ordered edit entry for every required_edit_paths entry, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker",
-		}, brief.RequiredNext)
+		}, rejectRunnerStateStrings(brief.RequiredNext, planThenExecuteSubmitReadySourceHint))
+		brief.Constraints = mergeRunnerStateStrings([]string{"plan_then_execute_submit_plan_ready"}, brief.Constraints)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
 			"final answer before submit_plan succeeds unless it is a source-satisfied closeout with current-state evidence for every required path",
 			"per-edit write tool in plan-execute planner phase",
@@ -2617,8 +2882,8 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		brief.SearchPolicy = mergeRunnerStateStrings([]string{
 			"required_edit_paths plus packet evidence define the submit_plan scope",
 			"if current source already matches requested final state, close as source-satisfied instead of submitting stale edits",
-			"use reads only for exact anchor confirmation before submit_plan",
-		}, brief.SearchPolicy)
+			"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome",
+		}, rejectRunnerStateStrings(brief.SearchPolicy, planThenExecuteSubmitReadySourceHint))
 		return brief
 	}
 	changed := changedPathsFromToolResults(results)
@@ -2686,6 +2951,28 @@ func planThenExecuteRequiredSourceHint(value string) bool {
 		"new orientation read/search before the next unread required_edit_path source-body read",
 		"progress through unread required_edit_paths one source-body read at a time before submit_plan",
 		"outline/search hits orient but do not satisfy required source-body evidence",
+	} {
+		if strings.Contains(value, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func planThenExecuteSubmitReadySourceHint(value string) bool {
+	if planThenExecuteRequiredSourceHint(value) {
+		return true
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"for existing required paths, satisfy source-body obligations before submit_plan",
+		"packet anchors establish scope but existing paths still need source-body obligations satisfied before submit_plan",
+		"source-body obligations before submit_plan",
+		"use reads only for exact anchor confirmation before submit_plan",
+		"raw source reads are only for exact anchor confirmation",
 	} {
 		if strings.Contains(value, marker) {
 			return true
@@ -2797,9 +3084,13 @@ func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []worker
 	if len(brief.ToolManifest) == 0 {
 		return nil
 	}
+	suppressWholeFileWrites := scopedImplementationUsesBoundedSourceEdits(brief, brief.RequiredEditPaths)
 	required := make(map[string]struct{}, len(brief.RequiredTools))
 	for _, tool := range brief.RequiredTools {
 		for _, concrete := range textualToolProtocolConcreteRequiredTools(tool) {
+			if suppressWholeFileWrites && textualToolProtocolWholeFileWriteTool(concrete) {
+				continue
+			}
 			if concrete != "" {
 				required[concrete] = struct{}{}
 			}
@@ -2811,6 +3102,9 @@ func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []worker
 	if len(required) > 0 {
 		for _, entry := range brief.ToolManifest {
 			tool := strings.TrimSpace(entry.Tool)
+			if suppressWholeFileWrites && textualToolProtocolWholeFileWriteTool(tool) {
+				continue
+			}
 			if _, ok := required[tool]; ok {
 				key := textualToolProtocolEntryKey(entry)
 				if _, seen := seenEntries[key]; seen {
@@ -2831,6 +3125,9 @@ func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []worker
 		if tool == "" {
 			continue
 		}
+		if suppressWholeFileWrites && textualToolProtocolWholeFileWriteTool(tool) {
+			continue
+		}
 		if _, ok := seenTools[tool]; ok {
 			continue
 		}
@@ -2843,6 +3140,15 @@ func textualToolProtocolEntries(brief workerruntime.WorkerRuntimeBrief) []worker
 		seenTools[tool] = struct{}{}
 	}
 	return selected
+}
+
+func textualToolProtocolWholeFileWriteTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "write_file", "append_file":
+		return true
+	default:
+		return false
+	}
 }
 
 func textualToolProtocolConcreteRequiredTools(tool string) []string {
@@ -3289,6 +3595,9 @@ func filterRunnerStateStrings(values []string, drop func(string) bool) []string 
 
 func runnerGuidanceConstraints(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	constraints := append([]string(nil), brief.Constraints...)
+	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
+		constraints = mergeRunnerStateStrings(constraints, []string{"plan_then_execute_submit_plan_ready"})
+	}
 	if delegatedReadOnlyClosureReady(agent, brief, results) {
 		constraints = mergeRunnerStateStrings(constraints, []string{"answer_readiness_reached"})
 	}
@@ -5034,6 +5343,582 @@ func legacyToolCallHistoryMessage(reply llama.ChatMessage, call llama.ToolCall) 
 	}
 }
 
+func textualToolRequestHistoryMessage(reply llama.ChatMessage, req workspace.ToolRequest, raw string, opts llama.ChatOptions) llama.ChatMessage {
+	content := strings.TrimSpace(raw)
+	if content == "" || !strings.Contains(content, `"tool"`) {
+		content = marshalToolRequestRaw(req)
+	}
+	content = strings.TrimSpace(content)
+	message := llama.ChatMessage{
+		Role:             util.FirstNonEmpty(strings.TrimSpace(reply.Role), "assistant"),
+		Content:          content,
+		ReasoningContent: reply.ReasoningContent,
+	}
+	return assistantHistoryMessageForOptions(message, opts)
+}
+
+func (r *Runner) prunePlanThenExecuteTerminalTextualToolHistory(messages *[]llama.ChatMessage, reason string) {
+	if r == nil || r.supportsNativeTools() || !r.planThenExecutePlannerPhase() || messages == nil {
+		return
+	}
+	pruned, dropped := prunePlanThenExecuteTextualToolRequestHistory(*messages)
+	if dropped == 0 {
+		return
+	}
+	*messages = pruned
+	r.emitEvent(marshalRunEvent("plan_then_execute_textual_tool_history_pruned", map[string]any{
+		"reason":           strings.TrimSpace(reason),
+		"dropped_messages": dropped,
+	}))
+}
+
+func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.ChatMessage, results []workspace.ToolResult, reason string) {
+	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil {
+		return
+	}
+	if !planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, results) {
+		r.prunePlanThenExecuteTerminalTextualToolHistory(messages, reason)
+		return
+	}
+	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(*messages)
+	terminalBrief := r.planThenExecuteTerminalToolBrief(results)
+	terminalState := workerruntime.RunState{
+		Lane:              util.FirstNonEmpty(strings.TrimSpace(terminalBrief.Lane), r.agentName()),
+		TaskFamily:        terminalBrief.TaskFamily,
+		Contract:          terminalBrief.Contract,
+		Phase:             "plan_submit_ready",
+		Objective:         terminalBrief.Objective,
+		Permission:        terminalBrief.PermissionProfile,
+		TargetRefs:        append([]string(nil), terminalBrief.TargetRefs...),
+		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
+		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
+		Constraints:       append([]string(nil), terminalBrief.Constraints...),
+		AllowedTools:      []string{"submit_plan"},
+		ToolManifest:      workerruntime.BuildToolManifest([]string{"submit_plan"}),
+		RequiredTools:     []string{"submit_plan"},
+		ReadinessGate:     append([]string(nil), terminalBrief.ReadinessGate...),
+		SearchPolicy:      append([]string(nil), terminalBrief.SearchPolicy...),
+		StopConditions:    append([]string(nil), terminalBrief.StopConditions...),
+		FinalCritic:       append([]string(nil), terminalBrief.FinalCritic...),
+		NextActions:       append([]string(nil), terminalBrief.RequiredNext...),
+		InvalidActions:    append([]string(nil), terminalBrief.InvalidActions...),
+		Readiness:         terminalBrief.Readiness,
+	}
+	transport := "textual"
+	surfaceTitle := "# Terminal Plan-Execute Textual Tool Surface"
+	nativeTerminal := r.supportsTerminalSubmitPlanNativeTools(results)
+	actionInstruction := r.textualToolProtocolPrompt(terminalBrief)
+	submitPlanSkeleton := planThenExecuteTerminalSubmitPlanSkeleton(terminalBrief, results, nativeTerminal)
+	renderedState := workerruntime.RenderRunState(terminalState)
+	if nativeTerminal {
+		transport = "native"
+		surfaceTitle = "# Terminal Plan-Execute Native Tool Surface"
+		terminalState.ReadinessGate = []string{"native_submit_plan_tool_call_required"}
+		terminalState.StopConditions = []string{"submit_plan_returned_ok", "submit_plan_rejected_with_blocker"}
+		terminalState.FinalCritic = []string{"submit_plan_called", "edits_cover_required_paths"}
+		terminalState.NextActions = []string{"call native submit_plan with one edit entry for every required_edit_path"}
+		renderedState = workerruntime.RenderStepInstruction(workerruntime.StepInstruction{
+			CurrentState: terminalState,
+			Directive:    "Use this current-state packet for the next action. Plan-execute source obligations are closed and this request exposes exactly one native tool: submit_plan. Call native submit_plan now with complete executable final edit bodies. Do not read, search, shell, verify, use per-edit write tools, or answer in prose.",
+		})
+		actionInstruction = "Native `submit_plan` is the only exposed tool in this request. Use the `submit_plan` tool call now; do not answer in prose."
+	}
+	terminalPrompt := strings.Join([]string{
+		surfaceTitle,
+		"",
+		"This replaces earlier runtime brief and tool protocol examples for this planner turn. Earlier `read_file`, `code_navigate`, search, shell, source-sanity, and per-edit write examples are stale because source obligations are closed.",
+		"",
+		renderedState,
+		"",
+		submitPlanSkeleton,
+		"",
+		actionInstruction,
+	}, "\n")
+	*messages = append(pruned, llama.ChatMessage{Role: "system", Content: strings.TrimSpace(terminalPrompt)})
+	r.emitEvent(marshalRunEvent("plan_then_execute_textual_tool_surface_refreshed", map[string]any{
+		"reason":                        strings.TrimSpace(reason),
+		"transport":                     transport,
+		"dropped_tool_request_messages": droppedActions,
+		"dropped_scaffolding_messages":  droppedScaffolding,
+		"allowed_tools":                 []string{"submit_plan"},
+	}))
+}
+
+func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *[]llama.ChatMessage, results []workspace.ToolResult, reason string) {
+	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil || !planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, results) {
+		return
+	}
+	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(*messages)
+	terminalBrief := r.planThenExecuteTerminalToolBrief(results)
+	terminalState := workerruntime.RunState{
+		Lane:              util.FirstNonEmpty(strings.TrimSpace(terminalBrief.Lane), r.agentName()),
+		TaskFamily:        terminalBrief.TaskFamily,
+		Contract:          terminalBrief.Contract,
+		Phase:             "plan_submit_ready_textual_fallback",
+		Objective:         terminalBrief.Objective,
+		Permission:        terminalBrief.PermissionProfile,
+		TargetRefs:        append([]string(nil), terminalBrief.TargetRefs...),
+		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
+		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
+		Constraints:       append([]string(nil), terminalBrief.Constraints...),
+		AllowedTools:      []string{"submit_plan"},
+		ToolManifest:      workerruntime.BuildToolManifest([]string{"submit_plan"}),
+		RequiredTools:     []string{"submit_plan"},
+		ReadinessGate:     []string{"visible_textual_submit_plan_json_required"},
+		SearchPolicy:      []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"},
+		StopConditions:    []string{"submit_plan_returned_ok", "submit_plan_rejected_with_blocker"},
+		FinalCritic:       []string{"submit_plan_called", "edits_cover_required_paths"},
+		NextActions:       []string{"emit exactly one visible submit_plan JSON object with one edit entry for every required_edit_path"},
+		InvalidActions:    append([]string(nil), terminalBrief.InvalidActions...),
+		Readiness:         terminalBrief.Readiness,
+	}
+	terminalPrompt := strings.Join([]string{
+		"# Terminal Plan-Execute Textual Tool Surface",
+		"",
+		"Native tool-call transport failed to produce a required `submit_plan` call. Native tools are disabled for this retry; the only accepted action is one visible textual `submit_plan` JSON object.",
+		"",
+		workerruntime.RenderRunState(terminalState),
+		"",
+		planThenExecuteTerminalSubmitPlanSkeleton(terminalBrief, results, false),
+		"",
+		r.textualToolProtocolPrompt(terminalBrief),
+	}, "\n")
+	*messages = append(pruned, llama.ChatMessage{Role: "system", Content: strings.TrimSpace(terminalPrompt)})
+	r.emitEvent(marshalRunEvent("plan_then_execute_textual_tool_surface_refreshed", map[string]any{
+		"reason":                        strings.TrimSpace(reason),
+		"transport":                     "textual_fallback",
+		"dropped_tool_request_messages": droppedActions,
+		"dropped_scaffolding_messages":  droppedScaffolding,
+		"allowed_tools":                 []string{"submit_plan"},
+	}))
+}
+
+func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
+	brief := runnerBriefWithPhaseHints(r.RuntimeBrief, results)
+	if strings.TrimSpace(brief.Lane) == "" {
+		brief.Lane = r.agentName()
+	}
+	brief.AllowedTools = []string{"submit_plan"}
+	brief.RequiredTools = []string{"submit_plan"}
+	brief.ForbiddenTools = mergeRunnerStateStrings(brief.ForbiddenTools,
+		[]string{"read_file", "code_navigate", "search_files", "search_content", "list_files", "shell", "source_sanity", "edit_file", "write_file", "append_file", "apply_patch"},
+	)
+	brief.ToolManifest = workerruntime.BuildToolManifest([]string{"submit_plan"})
+	brief.Constraints = mergeRunnerStateStrings(brief.Constraints, []string{"plan_then_execute_submit_plan_ready", "required_edit_paths_define_write_scope", "planner_owned_verification"})
+	brief.SearchPolicy = []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"}
+	brief.ReadinessGate = mergeRunnerStateStrings([]string{"submit_plan_or_source_satisfied_or_blocker_reported"}, brief.ReadinessGate)
+	brief.StopConditions = mergeRunnerStateStrings([]string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"}, brief.StopConditions)
+	brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called_or_source_satisfied", "edits_or_source_satisfied_evidence_listed_in_summary"}
+	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
+	return workerruntime.NormalizeRuntimeBrief(brief)
+}
+
+const planThenExecuteCurrentSubmitPlanSkeletonPrefix = "# Current Submit Plan Skeleton"
+
+func planThenExecuteTerminalSubmitPlanSkeleton(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, native bool) string {
+	entries := planThenExecuteTerminalSubmitPlanSkeletonEntries(brief, results)
+	if native {
+		return planThenExecuteNativeSubmitPlanSkeleton(entries)
+	}
+	return planThenExecuteTextualSubmitPlanSkeleton(entries)
+}
+
+type planThenExecuteSubmitPlanSkeletonEntry struct {
+	Path            string
+	Evidence        []string
+	EvidenceOmitted bool
+	StartLine       int
+	EndLine         int
+	NewFile         bool
+}
+
+const planThenExecuteSubmitPlanSkeletonMaxEvidenceLines = 16
+
+func planThenExecuteTerminalSubmitPlanSkeletonEntries(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []planThenExecuteSubmitPlanSkeletonEntry {
+	paths := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
+	if len(paths) == 0 {
+		paths = normalizedRequiredEditPaths(brief.RequiredEditPaths)
+	}
+	if len(paths) == 0 {
+		paths = []string{"path/from/required_edit_paths"}
+	}
+	evidenceByPath := planThenExecuteTerminalSubmitPlanEvidenceByPath(results, 2)
+	entries := make([]planThenExecuteSubmitPlanSkeletonEntry, 0, len(paths))
+	evidenceLinesRemaining := planThenExecuteSubmitPlanSkeletonMaxEvidenceLines
+	for _, path := range paths {
+		entry := planThenExecuteSubmitPlanSkeletonEntry{
+			Path:      path,
+			StartLine: 1,
+			EndLine:   1,
+			NewFile:   planThenExecuteRequiredPathHasTerminalMissingFileEvidence(path, results),
+		}
+		for _, evidence := range evidenceByPath[normalizeRunnerPath(path)] {
+			if evidenceLinesRemaining > 0 {
+				entry.Evidence = append(entry.Evidence, evidence.Summary)
+				evidenceLinesRemaining--
+			} else {
+				entry.EvidenceOmitted = true
+			}
+			if entry.StartLine == 1 && entry.EndLine == 1 && evidence.StartLine > 0 && evidence.EndLine >= evidence.StartLine {
+				entry.StartLine = evidence.StartLine
+				entry.EndLine = evidence.EndLine
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+type planThenExecuteTerminalSubmitPlanEvidence struct {
+	Summary   string
+	StartLine int
+	EndLine   int
+}
+
+func planThenExecuteTerminalSubmitPlanEvidenceByPath(results []workspace.ToolResult, maxPerPath int) map[string][]planThenExecuteTerminalSubmitPlanEvidence {
+	if maxPerPath <= 0 {
+		maxPerPath = 2
+	}
+	out := map[string][]planThenExecuteTerminalSubmitPlanEvidence{}
+	seen := map[string]map[string]struct{}{}
+	add := func(path string, summary string) {
+		path = normalizeRunnerPath(path)
+		summary = strings.TrimSpace(summary)
+		if path == "" || summary == "" || len(out[path]) >= maxPerPath {
+			return
+		}
+		if seen[path] == nil {
+			seen[path] = map[string]struct{}{}
+		}
+		if _, ok := seen[path][summary]; ok {
+			return
+		}
+		seen[path][summary] = struct{}{}
+		start, end, _ := planThenExecuteReadSummaryLineRange(summary)
+		out[path] = append(out[path], planThenExecuteTerminalSubmitPlanEvidence{
+			Summary:   summary,
+			StartLine: start,
+			EndLine:   end,
+		})
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		for _, path := range readPathsFromToolResult(result) {
+			add(path, result.Summary)
+		}
+		for _, line := range strings.Split(result.Output, "\n") {
+			line = strings.TrimSpace(line)
+			if !strings.HasPrefix(line, "route_summary:") {
+				continue
+			}
+			summary := strings.TrimSpace(strings.TrimPrefix(line, "route_summary:"))
+			path := extractReadPathFromSummary(summary)
+			if path == "" {
+				path = extractRoutedReadPathFromOutput(line)
+			}
+			add(path, summary)
+		}
+	}
+	return out
+}
+
+func planThenExecuteNativeSubmitPlanSkeleton(entries []planThenExecuteSubmitPlanSkeletonEntry) string {
+	var b strings.Builder
+	b.WriteString(planThenExecuteCurrentSubmitPlanSkeletonPrefix)
+	b.WriteString("\n\nNative `submit_plan` tool-argument shape. Fill these arguments in the tool call; do not answer with this template as prose.\n\n")
+	b.WriteString("rationale: <one sentence explaining why the edit set satisfies the request>\n")
+	b.WriteString("edits:\n")
+	for _, entry := range entries {
+		b.WriteString("- path: ")
+		b.WriteString(strconv.Quote(entry.Path))
+		b.WriteString("\n")
+		for _, evidence := range entry.Evidence {
+			b.WriteString("  evidence: ")
+			b.WriteString(evidence)
+			b.WriteString("\n")
+		}
+		b.WriteString("  purpose: <one sentence for this path>\n")
+		b.WriteString("  choose exactly one edit shape:\n")
+		if entry.NewFile {
+			b.WriteString("    whole_or_new_file: replace_all=true + old_text=\"\" + new_text\n")
+		} else {
+			b.WriteString("    insertion: insert_after_line + content\n")
+			b.WriteString("    substring: old_text + new_text\n")
+			b.WriteString(fmt.Sprintf("    line_range: start_line=%d + end_line=%d + content (replacement only)\n", entry.StartLine, entry.EndLine))
+			b.WriteString("    whole_or_new_file: replace_all=true + old_text=\"\" + new_text\n")
+		}
+	}
+	b.WriteString("\nEdit shape semantics:\n")
+	b.WriteString("- The shown source ranges are evidence handles, not proposed edits; adjust to the exact replacement range when needed.\n")
+	b.WriteString("- Line-range `content` replaces the inclusive current-source range from `start_line` through `end_line`; include the complete final replacement for that range.\n")
+	b.WriteString("- `insert_after_line` inserts non-empty `content` after an existing 1-based line in an existing file; it does not replace current lines and must not be combined with other edit shapes.\n")
+	b.WriteString("- Substring `old_text` must be copied exactly from current source and match once; `new_text` is the complete final replacement.\n")
+	b.WriteString("- Whole-file/new-file `new_text` is the complete final file body.\n")
+	b.WriteString("- For missing/new files, use only `replace_all:true` with empty `old_text` and a complete `new_text` file body.\n")
+	if planThenExecuteSubmitPlanSkeletonEvidenceOmitted(entries) {
+		b.WriteString("- Additional evidence handles were omitted after the template evidence cap; use the current-source evidence already present in this turn.\n")
+	}
+	b.WriteString("- Do not copy placeholder values into edit bodies; fill `old_text`, `new_text`, or `content` only from source evidence and the final intended code.")
+	return b.String()
+}
+
+func planThenExecuteTextualSubmitPlanSkeleton(entries []planThenExecuteSubmitPlanSkeletonEntry) string {
+	var b strings.Builder
+	b.WriteString(planThenExecuteCurrentSubmitPlanSkeletonPrefix)
+	b.WriteString("\n\nParser-readable JSON skeleton. Emit exactly one object with one edit entry for every required path; replace placeholder values before submitting.\n\n")
+	for _, entry := range entries {
+		for _, evidence := range entry.Evidence {
+			b.WriteString("- evidence for ")
+			b.WriteString(entry.Path)
+			b.WriteString(": ")
+			b.WriteString(evidence)
+			b.WriteString("\n")
+		}
+	}
+	if len(entries) > 0 {
+		b.WriteString("\n")
+	}
+	if planThenExecuteSubmitPlanSkeletonEvidenceOmitted(entries) {
+		b.WriteString("Additional evidence handles were omitted after the template evidence cap; use the current-source evidence already present in this turn.\n\n")
+	}
+	b.WriteString("```tool\n")
+	b.WriteString("{\"tool\":\"submit_plan\",\"rationale\":\"<one sentence explaining why the edit set satisfies the request>\",\"edits\":[")
+	for i, entry := range entries {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		b.WriteString("{\"path\":")
+		b.WriteString(planThenExecuteJSONString(entry.Path))
+		if entry.NewFile {
+			b.WriteString(",\"replace_all\":true,\"old_text\":\"\",\"new_text\":\"<complete final file body>\",\"purpose\":\"<one sentence for this new file>\"}")
+		} else {
+			b.WriteString(",\"insert_after_line\":")
+			if entry.EndLine > 0 {
+				b.WriteString(strconv.Itoa(entry.EndLine))
+			} else {
+				b.WriteString("1")
+			}
+			b.WriteString(",\"content\":\"<complete final text to insert after that line>\",\"purpose\":\"<one sentence for this path>\"}")
+		}
+	}
+	b.WriteString("]}\n")
+	b.WriteString("```\n\n")
+	b.WriteString("Edit shape choices: use `insert_after_line` + `content` for insertions/appends after an existing line, `old_text` + `new_text` for exact replacements/deletions, `start_line` + `end_line` + `content` for replacing an inclusive current-source range, or `replace_all:true` + empty `old_text` + full `new_text` for a whole-file/new-file write.\n")
+	b.WriteString("The shown source ranges are evidence handles, not proposed edits; adjust to the exact replacement range when needed.\n")
+	b.WriteString("`insert_after_line` targets an existing 1-based line in an existing file, inserts non-empty `content`, and must not be combined with other edit shapes.\n")
+	b.WriteString("For missing/new files, use only `replace_all:true` with empty `old_text` and a complete `new_text` file body.\n")
+	b.WriteString("Line-range `content` replaces every current source line from `start_line` through `end_line`, inclusive. It is not a patch hunk; include the complete final replacement for that range.\n")
+	b.WriteString("Do not copy placeholder values into edit bodies; fill `old_text`, `new_text`, or `content` only from source evidence and the final intended code.")
+	return b.String()
+}
+
+func planThenExecuteSubmitPlanSkeletonEvidenceOmitted(entries []planThenExecuteSubmitPlanSkeletonEntry) bool {
+	for _, entry := range entries {
+		if entry.EvidenceOmitted {
+			return true
+		}
+	}
+	return false
+}
+
+func planThenExecuteJSONString(value string) string {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return strconv.Quote(value)
+	}
+	return string(encoded)
+}
+
+func prunePlanThenExecuteTerminalTextualMessages(messages []llama.ChatMessage) ([]llama.ChatMessage, int, int) {
+	if len(messages) == 0 {
+		return messages, 0, 0
+	}
+	out := make([]llama.ChatMessage, 0, len(messages))
+	droppedActions := 0
+	droppedScaffolding := 0
+	for _, message := range messages {
+		if strings.TrimSpace(message.Role) == "tool" {
+			droppedActions++
+			continue
+		}
+		if planThenExecuteDropTextualToolRequestHistoryMessage(message) || strings.TrimSpace(message.Role) == "assistant" {
+			droppedActions++
+			continue
+		}
+		if planThenExecuteDropTerminalTextualScaffoldingMessage(message) {
+			droppedScaffolding++
+			continue
+		}
+		out = append(out, message)
+	}
+	if droppedActions == 0 && droppedScaffolding == 0 {
+		return messages, 0, 0
+	}
+	return out, droppedActions, droppedScaffolding
+}
+
+func prunePlanThenExecuteTextualToolRequestHistory(messages []llama.ChatMessage) ([]llama.ChatMessage, int) {
+	if len(messages) == 0 {
+		return messages, 0
+	}
+	out := make([]llama.ChatMessage, 0, len(messages))
+	dropped := 0
+	for _, message := range messages {
+		if planThenExecuteDropTextualToolRequestHistoryMessage(message) {
+			dropped++
+			continue
+		}
+		out = append(out, message)
+	}
+	if dropped == 0 {
+		return messages, 0
+	}
+	return out, dropped
+}
+
+func planThenExecuteDropTerminalTextualScaffoldingMessage(message llama.ChatMessage) bool {
+	if strings.TrimSpace(message.Role) != "system" {
+		return false
+	}
+	content := strings.TrimSpace(message.Content)
+	if content == "" {
+		return false
+	}
+	return strings.HasPrefix(content, "# Textual Tool Call Protocol") ||
+		strings.HasPrefix(content, "# Terminal Plan-Execute Textual Tool Surface") ||
+		strings.HasPrefix(content, "# Terminal Plan-Execute Native Tool Surface") ||
+		strings.HasPrefix(content, planThenExecuteCurrentSubmitPlanSkeletonPrefix) ||
+		strings.HasPrefix(content, "[frontier step instruction]") ||
+		strings.HasPrefix(content, "[frontier runtime brief]") ||
+		strings.HasPrefix(content, "REQUIRED SOURCE READ PENDING:") ||
+		strings.HasPrefix(content, "PLANNER READINESS REACHED:") ||
+		strings.HasPrefix(content, "SUBMIT_PLAN PARSE RECOVERY:") ||
+		strings.HasPrefix(content, "Plan-execute submit_plan is now the only allowed planner action.") ||
+		strings.HasPrefix(content, "The completion gate rejected") ||
+		strings.HasPrefix(content, "The previous `submit_plan` was rejected before it became a valid plan artifact.") ||
+		strings.HasPrefix(content, "The previous native `submit_plan` tool call was rejected before it became a valid plan artifact.") ||
+		strings.HasPrefix(content, "Native submit_plan tool-call transport failed before the model produced a tool call.") ||
+		strings.HasPrefix(content, "The previous retry produced hidden-only output with no parser-readable action.") ||
+		strings.HasPrefix(content, "Note: your `read_file` call was redirected") ||
+		strings.HasPrefix(content, "Note: your `code_navigate` call was redirected")
+}
+
+func planThenExecuteDropTextualToolRequestHistoryMessage(message llama.ChatMessage) bool {
+	if strings.TrimSpace(message.Role) != "assistant" || len(message.ToolCalls) > 0 {
+		return false
+	}
+	content := strings.TrimSpace(message.Content)
+	if content == "" || !strings.Contains(content, `"tool"`) {
+		return false
+	}
+	req, _, ok, parseErr := workspace.ParseToolRequest(content)
+	if ok {
+		tool := strings.TrimSpace(req.Tool)
+		return tool != "submit_plan"
+	}
+	return parseErr != nil || strings.Contains(content, `"tool"`)
+}
+
+const planThenExecuteRejectedSubmitPlanDraftEvidencePrefix = "# Rejected Submit Plan Draft Evidence"
+
+func replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(messages *[]llama.ChatMessage, req workspace.ToolRequest, result workspace.ToolResult) {
+	if messages == nil {
+		return
+	}
+	prompt := planThenExecuteRejectedSubmitPlanDraftEvidence(req, result)
+	if prompt == "" {
+		return
+	}
+	out := make([]llama.ChatMessage, 0, len(*messages)+1)
+	for _, message := range *messages {
+		if strings.TrimSpace(message.Role) == "system" &&
+			strings.HasPrefix(strings.TrimSpace(message.Content), planThenExecuteRejectedSubmitPlanDraftEvidencePrefix) {
+			continue
+		}
+		out = append(out, message)
+	}
+	out = append(out, llama.ChatMessage{Role: "system", Content: prompt})
+	*messages = out
+}
+
+func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, result workspace.ToolResult) string {
+	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
+	if len(edits) == 0 {
+		return ""
+	}
+	invalidPaths := submitPlanInvalidAnchorPaths(result)
+	missingPaths := submitPlanMissingRequiredPaths(result)
+	var b strings.Builder
+	b.WriteString(planThenExecuteRejectedSubmitPlanDraftEvidencePrefix)
+	b.WriteString("\n\nFactual evidence from the previous `submit_plan` request. The harness rejected that request; no plan artifact was created.\n")
+	if brief := strings.TrimSpace(lastSubmitPlanRejectionBrief(result)); brief != "" {
+		b.WriteString("\n")
+		b.WriteString(brief)
+		b.WriteString("\n")
+	}
+	b.WriteString("\nDraft edit entries from the rejected request. Rejected body excerpts are not source evidence; correct them against the latest read_file/code_navigate source evidence before resubmitting.\n")
+	for i, edit := range edits {
+		path := normalizeRunnerPath(edit.Path)
+		if path == "" {
+			path = strings.TrimSpace(edit.Path)
+		}
+		if path == "" {
+			path = fmt.Sprintf("edits[%d]", i)
+		}
+		b.WriteString(fmt.Sprintf("- edits[%d] path=%s", i, path))
+		if edit.StartLine > 0 || edit.EndLine > 0 {
+			b.WriteString(fmt.Sprintf(" lines=%d-%d", edit.StartLine, edit.EndLine))
+		}
+		if _, ok := invalidPaths[normalizeRunnerPath(edit.Path)]; ok {
+			b.WriteString(" status=invalid_anchor_or_syntax")
+		}
+		if _, ok := missingPaths[normalizeRunnerPath(edit.Path)]; ok {
+			b.WriteString(" status=missing_required_path")
+		}
+		if purpose := strings.TrimSpace(edit.Purpose); purpose != "" {
+			b.WriteString(" purpose=")
+			b.WriteString(truncateRunnerStateText(purpose, 180))
+		}
+		b.WriteString("\n")
+		if planThenExecuteShouldIncludeRejectedDraftBody(edit, invalidPaths) {
+			body := rejectedDraftEditBody(edit)
+			if body != "" {
+				b.WriteString("  rejected_body_excerpt_not_source_evidence:\n")
+				for _, line := range strings.Split(truncateRunnerStateText(body, 2200), "\n") {
+					b.WriteString("    ")
+					b.WriteString(line)
+					b.WriteString("\n")
+				}
+			}
+		}
+		if b.Len() > 7000 {
+			b.WriteString("- remaining rejected draft entries omitted after bounded evidence cap.\n")
+			break
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func planThenExecuteShouldIncludeRejectedDraftBody(edit workspace.PlanEdit, invalidPaths map[string]struct{}) bool {
+	if len(invalidPaths) == 0 {
+		return false
+	}
+	_, ok := invalidPaths[normalizeRunnerPath(edit.Path)]
+	return ok
+}
+
+func rejectedDraftEditBody(edit workspace.PlanEdit) string {
+	if strings.TrimSpace(edit.Content) != "" {
+		return edit.Content
+	}
+	if strings.TrimSpace(edit.NewText) != "" {
+		return edit.NewText
+	}
+	return ""
+}
+
 func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if r == nil || !readOnlyExplanationGateApplies(r.RuntimeBrief) {
 		return workspace.ToolResult{}, false
@@ -5627,10 +6512,20 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 	if r != nil && r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) > 0 && successfulSubmitPlanResultCount(results) == 0 {
 		return 1
 	}
+	if r != nil && r.textualRequiredPathCompletionRecoveryApplies(results) {
+		return 2
+	}
 	if r != nil && r.completionGateMutationRecoveryApplies(results) {
 		return 1
 	}
 	return 2
+}
+
+func (r *Runner) textualRequiredPathCompletionRecoveryApplies(results []workspace.ToolResult) bool {
+	return r != nil &&
+		!r.supportsNativeTools() &&
+		runnerBriefRequiresMutation(r.RuntimeBrief) &&
+		len(r.remainingRequiredEditPaths(results)) > 0
 }
 
 func (r *Runner) unscopedNoWriteCompletionRecoveryApplies(results []workspace.ToolResult) bool {
@@ -5747,7 +6642,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			targetSummary,
 			"Your next visible message must be exactly one parser-readable action, not the same prose. Do not include analysis before or after the action.",
 			"Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. The `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` outcome must appear in visible content or a native tool call.",
-			"When submitting, each `submit_plan.edits[]` entry must use a real candidate path plus either exact `old_text` copied from the read/source evidence with complete replacement `new_text`, or a concrete line range with complete replacement `content`, plus a one-sentence `purpose`. Edit bodies must be complete executable source text; do not copy schema examples, placeholders, ellipses, or prose as field values.",
+			"When submitting, each `submit_plan.edits[]` entry must use a real candidate path plus exactly one executable shape: exact `old_text`/`new_text`, replacement-only `start_line`/`end_line`/`content`, insertion-only `insert_after_line`/`content`, or whole/new-file `replace_all:true`/`new_text`; include a one-sentence `purpose`. Line ranges replace the exact inclusive current-source range, not insertion points. Edit bodies must be complete executable source text; do not copy schema examples, placeholders, ellipses, or prose as field values.",
 			nextAction,
 			"The only non-tool closeouts are a visible answer starting exactly with `Decision: source-satisfied` plus current-state evidence for the relevant path(s), or `<<QUESTION>>:` naming the exact blocker. Do not call per-edit write tools.",
 		}, "\n\n"), hideReads, true
@@ -5808,13 +6703,17 @@ func (r *Runner) implementationRequiredPathCompletionRecoveryPrompt(missing []st
 	b.WriteString(target)
 	b.WriteString(".\n\n")
 	b.WriteString("Your next visible message must be exactly one parser-readable action, not prose and not an implementation summary. Do not include analysis before or after the action.\n\n")
-	b.WriteString("Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. The write, bounded read/discovery, or <<QUESTION>> outcome must appear in visible content or a native tool call.\n\n")
-	b.WriteString("If the current evidence supports the requested change, call one write capability now for a remaining required path: `edit_file`, `write_file`, `append_file`, or `apply_patch`. Use real current text, complete replacement text, or a valid patch; do not copy placeholders or ellipses.\n\n")
+	b.WriteString("Hidden-only reasoning is not completion evidence and may not be available to the tool parser. The contract outcome is a visible write, bounded read/discovery action, native tool call, or `<<QUESTION>>` blocker.\n\n")
+	if scopedImplementationMissingPathsAreExistingSourceFiles(missing, r.Workspace) {
+		b.WriteString("If the current evidence supports the requested change, call one bounded edit capability now. Use `apply_patch` for one coherent multi-file patch across required source/test paths, or `edit_file` with `old_text`+`new_text` / `start_line`+`end_line`+`content` for one remaining path. Do not use `write_file` or `append_file` for existing source/test edits in this recovery; `write_file` is whole-file replacement for new/small/doc deliverables, and `append_file` is only for true end-of-file appends.\n\n")
+	} else {
+		b.WriteString("If the current evidence supports the requested change, call one write capability now for a remaining required path: `edit_file`, `write_file`, `append_file`, or `apply_patch`. Use real current text, complete replacement text, or a valid patch; do not copy placeholders or ellipses.\n\n")
+	}
 
-	readPaths := readPathsFromResults(results)
 	unread := make([]string, 0, len(missing))
 	for _, path := range missing {
-		if _, ok := readPaths[normalizeRunnerPath(path)]; ok {
+		evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, path)
+		if evidence.Level == planThenExecuteEvidenceAnchorReady {
 			continue
 		}
 		unread = append(unread, path)
@@ -5823,16 +6722,57 @@ func (r *Runner) implementationRequiredPathCompletionRecoveryPrompt(missing []st
 		b.WriteString("Read/search/discovery tools are hidden for this turn because the packet already claimed exact write anchors. If an anchor is stale or missing, answer `<<QUESTION>>:` and name the stale or missing anchor for each blocked remaining path.\n")
 	} else if len(unread) > 0 {
 		path := unread[0]
-		b.WriteString("If one edit-safety fact is still missing, call exactly one bounded discovery/read action for a remaining required path or declared project symbol. Prefer the first unread required path now:\n\n")
+		nextRead := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         220,
+			NamedGap:        "exact current source needed before editing this required path",
+			WhyNotAnswering: "need current source evidence before the write",
+		}
+		if recoveredReq, _, recovered := r.deterministicImplementationRequiredPathRead(results); recovered {
+			nextRead = recoveredReq
+		}
+		b.WriteString("If one edit-safety fact is still missing, call exactly one bounded discovery/read action for a remaining required path or declared project symbol. Prefer the next unread source-body request now:\n\n")
 		b.WriteString("```tool\n")
-		b.WriteString(fmt.Sprintf("{\"tool\":\"read_file\",\"path\":\"%s\",\"start_line\":1,\"end_line\":220,\"named_gap\":\"exact current source needed before editing this required path\",\"why_not_answering\":\"need current source evidence before the write\"}\n", path))
+		b.WriteString(marshalToolRequestRaw(nextRead))
+		b.WriteByte('\n')
 		b.WriteString("```\n\n")
 		b.WriteString("Do not perform broad discovery or task planning. A semantic/context lookup is valid only when it names the exact edit-safety fact needed before writing a remaining required path.\n")
 	} else {
-		b.WriteString("Every remaining required path already has source-body read evidence. Do not restart broad discovery or task planning. Call a write capability, or answer `<<QUESTION>>:` with the exact path-specific blocker that prevents the write.\n")
+		b.WriteString("Every remaining required path already has source-body anchor evidence. Do not restart broad discovery or task planning. Call a write capability, or answer `<<QUESTION>>:` with the exact path-specific blocker that prevents the write.\n")
+		if scopedImplementationMissingPathsAreExistingSourceFiles(missing, r.Workspace) {
+			examplePath := missing[0]
+			b.WriteString("\nFor textual-tool backends, use one of these exact JSON shapes with real values from the source evidence; do not copy placeholders:\n\n")
+			b.WriteString("```tool\n")
+			b.WriteString(fmt.Sprintf("{\"tool\":\"edit_file\",\"path\":\"%s\",\"old_text\":\"exact current text copied from source evidence\",\"new_text\":\"complete replacement text\",\"description\":\"one sentence\"}\n", examplePath))
+			b.WriteString("```\n")
+			if len(missing) > 1 {
+				b.WriteString("\n```tool\n")
+				b.WriteString("{\"tool\":\"apply_patch\",\"content\":\"*** Begin Patch\\n*** Update File: path/from/required_edit_paths.go\\n@@\\n-exact current source line\\n+complete replacement source line\\n*** End Patch\\n\",\"description\":\"one sentence\"}\n")
+				b.WriteString("```\n")
+			}
+		}
 	}
 	b.WriteString("\nThe only non-tool closeout is `<<QUESTION>>:` with one concrete blocker reason for every remaining required path.")
 	return b.String()
+}
+
+func scopedImplementationMissingPathsAreExistingSourceFiles(paths []string, manager *workspace.Manager) bool {
+	if len(paths) == 0 || manager == nil {
+		return false
+	}
+	for _, path := range paths {
+		relPath := cleanRelativeRunnerPath(path)
+		if relPath == "" || writePathIsNonSource(relPath) {
+			return false
+		}
+		info, err := os.Stat(filepath.Join(manager.Root(), filepath.FromSlash(relPath)))
+		if err != nil || info.IsDir() {
+			return false
+		}
+	}
+	return true
 }
 
 func postWriteVerificationFailedRecoveryPrompt(result workspace.ToolResult, plannerOwned bool) string {
@@ -6183,9 +7123,35 @@ func (r *Runner) salvageToolRequestFromReasoning(reply llama.ChatMessage, result
 		if !ok || err != nil {
 			continue
 		}
-		if safeReasoningToolRequest(req, results, r.planThenExecutePlanSubmissionPhase()) {
+		if r.safeReasoningToolRequest(req, results) {
 			return req, raw, true
 		}
+	}
+	return workspace.ToolRequest{}, "", false
+}
+
+func (r *Runner) salvageVisibleToolRequestFromProse(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !looksLikeUnexecutedToolRequestAnswer(reply) {
+		return workspace.ToolRequest{}, "", false
+	}
+	start, end, ok := firstToolRequestShapedJSONObjectSpan(strings.TrimSpace(reply))
+	if !ok {
+		return workspace.ToolRequest{}, "", false
+	}
+	raw := strings.TrimSpace(reply)[start:end]
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return workspace.ToolRequest{}, "", false
+	}
+	if _, hasExplicitTool := fields["tool"]; !hasExplicitTool {
+		return workspace.ToolRequest{}, "", false
+	}
+	req, parsedRaw, ok, err := workspace.ParseToolRequest(raw)
+	if !ok || err != nil {
+		return workspace.ToolRequest{}, "", false
+	}
+	if r.safeReasoningToolRequest(req, results) {
+		return req, parsedRaw, true
 	}
 	return workspace.ToolRequest{}, "", false
 }
@@ -6219,7 +7185,7 @@ func reasoningToolRequestCandidates(reasoning string) []string {
 	return candidates
 }
 
-func safeReasoningToolRequest(req workspace.ToolRequest, results []workspace.ToolResult, allowSubmitPlan bool) bool {
+func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" || reasoningToolRequestHasPlaceholder(req) {
 		return false
@@ -6234,8 +7200,39 @@ func safeReasoningToolRequest(req workspace.ToolRequest, results []workspace.Too
 	case "context_pack":
 		return strings.TrimSpace(req.Task) != "" && !contextPackUnavailableForRecovery(results)
 	case "submit_plan":
-		_ = allowSubmitPlan
 		return false
+	default:
+		return r.safeReasoningWorkspaceWriteRequest(req)
+	}
+}
+
+func (r *Runner) safeReasoningWorkspaceWriteRequest(req workspace.ToolRequest) bool {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return false
+	}
+	if !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+	paths := writeRequestPaths(req)
+	if len(paths) == 0 {
+		return false
+	}
+	if _, _, reject := requiredEditPathScopeRejection(req, r.RuntimeBrief); reject {
+		return false
+	}
+	switch strings.TrimSpace(req.Tool) {
+	case "edit_file":
+		hasOldNew := strings.TrimSpace(req.OldText) != "" && (strings.TrimSpace(req.NewText) != "" || req.NewText == "")
+		hasRange := req.StartLine > 0 && req.EndLine >= req.StartLine && strings.TrimSpace(req.Content) != ""
+		return hasOldNew || hasRange
+	case "write_file", "append_file":
+		return strings.TrimSpace(req.Content) != ""
+	case "apply_patch":
+		if strings.TrimSpace(req.Content) == "" {
+			return false
+		}
+		_, err := workspace.ParsePatch(req.Content)
+		return err == nil
 	default:
 		return false
 	}
@@ -6351,7 +7348,7 @@ func (r *Runner) deterministicPlanExecuteRequiredSourceRead(results []workspace.
 			continue
 		}
 		if planThenExecuteRequiredPathHasTerminalMissingFileEvidence(normalized, results) || planThenExecutePathHasAnyToolEvidence(normalized, results) {
-			if req, ok := r.deterministicPlanExecuteOutlineFollowup(normalized, results); ok {
+			if req, ok := r.deterministicPlanExecuteRequiredSourceFollowup(normalized, results); ok {
 				return req, marshalToolRequestRaw(req), true
 			}
 			continue
@@ -6373,18 +7370,369 @@ func (r *Runner) deterministicPlanExecuteRequiredSourceRead(results []workspace.
 	return req, marshalToolRequestRaw(req), true
 }
 
+func (r *Runner) deterministicPlanExecuteRejectedRequiredSourceRead(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" || strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return workspace.ToolRequest{}, "", false
+	}
+	if planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, results) == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	return r.deterministicPlanExecuteRequiredSourceRead(results)
+}
+
+func (r *Runner) deterministicImplementationRejectedRequiredPathRead(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || r.planThenExecutePlannerPhase() || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" || strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return workspace.ToolRequest{}, "", false
+	}
+	remaining := r.remainingRequiredEditPaths(results)
+	if !scopedImplementationUsesBoundedSourceEdits(r.RuntimeBrief, remaining) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if implementationRequiredPathAnchorsReady(r.RuntimeBrief, results) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !implementationRejectedTextCanAdvanceRequiredRead(trimmed) {
+		return workspace.ToolRequest{}, "", false
+	}
+	return r.deterministicImplementationRequiredPathRead(results)
+}
+
+func implementationRejectedTextCanAdvanceRequiredRead(reply string) bool {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" || strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return false
+	}
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
+	if containsAny(lower,
+		" blocked ",
+		" blocker ",
+		" cannot ",
+		" can't ",
+		" could not ",
+		" unable ",
+		" no access ",
+		" permission ",
+		" not available ",
+	) {
+		return false
+	}
+	return true
+}
+
+func (r *Runner) deterministicImplementationRequiredPathRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || r.planThenExecutePlannerPhase() || !runnerBriefRequiresMutation(r.RuntimeBrief) || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	if len(r.remainingRequiredEditPaths(results)) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	changed := changedPathsFromToolResults(results)
+	for _, path := range r.requiredEditCoveragePaths() {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := changed[normalized]; ok {
+			continue
+		}
+		evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, normalized)
+		if evidence.Level == planThenExecuteEvidenceAnchorReady {
+			continue
+		}
+		if evidence.Level != planThenExecuteEvidenceNone || planThenExecutePathHasAnyToolEvidence(normalized, results) {
+			if req, ok := r.deterministicImplementationRequiredSourceFollowup(normalized, results); ok {
+				return req, marshalToolRequestRaw(req), true
+			}
+			if alreadyReadPath(results, normalized) {
+				continue
+			}
+		}
+		req := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            normalized,
+			StartLine:       1,
+			EndLine:         220,
+			NamedGap:        "exact current source needed before editing this required path",
+			WhyNotAnswering: "need current source evidence before the write",
+		}
+		return req, marshalToolRequestRaw(req), true
+	}
+	return workspace.ToolRequest{}, "", false
+}
+
 func (r *Runner) deterministicPlanExecuteOutlineFollowup(path string, results []workspace.ToolResult) (workspace.ToolRequest, bool) {
-	path = normalizeRunnerPath(path)
-	if path == "" || !planThenExecutePathSupportsCodeNavigate(path) || !planThenExecutePathHasOutlineOnlyEvidence(path, results) {
+	if !planThenExecutePathHasOutlineOnlyEvidence(path, results) {
 		return workspace.ToolRequest{}, false
+	}
+	return r.deterministicPlanExecuteRequiredSourceFollowup(path, results)
+}
+
+func (r *Runner) deterministicPlanExecuteRequiredSourceFollowup(path string, results []workspace.ToolResult) (workspace.ToolRequest, bool) {
+	return r.deterministicRequiredSourceFollowup(path, results, requiredSourceFollowupWording{
+		OutlineGap:       "source-body line anchors for required plan-execute edit path",
+		SymbolGap:        "source-body evidence for required plan-execute edit path",
+		OutlineWhy:       "whole-file read redirected; need declarations before selecting a source-body read",
+		SymbolWhy:        "need current declaration body before submit_plan can anchor the required edit",
+		RangeWhy:         "outline did not produce a readable symbol; need bounded source before submit_plan can anchor the required edit",
+		FallbackRangeWhy: "outline did not expose usable declarations; need bounded source before submit_plan can anchor the required edit",
+	})
+}
+
+func (r *Runner) planThenExecuteRequiredSourceFollowupRedirect(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() || len(r.RuntimeBrief.RequiredEditPaths) == 0 {
+		return workspace.ToolRequest{}, false
+	}
+	if successfulSubmitPlanResultCount(results) > 0 || strings.TrimSpace(req.Tool) == "submit_plan" || !isReadClassTool(req) {
+		return workspace.ToolRequest{}, false
+	}
+	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	if target == "" {
+		return workspace.ToolRequest{}, false
+	}
+	if _, ok := normalizedRequiredEditPathSet(r.RuntimeBrief.RequiredEditPaths)[target]; !ok {
+		return workspace.ToolRequest{}, false
+	}
+	if planThenExecuteInvalidAnchorRefreshAllowed(req, target, results) {
+		return workspace.ToolRequest{}, false
+	}
+	unread := planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, results)
+	if _, missing := unread[target]; !missing {
+		if len(unread) == 0 {
+			return workspace.ToolRequest{}, false
+		}
+		redirected, _, ok := r.deterministicPlanExecuteRequiredSourceRead(results)
+		if !ok || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
+			return workspace.ToolRequest{}, false
+		}
+		return redirected, true
+	}
+	evidence := planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, target)
+	if evidence.Level == planThenExecuteEvidenceNone && !planThenExecutePathHasAnyToolEvidence(target, results) {
+		return workspace.ToolRequest{}, false
+	}
+	if planThenExecuteRequiredSourceRequestAdvances(req, target, evidence, results) {
+		return workspace.ToolRequest{}, false
+	}
+	redirected, ok := r.deterministicPlanExecuteRequiredSourceFollowup(target, results)
+	if !ok || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
+		return workspace.ToolRequest{}, false
+	}
+	return redirected, true
+}
+
+func planThenExecuteInvalidAnchorRefreshAllowed(req workspace.ToolRequest, target string, results []workspace.ToolResult) bool {
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok {
+		return false
+	}
+	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
+	if _, invalidAnchor := invalidAnchorPaths[normalizeRunnerPath(target)]; !invalidAnchor {
+		return false
+	}
+	return submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
+		planThenExecuteSourceBodyReadRequest(req) &&
+		!successfulSourceEvidencePathAfter(results, rejectedAt, target)
+}
+
+const planThenExecuteReadySourceRefreshLimit = 4
+
+func (r *Runner) planThenExecuteReadySourceRefreshAllowed(req workspace.ToolRequest, results []workspace.ToolResult, used int) bool {
+	if r == nil || !r.planThenExecutePlannerPhase() || used >= planThenExecuteReadySourceRefreshLimit {
+		return false
+	}
+	if len(r.RuntimeBrief.RequiredEditPaths) == 0 || successfulSubmitPlanResultCount(results) > 0 || len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, results)) > 0 {
+		return false
+	}
+	if planThenExecuteSubmitReadyParseFailureSeen(r.RuntimeBrief, results) {
+		return false
+	}
+	if !planThenExecuteRejectedPlanSourceRefreshAllowed(req, r.requiredEditCoveragePaths(), results) {
+		return false
+	}
+	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	if target == "" {
+		return false
+	}
+	if _, ok := normalizedRequiredEditPathSet(r.RuntimeBrief.RequiredEditPaths)[target]; !ok {
+		return false
+	}
+	if !planThenExecuteSourceBodyReadRequest(req) {
+		return false
+	}
+	switch strings.TrimSpace(req.Tool) {
+	case "read_file":
+		if req.StartLine <= 0 || req.EndLine < req.StartLine {
+			return false
+		}
+		return req.EndLine-req.StartLine+1 <= 400
+	case "code_navigate", "read_only_capability":
+		capability := strings.TrimSpace(req.Capability)
+		if capability == "read_symbol" || capability == "extract_body" ||
+			strings.HasSuffix(capability, "_read_symbol") ||
+			strings.HasSuffix(capability, "_extract_body") {
+			return true
+		}
+		return false
+	default:
+		tool := strings.TrimSpace(req.Tool)
+		return strings.HasSuffix(tool, "_read_symbol") || strings.HasSuffix(tool, "_extract_body")
+	}
+}
+
+func planThenExecuteSubmitReadyParseFailureSeen(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	for i, result := range results {
+		if strings.TrimSpace(result.Tool) != "tool_parse" || strings.TrimSpace(result.Error) == "" {
+			continue
+		}
+		if planThenExecuteSubmitPlanOnlyReady(brief, results[:i]) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (string, string, string, bool) {
+	if r == nil || !planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, results) {
+		return "", "", "", false
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" || tool == "submit_plan" || runnerAllowsTool(allowedTools, tool) {
+		return "", "", "", false
+	}
+	if len(allowedTools) != 1 || !runnerAllowsTool(allowedTools, "submit_plan") {
+		return "", "", "", false
+	}
+	prompt := strings.Join([]string{
+		"Plan-execute submit_plan is now the only allowed planner action. Every required_edit_path already has anchor-ready source evidence, so read/search/source-refresh tools are closed for this planner turn.",
+		"The next visible action must be exactly one terminal outcome: a parser-readable `submit_plan` JSON object with one ordered edit entry for every required_edit_path, `Decision: source-satisfied` with per-path current-state evidence, or `<<QUESTION>>:` with the exact path-specific blocker.",
+		"Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. The rejected request will not become available again in this planner phase. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
+	}, "\n")
+	return "Plan-execute submit_plan required", fmt.Sprintf("%s is not available because the plan-execute planner is source-ready and exposes only `submit_plan`. Emit `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`; do not request another source read.", tool), prompt, true
+}
+
+func planThenExecuteRequiredSourceRequestAdvances(req workspace.ToolRequest, path string, evidence planThenExecuteSourceEvidence, results []workspace.ToolResult) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	switch strings.TrimSpace(req.Tool) {
+	case "read_file":
+		start, end := req.StartLine, req.EndLine
+		if start <= 0 && end <= 0 {
+			return evidence.Level == planThenExecuteEvidenceNone
+		}
+		if start <= 0 {
+			start = 1
+		}
+		if end <= 0 || end < start {
+			return false
+		}
+		if planThenExecuteReadRangeSeen(path, start, end, results) {
+			return false
+		}
+		if start == 1 && end <= planThenExecuteGenericHeaderReadMaxLines && planThenExecutePathHasOutlineEvidence(path, results) {
+			return false
+		}
+		if start == 1 && end <= planThenExecuteGenericHeaderReadMaxLines &&
+			planThenExecuteEvidenceRank(evidence.Level) >= planThenExecuteEvidenceRank(planThenExecuteEvidenceBodyWindow) {
+			return false
+		}
+		return true
+	case "code_navigate", "read_only_capability":
+		capability := strings.TrimSpace(req.Capability)
+		switch {
+		case capability == "file_outline":
+			return !planThenExecuteFileOutlineSeen(path, results)
+		case capability == "read_symbol" || capability == "extract_body" ||
+			strings.HasSuffix(capability, "_read_symbol") ||
+			strings.HasSuffix(capability, "_extract_body"):
+			symbol := strings.TrimSpace(req.Pattern)
+			if symbol == "" {
+				symbol = strings.TrimSpace(req.Symbol)
+			}
+			return symbol == "" || !planThenExecuteReadSymbolSeen(path, symbol, results)
+		default:
+			return false
+		}
+	default:
+		tool := strings.TrimSpace(req.Tool)
+		if strings.HasSuffix(tool, "_read_symbol") || strings.HasSuffix(tool, "_extract_body") {
+			return true
+		}
+		return false
+	}
+}
+
+func planThenExecuteReadRangeSeen(path string, start, end int, results []workspace.ToolResult) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || start <= 0 || end < start {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
+		if !strings.Contains(text, strings.ToLower(path)) {
+			continue
+		}
+		priorStart, priorEnd, ok := planThenExecuteReadSummaryLineRange(result.Summary)
+		if ok && priorStart == start && priorEnd == end {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) deterministicImplementationRequiredSourceFollowup(path string, results []workspace.ToolResult) (workspace.ToolRequest, bool) {
+	return r.deterministicRequiredSourceFollowup(path, results, requiredSourceFollowupWording{
+		OutlineGap:       "source-body line anchors for required implementation edit path",
+		SymbolGap:        "source-body evidence for required implementation edit path",
+		OutlineWhy:       "whole-file read redirected; need declarations before selecting a source-body read",
+		SymbolWhy:        "need current declaration body before editing this required path",
+		RangeWhy:         "outline did not produce a readable symbol; need bounded source before editing this required path",
+		FallbackRangeWhy: "outline did not expose usable declarations; need bounded source before editing this required path",
+	})
+}
+
+type requiredSourceFollowupWording struct {
+	OutlineGap       string
+	SymbolGap        string
+	OutlineWhy       string
+	SymbolWhy        string
+	RangeWhy         string
+	FallbackRangeWhy string
+}
+
+func (r *Runner) deterministicRequiredSourceFollowup(path string, results []workspace.ToolResult, wording requiredSourceFollowupWording) (workspace.ToolRequest, bool) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return workspace.ToolRequest{}, false
+	}
+	if strings.TrimSpace(wording.OutlineGap) == "" {
+		wording.OutlineGap = "source-body line anchors for required edit path"
+	}
+	if strings.TrimSpace(wording.SymbolGap) == "" {
+		wording.SymbolGap = "source-body evidence for required edit path"
+	}
+	if !planThenExecutePathSupportsCodeNavigate(path) {
+		return deterministicRequiredSourceRangeFollowup(path, results, wording)
 	}
 	if !planThenExecuteFileOutlineSeen(path, results) {
 		return workspace.ToolRequest{
 			Tool:            "code_navigate",
 			Path:            path,
 			Capability:      "file_outline",
-			NamedGap:        "source-body line anchors for required plan-execute edit path",
-			WhyNotAnswering: "whole-file read redirected; need declarations before selecting a source-body read",
+			NamedGap:        wording.OutlineGap,
+			WhyNotAnswering: wording.OutlineWhy,
 		}, true
 	}
 	if symbol := planThenExecuteBestOutlineSymbol(path, r.RuntimeBrief.Objective, results); symbol != "" && !planThenExecuteReadSymbolSeen(path, symbol, results) {
@@ -6393,8 +7741,8 @@ func (r *Runner) deterministicPlanExecuteOutlineFollowup(path string, results []
 			Path:            path,
 			Capability:      "read_symbol",
 			Pattern:         symbol,
-			NamedGap:        "source-body evidence for required plan-execute edit path",
-			WhyNotAnswering: "need current declaration body before submit_plan can anchor the required edit",
+			NamedGap:        wording.SymbolGap,
+			WhyNotAnswering: wording.SymbolWhy,
 		}, true
 	}
 	if start, end, ok := planThenExecuteBestOutlineRange(path, r.RuntimeBrief.Objective, results); ok {
@@ -6403,18 +7751,71 @@ func (r *Runner) deterministicPlanExecuteOutlineFollowup(path string, results []
 			Path:            path,
 			StartLine:       start,
 			EndLine:         end,
-			NamedGap:        "source-body evidence for required plan-execute edit path",
-			WhyNotAnswering: "outline did not produce a readable symbol; need bounded source before submit_plan can anchor the required edit",
+			NamedGap:        wording.SymbolGap,
+			WhyNotAnswering: wording.RangeWhy,
 		}, true
+	}
+	return deterministicRequiredSourceRangeFollowup(path, results, wording)
+}
+
+func deterministicRequiredSourceRangeFollowup(path string, results []workspace.ToolResult, wording requiredSourceFollowupWording) (workspace.ToolRequest, bool) {
+	start, end, ok := planThenExecuteNextRequiredSourceReadRange(path, results)
+	if !ok {
+		return workspace.ToolRequest{}, false
 	}
 	return workspace.ToolRequest{
 		Tool:            "read_file",
 		Path:            path,
-		StartLine:       1,
-		EndLine:         180,
-		NamedGap:        "source-body evidence for required plan-execute edit path",
-		WhyNotAnswering: "outline did not expose usable declarations; need bounded source before submit_plan can anchor the required edit",
+		StartLine:       start,
+		EndLine:         end,
+		NamedGap:        wording.SymbolGap,
+		WhyNotAnswering: wording.FallbackRangeWhy,
 	}, true
+}
+
+func planThenExecuteNextRequiredSourceReadRange(path string, results []workspace.ToolResult) (int, int, bool) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return 0, 0, false
+	}
+	maxEnd, total := 0, 0
+	sawReadFileEvidence := false
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
+		if !strings.Contains(text, strings.ToLower(path)) {
+			continue
+		}
+		if !strings.Contains(text, "redirected") || !planThenExecutePathSupportsCodeNavigate(path) {
+			sawReadFileEvidence = true
+		}
+		if priorStart, priorEnd, ok := planThenExecuteReadSummaryLineRange(result.Summary); ok && priorStart > 0 && priorEnd >= priorStart && priorEnd > maxEnd {
+			maxEnd = priorEnd
+		}
+		if lineCount, ok := planThenExecuteReadSummaryTotalLines(result.Summary); ok && lineCount > total {
+			total = lineCount
+		}
+	}
+	if sawReadFileEvidence && maxEnd == 0 {
+		return 0, 0, false
+	}
+	start := 1
+	if maxEnd > 0 {
+		start = maxEnd + 1
+	}
+	if total > 0 && start > total {
+		return 0, 0, false
+	}
+	end := start + 179
+	if total > 0 && end > total {
+		end = total
+	}
+	if start <= 0 || end < start {
+		return 0, 0, false
+	}
+	return start, end, true
 }
 
 func planThenExecutePathSupportsCodeNavigate(path string) bool {
@@ -6747,6 +8148,26 @@ func alreadyReadPath(results []workspace.ToolResult, path string) bool {
 }
 
 func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	return completionGateRecoveryChatOptionsForBackend(opts, brief, results, true)
+}
+
+func implementationRequiredPathHiddenOnlyRecoveryStall(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, reply llama.ChatMessage, priorGateRejections int, supportsNativeTools bool) bool {
+	if supportsNativeTools || priorGateRejections == 0 {
+		return false
+	}
+	if !runnerBriefRequiresMutation(brief) || len(brief.RequiredEditPaths) == 0 {
+		return false
+	}
+	if len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) == 0 {
+		return false
+	}
+	if !implementationRequiredPathAnchorsReady(brief, results) {
+		return false
+	}
+	return strings.TrimSpace(reply.Content) == "" && strings.TrimSpace(reply.ReasoningContent) != ""
+}
+
+func completionGateRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if briefIsScratchpadDeliverableLane(brief) {
 		if opts.MaxTokens <= 0 {
 			opts.MaxTokens = 16384
@@ -6754,11 +8175,14 @@ func completionGateRecoveryChatOptions(opts llama.ChatOptions, brief workerrunti
 		return opts
 	}
 	if planThenExecutePlannerBrief(brief) {
-		return planThenExecuteCandidatePostReadChatOptions(opts, brief, results)
+		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 	}
 	if runnerBriefRequiresMutation(brief) && len(brief.RequiredEditPaths) > 0 &&
 		len(missingRequiredEditPaths(brief.RequiredEditPaths, changedPathsFromToolResults(results))) > 0 {
 		opts = implementationRequiredPathForceVisibleActionChatOptions(opts)
+		if !supportsNativeTools && implementationRequiredPathAnchorsReady(brief, results) {
+			opts = forceVisibleActionChatOptions(opts)
+		}
 		limit := implementationRequiredPathRecoveryTokenLimit(brief, results)
 		if opts.MaxTokens <= 0 || opts.MaxTokens < limit || opts.MaxTokens > limit {
 			opts.MaxTokens = limit
@@ -6796,6 +8220,27 @@ func implementationRequiredPathForceVisibleActionChatOptions(opts llama.ChatOpti
 	return opts
 }
 
+func implementationRequiredPathAnchorsReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if len(brief.RequiredEditPaths) == 0 {
+		return false
+	}
+	changed := changedPathsFromToolResults(results)
+	for _, path := range brief.RequiredEditPaths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			continue
+		}
+		if _, ok := changed[normalized]; ok {
+			continue
+		}
+		evidence := planThenExecuteRequiredSourceEvidenceForPath(brief, results, normalized)
+		if evidence.Level != planThenExecuteEvidenceAnchorReady {
+			return false
+		}
+	}
+	return true
+}
+
 func implementationRequiredPathRecoveryTokenLimit(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) int {
 	if implementationRequiredPathRecoveryNeedsLargeBodyBudget(brief, results) {
 		return 16384
@@ -6820,6 +8265,10 @@ func implementationRequiredPathRecoveryNeedsLargeBodyBudget(brief workerruntime.
 }
 
 func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, true)
+}
+
+func planThenExecuteCandidatePostReadChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if !planThenExecutePlannerBrief(brief) {
 		return opts
 	}
@@ -6834,7 +8283,7 @@ func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief w
 			}
 			return opts
 		}
-		opts = planThenExecuteForceVisibleActionChatOptions(opts)
+		opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
 		limit := planThenExecuteRecoveryTokenLimit(brief, results)
 		if planThenExecuteRecoveryNeedsLargeBodyBudget(brief, results) {
 			limit = 16384
@@ -6845,12 +8294,14 @@ func planThenExecuteCandidatePostReadChatOptions(opts llama.ChatOptions, brief w
 		return opts
 	}
 	if readEvidenceSeen {
-		opts = planThenExecuteForceVisibleActionChatOptions(opts)
-		if len(unreadPlanThenExecuteCandidateScopePaths(brief, results, 4)) == 0 && chatOptionsExposeTool(opts, "submit_plan") {
-			opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
-			opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
-		} else {
-			opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
+		opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
+		if supportsNativeTools {
+			if len(unreadPlanThenExecuteCandidateScopePaths(brief, results, 4)) == 0 && chatOptionsExposeTool(opts, "submit_plan") {
+				opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
+				opts.ToolChoice = "required"
+			} else {
+				opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
+			}
 		}
 	}
 	if opts.MaxTokens <= 0 || opts.MaxTokens > 4096 {
@@ -6907,7 +8358,11 @@ func planThenExecuteRecoveryResultText(results []workspace.ToolResult) string {
 }
 
 func (r *Runner) planThenExecuteSubmitPlanParseRecoveryPrompt(raw string, parseErr error, results []workspace.ToolResult) (string, bool) {
-	if r == nil || !r.planThenExecutePlannerPhase() || !submitPlanEditsStringParseError(raw, parseErr) {
+	if r == nil || !r.planThenExecutePlannerPhase() || parseErr == nil {
+		return "", false
+	}
+	stringifiedEdits := submitPlanEditsStringParseError(raw, parseErr)
+	if !stringifiedEdits && !planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, results) {
 		return "", false
 	}
 	if planThenExecuteReadyToSubmitNudge(r.RuntimeBrief, results) == "" {
@@ -6915,11 +8370,15 @@ func (r *Runner) planThenExecuteSubmitPlanParseRecoveryPrompt(raw string, parseE
 	}
 	required := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 12)
 	var b strings.Builder
-	b.WriteString("SUBMIT_PLAN PARSE RECOVERY: the previous `submit_plan` did not count because `edits` was emitted as a quoted JSON string.\n\n")
+	if stringifiedEdits {
+		b.WriteString("SUBMIT_PLAN PARSE RECOVERY: the previous `submit_plan` did not count because `edits` was emitted as a quoted JSON string.\n\n")
+	} else {
+		b.WriteString("SUBMIT_PLAN PARSE RECOVERY: the previous visible tool object was malformed and did not count as a plan artifact.\n\n")
+	}
 	b.WriteString("Do not call read/search/discovery for this correction. The required source-body obligations are already satisfied.\n\n")
 	b.WriteString("Next visible action MUST be exactly one of:\n")
 	b.WriteString("  1. A parser-readable `submit_plan` request whose top-level `edits` value is a JSON array, not a string. Each edit object must contain a path from the required edit scope, one executable edit shape, and a one-sentence purpose.\n")
-	b.WriteString("     If exact source contains quotes, raw strings, struct tags, or large function bodies, prefer numeric `start_line`/`end_line` plus complete `content` so the plan does not require a giant escaped `old_text` string.\n")
+	b.WriteString("     Use `insert_after_line` plus non-empty `content` for insertions/appends after an existing line. Use `old_text`/`new_text` for exact replacements/deletions. Use numeric `start_line`/`end_line` plus complete `content` only to replace that exact inclusive current-source range; it is not an insertion point.\n")
 	b.WriteString("  2. `Decision: source-satisfied` naming every required path and the observed current-state evidence.\n")
 	b.WriteString("  3. `<<QUESTION>>:` with the exact path-specific blocker that prevents drafting the plan.\n")
 	if len(required) > 0 {
@@ -6987,14 +8446,81 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 }
 
 func planThenExecuteReadyToSubmitChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	return planThenExecuteReadyToSubmitChatOptionsForBackend(opts, brief, results, true)
+}
+
+func planThenExecuteNativeSubmitPlanNudge(brief workerruntime.WorkerRuntimeBrief) string {
+	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
+	var b strings.Builder
+	b.WriteString("PLANNER READINESS REACHED: every required_edit_path has anchor-ready source evidence in this turn.\n\n")
+	b.WriteString("This backend now exposes only the native `submit_plan` tool for the terminal planner action. Call `submit_plan` now with one ordered edit entry for every required_edit_path. Do not answer in prose.")
+	if len(required) > 0 {
+		b.WriteString("\n\nRequired edit paths: ")
+		b.WriteString(strings.Join(required, ", "))
+		b.WriteString(".")
+	}
+	return b.String()
+}
+
+func planThenExecuteNativeSubmitPlanCorrectionPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
+	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
+	var b strings.Builder
+	b.WriteString("The previous native `submit_plan` tool call was rejected before it became a valid plan artifact. ")
+	b.WriteString(lastSubmitPlanRejectionBrief(result))
+	b.WriteString("Call native `submit_plan` again now. The next tool call must include one ordered edit entry for every required_edit_path and complete executable final edit bodies. Do not answer in prose, and do not call read/search/discovery, shell, verification, or per-edit write tools.")
+	if len(required) > 0 {
+		b.WriteString("\n\nRequired edit paths: ")
+		b.WriteString(strings.Join(required, ", "))
+		b.WriteString(".")
+	}
+	return b.String()
+}
+
+func (r *Runner) planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(modelErr error, opts llama.ChatOptions, results []workspace.ToolResult, used int) (string, bool) {
+	if r == nil || r.Client == nil || modelErr == nil || used > 0 || !opts.ForceNativeTools || !r.planThenExecutePlannerPhase() {
+		return "", false
+	}
+	if !strings.EqualFold(r.Client.Backend(), config.BackendMLX) || !planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results) {
+		return "", false
+	}
+	detail := strings.TrimSpace(modelErr.Error())
+	lower := strings.ToLower(detail)
+	if !strings.Contains(lower, "tool_choice") || !strings.Contains(lower, "required") || !strings.Contains(lower, "did not produce any tool calls") {
+		return "", false
+	}
+	required := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 12)
+	var b strings.Builder
+	b.WriteString("Native submit_plan tool-call transport failed before the model produced a tool call. For this one recovery retry, native tools are disabled and the textual tool parser is active.\n\n")
+	b.WriteString("Emit exactly one visible JSON object for `submit_plan` now. Do not write prose before or after it. Include one ordered edit entry for every required_edit_path and complete executable final edit bodies.")
+	if len(required) > 0 {
+		b.WriteString("\n\nRequired edit paths: ")
+		b.WriteString(strings.Join(required, ", "))
+		b.WriteString(".")
+	}
+	return b.String(), true
+}
+
+func planThenExecuteReadyToSubmitChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if planThenExecuteReadyToSubmitNudge(brief, results) == "" {
-		return planThenExecuteCandidatePostReadChatOptions(opts, brief, results)
+		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 	}
-	opts = planThenExecuteForceVisibleActionChatOptions(opts)
-	if chatOptionsExposeTool(opts, "submit_plan") {
+	opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
+	if supportsNativeTools && chatOptionsExposeTool(opts, "submit_plan") {
 		opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
-		opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
+		opts.ToolChoice = "required"
 	}
+	limit := planThenExecuteRecoveryTokenLimit(brief, results)
+	if opts.MaxTokens <= 0 || opts.MaxTokens < limit || opts.MaxTokens > limit {
+		opts.MaxTokens = limit
+	}
+	return opts
+}
+
+func planThenExecuteTextualSubmitPlanFallbackChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	opts.ForceNativeTools = false
+	opts.Tools = nil
+	opts.ToolChoice = ""
+	opts = forceVisibleActionChatOptions(opts)
 	limit := planThenExecuteRecoveryTokenLimit(brief, results)
 	if opts.MaxTokens <= 0 || opts.MaxTokens < limit || opts.MaxTokens > limit {
 		opts.MaxTokens = limit
@@ -7006,7 +8532,7 @@ func planThenExecuteUnreadRequiredSourceChatOptions(opts llama.ChatOptions, brie
 	if planThenExecuteUnreadRequiredSourceNudge(brief, results) == "" {
 		return opts
 	}
-	opts = planThenExecuteForceVisibleActionChatOptions(opts)
+	opts = forceVisibleActionChatOptions(opts)
 	if chatOptionsExposeAnyTool(opts, "read_file", "code_navigate") {
 		opts.Tools = filterChatOptionsTools(opts.Tools, "read_file", "code_navigate")
 		opts.ToolChoice = "required"
@@ -7018,6 +8544,10 @@ func planThenExecuteUnreadRequiredSourceChatOptions(opts llama.ChatOptions, brie
 }
 
 func planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	return planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, true)
+}
+
+func planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) > 0 {
 		return opts
 	}
@@ -7027,12 +8557,14 @@ func planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts llama.ChatOptions
 	if len(readPathsFromResults(results)) == 0 && !successfulToolSeen(results, "read_file") && lastNonGateTool(results) != "read_file" {
 		return opts
 	}
-	if !chatOptionsExposeTool(opts, "submit_plan") {
+	if supportsNativeTools && !chatOptionsExposeTool(opts, "submit_plan") {
 		return opts
 	}
-	opts = planThenExecuteForceVisibleActionChatOptions(opts)
-	opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
-	opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
+	opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
+	if supportsNativeTools {
+		opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
+		opts.ToolChoice = "required"
+	}
 	limit := planThenExecuteRecoveryTokenLimit(brief, results)
 	if opts.MaxTokens <= 0 || opts.MaxTokens < limit || opts.MaxTokens > limit {
 		opts.MaxTokens = limit
@@ -7043,7 +8575,7 @@ func planThenExecuteCandidateWriteOnlyRecoveryChatOptions(opts llama.ChatOptions
 func planThenExecuteRecoveryTokenLimit(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) int {
 	if planThenExecuteRejectedPlanCorrectionOnly(brief, results) {
 		if len(normalizedRequiredEditPathSet(brief.RequiredEditPaths)) >= 3 {
-			return 4096
+			return 8192
 		}
 		return 1024
 	}
@@ -7054,7 +8586,7 @@ func planThenExecuteRecoveryTokenLimit(brief workerruntime.WorkerRuntimeBrief, r
 		return 4096
 	}
 	if len(normalizedRequiredEditPathSet(brief.RequiredEditPaths)) >= 3 {
-		return 4096
+		return 8192
 	}
 	return 4096
 }
@@ -7070,8 +8602,12 @@ func planThenExecuteRejectedPlanCorrectionOnly(brief workerruntime.WorkerRuntime
 }
 
 func planThenExecutePostReadinessRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	return planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, brief, results, true)
+}
+
+func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
-		opts = planThenExecuteForceVisibleActionChatOptions(opts)
+		opts = forceVisibleActionChatOptions(opts)
 		if chatOptionsExposeAnyTool(opts, "read_file", "code_navigate") {
 			opts.Tools = filterChatOptionsTools(opts.Tools, "read_file", "code_navigate")
 			opts.ToolChoice = "required"
@@ -7081,7 +8617,7 @@ func planThenExecutePostReadinessRecoveryChatOptions(opts llama.ChatOptions, bri
 		}
 		return opts
 	}
-	return planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts, brief, results)
+	return planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 }
 
 func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -7107,7 +8643,7 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 			successfulSourceBodyReadPathBefore(results, rejectedAt, normalized) {
 			continue
 		}
-		if !successfulReadPathAfter(results, rejectedAt, normalized) {
+		if !successfulSourceEvidencePathAfter(results, rejectedAt, normalized) {
 			return true
 		}
 	}
@@ -7115,18 +8651,24 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 }
 
 func planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	return planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, true)
+}
+
+func planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
 	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) == 0 {
 		return opts
 	}
 	if successfulSubmitPlanResultCount(results) > 0 {
 		return opts
 	}
-	if !chatOptionsExposeTool(opts, "submit_plan") {
+	if supportsNativeTools && !chatOptionsExposeTool(opts, "submit_plan") {
 		return opts
 	}
-	opts = planThenExecuteForceVisibleActionChatOptions(opts)
-	opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
-	opts.ToolChoice = planThenExecuteTerminalAwareToolChoice(opts.ToolChoice)
+	opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
+	if supportsNativeTools {
+		opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
+		opts.ToolChoice = "required"
+	}
 	limit := planThenExecuteRecoveryTokenLimit(brief, results)
 	if opts.MaxTokens <= 0 || opts.MaxTokens < limit || opts.MaxTokens > limit {
 		opts.MaxTokens = limit
@@ -7136,6 +8678,25 @@ func planThenExecuteRequiredWriteOnlyRecoveryChatOptions(opts llama.ChatOptions,
 
 func planThenExecuteForceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
 	return forceVisibleActionChatOptions(opts)
+}
+
+func planThenExecuteSubmitPlanTerminalChatOptions(opts llama.ChatOptions, supportsNativeTools bool) llama.ChatOptions {
+	opts = planThenExecuteForceVisibleActionChatOptions(opts)
+	if !supportsNativeTools {
+		opts.Tools = nil
+		opts.ToolChoice = ""
+	}
+	return opts
+}
+
+func planThenExecuteTerminalSubmitPlanAllowed(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !planThenExecutePlannerBrief(brief) || successfulSubmitPlanResultCount(results) > 0 {
+		return false
+	}
+	if len(brief.RequiredEditPaths) > 0 {
+		return planThenExecuteReadyToSubmitNudge(brief, results) != ""
+	}
+	return successfulToolSeen(results, "read_file") || len(readPathsFromResults(results)) > 0 || lastNonGateTool(results) == "read_file"
 }
 
 func forceVisibleActionChatOptions(opts llama.ChatOptions) llama.ChatOptions {
@@ -7917,12 +9478,53 @@ func scopedImplementationDiscoveryPathAllowed(req workspace.ToolRequest, pathSco
 			return true
 		}
 	}
+	if scopedImplementationPackageDiscoveryPathAllowed(req, normalized, pathScope) {
+		return true
+	}
 	return false
 }
 
 func runnerPathLooksLikeFile(path string) bool {
 	base := filepath.Base(strings.TrimSpace(filepath.ToSlash(path)))
 	return strings.Contains(base, ".")
+}
+
+func scopedImplementationPackageDiscoveryPathAllowed(req workspace.ToolRequest, normalized string, pathScope []string) bool {
+	normalized = normalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(normalized)))
+	if normalized == "" || normalized == "." || normalized == "/" || runnerPathLooksLikeFile(normalized) {
+		return false
+	}
+	if !scopedImplementationDirectoryDiscoveryHasExactTarget(req) {
+		return false
+	}
+	for _, scoped := range pathScope {
+		scoped = normalizeRunnerPath(filepath.ToSlash(strings.TrimSpace(scoped)))
+		if scoped == "" || !runnerPathLooksLikeFile(scoped) {
+			continue
+		}
+		parent := normalizeRunnerPath(filepath.ToSlash(filepath.Dir(scoped)))
+		if parent == "" || parent == "." || parent == "/" {
+			continue
+		}
+		if normalized == parent {
+			return true
+		}
+	}
+	return false
+}
+
+func scopedImplementationDirectoryDiscoveryHasExactTarget(req workspace.ToolRequest) bool {
+	target := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query, req.Task, req.ID, req.Handle, req.NamedGap))
+	if target == "" || len(target) < 3 {
+		return false
+	}
+	if strings.ContainsAny(target, "*?[]{}|") {
+		return false
+	}
+	if strings.Contains(target, "$") {
+		return false
+	}
+	return true
 }
 
 func scopedImplementationSymbolOwnerLookupAllowed(req workspace.ToolRequest) bool {
@@ -12563,6 +14165,22 @@ func briefIsScratchpadDeliverableLane(brief workerruntime.WorkerRuntimeBrief) bo
 	return true
 }
 
+func scopedImplementationUsesBoundedSourceEdits(brief workerruntime.WorkerRuntimeBrief, paths []string) bool {
+	if !implementationScopedEditSurfaceActive(brief, nil) || briefIsDocDeliverableLane(brief) {
+		return false
+	}
+	for _, path := range paths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || writePathIsNonSource(normalized) {
+			continue
+		}
+		if recoverySearchPathLooksEditableSource(normalized) {
+			return true
+		}
+	}
+	return false
+}
+
 // writeTouchesOnlyNonSourcePaths returns true when every path in a
 // write result is a non-source file (markdown, plain text). Used to
 // exempt doc-deliverable lanes from the post-write verification gate.
@@ -12967,6 +14585,10 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 	b.WriteString("Recovery nudge — this implementation turn still has required edit path(s) without a successful write: ")
 	b.WriteString(strings.Join(missing, ", "))
 	b.WriteString(".\n")
+	if scopedImplementationUsesBoundedSourceEdits(in.brief, missing) {
+		b.WriteString("Do not answer with partial findings. For existing source/test required paths, the allowed write outcome is a bounded `edit_file` call using old_text/new_text or start_line/end_line/content, or an `apply_patch` envelope. Do not use `write_file` or `append_file` for existing source/test paths; reserve whole-file writes for new files, small files, and non-source deliverables. Otherwise answer with <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
+		return b.String(), true
+	}
 	b.WriteString("Do not answer with partial findings. Required outcomes are an allowed write or <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
 	return b.String(), true
 }

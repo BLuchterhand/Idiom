@@ -80,11 +80,12 @@ func submitPlanEditSchema() string {
 		`,"old_text":` + strProp("exact current text to replace for the substring shape; copy from source evidence, no placeholders/ellipses") +
 		`,"new_text":` + strProp("complete replacement text for the substring shape; may be empty when deleting old_text; OR the complete file body when paired with replace_all:true and empty old_text; no placeholders/ellipses") +
 		`,"new_text_ref":` + strProp("artifact ref for replacement/whole-file body; normally produced automatically after submit_plan spills a large new_text") +
-		`,"content":` + strProp("complete non-empty replacement content for the inclusive line-range shape; no placeholders/ellipses") +
+		`,"content":` + strProp("complete non-empty replacement content for line-range shape, or inserted content for insert_after_line shape; no placeholders/ellipses") +
 		`,"content_ref":` + strProp("artifact ref for line-range content; normally produced automatically after submit_plan spills large content") +
+		`,"insert_after_line":` + intProp("existing 1-based line after which to insert non-empty content; insertion-only shape, not a replacement range and not valid for new files") +
 		`,"replace_all":` + boolProp("with old_text set: replace every occurrence; with old_text empty: write new_text as the entire file body (creates the file if missing)") +
 		`,"purpose":` + strProp("one sentence: what this edit does and why")
-	return `{"type":"object","properties":{` + properties + `},"required":["path"],"anyOf":[{"required":["old_text","new_text"]},{"required":["start_line","end_line","content"]},{"required":["start_line","end_line","content_ref"]},{"required":["replace_all","new_text"]},{"required":["replace_all","new_text_ref"]}]}`
+	return `{"type":"object","properties":{` + properties + `},"required":["path"],"anyOf":[{"required":["old_text","new_text"]},{"required":["start_line","end_line","content"]},{"required":["start_line","end_line","content_ref"]},{"required":["insert_after_line","content"]},{"required":["replace_all","new_text"]},{"required":["replace_all","new_text_ref"]}]}`
 }
 
 func submitPlanParametersSchema() string {
@@ -391,7 +392,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "edit_file",
-			Description: "Replace a line range or exact old_text in an existing file. Preferred for localized edits. Use either old_text+new_text or start_line+end_line+content, plus a one-sentence description of the change's intent.",
+			Description: "Bounded edit for an existing file. Use exactly one body shape: old_text+new_text for an exact substring replacement, OR start_line+end_line+content for a line-range replacement. Preferred for existing source/test edits. Do not pass content without start_line/end_line; do not use this for whole-file replacement. Requires a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "description"},
 				`"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start for the line-range shape; use with end_line and content")+`,"end_line":`+intProp("1-based end for the line-range shape; use with start_line and content")+`,"old_text":`+strProp("exact text to replace for the exact-match shape; use with new_text and omit line range fields")+`,"new_text":`+strProp("replacement text for the exact-match shape; use with old_text")+`,"content":`+strProp("replacement content for the line-range shape; use with start_line and end_line")+`,"description":`+strProp("one sentence on what this change is and why")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this write fulfills, so the plan panel can check it off in place"),
@@ -399,7 +400,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "write_file",
-			Description: "Overwrite a file with exact contents. Requires a one-sentence description of the change's intent.",
+			Description: "Whole-file replacement with exact contents. Use for new files, small files, or non-source deliverables where complete file authorship is intended; prefer edit_file or apply_patch for existing source/test edits. Requires a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "content", "description"},
 				`"path":`+strProp("file path")+`,"content":`+strProp("full file contents")+`,"description":`+strProp("one sentence on what this file is for and why it's being written")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this write fulfills, so the plan panel can check it off in place"),
@@ -407,7 +408,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "append_file",
-			Description: "Append text to an existing file. Requires a one-sentence description of the change's intent.",
+			Description: "Append text to an existing file boundary. Use only when appending at the end is explicitly intended; prefer edit_file or apply_patch for source/test changes at known anchors. Requires a one-sentence description of the change's intent.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "content", "description"},
 				`"path":`+strProp("file path")+`,"content":`+strProp("text to append")+`,"description":`+strProp("one sentence on what's being appended and why")+`,"task_id":`+strProp("optional: id of the planned task_ledger item this write fulfills, so the plan panel can check it off in place"),
@@ -423,7 +424,7 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:           "submit_plan",
-			Description:    "Submit a durable structured edit plan in plan-then-execute mode. Planner phases use it for supported edit plans; review-repair phases use it only for new corrective edits when a checklist item fails. Clean review-repair closes with Decision: pass instead. Legacy callers may send rationale, pack_id, and edits at the top level; edits must be a JSON array, not a quoted JSON string. Structured callers may send plan_artifact with task, contract, packet, paths, evidence, unresolved_questions, verification_obligations, approval, handoff, and edits. Approval carries stable scope_id, approved_paths, pending_paths, and execution_permission; partial approval may execute only approved scope. Handoff carries a stable id used by executor/audit events. Use this in lieu of per-edit tool calls when the lane is plan-only. Every edit body must be executable final content: no placeholders, ellipses, TODO markers, existing-code comments, omitted bodies, pseudo-code, or prose descriptions. Three edit shapes: (1) line-range — path+start_line+end_line+non-empty content replaces lines [start_line, end_line] with complete replacement content; prefer this for non-trivial existing source/test edits; (2) substring — path+old_text+new_text replaces the first match; use only for tiny exact snippets copied from source evidence; empty new_text deletes old_text; set replace_all:true to replace every occurrence; (3) whole-file or new-file — path+new_text+replace_all:true with EMPTY old_text writes new_text as the complete file body, creating the file if it doesn't exist. Large new_text/content bodies are automatically spilled to artifact refs after submission. When you used context_pack to localize the work, pass its pack_id back so the executor can rehydrate the same cached view instead of re-discovering.",
+			Description:    "Submit a durable structured edit plan in plan-then-execute mode. Planner phases use it for supported edit plans; review-repair phases use it only for new corrective edits when a checklist item fails. Clean review-repair closes with Decision: pass instead. Legacy callers may send rationale, pack_id, and edits at the top level; edits must be a JSON array, not a quoted JSON string. Structured callers may send plan_artifact with task, contract, packet, paths, evidence, unresolved_questions, verification_obligations, approval, handoff, and edits. Approval carries stable scope_id, approved_paths, pending_paths, and execution_permission; partial approval may execute only approved scope. Handoff carries a stable id used by executor/audit events. Use this in lieu of per-edit tool calls when the lane is plan-only. Every edit body must be executable final content: no placeholders, ellipses, TODO markers, existing-code comments, omitted bodies, pseudo-code, or prose descriptions. Four edit shapes: (1) substring — path+old_text+new_text replaces the first match; use for exact replacements; empty new_text deletes old_text; set replace_all:true to replace every occurrence; (2) line-range — path+start_line+end_line+non-empty content replaces exactly lines [start_line, end_line] with complete replacement content; use only for replacement of that inclusive current-source range, not as an insertion point; (3) insertion — path+insert_after_line+non-empty content inserts after an existing 1-based line in an existing file and does not replace current lines; do not combine with old_text/new_text, start_line/end_line, replace_all, or content_ref; (4) whole-file or new-file — path+new_text+replace_all:true with EMPTY old_text writes new_text as the complete file body, creating the file if it doesn't exist. Large new_text/content bodies are automatically spilled to artifact refs after submission, except insert_after_line which requires inline content in this change. When you used context_pack to localize the work, pass its pack_id back so the executor can rehydrate the same cached view instead of re-discovering.",
 			ParametersJSON: submitPlanParametersSchema(),
 		},
 		{

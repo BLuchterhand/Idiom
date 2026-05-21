@@ -94,10 +94,10 @@ func shouldDispatchImplementationToPlanExecute(plan promptExecutionPlan, mode ag
 	if implementationDispatchPromptIsRefineScratchpad(prompt) {
 		return false
 	}
-	if !implementationDispatchHasPlanExecuteReadyHandoff(prompt, plan, cfg) {
-		return false
+	if implementationDispatchHasPlanExecuteReadyHandoff(prompt, plan, cfg) {
+		return true
 	}
-	return true
+	return false
 }
 
 func isPlanExecuteInternalFamily(family string) bool {
@@ -125,7 +125,79 @@ func implementationDispatchHasPlanExecuteReadyHandoff(prompt string, plan prompt
 	if implementationDispatchPromptHasExecutablePlanEdits(prompt, requiredPaths) {
 		return true
 	}
-	return len(requiredPaths) == 0 && implementationDispatchPromptHasExecutablePlanEdits(prompt, allowedPaths)
+	if len(requiredPaths) == 0 && implementationDispatchPromptHasExecutablePlanEdits(prompt, allowedPaths) {
+		return true
+	}
+	if implementationDispatchPromptExplicitPlanExecuteLaneRequest(prompt) &&
+		len(requiredPaths) >= 2 &&
+		implementationDispatchScopeHasSourceAndTestPath(requiredPaths) {
+		return true
+	}
+	if implementationDispatchHasSemanticSourceAndTestScope(prompt, plan, cfg) {
+		return false
+	}
+	return false
+}
+
+func implementationDispatchPromptExplicitPlanExecuteLaneRequest(prompt string) bool {
+	lower := strings.ToLower(strings.Join(strings.Fields(prompt), " "))
+	return strings.Contains(lower, "use the plan-execute lane") ||
+		strings.Contains(lower, "run through the plan-execute lane") ||
+		strings.Contains(lower, "send this through the plan-execute lane")
+}
+
+func implementationDispatchHasSemanticSourceAndTestScope(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
+	requiredPaths, _, _, _ := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
+	if len(requiredPaths) < 2 || !implementationDispatchScopeHasSourceAndTestPath(requiredPaths) {
+		return false
+	}
+	obligations := planexecute.EditSetObligationsFromPrompt(prompt)
+	if obligations.Has(planexecute.EditSetObligationKindTestEdit) && obligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
+		return true
+	}
+	return obligations.Has(planexecute.EditSetObligationKindImplementationEdit) && implementationDispatchPromptLooksLikeTDDProductWorkflow(prompt)
+}
+
+func implementationDispatchScopeHasSourceAndTestPath(paths []string) bool {
+	hasSource := false
+	hasTest := false
+	for _, path := range uniqueImplementationDispatchPaths(paths) {
+		if implementationDispatchPathLooksLikeTest(path) {
+			hasTest = true
+			continue
+		}
+		if implementationDispatchPathLooksLikeProductSource(path) {
+			hasSource = true
+		}
+	}
+	return hasSource && hasTest
+}
+
+func implementationDispatchPathLooksLikeProductSource(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" || implementationDispatchPathLooksLikeTest(lower) {
+		return false
+	}
+	if strings.HasPrefix(lower, "docs/") || strings.Contains(lower, "/docs/") ||
+		strings.HasPrefix(lower, "examples/") || strings.Contains(lower, "/examples/") {
+		return false
+	}
+	switch filepath.Ext(filepath.Base(lower)) {
+	case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".swift",
+		".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash",
+		".zsh", ".sql", ".proto", ".graphql", ".gd", ".mjs", ".cjs", ".kts",
+		".css", ".scss", ".sass", ".html", ".vue", ".svelte":
+		return true
+	default:
+		return false
+	}
+}
+
+func implementationDispatchPromptLooksLikeTDDProductWorkflow(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "tdd") ||
+		strings.Contains(lower, "test-driven") ||
+		strings.Contains(lower, "product workflow")
 }
 
 func implementationDispatchPromptHasExecutablePlanEdits(prompt string, paths []string) bool {
@@ -3118,6 +3190,9 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 }
 
 func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts planexecute.RunOptions) func() {
+	if strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily {
+		return func() {}
+	}
 	return m.applyExecutorPromptRoute(ctx, "plan-execute in-process runner", opts.UseActiveModel)
 }
 

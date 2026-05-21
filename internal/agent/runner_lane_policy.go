@@ -99,6 +99,14 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
+	if redirected, ok := r.planThenExecuteRequiredSourceFollowupRedirect(input.Results, decision.Request); ok {
+		r.emitEvent(RunEvent{
+			Role:    "plan_then_execute_source_followup_redirect",
+			Content: "redirected a non-advancing required-path source read to the next bounded source-evidence step",
+		})
+		decision.Request = redirected
+		decision.Raw = marshalToolRequestRaw(redirected)
+	}
 
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "read_only_verification_shell") &&
 		!isVerificationRequest(decision.Request) {

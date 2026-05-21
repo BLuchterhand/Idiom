@@ -654,7 +654,7 @@ func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 	}
 }
 
-func TestWriterRouteDecisionForPromptKeepsSemanticImplementationOnGuardedLane(t *testing.T) {
+func TestWriterRouteDecisionForPromptKeepsSemanticTDDScopeOnGuardedLane(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
@@ -667,16 +667,115 @@ func TestWriterRouteDecisionForPromptKeepsSemanticImplementationOnGuardedLane(t 
 		},
 	}
 
-	decision := m.writerRouteDecisionForPrompt("Implement a TDD coverage-gate fix. Required edit paths: internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go.", plan)
+	decision := m.writerRouteDecisionForPrompt("Implement a TDD coverage-gate fix and add regression tests. Required edit paths: internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go.", plan)
 
 	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
-		t.Fatalf("semantic TDD implementation should stay on guarded implement lane, got %#v", decision)
+		t.Fatalf("semantic TDD source+test implementation should stay on guarded implement until semantic plan handoff exists, got %#v", decision)
+	}
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
+		t.Fatalf("guarded implementation reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestWriterRouteDecisionForPromptHonorsExplicitPlanExecuteForSemanticTDDScope(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"internal/productworkflow/coverage_gate.go", "internal/productworkflow/coverage_gate_test.go"},
+		},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("Use the plan-execute lane to implement a TDD coverage-gate fix and add regression tests. Required edit paths: internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go.", plan)
+
+	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+		t.Fatalf("explicit semantic TDD request should route to plan-execute, got %#v", decision)
+	}
+	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("task family = %q, want %q", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.explicit_plan_execute_lane") {
+		t.Fatalf("explicit plan-execute reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseAsContract(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"pkg/widget.go"},
+		},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("Use the plan-execute lane to implement the widget behavior. Required edit paths: pkg/widget.go.", plan)
+
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("plan-execute wording alone should not select plan-submission contract, got %#v", decision)
+	}
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
+	}
+}
+
+func TestWriterRouteDecisionForPromptKeepsSimpleUnscopedImplementationOnGuardedLane(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:         agent.BuildMode(),
+		route:        turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("Update the small label text in the active file.", plan)
+
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("simple unscoped implementation should stay on guarded implement lane, got %#v", decision)
 	}
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
 	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
-		t.Fatalf("semantic implementation reason missing: %#v", decision.ReasonCodes)
+		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestWriterRouteDecisionForPromptKeepsSimpleScopedSourceTestImplementationOnGuardedLane(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"pkg/widget.go", "pkg/widget_test.go"},
+		},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("Fix the workflow label test expectation. Required edit paths: pkg/widget.go, pkg/widget_test.go.", plan)
+
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("simple scoped source+test implementation should stay on guarded implement lane, got %#v", decision)
+	}
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
+		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -714,6 +813,56 @@ func TestWriterRouteDecisionForPromptDispatchesExactEditPacketToPlanExecute(t *t
 
 	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
 		t.Fatalf("exact edit packet should dispatch to plan-execute, got %#v", decision)
+	}
+	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	}
+}
+
+func TestWriterRouteDecisionForPromptHonorsExplicitPlanExecuteForExactEditPacket(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"pkg/widget.go", "pkg/widget_test.go"},
+		},
+	}
+	prompt := strings.Join([]string{
+		"Use the plan-execute lane to apply these exact edits.",
+		"",
+		"Required edit paths: pkg/widget.go, pkg/widget_test.go",
+		"",
+		"## Required Edits",
+		"",
+		"Path: pkg/widget.go",
+		"old_text:",
+		"```text",
+		"old source",
+		"```",
+		"new_text:",
+		"```text",
+		"new source",
+		"```",
+		"",
+		"Path: pkg/widget_test.go",
+		"old_text:",
+		"```text",
+		"old test",
+		"```",
+		"new_text:",
+		"```text",
+		"new test",
+		"```",
+	}, "\n")
+
+	decision := m.writerRouteDecisionForPrompt(prompt, plan)
+
+	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+		t.Fatalf("explicit exact edit packet should dispatch to plan-execute, got %#v", decision)
 	}
 	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
@@ -1470,11 +1619,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 			})
 		case "/v1/chat/completions":
 			plannerChatRequests.Add(1)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"choices": []map[string]any{{
-					"message": map[string]string{"content": "planner should not handle direct implementation"},
-				}},
-			})
+			t.Fatalf("semantic source/test implementation should not enter exact plan-execute planner")
 		default:
 			http.NotFound(w, r)
 		}
@@ -1494,20 +1639,20 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 				t.Fatalf("read request: %v", err)
 			}
 			requestText := string(body)
-			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
-				t.Fatalf("semantic TDD prompt should not enter exact plan-execute planner:\n%s", requestText)
-			}
 			if !strings.Contains(requestText, `"model":"executor-model"`) {
 				t.Fatalf("direct implementation should send executor model id, got request:\n%s", requestText)
+			}
+			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
+				t.Fatalf("semantic direct implementation should not include plan-execute planner prompt:\n%s", requestText)
 			}
 			reply := ""
 			switch executorChatRequests.Add(1) {
 			case 1:
 				reply = `<tool_call>
-{"tool":"write_file","path":"pkg/feature.go","content":"package pkg\n\nfunc Enabled() bool { return true }\n","description":"implement feature behavior"}`
+{"tool":"edit_file","path":"pkg/feature.go","old_text":"return false","new_text":"return true","description":"enable feature behavior"}`
 			case 2:
 				reply = `<tool_call>
-{"tool":"write_file","path":"pkg/feature_test.go","content":"package pkg\n\nconst Covered = true\n","description":"add regression coverage marker"}`
+{"tool":"edit_file","path":"pkg/feature_test.go","old_text":"Covered = false","new_text":"Covered = true","description":"add regression coverage marker"}`
 			default:
 				reply = "Updated pkg/feature.go and pkg/feature_test.go."
 			}
@@ -1549,12 +1694,12 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement a semantic TDD feature fix. Required edit paths: pkg/feature.go, pkg/feature_test.go. Add or adjust tests.")
+	answer, err := model.RunPromptOnce(context.Background(), "Implement a semantic TDD feature fix and add regression tests. Required edit paths: pkg/feature.go, pkg/feature_test.go.")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
 	if plannerChatRequests.Load() != 0 {
-		t.Fatalf("direct implementation should not use planner chat when executor is reachable, got %d request(s)", plannerChatRequests.Load())
+		t.Fatalf("semantic implementation should not use exact plan-execute planner, got %d request(s)", plannerChatRequests.Load())
 	}
 	if executorChatRequests.Load() == 0 {
 		t.Fatalf("expected direct implementation to use executor chat")
@@ -4361,9 +4506,9 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSati
 				}
 				switch retryTurns.Add(1) {
 				case 1:
-					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature.go","start_line":1,"end_line":3}`
+					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature.go","start_line":1,"end_line":4}`
 				case 2:
-					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature_test.go","start_line":1,"end_line":3}`
+					reply = "<tool_call>\n" + `{"tool":"read_file","path":"pkg/feature_test.go","start_line":1,"end_line":4}`
 				default:
 					reply = strings.Join([]string{
 						"Decision: source-satisfied",

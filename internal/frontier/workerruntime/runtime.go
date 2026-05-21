@@ -168,6 +168,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	closureScope := closureGuidanceScope(input.Constraints, statusCombined)
 	closureActive := closureScope != ""
 	writeReadyPacket := implementationPacketWriteReady(input.Constraints)
+	planExecuteSubmitReady := slices.Contains(input.Constraints, "plan_then_execute_submit_plan_ready")
 	exactAnchorPacket := slices.Contains(input.Constraints, "exact_anchor_implementation") ||
 		slices.Contains(input.Constraints, "exact_anchor_prewrite_write_first")
 	requiredPathsRemaining := implementationRequiredPathsRemaining(input.Constraints)
@@ -190,6 +191,17 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 	if closureActive {
 		guidance.Constraints = appendUnique(guidance.Constraints, closureScope)
+	}
+	if planExecuteSubmitReady {
+		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/source-refresh after plan-execute submit_plan readiness")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "submit_plan with one ordered edit entry for every required_edit_paths entry")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "Decision: source-satisfied with current-state evidence for every required path")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "<<QUESTION>> naming the exact path-specific blocker")
+		if containsAny(statusCombined, "malformed tool request", "tool_parse") {
+			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "malformed_json_tool_request")
+			guidance.ValidNext = appendUnique(guidance.ValidNext, "emit exactly one parser-readable submit_plan JSON object")
+		}
+		return guidance
 	}
 
 	if containsAny(statusCombined, "malformed tool request", "tool_parse") {
@@ -642,7 +654,11 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		plan.DoNotRepeat = appendUnique(plan.DoNotRepeat, "markdown-wrapped or malformed tool JSON")
 	}
 	if containsAny(combined, "malformed tool", "tool_parse") {
-		plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
+		if slices.Contains(input.Constraints, "plan_then_execute_submit_plan_ready") {
+			plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one parser-readable submit_plan JSON object")
+		} else {
+			plan.RequiredNext = appendUnique(plan.RequiredNext, "emit exactly one valid JSON tool object")
+		}
 	}
 	if verificationToolFailure(tool, combined, input.Result) {
 		plan.FailureClass = "verification_failed"
@@ -791,7 +807,9 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.InvalidActions = uniqueNonEmpty(state.InvalidActions)
 	state.Readiness = NormalizeReadinessState(state.Readiness)
 	directive := "Use this current-state packet for the next action. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
-	if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
+	if planThenExecutePlannerState(state) && slices.Contains(state.Constraints, "plan_then_execute_submit_plan_ready") {
+		directive = "Use this current-state packet for the next action. Plan-execute source obligations are closed: do not read, search, shell, verify, or use per-edit write tools. The available contract menu is one parser-readable submit_plan with complete executable final edit bodies, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact blocker. Do not repeat invalid actions."
+	} else if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
 		directive = "Use this current-state packet for the next action. Required edit paths define the implementation scope. Contract outcomes are an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> naming the exact missing anchor or stale fact that blocks the edit. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if implementationStateMissingRequiredPaths(state) {
 		directive = "Use this current-state packet for the next action. Required edit paths remain contractual until each one is changed or explicitly blocked. The available contract menu is remaining-path edits, semantic/context/declared project discovery or narrow remaining-path source reads with named_gap for exact edit-safety facts, or concrete blockers. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."

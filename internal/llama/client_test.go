@@ -204,6 +204,41 @@ func TestMLXBackendOmitsNativeToolDefinitions(t *testing.T) {
 	}
 }
 
+func TestMLXBackendCanForceSingleNativeToolSurface(t *testing.T) {
+	var got chatRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","function":{"name":"submit_plan","arguments":"{\"rationale\":\"ok\",\"edits\":[]}"}}]},"finish_reason":"tool_calls"}]}`))
+	}))
+	defer server.Close()
+
+	client := NewClient(server.URL, time.Second).WithBackend(config.BackendMLX)
+	reply, err := client.CompleteChatMessage(context.Background(), nil, ChatOptions{
+		Model:            "mlx-model",
+		MaxTokens:        32,
+		ToolChoice:       "required",
+		ForceNativeTools: true,
+		Tools: []Tool{{
+			Type: "function",
+			Function: ToolFunction{
+				Name:       "submit_plan",
+				Parameters: json.RawMessage(`{"type":"object","properties":{"rationale":{"type":"string"},"edits":{"type":"array"}}}`),
+			},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteChatMessage: %v", err)
+	}
+	if len(got.Tools) != 1 || got.Tools[0].Function.Name != "submit_plan" || got.ToolChoice != "required" {
+		t.Fatalf("forced MLX terminal request should preserve one native tool, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
+	}
+	if len(reply.ToolCalls) != 1 || reply.ToolCalls[0].Function.Name != "submit_plan" {
+		t.Fatalf("expected parsed native tool call, got %#v", reply.ToolCalls)
+	}
+}
+
 func TestLlamaBackendKeepsNativeToolDefinitions(t *testing.T) {
 	var got chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -491,6 +491,47 @@ func TestExecuteReadWriteAndExploreWriteRejection(t *testing.T) {
 	}
 }
 
+func TestReadFileLineCountMatchesSubmitPlanLineRange(t *testing.T) {
+	dir := t.TempDir()
+	body := "package sample\n\nfunc Value() int {\n\treturn 1\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "value.go"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+	read := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "value.go"})
+	if read.Error != "" {
+		t.Fatalf("read_file failed: %#v", read)
+	}
+	if !strings.Contains(read.Summary, "total lines: 5") || strings.Contains(read.Output, "\n6:") {
+		t.Fatalf("read_file should report editable line spans without a synthetic trailing blank, got summary=%q output=\n%s", read.Summary, read.Output)
+	}
+	plan := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "update value",
+		Edits: []PlanEdit{{
+			Path:      "value.go",
+			StartLine: 3,
+			EndLine:   5,
+			Content:   "func Value() int {\n\treturn 2\n}\n",
+			Purpose:   "update returned value",
+		}},
+	})
+	if plan.Error != "" {
+		t.Fatalf("submit_plan should accept the line range advertised by read_file, got: %s", plan.Error)
+	}
+
+	if err := os.WriteFile(filepath.Join(dir, "empty.txt"), nil, 0o644); err != nil {
+		t.Fatalf("write empty fixture: %v", err)
+	}
+	empty := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "empty.txt"})
+	if empty.Error != "" {
+		t.Fatalf("empty read_file failed: %#v", empty)
+	}
+	if !strings.Contains(empty.Summary, "total lines: 0") || strings.Contains(empty.Output, "1:") {
+		t.Fatalf("empty read_file should not advertise editable line 1, got summary=%q output=%q", empty.Summary, empty.Output)
+	}
+}
+
 func TestUnsupportedToolErrorSuggestsClosestNames(t *testing.T) {
 	dir := t.TempDir()
 	mgr := NewManager(config.Workspace{
@@ -588,6 +629,69 @@ func TestEditFileRejectsEmptyContentLineRange(t *testing.T) {
 		})
 		if err := os.WriteFile(path, []byte(original), 0o644); err != nil {
 			t.Fatalf("restore original: %v", err)
+		}
+	}
+}
+
+func TestEditFileContentWithoutAnchorRecoveryPrefersBoundedSourceEdits(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "main.go")
+	original := "package main\n\nfunc main() {}\n"
+	writeTestFile(t, path, original)
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("main.go")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:        "edit_file",
+		Path:        "main.go",
+		Content:     "package main\n\nfunc main() { println(\"ok\") }\n",
+		Description: "update main behavior",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected malformed edit_file to be rejected")
+	}
+	for _, want := range []string{"bounded edit_file shape", `"description"`, "old_text", "start_line"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected source recovery to mention %q, got:\n%s", want, result.Error)
+		}
+	}
+	if strings.Contains(result.Error, "use write_file instead") || strings.Contains(result.Error, "REPLACE THE WHOLE FILE") {
+		t.Fatalf("source recovery should not redirect to write_file:\n%s", result.Error)
+	}
+	if got := readTestFile(t, path); got != original {
+		t.Fatalf("rejected edit should not mutate file\ngot:\n%s\nwant:\n%s", got, original)
+	}
+}
+
+func TestEditFileContentWithoutAnchorRecoveryKeepsWholeFileOptionForDocs(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "notes.md")
+	writeTestFile(t, path, "# Notes\n")
+	mgr := NewManager(config.Workspace{
+		Root:         dir,
+		CWD:          dir,
+		EnableWrites: true,
+		MaxFileBytes: 1 << 20,
+	})
+	mgr.MarkPathObserved("notes.md")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:        "edit_file",
+		Path:        "notes.md",
+		Content:     "# Updated\n",
+		Description: "update notes",
+	})
+	if result.Error == "" {
+		t.Fatalf("expected malformed edit_file to be rejected")
+	}
+	for _, want := range []string{"write_file", `"description"`, "new, small, or non-source deliverable"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected doc recovery to mention %q, got:\n%s", want, result.Error)
 		}
 	}
 }

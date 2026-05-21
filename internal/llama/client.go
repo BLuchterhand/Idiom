@@ -94,6 +94,11 @@ type ChatOptions struct {
 	MaxTokens          int
 	Tools              []Tool
 	ToolChoice         string
+	// ForceNativeTools lets a caller opt into the OpenAI tools array on
+	// backends that are normally kept in Idiom textual-tool mode. Use only
+	// for tightly scoped single-tool terminal turns; broad MLX tool surfaces
+	// remain textual because its parser has historically failed closed.
+	ForceNativeTools bool
 }
 
 type Usage struct {
@@ -224,11 +229,11 @@ func buildChatTemplateKwargs(opts ChatOptions, backend string) *chatTemplateKwar
 	}
 }
 
-func normalizeChatRequestForBackend(req *chatRequest, backend string) {
+func normalizeChatRequestForBackend(req *chatRequest, opts ChatOptions, backend string) {
 	if req == nil {
 		return
 	}
-	if !BackendSupportsNativeTools(backend) {
+	if !BackendSupportsNativeTools(backend) && !opts.ForceNativeTools {
 		// mlx_lm.server owns its own Qwen XML tool parser when a native
 		// OpenAI `tools` array is present. Current MLX parser failures can
 		// close the HTTP connection before idiom receives a structured model
@@ -491,7 +496,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 			Tools:              opts.Tools,
 			ToolChoice:         opts.ToolChoice,
 		}
-		normalizeChatRequestForBackend(&reqPayload, c.backend)
+		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
 		payload = reqPayload
 	}
 	data, err := json.Marshal(payload)
@@ -831,7 +836,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			Tools:              opts.Tools,
 			ToolChoice:         opts.ToolChoice,
 		}
-		normalizeChatRequestForBackend(&reqPayload, c.backend)
+		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
 		payload = reqPayload
 	}
 

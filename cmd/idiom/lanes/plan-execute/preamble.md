@@ -30,15 +30,18 @@ before `submit_plan`, unless the run short-circuits as exact-plan-ready before
 planner execution or closes as `Decision: source-satisfied` with current-state
 evidence. Missing/new files with a substantial full body or explicit whole-file
 replacement shape do not need a file read.
-For non-trivial existing source/test changes, prefer
+For insertion/appends after an existing line, use `insert_after_line` with
+non-empty `content`. For non-trivial existing source/test replacements, use
 `start_line`/`end_line`/`content` (line-range shape) after reading the relevant
-range. Use `old_text`/`new_text` (substring shape) only for a tiny exact snippet
-copied from current source evidence. For a new file or intentional whole-file
-write, use `replace_all:true` with empty `old_text` and `new_text` set to the
-full file body. If the brief names a missing required source/test path but gives
-only behavior, helper, or implementation-shape requirements without a
-substantial inline body or explicit replacement edit shape, stop with
-`<<QUESTION>>:` and name the missing body evidence. If an anchor proves stale,
+range; line ranges replace the inclusive current-source range and are not
+insertion points. Use `old_text`/`new_text` (substring shape) only for a tiny
+exact snippet copied from current source evidence. For a new file or
+intentional whole-file write, use `replace_all:true` with empty `old_text` and
+`new_text` set to the full file body. If the brief names a missing required
+source/test path but gives only behavior, helper, or implementation-shape
+requirements without a substantial inline body or explicit replacement edit
+shape, stop with `<<QUESTION>>:` and name the missing body evidence. If an
+anchor proves stale,
 ambiguous, or too imprecise during planning, the available contract surface is
 semantic/context/declared project discovery or a narrow source read inside the
 affected required edit path with `named_gap` to refresh the exact edit-safety
@@ -96,19 +99,20 @@ impact, evidence, and confidence. Use it for harness/tool/prompt/context gaps
 only, not for product-code bugs.
 
 Each entry in `submit_plan`'s `edits` array must specify exactly one edit
-shape plus a one-sentence `purpose`: `start_line`+`end_line`+non-empty
-`content` (line-range shape) for non-trivial existing-path edits,
-`old_text`+`new_text` (substring shape; small exact snippets only;
-`new_text: ""` deletes `old_text`), or `replace_all:true` with empty `old_text`
-and `new_text` as the full body for a new file or intentional whole-file write.
+shape plus a one-sentence `purpose`: `insert_after_line`+non-empty `content`
+for insertion after an existing 1-based line, `start_line`+`end_line`+non-empty
+`content` (line-range shape) for replacement only, `old_text`+`new_text`
+(substring shape; small exact snippets only; `new_text: ""` deletes
+`old_text`), or `replace_all:true` with empty `old_text` and `new_text` as the
+full body for a new file or intentional whole-file write.
 The `edits` field itself is a JSON array, not a quoted JSON string. Every edit
 body must be executable final content: no placeholders, ellipses, `<TODO>`
 markers, `existing code` comments, omitted bodies, pseudo-code, prose
 descriptions, or invented symbols in `old_text`, `new_text`, or `content`.
-Line-range `content` is the complete replacement for the inclusive range;
-`old_text` must be exact current text copied from source-body evidence;
-whole-file/new-file `new_text` is the complete file body. The executor phase
-will dispatch them in the order you list. Builds/tests listed
+`insert_after_line` does not replace current lines. Line-range `content` is the
+complete replacement for the inclusive range; `old_text` must be exact current
+text copied from source-body evidence; whole-file/new-file `new_text` is the
+complete file body. The executor phase will dispatch them in the order you list. Builds/tests listed
 in Acceptance are planner-owned and idiom enforces that contract; do not run
 build, test, shell, git, or source-sanity commands from the brief. Do not
 stage, commit, stash, checkout, or revert unrelated work.

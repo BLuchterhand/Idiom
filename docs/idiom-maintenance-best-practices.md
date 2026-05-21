@@ -104,10 +104,34 @@ instead of using its normal editing capability.
   into one "required paths" phrase. Prompts and rejections should distinguish
   `required_edit_paths`, source-body obligations, and `submit_plan.edits[]`
   coverage so the model cannot treat a read as a planned edit.
+- Keep mutation scope and bounded dependency evidence scope distinct. A
+  required edit path is the write allowlist; semantic read-only discovery may
+  inspect the immediate package/directory that owns an explicit required or
+  evidence file when the model names an exact edit-safety fact. Do not widen
+  raw file reads, broad search, shell, or write permissions to satisfy that
+  dependency lookup.
+- Treat `write_file` as a whole-file replacement primitive, not a general patch
+  primitive. In scoped implementation lanes, large existing source/test files
+  should be edited through `apply_patch` or bounded `edit_file` calls so the
+  harness preserves source truth without inviting accidental file truncation.
+  Keep `write_file` available for new files, small files, and non-source
+  deliverables where whole-file authorship is the actual contract.
+- Do not fix local-Qwen write failures by toggling thinking alone. First check
+  whether the backend's transcript matches its tool mode. Text-tool backends
+  must see prior tool actions as visible assistant text plus textual tool
+  results; synthetic native `tool_calls` create empty assistant turns in MLX
+  history and train the next turn to stay empty. Once the transcript is
+  text-native, terminal parser contracts such as `submit_plan` may use scoped
+  no-thinking to force visible output instead of hidden reasoning.
 - Keep candidate scope and coverage separate end to end. Discovered paths,
   context-packet candidates, sibling test/source guesses, and `editable files`
   headings belong in allowed/candidate scope unless a durable artifact
   explicitly made every path mandatory.
+- Treat explicit lane requests as operator intent only when the surrounding
+  scope can satisfy that lane's contract. For example, an explicit
+  `plan-execute lane` request with multi-file source/test required paths should
+  use the planner/executor split; casual wording for a single-file edit should
+  not become a plan-execute contract by itself.
 - Store edit-kind obligations in the run contract and progress state. A retry
   that requires "at least one test edit" or "at least one implementation-shaped
   edit" must carry that typed obligation through planner retry, executor,

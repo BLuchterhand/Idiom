@@ -1209,6 +1209,7 @@ func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
 	for _, want := range []string{
 		"The model owns strategy and proposed content",
 		"Hidden reasoning is not a tool call",
+		"insert_after_line",
 		"Use `old_text` + `new_text` only for a tiny exact snippet",
 		"Every edit body must be",
 		"executable final content",
@@ -1223,8 +1224,13 @@ func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
 	if strings.Index(text, "**Line-range**") < 0 || strings.Index(text, "**Substring**") < 0 {
 		t.Fatalf("claude-qwen profile missing edit-shape headings:\n%s", text)
 	}
-	if strings.Index(text, "**Line-range**") > strings.Index(text, "**Substring**") {
-		t.Fatalf("claude-qwen profile should present line-range before substring to avoid old_text-first bias:\n%s", text)
+	if strings.Index(text, "**Insertion**") < 0 || strings.Index(text, "**Insertion**") > strings.Index(text, "**Line-range**") {
+		t.Fatalf("claude-qwen profile should present typed insertion before replacement shapes:\n%s", text)
+	}
+	for _, stale := range []string{"accepts three edit shapes", "line-range first"} {
+		if strings.Contains(text, stale) {
+			t.Fatalf("claude-qwen profile retained stale submit_plan wording %q:\n%s", stale, text)
+		}
 	}
 }
 

@@ -3092,7 +3092,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			return result
 		}
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := splitWorkspaceFileLines(data)
 	start := req.StartLine
 	end := req.EndLine
 	requestedStart := start
@@ -3126,6 +3126,14 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		}
 	} else if end <= 0 || end > len(lines) {
 		end = len(lines)
+	}
+	if len(lines) == 0 {
+		m.MarkPathObserved(m.displayPath(path))
+		return ToolResult{
+			Tool:    "read_file",
+			Summary: fmt.Sprintf("Read %s lines 0-0 (total lines: 0)", description),
+			Output:  "",
+		}
 	}
 	start, end, clampedToFileBounds := clampRequestedLineRange(len(lines), start, end, requestedStart, requestedEnd)
 	if start > end {
@@ -3165,9 +3173,11 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 	} else if clampedToFileBounds {
 		summary += fmt.Sprintf(" (requested range %d-%d was clamped to file bounds; file has %d lines total)", displayRequestedLine(requestedStart, start), displayRequestedLine(requestedEnd, end), len(lines))
 	} else if rangeWasSwapped {
-		summary += fmt.Sprintf(" (start_line was greater than end_line; auto-swapped to lines %d-%d — pass start_line <= end_line on future calls)", start, end)
+		summary += fmt.Sprintf(" (file has %d lines total; start_line was greater than end_line; auto-swapped to lines %d-%d; pass start_line <= end_line on future calls)", len(lines), start, end)
 	} else if truncated {
 		summary += fmt.Sprintf(" (file has %d lines total; output was capped; pass start_line/end_line for a different range)", len(lines))
+	} else {
+		summary += fmt.Sprintf(" (total lines: %d)", len(lines))
 	}
 	return ToolResult{
 		Tool:    "read_file",
@@ -4634,7 +4644,7 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	lines := strings.Split(string(data), "\n")
+	lines := splitWorkspaceFileLines(data)
 	if start <= 0 {
 		start = 1
 	}
@@ -4651,6 +4661,17 @@ func (m *Manager) readFileLines(path string, start, end int) (string, error) {
 		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
 	}
 	return strings.TrimRight(b.String(), "\n"), nil
+}
+
+func splitWorkspaceFileLines(data []byte) []string {
+	if len(data) == 0 {
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	if len(lines) > 1 && lines[len(lines)-1] == "" {
+		return lines[:len(lines)-1]
+	}
+	return lines
 }
 
 func clampRequestedLineRange(totalLines int, start int, end int, requestedStart int, requestedEnd int) (int, int, bool) {
@@ -5188,25 +5209,35 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 	if strings.TrimSpace(req.OldText) == "" {
 		// The model's malformed shape is almost always one of three:
 		//   (1) it passed `content` thinking edit_file replaces the
-		//       whole file — that's what write_file does.
+		//       whole file.
 		//   (2) it forgot to include old_text with the match form.
 		//   (3) it meant the range form but dropped start_line/end_line.
-		// Give a targeted hint based on which fields were actually
-		// provided, and name write_file explicitly for case (1) so
-		// the model stops trying to coax edit_file into whole-file
-		// replacement.
+		// Give a targeted hint based on which fields were actually provided.
+		// Existing source/test files should recover to bounded edit shapes;
+		// whole-file replacement remains a separate primitive for new, small,
+		// or non-source deliverables.
 		display := m.displayPath(path)
 		hasContent := strings.TrimSpace(req.Content) != ""
 		var example string
-		if hasContent {
+		if hasContent && editRecoveryPathLooksSourceLike(path) {
 			example = fmt.Sprintf(
 				"edit_file needs either old_text (for an exact-match replace) or start_line+end_line (for a range replace). "+
 					"You provided `content` with neither.\n"+
-					"If you want to REPLACE THE WHOLE FILE, use write_file instead:\n"+
-					"  {\"tool\":\"write_file\",\"path\":%q,\"content\":\"<full file contents>\"}\n"+
+					"For an existing source/test file, use a bounded edit_file shape instead of whole-file replacement:\n"+
+					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
+					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
+					"Do not re-submit the same call shape.",
+				display, display,
+			)
+		} else if hasContent {
+			example = fmt.Sprintf(
+				"edit_file needs either old_text (for an exact-match replace) or start_line+end_line (for a range replace). "+
+					"You provided `content` with neither.\n"+
+					"If you want to REPLACE THE WHOLE FILE for a new, small, or non-source deliverable, use write_file instead:\n"+
+					"  {\"tool\":\"write_file\",\"path\":%q,\"content\":\"<full file contents>\",\"description\":\"<one sentence on what this file is for and why it is being written>\"}\n"+
 					"If you want a PARTIAL edit, pick one of these two edit_file shapes:\n"+
-					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\"}\n"+
-					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\"}\n"+
+					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
+					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
 					"Do not re-submit the same call shape.",
 				display, display, display,
 			)
@@ -5214,8 +5245,8 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			example = fmt.Sprintf(
 				"edit_file requires old_text (and new_text) OR start_line/end_line (and content). You provided neither.\n"+
 					"Valid shapes:\n"+
-					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\"}\n"+
-					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\"}",
+					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
+					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\",\"description\":\"<one sentence on what this change is and why>\"}",
 				display, display,
 			)
 		}
@@ -5272,6 +5303,25 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		Summary: fmt.Sprintf("Edited %s", m.displayPath(path)),
 		Output:  fmt.Sprintf("replaced occurrences: %d", replaced),
 	}
+}
+
+func editRecoveryPathLooksSourceLike(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	if lower == "" {
+		return false
+	}
+	for _, suffix := range []string{
+		".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+		".java", ".kt", ".swift", ".c", ".cc", ".cpp", ".h", ".hpp", ".cs",
+		".rb", ".php", ".sh", ".bash", ".zsh", ".fish", ".lua", ".sql",
+		".html", ".css", ".scss", ".sass", ".vue", ".svelte", ".templ",
+		".json", ".yaml", ".yml", ".toml", ".xml",
+	} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) editFileByLineRange(path string, current string, req ToolRequest) ToolResult {

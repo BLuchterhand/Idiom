@@ -71,7 +71,7 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("expected submit_plan schema, got %d definitions", len(defs))
 	}
-	for _, want := range []string{"executable final content", "no placeholders", "not a quoted JSON string", "complete file body"} {
+	for _, want := range []string{"executable final content", "no placeholders", "not a quoted JSON string", "complete file body", "insert_after_line", "not as an insertion point"} {
 		if !strings.Contains(defs[0].Description, want) {
 			t.Fatalf("submit_plan description missing %q:\n%s", want, defs[0].Description)
 		}
@@ -110,6 +110,9 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 	}
 	if !submitPlanTestAnyOfRequires(schema.Properties.Edits.Items.AnyOf, "old_text", "new_text") {
 		t.Fatalf("substring edit schema should require old_text and new_text together, got %#v", schema.Properties.Edits.Items.AnyOf)
+	}
+	if !submitPlanTestAnyOfRequires(schema.Properties.Edits.Items.AnyOf, "insert_after_line", "content") {
+		t.Fatalf("insert edit schema should require insert_after_line and content together, got %#v", schema.Properties.Edits.Items.AnyOf)
 	}
 	for _, field := range []string{"task", "contract", "verification_obligations", "edits"} {
 		if !submitPlanTestContains(schema.Properties.PlanArtifact.Required, field) {
@@ -193,6 +196,7 @@ func assertSubmitPlanPlansTreeDoesNotContain(t *testing.T, root string, forbidde
 func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	writeSubmitPlanFixture(t, root, "b.txt", "original\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
 		Rationale: "add donkey across the codebase",
@@ -442,7 +446,7 @@ func TestSubmitPlanRejectsLineRangeEditThatBreaksGoSyntax(t *testing.T) {
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("expected submit_plan to reject syntax-breaking line range edit")
 	}
-	for _, want := range []string{"preflight syntax validation failed", "pkg/feature_test.go"} {
+	for _, want := range []string{"preflight syntax validation failed", "pkg/feature_test.go", "declared start_line=7 and end_line=7", "extend end_line", "insert_after_line"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("submit_plan error missing %q:\n%s", want, result.Error)
 		}
@@ -1601,6 +1605,158 @@ func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanAcceptsInsertAfterLineMiddleAndEnd(t *testing.T) {
+	t.Run("middle", func(t *testing.T) {
+		mgr, root := newSubmitPlanTestManager(t)
+		writeSubmitPlanFixture(t, root, "x.txt", "one\ntwo\n")
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:      "submit_plan",
+			Rationale: "Insert a middle line.",
+			Edits: []PlanEdit{{
+				Path:            "x.txt",
+				InsertAfterLine: 1,
+				Content:         "inserted",
+				Purpose:         "Insert the requested middle line.",
+			}},
+		})
+		if strings.TrimSpace(result.Error) != "" {
+			t.Fatalf("submit_plan rejected middle insertion: %s", result.Error)
+		}
+		plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+		if err != nil {
+			t.Fatalf("load middle insertion plan: %v", err)
+		}
+		updated, changed, err := PreviewPlanEditContent("one\ntwo\n", plan.Edits[0])
+		if err != nil {
+			t.Fatalf("preview middle insertion: %v", err)
+		}
+		if !changed || updated != "one\ninserted\ntwo\n" {
+			t.Fatalf("middle insertion preview mismatch: changed=%v updated=%q", changed, updated)
+		}
+	})
+
+	t.Run("end preserves boundary", func(t *testing.T) {
+		mgr, root := newSubmitPlanTestManager(t)
+		writeSubmitPlanFixture(t, root, "x.txt", "one\ntwo")
+		result := mgr.Execute(context.Background(), ToolRequest{
+			Tool:      "submit_plan",
+			Rationale: "Append after the final line.",
+			Edits: []PlanEdit{{
+				Path:            "x.txt",
+				InsertAfterLine: 2,
+				Content:         "three\n",
+				Purpose:         "Append the requested final line.",
+			}},
+		})
+		if strings.TrimSpace(result.Error) != "" {
+			t.Fatalf("submit_plan rejected end insertion: %s", result.Error)
+		}
+		plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+		if err != nil {
+			t.Fatalf("load end insertion plan: %v", err)
+		}
+		updated, changed, err := PreviewPlanEditContent("one\ntwo", plan.Edits[0])
+		if err != nil {
+			t.Fatalf("preview end insertion: %v", err)
+		}
+		if !changed || updated != "one\ntwo\nthree\n" {
+			t.Fatalf("end insertion preview mismatch: changed=%v updated=%q", changed, updated)
+		}
+	})
+
+	t.Run("preserves crlf", func(t *testing.T) {
+		updated, changed, err := PreviewPlanEditContent("one\r\ntwo\r\n", PlanEdit{
+			Path:            "x.txt",
+			InsertAfterLine: 1,
+			Content:         "inserted",
+		})
+		if err != nil {
+			t.Fatalf("preview crlf insertion: %v", err)
+		}
+		if !changed || updated != "one\r\ninserted\r\ntwo\r\n" {
+			t.Fatalf("crlf insertion preview mismatch: changed=%v updated=%q", changed, updated)
+		}
+	})
+
+	t.Run("newline terminated end appends newline", func(t *testing.T) {
+		updated, changed, err := PreviewPlanEditContent("one\ntwo\n", PlanEdit{
+			Path:            "x.txt",
+			InsertAfterLine: 2,
+			Content:         "three",
+		})
+		if err != nil {
+			t.Fatalf("preview newline-terminated insertion: %v", err)
+		}
+		if !changed || updated != "one\ntwo\nthree\n" {
+			t.Fatalf("newline-terminated insertion preview mismatch: changed=%v updated=%q", changed, updated)
+		}
+	})
+}
+
+func TestSubmitPlanRejectsInvalidInsertAfterLineShapes(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		seed  string
+		edit  PlanEdit
+		wants []string
+	}{
+		{
+			name: "missing file",
+			edit: PlanEdit{Path: "missing.txt", InsertAfterLine: 1, Content: "new\n"},
+			wants: []string{
+				"insert_after_line preflight could not read existing",
+			},
+		},
+		{
+			name:  "out of range",
+			seed:  "one\n",
+			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 2, Content: "new\n"},
+			wants: []string{"insert_after_line 2 is outside"},
+		},
+		{
+			name:  "combined substring",
+			seed:  "one\n",
+			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 1, Content: "new\n", OldText: "one\n", NewText: "ONE\n"},
+			wants: []string{"mutually exclusive"},
+		},
+		{
+			name:  "combined range",
+			seed:  "one\n",
+			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 1, StartLine: 1, EndLine: 1, Content: "new\n"},
+			wants: []string{"mutually exclusive"},
+		},
+		{
+			name:  "content ref",
+			seed:  "one\n",
+			edit:  PlanEdit{Path: "x.txt", InsertAfterLine: 1, ContentRef: "assets/body.txt"},
+			wants: []string{"do not support content_ref"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mgr, root := newSubmitPlanTestManager(t)
+			if tc.seed != "" {
+				writeSubmitPlanFixture(t, root, "x.txt", tc.seed)
+			}
+			result := mgr.Execute(context.Background(), ToolRequest{
+				Tool:      "submit_plan",
+				Rationale: "Try insertion.",
+				Edits:     []PlanEdit{tc.edit},
+			})
+			if strings.TrimSpace(result.Error) == "" {
+				t.Fatalf("invalid insertion should be rejected")
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(result.Error, want) {
+					t.Fatalf("rejection missing %q: %q", want, result.Error)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+				t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+			}
+		})
+	}
+}
+
 func TestSubmitPlanRejectsNoOpWholeFileEditBeforeWritingArtifactOrAssets(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	large := strings.Repeat("same line\n", 600)
@@ -1886,6 +2042,39 @@ func TestSubmitPlanSpillsLargeEditBodiesToRefs(t *testing.T) {
 	}
 	if plan.Edits[0].NewText != large {
 		t.Fatalf("hydrated large body mismatch: got %d bytes, want %d", len(plan.Edits[0].NewText), len(large))
+	}
+}
+
+func TestSubmitPlanRejectsLargeInsertAfterLineContentBeforeSpill(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "one\ntwo\n")
+	large := strings.Repeat("inserted line\n", planInlineTextSpillThreshold/len("inserted line\n")+2)
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "submit_plan",
+		Edits: []PlanEdit{{
+			Path:            "x.txt",
+			InsertAfterLine: 1,
+			Content:         large,
+			Purpose:         "Insert a large generated block.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("large insert_after_line content should be rejected before spill")
+	}
+	for _, want := range []string{"insert_after_line content exceeds inline submit_plan limit", "content_ref is not supported"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("large insertion rejection missing %q: %q", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("large insertion should reject before writing artifact; stat err=%v", err)
+	}
+	matches, err := filepath.Glob(filepath.Join(root, ".idiom", "plans", "assets", "*"))
+	if err != nil {
+		t.Fatalf("glob spill assets: %v", err)
+	}
+	if len(matches) != 0 {
+		t.Fatalf("large insertion should reject before writing spill assets, got %v", matches)
 	}
 }
 

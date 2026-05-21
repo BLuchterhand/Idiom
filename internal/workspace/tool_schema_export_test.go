@@ -143,6 +143,50 @@ func TestWriteToolManifestExamplesIncludeRequiredDescription(t *testing.T) {
 	}
 }
 
+func TestWriteToolDescriptionsDistinguishBoundedAndWholeFileEdits(t *testing.T) {
+	manifest := BuildToolManifest(nil)
+	var editPurpose, writePurpose string
+	for _, entry := range manifest {
+		switch entry.Tool {
+		case "edit_file":
+			editPurpose += entry.Purpose + "\n"
+		case "write_file":
+			writePurpose = entry.Purpose
+		}
+	}
+	for _, want := range []string{"bounded edit", "existing source/test"} {
+		if !strings.Contains(editPurpose, want) {
+			t.Fatalf("edit_file manifest should advertise bounded source/test edits and contain %q:\n%s", want, editPurpose)
+		}
+	}
+	for _, want := range []string{"whole-file replacement", "new files", "prefer edit_file/apply_patch for existing source/test files"} {
+		if !strings.Contains(writePurpose, want) {
+			t.Fatalf("write_file manifest should scope whole-file replacement and contain %q:\n%s", want, writePurpose)
+		}
+	}
+
+	export, err := BuildToolSchemaExport(nil)
+	if err != nil {
+		t.Fatalf("BuildToolSchemaExport returned error: %v", err)
+	}
+	tools := make(map[string]ExportedToolSchema)
+	for _, tool := range export.Tools {
+		tools[tool.Name] = tool
+	}
+	editDescription := tools["edit_file"].Description
+	for _, want := range []string{"Bounded edit", "Do not pass content without start_line/end_line", "not use this for whole-file replacement"} {
+		if !strings.Contains(editDescription, want) {
+			t.Fatalf("edit_file schema description should contain %q:\n%s", want, editDescription)
+		}
+	}
+	writeDescription := tools["write_file"].Description
+	for _, want := range []string{"Whole-file replacement", "new files", "prefer edit_file or apply_patch for existing source/test edits"} {
+		if !strings.Contains(writeDescription, want) {
+			t.Fatalf("write_file schema description should contain %q:\n%s", want, writeDescription)
+		}
+	}
+}
+
 func TestBuildToolSchemaExportNormalizesAllowedToolNames(t *testing.T) {
 	export, err := BuildToolSchemaExport([]string{" read_file ", "", "\tcontext_pack\n"})
 	if err != nil {

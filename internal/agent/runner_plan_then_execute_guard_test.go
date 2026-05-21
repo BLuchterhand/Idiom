@@ -3,12 +3,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -132,7 +135,7 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 	if got.MaxTokens != 768 {
 		t.Fatalf("plan-execute source-read recovery should cap to one tool call, got %d", got.MaxTokens)
 	}
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"}}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"}}
 	got = completionGateRecoveryChatOptions(llama.ChatOptions{MaxTokens: 16384}, brief, results)
 	if got.MaxTokens != 4096 {
 		t.Fatalf("plan-execute existing-file recovery should cap submit_plan budget, got %d", got.MaxTokens)
@@ -1106,8 +1109,8 @@ func TestPlanThenExecutePostReadinessRecoverySkipsMissingPlanPathRefreshWithSour
 		},
 	})
 
-	if opts.ToolChoice != "auto" {
-		t.Fatalf("source-backed missing-path recovery should allow source-satisfied/blocker text alongside submit_plan, got %q", opts.ToolChoice)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("source-backed missing-path recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") || chatOptionsExposeTool(opts, "read_file") || chatOptionsExposeTool(opts, "code_navigate") {
 		t.Fatalf("source-backed missing-path recovery should expose only submit_plan, got %#v", opts.Tools)
@@ -1465,8 +1468,8 @@ func TestMutationCompletionGateAcceptsPlannerSourceSatisfiedWithReadEvidence(t *
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10"},
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
 	}
 	answer := "Decision: source-satisfied\n- a.txt: already implemented; no changes needed.\n- b.txt: already implemented; no changes needed."
 	if got, rejected := runner.mutationCompletionRejection(answer, results); rejected {
@@ -1486,8 +1489,8 @@ func TestMutationCompletionGateAcceptsUnscopedPlannerSourceSatisfiedWithReadEvid
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-10"},
-		{Tool: "read_file", Summary: "Read f2 pkg/feature_test.go lines 1-10"},
+		{Tool: "read_file", Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read f2 pkg/feature_test.go lines 1-10 (total lines: 10)"},
 	}
 	answer := "Decision: source-satisfied\n- pkg/feature.go: requested final state is already present.\n- pkg/feature_test.go: current test coverage already contains the regression."
 	if got, rejected := runner.mutationCompletionRejection(answer, results); rejected {
@@ -1596,8 +1599,8 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 	}
 
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10"},
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
 	}
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
 	if !ok {
@@ -1609,10 +1612,9 @@ func TestCompletionGateRecoveryPromptPointsPlanExecuteAtSubmitPlan(t *testing.T)
 	for _, want := range []string{
 		"your next response must be a parser-readable `submit_plan` request, not prose",
 		"top-level `edits` as a JSON array, not a quoted string",
-		"start_line",
-		"end_line",
-		"complete replacement lines",
-		"prefer numeric `start_line`/`end_line`",
+		"insert_after_line",
+		"For insertions/appends, use `insert_after_line`",
+		"it is not an insertion point",
 		"explicit replacement edit shapes",
 		"replace_all:true",
 		"empty `old_text`",
@@ -1739,11 +1741,11 @@ func TestDeterministicPlanExecuteRequiredSourceReadStartsFreshPlanner(t *testing
 	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
 	})
-	if !ok || req.Tool != "read_file" || req.Path != "b.txt" {
-		t.Fatalf("expected deterministic recovery to advance to next unread required path, got %#v ok=%v", req, ok)
+	if !ok || req.Tool != "read_file" || req.Path != "a.txt" {
+		t.Fatalf("expected deterministic recovery to advance the shallow required-path read, got %#v ok=%v", req, ok)
 	}
-	if req.StartLine != 1 || req.EndLine != 180 {
-		t.Fatalf("advanced deterministic source read should be bounded, got lines %d-%d", req.StartLine, req.EndLine)
+	if req.StartLine != 11 || req.EndLine != 190 {
+		t.Fatalf("advanced deterministic source read should continue the same path, got lines %d-%d", req.StartLine, req.EndLine)
 	}
 
 	req, _, ok = runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
@@ -1766,6 +1768,318 @@ func TestDeterministicPlanExecuteRequiredSourceReadStartsFreshPlanner(t *testing
 	})
 	if ok {
 		t.Fatalf("deterministic recovery should not repeat a required path already attempted; got %#v", req)
+	}
+}
+
+func TestDeterministicPlanExecuteRequiredSourceReadFollowsGenericCodeWindow(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+
+	req, _, ok := runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (file has 2892 lines total)",
+			Output:  "1:package main",
+		},
+	})
+	if !ok || req.Tool != "code_navigate" || req.Capability != "file_outline" || req.Path != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("generic code header read should deterministically advance to file_outline, got %#v ok=%v", req, ok)
+	}
+}
+
+func TestPlanExecuteRequiredSourceFollowupRedirectsRepeatedGenericRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (total lines: 2893)",
+		Output:  "1:package main",
+	}}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 1,
+		EndLine:   180,
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: req,
+		Raw:     marshalToolRequestRaw(req),
+		Results: results,
+	})
+	if decision.Request.Tool != "code_navigate" ||
+		decision.Request.Capability != "file_outline" ||
+		decision.Request.Path != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("repeated generic required-path read should redirect to source follow-up, got %#v", decision.Request)
+	}
+}
+
+func TestPlanExecuteRequiredSourceFollowupRedirectAllowsAdvancingRange(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (total lines: 2893)",
+		Output:  "1:package main",
+	}}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 181,
+		EndLine:   360,
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: req,
+		Raw:     marshalToolRequestRaw(req),
+		Results: results,
+	})
+	if decision.Request.Tool != req.Tool || decision.Request.Path != req.Path || decision.Request.StartLine != req.StartLine || decision.Request.EndLine != req.EndLine {
+		t.Fatalf("bounded follow-up range should be allowed as advancing evidence, got %#v", decision.Request)
+	}
+}
+
+func TestPlanExecuteRequiredSourceFollowupRedirectsGenericRangeAfterOutline(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Implement product TDD coverage gate behavior",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed file_outline via go_file_outline",
+		Output: strings.Join([]string{
+			"capability: file_outline",
+			"route_summary: Outlined 2 top-level declaration(s) in cmd/idiom/product_workflow.go.",
+			"declarations:",
+			"- buildAuditResult lines 313-354 tags: core",
+			"- runProductTDD lines 1396-1671 tags: implementation",
+		}, "\n"),
+	}}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 1,
+		EndLine:   100,
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: req,
+		Raw:     marshalToolRequestRaw(req),
+		Results: results,
+	})
+	if decision.Request.Tool != "code_navigate" ||
+		decision.Request.Path != "cmd/idiom/product_workflow.go" ||
+		decision.Request.Capability != "read_symbol" ||
+		decision.Request.Pattern != "runProductTDD" {
+		t.Fatalf("generic range after outline should redirect to symbol source, got %#v", decision.Request)
+	}
+}
+
+func TestPlanExecuteRequiredSourceFollowupRedirectsSatisfiedPathDriftToPendingPath(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Implement product TDD coverage gate behavior",
+			RequiredEditPaths: []string{"internal/productworkflow/coverage_gate.go", "cmd/idiom/product_workflow.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read ValidateCoverage in internal/productworkflow/coverage_gate.go lines 20-80\n\n20:func ValidateCoverage() {}\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read cmd/idiom/product_workflow.go lines 1-180 (total lines: 2893)",
+			Output:  "1:package main",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output: strings.Join([]string{
+				"capability: file_outline",
+				"route_summary: Outlined 2 top-level declaration(s) in cmd/idiom/product_workflow.go.",
+				"declarations:",
+				"- buildAuditResult lines 313-354 tags: core",
+				"- runProductTDD lines 1396-1671 tags: implementation",
+			}, "\n"),
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/productworkflow/coverage_gate.go",
+		StartLine: 1,
+		EndLine:   300,
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: req,
+		Raw:     marshalToolRequestRaw(req),
+		Results: results,
+	})
+	if decision.Request.Tool != "code_navigate" ||
+		decision.Request.Path != "cmd/idiom/product_workflow.go" ||
+		decision.Request.Capability != "read_symbol" ||
+		decision.Request.Pattern != "runProductTDD" {
+		t.Fatalf("drift to already-satisfied required path should redirect to pending path follow-up, got %#v", decision.Request)
+	}
+}
+
+func TestPlanExecuteRequiredSourceFollowupRedirectPreservesInvalidAnchorRefresh(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`; missing required edit path(s): `internal/productworkflow/coverage_gate.go`.",
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 1515,
+		EndLine:   1640,
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: req,
+		Raw:     marshalToolRequestRaw(req),
+		Results: results,
+	})
+	if decision.Request.Tool != req.Tool || decision.Request.Path != req.Path || decision.Request.StartLine != req.StartLine || decision.Request.EndLine != req.EndLine {
+		t.Fatalf("bounded invalid-anchor refresh should not be redirected, got %#v", decision.Request)
+	}
+}
+
+func TestPlanExecuteReadySourceRefreshRequiresRejectedPlanAnchorGap(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n\n1396:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/productworkflow/coverage_gate.go lines 1-300 (total lines: 338)",
+			Output:  "1:package productworkflow",
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            "cmd/idiom/product_workflow.go",
+		StartLine:       1396,
+		EndLine:         1671,
+		NamedGap:        "exact current source for the plan edit anchor",
+		WhyNotAnswering: "need exact range before submit_plan",
+	}
+	if runner.planThenExecuteReadySourceRefreshAllowed(req, results, 0) {
+		t.Fatalf("pre-submit source-ready planner state should not reopen reads before submit_plan is attempted")
+	}
+	results = append(results, workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+	})
+	if !runner.planThenExecuteReadySourceRefreshAllowed(req, results, 0) {
+		t.Fatalf("bounded required-path source refresh should be allowed after rejected submit_plan identifies a stale anchor")
+	}
+	req.NamedGap = ""
+	req.WhyNotAnswering = ""
+	if !runner.planThenExecuteReadySourceRefreshAllowed(req, results, 0) {
+		t.Fatalf("rejected-plan source refresh should not require extra prose fields")
+	}
+}
+
+func TestPlanExecuteReadySourceRefreshRejectsBroadOrExhaustedReads(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671\n\n1396:func runProductTDD() {}\n",
+	}}
+	rangeLess := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            "cmd/idiom/product_workflow.go",
+		NamedGap:        "more context",
+		WhyNotAnswering: "need more context",
+	}
+	if runner.planThenExecuteReadySourceRefreshAllowed(rangeLess, results, 0) {
+		t.Fatalf("range-less post-anchor read should not bypass submit_plan-only surface")
+	}
+	tooLarge := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            "cmd/idiom/product_workflow.go",
+		StartLine:       1,
+		EndLine:         600,
+		NamedGap:        "large context",
+		WhyNotAnswering: "need too much context",
+	}
+	if runner.planThenExecuteReadySourceRefreshAllowed(tooLarge, results, 0) {
+		t.Fatalf("oversized post-anchor read should not bypass submit_plan-only surface")
+	}
+	bounded := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            "cmd/idiom/product_workflow.go",
+		StartLine:       1396,
+		EndLine:         1671,
+		NamedGap:        "exact current source",
+		WhyNotAnswering: "need exact range",
+	}
+	if runner.planThenExecuteReadySourceRefreshAllowed(bounded, results, planThenExecuteReadySourceRefreshLimit) {
+		t.Fatalf("post-anchor source refresh allowance should honor the turn cap")
 	}
 }
 
@@ -1811,6 +2125,41 @@ func TestDeterministicPlanExecuteRequiredSourceReadFollowsRedirectedOutline(t *t
 	})
 	if !ok || req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Pattern != "runProductTDD" {
 		t.Fatalf("outline should deterministically advance to best matching source-body symbol, got %#v ok=%v", req, ok)
+	}
+}
+
+func TestDeterministicPlanExecuteRequiredSourceReadFallbackAdvancesPastReadWindow(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			Objective:         "Implement coverage gate authority reuse",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow_test.go"},
+		},
+	}
+
+	req, _, ok := runner.deterministicPlanExecuteRequiredSourceRead([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read cmd/idiom/product_workflow_test.go lines 1-180 (total lines: 2893)",
+			Output:  "1:package main",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output: strings.Join([]string{
+				"capability: file_outline",
+				"route_summary: Outlined 222 top-level declaration(s) in cmd/idiom/product_workflow_test.go. Includes declaration tags and suggested move batches in the output.",
+				"structural move batches:",
+				"- tag: unrelated destination: cmd/idiom/unrelated.go",
+				"  preview declarations: [...27 more]",
+				"declarations: omitted for large file (222 top-level declarations).",
+			}, "\n"),
+		},
+	})
+	if !ok || req.Tool != "read_file" || req.Path != "cmd/idiom/product_workflow_test.go" || req.StartLine != 181 || req.EndLine != 360 {
+		t.Fatalf("fallback after a generic window should advance to the next bounded range, got %#v ok=%v", req, ok)
 	}
 }
 
@@ -2103,8 +2452,8 @@ func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing
 	if !opts.ChatTemplateKwargs {
 		t.Fatalf("post-read plan-execute recovery should force request-level thinking kwargs")
 	}
-	if opts.ToolChoice != "auto" {
-		t.Fatalf("post-read plan-execute recovery should allow source-satisfied/blocker text alongside submit_plan, got %q", opts.ToolChoice)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("post-read plan-execute recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
 	}
 }
 
@@ -2173,7 +2522,7 @@ func TestPlanExecuteReadyToSubmitCapsCloseoutBudget(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"internal/app/app.go", "internal/agent/runner.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56"},
+		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56 (total lines: 56)"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/agent/runner.go lines 88-210"},
 	})
 
@@ -2206,18 +2555,220 @@ func TestPlanExecuteReadyToSubmitForcesSubmitPlanOnlyWhenAvailable(t *testing.T)
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"internal/app/app.go", "internal/agent/runner.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56"},
+		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56 (total lines: 56)"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/agent/runner.go lines 88-210"},
 	})
 
-	if opts.ToolChoice != "auto" {
-		t.Fatalf("ready-to-submit should allow source-satisfied/blocker text alongside submit_plan, got %q", opts.ToolChoice)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("ready-to-submit should force submit_plan tool choice, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("ready-to-submit should expose only submit_plan, got %#v", opts.Tools)
 	}
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("ready-to-submit should force visible submit_plan output over hidden thinking, got %#v", opts.EnableThinking)
+	}
+}
+
+func TestPlanExecuteSubmitPlanOnlySurfaceRejection(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "a_test.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
+		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)"},
+	}
+
+	summary, errorText, prompt, reject := runner.planThenExecuteSubmitPlanOnlySurfaceRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "a.go", StartLine: 1, EndLine: 20},
+		results,
+		[]string{"submit_plan"},
+	)
+	if !reject {
+		t.Fatal("source-ready plan-execute planner should reject further reads on submit_plan-only surface")
+	}
+	if summary != "Plan-execute submit_plan required" {
+		t.Fatalf("summary = %q", summary)
+	}
+	for _, want := range []string{"source-ready", "submit_plan", "Do not call `read_file`"} {
+		if !strings.Contains(errorText+"\n"+prompt, want) {
+			t.Fatalf("expected submit-plan-only rejection to contain %q, got error=%q prompt=%q", want, errorText, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "a_test.go"},
+	}
+	req := workspace.ToolRequest{Tool: "read_file", Path: "a.go", StartLine: 1, EndLine: 20}
+	rejected := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Plan-execute submit_plan required",
+		Error:   "read_file is not available because the plan-execute planner is source-ready and exposes only submit_plan",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
+		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)"},
+		rejected,
+	}
+
+	state := buildRunnerNextActionState("main", 3, "tool_rejected", req, rejected, results, false, brief)
+	joinedState := strings.Join(state.NextValidActions, "\n")
+	if !strings.Contains(joinedState, "submit_plan with one ordered edit entry") {
+		t.Fatalf("submit-ready next_action_state should point at submit_plan, got %#v", state.NextValidActions)
+	}
+	if strings.Contains(joinedState, "one exact tool-shaped follow-up") {
+		t.Fatalf("submit-ready next_action_state must not suggest another probe: %#v", state.NextValidActions)
+	}
+	if strings.Contains(joinedState, "answer from the current evidence") {
+		t.Fatalf("submit-ready next_action_state must not include generic answer/probe fallback: %#v", state.NextValidActions)
+	}
+	packet := buildRunnerFailureFeedbackPacket("main", 3, "tool_rejected", req, rejected, results, false, brief)
+	joinedFeedback := strings.Join(packet.ValidNext, "\n")
+	if !strings.Contains(joinedFeedback, "submit_plan with one ordered edit entry") {
+		t.Fatalf("submit-ready failure feedback should point at submit_plan, got %#v", packet.ValidNext)
+	}
+	if strings.Contains(joinedFeedback, "one exact tool-shaped follow-up") {
+		t.Fatalf("submit-ready failure feedback must not suggest another probe: %#v", packet.ValidNext)
+	}
+	if strings.Contains(joinedFeedback, "answer from the current evidence") {
+		t.Fatalf("submit-ready failure feedback must not include generic answer/probe fallback: %#v", packet.ValidNext)
+	}
+	if strings.Contains(packet.ResultError, "Use an available tool") {
+		t.Fatalf("submit-ready rejection should not use generic allowed-tool wording: %q", packet.ResultError)
+	}
+}
+
+func TestPlanExecuteSubmitReadyStateDoesNotAdvertiseReadProbes(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "b.go"},
+		RequiredNext: []string{
+			"for existing required paths, satisfy source-body obligations before submit_plan unless the packet is exact-plan-ready/source-satisfied; then call submit_plan, answer Decision: source-satisfied with per-path evidence, or report <<QUESTION>>",
+		},
+		SearchPolicy: []string{
+			"treat required_edit_paths plus packet evidence as submit_plan scope; packet anchors establish scope but existing paths still need source-body obligations satisfied before submit_plan",
+			"use reads only for exact anchor confirmation before submit_plan",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read Run in b.go lines 10-30\nfunc Run() {}\n",
+		},
+	}
+
+	readyBrief := runnerBriefWithRequiredEditPathHints(brief, results)
+	joinedNext := strings.Join(readyBrief.RequiredNext, "\n")
+	joinedPolicy := strings.Join(readyBrief.SearchPolicy, "\n")
+	if !strings.Contains(joinedNext, "submit_plan with one ordered edit entry") {
+		t.Fatalf("submit-ready brief should keep terminal submit_plan action, got %#v", readyBrief.RequiredNext)
+	}
+	if !strings.Contains(joinedPolicy, "no read/search/discovery action is valid after submit_plan readiness") {
+		t.Fatalf("submit-ready brief should add terminal no-read policy, got %#v", readyBrief.SearchPolicy)
+	}
+	for _, forbidden := range []string{
+		"source-body obligations before submit_plan",
+		"use reads only for exact anchor confirmation",
+		"raw source reads are only for exact anchor confirmation",
+	} {
+		if strings.Contains(joinedNext+"\n"+joinedPolicy, forbidden) {
+			t.Fatalf("submit-ready brief leaked stale source-read phrase %q\nnext=%#v\npolicy=%#v", forbidden, readyBrief.RequiredNext, readyBrief.SearchPolicy)
+		}
+	}
+
+	lastReq := workspace.ToolRequest{Tool: "code_navigate", Path: "b.go", Capability: "read_symbol", Pattern: "Run"}
+	lastResult := results[len(results)-1]
+	state := buildRunnerNextActionState("main", 2, "tool_result", lastReq, lastResult, results, false, brief)
+	joinedState := strings.Join(state.NextValidActions, "\n")
+	if !strings.Contains(joinedState, "submit_plan with one ordered edit entry") {
+		t.Fatalf("submit-ready next_action_state should point at submit_plan, got %#v", state.NextValidActions)
+	}
+	for _, forbidden := range []string{
+		"one exact missing claim",
+		"narrow range read",
+		"exact-text search",
+		"answer if the inspected body",
+		"source-body obligations before submit_plan",
+	} {
+		if strings.Contains(joinedState, forbidden) {
+			t.Fatalf("submit-ready next_action_state leaked read/probe action %q: %#v", forbidden, state.NextValidActions)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitReadyParseRecoveryBlocksFurtherReads(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "a_test.go"},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	sourceReady := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
+		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)"},
+	}
+	raw := `{"tool":"submit_plan","rationale":"Update coverage gate","edits":[{"path":"a.go""start_line":1}]}`
+	prompt, ok := runner.planThenExecuteSubmitPlanParseRecoveryPrompt(raw, errors.New(`invalid character '"' after object key:value pair`), sourceReady)
+	if !ok {
+		t.Fatalf("expected submit-ready malformed JSON to trigger submit_plan parse recovery")
+	}
+	if !strings.Contains(prompt, "malformed") || !strings.Contains(prompt, "Do not call read/search/discovery") {
+		t.Fatalf("expected terminal parse recovery prompt, got %q", prompt)
+	}
+
+	afterParse := append(append([]workspace.ToolResult{}, sourceReady...), workspace.ToolResult{
+		Tool:    "tool_parse",
+		Summary: "Malformed tool request rejected",
+		Error:   "decode tool request",
+		Output:  raw,
+	})
+	if !planThenExecuteSubmitReadyParseFailureSeen(brief, afterParse) {
+		t.Fatal("expected submit-ready parse failure to be remembered")
+	}
+	if runner.planThenExecuteReadySourceRefreshAllowed(workspace.ToolRequest{Tool: "read_file", Path: "a.go", StartLine: 1, EndLine: 20}, afterParse, 0) {
+		t.Fatal("post-readiness source refresh must not reopen after malformed submit_plan JSON")
+	}
+}
+
+func TestPlanExecuteTerminalTextualHistoryPrunesReadToolRequests(t *testing.T) {
+	messages := []llama.ChatMessage{
+		{Role: "system", Content: "base"},
+		{Role: "assistant", Content: `{"tool":"read_file","path":"a.go"}`},
+		{Role: "system", Content: "Read a.go lines 1-20"},
+		{Role: "assistant", Content: `{"tool":"code_navigate","path":"a.go","capability":"read_symbol","pattern":"Run"}`},
+		{Role: "assistant", Content: `{"tool":"submit_plan","rationale":"ok","edits":[]}`},
+		{Role: "assistant", Content: `{"tool":"read_file","path":"a.go""start_line":1}`},
+	}
+
+	pruned, dropped := prunePlanThenExecuteTextualToolRequestHistory(messages)
+	if dropped != 3 {
+		t.Fatalf("dropped = %d, want 3; pruned=%#v", dropped, pruned)
+	}
+	joined := ""
+	for _, message := range pruned {
+		joined += message.Content + "\n"
+	}
+	if strings.Contains(joined, `"tool":"read_file"`) || strings.Contains(joined, `"tool":"code_navigate"`) {
+		t.Fatalf("terminal history should drop prior read/navigation JSON requests, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "Read a.go lines") {
+		t.Fatalf("terminal history must keep tool result evidence, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, `"tool":"submit_plan"`) {
+		t.Fatalf("terminal history should keep submit_plan attempts for correction, got:\n%s", joined)
 	}
 }
 
@@ -2267,7 +2818,7 @@ func TestPlanExecuteReadyToSubmitPreservesMultiFilePlanBudget(t *testing.T) {
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/productworkflow/coverage_gate_test.go lines 1-80"},
 	})
 
-	if opts.MaxTokens != 4096 {
+	if opts.MaxTokens != 8192 {
 		t.Fatalf("ready-to-submit should preserve enough budget for multi-file submit_plan output, got %d", opts.MaxTokens)
 	}
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -2297,10 +2848,10 @@ func TestPlanExecuteRejectedPlanCorrectionPreservesMultiFilePlanBudget(t *testin
 		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow.go lines 1396-1671"},
 	})
 
-	if opts.MaxTokens != 4096 {
+	if opts.MaxTokens != 8192 {
 		t.Fatalf("correction-only multi-file submit_plan recovery should preserve enough budget for executable edits, got %d", opts.MaxTokens)
 	}
-	if opts.ToolChoice != "auto" || len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
+	if opts.ToolChoice != "required" || len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("correction-only recovery should expose only submit_plan, got tool_choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
 	}
 }
@@ -2385,8 +2936,8 @@ func TestPlanExecuteStrictVisibleActionOverridesThinkingFloor(t *testing.T) {
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-180"},
-		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 1-180"},
+		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1396-1671 (total lines: 2892)"},
+		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow_test.go lines 5300-5480 (total lines: 6795)"},
 	})
 
 	if opts.EnableThinking == nil || *opts.EnableThinking {
@@ -2398,8 +2949,8 @@ func TestPlanExecuteStrictVisibleActionOverridesThinkingFloor(t *testing.T) {
 	if !opts.ChatTemplateKwargs {
 		t.Fatalf("strict plan-execute visible action should set request-level thinking kwargs")
 	}
-	if opts.ToolChoice != "auto" || len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
-		t.Fatalf("strict plan-execute visible action should expose submit_plan while allowing text terminal outcomes, got choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
+	if opts.ToolChoice != "required" || len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("strict plan-execute visible action should require submit_plan, got choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
 	}
 }
 
@@ -2431,8 +2982,8 @@ func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t
 	if !opts.ChatTemplateKwargs {
 		t.Fatalf("write-only plan-execute recovery should force request-level thinking kwargs")
 	}
-	if opts.ToolChoice != "auto" {
-		t.Fatalf("write-only plan-execute recovery should allow source-satisfied/blocker text alongside submit_plan, got %q", opts.ToolChoice)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("write-only plan-execute recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("write-only plan-execute recovery should expose only submit_plan, got %#v", opts.Tools)
@@ -2471,8 +3022,8 @@ func TestPlanExecuteRequiredWriteOnlyRecoveryForcesVisibleSubmitPlan(t *testing.
 	if !opts.ChatTemplateKwargs {
 		t.Fatalf("required-path recovery should force request-level thinking kwargs")
 	}
-	if opts.ToolChoice != "auto" {
-		t.Fatalf("required-path recovery should allow source-satisfied/blocker text alongside submit_plan, got %q", opts.ToolChoice)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("required-path recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("required-path recovery should expose only submit_plan, got %#v", opts.Tools)
@@ -2518,6 +3069,55 @@ func TestPlanExecutePostReadinessRecoveryAllowsOnlyAnchorRefreshBeforeCorrectedP
 	}
 	if opts.EnableThinking == nil || *opts.EnableThinking {
 		t.Fatalf("anchor-refresh recovery should force visible/tool output over hidden thinking, got %#v", opts.EnableThinking)
+	}
+}
+
+func TestPlanExecuteTerminalNativeSubmitPlanDoesNotClampAnchorRefresh(t *testing.T) {
+	thinkingOn := true
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-20"},
+		{Tool: "read_file", Summary: "Read f2 internal/productworkflow/coverage_gate.go lines 1-20"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+		},
+	}
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        4096,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "search_content"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, true)
+	runner := &Runner{
+		Client:       llama.NewClient("http://127.0.0.1:1", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: brief,
+	}
+	if runner.supportsTerminalSubmitPlanNativeTools(results) {
+		t.Fatalf("MLX terminal native submit_plan should stand down while rejected plan needs source refresh")
+	}
+	runner.forceTerminalSubmitPlanNativeTools(&opts, results)
+	if opts.ForceNativeTools || chatOptionsExposeTool(opts, "submit_plan") || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || opts.ToolChoice != "required" {
+		t.Fatalf("MLX source-refresh recovery should remain source-read-only, got force=%v tools=%#v choice=%q", opts.ForceNativeTools, opts.Tools, opts.ToolChoice)
+	}
+	nativeRunner := &Runner{
+		Client:       llama.NewClient("http://127.0.0.1:1", time.Second).WithBackend(config.BackendLlama),
+		RuntimeBrief: brief,
+	}
+	if nativeRunner.supportsTerminalSubmitPlanNativeTools(results) {
+		t.Fatalf("native submit_plan should also stand down while rejected plan needs source refresh")
 	}
 }
 
@@ -2589,8 +3189,8 @@ func TestPlanExecutePostReadinessRecoveryForcesCorrectedSubmitPlanAfterAnchorRef
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640"},
 	})
 
-	if opts.ToolChoice != "auto" {
-		t.Fatalf("corrected-plan recovery should allow source-satisfied/blocker text alongside submit_plan, got %q", opts.ToolChoice)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("corrected-plan recovery should require submit_plan after anchor refresh, got %q", opts.ToolChoice)
 	}
 	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("corrected-plan recovery should expose only submit_plan after anchor refresh, got %#v", opts.Tools)
@@ -2736,7 +3336,7 @@ func TestCompletionGateRecoveryPromptKeepsReadsVisibleForUnreadBetterCandidate(t
 		},
 		{
 			Tool:    "read_file",
-			Summary: "Read f97 internal/productworkflow/migration.go lines 1-180",
+			Summary: "Read f97 internal/productworkflow/migration.go lines 1-180 (total lines: 180)",
 			Output:  "type StatusMigrationPlan struct{}",
 		},
 	}
@@ -2787,7 +3387,7 @@ func TestPlanExecuteCandidateScopeReadinessDefersForUnreadBetterCandidate(t *tes
 	}
 	results = append(results, workspace.ToolResult{
 		Tool:    "read_file",
-		Summary: "Read f107 internal/productworkflow/migration_apply.go lines 1-180",
+		Summary: "Read f107 internal/productworkflow/migration_apply.go lines 1-180 (total lines: 180)",
 		Output:  "tmpPath := workflowPath + \".tmp\"",
 	})
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); !strings.Contains(got, "PLANNER READINESS REACHED") {
@@ -2911,8 +3511,8 @@ func TestPlanThenExecuteRequiredPathHintsSwitchToSubmitPlanAfterSourceEvidence(t
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
 		TargetPacket:      []string{"verified anchors"},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10", Output: "current a"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10", Output: "current b"},
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "current a"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)", Output: "current b"},
 	})
 
 	joined := strings.Join(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), "\n")
@@ -2943,7 +3543,7 @@ func TestPlanThenExecuteRequiredPathHintsClearStaleSourceReadLanguageAfterReadin
 			"keep this unrelated policy",
 		},
 	}, []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10", Output: "current a"},
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "current a"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read B in b.txt lines 1-10\n1: current b"},
 	})
 
@@ -3185,7 +3785,7 @@ func TestCompletionGateRecoveryPromptForDirectRequiredPathImplementationNoWrite(
 	}
 
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read internal/productworkflow/coverage_gate.go lines 1-220"},
+		{Tool: "read_file", Summary: "Read internal/productworkflow/coverage_gate.go lines 1-220 (total lines: 220)"},
 		{Tool: "context_query", Summary: "Answered query for ValidatePRDTDDObligationCrossLinks"},
 	})
 	if !ok {
@@ -3200,12 +3800,12 @@ func TestCompletionGateRecoveryPromptForDirectRequiredPathImplementationNoWrite(
 		"internal/productworkflow/coverage_gate_test.go",
 		"parser-readable action",
 		"not prose",
-		"Actions written only in hidden reasoning",
+		"Hidden-only reasoning is not completion evidence",
 		"edit_file",
 		"write_file",
 		"append_file",
 		"apply_patch",
-		"Prefer the first unread required path now",
+		"Prefer the next unread source-body request now",
 		`"tool":"read_file"`,
 		`"path":"internal/productworkflow/coverage_gate_test.go"`,
 		"named_gap",
@@ -3416,6 +4016,65 @@ func TestCompletionGateRecoveryChatOptionsPreservesCurrentThinkingForDirectRequi
 	}
 }
 
+func TestCompletionGateRecoveryChatOptionsForcesVisibleTextualActionWhenAnchorsReady(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		MaxTokens:          16384,
+		ToolChoice:         "auto",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "a_test.go"},
+	}, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{Tool: "read_file", Summary: "Read a_test.go lines 1-40 (total lines: 40)", Output: "1:package a"},
+	}, false)
+
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("textual required-path write recovery should disable hidden thinking after anchors are ready, got %#v", opts.EnableThinking)
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatalf("textual required-path write recovery should send request-level chat template kwargs")
+	}
+	if opts.PreserveThinking {
+		t.Fatalf("textual required-path write recovery should not preserve prior hidden reasoning")
+	}
+	if opts.ToolChoice != "auto" {
+		t.Fatalf("textual backend should keep terminal-aware auto tool choice, got %q", opts.ToolChoice)
+	}
+}
+
+func TestImplementationRequiredPathHiddenOnlyRecoveryStallDisablesThinkingAfterRetry(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read a.go lines 1-4 (total lines: 4)",
+		Output:  "1:package main\n2:\n3:func main() {}\n",
+	}}
+	reply := llama.ChatMessage{ReasoningContent: "I can make the edit now."}
+
+	if implementationRequiredPathHiddenOnlyRecoveryStall(brief, results, reply, 0, false) {
+		t.Fatal("first hidden-only recovery should keep bounded thinking available")
+	}
+	if !implementationRequiredPathHiddenOnlyRecoveryStall(brief, results, reply, 1, false) {
+		t.Fatal("second hidden-only anchor-ready textual recovery should disable hidden thinking")
+	}
+	if implementationRequiredPathHiddenOnlyRecoveryStall(brief, results, llama.ChatMessage{Content: `{"tool":"edit_file"}`}, 1, false) {
+		t.Fatal("visible content should not be treated as hidden-only stall")
+	}
+	if implementationRequiredPathHiddenOnlyRecoveryStall(brief, results, reply, 1, true) {
+		t.Fatal("native tool backends should not use textual hidden-only fallback")
+	}
+}
+
 func TestSalvageToolRequestFromEmptyReasoning(t *testing.T) {
 	runner := &Runner{}
 	req, _, ok := runner.salvageToolRequestFromReasoning(llama.ChatMessage{
@@ -3488,7 +4147,7 @@ func TestSalvageToolRequestFromReasoningRejectsPlaceholders(t *testing.T) {
 	}
 }
 
-func TestSalvageToolRequestFromReasoningRejectsMutatingTools(t *testing.T) {
+func TestSalvageToolRequestFromReasoningRejectsMutatingToolsWithoutRequiredScope(t *testing.T) {
 	runner := &Runner{}
 	for _, reasoning := range []string{
 		"```tool\n{\"tool\":\"edit_file\",\"path\":\"a.txt\",\"old_text\":\"old\",\"new_text\":\"new\"}\n```",
@@ -3741,6 +4400,25 @@ func TestCompletionGateRetryLimitAllowsTwoUnscopedNoWriteRecoveries(t *testing.T
 	}
 }
 
+func TestCompletionGateRetryLimitAllowsTwoTextualRequiredPathRecoveries(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+	}
+
+	if got := runner.completionGateRetryLimit(nil); got != 2 {
+		t.Fatalf("textual required-path recovery retry limit = %d, want 2", got)
+	}
+	if !runner.textualRequiredPathCompletionRecoveryApplies(nil) {
+		t.Fatal("expected textual required-path recovery to apply")
+	}
+}
+
 func TestCompletionGateRetryLimitCutsOverPlanExecuteSubmitPlanRecovery(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -3825,8 +4503,8 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresWhenAllPathsRead(t *testing.T) {
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10"},
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)"},
 	}
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
 	if got == "" {
@@ -3847,8 +4525,1026 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresWhenAllPathsRead(t *testing.T) {
 	if !strings.Contains(got, "source-satisfied") {
 		t.Fatalf("nudge must offer the source-satisfied closeout; got %q", got)
 	}
-	if !strings.Contains(got, "Only read again if you can name one exact new edit-safety fact") {
-		t.Fatalf("nudge must keep follow-up reads gap-driven; got %q", got)
+	if !strings.Contains(got, "Do not read/search/discovery again before the first valid `submit_plan`") {
+		t.Fatalf("nudge must close reads after readiness; got %q", got)
+	}
+	if strings.Contains(got, "Only read again") {
+		t.Fatalf("nudge must not retain stale optional-read language; got %q", got)
+	}
+}
+
+func TestPlanThenExecuteLargeGenericHeaderReadIsNotSourceReady(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"huge.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read huge.go lines 1-180 (bounded large required-path source; file has 1200 lines total; full range-less read omitted)",
+		Output:  "Bounded source packet for huge.go\n- file_lines: 1200\n- returned_lines: 1-180\nSource lines:\n1:package huge",
+	}}
+
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
+		t.Fatalf("generic first-window read of a large file must not reach planner readiness:\n%s", got)
+	}
+	noTotalResults := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read huge.go lines 1-180",
+		Output:  "1:package huge",
+	}}
+	if got := planThenExecuteReadyToSubmitNudge(brief, noTotalResults); got != "" {
+		t.Fatalf("generic first-window read without total line count must not reach planner readiness:\n%s", got)
+	}
+	largeHeaderResults := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read huge.go lines 1-300 (total lines: 6796)",
+		Output:  "1:package huge",
+	}}
+	if got := planThenExecuteReadyToSubmitNudge(brief, largeHeaderResults); got != "" {
+		t.Fatalf("generic 300-line header read of a very large file must not reach planner readiness:\n%s", got)
+	}
+	unread := planThenExecuteUnreadRequiredPaths(brief, results)
+	if _, ok := unread["huge.go"]; !ok {
+		t.Fatalf("huge.go should remain pending after generic header window: %#v", unread)
+	}
+	nudge := planThenExecuteUnreadRequiredSourceNudge(brief, results)
+	for _, want := range []string{"huge.go", "Current evidence state: body_window", "Do not call `submit_plan`"} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("unread-source nudge missing %q:\n%s", want, nudge)
+		}
+	}
+	readiness := runnerReadinessState("main", brief, results)
+	joined := strings.Join(readiness.OpenObligations, "\n")
+	if !strings.Contains(joined, "pending_required_source_anchors") || !strings.Contains(joined, "huge.go(body_window") {
+		t.Fatalf("readiness should expose pending source anchor without source excerpts, got %#v", readiness.OpenObligations)
+	}
+}
+
+func TestPlanThenExecuteSmallWholeFileReadIsSourceReady(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"small.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read small.go lines 1-24 (file has 24 lines total)",
+		Output:  "1:package small\n2:\n3:func Value() int { return 1 }",
+	}}
+
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); !strings.Contains(got, "PLANNER READINESS REACHED") {
+		t.Fatalf("small whole-file read should reach readiness, got:\n%s", got)
+	}
+	if unread := planThenExecuteUnreadRequiredPaths(brief, results); len(unread) != 0 {
+		t.Fatalf("small whole-file read should satisfy source readiness, got %#v", unread)
+	}
+}
+
+func TestPlanThenExecuteSymbolBodyReadIsSourceReady(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"internal/agent/runner.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output:  "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: Read Runner.Run in internal/agent/runner.go lines 88-210\n\n88:func (r *Runner) Run() {}",
+	}}
+
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); !strings.Contains(got, "PLANNER READINESS REACHED") {
+		t.Fatalf("read_symbol body should reach readiness, got:\n%s", got)
+	}
+}
+
+func TestPlanThenExecuteOutlineAndSearchDoNotSatisfyRequiredSource(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"pkg/feature.go"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_content",
+			Summary: "Found matching lines.",
+			Output:  "pkg/feature.go:88: func Feature() bool",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output:  "capability: file_outline\nlanguage: go\nrouted_tool: go_file_outline\nroute_summary: Outlined 2 top-level declaration(s) in pkg/feature.go.",
+		},
+	}
+
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
+		t.Fatalf("outline/search evidence should not reach readiness:\n%s", got)
+	}
+	if unread := planThenExecuteUnreadRequiredPaths(brief, results); len(unread) != 1 {
+		t.Fatalf("required source should remain pending after outline/search, got %#v", unread)
+	}
+}
+
+func TestPlanExecuteTextualSubmitPlanRecoveryForcesVisibleOutput(t *testing.T) {
+	thinkingOn := true
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"}}
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        2048,
+		Tools:            []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
+		ToolChoice:       "required",
+	}, brief, results, false)
+
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("textual submit_plan recovery should force visible output over hidden thinking, got %#v", opts.EnableThinking)
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatal("textual submit_plan recovery should send request-level no-thinking kwargs")
+	}
+	if opts.PreserveThinking {
+		t.Fatalf("textual submit_plan recovery should not preserve prior reasoning")
+	}
+	if len(opts.Tools) != 0 || opts.ToolChoice != "" {
+		t.Fatalf("textual submit_plan recovery must not depend on native tools/tool_choice, got tools=%#v choice=%q", opts.Tools, opts.ToolChoice)
+	}
+}
+
+func TestPlanExecuteMLXReadinessRecoveryUsesTextHistoryAndStrictNoThinking(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.go"}`,
+	}
+	type requestPayload struct {
+		Tools              []planExecuteRequestToolPayload `json:"tools"`
+		ToolChoice         string                          `json:"tool_choice"`
+		ChatTemplateKwargs *struct {
+			EnableThinking *bool `json:"enable_thinking"`
+			Preserve       bool  `json:"preserve_thinking"`
+			ThinkingBudget int   `json:"thinking_budget"`
+		} `json:"chat_template_kwargs,omitempty"`
+		Messages []struct {
+			Role       string `json:"role"`
+			Content    string `json:"content"`
+			ToolCallID string `json:"tool_call_id,omitempty"`
+			ToolCalls  []any  `json:"tool_calls,omitempty"`
+		} `json:"messages"`
+	}
+	var requests int
+	var recoveryPayload requestPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies)+1 {
+			t.Fatalf("unexpected extra chat request")
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if requests == 1 {
+			if err := json.Unmarshal(body, &recoveryPayload); err != nil {
+				t.Fatalf("decode recovery request: %v\n%s", err, string(body))
+			}
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []map[string]any{{
+							"id":   "call_submit_plan",
+							"type": "function",
+							"function": map[string]any{
+								"name":      "submit_plan",
+								"arguments": `{"rationale":"Update value.","edits":[{"path":"a.go","old_text":"return 1","new_text":"return 2","purpose":"change returned value"}]}`,
+							},
+						}},
+					},
+					"finish_reason": "tool_calls",
+				}},
+			})
+			return
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second).WithBackend(config.BackendMLX),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "required",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(recoveryPayload.Tools) != 1 || recoveryPayload.Tools[0].Function.Name != "submit_plan" || recoveryPayload.ToolChoice != "required" {
+		t.Fatalf("MLX terminal recovery should force one native submit_plan tool, got tools=%#v choice=%q", recoveryPayload.Tools, recoveryPayload.ToolChoice)
+	}
+	if recoveryPayload.ChatTemplateKwargs == nil ||
+		recoveryPayload.ChatTemplateKwargs.EnableThinking == nil ||
+		*recoveryPayload.ChatTemplateKwargs.EnableThinking ||
+		recoveryPayload.ChatTemplateKwargs.Preserve {
+		t.Fatalf("MLX recovery should force no-thinking visible output, got %#v", recoveryPayload.ChatTemplateKwargs)
+	}
+	var sawTextualReadAction bool
+	var sawReadEvidence bool
+	var sawNativeTerminalSurface bool
+	for _, msg := range recoveryPayload.Messages {
+		if len(msg.ToolCalls) > 0 || strings.TrimSpace(msg.ToolCallID) != "" || msg.Role == "tool" {
+			t.Fatalf("MLX terminal recovery history should not contain stale native tool-call messages: %#v", recoveryPayload.Messages)
+		}
+		if msg.Role == "system" {
+			for _, stale := range []string{
+				"REQUIRED SOURCE READ PENDING",
+				"Next action MUST be exactly one visible source-body tool call",
+				"your `read_file` call was redirected",
+				"your `code_navigate` call was redirected",
+				"Decision: source-satisfied",
+				"<<QUESTION>>",
+			} {
+				if strings.Contains(msg.Content, stale) {
+					t.Fatalf("MLX terminal recovery should drop stale pre-read routing nudge %q:\n%s", stale, msg.Content)
+				}
+			}
+		}
+		if msg.Role == "assistant" && strings.Contains(msg.Content, `"tool":"read_file"`) && strings.Contains(msg.Content, `"path":"a.go"`) {
+			sawTextualReadAction = true
+		}
+		if msg.Role == "system" && strings.Contains(msg.Content, "Read f1 a.go") {
+			sawReadEvidence = true
+		}
+		if msg.Role == "system" && strings.Contains(msg.Content, "# Terminal Plan-Execute Native Tool Surface") {
+			sawNativeTerminalSurface = true
+			if !strings.Contains(msg.Content, "Native `submit_plan` is the only exposed tool") {
+				t.Fatalf("terminal native surface should advertise submit_plan:\n%s", msg.Content)
+			}
+			for _, stale := range []string{
+				`"tool":"read_file"`,
+				`"tool":"code_navigate"`,
+				"- read_file ",
+				"- code_navigate ",
+				`"tool":"search_content"`,
+				"# Textual Tool Call Protocol",
+			} {
+				if strings.Contains(msg.Content, stale) {
+					t.Fatalf("terminal native surface retained stale textual tool example %q:\n%s", stale, msg.Content)
+				}
+			}
+		}
+	}
+	if sawTextualReadAction {
+		t.Fatalf("MLX terminal recovery should prune prior read_file action JSON, got messages %#v", recoveryPayload.Messages)
+	}
+	if !sawReadEvidence {
+		t.Fatalf("MLX terminal recovery should keep read evidence while pruning action JSON, got messages %#v", recoveryPayload.Messages)
+	}
+	if !sawNativeTerminalSurface {
+		t.Fatalf("MLX terminal recovery should replace stale read-capable textual scaffolding with native submit_plan-only surface, got messages %#v", recoveryPayload.Messages)
+	}
+	if !strings.Contains(answer, "Plan submitted with 1 edit") {
+		t.Fatalf("expected submit_plan success, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteTerminalTextualPruneDropsStaleScaffoldingOnly(t *testing.T) {
+	messages := []llama.ChatMessage{
+		{Role: "user", Content: "plan edit"},
+		{Role: "system", Content: "[frontier step instruction]\n{\"current_state\":{\"tool_manifest\":[{\"tool\":\"read_file\"}]}}"},
+		{Role: "system", Content: "[frontier runtime brief]\n{\"allowed_tools\":[\"read_file\"]}"},
+		{Role: "system", Content: "# Textual Tool Call Protocol\n- read_file {\"tool\":\"read_file\",\"path\":\"a.go\"}"},
+		{Role: "system", Content: "REQUIRED SOURCE READ PENDING: a required_edit_path has not produced source-body evidence yet.\n\nNext action MUST be exactly one visible source-body tool call for that path before `submit_plan`:\n  1. `code_navigate` with `capability:\"read_symbol\"` for the relevant declaration in a.go, or\n  2. `read_file` with explicit `start_line`/`end_line` copied from the outline/search hit."},
+		{Role: "system", Content: "Note: your `read_file` call was redirected to `code_navigate` by lane routing. The rewritten call will execute and return its result; use that result, not another retry of `read_file`."},
+		{Role: "system", Content: "AUTHORITATIVE_CONSTRAINT: preserve this unrelated system guidance."},
+		{Role: "system", Content: "Read f1 a.go lines 1-20 (total lines: 20)\n1:package a"},
+		{Role: "assistant", Content: `{"tool":"read_file","path":"a.go"}`},
+		{Role: "assistant", Content: "I should now submit the plan."},
+	}
+
+	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(messages)
+	if droppedActions != 2 || droppedScaffolding != 5 {
+		t.Fatalf("drops = actions:%d scaffolding:%d, want 2/5; messages=%#v", droppedActions, droppedScaffolding, pruned)
+	}
+	joined := ""
+	for _, msg := range pruned {
+		joined += msg.Role + "\n" + msg.Content + "\n"
+	}
+	if !strings.Contains(joined, "plan edit") || !strings.Contains(joined, "Read f1 a.go") {
+		t.Fatalf("terminal prune must preserve user objective and source evidence, got:\n%s", joined)
+	}
+	if !strings.Contains(joined, "AUTHORITATIVE_CONSTRAINT") {
+		t.Fatalf("terminal prune must preserve unrelated system authority, got:\n%s", joined)
+	}
+	for _, stale := range []string{"[frontier step instruction]", "[frontier runtime brief]", "# Textual Tool Call Protocol", "REQUIRED SOURCE READ PENDING", "redirected to `code_navigate`", `"tool":"read_file"`, "I should now submit"} {
+		if strings.Contains(joined, stale) {
+			t.Fatalf("terminal prune retained stale scaffolding/action %q:\n%s", stale, joined)
+		}
+	}
+}
+
+func TestPlanExecuteTerminalPruneDropsOrphanableNativeToolResultHistory(t *testing.T) {
+	messages := []llama.ChatMessage{
+		{Role: "user", Content: "plan edit"},
+		{Role: "system", Content: "Read f1 a.go lines 1-20 (total lines: 20)\n1:package a"},
+		{Role: "assistant", ToolCalls: []llama.ToolCall{{
+			ID:   "call_submit",
+			Type: "function",
+			Function: llama.ToolCallFunc{
+				Name:      "submit_plan",
+				Arguments: `{"edits":[]}`,
+			},
+		}}},
+		{Role: "tool", ToolCallID: "call_submit", Name: "submit_plan", Content: "submit_plan rejected: missing required edit path(s): a.go"},
+		{Role: "system", Content: "AUTHORITATIVE_CONSTRAINT: preserve this unrelated system guidance."},
+	}
+
+	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(messages)
+	if droppedActions != 2 || droppedScaffolding != 0 {
+		t.Fatalf("drops = actions:%d scaffolding:%d, want 2/0; messages=%#v", droppedActions, droppedScaffolding, pruned)
+	}
+	joined := ""
+	for _, msg := range pruned {
+		if msg.Role == "tool" || len(msg.ToolCalls) > 0 || strings.TrimSpace(msg.ToolCallID) != "" {
+			t.Fatalf("terminal prune must not leave orphanable native tool history: %#v", pruned)
+		}
+		joined += msg.Role + "\n" + msg.Content + "\n"
+	}
+	if !strings.Contains(joined, "Read f1 a.go") || !strings.Contains(joined, "AUTHORITATIVE_CONSTRAINT") {
+		t.Fatalf("terminal prune should preserve source evidence and unrelated authority, got:\n%s", joined)
+	}
+}
+
+func TestPlanExecuteNativeSubmitPlanRecoveryKeepsRequiredToolChoice(t *testing.T) {
+	thinkingOn := true
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"}}
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, true)
+
+	if opts.ToolChoice != "required" || len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("native submit_plan recovery should require only submit_plan, got tools=%#v choice=%q", opts.Tools, opts.ToolChoice)
+	}
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("native submit_plan recovery should keep strict visible tool mode, got %#v", opts.EnableThinking)
+	}
+}
+
+func TestPlanExecuteNativeSubmitPlanCorrectionPromptStaysNativeOnly(t *testing.T) {
+	prompt := planThenExecuteNativeSubmitPlanCorrectionPrompt(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}, workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "missing required edit path(s): `b.go`.",
+	})
+
+	for _, forbidden := range []string{"Decision: source-satisfied", "<<QUESTION>>", "Textual-tool backends", "visible JSON object", "textual JSON"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("native correction prompt should not advertise %q:\n%s", forbidden, prompt)
+		}
+	}
+	for _, want := range []string{"native `submit_plan`", "a.go, b.go", "Do not answer in prose"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("native correction prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteNativeTerminalSurfaceIncludesRequiredPathSkeleton(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+	}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
+
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "test")
+	joined := planExecuteJoinedMessages(messages)
+
+	if strings.Count(joined, planThenExecuteCurrentSubmitPlanSkeletonPrefix) != 1 {
+		t.Fatalf("native terminal surface should include exactly one current skeleton:\n%s", joined)
+	}
+	for _, want := range []string{
+		"# Terminal Plan-Execute Native Tool Surface",
+		"Native `submit_plan` tool-argument shape",
+		`path: "a.go"`,
+		`path: "b.go"`,
+		"evidence: Read a.go lines 1-20",
+		"insertion: insert_after_line + content",
+		"substring: old_text + new_text",
+		"line_range: start_line=1 + end_line=20 + content (replacement only)",
+		"`insert_after_line` inserts non-empty `content` after an existing 1-based line",
+		"The shown source ranges are evidence handles, not proposed edits",
+		"Line-range `content` replaces the inclusive current-source range",
+		"Substring `old_text` must be copied exactly from current source and match once",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("native terminal surface missing %q:\n%s", want, joined)
+		}
+	}
+	for _, forbidden := range []string{"visible JSON object", "textual JSON", "parser-readable JSON", "Decision: source-satisfied", "<<QUESTION>>"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("native terminal surface should not ask for %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestPlanExecuteTrueNativeTerminalSurfaceIncludesRequiredPathSkeleton(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 10-40 (total lines: 80)", Output: "10:func value() int {"},
+	}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
+
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "test")
+	joined := planExecuteJoinedMessages(messages)
+
+	if !strings.Contains(joined, "# Terminal Plan-Execute Native Tool Surface") ||
+		!strings.Contains(joined, "Native `submit_plan` tool-argument shape") ||
+		!strings.Contains(joined, `path: "a.go"`) ||
+		!strings.Contains(joined, "line_range: start_line=10 + end_line=40 + content (replacement only)") ||
+		!strings.Contains(joined, "insertion: insert_after_line + content") {
+		t.Fatalf("true native terminal surface should include native skeleton:\n%s", joined)
+	}
+	for _, forbidden := range []string{"visible JSON object", "parser-readable JSON", "Decision: source-satisfied", "<<QUESTION>>"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("true native terminal surface should not advertise %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
+func TestPlanExecuteTextualFallbackSurfaceIncludesConcreteSubmitPlanJSONSkeleton(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+	}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
+
+	runner.refreshPlanThenExecuteTerminalTextualFallbackSurface(&messages, results, "test")
+	joined := planExecuteJoinedMessages(messages)
+
+	if strings.Count(joined, planThenExecuteCurrentSubmitPlanSkeletonPrefix) != 1 {
+		t.Fatalf("textual fallback should include exactly one current skeleton:\n%s", joined)
+	}
+	for _, want := range []string{
+		"# Terminal Plan-Execute Textual Tool Surface",
+		"Parser-readable JSON skeleton",
+		`"tool":"submit_plan"`,
+		`"edits":[`,
+		`"path":"a.go"`,
+		`"path":"b.go"`,
+		"evidence for a.go: Read a.go lines 1-20",
+		`"insert_after_line":20`,
+		`"content":"<complete final text to insert after that line>"`,
+		"Edit shape choices",
+		"`insert_after_line` + `content` for insertions/appends after an existing line",
+		"`replace_all:true` + empty `old_text` + full `new_text`",
+		"`insert_after_line` targets an existing 1-based line in an existing file",
+		"The shown source ranges are evidence handles, not proposed edits",
+		"Line-range `content` replaces every current source line",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("textual fallback surface missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestPlanExecuteTextualFallbackSurfaceUsesNewFileShapeForMissingPath(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "new_file.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{
+			Tool:    "read_file",
+			Summary: "read_file failed for new_file.go",
+			Error:   `path "new_file.go" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.`,
+		},
+	}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
+
+	runner.refreshPlanThenExecuteTerminalTextualFallbackSurface(&messages, results, "test")
+	joined := planExecuteJoinedMessages(messages)
+
+	for _, want := range []string{
+		`"path":"new_file.go"`,
+		`"replace_all":true`,
+		`"old_text":""`,
+		`"new_text":"<complete final file body>"`,
+		"For missing/new files, use only `replace_all:true`",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("missing-file skeleton missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, `"start_line":1`) || strings.Contains(joined, `"content":"<complete final replacement`) {
+		newFileStart := strings.Index(joined, `"path":"new_file.go"`)
+		if newFileStart < 0 || strings.Contains(joined[newFileStart:], `"content":"<complete final replacement`) {
+			t.Fatalf("missing-file skeleton should not use line-range shape:\n%s", joined)
+		}
+	}
+}
+
+func TestPlanExecuteNativeSurfaceUsesNewFileShapeForMissingPath(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "new_file.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{
+			Tool:    "read_file",
+			Summary: "read_file failed for new_file.go",
+			Error:   `path "new_file.go" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.`,
+		},
+	}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan edit"}}
+
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "test")
+	joined := planExecuteJoinedMessages(messages)
+	newFileStart := strings.Index(joined, `path: "new_file.go"`)
+	if newFileStart < 0 {
+		t.Fatalf("native missing-file skeleton should list new path:\n%s", joined)
+	}
+	newFileBlock := joined[newFileStart:]
+	if end := strings.Index(newFileBlock, "\n\nEdit shape semantics:"); end >= 0 {
+		newFileBlock = newFileBlock[:end]
+	}
+	if !strings.Contains(newFileBlock, `whole_or_new_file: replace_all=true + old_text="" + new_text`) {
+		t.Fatalf("native missing-file skeleton should use new-file shape:\n%s", joined)
+	}
+	if strings.Contains(newFileBlock, "substring: old_text + new_text") ||
+		strings.Contains(newFileBlock, "line_range:") {
+		t.Fatalf("native missing-file skeleton should not advertise invalid anchor shapes:\n%s", joined)
+	}
+}
+
+func TestPlanExecuteTerminalSkeletonCapsEvidenceWhileListingAllRequiredPaths(t *testing.T) {
+	paths := make([]string, 0, planThenExecuteSubmitPlanSkeletonMaxEvidenceLines+4)
+	results := make([]workspace.ToolResult, 0, planThenExecuteSubmitPlanSkeletonMaxEvidenceLines+4)
+	for i := 0; i < planThenExecuteSubmitPlanSkeletonMaxEvidenceLines+4; i++ {
+		path := fmt.Sprintf("file%d.go", i)
+		paths = append(paths, path)
+		results = append(results, workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: fmt.Sprintf("Read %s lines 1-10 (total lines: 10)", path),
+			Output:  "1:package p",
+		})
+	}
+
+	skeleton := planThenExecuteTerminalSubmitPlanSkeleton(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: paths,
+	}, results, true)
+
+	for _, path := range paths {
+		if !strings.Contains(skeleton, strconv.Quote(path)) {
+			t.Fatalf("skeleton must still list required path %s:\n%s", path, skeleton)
+		}
+	}
+	if got := strings.Count(skeleton, "  evidence: "); got != planThenExecuteSubmitPlanSkeletonMaxEvidenceLines {
+		t.Fatalf("evidence details should be globally capped, got %d:\n%s", got, skeleton)
+	}
+	if !strings.Contains(skeleton, "Additional evidence handles were omitted after the template evidence cap") {
+		t.Fatalf("capped skeleton should disclose omitted evidence handles:\n%s", skeleton)
+	}
+}
+
+func TestPlanExecutePostRejectionSurfaceKeepsOneSkeletonAndRejectedDraftEvidence(t *testing.T) {
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.go", StartLine: 1, EndLine: 3, Content: "package a\n\nfunc Value() int { return 2 }\n", Purpose: "change returned value"},
+			{Path: "b.go", OldText: "return 1", NewText: "return 2", Purpose: "change returned value"},
+		},
+	}
+	result := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "invalid edit anchor(s): `b.go: old_text not found in current source`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+		result,
+	}
+	messages := []llama.ChatMessage{
+		{Role: "system", Content: "# Terminal Plan-Execute Native Tool Surface\n" + planThenExecuteNativeSubmitPlanSkeleton([]planThenExecuteSubmitPlanSkeletonEntry{{Path: "stale.go"}})},
+		{Role: "system", Content: planThenExecuteRejectedSubmitPlanDraftEvidencePrefix + "\nstale draft"},
+	}
+
+	replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&messages, req, result)
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "submit_plan_rejected")
+	joined := planExecuteJoinedMessages(messages)
+
+	if strings.Count(joined, planThenExecuteCurrentSubmitPlanSkeletonPrefix) != 1 {
+		t.Fatalf("post-rejection surface should have exactly one current skeleton:\n%s", joined)
+	}
+	if strings.Count(joined, planThenExecuteRejectedSubmitPlanDraftEvidencePrefix) != 1 {
+		t.Fatalf("post-rejection surface should preserve exactly one rejected draft evidence block:\n%s", joined)
+	}
+	for _, want := range []string{`"path":"a.go"`, `"path":"b.go"`, "path=a.go lines=1-3", "return 2", "old_text not found"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("post-rejection surface missing %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "stale.go") || strings.Contains(joined, "stale draft") {
+		t.Fatalf("post-rejection surface retained stale skeleton/evidence:\n%s", joined)
+	}
+}
+
+func planExecuteJoinedMessages(messages []llama.ChatMessage) string {
+	var b strings.Builder
+	for _, msg := range messages {
+		b.WriteString(msg.Role)
+		b.WriteByte('\n')
+		b.WriteString(msg.Content)
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+func TestPlanExecuteRejectedSubmitPlanDraftEvidencePreservesFailingBody(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: preflight syntax validation failed for a.go at line 4: ./a.go:4:2: expected declaration, found '}'",
+	}
+	prompt := planThenExecuteRejectedSubmitPlanDraftEvidence(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{
+				Path:      "a.go",
+				StartLine: 1,
+				EndLine:   5,
+				Content:   "package a\n\nfunc Value() int {\n\treturn 2\n}\n}\n",
+				Purpose:   "change returned value",
+			},
+			{
+				Path:    "b.go",
+				OldText: "return 1",
+				NewText: "return 2",
+				Purpose: "follow-up edit",
+			},
+		},
+	}, result)
+	for _, want := range []string{
+		planThenExecuteRejectedSubmitPlanDraftEvidencePrefix,
+		"path=a.go",
+		"status=invalid_anchor_or_syntax",
+		"rejected_body_excerpt_not_source_evidence",
+		"not source evidence",
+		"func Value() int",
+		"path=b.go",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("rejected draft evidence missing %q:\n%s", want, prompt)
+		}
+	}
+	messages := []llama.ChatMessage{
+		{Role: "system", Content: prompt},
+		{Role: "system", Content: "# Terminal Plan-Execute Native Tool Surface\nstale"},
+		{Role: "assistant", ToolCalls: []llama.ToolCall{{ID: "call_1", Type: "function", Function: llama.ToolCallFunc{Name: "submit_plan", Arguments: "{}"}}}},
+		{Role: "tool", ToolCallID: "call_1", Name: "submit_plan", Content: "submit_plan rejected"},
+	}
+	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(messages)
+	if droppedActions != 2 || droppedScaffolding != 1 {
+		t.Fatalf("drops = actions:%d scaffolding:%d, want 2/1", droppedActions, droppedScaffolding)
+	}
+	if len(pruned) != 1 || !strings.Contains(pruned[0].Content, "func Value() int") {
+		t.Fatalf("terminal prune should preserve rejected draft evidence, got %#v", pruned)
+	}
+}
+
+func TestPlanExecuteSubmitPlanRejectionBriefPreservesTailGuidance(t *testing.T) {
+	longPrefix := strings.Repeat("planned content around syntax error ", 30)
+	brief := lastSubmitPlanRejectionBrief(workspace.ToolResult{
+		Tool: "submit_plan",
+		Error: longPrefix + "Line-range edit detail: submit_plan edit for a.go declared start_line=10 and end_line=20. " +
+			"The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it.",
+	})
+	for _, want := range []string{"Last submit_plan rejection", "Line-range edit detail", "extend end_line"} {
+		if !strings.Contains(brief, want) {
+			t.Fatalf("brief should preserve actionable tail guidance %q:\n%s", want, brief)
+		}
+	}
+	if len(brief) > 820 {
+		t.Fatalf("brief should remain bounded, got %d chars:\n%s", len(brief), brief)
+	}
+}
+
+func TestPlanExecuteNativeNoToolCallFallbackSwitchesToTextualSubmitPlan(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-20 (total lines: 20)"},
+	}
+	runner := &Runner{
+		Client:       llama.NewClient("http://127.0.0.1:1", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: brief,
+	}
+	prompt, ok := runner.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(
+		errors.New(`chat request failed: {"detail":"tool_choice='required' was set but the model did not produce any tool calls."}`),
+		llama.ChatOptions{ForceNativeTools: true, ToolChoice: "required"},
+		results,
+		0,
+	)
+	if !ok {
+		t.Fatalf("expected native required no-tool-call error to activate textual fallback")
+	}
+	for _, want := range []string{"textual tool parser is active", "Emit exactly one visible JSON object", "a.go, b.go"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("fallback prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	opts := planThenExecuteTextualSubmitPlanFallbackChatOptions(llama.ChatOptions{
+		ForceNativeTools: true,
+		Tools:            []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
+		ToolChoice:       "required",
+	}, brief, results)
+	if opts.ForceNativeTools || len(opts.Tools) != 0 || opts.ToolChoice != "" {
+		t.Fatalf("textual fallback should disable native tools, got force=%v tools=%#v choice=%q", opts.ForceNativeTools, opts.Tools, opts.ToolChoice)
+	}
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("textual fallback should force visible output, got %#v", opts.EnableThinking)
+	}
+}
+
+func TestPlanExecuteNativeNoToolCallFallbackStaysTextualAfterGateRecovery(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	type requestPayload struct {
+		Tools      []planExecuteRequestToolPayload `json:"tools"`
+		ToolChoice string                          `json:"tool_choice"`
+	}
+	var requests int
+	var fallbackPayload requestPayload
+	var postGatePayload requestPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload requestPayload
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("decode request %d: %v\n%s", requests, err, string(body))
+		}
+		switch requests {
+		case 0:
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"read_file","path":"a.go"}`}}}})
+		case 1:
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "tool_calls": []map[string]any{{
+					"id": "call_submit", "type": "function",
+					"function": map[string]any{"name": "submit_plan", "arguments": `{"rationale":"incomplete","edits":[]}`},
+				}}},
+				"finish_reason": "tool_calls",
+			}}})
+		case 2:
+			requests++
+			http.Error(w, `{"detail":"tool_choice='required' was set but the model did not produce any tool calls."}`, http.StatusBadRequest)
+		case 3:
+			fallbackPayload = payload
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": "I will submit the corrected plan now."}}}})
+		case 4:
+			postGatePayload = payload
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"submit_plan","rationale":"Update value.","edits":[{"path":"a.go","old_text":"return 1","new_text":"return 2","purpose":"change returned value"}]}`}}}})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second).WithBackend(config.BackendMLX),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "required",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(fallbackPayload.Tools) != 0 || fallbackPayload.ToolChoice != "" {
+		t.Fatalf("native no-call fallback request should be textual, got tools=%#v choice=%q", fallbackPayload.Tools, fallbackPayload.ToolChoice)
+	}
+	if len(postGatePayload.Tools) != 0 || postGatePayload.ToolChoice != "" {
+		t.Fatalf("post-gate recovery after textual fallback must stay textual, got tools=%#v choice=%q", postGatePayload.Tools, postGatePayload.ToolChoice)
+	}
+	if !strings.Contains(answer, "Plan submitted with 1 edit") {
+		t.Fatalf("expected submit_plan success, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteMLXSubmitPlanAfterRefreshPromptMatchesNativeTransport(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int {\n\treturn 1\n}\n"), 0o644); err != nil {
+		t.Fatalf("write a.go: %v", err)
+	}
+	type requestPayload struct {
+		Messages   []llama.ChatMessage             `json:"messages"`
+		Tools      []planExecuteRequestToolPayload `json:"tools"`
+		ToolChoice string                          `json:"tool_choice"`
+	}
+	var requests int
+	var correctedSubmitPayload requestPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload requestPayload
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if err := json.Unmarshal(body, &payload); err != nil {
+			t.Fatalf("decode request %d: %v\n%s", requests, err, string(body))
+		}
+		switch requests {
+		case 0:
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"read_file","path":"a.go","start_line":1,"end_line":6}`}}}})
+		case 1:
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "tool_calls": []map[string]any{{
+					"id": "call_bad_submit", "type": "function",
+					"function": map[string]any{"name": "submit_plan", "arguments": `{"rationale":"Bad anchor should require refresh.","edits":[{"path":"a.go","old_text":"return missing","new_text":"return 2","purpose":"change returned value"}]}`},
+				}}},
+				"finish_reason": "tool_calls",
+			}}})
+		case 2:
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"read_file","path":"a.go","start_line":1,"end_line":6}`}}}})
+		case 3:
+			correctedSubmitPayload = payload
+			requests++
+			_ = json.NewEncoder(w).Encode(map[string]any{"choices": []map[string]any{{
+				"message": map[string]any{"role": "assistant", "tool_calls": []map[string]any{{
+					"id": "call_submit", "type": "function",
+					"function": map[string]any{"name": "submit_plan", "arguments": `{"rationale":"Corrected after refresh.","edits":[{"path":"a.go","old_text":"return 1","new_text":"return 2","purpose":"change returned value"}]}`},
+				}}},
+				"finish_reason": "tool_calls",
+			}}})
+		default:
+			t.Fatalf("unexpected request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second).WithBackend(config.BackendMLX),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if correctedSubmitPayload.ToolChoice != "required" || len(correctedSubmitPayload.Tools) != 1 || !requestPayloadExposesTool(correctedSubmitPayload.Tools, "submit_plan") {
+		t.Fatalf("post-refresh MLX request should require native submit_plan, got tools=%#v choice=%q", correctedSubmitPayload.Tools, correctedSubmitPayload.ToolChoice)
+	}
+	var promptText strings.Builder
+	for _, msg := range correctedSubmitPayload.Messages {
+		promptText.WriteString(msg.Content)
+		promptText.WriteByte('\n')
+	}
+	joined := promptText.String()
+	for _, forbidden := range []string{"Textual-tool backends", "visible JSON object", "parser-readable `submit_plan`"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("post-refresh native request leaked textual guidance %q:\n%s", forbidden, joined)
+		}
+	}
+	for _, want := range []string{"native `submit_plan`", "Do not answer in prose"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("post-refresh native request missing %q:\n%s", want, joined)
+		}
+	}
+	if !strings.Contains(answer, "Plan submitted with 1 edit") {
+		t.Fatalf("expected submit_plan success, got:\n%s", answer)
 	}
 }
 
@@ -3922,7 +5618,7 @@ func TestPlanThenExecuteExplicitSourceSatisfiedAnswerAfterRequiredReads(t *testi
 		RequiredEditPaths: []string{"internal/app/app.go", "internal/agent/runner.go"},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56"},
+		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56 (total lines: 56)"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/agent/runner.go lines 88-210"},
 	}
 
@@ -3993,11 +5689,14 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.
 		"Decision: source-satisfied",
 		"<<QUESTION>>",
 		"Hidden reasoning is not executable evidence",
-		"Only read/search again if you can name one exact new edit-safety fact",
+		"Do not read/search/discovery again before the first valid `submit_plan`",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("candidate-scope nudge missing %q: %q", want, got)
 		}
+	}
+	if strings.Contains(got, "Only read/search again") {
+		t.Fatalf("candidate-scope nudge must not retain stale optional-read language: %q", got)
 	}
 }
 
@@ -4474,8 +6173,8 @@ func TestPlanExecuteRecoveryForcesSubmitPlanOnlyAfterRejectedPlan(t *testing.T) 
 	if len(recoveryPayload.Tools) != 1 || recoveryPayload.Tools[0].Function.Name != "submit_plan" {
 		t.Fatalf("after rejected submit_plan, recovery request should expose only submit_plan, got %#v", recoveryPayload.Tools)
 	}
-	if recoveryPayload.ToolChoice != "auto" {
-		t.Fatalf("after rejected submit_plan, recovery request should allow source-satisfied/blocker text alongside submit_plan, got %q", recoveryPayload.ToolChoice)
+	if recoveryPayload.ToolChoice != "required" {
+		t.Fatalf("after rejected submit_plan, recovery request should require submit_plan, got %q", recoveryPayload.ToolChoice)
 	}
 	if !strings.Contains(answer, "Plan submitted with 2 edit") {
 		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
@@ -4635,8 +6334,8 @@ func TestPlanExecuteParseRecoveryForcesSubmitPlanOnlyAfterUnrepairableStringifie
 	if len(recoveryPayload.Tools) != 1 || recoveryPayload.Tools[0].Function.Name != "submit_plan" {
 		t.Fatalf("after unrepairable stringified-edits parse failure, recovery request should expose only submit_plan, got %#v", recoveryPayload.Tools)
 	}
-	if recoveryPayload.ToolChoice != "auto" {
-		t.Fatalf("after unrepairable stringified-edits parse failure, recovery request should allow source-satisfied/blocker text alongside submit_plan, got %q", recoveryPayload.ToolChoice)
+	if recoveryPayload.ToolChoice != "required" {
+		t.Fatalf("after unrepairable stringified-edits parse failure, recovery request should require submit_plan, got %q", recoveryPayload.ToolChoice)
 	}
 	if recoveryPayload.ChatTemplateKwargs == nil || recoveryPayload.ChatTemplateKwargs.EnableThinking == nil || *recoveryPayload.ChatTemplateKwargs.EnableThinking {
 		t.Fatalf("parse recovery should force visible submit_plan output over hidden thinking, got %#v", recoveryPayload.ChatTemplateKwargs)
@@ -4850,8 +6549,8 @@ func TestPlanExecuteCompletionBlockerKindDistinguishesInvalidSubmitPlan(t *testi
 		},
 	}
 	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-2", Output: "before a\n"},
-		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-2", Output: "before b\n"},
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-2 (total lines: 2)", Output: "before a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-2 (total lines: 2)", Output: "before b\n"},
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
@@ -4898,6 +6597,9 @@ func TestScopedImplementationDiscoveryLookupAllowsSemanticAndDeclaredProjectTool
 		{Tool: "context_query", Query: "FormativeEventType owner", Resolution: "symbol"},
 		{Tool: "lookup", Query: "FormativeEventType"},
 		{Tool: "code_navigate", Capability: "file_outline", Path: "native/src/simulation/creatures/formative_events.h"},
+		{Tool: "code_navigate", Capability: "read_symbol", Path: "native/src/simulation/creatures", Pattern: "ValidateFormativeEvent"},
+		{Tool: "discovery_query", Purpose: "trace_code", Path: "native/src/simulation/creatures", Pattern: "ValidateFormativeEvent"},
+		{Tool: "structural_search", Path: "native/src/simulation/creatures", Pattern: "ValidateFormativeEvent", Language: "cpp"},
 	}
 	for _, req := range allowed {
 		if !runner.scopedImplementationDiscoveryLookupAllowed(req, []string{"native/src/simulation/creatures/formative_events.h"}) {
@@ -4911,6 +6613,9 @@ func TestScopedImplementationDiscoveryLookupAllowsSemanticAndDeclaredProjectTool
 		{Tool: "cpp_find_symbol", Pattern: "*"},
 		{Tool: "code_navigate", Capability: "file_outline", Path: "native/src/core/components.h"},
 		{Tool: "structural_search", Pattern: "enum class FormativeEventType", Path: "native/src"},
+		{Tool: "structural_search", Pattern: "if $COND { $BODY }", Path: "native/src/simulation/creatures", Language: "cpp"},
+		{Tool: "code_navigate", Capability: "read_symbol", Path: "native/src/simulation", Pattern: "ValidateFormativeEvent"},
+		{Tool: "code_navigate", Capability: "read_symbol", Path: "native/src/simulation/core", Pattern: "ValidateFormativeEvent"},
 	}
 	for _, req := range rejected {
 		if runner.scopedImplementationDiscoveryLookupAllowed(req, []string{"native/src/simulation/creatures/formative_events.h"}) {
@@ -5215,5 +6920,35 @@ func TestScratchpadDeliverableFailedEvidenceIgnoresSourceImplementation(t *testi
 		nil,
 	); ok {
 		t.Fatalf("source implementation failures should keep the normal recovery path")
+	}
+}
+
+func TestPlanExecuteNonToolPlannerTextTriggersRequiredSourceRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "cmd/idiom/product_workflow_test.go"},
+		},
+	}
+	req, _, ok := runner.deterministicPlanExecuteRejectedRequiredSourceRead("I can make this change.", nil)
+	if !ok {
+		t.Fatalf("expected deterministic source read for non-tool planner text before required source evidence")
+	}
+	if req.Tool != "read_file" || req.Path != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("unexpected deterministic read request: %#v", req)
+	}
+}
+
+func TestPlanExecuteNonToolPlannerQuestionDoesNotAutoRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		},
+	}
+	if _, _, ok := runner.deterministicPlanExecuteRejectedRequiredSourceRead("<<QUESTION>>: missing permission", nil); ok {
+		t.Fatalf("typed blocker questions should not be replaced by deterministic reads")
 	}
 }

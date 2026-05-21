@@ -44,11 +44,11 @@ planner-phase instructions differ.
   current-state anchors. In plan-execute planner phase, plan directly when the
   packet is exact-plan-ready; otherwise satisfy required source-body reads
   before `submit_plan`.
-- For non-trivial existing source/test changes, prefer the line-range
-  `start_line` + `end_line` + `content` shape after reading the relevant
-  range. It avoids brittle escaped substring anchors when code contains quotes,
-  raw strings, struct tags, indentation-sensitive blocks, or large function
-  bodies.
+- For insertions/appends after an existing line, use `insert_after_line` +
+  non-empty `content`. For non-trivial existing source/test replacements, use
+  the line-range `start_line` + `end_line` + `content` shape after reading the
+  relevant range. Line ranges replace the inclusive current-source range; they
+  are not insertion points.
 - Use `old_text` + `new_text` only for a tiny exact snippet copied from current
   source evidence. If an `old_text` anchor does not match, refresh the anchor
   with semantic discovery or a narrow read inside a required edit path, or
@@ -59,11 +59,12 @@ planner-phase instructions differ.
 
 ## Edit Shapes (plan-execute)
 
-The planner's `submit_plan` accepts three edit shapes per entry:
+The planner's `submit_plan` accepts four edit shapes per entry:
 
-- **Line-range**: `start_line` + `end_line` + non-empty `content`
-  (preferred for non-trivial existing source/test edits; replaces the
-  inclusive line span; use substring shape for deletions).
+- **Insertion**: `insert_after_line` + non-empty `content` inserts after an
+  existing 1-based line in an existing file and does not replace current lines.
+- **Line-range**: `start_line` + `end_line` + non-empty `content` replaces the
+  inclusive line span; use it for replacements, not insertion points.
 - **Substring**: `old_text` + `new_text` (small exact snippets only; replaces
   first match; `new_text: ""` deletes `old_text`; add `replace_all: true` to
   replace every occurrence).
@@ -71,15 +72,16 @@ The planner's `submit_plan` accepts three edit shapes per entry:
   empty `old_text` (writes `new_text` as the entire file body;
   creates the file if it doesn't exist).
 
-Use whole-file shape for new files. Use line-range or substring for edits to
-existing files, with line-range first unless the edit is a small exact snippet.
+Use whole-file shape for new files. Use insertion shape for appends/inserts
+after an existing line. Use line-range or substring for replacement edits to
+existing files.
 The top-level `edits` value is a JSON array, not a quoted string containing
 JSON. Every edit body must be executable final content: no placeholders,
 ellipses, `<TODO>` markers, `existing code` comments, omitted bodies,
 pseudo-code, or prose descriptions. Line-range `content` is the complete
-replacement for the inclusive range; `old_text` is exact current text copied
-from source evidence; whole-file or new-file `new_text` is the complete file
-body.
+replacement for the inclusive range; `insert_after_line` content is inserted
+after the named line; `old_text` is exact current text copied from source
+evidence; whole-file or new-file `new_text` is the complete file body.
 
 ## Read Discipline
 

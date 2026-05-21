@@ -18,14 +18,14 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"`<<QUESTION>>:`",
 		"Plan artifact rules",
 		"`edits` is an array, never a quoted JSON string",
-		"Prefer numeric line-range edits",
+		"`insert_after_line` inserts non-empty `content` after an existing 1-based line",
 		"Each edit body must be executable final content",
 		"Do not submit placeholders, ellipses, `TODO` markers, `existing code` comments",
 		"Line-range `content` is the complete replacement for the inclusive range",
 		"Canonical `submit_plan` shape",
 		`"tool":"submit_plan"`,
-		`"start_line":10`,
-		`"content":"complete replacement lines\n"`,
+		`"insert_after_line":20`,
+		`"content":"complete inserted lines\n"`,
 		"never placeholders",
 		"Required `submit_plan` coverage for this run: 2 required path(s)",
 		"After every existing required path has satisfied its source-body obligation, your first successful `submit_plan.edits` array must include at least one real edit for every path above",
@@ -33,6 +33,14 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("planner addendum missing %q:\n%s", want, got)
+		}
+	}
+	for _, stale := range []string{
+		"Prefer numeric line-range edits for existing source/test changes",
+		"line-range shape) for non-trivial existing-path edits",
+	} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("planner addendum retained stale wording %q:\n%s", stale, got)
 		}
 	}
 }
@@ -52,12 +60,21 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 		"Corrective `submit_plan.edits[]` entries must be executable final content",
 		"not review prose",
 		"no placeholders, ellipses",
-		"Prefer line-range `content` for non-trivial source/test repairs",
+		"`insert_after_line`+`content` for insertions after an existing line",
+		"not an insertion point",
 		"Use `old_text` only for tiny exact snippets",
 		"not a quoted JSON string",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("review-repair prompt missing %q:\n%s", want, got)
+		}
+	}
+	for _, stale := range []string{
+		"Prefer line-range `content` for non-trivial source/test repairs",
+		"Line-range `content` for non-trivial source/test repairs",
+	} {
+		if strings.Contains(got, stale) {
+			t.Fatalf("review-repair prompt retained stale wording %q:\n%s", stale, got)
 		}
 	}
 }

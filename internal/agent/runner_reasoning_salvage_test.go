@@ -291,6 +291,104 @@ func TestRunAutoSalvageRecordsMarkdownDeliverableWrite(t *testing.T) {
 	}
 }
 
+func TestRunSalvagesHiddenReasoningWriteInsideRequiredScope(t *testing.T) {
+	dir := t.TempDir()
+	required := "a.txt"
+	if err := os.WriteFile(filepath.Join(dir, required), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write required file: %v", err)
+	}
+
+	replies := []map[string]string{
+		{"content": "```tool\n{\"tool\":\"read_file\",\"path\":\"a.txt\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"current text before edit\",\"why_not_answering\":\"need source evidence\"}\n```"},
+		{"reasoning_content": "I will make the scoped edit now.\n```tool\n{\"tool\":\"edit_file\",\"path\":\"a.txt\",\"old_text\":\"before\\n\",\"new_text\":\"after\\n\",\"description\":\"update required file\"}\n```"},
+		{"content": "Done.\nChanged paths:\n- a.txt\nVerification: not required for this text mutation."},
+	}
+	requests := 0
+	var salvageEvent string
+	var eventLog []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": reply,
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         dir,
+			CWD:          dir,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "not_required_for_text_mutations",
+			PermissionProfile:    "guarded_workspace_write",
+			RequiredEditPaths:    []string{required},
+		},
+		OnEvent: func(event RunEvent) {
+			eventLog = append(eventLog, event.Role+": "+event.Content)
+			if event.Role == "reasoning_tool_salvage" {
+				salvageEvent = event.Content
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v\nevents:\n%s", err, strings.Join(eventLog, "\n"))
+	}
+	if !strings.Contains(answer, "Done") {
+		t.Fatalf("unexpected answer: %s\nevents:\n%s", answer, strings.Join(eventLog, "\n"))
+	}
+	if !strings.Contains(salvageEvent, "edit_file") {
+		t.Fatalf("expected reasoning_tool_salvage event for edit_file, got %q", salvageEvent)
+	}
+	body, err := os.ReadFile(filepath.Join(dir, required))
+	if err != nil {
+		t.Fatalf("read required file: %v", err)
+	}
+	if string(body) != "after\n" {
+		t.Fatalf("required file = %q, want after", string(body))
+	}
+	if requests > len(replies) {
+		t.Fatalf("expected bounded model requests, got %d", requests)
+	}
+}
+
+func TestReasoningWriteSalvageRejectsOutsideRequiredScope(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			RequiredEditPaths: []string{"a.txt"},
+		},
+	}
+	reply := llama.ChatMessage{
+		ReasoningContent: "```tool\n{\"tool\":\"edit_file\",\"path\":\"b.txt\",\"old_text\":\"before\",\"new_text\":\"after\",\"description\":\"outside scope\"}\n```",
+	}
+
+	if req, _, ok := runner.salvageToolRequestFromReasoning(reply, nil); ok {
+		t.Fatalf("outside-scope hidden write should not be salvaged: %#v", req)
+	}
+}
+
 func TestAutoSalvageSkipsQuestionBlockerEvenWithMarkdownShape(t *testing.T) {
 	dir := t.TempDir()
 	mgr := workspace.NewManager(config.Workspace{Root: dir, CWD: dir, EnableWrites: true})

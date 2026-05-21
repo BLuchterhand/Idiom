@@ -309,7 +309,7 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	}
 }
 
-func TestTuneChatOptionsForPlanExecutePlannerUsesStrictToolSampling(t *testing.T) {
+func TestTuneChatOptionsForPlanExecutePlannerUsesStrictLocalToolMode(t *testing.T) {
 	thinkingOn := true
 	opts := llama.ChatOptions{
 		Temperature:      0.6,
@@ -331,10 +331,10 @@ func TestTuneChatOptionsForPlanExecutePlannerUsesStrictToolSampling(t *testing.T
 		t.Fatalf("plan-execute planner sampling = temp %.2f top_p %.2f, want deterministic tool sampling", tuned.Temperature, tuned.TopP)
 	}
 	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatalf("plan-execute planner should disable local thinking before strict tool emission, got %#v", tuned.EnableThinking)
+		t.Fatalf("plan-execute planner should disable local thinking for strict tool emission, got %#v", tuned.EnableThinking)
 	}
 	if tuned.PreserveThinking {
-		t.Fatalf("plan-execute planner should not preserve thinking in strict tool mode")
+		t.Fatalf("plan-execute planner should strip hidden reasoning from follow-up history")
 	}
 	if !tuned.ChatTemplateKwargs {
 		t.Fatalf("plan-execute planner should send explicit thinking kwargs")

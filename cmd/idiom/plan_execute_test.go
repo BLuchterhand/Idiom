@@ -241,6 +241,7 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 		"real edits grounded in the objective/target refs",
 		"Each edit body must be executable final content",
 		"Do not submit placeholders, ellipses",
+		"`insert_after_line` inserts non-empty `content` after an existing 1-based line",
 		"complete replacement for the inclusive range",
 	} {
 		if !strings.Contains(addendum, want) {
@@ -1786,6 +1787,8 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 		"submit_plan.rationale",
 		"executable final content",
 		"not review prose",
+		"`insert_after_line`+`content` for insertions after an existing line",
+		"not an insertion point",
 		"not a quoted JSON string",
 		"Empty corrective plans are invalid",
 		"pending outside this lane unless Phase Evidence names the exact command as successful",
@@ -3180,6 +3183,51 @@ func TestPreflightPlanEditsSkipsRangeShapedEdits(t *testing.T) {
 	}
 	if got := preflightPlanEdits(root, plan); got != nil {
 		t.Fatalf("preflight must skip range-shaped edits, got mismatch %#v", got)
+	}
+}
+
+func TestPreflightPlanEditsAcceptsInsertAfterLineShape(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb\n"), 0o644); err != nil {
+		t.Fatalf("seed x.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "x.txt", InsertAfterLine: 1, Content: "inserted"},
+		},
+	}
+	if got := preflightPlanEdits(root, plan); got != nil {
+		t.Fatalf("preflight must accept insert_after_line edits, got mismatch %#v", got)
+	}
+}
+
+func TestRunExecutorPhaseAppliesInsertAfterLineShape(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "x.txt"), []byte("a\nb"), 0o644); err != nil {
+		t.Fatalf("seed x.txt: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "x.txt", InsertAfterLine: 2, Content: "c\n", Purpose: "Append c."},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	report, err := runExecutorPhase(cfg, plan, []string{"x.txt"}, true, &stdout)
+	if err != nil {
+		t.Fatalf("executor phase failed: %v\n%s", err, stdout.String())
+	}
+	if report.Succeeded != 1 || report.Failed != 0 {
+		t.Fatalf("unexpected report: %#v", report)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "x.txt"))
+	if err != nil {
+		t.Fatalf("read x.txt: %v", err)
+	}
+	if string(got) != "a\nb\nc\n" {
+		t.Fatalf("insert_after_line executor result mismatch: %q", string(got))
 	}
 }
 

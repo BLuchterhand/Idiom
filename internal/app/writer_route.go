@@ -26,11 +26,18 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		lane = "plan-execute"
 		taskFamily = agent.PlanThenExecutePlannerTaskFamily
 		reasonCodes = []string{"route.multi_file_plan_execute"}
+		if implementationDispatchPromptExplicitPlanExecuteLaneRequest(prompt) {
+			reasonCodes = []string{"route.explicit_plan_execute_lane"}
+		}
 		verificationOwner = "planner_owned"
 	} else if isImplementationLikeFamily(plan.route.Family) {
 		mode = writerroute.ModeAgenticGuarded
 		lane = "implement"
 		reasonCodes = []string{"route.local_model_default"}
+		if strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute" &&
+			implementationDispatchHasSemanticSourceAndTestScope(prompt, plan, m.cfg) {
+			reasonCodes = []string{"route.semantic_source_test_executor"}
+		}
 		if m.plannerOwnedVerification {
 			verificationOwner = "planner_owned"
 		} else {
