@@ -144,6 +144,9 @@ func TestSlashHelpDocumentsRecoverStatusBarePacketPath(t *testing.T) {
 	if !strings.Contains(model.status, "/recover-status [--packet <path>|<path>]") {
 		t.Fatalf("help must document both recover status path forms, got %q", model.status)
 	}
+	if !strings.Contains(model.status, "/plan-execute <objective>") {
+		t.Fatalf("help must document typed plan-execute command, got %q", model.status)
+	}
 }
 
 func TestSlashRecoverStatusLoadErrorUsesSharedPresenter(t *testing.T) {

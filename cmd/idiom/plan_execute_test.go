@@ -47,7 +47,7 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 	}
 }
 
-func TestRunPlanExecuteMainUsesTightExistingFilePlannerTokenBudget(t *testing.T) {
+func TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	var stdout, stderr bytes.Buffer
 	var gotOpts runOptions
@@ -65,8 +65,8 @@ func TestRunPlanExecuteMainUsesTightExistingFilePlannerTokenBudget(t *testing.T)
 	if code != 1 {
 		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
 	}
-	if gotOpts.MaxTokensOverride != 8192 {
-		t.Fatalf("MaxTokensOverride = %d, want existing-file plan-execute budget 8192", gotOpts.MaxTokensOverride)
+	if gotOpts.MaxTokensOverride != 16384 {
+		t.Fatalf("MaxTokensOverride = %d, want existing-file plan-execute budget 16384", gotOpts.MaxTokensOverride)
 	}
 }
 
@@ -241,7 +241,10 @@ func TestPlanExecutePlannerAddendumAvoidsHardReadCaps(t *testing.T) {
 		"real edits grounded in the objective/target refs",
 		"Each edit body must be executable final content",
 		"Do not submit placeholders, ellipses",
-		"`insert_after_line` inserts non-empty `content` after an existing 1-based line",
+		"Prefer the smallest executable edit body",
+		"use exact `old_text`/`new_text` for small unique replacements",
+		"`insert_after_line` inserts small inline non-empty `content` after an existing 1-based line",
+		"needs a large insertion anchored to unchanged source lines",
 		"complete replacement for the inclusive range",
 	} {
 		if !strings.Contains(addendum, want) {
@@ -1770,6 +1773,13 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 	)
 	for _, want := range []string{
 		"Verification Checklist",
+		"primary evidence ledger",
+		"`context_status` (`refresh=true`)",
+		"`context_query`",
+		"`context_zoom`",
+		"`code_navigate`",
+		"Do not sweep large files",
+		"one bounded `read_file` range",
 		"behavior, not just literal code correctness",
 		"Default/non-regression behavior",
 		"Data, lifecycle, state, persistence, concurrency/threading, and performance",
@@ -1787,8 +1797,8 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 		"submit_plan.rationale",
 		"executable final content",
 		"not review prose",
-		"`insert_after_line`+`content` for insertions after an existing line",
-		"not an insertion point",
+		"`insert_after_line`+`content` only for small inline insertions after an existing line",
+		"line-range `content` for non-trivial source/test replacements and large additions",
 		"not a quoted JSON string",
 		"Empty corrective plans are invalid",
 		"pending outside this lane unless Phase Evidence names the exact command as successful",
@@ -1796,6 +1806,56 @@ func TestPlanExecuteReviewRepairPromptRequiresBehavioralChecklist(t *testing.T) 
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("review-repair prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteReviewRepairPromptTreatsFailedSourceSanityAsTerminalEvidence(t *testing.T) {
+	prompt := planExecuteReviewRepairPrompt(
+		"Implement the required behavior.",
+		workspace.PlanArtifact{
+			Rationale: "change behavior",
+			Edits: []workspace.PlanEdit{
+				{Path: "a.go", Purpose: "update behavior"},
+			},
+		},
+		[]string{"a.go"},
+		[]string{"a.go"},
+		reviewRepairEvidence{
+			Diff:          "diff --git a/a.go b/a.go\n",
+			DiffCheckExit: 0,
+			PhaseEvidence: phaseEvidenceBundle{
+				SchemaVersion:   phaseEvidenceSchemaVersion,
+				Phase:           "review_repair",
+				ChangedPaths:    []string{"a.go"},
+				OpenObligations: []string{"source_sanity_failed:a.go"},
+				SubmittedPlan:   []phaseEvidenceCheck{{Kind: "submitted_edit", Path: "a.go", Status: "applied", Summary: "edit 1/1: submitted new_text is present"}},
+				SourceSanity:    []phaseEvidenceCheck{{Kind: "source_sanity", Path: "a.go", Status: "failed", Summary: "Source sanity failed", Error: "compile failed"}},
+			},
+		},
+	)
+	for _, want := range []string{
+		"failed verification or source_sanity obligations",
+		"Treat that failure as sufficient post-edit evidence",
+		"do not perform additional reads, searches, or context refreshes",
+		"Submit a corrective plan",
+		"<<QUESTION>>",
+		"source_sanity_failed:a.go",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("review-repair failed-source-sanity prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"If exact post-edit evidence is missing, make one targeted probe",
+		"`context_status` (`refresh=true`)",
+		"`context_query`",
+		"`context_zoom`",
+		"`code_navigate`",
+		"one bounded `read_file` range",
+	} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("failed-source-sanity prompt must not invite discovery via %q:\n%s", forbidden, prompt)
 		}
 	}
 }
@@ -1978,6 +2038,41 @@ func TestRunReviewRepairPhaseRejectsPassWithoutChecklist(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "Verification Checklist") {
 		t.Fatalf("error should require checklist, got %v", err)
+	}
+}
+
+func TestRunReviewRepairPhaseRejectsRecoveryTemplateAsPass(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{},
+		planExecuteOptions{},
+		&stdout,
+		func(_ config.Config, _ string, _ runOptions, _ io.Writer) (string, error) {
+			return "The completion gate rejected the review-repair response.\n\nPass shape:\nDecision: pass\n\nVerification Checklist:\n- Required behavior: <checked fact>.\n\nDo not add prose before or after the chosen terminal shape.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected recovery template text not to count as a review pass")
+	}
+	if !strings.Contains(err.Error(), "Decision: pass") || !strings.Contains(err.Error(), "Verification Checklist") {
+		t.Fatalf("error should require an actual terminal pass shape, got %v", err)
 	}
 }
 
@@ -2164,6 +2259,134 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t
 	}
 }
 
+func TestRunReviewRepairPhaseRejectsPassWhenVerificationFailed(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Value() int { return 2 }\n"), 0o644); err != nil {
+		t.Fatalf("seed pkg.go: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg.go", OldText: "return 1", NewText: "return 2", Purpose: "change behavior"},
+		},
+	}
+	command := "go test ./... -run 'TestValue' -count=1"
+	var stdout bytes.Buffer
+	var gotPrompt string
+	_, err := runReviewRepairPhase(
+		cfg,
+		"Update Value. Make this pass: `"+command+"`.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{Total: 1, Succeeded: 1, Verification: []phaseEvidenceCheck{{
+			Kind:    "verification",
+			Command: command,
+			Status:  "failed",
+			Error:   "TestValue failed",
+		}}},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, prompt string, _ runOptions, _ io.Writer) (string, error) {
+			gotPrompt = prompt
+			return "Decision: pass\n\nVerification Checklist:\n- Requested verification: acceptable.", nil
+		},
+		nil,
+	)
+	if err == nil {
+		t.Fatalf("expected failed requested verification to reject review pass")
+	}
+	if !strings.Contains(err.Error(), "verification_failed") {
+		t.Fatalf("expected verification_failed rejection, got %v", err)
+	}
+	if !strings.Contains(gotPrompt, "verification_failed:"+command) {
+		t.Fatalf("review prompt should expose failed verification obligation, got:\n%s", gotPrompt)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	event, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_pass_rejected")
+	if !ok {
+		t.Fatalf("expected review_repair_pass_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "verification_failed" {
+		t.Fatalf("expected verification_failed reason, got %#v", event)
+	}
+}
+
+func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "a.txt")
+	if err := os.WriteFile(path, []byte("value=bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "value=good", NewText: "value=bad", Purpose: "introduce bad value"},
+		},
+	}
+	var stdout bytes.Buffer
+	attempts := 0
+	report, err := runReviewRepairPhase(
+		cfg,
+		"Keep a.txt good.",
+		plan,
+		nil,
+		nil,
+		executorPhaseReport{Total: 1, Succeeded: 1, Verification: []phaseEvidenceCheck{{
+			Kind:    "verification",
+			Command: "check a.txt",
+			Status:  "failed",
+			Error:   "value was bad",
+		}}},
+		planExecuteOptions{JSONEvents: true},
+		&stdout,
+		func(cfg config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
+			attempts++
+			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+				t.Fatalf("unexpected task family %q", opts.TaskFamily)
+			}
+			if attempts == 1 {
+				if !strings.Contains(prompt, "verification_failed:check a.txt") {
+					t.Fatalf("initial prompt should expose failed verification, got:\n%s", prompt)
+				}
+				return "Decision: pass\n\nVerification Checklist:\n- Required behavior: acceptable.\n- Test or command evidence: acceptable.", nil
+			}
+			if !strings.Contains(prompt, "Rejected Previous Review Outcome") || !strings.Contains(prompt, "`Decision: pass` is not an allowed terminal outcome") {
+				t.Fatalf("retry prompt should forbid another pass, got:\n%s", prompt)
+			}
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "Verification Checklist:\n- Failing item: check a.txt reported value was bad.\n- Scope safety: edit only a.txt.",
+				Edits: []workspace.PlanEdit{
+					{Path: "a.txt", OldText: "value=bad", NewText: "value=good", Purpose: "repair failed verification"},
+				},
+			})
+			return "submitted repair plan", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("expected retry corrective plan to repair, got %v", err)
+	}
+	if attempts != 2 {
+		t.Fatalf("expected one retry after contradictory pass, got %d attempts", attempts)
+	}
+	if report.Status != "repaired" || report.Repairs != 1 {
+		t.Fatalf("expected repaired report, got %#v", report)
+	}
+	if got := readFileString(t, path); got != "value=good\n" {
+		t.Fatalf("expected repair to apply, got %q", got)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.review_repair_retry"); !ok {
+		t.Fatalf("expected review_repair_retry event, got %s", stdout.String())
+	}
+}
+
 func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMissing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return false }\n"), 0o644); err != nil {
@@ -2293,6 +2516,7 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 	var stdout bytes.Buffer
 	var gotTaskFamily string
 	var gotPrompt string
+	var gotDisableThinking bool
 	report, err := runReviewRepairPhase(
 		cfg,
 		"Review behavior.",
@@ -2305,6 +2529,7 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 		func(_ config.Config, prompt string, opts runOptions, _ io.Writer) (string, error) {
 			gotTaskFamily = opts.TaskFamily
 			gotPrompt = prompt
+			gotDisableThinking = opts.DisableThinking
 			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: good is present.\n- Scope safety: no corrective edit needed.", nil
 		},
 		nil,
@@ -2317,6 +2542,20 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 	}
 	if gotTaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
 		t.Fatalf("review-repair should use review-repair task family, got %q", gotTaskFamily)
+	}
+	if !gotDisableThinking {
+		t.Fatal("review-repair must force visible no-thinking output for its terminal contract")
+	}
+	for _, want := range []string{
+		"## Terminal Output Templates",
+		"Do not add prose before or after the chosen shape",
+		"Pass shape:",
+		"Corrective plan shape:",
+		"Blocker shape:",
+	} {
+		if !strings.Contains(gotPrompt, want) {
+			t.Fatalf("review-repair prompt missing %q:\n%s", want, gotPrompt)
+		}
 	}
 	if strings.Contains(gotPrompt, "The plan-submission capability must cover every brief-required edit once") {
 		t.Fatalf("review-repair prompt must not include planner-phase submit_plan closeout addendum:\n%s", gotPrompt)

@@ -8,7 +8,6 @@ import (
 	"idiom/internal/backends"
 	"idiom/internal/config"
 	"idiom/internal/llama"
-	"idiom/internal/util"
 )
 
 func (m *Model) applyModelSwap(name string) {
@@ -22,6 +21,7 @@ func (m *Model) applyModelSwap(name string) {
 	}
 
 	m.modelID = name
+	m.modelDisplayID = name
 	m.modelSwapped = true
 	m.modelThinkingFloor = false
 	m.maxTokensOverride = 0
@@ -46,7 +46,8 @@ func (m *Model) applyModelSwap(name string) {
 	m.cfg.LlamaServer = spec
 	m.modelThinkingFloor = spec.IsHosted()
 	m.maxTokensOverride = model.MaxTokens
-	m.modelID = modelSwapDisplayID(model, spec, name)
+	m.modelID = resolveModelID(spec, spec.Model)
+	m.modelDisplayID = modelSwapDisplayID(model, spec, name)
 
 	timeout := time.Duration(m.cfg.Chat.RequestTimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -59,7 +60,7 @@ func (m *Model) applyModelSwap(name string) {
 	} else {
 		m.controller = nil
 	}
-	m.status = fmt.Sprintf("Model set to %s", m.modelID)
+	m.status = fmt.Sprintf("Model set to %s", m.activeModelDisplayID())
 }
 
 func (m *Model) slashModel(_ string, args []string) {
@@ -84,8 +85,9 @@ func (m *Model) slashModel(_ string, args []string) {
 }
 
 func modelSwapDisplayID(model backends.Model, spec config.LlamaServer, fallback string) string {
-	if spec.IsHosted() {
-		return util.FirstNonEmpty(strings.TrimSpace(model.Model), strings.TrimSpace(model.Alias), strings.TrimSpace(spec.Model), fallback)
+	s := strings.TrimSpace(model.Alias)
+	if s == "" {
+		return fallback
 	}
-	return util.FirstNonEmpty(strings.TrimSpace(model.Alias), strings.TrimSpace(spec.Model), fallback)
+	return s
 }

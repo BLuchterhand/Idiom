@@ -44,6 +44,7 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
 	m.lastAssistantReasoningContent = ""
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
+	plan = m.recoverDirectImplementationContext(prompt, plan)
 	restoreRoute := m.applyDirectImplementationPromptRoute(ctx, prompt, plan)
 	defer restoreRoute()
 	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
@@ -89,6 +90,70 @@ func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt
 		return func() {}
 	}
 	return m.applyExecutorPromptRoute(ctx, "implementation direct runner", false)
+}
+
+func (m *Model) recoverDirectImplementationContext(prompt string, plan promptExecutionPlan) promptExecutionPlan {
+	if !m.shouldPreloadDirectImplementationContext(prompt, plan) {
+		return plan
+	}
+	var diagnostics strings.Builder
+	section := planexecute.BuildPromptContextPackSection(m.cfg, planexecute.PromptContextPackOptions{
+		Mode:        "implement",
+		Title:       prompt,
+		Brief:       prompt,
+		ProjectRoot: m.projectRoot(),
+		Limit:       8,
+	}, &diagnostics)
+	if diag := strings.TrimSpace(diagnostics.String()); diag != "" {
+		m.logMessage("direct_context_recovery", truncateImplementationDispatchText(diag, 700))
+	}
+	if strings.TrimSpace(section) == "" {
+		return plan
+	}
+	plan.runtimeBrief.TargetPacket = appendUniqueBriefStrings(plan.runtimeBrief.TargetPacket, directContextPacketLines(section)...)
+	plan.runtimeBrief.SearchPolicy = appendUniqueBriefStrings(plan.runtimeBrief.SearchPolicy,
+		"direct_implement_context_preloaded_before_model_turn",
+		"do_not_repeat_context_pack_if_preload_reports_unavailable",
+	)
+	m.logMessage("direct_context_recovery", "preloaded context packet for direct implementation turn")
+	return plan
+}
+
+func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan promptExecutionPlan) bool {
+	if m == nil || m.workspace == nil {
+		return false
+	}
+	if !isImplementationLikeFamily(plan.route.Family) || isPlanExecuteInternalFamily(plan.route.Family) {
+		return false
+	}
+	if shouldDispatchImplementationToPlanExecute(plan, plan.mode, m.cfg, prompt) {
+		return false
+	}
+	if len(plan.runtimeBrief.TargetPacket) > 0 || len(plan.runtimeBrief.RequiredEditPaths) > 0 || len(plan.runtimeBrief.AllowedEditPaths) > 0 {
+		return false
+	}
+	if len(pathparse.MentionedWorkspacePaths(prompt)) > 0 {
+		return false
+	}
+	return strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute"
+}
+
+func directContextPacketLines(section string) []string {
+	lines := []string{"prompt_context:direct_implementation_preload"}
+	usedBytes := 0
+	for _, line := range strings.Split(section, "\n") {
+		line = strings.TrimRight(line, " \t")
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		usedBytes += len(line)
+		if usedBytes > 12000 || len(lines) >= 120 {
+			lines = append(lines, "prompt_context:direct_implementation_preload_truncated")
+			break
+		}
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func (m *Model) finishPromptOnceReply(reply string) string {
@@ -137,8 +202,55 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 	}
 }
 
+func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
+	mode := agent.BuildMode()
+	route := normalizeTurnRoutePlan(turnRoutePlan{
+		Family: agent.PlanThenExecutePlannerTaskFamily,
+		Reason: "typed_plan_execute_command",
+	}, mode)
+	return promptExecutionPlan{
+		mode:         mode,
+		route:        route,
+		runtimeBrief: m.runtimeBriefForRouteMode(route, mode, objective),
+	}
+}
+
+func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string) (string, error) {
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return "", fmt.Errorf("plan-execute objective is required")
+	}
+	m.emitJSONStart(objective)
+	plan := m.planExecuteCommandExecutionPlan(objective)
+	if m.workspace != nil {
+		m.workspace.PrimeDiscoveredPaths(pathparse.MentionedWorkspacePaths(objective))
+	}
+	suppressTranscript := m.suppressPromptTranscript
+	if !suppressTranscript {
+		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: objective})
+		m.logMessage("user", objective)
+	} else if m.debugLogger != nil {
+		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested plan-execute command (%d chars)", len(objective)))
+	}
+	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
+		m.logMessage("route_plan", summary)
+	}
+	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(objective, plan))
+	requiredPaths := requiredEditPathsFromPrompt(objective)
+	allowedPaths := allowedEditPathsFromPrompt(objective)
+	reply, err := m.runSingleImplementationPlanExecute(ctx, objective, plan, requiredPaths, allowedPaths, nil)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	return m.finishPromptOnceReply(reply), nil
+}
+
 func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerruntime.WorkerRuntimeBrief {
-	mode := m.currentMode()
+	return m.runtimeBriefForRouteMode(route, m.currentMode(), prompt)
+}
+
+func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
 	brief.Objective = strings.TrimSpace(pathparse.ScopeToBriefBody(prompt))
 	if brief.Objective == "" {
@@ -207,6 +319,15 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_snippets_satisfied")
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_snippets_reported")
 	}
+	if useTypedPlanExecuteScope && route.Family == agent.PlanThenExecutePlannerTaskFamily {
+		brief = runtimeBriefWithPlanExecuteEditSetObligations(brief, scopeContract.EditSetObligations)
+	}
+	if len(m.forcedReadinessOpenObligations) > 0 {
+		if brief.Readiness == nil {
+			brief.Readiness = &workerruntime.ReadinessState{}
+		}
+		brief.Readiness.OpenObligations = appendUniqueBriefStrings(brief.Readiness.OpenObligations, m.forcedReadinessOpenObligations...)
+	}
 	if plan := defaultVerificationPlan(m.projectRoot()); len(brief.VerificationPlan) == 0 {
 		brief.VerificationPlan = plan
 	}
@@ -270,6 +391,40 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
 	}
 	return brief
+}
+
+func runtimeBriefWithPlanExecuteEditSetObligations(brief workerruntime.WorkerRuntimeBrief, obligations planexecute.EditSetObligations) workerruntime.WorkerRuntimeBrief {
+	obligations = obligations.Normalized()
+	if !runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindTestEdit) &&
+		!runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindImplementationEdit) {
+		return brief
+	}
+	if runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindTestEdit) {
+		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "missing_requested_test_edit_recovery")
+		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "test_edit_or_test_path_source_satisfied_evidence")
+		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+			"Missing Requested Test Edit Recovery: terminal outcome must be submit_plan with at least one real test edit, Decision: source-satisfied naming both source and test evidence paths when the final state already exists, or <<QUESTION>> with the exact blocker; do not submit another production-only plan",
+		)
+	}
+	if runtimeBriefHasNonPromptEditSetObligation(obligations, planexecute.EditSetObligationKindImplementationEdit) {
+		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "missing_requested_implementation_edit_recovery")
+		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "implementation_edit_or_implementation_path_source_satisfied_evidence")
+		brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
+			"Missing Requested Implementation Edit Recovery: terminal outcome must be submit_plan with at least one real non-test implementation edit, Decision: source-satisfied naming implementation and test/source evidence paths when the final state already exists, or <<QUESTION>> with the exact blocker; do not submit another test-only plan",
+		)
+	}
+	return brief
+}
+
+func runtimeBriefHasNonPromptEditSetObligation(obligations planexecute.EditSetObligations, kind planexecute.EditSetObligationKind) bool {
+	for _, obligation := range obligations.Normalized() {
+		if obligation.Kind != kind {
+			continue
+		}
+		source := strings.TrimSpace(obligation.Source)
+		return source == "" || source != "prompt"
+	}
+	return false
 }
 
 func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (planexecute.PlanScopeContract, bool) {
@@ -379,6 +534,7 @@ func inlineRequiredEditPathsFromPrompt(prompt string) []string {
 		lower := strings.ToLower(line)
 		for _, prefix := range []string{
 			"required edit paths:",
+			"required edit paths only:",
 			"required files:",
 			"files to modify:",
 			"files to edit:",
@@ -404,6 +560,7 @@ func requiredEditPathHeadings() []string {
 		"files to edit",
 		"edit files",
 		"required edit paths",
+		"required edit paths only",
 		"required files",
 		"required paths",
 	}
@@ -488,6 +645,7 @@ func structuredRequiredEditPathsFromPrompt(prompt string) []string {
 		"files_to_modify",
 		"files_to_edit",
 		"required_edit_paths",
+		"required_edit_paths_only",
 	})
 }
 

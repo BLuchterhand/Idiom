@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
@@ -128,6 +129,16 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		}
 	}
 
+	if conversationEvidenceSatisfied(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
+		decision.RejectSummary = "Conversation contract rejected extra exploration after bounded evidence"
+		decision.RejectError = "the conversation lane already has enough bounded read/search evidence to answer. Return a concise, well formatted answer from the gathered evidence; name one exact uncertainty only if it materially affects the answer."
+		decision.ForceAnswer = &runnerForcedAnswer{
+			Reason: "conversation_evidence_sufficient",
+			Prompt: "The conversation lane has enough bounded evidence. Answer the user's actual question now in a concise, well formatted, on-topic response. Name the files or evidence you used when workspace evidence matters. Do not return raw tool summaries as the answer.",
+		}
+		return decision
+	}
+
 	if summary, errorText, reject := prematureTargetReadRejection(decision.Request, input.Results, r.RuntimeBrief); reject {
 		decision.RejectSummary = summary
 		decision.RejectError = errorText
@@ -170,6 +181,27 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 	}
 
 	return decision
+}
+
+func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") ||
+		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+		return false
+	}
+	successfulReads := 0
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if !isReadClassTool(workspace.ToolRequest{Tool: result.Tool}) {
+			continue
+		}
+		successfulReads++
+		if successfulReads >= 2 {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
@@ -844,9 +876,7 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return false
 	}
-	switch strings.TrimSpace(r.RuntimeBrief.Contract) {
-	case "architecture_assessment", "review_findings":
-	default:
+	if !readOnlyExplanationGateApplies(r.RuntimeBrief) {
 		return false
 	}
 	exactProbes := readOnlyAnalysisExactProbeCount(results)

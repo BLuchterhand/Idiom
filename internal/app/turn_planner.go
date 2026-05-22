@@ -61,7 +61,7 @@ func deterministicHardTurnRoute(prompt string, fallback turnRoutePlan, mode agen
 func deterministicTurnRouteIsDecisive(plan turnRoutePlan, prompt string, mode agent.Mode) bool {
 	plan = normalizeTurnRoutePlan(plan, mode)
 	family := strings.TrimSpace(plan.Family)
-	if family == "" || family == "direct_question" || family == "multi_turn_state" || isImplementationLikeFamily(family) {
+	if family == "" || family == "conversation" || family == "direct_question" || family == "multi_turn_state" || isImplementationLikeFamily(family) {
 		return false
 	}
 	words := plannerWordText(prompt)
@@ -91,16 +91,16 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"You classify coding-agent turns into one workflow family before execution.",
 				"Return strict JSON only.",
 				"Choose the best family from this enum:",
-				"direct_question, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
+				"conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
 				"Also return initial_lane, optional followup_lane, reason, contract, and optional thoroughness.",
-				"Use coarse OpenCode-shaped routing: read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
+				"Use coarse OpenCode-shaped routing: conversation for normal question-answer turns, read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
+				"Prefer conversation by default for questions, status requests, how-to requests, and lightweight repo questions. Conversation may use efficient read-only workspace tools when the answer depends on code or logs.",
 				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
-				"Prefer direct_question only for questions answerable from conversation alone. If the user names a project feature, mode, runner, tool, or behavior and asks what it does, prefer architecture so the answer is grounded in code.",
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
 				"Prefer implementation-like families when the user is asking for file changes, tests, docs, config, scripts, prompts, or repairs.",
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
-				"Prefer architecture for explanation-only questions about how a repo, harness, runner, tool, agent, workflow, or component works. Do not choose an implementation family unless the user is asking for edits.",
+				"Prefer architecture for broad design, boundary, or cross-component assessment. Use conversation for ordinary explanation-only questions unless the user asks for deep architecture/review.",
 				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
 				"Prefer performance_review, security_review, or architecture when the user asks for that style of analysis without edits.",
 				"Use contracts from this enum: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
@@ -223,11 +223,17 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		return fallbackTurnRoute("", mode)
 	}
 	switch plan.Family {
-	case "direct_question":
+	case workerruntime.ArtifactFinalAnswerTaskFamily:
+		plan.InitialLane = "main"
+		plan.FollowupLane = ""
+		plan.Contract = "artifact_final_answer"
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "artifact_final_answer")
+	case "direct_question", "conversation":
+		plan.Family = "conversation"
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
 		plan.Contract = "direct_answer"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "direct_conversation")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "conversation")
 	case "debug_logs":
 		plan.InitialLane = "explore"
 		plan.FollowupLane = ""
@@ -288,8 +294,9 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		// implementation (write-capable contract, single turn) but the
 		// only exposed write tool is submit_plan; per-edit writes are
 		// runtime-rejected. Without this case the family fell through
-		// to fallbackTurnRoute → direct_answer, leaving the planner
-		// with zero tools and no way to submit a plan.
+		// to fallbackTurnRoute -> conversation/direct_answer,
+		// leaving the planner with zero write tools and no way to
+		// submit a plan.
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
@@ -304,6 +311,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.Contract = "review_findings"
 		plan.Reason = util.FirstNonEmpty(plan.Reason, "plan_then_execute_review_repair")
 	case "multi_turn_state":
+		plan.Family = "conversation"
 		plan.InitialLane = "main"
 		plan.Contract = "direct_answer"
 		plan.Reason = util.FirstNonEmpty(plan.Reason, "context_followup")
@@ -378,7 +386,7 @@ func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, pr
 	if isImplementationLikeFamily(fallbackFamily) && !isImplementationLikeFamily(plannedFamily) && !isExplanationOnlyCodeQuestion(words) {
 		return true
 	}
-	return fallbackFamily != "direct_question" && plannedFamily == "direct_question"
+	return fallbackFamily != "conversation" && plannedFamily == "conversation"
 }
 
 func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
@@ -407,7 +415,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 		}
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
 	case isExplanationOnlyCodeQuestion(words):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation"}, mode)
 	case util.ContainsAny(words, " security ", " prompt injection ", " adversarial "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "security_review"}, mode)
 	case util.ContainsAny(words, " performance ", " perf ", " timeout ", " timed out ", " regression ", " slow "):
@@ -464,7 +472,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	if strings.EqualFold(mode.Name, "plan") {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
 	}
-	return normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, mode)
+	return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation"}, mode)
 }
 
 func isImplementationLikeFamily(family string) bool {
@@ -575,7 +583,69 @@ func hasEditIntent(words string) bool {
 }
 
 func hasEffectiveEditIntent(words string) bool {
-	return (hasEditIntent(words) || hasUILayoutMutationIntent(words)) && !explicitlyForbidsEdits(words)
+	return (hasEditIntent(words) || hasQuestionShapedMutationIntent(words) || hasUILayoutMutationIntent(words)) && !explicitlyForbidsEdits(words)
+}
+
+func hasQuestionShapedMutationIntent(words string) bool {
+	if !util.ContainsAny(words,
+		" can we ",
+		" can you ",
+		" could we ",
+		" could you ",
+		" would you ",
+	) {
+		return false
+	}
+	if util.ContainsAny(words,
+		" explain ",
+		" whether ",
+		" why ",
+		" possible ",
+		" feasibility ",
+		" should we ",
+		" how can ",
+		" how could ",
+	) {
+		return false
+	}
+	if !util.ContainsAny(words,
+		" shorten ",
+		" shortening ",
+		" simplify ",
+		" simplifying ",
+		" reword ",
+		" rewording ",
+		" relabel ",
+		" relabeling ",
+		" restyle ",
+		" restyling ",
+		" rename ",
+		" renaming ",
+		" replace ",
+		" replacing ",
+		" change ",
+		" changing ",
+		" update ",
+		" updating ",
+		" show ",
+		" use ",
+		" make ",
+	) {
+		return false
+	}
+	return util.ContainsAny(words,
+		" to ",
+		" into ",
+		" as ",
+		" instead ",
+		" just ",
+		" be ",
+		" display ",
+		" shown ",
+		" label ",
+		" string ",
+		" text ",
+	)
 }
 
 func hasImplementationWorkflowContract(prompt string, words string) bool {

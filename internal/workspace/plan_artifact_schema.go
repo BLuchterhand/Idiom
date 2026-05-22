@@ -897,11 +897,10 @@ func sanitizePlanArtifactErrorDetail(value string) string {
 	if value == "" {
 		return ""
 	}
-	if planArtifactTextLooksSensitive(value) {
-		return "redacted:" + planArtifactHash(value)
-	}
 	lower := strings.ToLower(value)
 	switch {
+	case strings.Contains(lower, "insert_after_line content exceeds inline submit_plan limit"):
+		return sanitizePlanArtifactVisibleText(value, 600)
 	case strings.Contains(lower, "requires one edit shape"):
 		return sanitizePlanArtifactVisibleText(value, 600)
 	case strings.Contains(lower, "path"):
@@ -909,6 +908,9 @@ func sanitizePlanArtifactErrorDetail(value string) string {
 	case strings.Contains(lower, "old_text"):
 		return sanitizePlanArtifactVisibleText(value, 600)
 	default:
+		if planArtifactTextLooksSensitive(value) {
+			return "redacted:" + planArtifactHash(value)
+		}
 		return sanitizePlanArtifactVisibleText(value, 160)
 	}
 }

@@ -210,7 +210,9 @@ func earlyRejectedFingerprintSummary(summary string) bool {
 	case "Plan-execute submit_plan required",
 		"Tool not available in current runtime contract",
 		"Tool hidden by active contract",
-		"Write-only recovery blocked non-write tool":
+		"Write-only recovery blocked non-write tool",
+		"Repeated range-less read_file redirected to bounded source request",
+		"Repeated range-less read_file rejected":
 		return true
 	default:
 		return false

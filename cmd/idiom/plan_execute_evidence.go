@@ -27,6 +27,7 @@ type phaseEvidenceBundle struct {
 	ExecutorHandoff    phaseEvidenceHandoff           `json:"executor_handoff"`
 	SubmittedPlan      []phaseEvidenceCheck           `json:"submitted_plan_state,omitempty"`
 	SourceSanity       []phaseEvidenceCheck           `json:"source_sanity,omitempty"`
+	Verification       []phaseEvidenceCheck           `json:"verification,omitempty"`
 	PatchHygiene       phaseEvidenceCheck             `json:"patch_hygiene"`
 	SuggestedTests     []phaseEvidenceTest            `json:"suggested_tests,omitempty"`
 	UnresolvedGaps     []string                       `json:"unresolved_gaps,omitempty"`
@@ -92,6 +93,7 @@ type phaseEvidenceTest struct {
 type phaseEvidenceCheck struct {
 	Kind    string `json:"kind"`
 	Path    string `json:"path,omitempty"`
+	Command string `json:"command,omitempty"`
 	Status  string `json:"status"`
 	Summary string `json:"summary,omitempty"`
 	Error   string `json:"error,omitempty"`
@@ -133,11 +135,12 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		ExecutorHandoff:  phaseEvidenceHandoffFromExecutor(handoff),
 		SubmittedPlan:    submittedPlan,
 		SourceSanity:     sourceSanity,
+		Verification:     append([]phaseEvidenceCheck(nil), executorReport.Verification...),
 		PatchHygiene:     patchHygiene,
 		SuggestedTests:   packetSuggestedTests(packet),
 		UnresolvedGaps:   append([]string(nil), packet.UnresolvedGaps...),
-		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, patchHygiene),
-		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, patchHygiene),
+		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
+		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 	}
 	return bundle
 }
@@ -367,7 +370,7 @@ func packetSuggestedTests(packet phaseEvidencePacket) []phaseEvidenceTest {
 	return append([]phaseEvidenceTest(nil), packet.SuggestedTests...)
 }
 
-func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvidencePacket, changedPaths []string, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []string {
+func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvidencePacket, changedPaths []string, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, verification []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []string {
 	var out []string
 	if strings.TrimSpace(plan.PackID) != "" {
 		if packet.Status != "available" && packet.Status != "available_stale" {
@@ -405,10 +408,16 @@ func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet phaseEvide
 			out = append(out, "source_sanity_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"))
 		}
 	}
+	for _, check := range verification {
+		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
+		if status != "ok" && status != "passed" {
+			out = append(out, "verification_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Command), "(unknown)"))
+		}
+	}
 	return cappedStrings(out, 16)
 }
 
-func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []phaseEvidenceSummary {
+func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []phaseEvidenceCheck, sourceSanity []phaseEvidenceCheck, verification []phaseEvidenceCheck, patchHygiene phaseEvidenceCheck) []phaseEvidenceSummary {
 	out := []phaseEvidenceSummary{
 		{Kind: "context_packet", Status: packet.Status, Summary: phaseEvidencePacketSummary(packet)},
 		{Kind: "patch_hygiene", Status: patchHygiene.Status, Summary: strings.TrimSpace(patchHygiene.Error)},
@@ -435,6 +444,17 @@ func phaseEvidenceDecisionSummary(packet phaseEvidencePacket, submittedPlan []ph
 		}
 	}
 	out = append(out, phaseEvidenceSummary{Kind: "source_sanity", Status: status, Summary: fmt.Sprintf("%d check(s)", len(sourceSanity))})
+	verificationStatus := "not_applicable"
+	if len(verification) > 0 {
+		verificationStatus = "passed"
+		for _, check := range verification {
+			if check.Status != "ok" && check.Status != "passed" {
+				verificationStatus = "failed"
+				break
+			}
+		}
+	}
+	out = append(out, phaseEvidenceSummary{Kind: "verification", Status: verificationStatus, Summary: fmt.Sprintf("%d command(s)", len(verification))})
 	return out
 }
 
@@ -505,6 +525,12 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Path, check.Status, check.Summary, check.Error)
 		}
 	}
+	if len(bundle.Verification) > 0 {
+		b.WriteString("verification:\n")
+		for _, check := range bundle.Verification {
+			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Command, check.Status, check.Summary, check.Error)
+		}
+	}
 	fmt.Fprintf(&b, "patch_hygiene: status=%s", bundle.PatchHygiene.Status)
 	if strings.TrimSpace(bundle.PatchHygiene.Error) != "" {
 		fmt.Fprintf(&b, " error=%s", strings.TrimSpace(bundle.PatchHygiene.Error))
@@ -555,6 +581,8 @@ func phaseEvidenceTelemetry(bundle phaseEvidenceBundle) map[string]any {
 		"submitted_plan":        phaseEvidenceTelemetryChecks(bundle.SubmittedPlan, 8),
 		"source_sanity_checks":  len(bundle.SourceSanity),
 		"source_sanity":         phaseEvidenceTelemetryChecks(bundle.SourceSanity, 8),
+		"verification_checks":   len(bundle.Verification),
+		"verification":          phaseEvidenceTelemetryChecks(bundle.Verification, 8),
 		"patch_hygiene_status":  bundle.PatchHygiene.Status,
 		"unresolved_gap_count":  len(bundle.UnresolvedGaps),
 		"unresolved_gaps":       cappedStrings(bundle.UnresolvedGaps, 8),
@@ -615,6 +643,9 @@ func phaseEvidenceTelemetryChecks(checks []phaseEvidenceCheck, limit int) []map[
 			"kind":   strings.TrimSpace(check.Kind),
 			"path":   strings.TrimSpace(check.Path),
 			"status": strings.TrimSpace(check.Status),
+		}
+		if command := strings.TrimSpace(check.Command); command != "" {
+			entry["command"] = phaseEvidenceTruncate(command, 240)
 		}
 		if summary := strings.TrimSpace(check.Summary); summary != "" {
 			entry["summary"] = phaseEvidenceTruncate(summary, 240)

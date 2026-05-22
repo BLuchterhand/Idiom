@@ -8,6 +8,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/plancontract"
 	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
@@ -23,7 +24,11 @@ type RunResult struct {
 	PlannerAnswer   string
 }
 
-const RunFailurePlannerBlocked = "planner_blocked"
+const (
+	RunFailurePlannerBlocked       = "planner_blocked"
+	RunFailureSourceSanityFailed   = "source_sanity_failed"
+	RunFailureVerificationRequired = "verification_failed"
+)
 
 func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) RunResult {
 	defer cleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
@@ -75,6 +80,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	requiredEditPaths := scopeContract.RequiredCoveragePaths
 	allowedEditPaths := scopeContract.AllowedCandidatePaths
 	editSetObligations := scopeContract.EditSetObligations
+	verificationCommands := planExecuteRequestedVerificationCommands(prompt)
 	opts.ScopeContract = scopeContract
 	opts.EditSetObligations = editSetObligations
 	promptRequiredEditPaths := RequiredEditPathsFromPrompt(prompt)
@@ -94,6 +100,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"allowed_count":             len(allowedEditPaths),
 		"required_edit_paths":       requiredEditPaths,
 		"allowed_edit_paths":        allowedEditPaths,
+		"verification_commands":     verificationCommands,
 		"scope_contract_id":         scopeContract.ContractID,
 		"edit_set_obligations":      editSetObligations,
 		"edit_set_obligation_count": len(editSetObligations),
@@ -260,7 +267,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	planPath, err := FindLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
 	if err != nil {
 		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
-		if agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
+		if plancontract.SourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
 			if reason := editSetObligations.RejectionReason(sourceSatisfiedPaths); reason != "" {
 				message := EditSetObligationFailureMessage(reason)
 				progress.Status = ProgressStatusFailed
@@ -447,19 +454,33 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			opts.OnEditProgress(step, total, path, succeeded)
 		}
 	}
-	report, runErr := RunExecutorPhaseScoped(cfg, plan, executorRequiredEditPaths, allowedEditPaths, opts.JSONEvents, stdout, progressCallback)
+	report, runErr := RunExecutorPhaseScopedWithVerification(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationCommands, opts.JSONEvents, stdout, progressCallback)
 	if runErr == nil && progressSaveErr != nil {
 		runErr = progressSaveErr
 	}
+	sourceSanityRepairRequired := ExecutorSourceSanityFailed(report, runErr)
+	verificationRepairRequired := ExecutorVerificationFailed(report, runErr)
 	progress.MarkExecutorComplete(report, runErr)
-	progressPath, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+	progressPath, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved", (sourceSanityRepairRequired || verificationRepairRequired) && !opts.SkipReviewRepair)
 	if err != nil && runErr == nil {
 		runErr = err
+	}
+	if sourceSanityRepairRequired {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "executor_verification_repair_required", map[string]any{
+			"failure_kind": RunFailureSourceSanityFailed,
+			"reason":       sanitizeProgressReason(runErr.Error()),
+		})
+	} else if verificationRepairRequired {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "executor_verification_repair_required", map[string]any{
+			"failure_kind":          RunFailureVerificationRequired,
+			"reason":                sanitizeProgressReason(runErr.Error()),
+			"verification_commands": verificationCommands,
+		})
 	}
 	_ = sessionStart
 	reviewReport := ReviewRepairPhaseReport{Skipped: opts.SkipReviewRepair}
 	var reviewErr error
-	if runErr == nil && !opts.SkipReviewRepair {
+	if (runErr == nil || sourceSanityRepairRequired || verificationRepairRequired) && !opts.SkipReviewRepair {
 		if emitPhase != nil {
 			emitPhase("reviewing", "Verifying changes...")
 		}
@@ -474,6 +495,35 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			reviewReport, reviewErr = RunReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)
 		}
 		progress.MarkReviewComplete(reviewReport, reviewErr)
+		if (sourceSanityRepairRequired || verificationRepairRequired) && reviewErr == nil {
+			if ReviewRepairResolvedVerificationFailure(reviewReport) {
+				if verificationRepairRequired {
+					_, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, opts.JSONEvents, stdout)
+					report.Verification = verificationEvidence
+					progress.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
+					if verificationErr != nil {
+						runErr = verificationErr
+						progress.Status = ProgressStatusFailed
+						progress.FailureKind = RunFailureVerificationRequired
+						progress.FailureReason = sanitizeProgressReason(verificationErr.Error())
+					} else {
+						runErr = nil
+						verificationRepairRequired = false
+					}
+				} else {
+					runErr = nil
+				}
+				sourceSanityRepairRequired = false
+			} else {
+				progress.Status = ProgressStatusFailed
+				if verificationRepairRequired {
+					progress.FailureKind = RunFailureVerificationRequired
+				} else {
+					progress.FailureKind = RunFailureSourceSanityFailed
+				}
+				progress.FailureReason = sanitizeProgressReason(runErr.Error())
+			}
+		}
 		progressPath, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 		if err != nil && reviewErr == nil {
 			reviewErr = err
@@ -496,11 +546,11 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 	if runErr != nil {
 		fmt.Fprintln(stderr, runErr)
-		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
+		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: progress.FailureKind, FailureReason: progress.FailureReason}
 	}
 	if reviewErr != nil {
 		fmt.Fprintln(stderr, reviewErr)
-		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
+		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: progress.FailureKind, FailureReason: progress.FailureReason}
 	}
 	return RunResult{ExitCode: 0, SessionID: sessionID, ResumeStatePath: progressPath}
 }
@@ -553,6 +603,17 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	reviewBaseline := state.ReviewBaseline
 	reviewReport, reviewErr := RunReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)
 	state.MarkReviewComplete(reviewReport, reviewErr)
+	if reviewErr == nil && ExecutorVerificationFailed(report, fmt.Errorf("verification failed")) && ReviewRepairResolvedVerificationFailure(reviewReport) {
+		verificationCommands := planExecuteRequestedVerificationCommands(prompt)
+		_, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, opts.JSONEvents, stdout)
+		state.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
+		if verificationErr != nil {
+			reviewErr = verificationErr
+			state.Status = ProgressStatusFailed
+			state.FailureKind = RunFailureVerificationRequired
+			state.FailureReason = sanitizeProgressReason(verificationErr.Error())
+		}
+	}
 	progressPath, err = saveRunProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil && reviewErr == nil {
 		reviewErr = err
@@ -573,13 +634,13 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	return RunResult{ExitCode: 0, SessionID: sessionID, ResumeStatePath: progressPath}
 }
 
-func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, stdout io.Writer, eventType string) (string, error) {
+func saveRunProgressState(root string, state *ProgressState, jsonEvents bool, stdout io.Writer, eventType string, suppressRecovery ...bool) (string, error) {
 	statePath, err := SaveProgressState(root, state)
 	if err != nil {
 		return statePath, err
 	}
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, ProgressStateEventFields(*state, statePath))
-	if state.Status == ProgressStatusFailed {
+	if state.Status == ProgressStatusFailed && !(len(suppressRecovery) > 0 && suppressRecovery[0]) {
 		now := time.Now().UTC()
 		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, RecoveryInputFromProgress(*state, statePath), now)
 		if err != nil {

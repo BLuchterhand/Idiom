@@ -22,6 +22,7 @@ import (
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/plancontract"
 	"idiom/internal/telemetry"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
@@ -173,9 +174,9 @@ func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string,
 		"",
 		"Plan artifact rules:",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
-		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`insert_after_line`+non-empty `content` for insertion after an existing line | `start_line`+`end_line`+non-empty `content` for replacement only | `old_text`+`new_text`; empty `new_text` deletes `old_text` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Use numeric line-range edits for existing source/test replacements that span more than a few lines or contain quotes, raw strings, struct tags, or large function bodies; large bodies are spilled to artifact refs after submit_plan except insert_after_line content.",
+		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`insert_after_line`+small inline non-empty `content` for insertion after an existing line | `start_line`+`end_line`+non-empty `content` for replacement | `old_text`+`new_text`; empty `new_text` deletes `old_text` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Prefer the smallest executable edit body that satisfies the objective: use exact `old_text`/`new_text` for small unique replacements, and use numeric line-range edits only when the replacement spans more than a few lines, contains JSON-hostile syntax, or needs a large insertion anchored to unchanged source lines. Large bodies are spilled to artifact refs after submit_plan except insert_after_line content.",
 		"3. Each edit body must be executable final content. Do not submit placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, prose descriptions, or invented symbols in `old_text`, `new_text`, or `content`.",
-		"4. `insert_after_line` inserts non-empty `content` after an existing 1-based line and does not replace current lines. Line-range `content` is the complete replacement for the inclusive range. `old_text` is exact current text copied from source-body evidence. Whole-file/new-file `new_text` is the complete file body.",
+		"4. `insert_after_line` inserts small inline non-empty `content` after an existing 1-based line and does not replace current lines; do not use it for large generated blocks. Line-range `content` is the complete replacement for the inclusive range and may include unchanged anchor line(s) plus inserted content for large additions. `old_text` is exact current text copied from source-body evidence. Whole-file/new-file `new_text` is the complete file body.",
 		"5. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
 		"6. Substring-anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before using any multi-line substring anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
 		"7. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence can identify the intended edit, but required existing paths still need source-body obligations satisfied before submit_plan unless the run short-circuits as source-satisfied or exact-plan-ready before planner execution.",
@@ -422,7 +423,7 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	if len(paths) > 0 {
 		return paths
 	}
-	evidencePaths := planExecuteUniqueRequiredPaths(agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer))
+	evidencePaths := planExecuteUniqueRequiredPaths(plancontract.SourceSatisfiedEvidencePaths(answer))
 	allowed := planExecutePathSet(allowedEditPaths)
 	if len(allowed) == 0 {
 		return evidencePaths
@@ -1289,38 +1290,47 @@ func RunReviewRepairPhase(
 	if reviewMaxTokens <= 0 {
 		reviewMaxTokens = 8192
 	}
-	answer, err := promptRun(reviewCfg, prompt, RunOptions{
-		JSONEvents:               opts.JSONEvents,
-		TaskFamily:               agent.PlanThenExecuteReviewRepairTaskFamily,
-		PlannerOwnedVerification: true,
-		MaxTokensOverride:        reviewMaxTokens,
-		DisableThinking:          opts.DisableThinking,
-		Telemetry:                rec,
-	}, stdout)
-	if err != nil {
-		reasonClass := reviewRepairDegradedReasonClass(err)
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_degraded", map[string]any{
-			"status":        "review_unavailable",
-			"reason_class":  reasonClass,
-			"changed_paths": changedPaths,
-			"allowed_paths": allowedRepairPaths,
-		})
-		return ReviewRepairPhaseReport{
-			Status:      "degraded (review unavailable)",
-			AutoRepairs: autoRepair.Lines,
-			ReasonClass: reasonClass,
-		}, nil
-	}
-	planPath, found, err := findOptionalReviewPlanArtifact(cfg.Workspace.Root, reviewStart, reviewSessionID)
-	if err != nil {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_failed", map[string]any{
-			"reason": err.Error(),
-		})
-		return ReviewRepairPhaseReport{Status: "failed"}, err
-	}
-	if !found {
-		if reviewAnswerDeclaresPass(answer) && reviewTextHasVerificationChecklist(answer) {
-			reason := reviewAnswerPassContradictionReason(answer)
+	var planPath string
+	var found bool
+	for attempt := 0; ; attempt++ {
+		answer, err := promptRun(reviewCfg, prompt, RunOptions{
+			JSONEvents:                  opts.JSONEvents,
+			TaskFamily:                  agent.PlanThenExecuteReviewRepairTaskFamily,
+			PlannerOwnedVerification:    true,
+			MaxTokensOverride:           reviewMaxTokens,
+			DisableThinking:             true,
+			ReviewRepairOpenObligations: append([]string(nil), evidence.PhaseEvidence.OpenObligations...),
+			Telemetry:                   rec,
+		}, stdout)
+		if err != nil {
+			reasonClass := reviewRepairDegradedReasonClass(err)
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_degraded", map[string]any{
+				"status":        "review_unavailable",
+				"reason_class":  reasonClass,
+				"changed_paths": changedPaths,
+				"allowed_paths": allowedRepairPaths,
+			})
+			return ReviewRepairPhaseReport{
+				Status:      "degraded (review unavailable)",
+				AutoRepairs: autoRepair.Lines,
+				ReasonClass: reasonClass,
+			}, nil
+		}
+		planPath, found, err = findOptionalReviewPlanArtifact(cfg.Workspace.Root, reviewStart, reviewSessionID)
+		if err != nil {
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_failed", map[string]any{
+				"reason": err.Error(),
+			})
+			return ReviewRepairPhaseReport{Status: "failed"}, err
+		}
+		if found {
+			break
+		}
+		if plancontract.ReviewRepairAnswerDeclaresPass(answer) && plancontract.ReviewRepairTextHasChecklist(answer) {
+			reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
+			if reason == "" {
+				reason = reviewAnswerPassContradictionReason(answer)
+			}
 			if reason == "" {
 				reason = editSetObligations.RejectionReason(changedPaths)
 			}
@@ -1329,7 +1339,15 @@ func RunReviewRepairPhase(
 					"reason":                    reason,
 					"edit_set_obligations":      editSetObligations,
 					"edit_set_obligation_count": len(editSetObligations),
+					"retry_available":           attempt == 0,
 				})
+				if attempt == 0 {
+					emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_retry", map[string]any{
+						"reason": reason,
+					})
+					prompt = planExecuteReviewRepairRejectedPassRetryPrompt(prompt, reason)
+					continue
+				}
 				return ReviewRepairPhaseReport{Status: "failed", ChecklistFound: true}, fmt.Errorf("review-repair phase rejected contradictory `Decision: pass`: %s", reason)
 			}
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
@@ -1347,7 +1365,7 @@ func RunReviewRepairPhase(
 	if err != nil {
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("read review-repair plan artifact %q: %w", planPath, err)
 	}
-	if !reviewTextHasVerificationChecklist(repairPlan.Rationale) {
+	if !plancontract.ReviewRepairTextHasChecklist(repairPlan.Rationale) {
 		return ReviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("review-repair plan %q is missing `Verification Checklist` in submit_plan rationale", planPath)
 	}
 	repairPaths := planChangedPaths(repairPlan)
@@ -1410,6 +1428,23 @@ func reviewRepairDegradedReasonClass(err error) string {
 	}
 }
 
+func phaseEvidencePassRejectionReason(bundle PhaseEvidenceBundle) string {
+	for _, obligation := range bundle.OpenObligations {
+		obligation = strings.TrimSpace(obligation)
+		switch {
+		case obligation == "patch_hygiene_failed":
+			return "patch_hygiene_failed"
+		case strings.HasPrefix(obligation, "source_sanity_failed:"),
+			strings.HasPrefix(obligation, "source_sanity_error:"),
+			strings.HasPrefix(obligation, "verification_failed:"),
+			strings.HasPrefix(obligation, "verification_error:"),
+			strings.HasPrefix(obligation, "submitted_edit_failed:"):
+			return RunFailureVerificationRequired
+		}
+	}
+	return ""
+}
+
 func findOptionalReviewPlanArtifact(root string, notBefore time.Time, sessionID string) (string, bool, error) {
 	path, err := FindLatestPlanArtifact(root, notBefore, sessionID)
 	if err == nil {
@@ -1427,6 +1462,8 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("# Plan-then-execute review-repair phase\n\n")
 	b.WriteString("You are the REVIEW-REPAIR planner for a plan-execute run that already applied executor edits. Review the actual diff and behavioral contract, then either submit a narrow corrective plan or explicitly pass.\n\n")
 	b.WriteString("## Required Review Contract\n\n")
+	b.WriteString("Use the Phase Evidence Bundle, Diff Evidence, submitted_plan_state, source_sanity, verification entries, and inherited context packet as the primary evidence ledger. Do not restart discovery as if this were a fresh review.\n\n")
+	b.WriteString("If exact post-edit evidence is missing, make one targeted probe: refresh/check context state with `context_status` (`refresh=true`) or use `context_query`, `context_zoom`, `code_navigate`, or one bounded `read_file` range for one named checklist fact. Do not sweep large files with unbounded or multi-hundred-line raw reads; broad raw reads waste the review budget and duplicate the sidecar evidence.\n\n")
 	b.WriteString("Create a `Verification Checklist` before deciding. This checklist must verify behavior, not just literal code correctness. Cover:\n\n")
 	b.WriteString("- Required behavior from the original task/spec.\n")
 	b.WriteString("- Default/non-regression behavior that should remain equivalent.\n")
@@ -1436,12 +1473,15 @@ func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArt
 	b.WriteString("- Test or command evidence available now, plus any planner-owned verification that still must run outside this lane.\n\n")
 	b.WriteString("Outcomes:\n\n")
 	b.WriteString("- If any checklist item fails and the repair is inside Allowed Repair Paths, call `submit_plan` once with corrective edits only. The `submit_plan.rationale` must start with `Verification Checklist:` and include the checklist plus the failing item each edit addresses.\n")
-	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. Use `insert_after_line`+`content` for insertions after an existing line. Use line-range `content` for non-trivial source/test replacements; it is the complete replacement for the inclusive range, not an insertion point. Use `old_text` only for tiny exact snippets copied from diff/source evidence. Whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
+	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. Use `insert_after_line`+`content` only for small inline insertions after an existing line. Use line-range `content` for non-trivial source/test replacements and large additions; it is the complete replacement for the inclusive range and may include unchanged anchor line(s) plus inserted content. Use `old_text` only for tiny exact snippets copied from diff/source evidence. Whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
 	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
 	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
 	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
+	b.WriteString(plancontract.ReviewRepairTerminalTemplates())
+	b.WriteString("\n")
 	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: the original task explicitly requested test edits, but this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
 	b.WriteString("If Phase Evidence lists `requested_implementation_edit_missing`, `Decision: pass` is invalid: the original task requested implementation behavior, but this run changed only test paths. Submit a corrective implementation edit if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing source-edit scope.\n\n")
+	b.WriteString("If Phase Evidence lists `verification_failed:` or any verification/source_sanity check with status `failed`, `Decision: pass` is invalid. Submit a corrective plan if the failing checklist item can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the exact failed check.\n\n")
 	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
 	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
 	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
@@ -1503,6 +1543,26 @@ func quotePlanExecuteReference(text string) string {
 		lines[i] = "> " + line
 	}
 	return strings.Join(lines, "\n") + "\n"
+}
+
+func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "phase evidence contradicted the pass decision"
+	}
+	return strings.Join([]string{
+		basePrompt,
+		"",
+		"## Rejected Previous Review Outcome",
+		"",
+		"The previous review-repair answer used `Decision: pass`, but the phase evidence rejected that pass decision: " + truncatePlanExecuteText(reason, 2000) + ".",
+		"",
+		"For this retry, `Decision: pass` is not an allowed terminal outcome. Choose exactly one visible outcome:",
+		"- Corrective plan: call `submit_plan` with only the executable corrective edits needed to resolve the rejected checklist item. The rationale must start with `Verification Checklist:`.",
+		"- Blocker: return `<<QUESTION>>:` with the exact failed checklist item if it cannot be repaired inside Allowed Repair Paths.",
+		"",
+		"Do not repeat `Decision: pass`. Do not add prose before or after the corrective plan or blocker.",
+	}, "\n")
 }
 
 func collectReviewRepairEvidence(root string, paths []string, baseline *ReviewRepairBaseline) ReviewRepairEvidence {
@@ -1873,11 +1933,6 @@ func mergePlanExecutePaths(groups ...[]string) []string {
 	return out
 }
 
-func reviewAnswerDeclaresPass(answer string) bool {
-	lower := strings.ToLower(answer)
-	return strings.Contains(lower, "decision: pass")
-}
-
 func reviewAnswerDeclaresBlocker(answer string) bool {
 	lower := strings.ToLower(answer)
 	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
@@ -1905,10 +1960,6 @@ func planExecuteBlockerSummary(answer string) string {
 		return line
 	}
 	return "planner stopped with a blocker"
-}
-
-func reviewTextHasVerificationChecklist(text string) bool {
-	return strings.Contains(strings.ToLower(text), "verification checklist")
 }
 
 func reviewAnswerPassContractRejectionReason(originalPrompt string, changedPaths []string, answer string) string {
@@ -2345,6 +2396,10 @@ func RunExecutorPhase(cfg config.Config, plan workspace.PlanArtifact, requiredEd
 }
 
 func RunExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
+	return RunExecutorPhaseScopedWithVerification(cfg, plan, requiredEditPaths, allowedEditPaths, nil, jsonEvents, stdout, progress...)
+}
+
+func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
 	report := ExecutorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
@@ -2437,6 +2492,37 @@ func RunExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 				Content:     edit.NewText,
 				Description: firstNonEmptyString(edit.Purpose, "executor phase: whole-file write"),
 			}
+		} else if edit.InsertAfterLine > 0 {
+			updated, err := projectedInsertAfterLineContent(cfg.Workspace.Root, edit)
+			if err != nil {
+				result := workspace.ToolResult{Tool: "submit_plan", Summary: "Executor insert preflight failed", Error: err.Error()}
+				status := "failed"
+				emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_edit", map[string]any{
+					"step":   i + 1,
+					"total":  len(plan.Edits),
+					"path":   edit.Path,
+					"status": status,
+					"error":  strings.TrimSpace(result.Error),
+				})
+				if !jsonEvents {
+					fmt.Fprintf(stdout, "  edit %d/%d %s ... %s\n", i+1, len(plan.Edits), edit.Path, executorEditOutcome(result))
+				}
+				report.Failed++
+				report.Failures = append(report.Failures, fmt.Sprintf("edits[%d] %s: %s", i, edit.Path, result.Error))
+				emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
+					"total":       report.Total,
+					"succeeded":   report.Succeeded,
+					"failed":      report.Failed,
+					"duration_ms": time.Since(executorStartedAt).Milliseconds(),
+				})
+				return report, fmt.Errorf("executor phase aborted on edit %d (%s): %s", i, edit.Path, result.Error)
+			}
+			req = workspace.ToolRequest{
+				Tool:        "write_file",
+				Path:        edit.Path,
+				Content:     updated,
+				Description: firstNonEmptyString(edit.Purpose, "executor phase: insert-after-line projection"),
+			}
 		} else {
 			req = workspace.ToolRequest{
 				Tool:        "edit_file",
@@ -2494,15 +2580,92 @@ func RunExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 		})
 		return report, err
 	}
+	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, jsonEvents, stdout)
+	report.Verification = verificationEvidence
+	if verificationErr != nil {
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
+			"total":                    report.Total,
+			"succeeded":                report.Succeeded,
+			"failed":                   report.Failed,
+			"source_sanity_checked":    sourceSanityChecked,
+			"source_sanity_status":     "passed",
+			"verification_checked":     verificationChecked,
+			"verification_status":      "failed",
+			"verification_command_cnt": len(verificationEvidence),
+			"duration_ms":              time.Since(executorStartedAt).Milliseconds(),
+		})
+		return report, verificationErr
+	}
 	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
 		"total":                 report.Total,
 		"succeeded":             report.Succeeded,
 		"failed":                report.Failed,
 		"source_sanity_checked": sourceSanityChecked,
 		"source_sanity_status":  "passed",
+		"verification_checked":  verificationChecked,
+		"verification_status":   planExecuteVerificationStatus(verificationEvidence),
 		"duration_ms":           time.Since(executorStartedAt).Milliseconds(),
 	})
 	return report, nil
+}
+
+func runPlanExecuteVerificationCommands(root string, commands []string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
+	commands = planExecuteVerificationCommands(commands)
+	evidence := make([]PhaseEvidenceCheck, 0, len(commands))
+	for _, command := range commands {
+		check := runPlanExecuteVerificationCommand(root, command)
+		evidence = append(evidence, check)
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", map[string]any{
+			"command": command,
+			"status":  check.Status,
+			"summary": check.Summary,
+			"error":   check.Error,
+		})
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "  verification %s ... %s\n", command, check.Status)
+		}
+		if check.Status != "ok" && check.Status != "passed" {
+			return len(evidence), evidence, fmt.Errorf("verification failed for %q: %s", command, firstNonEmptyString(check.Error, check.Summary))
+		}
+	}
+	return len(evidence), evidence, nil
+}
+
+func runPlanExecuteVerificationCommand(root string, command string) PhaseEvidenceCheck {
+	command = strings.TrimSpace(command)
+	check := PhaseEvidenceCheck{Kind: "verification", Command: command, Status: "failed"}
+	args, ok := VerificationCommandArgs(command)
+	if !ok {
+		check.Error = "unsupported verification command"
+		return check
+	}
+	cmd := exec.Command(args[0], args[1:]...)
+	cmd.Dir = strings.TrimSpace(root)
+	if cmd.Dir == "" {
+		cmd.Dir = "."
+	}
+	out, err := cmd.CombinedOutput()
+	output := truncatePlanExecuteText(strings.TrimSpace(string(out)), 12000)
+	if err != nil {
+		check.Error = firstNonEmptyString(output, err.Error())
+		check.Summary = err.Error()
+		return check
+	}
+	check.Status = "ok"
+	check.Summary = output
+	return check
+}
+
+func planExecuteVerificationStatus(evidence []PhaseEvidenceCheck) string {
+	if len(evidence) == 0 {
+		return "not_applicable"
+	}
+	for _, check := range evidence {
+		if check.Status != "ok" && check.Status != "passed" {
+			return "failed"
+		}
+	}
+	return "passed"
 }
 
 func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, root string, paths []string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
@@ -2992,6 +3155,29 @@ func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) 
 	return nil
 }
 
+func projectedInsertAfterLineContent(workspaceRoot string, edit workspace.PlanEdit) (string, error) {
+	path := normalizePlanExecutePath(edit.Path)
+	if path == "" {
+		return "", fmt.Errorf("edit has invalid path")
+	}
+	abs := path
+	if !filepath.IsAbs(abs) {
+		abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
+	}
+	body, err := os.ReadFile(abs)
+	if err != nil {
+		return "", fmt.Errorf("insert_after_line could not read existing %s: %w", path, err)
+	}
+	updated, changed, err := workspace.PreviewPlanEditContent(string(body), edit)
+	if err != nil {
+		return "", err
+	}
+	if !changed {
+		return "", fmt.Errorf("insert_after_line would not change %s", path)
+	}
+	return updated, nil
+}
+
 func executorEditOutcome(result workspace.ToolResult) string {
 	if strings.TrimSpace(result.Error) != "" {
 		return "FAILED: " + result.Error
@@ -3111,11 +3297,12 @@ func collectPlanExecutePhaseEvidence(root string, phase string, plan workspace.P
 		ExecutorHandoff:  phaseEvidenceHandoffFromExecutor(handoff),
 		SubmittedPlan:    submittedPlan,
 		SourceSanity:     sourceSanity,
+		Verification:     append([]PhaseEvidenceCheck(nil), executorReport.Verification...),
 		PatchHygiene:     patchHygiene,
 		SuggestedTests:   packetSuggestedTests(packet),
 		UnresolvedGaps:   append([]string(nil), packet.UnresolvedGaps...),
-		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, patchHygiene),
-		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, patchHygiene),
+		OpenObligations:  phaseEvidenceOpenObligations(plan, packet, changedPaths, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
+		DecisionEvidence: phaseEvidenceDecisionSummary(packet, submittedPlan, sourceSanity, executorReport.Verification, patchHygiene),
 	}
 	return bundle
 }
@@ -3345,7 +3532,7 @@ func packetSuggestedTests(packet PhaseEvidencePacket) []PhaseEvidenceTest {
 	return append([]PhaseEvidenceTest(nil), packet.SuggestedTests...)
 }
 
-func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvidencePacket, changedPaths []string, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []string {
+func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvidencePacket, changedPaths []string, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, verification []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []string {
 	var out []string
 	if strings.TrimSpace(plan.PackID) != "" {
 		if packet.Status != "available" && packet.Status != "available_stale" {
@@ -3383,10 +3570,16 @@ func phaseEvidenceOpenObligations(plan workspace.PlanArtifact, packet PhaseEvide
 			out = append(out, "source_sanity_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Path), "(unknown)"))
 		}
 	}
+	for _, check := range verification {
+		status := firstNonEmptyString(strings.TrimSpace(check.Status), "unknown")
+		if status != "ok" && status != "passed" {
+			out = append(out, "verification_"+status+":"+firstNonEmptyString(strings.TrimSpace(check.Command), "(unknown)"))
+		}
+	}
 	return cappedStrings(out, 16)
 }
 
-func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []phaseEvidenceSummary {
+func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []PhaseEvidenceCheck, sourceSanity []PhaseEvidenceCheck, verification []PhaseEvidenceCheck, patchHygiene PhaseEvidenceCheck) []phaseEvidenceSummary {
 	out := []phaseEvidenceSummary{
 		{Kind: "context_packet", Status: packet.Status, Summary: PhaseEvidencePacketSummary(packet)},
 		{Kind: "patch_hygiene", Status: patchHygiene.Status, Summary: strings.TrimSpace(patchHygiene.Error)},
@@ -3413,6 +3606,17 @@ func phaseEvidenceDecisionSummary(packet PhaseEvidencePacket, submittedPlan []Ph
 		}
 	}
 	out = append(out, phaseEvidenceSummary{Kind: "source_sanity", Status: status, Summary: fmt.Sprintf("%d check(s)", len(sourceSanity))})
+	verificationStatus := "not_applicable"
+	if len(verification) > 0 {
+		verificationStatus = "passed"
+		for _, check := range verification {
+			if check.Status != "ok" && check.Status != "passed" {
+				verificationStatus = "failed"
+				break
+			}
+		}
+	}
+	out = append(out, phaseEvidenceSummary{Kind: "verification", Status: verificationStatus, Summary: fmt.Sprintf("%d command(s)", len(verification))})
 	return out
 }
 
@@ -3483,6 +3687,12 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Path, check.Status, check.Summary, check.Error)
 		}
 	}
+	if len(bundle.Verification) > 0 {
+		b.WriteString("verification:\n")
+		for _, check := range bundle.Verification {
+			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Command, check.Status, check.Summary, check.Error)
+		}
+	}
 	fmt.Fprintf(&b, "patch_hygiene: status=%s", bundle.PatchHygiene.Status)
 	if strings.TrimSpace(bundle.PatchHygiene.Error) != "" {
 		fmt.Fprintf(&b, " error=%s", strings.TrimSpace(bundle.PatchHygiene.Error))
@@ -3533,6 +3743,8 @@ func phaseEvidenceTelemetry(bundle PhaseEvidenceBundle) map[string]any {
 		"submitted_plan":        phaseEvidenceTelemetryChecks(bundle.SubmittedPlan, 8),
 		"source_sanity_checks":  len(bundle.SourceSanity),
 		"source_sanity":         phaseEvidenceTelemetryChecks(bundle.SourceSanity, 8),
+		"verification_checks":   len(bundle.Verification),
+		"verification":          phaseEvidenceTelemetryChecks(bundle.Verification, 8),
 		"patch_hygiene_status":  bundle.PatchHygiene.Status,
 		"unresolved_gap_count":  len(bundle.UnresolvedGaps),
 		"unresolved_gaps":       cappedStrings(bundle.UnresolvedGaps, 8),
@@ -3593,6 +3805,9 @@ func phaseEvidenceTelemetryChecks(checks []PhaseEvidenceCheck, limit int) []map[
 			"kind":   strings.TrimSpace(check.Kind),
 			"path":   strings.TrimSpace(check.Path),
 			"status": strings.TrimSpace(check.Status),
+		}
+		if command := strings.TrimSpace(check.Command); command != "" {
+			entry["command"] = phaseEvidenceTruncate(command, 240)
 		}
 		if summary := strings.TrimSpace(check.Summary); summary != "" {
 			entry["summary"] = phaseEvidenceTruncate(summary, 240)

@@ -40,6 +40,7 @@ func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
+		map[string]bool{"TDD-1": true},
 	)
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Findings)
@@ -176,6 +177,7 @@ func TestCoverageGateBlocksWhenPRDOrADRReferencesUnknownTDDObligation(t *testing
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-MISSING"}},
 		},
+		map[string]bool{"TDD-1": true},
 	)
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
@@ -209,6 +211,7 @@ func TestCoverageGateDoesNotBlockWhenNonMustPRDReferencesUnknownTDDObligation(t 
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-MISSING"}},
 		},
+		map[string]bool{"TDD-1": true},
 	)
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q", eval.Status)
@@ -304,6 +307,7 @@ func TestCoverageGateBlocksWhenAcceptedADRReferencesUnknownTDDObligation(t *test
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
+		map[string]bool{"TDD-1": true, "TDD-2": true, "TDD-IMPLEMENTATION-LOCAL": true},
 	)
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
@@ -368,6 +372,7 @@ func TestCoverageGateRegressionForADRWithoutRelPath(t *testing.T) {
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
+		map[string]bool{"TDD-1": true, "TDD-2": true, "TDD-IMPLEMENTATION-LOCAL": true},
 	)
 	if eval.Status != "blocked" {
 		t.Fatalf("expected blocked, got %q", eval.Status)
@@ -435,9 +440,58 @@ func TestCoverageGateEvidenceAcceptanceDoesNotRequireEveryTDDObligationTrace(t *
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
+		map[string]bool{"TDD-1": true, "TDD-2": true, "TDD-IMPLEMENTATION-LOCAL": true},
 	)
 	if eval.Status != "pass" {
 		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Findings)
+	}
+}
+
+func TestCoverageGateBlocksWhenTDDEvidenceMissing(t *testing.T) {
+	// Create a scenario where TDD obligations exist but no verification records satisfy them.
+	// knownTDDIDs is empty, so evaluateTDDEvidenceCoverage should return false.
+	eval := EvaluateCoverageGate(
+		PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", EvidenceRefs: []string{"EV-1"}, TDDObligations: []string{"TDD-1"}},
+			},
+		},
+		ADRIndex{ADRs: []ADRIndexEntry{{ADRID: "ADR-1"}}},
+		[]ParsedADR{{
+			Doc: ADRDocument{
+				FrontMatter: ADRFrontMatter{
+					ADRID:          "ADR-1",
+					Status:         "accepted",
+					EvidenceRefs:   []string{"EV-1"},
+					TDDObligations: []string{"TDD-1"},
+				},
+			},
+		}},
+		TDDLedger{
+			CoverageTier: "unit",
+			Coverage:     TDDCoverage{MutationMinScore: 80},
+			Obligations: []TDDObligation{
+				{ID: "TDD-1"},
+			},
+		},
+		TraceabilityMatrix{
+			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
+		},
+		// No knownTDDIDs provided, so TDD-1 is not satisfied.
+	)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q: %#v", eval.Status, eval.Findings)
+	}
+	found := false
+	for _, f := range eval.Findings {
+		if f.Criterion == "tdd_evidence" && f.Kind == "coverage_tdd_evidence_missing" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected tdd_evidence finding, got: %#v", eval.Findings)
 	}
 }
 
@@ -549,5 +603,6 @@ func coverageGateEvalWithZeroInvariants(tier string) CoverageGateEvaluation {
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
+		map[string]bool{"TDD-1": true},
 	)
 }

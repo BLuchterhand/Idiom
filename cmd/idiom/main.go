@@ -28,14 +28,15 @@ import (
 )
 
 type runOptions struct {
-	JSONEvents               bool
-	Resume                   string
-	TaskFamily               string
-	PlannerOwnedVerification bool
-	MaxTokensOverride        int
-	DisableThinking          bool
-	Telemetry                *telemetry.Recorder
-	ScopeContract            planexecute.PlanScopeContract
+	JSONEvents                  bool
+	Resume                      string
+	TaskFamily                  string
+	PlannerOwnedVerification    bool
+	MaxTokensOverride           int
+	DisableThinking             bool
+	ReviewRepairOpenObligations []string
+	Telemetry                   *telemetry.Recorder
+	ScopeContract               planexecute.PlanScopeContract
 }
 
 type promptRunner func(config.Config, string, runOptions, io.Writer) (string, error)
@@ -717,6 +718,7 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	model.SetDisableThinkingOverride(opts.DisableThinking)
+	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
 	if strings.TrimSpace(opts.TaskFamily) == "plan_then_execute_planner" {
 		model.SetPlanExecuteScopeContract(opts.ScopeContract)
 	}
@@ -752,6 +754,7 @@ func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout
 	model.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	model.SetDisableThinkingOverride(opts.DisableThinking)
+	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
 	logModelSessionLink(opts.Telemetry, "turns_file", model.DebugLogPath())
 
 	if opts.Resume != "" {

@@ -256,6 +256,161 @@ func TestAtomIntakeIgnoresCurrentStateFencesForSourceSatisfied(t *testing.T) {
 	}
 }
 
+func TestAtomIntakeDetectsSourceSatisfiedCurrentStateAnchorScope(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "internal", "writerroute", "decision_test.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	current := strings.Join([]string{
+		"package writerroute",
+		"",
+		"func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {",
+		"	t.Fatal(\"covers normalization stable id\")",
+		"}",
+		"",
+		"func TestWriterRouteDecision_JSONEventFieldMapping(t *testing.T) {",
+		"	t.Fatal(\"covers JSON event fields\")",
+		"}",
+		"",
+	}, "\n")
+	if err := os.WriteFile(target, []byte(current), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", strings.Join([]string{
+		"# Atom",
+		"",
+		"Status: pending",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| internal/writerroute/decision_test.go | Unit tests for normalization, stable ID, JSON/event fields |",
+		"",
+		"## Verified Current State",
+		"",
+		"- Host current-state anchors captured before dispatch:",
+		"  - `internal/writerroute/decision_test.go:3`: `func TestWriterRouteDecision_NormalizationAndStableID(t *testing.T) {`",
+		"",
+		"## Required Behavior",
+		"",
+		"Implement only this atom's bounded slice for `internal/writerroute/decision_test.go`.",
+		"",
+	}, "\n"))
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected source-satisfied exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateSourceSatisfied || report.Dispatchable {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+	if !reportReasonContains(report, "current source covers the atom's current-state anchored scope") {
+		t.Fatalf("expected current-state source-satisfied reason, got %+v", report.Reasons)
+	}
+}
+
+func TestAtomIntakeDoesNotTreatUncoveredCurrentStateAnchorsAsDone(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "foo.go"), []byte("package main\n\nconst A = \"old\"\n"), 0o644); err != nil {
+		t.Fatalf("write foo: %v", err)
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", strings.Join([]string{
+		"# Atom",
+		"",
+		"Status: pending",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| foo.go | Replace fixture value with new behavior |",
+		"",
+		"## Verified Current State",
+		"",
+		"- Host current-state anchors captured before dispatch:",
+		"  - `foo.go:3`: `const A = \"old\"`",
+		"",
+	}, "\n"))
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code != 0 {
+		t.Fatalf("expected dispatchable exit 0, got %d stderr=%s report=%+v", code, stderr, report)
+	}
+	if report.State != atomStateDispatchable {
+		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateDispatchable, report)
+	}
+}
+
+func TestAtomIntakeOptionalCurrentStateScopeRequiresLiveAnchor(t *testing.T) {
+	root := t.TempDir()
+	current := "package main\n\ntype implementationDispatchPlanDocument struct {\n\tPath string\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "dispatch.go"), []byte(current), 0o644); err != nil {
+		t.Fatalf("write dispatch: %v", err)
+	}
+	spec := strings.Join([]string{
+		"# Atom",
+		"",
+		"Status: pending",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| dispatch.go | If needed, pass or annotate dispatch route without changing behavior |",
+		"",
+		"## Verified Current State",
+		"",
+		"- Host current-state anchors captured before dispatch:",
+		"  - `dispatch.go:3`: `type implementationDispatchPlanDocument struct {`",
+		"",
+	}, "\n")
+	specPath := writeAtomSpec(t, root, "spec.md", spec)
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code == 0 {
+		t.Fatalf("expected source-satisfied exit, got 0 stderr=%s report=%+v", stderr, report)
+	}
+	if report.State != atomStateSourceSatisfied || !reportReasonContains(report, "optional current-state anchor remains current") {
+		t.Fatalf("expected optional anchor source-satisfied evidence, got %+v", report)
+	}
+}
+
+func TestAtomIntakeOptionalCurrentStateScopeDoesNotUseWeakSourceBodyTerms(t *testing.T) {
+	root := t.TempDir()
+	current := "package main\n\ntype implementationDispatchPlanDocument struct {\n\tPath string\n}\n"
+	if err := os.WriteFile(filepath.Join(root, "dispatch.go"), []byte(current), 0o644); err != nil {
+		t.Fatalf("write dispatch: %v", err)
+	}
+	spec := strings.Join([]string{
+		"# Atom",
+		"",
+		"Status: pending",
+		"",
+		"## Files To Modify",
+		"",
+		"| File | Change |",
+		"|---|---|",
+		"| dispatch.go | If needed, pass or annotate dispatch route without changing behavior |",
+		"",
+		"## Verified Current State",
+		"",
+		"- Host current-state anchors captured before dispatch:",
+		"  - `dispatch.go:3`: `func staleAnchor() {}`",
+		"",
+	}, "\n")
+	specPath := writeAtomSpec(t, root, "spec.md", spec)
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code != 0 {
+		t.Fatalf("expected dispatchable exit 0, got %d stderr=%s report=%+v", code, stderr, report)
+	}
+	if report.State != atomStateDispatchable {
+		t.Fatalf("state=%q, want %q report=%+v", report.State, atomStateDispatchable, report)
+	}
+}
+
 func TestAtomIntakeBlocksMissingScope(t *testing.T) {
 	root := t.TempDir()
 	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Acceptance\n\n- tests pass\n")

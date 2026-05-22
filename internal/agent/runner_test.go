@@ -40,6 +40,22 @@ func TestVerificationContractSkipsGate(t *testing.T) {
 	}
 }
 
+func TestContextPackResultNeedsFreshnessRecovery(t *testing.T) {
+	cases := []workspace.ToolResult{
+		{Tool: "context_pack", Error: "freshness_blocker"},
+		{Tool: "context_pack", Summary: "context_pack blocked by context freshness (stale_unbounded_graph)"},
+		{Tool: "context_pack", Output: `{"error":"freshness_blocker"}`},
+	}
+	for _, result := range cases {
+		if !contextPackResultNeedsFreshnessRecovery(result) {
+			t.Fatalf("expected freshness recovery for %#v", result)
+		}
+	}
+	if contextPackResultNeedsFreshnessRecovery(workspace.ToolResult{Tool: "context_pack", Summary: "Context pack wrote view"}) {
+		t.Fatal("successful context_pack summary should not trigger freshness recovery")
+	}
+}
+
 func TestLanguageDiagnosticsCountAsVerification(t *testing.T) {
 	diagnosticsTools := []string{
 		"go_diagnostics",
@@ -639,6 +655,75 @@ func TestAdvertisedAllowedToolsPreservesRuntimeBriefOrder(t *testing.T) {
 	}
 }
 
+func TestAdvertisedAllowedToolsSuppressesArtifactFinalAnswerTools(t *testing.T) {
+	root := t.TempDir()
+	reg, err := workspace.NewExternalToolRegistry([]workspace.ExternalTool{
+		{Name: "project_lookup", Command: "/bin/sh"},
+	})
+	if err != nil {
+		t.Fatalf("NewExternalToolRegistry: %v", err)
+	}
+	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	manager.SetExternalToolsRegistry(reg)
+	runner := &Runner{
+		Workspace: manager,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        workerruntime.ArtifactFinalAnswerTaskFamily,
+			Contract:          "artifact_final_answer",
+			PermissionProfile: "conversation_only",
+		},
+	}
+
+	got := runner.advertisedAllowedTools([]string{"read_file", "write_file", "project_lookup"})
+	if len(got) != 0 {
+		t.Fatalf("artifact final-answer must advertise zero tools, got %#v", got)
+	}
+}
+
+func TestArtifactFinalAnswerRunDoesNotAppendExternalTools(t *testing.T) {
+	root := t.TempDir()
+	reg, err := workspace.NewExternalToolRegistry([]workspace.ExternalTool{
+		{Name: "project_lookup", Command: "/bin/sh"},
+	})
+	if err != nil {
+		t.Fatalf("NewExternalToolRegistry: %v", err)
+	}
+	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	manager.SetExternalToolsRegistry(reg)
+	type requestPayload struct {
+		Tools []llama.Tool `json:"tools,omitempty"`
+	}
+	var payload requestPayload
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "# Artifact\n"},
+			}},
+		})
+	}))
+	defer server.Close()
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: manager,
+		Policy:    RunPolicy{MaxModelCalls: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        workerruntime.ArtifactFinalAnswerTaskFamily,
+			Contract:          "artifact_final_answer",
+			PermissionProfile: "conversation_only",
+		},
+	}
+
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "write artifact"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(payload.Tools) != 0 {
+		t.Fatalf("artifact final-answer run must send zero tools, got %#v", payload.Tools)
+	}
+}
+
 func TestTextOnlyChatOptionsUsesContractAwareCaps(t *testing.T) {
 	tool := llama.Tool{Type: "function", Function: llama.ToolFunction{Name: "read_file"}}
 	cases := []struct {
@@ -647,6 +732,7 @@ func TestTextOnlyChatOptionsUsesContractAwareCaps(t *testing.T) {
 		input    int
 		want     int
 	}{
+		{name: "artifact final answer", contract: "artifact_final_answer", input: 20000, want: 8192},
 		{name: "direct answer", contract: "direct_answer", input: 8192, want: 1024},
 		{name: "grounded explanation", contract: "grounded_explanation", input: 8192, want: 1536},
 		{name: "delegated evidence summary", contract: "grounded_evidence_summary", input: 8192, want: 1536},
@@ -2414,6 +2500,73 @@ func TestCompletionGateRejectsFutureRefreshNarration(t *testing.T) {
 	}
 }
 
+func TestCompletionGateRejectsRawToolResultTranscript(t *testing.T) {
+	result, rejected := rawToolResultTranscriptCompletionRejection("tool: read_file\nsummary: Read internal/app/model_swap.go lines 70-91\nstatus: ok\noutput:\n70:\t\tm.openModelPopup()")
+	if !rejected {
+		t.Fatal("expected raw tool result transcript to be rejected")
+	}
+	if result.Tool != "completion_gate" || !strings.Contains(result.Error, "internal tool-result transcript") {
+		t.Fatalf("unexpected rejection result: %#v", result)
+	}
+}
+
+func TestRunnerRepairsRawToolResultTranscriptFinalAnswer(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/app/model_swap.go", "package app\n\nfunc modelAlias() string { return \"qwen\" }\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	replies := []string{
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"internal/app/model_swap.go\",\"start_line\":1,\"end_line\":3}\n```",
+		"tool: read_file\nsummary: Read internal/app/model_swap.go lines 1-3\nstatus: ok\noutput:\n1:package app\n2:\n3:func modelAlias() string { return \"qwen\" }",
+		"The inspected code path is `internal/app/model_swap.go`; the current evidence shows the model alias helper there, but this read-only turn did not change files.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_answer",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+			Objective:         "answer from the inspected model display code",
+		},
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Can we shorten this to the alias?"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "tool:") ||
+		strings.Contains(strings.ToLower(answer), "\nsummary:") ||
+		strings.Contains(strings.ToLower(answer), "\noutput:") {
+		t.Fatalf("runner returned raw tool transcript:\n%s", answer)
+	}
+	if !strings.Contains(answer, "read-only turn did not change files") {
+		t.Fatalf("expected repaired prose answer, got:\n%s", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected raw transcript rejection and repair retry, got %d request(s)", requests)
+	}
+}
+
 func TestForcedCompletionRepairsToolRequestBeforeDeterministicEvidenceFallback(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/agent/runner_child_tasks.go", "package agent\n\nfunc runChildTask() {}\n"); err != nil {
@@ -3956,6 +4109,48 @@ func TestApplyLanePreflightForcesAnswerAfterBlindDebugLogReread(t *testing.T) {
 	}
 }
 
+func TestApplyLanePreflightForcesAnswerAfterConversationEvidence(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "conversation",
+		Contract:   "direct_answer",
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "search_content", Summary: "Found matching route planner lines."},
+		{Tool: "read_file", Summary: "Read internal/app/turn_planner.go."},
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/app/prompt_routing.go"},
+		Results: results,
+	})
+	if decision.RejectSummary != "Conversation contract rejected extra exploration after bounded evidence" {
+		t.Fatalf("expected conversation evidence gate, got %#v", decision)
+	}
+	if decision.ForceAnswer == nil || decision.ForceAnswer.Reason != "conversation_evidence_sufficient" {
+		t.Fatalf("expected forced conversation answer, got %#v", decision)
+	}
+	if !strings.Contains(decision.ForceAnswer.Prompt, "Do not return raw tool summaries") {
+		t.Fatalf("expected answer-quality prompt, got %#v", decision.ForceAnswer)
+	}
+}
+
+func TestEffectivePolicyHonorsRuntimeBriefBudget(t *testing.T) {
+	runner := &Runner{
+		MaxToolSteps: 12,
+		Policy:       RunPolicy{MaxModelCalls: 20},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Budget: workerruntime.BudgetBrief{
+				MaxToolSteps:  4,
+				MaxModelCalls: 6,
+			},
+		},
+	}
+	policy := runner.effectivePolicy()
+	if policy.MaxToolSteps != 4 || policy.MaxModelCalls != 6 {
+		t.Fatalf("expected runtime brief budget to cap policy, got %#v", policy)
+	}
+}
+
 func TestInFlightVerificationGateRespectsSkippedVerificationContract(t *testing.T) {
 	state := newRunnerExecutionState(false, 0)
 	state.writesSinceVerification = 2
@@ -4761,6 +4956,133 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 	}
 }
 
+func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrite(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.go", "package target\n\nfunc Name() string { return \"old\" }\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	replies := []string{
+		"Done.",
+		`{"tool":"edit_file","path":"target.go","old_text":"return \"old\"","new_text":"return \"new\"","description":"update displayed name"}`,
+		"Done.",
+		`{"tool":"source_sanity","path":"target.go"}`,
+		"Updated target.go and source sanity passed.",
+	}
+	type requestPayload struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	requests := 0
+	var postWriteRequest requestPayload
+	var recoveryRequest requestPayload
+	var recoveryPrompt string
+	var postWritePrompt string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		if requests == 3 {
+			if err := json.Unmarshal(body, &recoveryRequest); err != nil {
+				t.Fatalf("decode verification recovery request: %v\n%s", err, string(body))
+			}
+		}
+		if requests == 2 {
+			if err := json.Unmarshal(body, &postWriteRequest); err != nil {
+				t.Fatalf("decode post-write request: %v\n%s", err, string(body))
+			}
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"target.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "post_write_verification_required" {
+				postWritePrompt = event.Content
+			}
+			if event.Role == "completion_gate_recovery" && strings.Contains(event.Content, "post-write verification") {
+				recoveryPrompt = event.Content
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update target.go."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected verification recovery after write, got %d request(s)", requests)
+	}
+	for _, want := range []string{
+		"post-write verification",
+		"parser-readable verification action",
+		"source_sanity",
+		"target.go",
+	} {
+		if !strings.Contains(recoveryPrompt, want) {
+			t.Fatalf("expected recovery prompt to contain %q, got:\n%s", want, recoveryPrompt)
+		}
+		if !strings.Contains(postWritePrompt, want) {
+			t.Fatalf("expected post-write prompt to contain %q, got:\n%s", want, postWritePrompt)
+		}
+	}
+	var postWriteText strings.Builder
+	for _, message := range postWriteRequest.Messages {
+		postWriteText.WriteString(message.Role)
+		postWriteText.WriteString(": ")
+		postWriteText.WriteString(message.Content)
+		postWriteText.WriteString("\n")
+	}
+	if !strings.Contains(postWriteText.String(), postWritePrompt) {
+		t.Fatalf("post-write verification prompt was not attached before the premature final answer:\n%s", postWriteText.String())
+	}
+	var recoveryText strings.Builder
+	for _, message := range recoveryRequest.Messages {
+		recoveryText.WriteString(message.Role)
+		recoveryText.WriteString(": ")
+		recoveryText.WriteString(message.Content)
+		recoveryText.WriteString("\n")
+	}
+	if !strings.Contains(recoveryText.String(), recoveryPrompt) {
+		t.Fatalf("verification recovery prompt was not attached to the next model request:\n%s", recoveryText.String())
+	}
+	if !strings.Contains(answer, "source sanity passed") {
+		t.Fatalf("expected verified final answer, got:\n%s", answer)
+	}
+}
+
 func TestPartialRequiredEditsCompletionGateUsesBoundedRecovery(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{"a.txt", "b.txt"} {
@@ -5272,6 +5594,57 @@ func TestVisibleToolRequestProseSalvageExecutesExplicitToolObject(t *testing.T) 
 	}
 	if !strings.Contains(salvageEvent, "read_file") {
 		t.Fatalf("expected visible tool salvage event for read_file, got %q", salvageEvent)
+	}
+}
+
+func TestVisibleSubmitPlanProseSalvageAllowedAtTerminalReadiness(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+	}
+	reply := strings.Join([]string{
+		"I have enough evidence now, so I will submit the complete plan as the required visible tool request. The prose here should not make the harness drop the structured object when it is otherwise valid.",
+		`{"tool":"submit_plan","rationale":"Update both required files.","edits":[{"path":"a.go","old_text":"package a","new_text":"package a\n// updated","purpose":"update a"},{"path":"b.go","old_text":"package b","new_text":"package b\n// updated","purpose":"update b"}]}`,
+	}, "\n")
+
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results)
+	if !ok {
+		t.Fatal("expected visible submit_plan JSON embedded in prose to be salvaged at terminal readiness")
+	}
+	if req.Tool != "submit_plan" || !strings.Contains(raw, `"edits"`) || len(req.Edits) != 2 {
+		t.Fatalf("unexpected salvaged submit_plan: req=%#v raw=%s", req, raw)
+	}
+	if hiddenReq, _, hidden := runner.salvageToolRequestFromReasoning(llama.ChatMessage{ReasoningContent: reply}, results); hidden {
+		t.Fatalf("hidden reasoning must not salvage submit_plan, got %#v", hiddenReq)
+	}
+}
+
+func TestVisibleSubmitPlanTerminalBypassDoesNotWidenNonSubmitSalvage(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read a.go lines 1-20 (total lines: 20)",
+		Output:  "1:package a",
+	}}
+	reply := `Here is context, but this is not a tool-action response: {"tool":"read_file","path":"a.go","start_line":1,"end_line":20}`
+
+	if req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results); ok {
+		t.Fatalf("terminal submit-plan bypass must not salvage non-submit prose JSON, req=%#v raw=%s", req, raw)
 	}
 }
 
@@ -6900,6 +7273,23 @@ func TestRunnerRejectsUnexecutedToolJSONAsFinalAnswer(t *testing.T) {
 	}
 	if !strings.Contains(secondRequest, "Unexecuted tool request rejected as final answer") {
 		t.Fatalf("retry request did not include completion-gate rejection context:\n%s", secondRequest)
+	}
+}
+
+func TestLooksLikeTextualToolCallRejectsLineOrientedToolPayload(t *testing.T) {
+	payload := "tool: code_navigate\ncapability: read_symbol\npath: internal/app/turn_planner.go\npattern: classifyTurnRoute"
+	if !looksLikeTextualToolCall(payload) {
+		t.Fatalf("expected line-oriented tool payload to be rejected")
+	}
+	if looksLikeTextualToolCall("Tool: route classifier\n\nThis section explains the classifier in prose.") {
+		t.Fatalf("prose heading should not be rejected as a line-oriented tool payload")
+	}
+}
+
+func TestFinalAnswerNeedsDecorationRejectsStructuredAnswerEnvelope(t *testing.T) {
+	answer := `{"answer":["The route classifier chooses the workflow family."],"verification":["internal/app/turn_planner.go"]}`
+	if !finalAnswerNeedsDecoration(answer) {
+		t.Fatal("expected structured answer envelope to need decoration")
 	}
 }
 
@@ -11745,11 +12135,11 @@ func eventRolesFor(events []RunEvent) []string {
 func TestFingerprintNudgeFiresOncePerFingerprint(t *testing.T) {
 	// Alternate A/B/A/B/A so the identical-call run never reaches 3.
 	replies := []string{
-		`{"tool":"read_file","path":"internal/app/app.go"}`,
-		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
-		`{"tool":"read_file","path":"internal/app/app.go"}`,
-		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
-		`{"tool":"read_file","path":"internal/app/app.go"}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":1,"end_line":20}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":20}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":1,"end_line":20}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":20}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":1,"end_line":20}`,
 		"done",
 	}
 	policy := RunPolicy{MaxNoProgressTurns: 8, FingerprintNudgeAt: 3}
@@ -11779,6 +12169,54 @@ func TestSynthesisNudgeFiresOnceAtThreshold(t *testing.T) {
 
 	if got := countEventsByRole(events, "synthesis_nudge"); got != 1 {
 		t.Fatalf("expected exactly 1 synthesis_nudge, got %d", got)
+	}
+}
+
+func TestSynthesisNudgeDoesNotFireForPlanExecutePlanner(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package a\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":1}`,
+		"Decision: source-satisfied\n- a.go: already implemented; no changes needed.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second).WithBackend(config.BackendMLX),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxNoProgressTurns: 6, SynthesisNudgeAt: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan execute nudge scenario"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "synthesis_nudge"); got != 0 {
+		t.Fatalf("plan-execute planner should rely on typed source/readiness nudges, got %d generic synthesis nudge(s)", got)
 	}
 }
 

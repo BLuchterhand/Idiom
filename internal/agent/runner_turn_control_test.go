@@ -18,8 +18,8 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 		"JSON array value, not a string",
 		`"edits":[`,
 		`"insert_after_line":42`,
-		"Use insert_after_line/content for insertions/appends",
-		"only to replace that exact inclusive current-source range",
+		"Use insert_after_line/content only for small inline insertions/appends",
+		"including large additions by replacing unchanged anchor line(s)",
 		"complete executable source text",
 		"not placeholders or prose",
 	} {

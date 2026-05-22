@@ -83,6 +83,7 @@ func inlineRequiredEditPathsFromPrompt(prompt string) []string {
 		lower := strings.ToLower(line)
 		for _, prefix := range []string{
 			"required edit paths:",
+			"required edit paths only:",
 			"required files:",
 			"files to modify:",
 			"files to edit:",
@@ -134,6 +135,7 @@ func requiredEditPathHeadings() []string {
 		"files to edit",
 		"edit files",
 		"required edit paths",
+		"required edit paths only",
 		"required files",
 		"required paths",
 	}
@@ -218,6 +220,7 @@ func structuredRequiredEditPathsFromPrompt(prompt string) []string {
 		"files_to_modify",
 		"files_to_edit",
 		"required_edit_paths",
+		"required_edit_paths_only",
 	})
 }
 

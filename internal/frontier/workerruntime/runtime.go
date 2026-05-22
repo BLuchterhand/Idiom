@@ -195,8 +195,8 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	if planExecuteSubmitReady {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/source-refresh after plan-execute submit_plan readiness")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "submit_plan with one ordered edit entry for every required_edit_paths entry")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "Decision: source-satisfied with current-state evidence for every required path")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "<<QUESTION>> naming the exact path-specific blocker")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: Decision: source-satisfied only with current-state evidence for every required path")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: <<QUESTION>> only with exact path-specific blockers")
 		if containsAny(statusCombined, "malformed tool request", "tool_parse") {
 			guidance.InvalidNext = appendUnique(guidance.InvalidNext, "malformed_json_tool_request")
 			guidance.ValidNext = appendUnique(guidance.ValidNext, "emit exactly one parser-readable submit_plan JSON object")
@@ -808,7 +808,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.Readiness = NormalizeReadinessState(state.Readiness)
 	directive := "Use this current-state packet for the next action. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	if planThenExecutePlannerState(state) && slices.Contains(state.Constraints, "plan_then_execute_submit_plan_ready") {
-		directive = "Use this current-state packet for the next action. Plan-execute source obligations are closed: do not read, search, shell, verify, or use per-edit write tools. The available contract menu is one parser-readable submit_plan with complete executable final edit bodies, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact blocker. Do not repeat invalid actions."
+		directive = "Use this current-state packet for the next action. Plan-execute source obligations are closed: do not read, search, shell, verify, or use per-edit write tools. Emit one parser-readable submit_plan with complete executable final edit bodies. Use Decision: source-satisfied only when every required path already contains the requested final state with per-path evidence, or <<QUESTION>> only with exact path-specific blockers. Do not repeat invalid actions."
 	} else if implementationStateHasRequiredPathsForMutation(state) && len(state.ChangedPaths) == 0 {
 		directive = "Use this current-state packet for the next action. Required edit paths define the implementation scope. Contract outcomes are an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> naming the exact missing anchor or stale fact that blocks the edit. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if implementationStateMissingRequiredPaths(state) {
@@ -831,6 +831,9 @@ func BuildStepInstruction(state RunState) StepInstruction {
 func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
 	directive := "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script."
+	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") && strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
+		directive += " Conversation lane is the default read-only answer lane: answer directly when visible context is enough; when workspace facts are needed, use efficient bounded reads/search/context tools, then return a concise, well formatted, on-topic prose/Markdown answer with the evidence named. Do not return tool summaries or JSON envelopes as the user-facing answer."
+	}
 	if initialActionContractApplies(state) {
 		directive += " For guarded workspace write tasks, the first assistant response must be either exactly one tool call or an explicit blocker/no-op answer; narrative-only implementation summaries are invalid before a successful write, no-op, or blocker."
 	}

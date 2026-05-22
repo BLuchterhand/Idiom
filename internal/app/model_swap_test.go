@@ -129,8 +129,8 @@ func (s *stubLLMClient) StreamChat(_ context.Context, _ []llama.ChatMessage, _ l
 func (s *stubLLMClient) ListModels(_ context.Context) ([]llama.ModelInfo, error) {
 	return nil, nil
 }
-func (s *stubLLMClient) Backend() string                    { return "stub" }
-func (s *stubLLMClient) SupportsNativeTools() bool          { return false }
+func (s *stubLLMClient) Backend() string           { return "stub" }
+func (s *stubLLMClient) SupportsNativeTools() bool { return false }
 
 func TestApplyModelSwapHostedSetsThinkingFloor(t *testing.T) {
 	m := newTestModelWithWorkspace(t)
@@ -154,7 +154,10 @@ func TestApplyModelSwapMinimaxSetsThinkingFloor(t *testing.T) {
 	m.applyModelSwap("minimax-m2.7")
 
 	if m.modelID != "MiniMax-M2.7" {
-		t.Fatalf("expected modelID MiniMax-M2.7, got %q", m.modelID)
+		t.Fatalf("expected request modelID MiniMax-M2.7, got %q", m.modelID)
+	}
+	if m.activeModelDisplayID() != "minimax-m2.7" {
+		t.Fatalf("expected display model minimax-m2.7, got %q", m.activeModelDisplayID())
 	}
 	if !m.modelThinkingFloor {
 		t.Fatal("expected modelThinkingFloor=true for minimax hosted model")
@@ -169,6 +172,12 @@ func TestApplyModelSwapLocalDoesNotSetThinkingFloor(t *testing.T) {
 
 	m.applyModelSwap("local-qwen")
 
+	if m.modelID != "Qwen/Qwen3.6-35B" {
+		t.Fatalf("expected request modelID Qwen/Qwen3.6-35B, got %q", m.modelID)
+	}
+	if m.activeModelDisplayID() != "local-qwen" {
+		t.Fatalf("expected display model local-qwen, got %q", m.activeModelDisplayID())
+	}
 	if m.modelThinkingFloor {
 		t.Fatal("expected modelThinkingFloor=false for local model")
 	}
@@ -231,6 +240,9 @@ func TestApplyModelSwapWithoutBackendsSetsModelIDOnly(t *testing.T) {
 
 	if m.modelID != "some-model" {
 		t.Fatalf("expected modelID some-model, got %q", m.modelID)
+	}
+	if m.activeModelDisplayID() != "some-model" {
+		t.Fatalf("expected display model some-model, got %q", m.activeModelDisplayID())
 	}
 	if m.modelThinkingFloor {
 		t.Fatal("expected modelThinkingFloor=false when no backends.json")
@@ -523,8 +535,11 @@ func TestEnsureServerReadyDoesNotRevertSwappedModelWhenUnreachable(t *testing.T)
 	m := newTestModelWithWorkspace(t)
 	m.applyModelSwap("local-qwen")
 
-	if m.modelID != "local-qwen" {
-		t.Fatalf("setup: expected modelID local-qwen, got %q", m.modelID)
+	if m.modelID != "Qwen/Qwen3.6-35B" {
+		t.Fatalf("setup: expected request modelID Qwen/Qwen3.6-35B, got %q", m.modelID)
+	}
+	if m.activeModelDisplayID() != "local-qwen" {
+		t.Fatalf("setup: expected display model local-qwen, got %q", m.activeModelDisplayID())
 	}
 	origSpec := m.plannerSpec
 
@@ -541,8 +556,11 @@ func TestEnsureServerReadyDoesNotRevertSwappedModelWhenUnreachable(t *testing.T)
 	if !strings.Contains(err.Error(), "swapped model") {
 		t.Fatalf("expected swapped-model error, got %q", err.Error())
 	}
-	if m.modelID != "local-qwen" {
-		t.Fatalf("modelID should NOT be reverted, got %q", m.modelID)
+	if m.modelID != "Qwen/Qwen3.6-35B" {
+		t.Fatalf("request modelID should NOT be reverted, got %q", m.modelID)
+	}
+	if m.activeModelDisplayID() != "local-qwen" {
+		t.Fatalf("display model should NOT be reverted, got %q", m.activeModelDisplayID())
 	}
 	if m.plannerSpec.EndpointBaseURL() != origSpec.EndpointBaseURL() {
 		t.Fatal("plannerSpec should not be mutated on failure")
@@ -563,6 +581,36 @@ func TestEnsureServerReadySucceedsForReachableSwappedModel(t *testing.T) {
 	err := m.ensureServerReady(ctx)
 	if err != nil {
 		t.Fatalf("expected no error for reachable swapped server, got %v", err)
+	}
+}
+
+func TestEnsureServerReadyDisplaysAliasWithoutChangingRequestModel(t *testing.T) {
+	m := newTestModelWithWorkspace(t)
+	m.plannerSpec = config.LlamaServer{
+		Kind:        config.BackendMLX,
+		Model:       "/Users/ben/models/qwen3.6-35b-a3b-jang-6m",
+		DisplayName: "qwen3.6-35b",
+		Host:        "127.0.0.1",
+		Port:        11434,
+	}
+	m.client = &reachableListModelsClient{
+		models: []llama.ModelInfo{{ID: "default-reported-model"}},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	if err := m.ensureServerReady(ctx); err != nil {
+		t.Fatalf("ensureServerReady: %v", err)
+	}
+	if m.modelID != "/Users/ben/models/qwen3.6-35b-a3b-jang-6m" {
+		t.Fatalf("request modelID should remain backend path, got %q", m.modelID)
+	}
+	if m.activeModelDisplayID() != "qwen3.6-35b" {
+		t.Fatalf("display model should use alias, got %q", m.activeModelDisplayID())
+	}
+	if opts := m.chatOptions(); opts.Model != "/Users/ben/models/qwen3.6-35b-a3b-jang-6m" {
+		t.Fatalf("chat options should use request model path, got %q", opts.Model)
 	}
 }
 

@@ -61,6 +61,10 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	evidencePass := len(prdTDDLinkErrs) == 0 && len(adrTDDLinkErrs) == 0 && evaluateEvidenceAndAcceptanceCoverage(prd, adrIndex, adrs, traceability)
 	record("evidence_acceptance", true, evidencePass, "all requirements and accepted artifacts must map evidence and traceability", "evidence/traceability_matrix.json", "coverage_evidence_acceptance_incomplete")
 
+	// TDD Evidence: fail closed if obligations exist but none are satisfied by verification records.
+	tddEvidencePass := len(tddIDs) == 0 || evaluateTDDEvidenceCoverage(ledger, knownTDDIDs...)
+	record("tdd_evidence", true, tddEvidencePass, fmt.Sprintf("expected all %d TDD obligations to have verification evidence", len(tddIDs)), "tdd.json", "coverage_tdd_evidence_missing")
+
 	earsPass := ledger.Coverage.EARSTotal > 0 && ledger.Coverage.EARSMapped == ledger.Coverage.EARSTotal
 	record("ears", requireBehavior, earsPass, fmt.Sprintf("expected ears_mapped == ears_total (%d/%d)", ledger.Coverage.EARSMapped, ledger.Coverage.EARSTotal), "tdd.json", "coverage_ears_incomplete")
 
@@ -122,6 +126,14 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 
 func BuildKnownTDDObligationIDs(ledger TDDLedger, records []ImplementationLedgerRecord, artifactTaskIDs ...string) map[string]bool {
 	ids := knownTDDObligationIDs(ledger)
+	for id := range BuildSatisfiedTDDObligationIDs(ledger, records, artifactTaskIDs...) {
+		ids[id] = true
+	}
+	return ids
+}
+
+func BuildSatisfiedTDDObligationIDs(ledger TDDLedger, records []ImplementationLedgerRecord, artifactTaskIDs ...string) map[string]bool {
+	ids := map[string]bool{}
 	allowedTasks := map[string]bool{}
 	for _, taskID := range artifactTaskIDs {
 		trimmed := strings.TrimSpace(taskID)
@@ -330,6 +342,48 @@ func evaluateEvidenceAndAcceptanceCoverage(prd PRDDocument, adrIndex ADRIndex, a
 			continue
 		}
 		if !traceADRs[adrID] {
+			return false
+		}
+	}
+	return true
+}
+
+func evaluateTDDEvidenceCoverage(ledger TDDLedger, knownTDDIDs ...map[string]bool) bool {
+	// Collect all known TDD obligation IDs from the ledger and any extra provided maps.
+	allTDDIDs := knownTDDObligationIDs(ledger, knownTDDIDs...)
+	if len(allTDDIDs) == 0 {
+		return true
+	}
+
+	// Check if any of the known TDD obligations are satisfied by verification records.
+	// We look at the ledger's Obligations to see which ones have been satisfied.
+	// If the ledger itself tracks satisfaction, we use that. Otherwise, we rely on
+	// the fact that if an obligation is in the ledger but not marked as satisfied,
+	// it's missing evidence.
+	// However, the standard pattern in this codebase is that ledger.Obligations contains
+	// the planned obligations. Satisfaction is tracked via ImplementationLedgerRecord
+	// or via a field on the obligation itself if available.
+	// Looking at BuildKnownTDDObligationIDs, it filters records by RecordType == "verification_completed"
+	// and collects TDDObligationsSatisfied.
+	// The EvaluateCoverageGate function receives `knownTDDIDs` which are typically built from
+	// verification records. If `knownTDDIDs` is empty or doesn't contain the obligation ID,
+	// it means no verification record satisfied it.
+
+	// If no extra knownTDDIDs are provided, we assume no evidence is present.
+	if len(knownTDDIDs) == 0 {
+		return false
+	}
+
+	// Check if all TDD IDs from the ledger are present in the knownTDDIDs (which represent satisfied ones).
+	for id := range allTDDIDs {
+		found := false
+		for _, extra := range knownTDDIDs {
+			if extra[id] {
+				found = true
+				break
+			}
+		}
+		if !found {
 			return false
 		}
 	}

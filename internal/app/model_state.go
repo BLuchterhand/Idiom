@@ -163,40 +163,42 @@ type Model struct {
 	input    textarea.Model
 	spinner  spinner.Model
 
-	messages                      []llama.ChatMessage
-	promptStack                   promptstack.Stack
-	composedPrompt                string
-	composedPromptSources         []promptstack.Source
-	composedPromptCacheKey        string
-	activeProfiles                []string
-	streaming                     bool
-	bootingServer                 bool
-	serverUp                      bool
-	managedServer                 bool
-	modelID                       string
-	status                        string
-	contextError                  string
-	runtimeError                  string
-	workingFrame                  int
-	debugLogger                   *transcript.DebugLogger
-	debugLogPath                  string
-	sessionStartedAt              time.Time
-	sessionAgg                    sessionAggregate
-	sessionSummaryWritten         bool
-	eventStream                   *jsonEventStream
-	lastAssistantReasoningContent string
-	agentModeName                 string
-	forcedTaskFamily              string
-	suppressPromptTranscript      bool
-	plannerOwnedVerification      bool
-	maxTokensOverride             int
-	disableThinkingOverride       bool
-	planExecuteActive             bool
-	planExecuteScopeContract      planexecute.PlanScopeContract
-	modelThinkingFloor            bool
-	modelSwapped                  bool
-	traceMode                     traceDisplayMode
-	planPhaseText                 string
+	messages                       []llama.ChatMessage
+	promptStack                    promptstack.Stack
+	composedPrompt                 string
+	composedPromptSources          []promptstack.Source
+	composedPromptCacheKey         string
+	activeProfiles                 []string
+	streaming                      bool
+	bootingServer                  bool
+	serverUp                       bool
+	managedServer                  bool
+	modelID                        string
+	modelDisplayID                 string
+	status                         string
+	contextError                   string
+	runtimeError                   string
+	workingFrame                   int
+	debugLogger                    *transcript.DebugLogger
+	debugLogPath                   string
+	sessionStartedAt               time.Time
+	sessionAgg                     sessionAggregate
+	sessionSummaryWritten          bool
+	eventStream                    *jsonEventStream
+	lastAssistantReasoningContent  string
+	agentModeName                  string
+	forcedTaskFamily               string
+	suppressPromptTranscript       bool
+	plannerOwnedVerification       bool
+	maxTokensOverride              int
+	disableThinkingOverride        bool
+	forcedReadinessOpenObligations []string
+	planExecuteActive              bool
+	planExecuteScopeContract       planexecute.PlanScopeContract
+	modelThinkingFloor             bool
+	modelSwapped                   bool
+	traceMode                      traceDisplayMode
+	planPhaseText                  string
 
 	workspaceOverviewInjected bool
 
@@ -384,7 +386,7 @@ func samplingSummaryForOptions(opts llama.ChatOptions) string {
 	)
 }
 
-// resolveModelID picks the right display name for a backend's loaded model.
+// resolveModelID picks the model identifier used in chat requests.
 // llama-server's /v1/models reports the actually-loaded GGUF, so reported
 // is trusted. mlx_lm.server may report default catalog models before the
 // configured local model, but chat requests still need the configured model id
@@ -404,6 +406,20 @@ func resolveModelID(spec config.LlamaServer, reported string) string {
 	return reported
 }
 
+func resolveModelDisplayID(spec config.LlamaServer, reported string) string {
+	if name := strings.TrimSpace(spec.DisplayName); name != "" {
+		return name
+	}
+	return resolveModelID(spec, reported)
+}
+
+func (m *Model) activeModelDisplayID() string {
+	if m == nil {
+		return ""
+	}
+	return util.Fallback(strings.TrimSpace(m.modelDisplayID), strings.TrimSpace(m.modelID))
+}
+
 func (m *Model) bootstrap() {
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
@@ -417,13 +433,15 @@ func (m *Model) bootstrap() {
 	}
 
 	if m.plannerSpec.IsHosted() {
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, m.plannerSpec.Model)}
+		modelID := resolveModelID(m.plannerSpec, m.plannerSpec.Model)
+		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, m.plannerSpec.Model)}
 		return
 	}
 
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID)}
+		modelID := resolveModelID(m.plannerSpec, models[0].ID)
+		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID)}
 		return
 	}
 
@@ -444,7 +462,7 @@ func (m *Model) startImplementerAsync() {
 	defer cancel()
 
 	if models, err := m.implementerClient.ListModels(ctx); err == nil && len(models) > 0 {
-		m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(m.executorSpec, models[0].ID)}
+		m.events <- infoMsg{text: "Implementer ready: " + resolveModelDisplayID(m.executorSpec, models[0].ID)}
 		return
 	}
 	if !m.cfg.Chat.AutoStartServer {
@@ -463,7 +481,7 @@ func (m *Model) startImplementerAsync() {
 	if err == nil && len(models) > 0 {
 		id = models[0].ID
 	}
-	m.events <- infoMsg{text: "Implementer ready: " + resolveModelID(m.executorSpec, id)}
+	m.events <- infoMsg{text: "Implementer ready: " + resolveModelDisplayID(m.executorSpec, id)}
 }
 
 func (m *Model) handleSlashCommand(raw string) bool {
@@ -506,11 +524,13 @@ func (m *Model) startServerAsync() {
 
 		models, err := m.client.ListModels(context.Background())
 		if err != nil || len(models) == 0 {
-			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, "local-model"), owned: true}
+			modelID := resolveModelID(m.plannerSpec, "local-model")
+			m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, "local-model"), owned: true}
 			return
 		}
 
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID), owned: true}
+		modelID := resolveModelID(m.plannerSpec, models[0].ID)
+		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID), owned: true}
 	}()
 }
 
@@ -553,10 +573,12 @@ func (m *Model) restartServerAsync() {
 
 		models, err := m.client.ListModels(context.Background())
 		if err != nil || len(models) == 0 {
-			m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, "local-model"), owned: true}
+			modelID := resolveModelID(m.plannerSpec, "local-model")
+			m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, "local-model"), owned: true}
 			return
 		}
-		m.events <- serverStatusMsg{running: true, modelID: resolveModelID(m.plannerSpec, models[0].ID), owned: true}
+		modelID := resolveModelID(m.plannerSpec, models[0].ID)
+		m.events <- serverStatusMsg{running: true, modelID: modelID, displayID: resolveModelDisplayID(m.plannerSpec, models[0].ID), owned: true}
 	}()
 }
 
@@ -1362,6 +1384,10 @@ func (m *Model) SetMaxTokensOverride(maxTokens int) {
 
 func (m *Model) SetDisableThinkingOverride(disabled bool) {
 	m.disableThinkingOverride = disabled
+}
+
+func (m *Model) SetForcedReadinessOpenObligations(obligations []string) {
+	m.forcedReadinessOpenObligations = append([]string(nil), obligations...)
 }
 
 func (m *Model) SetPlanExecuteScopeContract(contract planexecute.PlanScopeContract) {

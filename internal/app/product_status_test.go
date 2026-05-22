@@ -333,7 +333,7 @@ func appProductContinuationEffort(t *testing.T, root, state, action string) stri
 	appProductStatusWriteFile(t, effortRoot, "implementation_ledger.jsonl", strings.Join([]string{
 		`{"record_type":"atom_planned","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
 		`{"record_type":"implementation_completed","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000"}`,
-		`{"record_type":"verification_completed","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:02:00Z"}`,
+		`{"record_type":"verification_completed","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-001"]}`,
 		`{"record_type":"review_completed","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:03:00Z","reviewer_id":"rev","model":"test","reasoning_effort":"medium"}`,
 		`{"record_type":"post_effort_investigation_completed","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:04:00Z"}`,
 		`{"record_type":"atom_closed","task_id":"impl-app","effort_id":"app-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,

@@ -469,6 +469,12 @@ func finalAnswerNeedsDecoration(answer string) bool {
 	if lower == "" {
 		return false
 	}
+	if looksLikeRawToolResultTranscript(answer) {
+		return true
+	}
+	if looksLikeStructuredAnswerEnvelope(lower) {
+		return true
+	}
 	if strings.HasPrefix(lower, "what i found:") ||
 		strings.HasPrefix(lower, "partial findings from this turn") ||
 		strings.HasPrefix(lower, "## grounded answer") ||
@@ -498,6 +504,43 @@ func finalAnswerNeedsDecoration(answer string) bool {
 		"related_files:",
 		".idiom/discovery/queries/",
 	)
+}
+
+func looksLikeStructuredAnswerEnvelope(lower string) bool {
+	if !strings.HasPrefix(strings.TrimSpace(lower), "{") {
+		return false
+	}
+	return strings.Contains(lower, `"answer"`) &&
+		(strings.Contains(lower, `"verification"`) ||
+			strings.Contains(lower, `"evidence"`) ||
+			strings.Contains(lower, `"sources"`))
+}
+
+func looksLikeRawToolResultTranscript(answer string) bool {
+	lines := strings.Split(strings.TrimSpace(answer), "\n")
+	first := ""
+	seenSummary := false
+	seenOutput := false
+	seenStatus := false
+	for _, line := range lines {
+		lower := strings.ToLower(strings.TrimSpace(line))
+		if lower == "" {
+			continue
+		}
+		if first == "" {
+			first = lower
+		}
+		if strings.HasPrefix(lower, "summary:") {
+			seenSummary = true
+		}
+		if strings.HasPrefix(lower, "output:") {
+			seenOutput = true
+		}
+		if strings.HasPrefix(lower, "status:") {
+			seenStatus = true
+		}
+	}
+	return strings.HasPrefix(first, "tool: ") && seenSummary && (seenOutput || seenStatus)
 }
 
 func looksLikeGenericEvidenceComposerAnswer(answer string) bool {

@@ -71,7 +71,7 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 	if len(defs) != 1 {
 		t.Fatalf("expected submit_plan schema, got %d definitions", len(defs))
 	}
-	for _, want := range []string{"executable final content", "no placeholders", "not a quoted JSON string", "complete file body", "insert_after_line", "not as an insertion point"} {
+	for _, want := range []string{"executable final content", "no placeholders", "not a quoted JSON string", "complete file body", "insert_after_line", "small inline", "large additions"} {
 		if !strings.Contains(defs[0].Description, want) {
 			t.Fatalf("submit_plan description missing %q:\n%s", want, defs[0].Description)
 		}
@@ -1535,10 +1535,13 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("no-op substring edit should be rejected")
 	}
-	for _, want := range []string{"old_text and new_text are identical", "Decision: source-satisfied", "Decision: pass"} {
+	for _, want := range []string{"old_text and new_text are identical", "Decision: source-satisfied"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op rejection should include %q, got %q", want, result.Error)
 		}
+	}
+	if strings.Contains(result.Error, "Decision: pass") {
+		t.Fatalf("planner no-op guidance must not leak review-repair pass wording, got %q", result.Error)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
@@ -1595,10 +1598,13 @@ func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
 	if !strings.Contains(result.Error, "edit would not change x.txt") {
 		t.Fatalf("no-op range rejection should name unchanged edit, got %q", result.Error)
 	}
-	for _, want := range []string{"Decision: source-satisfied", "Decision: pass"} {
+	for _, want := range []string{"Decision: source-satisfied"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op range rejection should include %q, got %q", want, result.Error)
 		}
+	}
+	if strings.Contains(result.Error, "Decision: pass") {
+		t.Fatalf("planner no-op guidance must not leak review-repair pass wording, got %q", result.Error)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
@@ -1770,10 +1776,13 @@ func TestSubmitPlanRejectsNoOpWholeFileEditBeforeWritingArtifactOrAssets(t *test
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("no-op whole-file edit should be rejected")
 	}
-	for _, want := range []string{"edit would not change large.txt", "Decision: source-satisfied", "Decision: pass"} {
+	for _, want := range []string{"edit would not change large.txt", "Decision: source-satisfied"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op whole-file rejection should include %q, got %q", want, result.Error)
 		}
+	}
+	if strings.Contains(result.Error, "Decision: pass") {
+		t.Fatalf("planner no-op guidance must not leak review-repair pass wording, got %q", result.Error)
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
@@ -2061,7 +2070,7 @@ func TestSubmitPlanRejectsLargeInsertAfterLineContentBeforeSpill(t *testing.T) {
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("large insert_after_line content should be rejected before spill")
 	}
-	for _, want := range []string{"insert_after_line content exceeds inline submit_plan limit", "content_ref is not supported"} {
+	for _, want := range []string{"insert_after_line content exceeds inline submit_plan limit", "content_ref is not supported", "line-range replacement", "unchanged anchor line", "replace_all"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("large insertion rejection missing %q: %q", want, result.Error)
 		}

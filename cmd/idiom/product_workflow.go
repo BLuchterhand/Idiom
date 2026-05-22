@@ -328,6 +328,8 @@ func buildAuditResult(lintResult productworkflow.LintSummaryResult) productAudit
 				section = "scope_gate"
 			} else if strings.HasPrefix(f.Code, "obsidian_") {
 				section = "obsidian"
+			} else if strings.HasPrefix(f.Code, "coverage_") {
+				section = "tdd"
 			} else {
 				continue
 			}

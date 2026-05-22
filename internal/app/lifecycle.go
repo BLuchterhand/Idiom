@@ -71,6 +71,9 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 		// to the wrong backend.
 		out.Model = alias
 	}
+	if alias := strings.TrimSpace(m.Alias); alias != "" {
+		out.DisplayName = alias
+	}
 	if baseURL := strings.TrimSpace(m.BaseURL); baseURL != "" {
 		out.BaseURL = baseURL
 	}
@@ -166,10 +169,11 @@ func llamaServerBaseURL(spec config.LlamaServer) string {
 }
 
 type serverStatusMsg struct {
-	running bool
-	modelID string
-	err     error
-	owned   bool
+	running   bool
+	modelID   string
+	displayID string
+	err       error
+	owned     bool
 }
 
 type streamDoneMsg struct {
@@ -544,14 +548,16 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	if m.plannerSpec.IsHosted() {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, m.plannerSpec.Model)
-		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID})
+		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, m.plannerSpec.Model)
+		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
 		return nil
 	}
 	models, err := m.client.ListModels(ctx)
 	if err == nil && len(models) > 0 {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
-		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID})
+		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, models[0].ID)
+		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID})
 		return nil
 	}
 	if m.modelSwapped {
@@ -579,12 +585,14 @@ func (m *Model) ensureServerReady(ctx context.Context) error {
 	if err != nil || len(models) == 0 {
 		m.serverUp = true
 		m.modelID = resolveModelID(m.plannerSpec, "local-model")
-		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, owned: true})
+		m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, "local-model")
+		m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
 		return nil
 	}
 	m.serverUp = true
 	m.modelID = resolveModelID(m.plannerSpec, models[0].ID)
-	m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, owned: true})
+	m.modelDisplayID = resolveModelDisplayID(m.plannerSpec, models[0].ID)
+	m.logServerEvent(serverStatusMsg{running: true, modelID: m.modelID, displayID: m.modelDisplayID, owned: true})
 	return nil
 }
 
@@ -622,6 +630,18 @@ func (m *Model) sendPromptAsync(prompt string) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		_, err := m.RunPromptOnce(ctx, prompt)
+		m.events <- streamDoneMsg{err: err}
+	}()
+}
+
+func (m *Model) sendPlanExecuteCommandAsync(objective string) {
+	m.streaming = true
+	m.workingFrame = 0
+	m.beginAgentHistoryTurn()
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, err := m.runPlanExecuteCommandOnce(ctx, objective)
 		m.events <- streamDoneMsg{err: err}
 	}()
 }

@@ -99,6 +99,11 @@ type ChatOptions struct {
 	// for tightly scoped single-tool terminal turns; broad MLX tool surfaces
 	// remain textual because its parser has historically failed closed.
 	ForceNativeTools bool
+	// ResponseFormatJSON asks OpenAI-compatible chat-completions backends to
+	// constrain visible content to one JSON object. Use for textual-tool
+	// terminal turns where Idiom owns parsing and native tool transport is not
+	// reliable.
+	ResponseFormatJSON bool
 }
 
 type Usage struct {
@@ -130,6 +135,7 @@ type chatRequest struct {
 	MaxTokens          int                 `json:"max_tokens"`
 	Tools              []Tool              `json:"tools,omitempty"`
 	ToolChoice         string              `json:"tool_choice,omitempty"`
+	ResponseFormat     any                 `json:"response_format,omitempty"`
 }
 
 type chatTemplateKwargs struct {
@@ -420,6 +426,7 @@ type hostedChatPayload struct {
 	Tools           any           `json:"tools,omitempty"`
 	ToolChoice      string        `json:"tool_choice,omitempty"`
 	Thinking        any           `json:"thinking,omitempty"`
+	ResponseFormat  any           `json:"response_format,omitempty"`
 }
 
 func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend string) any {
@@ -452,6 +459,9 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 			mode = "enabled"
 		}
 		payload.Thinking = map[string]string{"type": mode}
+	}
+	if opts.ResponseFormatJSON {
+		payload.ResponseFormat = map[string]string{"type": "json_object"}
 	}
 	return payload
 }
@@ -495,6 +505,9 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 			MaxTokens:          opts.MaxTokens,
 			Tools:              opts.Tools,
 			ToolChoice:         opts.ToolChoice,
+		}
+		if opts.ResponseFormatJSON {
+			reqPayload.ResponseFormat = map[string]string{"type": "json_object"}
 		}
 		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
 		payload = reqPayload
@@ -835,6 +848,9 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			MaxTokens:          opts.MaxTokens,
 			Tools:              opts.Tools,
 			ToolChoice:         opts.ToolChoice,
+		}
+		if opts.ResponseFormatJSON {
+			reqPayload.ResponseFormat = map[string]string{"type": "json_object"}
 		}
 		normalizeChatRequestForBackend(&reqPayload, opts, c.backend)
 		payload = reqPayload

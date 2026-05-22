@@ -6,16 +6,39 @@ import (
 )
 
 func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
-	t.Run("direct question", func(t *testing.T) {
-		spec := RuntimeContractForTaskFamily("direct_question")
-		if spec.TaskFamily != "direct_answer" || spec.ToolProfile != CapabilityReadOnlyDiscovery {
-			t.Fatalf("unexpected direct question contract: %#v", spec)
+	t.Run("artifact final answer", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(ArtifactFinalAnswerTaskFamily)
+		if spec.TaskFamily != ArtifactFinalAnswerTaskFamily || spec.Contract != "artifact_final_answer" {
+			t.Fatalf("unexpected artifact final-answer contract: %#v", spec)
+		}
+		if spec.PermissionProfile != "conversation_only" {
+			t.Fatalf("permission = %q, want conversation_only", spec.PermissionProfile)
+		}
+		if !slices.Contains(spec.FinalCritic, "no_tool_calls") {
+			t.Fatalf("artifact contract should require no tool calls, got %#v", spec.FinalCritic)
+		}
+	})
+
+	t.Run("conversation", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily("conversation")
+		if spec.TaskFamily != "conversation" || spec.ToolProfile != CapabilityConversationReadOnly {
+			t.Fatalf("unexpected conversation contract: %#v", spec)
 		}
 		if spec.PermissionProfile != "read_only_workspace" {
 			t.Fatalf("permission = %q, want read_only_workspace", spec.PermissionProfile)
 		}
-		if len(spec.ReadinessGate) != 0 || !slices.Contains(spec.FinalCritic, "answers_actual_user_request") {
-			t.Fatalf("expected direct question contract to avoid readiness gate and use final critic only, got %#v", spec)
+		if len(spec.ReadinessGate) != 0 ||
+			!slices.Contains(spec.FinalCritic, "answers_actual_user_request") ||
+			!slices.Contains(spec.FinalCritic, "well_formatted_informative_on_topic") ||
+			!slices.Contains(spec.SearchPolicy, "answer_from_visible_context_when_sufficient") {
+			t.Fatalf("expected conversation contract to be answer-oriented and efficient, got %#v", spec)
+		}
+	})
+
+	t.Run("direct question alias", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily("direct_question")
+		if spec.TaskFamily != "conversation" || spec.Contract != "direct_answer" || spec.PermissionProfile != "read_only_workspace" {
+			t.Fatalf("direct_question should normalize to conversation contract, got %#v", spec)
 		}
 	})
 
@@ -46,11 +69,11 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("unknown family", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("unknown_family")
-		if spec.TaskFamily != "direct_answer" || spec.Contract != "direct_answer" {
+		if spec.TaskFamily != "conversation" || spec.Contract != "direct_answer" {
 			t.Fatalf("unexpected unknown-family fallback: %#v", spec)
 		}
-		if spec.PermissionProfile != "conversation_only" {
-			t.Fatalf("permission = %q, want conversation_only", spec.PermissionProfile)
+		if spec.PermissionProfile != "read_only_workspace" {
+			t.Fatalf("permission = %q, want read_only_workspace", spec.PermissionProfile)
 		}
 	})
 
@@ -79,18 +102,29 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "edit_file", "write_file"}
 
-	brief := RuntimeBriefForTaskFamily("direct_question", "main", available)
+	artifact := RuntimeBriefForTaskFamily(ArtifactFinalAnswerTaskFamily, "main", available)
+	if artifact.Contract != "artifact_final_answer" || artifact.PermissionProfile != "conversation_only" {
+		t.Fatalf("unexpected artifact brief: %#v", artifact)
+	}
+	if len(artifact.AllowedTools) != 0 || len(artifact.ToolManifest) != 0 || len(artifact.RequiredTools) != 0 {
+		t.Fatalf("artifact final-answer brief must be tool-free, got tools=%#v manifest=%#v required=%#v", artifact.AllowedTools, artifact.ToolManifest, artifact.RequiredTools)
+	}
+
+	brief := RuntimeBriefForTaskFamily("conversation", "main", available)
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
+	if brief.Budget.MaxToolSteps != 4 || brief.Budget.MaxModelCalls != 6 {
+		t.Fatalf("conversation should carry a tight read-only budget, got %#v", brief.Budget)
+	}
 	for _, expected := range []string{"read_file", "search_files", "search_content", "context_query"} {
 		if !slices.Contains(brief.AllowedTools, expected) {
-			t.Fatalf("direct_question missing read-only tool %q in %#v", expected, brief.AllowedTools)
+			t.Fatalf("conversation missing read-only tool %q in %#v", expected, brief.AllowedTools)
 		}
 	}
 	for _, forbidden := range []string{"edit_file", "write_file", "shell"} {
 		if slices.Contains(brief.AllowedTools, forbidden) {
-			t.Fatalf("direct_question should not allow write tool %q in %#v", forbidden, brief.AllowedTools)
+			t.Fatalf("conversation should not allow write tool %q in %#v", forbidden, brief.AllowedTools)
 		}
 	}
 

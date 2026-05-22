@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/llama"
+	"idiom/internal/util"
 )
 
 func (m *Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Cmd, bool) {
@@ -111,8 +112,10 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		m.input.SetValue("")
 		if strings.HasPrefix(text, "/") {
-			if quit := m.handleSlashCommand(text); quit {
-				return tea.Quit, true
+			if !m.handlePlanExecuteCommand(text) {
+				if quit := m.handleSlashCommand(text); quit {
+					return tea.Quit, true
+				}
 			}
 			if m.pendingExec != nil {
 				cmd := m.pendingExec
@@ -127,6 +130,26 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.renderMessages(true)
 	}
 	return nil, false
+}
+
+func (m *Model) handlePlanExecuteCommand(raw string) bool {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 || fields[0] != "/plan-execute" {
+		return false
+	}
+	objective := strings.TrimSpace(strings.TrimPrefix(raw, "/plan-execute"))
+	if objective == "" {
+		m.status = "Usage: /plan-execute <objective>"
+		return true
+	}
+	if m.streaming {
+		m.status = "A response is already in progress."
+		return true
+	}
+	m.appendHistoryMessage("user", objective, nil)
+	m.sendPlanExecuteCommandAsync(objective)
+	m.status = "Dispatching to plan-execute..."
+	return true
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
@@ -158,12 +181,14 @@ func (m *Model) handleServerStatus(msg serverStatusMsg) (tea.Cmd, bool) {
 		m.serverUp = msg.running
 		if !msg.running {
 			m.modelID = ""
+			m.modelDisplayID = ""
 		}
 		m.modelID = msg.modelID
+		m.modelDisplayID = util.Fallback(strings.TrimSpace(msg.displayID), strings.TrimSpace(msg.modelID))
 		m.managedServer = m.managedServer || msg.owned
 		m.clearRuntimeErrorIfServerRelated()
 		if msg.running {
-			m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.plannerSpec.EndpointBaseURL(), msg.modelID)
+			m.status = fmt.Sprintf("Server ready on %s. Model: %s", m.plannerSpec.EndpointBaseURL(), m.activeModelDisplayID())
 		} else {
 			m.status = "Server stopped."
 		}

@@ -137,6 +137,7 @@ type LlamaServer struct {
 	Host            string   `json:"host"`
 	Port            int      `json:"port"`
 	Model           string   `json:"model"`
+	DisplayName     string   `json:"display_name,omitempty"`
 	BaseURL         string   `json:"base_url,omitempty"`
 	APIKeyEnv       string   `json:"api_key_env,omitempty"`
 	ReasoningEffort string   `json:"reasoning_effort,omitempty"`

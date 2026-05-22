@@ -23,11 +23,12 @@ import (
 )
 
 type implementationDispatchPlanDocument struct {
-	Path            string
-	Content         string
-	EditPaths       []string
-	TestObligations []string
-	ReferenceOnly   bool
+	Path                string
+	Content             string
+	EditPaths           []string
+	TestObligations     []string
+	ReferenceOnly       bool
+	AllowDirtyAtomScope bool
 }
 
 type implementationDispatchPlanDocumentPreflightResult struct {
@@ -173,6 +174,41 @@ func implementationDispatchScopeHasSourceAndTestPath(paths []string) bool {
 	return hasSource && hasTest
 }
 
+func implementationDispatchEditSetObligationsForScope(prompt string, requiredPaths []string) planexecute.EditSetObligations {
+	obligations := planexecute.EditSetObligationsFromPrompt(prompt).Normalized()
+	requiredPaths = uniqueImplementationDispatchPaths(requiredPaths)
+	if len(requiredPaths) == 0 {
+		return obligations
+	}
+	requiredHasTest := false
+	requiredHasSource := false
+	for _, path := range requiredPaths {
+		if implementationDispatchPathLooksLikeTest(path) {
+			requiredHasTest = true
+			continue
+		}
+		if implementationDispatchPathLooksLikeProductSource(path) {
+			requiredHasSource = true
+		}
+	}
+	var scoped planexecute.EditSetObligations
+	for _, obligation := range obligations {
+		switch obligation.Kind {
+		case planexecute.EditSetObligationKindTestEdit:
+			if requiredHasTest {
+				scoped = append(scoped, obligation)
+			}
+		case planexecute.EditSetObligationKindImplementationEdit:
+			if requiredHasSource {
+				scoped = append(scoped, obligation)
+			}
+		default:
+			scoped = append(scoped, obligation)
+		}
+	}
+	return scoped.Normalized()
+}
+
 func implementationDispatchPathLooksLikeProductSource(path string) bool {
 	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
 	if lower == "" || implementationDispatchPathLooksLikeTest(lower) {
@@ -188,6 +224,12 @@ func implementationDispatchPathLooksLikeProductSource(path string) bool {
 		".zsh", ".sql", ".proto", ".graphql", ".gd", ".mjs", ".cjs", ".kts",
 		".css", ".scss", ".sass", ".html", ".vue", ".svelte":
 		return true
+	case ".md":
+		return strings.HasPrefix(lower, "prompts/") ||
+			strings.Contains(lower, "/prompts/") ||
+			strings.Contains(lower, "/lanes/") ||
+			strings.Contains(lower, "/profiles/") ||
+			strings.Contains(lower, "/rules/")
 	default:
 		return false
 	}
@@ -489,7 +531,11 @@ func defaultImplementationDispatchPlanDocumentPreflight(ctx context.Context, cfg
 		return result
 	}
 
-	atom := runImplementationDispatchPreflightCommand(ctx, root, binary, "atom", "intake", "--spec", abs, "--project-root", root, "--json")
+	atomArgs := []string{"atom", "intake", "--spec", abs, "--project-root", root, "--json"}
+	if doc.AllowDirtyAtomScope {
+		atomArgs = append(atomArgs, "--allow-dirty")
+	}
+	atom := runImplementationDispatchPreflightCommand(ctx, root, binary, atomArgs...)
 	if atom.ExitCode != 0 {
 		atomState, blockers := implementationDispatchAtomIntakeBlocker(atom)
 		result.AtomState = atomState
@@ -556,7 +602,7 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 	result.Stderr = cmdResult.Stderr
 	result.Err = cmdResult.Err
 	if cmdResult.ExitCode != 0 {
-		candidate, candidatePath, blockers, ok := materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx, cfg, outRel)
+		candidate, candidatePath, blockers, ok := materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx, cfg, outRel, doc.AllowDirtyAtomScope)
 		if strings.TrimSpace(candidatePath) != "" {
 			result.OutputPath = candidatePath
 			result.Document = candidate
@@ -570,6 +616,7 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 		}
 		if strings.TrimSpace(result.Document.Path) == "" {
 			if refined, ok := readImplementationDispatchPlanDocument(root, outRel); ok {
+				refined.AllowDirtyAtomScope = doc.AllowDirtyAtomScope
 				result.Document = refined
 			}
 		}
@@ -584,12 +631,13 @@ func defaultImplementationDispatchPlanDocumentRefine(ctx context.Context, cfg co
 		result.Err = fmt.Errorf("refine completed but output brief was not readable: %s", outRel)
 		return result
 	}
+	refined.AllowDirtyAtomScope = doc.AllowDirtyAtomScope
 	result.Document = refined
 	result.OK = true
 	return result
 }
 
-func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context.Context, cfg config.Config, acceptedRel string) (implementationDispatchPlanDocument, string, []implementationDispatchPlanDocumentPreflightResult, bool) {
+func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context.Context, cfg config.Config, acceptedRel string, allowDirtyAtomScope ...bool) (implementationDispatchPlanDocument, string, []implementationDispatchPlanDocumentPreflightResult, bool) {
 	root := implementationDispatchWorkspaceRoot(cfg)
 	if strings.TrimSpace(root) == "" {
 		return implementationDispatchPlanDocument{}, "", nil, false
@@ -618,6 +666,7 @@ func materializeImplementationDispatchNonzeroRefineAcceptedCandidate(ctx context
 	if !ok {
 		return implementationDispatchPlanDocument{}, "", nil, false
 	}
+	candidate.AllowDirtyAtomScope = len(allowDirtyAtomScope) > 0 && allowDirtyAtomScope[0]
 	if blocked := preflightImplementationDispatchPlanDocuments(ctx, cfg, []implementationDispatchPlanDocument{candidate}); len(blocked) > 0 {
 		return candidate, candidateRel, blocked, false
 	}
@@ -2043,6 +2092,23 @@ func implementationDispatchPlanDocumentSourceSatisfied(root string, doc implemen
 			TestEvidence:    testEvidence,
 		}, true
 	}
+	if !implementationDispatchScopeRowIsOptional(scopeText) {
+		evidence := implementationDispatchSourceSatisfiedSourceBodyEvidence(path, content, scopeText)
+		if len(evidence) == 0 {
+			return implementationDispatchSourceSatisfiedRecord{}, false
+		}
+		testEvidence, ok := implementationDispatchSourceSatisfiedTestEvidence(root, doc, atom)
+		if !ok {
+			return implementationDispatchSourceSatisfiedRecord{}, false
+		}
+		return implementationDispatchSourceSatisfiedRecord{
+			DocumentPath:    doc.Path,
+			EditPath:        path,
+			Evidence:        evidence,
+			TestObligations: atom.TestObligations,
+			TestEvidence:    testEvidence,
+		}, true
+	}
 	return implementationDispatchSourceSatisfiedRecord{}, false
 }
 
@@ -2179,6 +2245,39 @@ func implementationDispatchSourceSatisfiedAnchorEvidence(path string, content st
 		}
 		if matched {
 			evidence = append(evidence, fmt.Sprintf("`%s:%d`: current-state anchor covers requested source-scope term(s) (`%s`)", anchor.Path, anchor.Line, strings.ReplaceAll(anchor.Text, "`", "'")))
+		}
+	}
+	if !implementationDispatchAnchorCoverageSatisfies(sourceTerms, covered) {
+		return nil
+	}
+	if len(evidence) > 3 {
+		evidence = evidence[:3]
+	}
+	return evidence
+}
+
+func implementationDispatchSourceSatisfiedSourceBodyEvidence(path string, content string, scopeText string) []string {
+	sourceTerms := implementationDispatchSatisfactionTermSet(implementationDispatchStripWorkspacePathLiterals(scopeText))
+	if len(sourceTerms) == 0 {
+		return nil
+	}
+	covered := map[string]struct{}{}
+	var evidence []string
+	for i, line := range strings.Split(content, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lineTerms := implementationDispatchSatisfactionTermSet(trimmed)
+		matched := false
+		for term := range sourceTerms {
+			if _, ok := lineTerms[term]; ok {
+				covered[term] = struct{}{}
+				matched = true
+			}
+		}
+		if matched {
+			evidence = append(evidence, fmt.Sprintf("`%s:%d`: current source covers requested source-scope term(s) (`%s`)", path, i+1, strings.ReplaceAll(trimmed, "`", "'")))
 		}
 	}
 	if !implementationDispatchAnchorCoverageSatisfies(sourceTerms, covered) {
@@ -3205,33 +3304,36 @@ func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string,
 		routeLabel = "executor route"
 	}
 	if useActiveModel {
-		m.logMessage("dispatch_route", fmt.Sprintf("%s using active model %s for fallback", routeLabel, strings.TrimSpace(m.modelID)))
+		m.logMessage("dispatch_route", fmt.Sprintf("%s using active model %s for fallback", routeLabel, strings.TrimSpace(m.activeModelDisplayID())))
 		return func() {}
 	}
 	if sameLlamaTarget(m.executorSpec, m.plannerSpec) {
 		return func() {}
 	}
 	if !m.executorPromptRouteReachable(ctx) {
-		m.logMessage("dispatch_route", fmt.Sprintf("%s falling back to active model %s because executor model %s is not reachable", routeLabel, strings.TrimSpace(m.modelID), strings.TrimSpace(m.executorSpec.Model)))
+		m.logMessage("dispatch_route", fmt.Sprintf("%s falling back to active model %s because executor model %s is not reachable", routeLabel, strings.TrimSpace(m.activeModelDisplayID()), strings.TrimSpace(resolveModelDisplayID(m.executorSpec, m.executorSpec.Model))))
 		return func() {}
 	}
 
 	priorClient := m.client
 	priorPlannerSpec := m.plannerSpec
 	priorModelID := m.modelID
+	priorModelDisplayID := m.modelDisplayID
 	priorModelThinkingFloor := m.modelThinkingFloor
 
 	m.client = m.implementerClient
 	m.plannerSpec = m.executorSpec
 	m.modelID = resolveModelID(m.executorSpec, m.executorSpec.Model)
+	m.modelDisplayID = resolveModelDisplayID(m.executorSpec, m.executorSpec.Model)
 	m.modelThinkingFloor = m.executorSpec.IsHosted()
 	m.invalidateComposedPrompt()
-	m.logMessage("dispatch_route", fmt.Sprintf("%s using executor model %s", routeLabel, strings.TrimSpace(m.modelID)))
+	m.logMessage("dispatch_route", fmt.Sprintf("%s using executor model %s", routeLabel, strings.TrimSpace(m.activeModelDisplayID())))
 
 	return func() {
 		m.client = priorClient
 		m.plannerSpec = priorPlannerSpec
 		m.modelID = priorModelID
+		m.modelDisplayID = priorModelDisplayID
 		m.modelThinkingFloor = priorModelThinkingFloor
 		m.invalidateComposedPrompt()
 	}
@@ -3261,6 +3363,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorPlannerOwnedVerification := m.plannerOwnedVerification
 	priorMaxTokensOverride := m.maxTokensOverride
 	priorDisableThinkingOverride := m.disableThinkingOverride
+	priorForcedReadinessOpenObligations := append([]string(nil), m.forcedReadinessOpenObligations...)
 	priorEventStream := m.eventStream
 	priorPlanExecuteActive := m.planExecuteActive
 	priorPlanExecuteScopeContract := m.planExecuteScopeContract
@@ -3277,6 +3380,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	m.SetPlannerOwnedVerification(opts.PlannerOwnedVerification)
 	m.SetMaxTokensOverride(opts.MaxTokensOverride)
 	m.SetDisableThinkingOverride(disableThinking)
+	m.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
 	if opts.JSONEvents && stdout != nil {
 		m.SetJSONEventStream(stdout, cfg.Workspace.SessionID)
 	}
@@ -3292,6 +3396,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 		m.SetPlannerOwnedVerification(priorPlannerOwnedVerification)
 		m.SetMaxTokensOverride(priorMaxTokensOverride)
 		m.SetDisableThinkingOverride(priorDisableThinkingOverride)
+		m.SetForcedReadinessOpenObligations(priorForcedReadinessOpenObligations)
 		m.planExecuteScopeContract = priorPlanExecuteScopeContract
 		m.eventStream = priorEventStream
 	}
@@ -3320,6 +3425,7 @@ func (m *Model) runImplementationViaPlanExecute(ctx context.Context, prompt stri
 }
 
 func (m *Model) runImplementationPlanDocumentsViaPlanExecute(ctx context.Context, prompt string, plan promptExecutionPlan, planDocuments []implementationDispatchPlanDocument) (string, error) {
+	planDocuments = implementationDispatchPlanDocumentsWithDirtyAllowance(prompt, planDocuments)
 	requiredPaths, allowedPaths := implementationDispatchEditScopeFromPlanDocuments(prompt, plan, m.cfg, planDocuments)
 	if closed := implementationDispatchPlanDocumentsTerminalAtoms(planDocuments); len(closed) == len(planDocuments) && len(closed) > 0 {
 		m.logMessage("dispatch_source_satisfied", fmt.Sprintf("skipping plan-execute for %d closed design-doc atom(s)", len(closed)))
@@ -3487,6 +3593,7 @@ func (m *Model) runAtomizedImplementationPlanDocumentsViaPlanExecute(ctx context
 	if len(atomDocuments) == 0 {
 		return "Plan-execute dispatch blocked before the planner ran.\n\nThe referenced design document needed sub-atoms, but no dispatchable atom briefs could be materialized.", nil
 	}
+	atomDocuments = implementationDispatchPlanDocumentsWithDirtyAllowance(prompt, atomDocuments)
 	m.logMessage("dispatch_atomize", fmt.Sprintf("dispatching %d materialized atom brief(s) through plan-execute", len(atomDocuments)))
 	var summaries []string
 	var skipped []implementationDispatchTerminalAtomRecord
@@ -3602,7 +3709,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		m.logMessage("dispatch_scope", fmt.Sprintf("derived %d candidate edit path(s) from referenced plan document", len(allowedPaths)))
 	}
 
-	editSetObligations := planexecute.EditSetObligationsFromPrompt(prompt)
+	editSetObligations := implementationDispatchEditSetObligationsForScope(prompt, requiredPaths)
 	scopeContract := planexecute.NewPlanScopeContract(requiredPaths, allowedPaths, editSetObligations)
 	opts := planexecute.Options{
 		Prompt:             brief,

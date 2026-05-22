@@ -1000,6 +1000,22 @@ func TestRenderInitialRuntimeBriefOmitsDiscoveryExamplesWithoutToolAccess(t *tes
 	}
 }
 
+func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t *testing.T) {
+	step := BuildInitialStepInstruction(WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"search_content", "read_file", "context_query"},
+	})
+	if !strings.Contains(step.Directive, "default read-only answer lane") ||
+		!strings.Contains(step.Directive, "efficient bounded reads/search/context tools") ||
+		!strings.Contains(step.Directive, "well formatted, on-topic prose/Markdown answer") ||
+		!strings.Contains(step.Directive, "Do not return tool summaries or JSON envelopes") {
+		t.Fatalf("conversation initial directive should explain the default read-only answer contract:\n%s", step.Directive)
+	}
+}
+
 func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
 	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
 		PermissionProfile: "conversation_only",

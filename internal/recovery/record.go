@@ -281,6 +281,8 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 		return FailureClassScopeTooLarge
 	case "verification_failed":
 		return FailureClassVerification
+	case "source_sanity_failed":
+		return FailureClassVerification
 	case "executor_failed":
 		if looksStaleContext(reasonLower) {
 			return FailureClassStaleContext
@@ -638,6 +640,10 @@ func looksScopeTooLarge(reasonLower string) bool {
 func looksVerificationFailed(reasonLower string) bool {
 	return strings.Contains(reasonLower, "verification failed") ||
 		strings.Contains(reasonLower, "verification command failed") ||
+		strings.Contains(reasonLower, "source_sanity failed") ||
+		strings.Contains(reasonLower, "source sanity failed") ||
+		strings.Contains(reasonLower, "compile failed") ||
+		strings.Contains(reasonLower, "go test compile failed") ||
 		strings.Contains(reasonLower, "required test failed") ||
 		strings.Contains(reasonLower, "required tests failed") ||
 		strings.Contains(reasonLower, "test failed") ||

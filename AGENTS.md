@@ -59,6 +59,11 @@ For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or 
   independent reviewer to check that analysis before applying or finalizing the
   fix; if reviewer feedback changes the diagnosis, narrow or redesign the patch
   before proceeding.
+- Use the reviewer bench in [docs/debugging-reviewer-bench.md](docs/debugging-reviewer-bench.md)
+  for behavior-debugging review. Default to Incident Root-Cause Reviewer plus one
+  specialist; add a second specialist only when the evidence spans two concrete
+  domains. Add North-Star / Architecture review for broad harness or repeated
+  live-run failures. Do not run the full bench by default.
 - Search for authority leaks, not only direct wording. Distinguish instructions from evidence, telemetry, generated context, and source text.
 - For required-path implementation failures, distinguish exact-anchor write-first contracts from abstract scope-ready packets. Check both what tells the model to write and which bounded read/search affordances remain visible.
 - Prefer removing conflicting affordances or encoding a typed contract over adding another prompt reminder.

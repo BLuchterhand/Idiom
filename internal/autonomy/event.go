@@ -93,19 +93,76 @@ type EventCorrelation struct {
 }
 
 type ContractLifecycleEvent struct {
-	Summary              *ContractSummary `json:"summary,omitempty"`
-	OldContractID        string           `json:"old_contract_id,omitempty"`
-	NewContractID        string           `json:"new_contract_id,omitempty"`
-	Reason               string           `json:"reason,omitempty"`
-	StateDelta           []string         `json:"state_delta,omitempty"`
-	RailsHash            string           `json:"rails_hash,omitempty"`
-	AllowedTools         []string         `json:"allowed_tools,omitempty"`
-	HiddenTools          []string         `json:"hidden_tools,omitempty"`
-	RequiredEvidence     []string         `json:"required_evidence,omitempty"`
-	ReadinessGate        string           `json:"readiness_gate,omitempty"`
-	VerificationContract string           `json:"verification_contract,omitempty"`
-	InvariantID          string           `json:"invariant_id,omitempty"`
-	RemainingObligations []string         `json:"remaining_obligations,omitempty"`
+	Summary              *ContractSummary        `json:"summary,omitempty"`
+	OldContractID        string                  `json:"old_contract_id,omitempty"`
+	NewContractID        string                  `json:"new_contract_id,omitempty"`
+	Reason               string                  `json:"reason,omitempty"`
+	StateDelta           []string                `json:"state_delta,omitempty"`
+	RailsHash            string                  `json:"rails_hash,omitempty"`
+	AllowedTools         []string                `json:"allowed_tools,omitempty"`
+	HiddenTools          []string                `json:"hidden_tools,omitempty"`
+	RequiredEvidence     []string                `json:"required_evidence,omitempty"`
+	ReadinessGate        string                  `json:"readiness_gate,omitempty"`
+	VerificationContract string                  `json:"verification_contract,omitempty"`
+	InvariantID          string                  `json:"invariant_id,omitempty"`
+	RemainingObligations []string                `json:"remaining_obligations,omitempty"`
+	TurnPhaseContract    *TurnPhaseContractEvent `json:"turn_phase_contract,omitempty"`
+}
+
+type TurnPhaseContractEvent struct {
+	SchemaVersion    string   `json:"schema_version,omitempty"`
+	PhaseID          string   `json:"phase_id,omitempty"`
+	PhaseEpoch       int      `json:"phase_epoch,omitempty"`
+	ModelCallID      string   `json:"model_call_id,omitempty"`
+	Step             int      `json:"step,omitempty"`
+	Phase            string   `json:"phase,omitempty"`
+	DerivationReason string   `json:"derivation_reason,omitempty"`
+	InvariantIDs     []string `json:"invariant_ids,omitempty"`
+
+	PermissionProfile string   `json:"permission_profile,omitempty"`
+	AllowedTools      []string `json:"allowed_tools,omitempty"`
+	HiddenTools       []string `json:"hidden_tools,omitempty"`
+	RequiredNext      []string `json:"required_next,omitempty"`
+	InvalidNext       []string `json:"invalid_next,omitempty"`
+	StopConditions    []string `json:"stop_conditions,omitempty"`
+	TerminalOutcomes  []string `json:"terminal_outcomes,omitempty"`
+	Constraints       []string `json:"constraints,omitempty"`
+
+	ActionPolicy    TurnActionClassPolicyEvent `json:"action_policy,omitempty"`
+	RuntimeCall     RuntimeCallContractEvent   `json:"runtime_call,omitempty"`
+	EvidenceState   PhaseEvidenceStateEvent    `json:"evidence_state,omitempty"`
+	EnforcementMode string                     `json:"enforcement_mode,omitempty"`
+}
+
+type TurnActionClassPolicyEvent struct {
+	AllowedActionClasses   []string `json:"allowed_action_classes,omitempty"`
+	InvalidActionClasses   []string `json:"invalid_action_classes,omitempty"`
+	TerminalResponseShapes []string `json:"terminal_response_shapes,omitempty"`
+	CallableToolNames      []string `json:"callable_tool_names,omitempty"`
+}
+
+type RuntimeCallContractEvent struct {
+	BackendKind              string   `json:"backend_kind,omitempty"`
+	ModelAlias               string   `json:"model_alias,omitempty"`
+	ToolTransportMode        string   `json:"tool_transport_mode,omitempty"`
+	ParserContract           string   `json:"parser_contract,omitempty"`
+	ResponseFormat           string   `json:"response_format,omitempty"`
+	ToolChoice               string   `json:"tool_choice,omitempty"`
+	ThinkingPolicy           string   `json:"thinking_policy,omitempty"`
+	MaxTokens                int      `json:"max_tokens,omitempty"`
+	ExpectedVisibleOutput    string   `json:"expected_visible_output,omitempty"`
+	ExpressibleActionClasses []string `json:"expressible_action_classes,omitempty"`
+}
+
+type PhaseEvidenceStateEvent struct {
+	AcceptanceRefs           []string `json:"acceptance_refs,omitempty"`
+	TDDObligationRefs        []string `json:"tdd_obligation_refs,omitempty"`
+	VerificationEvidenceRefs []string `json:"verification_evidence_refs,omitempty"`
+	VerificationStatus       string   `json:"verification_status,omitempty"`
+	ProductWorkflowState     string   `json:"product_workflow_state,omitempty"`
+	AtomStatus               string   `json:"atom_status,omitempty"`
+	RecoveryPacketRefs       []string `json:"recovery_packet_refs,omitempty"`
+	ResidualBlockers         []string `json:"residual_blockers,omitempty"`
 }
 
 type ContractPolicyEvent struct {
@@ -246,6 +303,19 @@ func NewContractCompiledEvent(contract AutonomyContract, occurredAt time.Time, s
 		ParentID:    contract.ParentID,
 		Correlation: CorrelationFromContract(contract),
 		Lifecycle:   &ContractLifecycleEvent{Summary: &summary},
+		Metadata:    contract.Metadata,
+	})
+}
+
+func NewContractPresentedEvent(contract AutonomyContract, lifecycle ContractLifecycleEvent, occurredAt time.Time, sequence int64) (Event, error) {
+	return NewEvent(EventInput{
+		Type:        EventContractPresented,
+		OccurredAt:  occurredAt,
+		Sequence:    sequence,
+		ContractID:  contract.ContractID,
+		ParentID:    contract.ParentID,
+		Correlation: CorrelationFromContract(contract),
+		Lifecycle:   &lifecycle,
 		Metadata:    contract.Metadata,
 	})
 }
@@ -658,6 +728,60 @@ func (e *ContractLifecycleEvent) normalize() {
 	e.VerificationContract = strings.TrimSpace(e.VerificationContract)
 	e.InvariantID = strings.TrimSpace(e.InvariantID)
 	e.RemainingObligations = compactStrings(e.RemainingObligations)
+	if e.TurnPhaseContract != nil {
+		e.TurnPhaseContract.normalize()
+	}
+}
+
+func (p *TurnPhaseContractEvent) normalize() {
+	p.SchemaVersion = strings.TrimSpace(p.SchemaVersion)
+	p.PhaseID = strings.TrimSpace(p.PhaseID)
+	p.ModelCallID = strings.TrimSpace(p.ModelCallID)
+	p.Phase = strings.TrimSpace(p.Phase)
+	p.DerivationReason = strings.TrimSpace(p.DerivationReason)
+	p.InvariantIDs = compactStrings(p.InvariantIDs)
+	p.PermissionProfile = strings.TrimSpace(p.PermissionProfile)
+	p.AllowedTools = compactStrings(p.AllowedTools)
+	p.HiddenTools = compactStrings(p.HiddenTools)
+	p.RequiredNext = compactStrings(p.RequiredNext)
+	p.InvalidNext = compactStrings(p.InvalidNext)
+	p.StopConditions = compactStrings(p.StopConditions)
+	p.TerminalOutcomes = compactStrings(p.TerminalOutcomes)
+	p.Constraints = compactStrings(p.Constraints)
+	p.ActionPolicy.normalize()
+	p.RuntimeCall.normalize()
+	p.EvidenceState.normalize()
+	p.EnforcementMode = strings.TrimSpace(p.EnforcementMode)
+}
+
+func (p *TurnActionClassPolicyEvent) normalize() {
+	p.AllowedActionClasses = compactStrings(p.AllowedActionClasses)
+	p.InvalidActionClasses = compactStrings(p.InvalidActionClasses)
+	p.TerminalResponseShapes = compactStrings(p.TerminalResponseShapes)
+	p.CallableToolNames = compactStrings(p.CallableToolNames)
+}
+
+func (r *RuntimeCallContractEvent) normalize() {
+	r.BackendKind = strings.TrimSpace(r.BackendKind)
+	r.ModelAlias = strings.TrimSpace(r.ModelAlias)
+	r.ToolTransportMode = strings.TrimSpace(r.ToolTransportMode)
+	r.ParserContract = strings.TrimSpace(r.ParserContract)
+	r.ResponseFormat = strings.TrimSpace(r.ResponseFormat)
+	r.ToolChoice = strings.TrimSpace(r.ToolChoice)
+	r.ThinkingPolicy = strings.TrimSpace(r.ThinkingPolicy)
+	r.ExpectedVisibleOutput = strings.TrimSpace(r.ExpectedVisibleOutput)
+	r.ExpressibleActionClasses = compactStrings(r.ExpressibleActionClasses)
+}
+
+func (s *PhaseEvidenceStateEvent) normalize() {
+	s.AcceptanceRefs = compactStrings(s.AcceptanceRefs)
+	s.TDDObligationRefs = compactStrings(s.TDDObligationRefs)
+	s.VerificationEvidenceRefs = compactStrings(s.VerificationEvidenceRefs)
+	s.VerificationStatus = strings.TrimSpace(s.VerificationStatus)
+	s.ProductWorkflowState = strings.TrimSpace(s.ProductWorkflowState)
+	s.AtomStatus = strings.TrimSpace(s.AtomStatus)
+	s.RecoveryPacketRefs = compactStrings(s.RecoveryPacketRefs)
+	s.ResidualBlockers = compactStrings(s.ResidualBlockers)
 }
 
 func (p *ContractPolicyEvent) normalize() {
@@ -790,6 +914,33 @@ func copyLifecycleEvent(in *ContractLifecycleEvent) *ContractLifecycleEvent {
 	out.HiddenTools = append([]string(nil), in.HiddenTools...)
 	out.RequiredEvidence = append([]string(nil), in.RequiredEvidence...)
 	out.RemainingObligations = append([]string(nil), in.RemainingObligations...)
+	out.TurnPhaseContract = copyTurnPhaseContractEvent(in.TurnPhaseContract)
+	return &out
+}
+
+func copyTurnPhaseContractEvent(in *TurnPhaseContractEvent) *TurnPhaseContractEvent {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.InvariantIDs = append([]string(nil), in.InvariantIDs...)
+	out.AllowedTools = append([]string(nil), in.AllowedTools...)
+	out.HiddenTools = append([]string(nil), in.HiddenTools...)
+	out.RequiredNext = append([]string(nil), in.RequiredNext...)
+	out.InvalidNext = append([]string(nil), in.InvalidNext...)
+	out.StopConditions = append([]string(nil), in.StopConditions...)
+	out.TerminalOutcomes = append([]string(nil), in.TerminalOutcomes...)
+	out.Constraints = append([]string(nil), in.Constraints...)
+	out.ActionPolicy.AllowedActionClasses = append([]string(nil), in.ActionPolicy.AllowedActionClasses...)
+	out.ActionPolicy.InvalidActionClasses = append([]string(nil), in.ActionPolicy.InvalidActionClasses...)
+	out.ActionPolicy.TerminalResponseShapes = append([]string(nil), in.ActionPolicy.TerminalResponseShapes...)
+	out.ActionPolicy.CallableToolNames = append([]string(nil), in.ActionPolicy.CallableToolNames...)
+	out.RuntimeCall.ExpressibleActionClasses = append([]string(nil), in.RuntimeCall.ExpressibleActionClasses...)
+	out.EvidenceState.AcceptanceRefs = append([]string(nil), in.EvidenceState.AcceptanceRefs...)
+	out.EvidenceState.TDDObligationRefs = append([]string(nil), in.EvidenceState.TDDObligationRefs...)
+	out.EvidenceState.VerificationEvidenceRefs = append([]string(nil), in.EvidenceState.VerificationEvidenceRefs...)
+	out.EvidenceState.RecoveryPacketRefs = append([]string(nil), in.EvidenceState.RecoveryPacketRefs...)
+	out.EvidenceState.ResidualBlockers = append([]string(nil), in.EvidenceState.ResidualBlockers...)
 	return &out
 }
 

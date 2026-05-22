@@ -450,6 +450,25 @@ func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerR
 	}
 }
 
+func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContract) {
+	if a == nil {
+		return
+	}
+	payload := contract.autonomyEventPayload()
+	lifecycle := autonomy.ContractLifecycleEvent{
+		Reason:               "turn_phase_contract",
+		StateDelta:           []string{payload.PhaseID, payload.DerivationReason},
+		AllowedTools:         append([]string(nil), contract.AllowedTools...),
+		HiddenTools:          append([]string(nil), contract.HiddenTools...),
+		RequiredEvidence:     append([]string(nil), contract.EvidenceState.AcceptanceRefs...),
+		ReadinessGate:        contract.Phase,
+		VerificationContract: contract.EvidenceState.VerificationStatus,
+		RemainingObligations: a.openObligationIDs(),
+		TurnPhaseContract:    &payload,
+	}
+	a.emitNewEvent(autonomy.NewContractPresentedEvent(a.contract, lifecycle, a.nextTime(), a.nextSequence()))
+}
+
 func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecision) {
 	if a == nil {
 		return
@@ -553,6 +572,21 @@ func (a *runnerAutonomyRecorder) openObligationIDsForRefs(refs []string) []strin
 		out = append(out, ref)
 	}
 	return out
+}
+
+func (a *runnerAutonomyRecorder) openObligationIDs() []string {
+	if a == nil {
+		return nil
+	}
+	a.ensureObligationState()
+	ids := make([]string, 0, len(a.openObligations))
+	for id := range a.openObligations {
+		if trimmed := strings.TrimSpace(id); trimmed != "" {
+			ids = append(ids, trimmed)
+		}
+	}
+	slices.Sort(ids)
+	return ids
 }
 
 func (a *runnerAutonomyRecorder) writeGateResolvedAndOpenObligations(changedPaths []string) (resolved []string, open []string) {

@@ -136,7 +136,7 @@ const PlanEditAnchorProvenanceSchemaVersion = "idiom.plan_edit_anchor.v1"
 
 const planInlineTextSpillThreshold = 4096
 
-const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: source-satisfied` with current-state evidence or review `Decision: pass` when no correction is needed"
+const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: source-satisfied` with current-state evidence when no changes are needed"
 
 // submitPlan persists the planner's edit-plan artifact to disk and
 // returns the path so the caller (orchestrator) can find and execute
@@ -259,7 +259,7 @@ func validatePlanEdit(edit PlanEdit) error {
 			return fmt.Errorf("insert_after_line edits require non-empty content")
 		}
 		if len(edit.Content) > planInlineTextSpillThreshold {
-			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema", planInlineTextSpillThreshold)
+			return fmt.Errorf("insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content, or use replace_all with a complete file body when replacing the whole file", planInlineTextSpillThreshold)
 		}
 		if hasOldText || strings.TrimSpace(edit.NewText) != "" || strings.TrimSpace(edit.NewTextRef) != "" || edit.StartLine > 0 || edit.EndLine > 0 || edit.ReplaceAll {
 			return fmt.Errorf("insert_after_line edits are mutually exclusive with old_text/new_text, start_line/end_line, and replace_all shapes")
@@ -908,7 +908,7 @@ func spillLargePlanEditBodies(dir string, stamp string, edits []PlanEdit) ([]Pla
 		}
 		if shouldSpillPlanInlineText(out[i].Content) {
 			if out[i].InsertAfterLine > 0 {
-				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema", i, planInlineTextSpillThreshold)
+				return nil, 0, fmt.Errorf("edits[%d]: insert_after_line content exceeds inline submit_plan limit (%d bytes); content_ref is not supported for insert_after_line in this schema; for large insertions, use a line-range replacement that includes the unchanged anchor line(s) plus inserted content, or use replace_all with a complete file body when replacing the whole file", i, planInlineTextSpillThreshold)
 			}
 			ref, err := writePlanEditBodyRef(dir, stamp, i, "content", out[i].Content)
 			if err != nil {

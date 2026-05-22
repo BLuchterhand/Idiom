@@ -161,6 +161,12 @@ instead of using its normal editing capability.
   log/test-backed, whether the harness is enforcing a real invariant rather than
   picking model strategy, whether the change preserves valid lanes and CLI/TUI
   parity, and whether it is likely to cause follow-on compensating fixes.
+- Select reviewers from [Debugging Reviewer Bench](debugging-reviewer-bench.md).
+  The economical default is Incident Root-Cause Reviewer plus one specialist
+  matched to the failure signature. Add a second specialist only when the
+  evidence spans two concrete domains. Add North-Star / Architecture review when
+  a fix changes shared harness behavior, lane contracts, gate authority, or
+  follows repeated related live-run failures.
 - Before replacing or reverting non-trivial behavior, inspect the relevant
   commit/blame/symbol history when current intent is ambiguous. History is not
   a veto, but it is evidence: preserve still-valid rationale and call out when

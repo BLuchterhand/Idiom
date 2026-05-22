@@ -399,6 +399,10 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		if lang.Tool(workspace.CapFileOutline) == "" {
 			return workspace.LanguageSupport{}, "", false
 		}
+		lineCount, ok := ws.FileLineCount(path)
+		if !ok {
+			return workspace.LanguageSupport{}, "", false
+		}
 		// Small files short-circuit the outline detour. A typical
 		// outline+read_symbol loop costs two tool calls plus a chunk
 		// of prompt context for the outline table; below this
@@ -409,7 +413,7 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		// dump can blow the planner context budget.
 		// The threshold is deliberately generous — outline is still the
 		// right answer for 500-line files with many decls.
-		if n, ok := ws.FileLineCount(path); ok && n > 0 && n <= smallFileRedirectThreshold {
+		if lineCount > 0 && lineCount <= smallFileRedirectThreshold {
 			return workspace.LanguageSupport{}, "", false
 		}
 		return lang, workspace.CapFileOutline, true

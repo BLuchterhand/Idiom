@@ -188,6 +188,15 @@ func TestRedirectSkipsInactiveLanguage(t *testing.T) {
 	}
 }
 
+func TestReadFileRedirectSkipsMissingPath(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+	decision := d.Consider(workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/gate.go"}, ws)
+	if decision.ShouldRedirect {
+		t.Fatalf("missing read_file path should flow to path resolution, got redirect to %s", decision.Capability)
+	}
+}
+
 // TestRedirectSkipsUnknownExtension ensures read_file on a file whose
 // extension is unmapped (e.g. Markdown, plain text) never redirects.
 func TestRedirectSkipsUnknownExtension(t *testing.T) {

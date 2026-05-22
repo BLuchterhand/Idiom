@@ -194,7 +194,10 @@ failure patterns that have cost time in real Idiom/Colony runs.
   independent reviewer has challenged the diagnosis, north-star alignment, and
   follow-on risk. Do not land a patch solely because it fixes the latest live
   run; record why it removes the cause without opening a new compensating-fix
-  chain.
+  chain. Use the reviewer bench in `docs/debugging-reviewer-bench.md`: default
+  to Incident Root-Cause Reviewer plus one specialist, add a second specialist
+  only when evidence spans two concrete domains, and add North-Star /
+  Architecture review for broad or repeated harness failures.
 - **Rerunning the same failed atom repeatedly**: after two harness-shaped
   failures, write a focused regression test from the logged failure shape before
   more live runs.
@@ -223,3 +226,5 @@ Before calling an Idiom harness change complete, check:
    allowed path?
 8. Did an independent reviewer check the root cause, north-star alignment, and
    rabbit-hole risk before the fix was finalized?
+9. Was the reviewer set minimal and matched to the failure signature, rather
+   than the full bench by default?

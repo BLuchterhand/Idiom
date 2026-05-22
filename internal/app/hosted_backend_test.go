@@ -27,6 +27,9 @@ func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
 	if got.Model != "glm-5.1" || got.EndpointBaseURL() != "https://api.z.ai/api/paas/v4" || got.APIKeyEnvName() != "ZAI_API_KEY" {
 		t.Fatalf("hosted fields not carried: %#v", got)
 	}
+	if got.DisplayName != "glm" {
+		t.Fatalf("expected display name to preserve alias, got %q", got.DisplayName)
+	}
 	if got.ReasoningEffort != "high" || got.Verbosity != "low" {
 		t.Fatalf("provider options not carried: %#v", got)
 	}

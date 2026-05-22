@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/telemetry"
 )
 
@@ -106,7 +107,7 @@ func runArtifactMainWithTelemetry(args []string, stdout io.Writer, stderr io.Wri
 
 	runOpts := runOptions{JSONEvents: true, Resume: opts.Resume, MaxTokensOverride: opts.MaxTokens, Telemetry: rec}
 	if opts.NoTools {
-		runOpts.TaskFamily = "direct_question"
+		runOpts.TaskFamily = workerruntime.ArtifactFinalAnswerTaskFamily
 	}
 	var events bytes.Buffer
 	answer, err := promptRun(cfg, prompt, runOpts, &events)

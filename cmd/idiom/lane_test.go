@@ -1149,6 +1149,9 @@ func TestCanonicalPlanExecutePreambleDoesNotRepeatSourceBodyRule(t *testing.T) {
 	for _, want := range []string{
 		"Existing required paths still need source-body evidence in this planner turn",
 		"this does not waive the source-body obligation above",
+		"small insertions/appends",
+		"large additions/appends",
+		"unchanged line N plus the inserted content",
 	} {
 		if !strings.Contains(normalized, want) {
 			t.Fatalf("plan-execute preamble missing source-body invariant %q:\n%s", want, prompt)

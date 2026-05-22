@@ -21,6 +21,11 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		lane = "plan-execute"
 		reasonCodes = []string{"route.plan_execute_planner"}
 		verificationOwner = "planner_owned"
+	} else if taskFamily == agent.PlanThenExecuteReviewRepairTaskFamily {
+		mode = writerroute.ModePlanSubmission
+		lane = "plan-execute"
+		reasonCodes = []string{"route.plan_execute_review_repair"}
+		verificationOwner = "planner_owned"
 	} else if dispatchToPlanExecute {
 		mode = writerroute.ModePlanSubmission
 		lane = "plan-execute"

@@ -361,6 +361,120 @@ func TestAuditEventsReportsUnmatchedSidecarToolCallCorrelation(t *testing.T) {
 	}
 }
 
+func TestAuditEventsFlagsTurnPhaseContradictoryToolAction(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 15, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason:       "turn_phase_contract",
+		AllowedTools: []string{"submit_plan"},
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "plan_execute.submit_ready.textual",
+			ModelCallID:   "call-1",
+			Step:          2,
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses: []string{"submit_plan", "source_satisfied", "blocker"},
+				InvalidActionClasses: []string{"read", "search", "verify", "per_edit_write"},
+			},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "submit_plan_json",
+				ExpressibleActionClasses: []string{"submit_plan", "source_satisfied", "blocker"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(time.Second), 2))
+	readPolicy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+		ToolName:   "read_file",
+		Capability: CapabilityBoundedRead,
+		Decision:   PolicyReject,
+		ReasonCode: "tool_surface",
+	}, occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, presented, readPolicy}, EventAuditOptions{})
+
+	if report.TurnPhaseCoverage.Total != 1 || report.TurnPhaseCoverage.PhaseCounts["plan_execute.submit_ready.textual"] != 1 {
+		t.Fatalf("expected turn phase coverage, got %#v", report.TurnPhaseCoverage)
+	}
+	if len(report.TurnPhaseCoverage.Contradictions) != 1 ||
+		report.TurnPhaseCoverage.Contradictions[0].ToolName != "read_file" ||
+		report.TurnPhaseCoverage.Contradictions[0].ActionClass != "read" {
+		t.Fatalf("expected read action contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") || report.AllClear {
+		t.Fatalf("expected contradiction finding and all_clear=false, all_clear=%v findings=%#v", report.AllClear, report.Findings)
+	}
+}
+
+func TestAuditEventsFlagsTextualPhaseWithManifestAllowedTools(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 20, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason:       "turn_phase_contract",
+		AllowedTools: []string{"submit_plan"},
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "plan_execute.submit_ready.textual",
+			AllowedTools:  []string{"submit_plan"},
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses: []string{"submit_plan"},
+			},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "submit_plan_json",
+				ExpressibleActionClasses: []string{"submit_plan"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(time.Second), 2))
+
+	report := AuditEvents([]Event{compiled, presented}, EventAuditOptions{})
+
+	if len(report.TurnPhaseCoverage.Contradictions) != 1 ||
+		!strings.Contains(report.TurnPhaseCoverage.Contradictions[0].Reason, "textual phase advertised") {
+		t.Fatalf("expected textual manifest contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
+		t.Fatalf("expected contradiction finding, got %#v", report.Findings)
+	}
+}
+
+func TestAuditEventsFlagsToolWhenNoManifestToolsAreAllowed(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 25, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason: "turn_phase_contract",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "product.acceptance_closeout",
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses: []string{"final_answer", "blocker"},
+				InvalidActionClasses: []string{"read", "search", "verify"},
+			},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "none",
+				ExpressibleActionClasses: []string{"final_answer", "blocker"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(time.Second), 2))
+	policy := mustAutonomyEvent(NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
+		ToolName:   "read_file",
+		Capability: CapabilityBoundedRead,
+		Decision:   PolicyReject,
+	}, occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, presented, policy}, EventAuditOptions{})
+
+	if len(report.TurnPhaseCoverage.Contradictions) != 1 ||
+		report.TurnPhaseCoverage.Contradictions[0].ToolName != "read_file" {
+		t.Fatalf("expected no-manifest tool contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+}
+
 func TestAuditEventsAllClearCoverageCarriesClassificationAndProductSignals(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 20, 30, 0, 0, time.UTC)

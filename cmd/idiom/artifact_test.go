@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 )
 
 func TestArtifactCommandWritesOutputAndJSON(t *testing.T) {
@@ -136,8 +137,8 @@ func TestArtifactCommandNoToolsWrapsPromptAndFailsToolUse(t *testing.T) {
 	if !strings.Contains(gotPrompt, "Do not call tools") {
 		t.Fatalf("-no-tools did not wrap prompt: %q", gotPrompt)
 	}
-	if gotOpts.TaskFamily != "direct_question" {
-		t.Fatalf("-no-tools TaskFamily = %q, want direct_question", gotOpts.TaskFamily)
+	if gotOpts.TaskFamily != workerruntime.ArtifactFinalAnswerTaskFamily {
+		t.Fatalf("-no-tools TaskFamily = %q, want %s", gotOpts.TaskFamily, workerruntime.ArtifactFinalAnswerTaskFamily)
 	}
 	if !strings.Contains(stderr.String(), "read_file") {
 		t.Fatalf("stderr should name offending tool, got %q", stderr.String())

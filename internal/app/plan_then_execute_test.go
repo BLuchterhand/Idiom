@@ -5,6 +5,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 )
 
 func TestSetForcedTaskFamilyTogglesPlanThenExecutePlannerMode(t *testing.T) {
@@ -119,6 +120,22 @@ func TestNormalizeTurnRoutePlanRecognizesPlanThenExecuteReviewRepair(t *testing.
 	}
 	if plan.Contract != "review_findings" {
 		t.Fatalf("review-repair phase should carry review_findings contract, got %q", plan.Contract)
+	}
+}
+
+func TestNormalizeTurnRoutePlanRecognizesArtifactFinalAnswer(t *testing.T) {
+	plan := normalizeTurnRoutePlan(turnRoutePlan{
+		Family: workerruntime.ArtifactFinalAnswerTaskFamily,
+		Reason: "explicit_task_family",
+	}, agent.ModeOrDefault(""))
+	if plan.Family != workerruntime.ArtifactFinalAnswerTaskFamily {
+		t.Fatalf("normalizer must preserve artifact family, got %q", plan.Family)
+	}
+	if plan.InitialLane != "main" {
+		t.Fatalf("artifact final-answer phase should run on main lane, got %q", plan.InitialLane)
+	}
+	if plan.Contract != "artifact_final_answer" {
+		t.Fatalf("artifact phase should carry artifact_final_answer contract, got %q", plan.Contract)
 	}
 }
 

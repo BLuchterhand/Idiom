@@ -38,6 +38,25 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	}
 }
 
+func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) {
+	for _, summary := range []string{
+		"Repeated range-less read_file redirected to bounded source request",
+		"Repeated range-less read_file rejected",
+	} {
+		t.Run(summary, func(t *testing.T) {
+			state := newRunnerRequestBudgetState(2)
+			req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
+			fingerprint := "read_file|README.md"
+			state.fingerprint.rejected[fingerprint] = summary
+
+			decision := state.earlyRejectedFingerprintDecision(req, fingerprint)
+			if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {
+				t.Fatalf("expected repeated range-less read retry to be blocked before re-rejection, got %#v", decision)
+			}
+		})
+	}
+}
+
 func TestRunnerRequestBudgetAllowsOneCorrectedRetryAfterMissingNamedGap(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{

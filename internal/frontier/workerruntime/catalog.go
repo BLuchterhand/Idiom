@@ -35,18 +35,33 @@ type RuntimeContractSpec struct {
 	FinalCritic          []string
 }
 
+const ArtifactFinalAnswerTaskFamily = "artifact_final_answer"
+
 func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 	switch strings.TrimSpace(family) {
-	case "direct_question":
+	case ArtifactFinalAnswerTaskFamily:
 		return RuntimeContractSpec{
-			TaskFamily:           "direct_answer",
+			TaskFamily:           ArtifactFinalAnswerTaskFamily,
+			Contract:             "artifact_final_answer",
+			PermissionProfile:    "conversation_only",
+			ToolProfile:          CapabilityConversationReadOnly,
+			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), "task", "shell"), readOnlyDiscoveryToolNames()...),
+			RequiredEvidence:     []string{"artifact_body_or_typed_blocker"},
+			VerificationContract: "not_required_for_artifact_final_answer",
+			StopConditions:       []string{"artifact_body_returned", "blocked_by_missing_information"},
+			FinalCritic:          []string{"artifact_body_only_or_typed_blocker", "no_tool_calls"},
+		}
+	case "conversation", "direct_question":
+		return RuntimeContractSpec{
+			TaskFamily:           "conversation",
 			Contract:             "direct_answer",
 			PermissionProfile:    "read_only_workspace",
-			ToolProfile:          CapabilityReadOnlyDiscovery,
-			RequiredEvidence:     []string{"answer_addresses_prompt"},
+			ToolProfile:          CapabilityConversationReadOnly,
+			RequiredEvidence:     []string{"answer_addresses_user_request"},
+			SearchPolicy:         []string{"answer_from_visible_context_when_sufficient", "for repo-specific questions use one efficient context/search/read path", "prefer bounded source reads over broad scans", "stop_after_enough_evidence_to_answer"},
 			VerificationContract: "not_required_for_read_only_lane",
-			StopConditions:       []string{"required_evidence_satisfied"},
-			FinalCritic:          []string{"answers_actual_user_request"},
+			StopConditions:       []string{"answered_user_request", "blocked_by_missing_information"},
+			FinalCritic:          []string{"answers_actual_user_request", "well_formatted_informative_on_topic", "cite_or_name_evidence_when_workspace_used"},
 		}
 	case "debug_logs":
 		return RuntimeContractSpec{
@@ -156,7 +171,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "submit_plan_requires_executable_final_edits", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
 			VerificationContract: "not_required_for_text_mutations",
 			StopConditions:       []string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"},
-			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called_or_source_satisfied", "edits_or_source_satisfied_evidence_listed_in_summary"},
+			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"},
 		}
 	case "plan_then_execute_review_repair":
 		// Action-capable review for plan-execute. This lane receives
@@ -207,13 +222,14 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		}
 	default:
 		return RuntimeContractSpec{
-			TaskFamily:           "direct_answer",
+			TaskFamily:           "conversation",
 			Contract:             "direct_answer",
-			PermissionProfile:    "conversation_only",
+			PermissionProfile:    "read_only_workspace",
 			ToolProfile:          CapabilityConversationReadOnly,
 			RequiredEvidence:     []string{"answer_addresses_user_request"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"answered_user_request", "blocked_by_missing_information"},
+			FinalCritic:          []string{"answers_actual_user_request", "well_formatted_informative_on_topic"},
 		}
 	}
 }
@@ -247,6 +263,12 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 	}
 	if spec.PermissionProfile == "read_only_workspace" {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})
+	}
+	if spec.TaskFamily == "conversation" && spec.Contract == "direct_answer" {
+		brief.Budget = BudgetBrief{
+			MaxToolSteps:  4,
+			MaxModelCalls: 6,
+		}
 	}
 	if spec.PermissionProfile == "read_only_verification_shell" {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})

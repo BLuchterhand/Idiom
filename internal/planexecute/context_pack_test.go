@@ -30,6 +30,22 @@ func TestComposePlannerPromptWithContextPackScopesBriefBody(t *testing.T) {
 	}
 }
 
+func TestPromptContextPackNeedsFreshnessRecovery(t *testing.T) {
+	cases := []workspace.ToolResult{
+		{Tool: "context_pack", Error: "freshness_blocker"},
+		{Tool: "context_pack", Summary: "context_pack blocked by context freshness (stale_unbounded_graph)"},
+		{Tool: "context_pack", Output: `{"error":"freshness_blocker"}`},
+	}
+	for _, result := range cases {
+		if !promptContextPackNeedsFreshnessRecovery(result) {
+			t.Fatalf("expected freshness recovery for %#v", result)
+		}
+	}
+	if promptContextPackNeedsFreshnessRecovery(workspace.ToolResult{Tool: "context_pack", Summary: "Context pack wrote view"}) {
+		t.Fatal("successful context_pack summary should not trigger freshness recovery")
+	}
+}
+
 func TestContextDiscoveryFallbackUsesLaneNeutralEditBearingLanguage(t *testing.T) {
 	got := RenderPromptContextDiscoveryFallbackSection(PromptContextPackOptions{
 		Title:             "Update target behavior",
@@ -84,6 +100,20 @@ func TestRequiredEditPathsFromPromptCapturesInlineColonList(t *testing.T) {
 		if !slices.Contains(got, want) {
 			t.Fatalf("missing required path %q, got %#v", want, got)
 		}
+	}
+}
+
+func TestRequiredEditPathsFromPromptCapturesInlineOnlyColonList(t *testing.T) {
+	prompt := "Implement a bounded harness fix. Required edit paths only: internal/planexecute/prompt.go, internal/planexecute/context_pack_test.go, internal/app/update_handlers.go, internal/app/lifecycle.go."
+	want := []string{
+		"internal/planexecute/prompt.go",
+		"internal/planexecute/context_pack_test.go",
+		"internal/app/update_handlers.go",
+		"internal/app/lifecycle.go",
+	}
+	got := RequiredEditPathsFromPrompt(prompt)
+	if !slices.Equal(got, want) {
+		t.Fatalf("required paths = %#v, want %#v", got, want)
 	}
 }
 

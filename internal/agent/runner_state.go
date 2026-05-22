@@ -94,6 +94,12 @@ func (r *Runner) effectivePolicy() RunPolicy {
 	if policy.MaxToolSteps == 0 && r.MaxToolSteps != 0 {
 		policy.MaxToolSteps = r.MaxToolSteps
 	}
+	if briefLimit := r.RuntimeBrief.Budget.MaxToolSteps; briefLimit > 0 && (policy.MaxToolSteps <= 0 || briefLimit < policy.MaxToolSteps) {
+		policy.MaxToolSteps = briefLimit
+	}
+	if briefLimit := r.RuntimeBrief.Budget.MaxModelCalls; briefLimit > 0 && (policy.MaxModelCalls <= 0 || briefLimit < policy.MaxModelCalls) {
+		policy.MaxModelCalls = briefLimit
+	}
 	if policy.MaxNoProgressTurns <= 0 {
 		policy.MaxNoProgressTurns = 6
 	}

@@ -12,16 +12,17 @@ import (
 type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, error)
 
 type RunOptions struct {
-	JSONEvents               bool
-	Resume                   string
-	TaskFamily               string
-	PlannerOwnedVerification bool
-	MaxTokensOverride        int
-	DisableThinking          bool
-	UseActiveModel           bool
-	Telemetry                *telemetry.Recorder
-	ConfigSourcePath         string
-	ScopeContract            PlanScopeContract
+	JSONEvents                  bool
+	Resume                      string
+	TaskFamily                  string
+	PlannerOwnedVerification    bool
+	MaxTokensOverride           int
+	DisableThinking             bool
+	ReviewRepairOpenObligations []string
+	UseActiveModel              bool
+	Telemetry                   *telemetry.Recorder
+	ConfigSourcePath            string
+	ScopeContract               PlanScopeContract
 }
 
 type MultiFlag []string
@@ -100,7 +101,39 @@ type ExecutorPhaseReport struct {
 	Failed       int
 	Failures     []string
 	SourceSanity []PhaseEvidenceCheck
+	Verification []PhaseEvidenceCheck
 	Handoff      ExecutorHandoffPacket
+}
+
+func ExecutorSourceSanityFailed(report ExecutorPhaseReport, err error) bool {
+	if err == nil || report.Total == 0 || report.Succeeded != report.Total || report.Failed != 0 || len(report.Failures) > 0 {
+		return false
+	}
+	hasFailedSourceSanity := false
+	for _, check := range report.SourceSanity {
+		status := strings.ToLower(strings.TrimSpace(check.Status))
+		if strings.TrimSpace(check.Error) != "" || (status != "" && status != "ok" && status != "passed") {
+			hasFailedSourceSanity = true
+			break
+		}
+	}
+	if !hasFailedSourceSanity {
+		return false
+	}
+	return strings.Contains(strings.ToLower(err.Error()), "source_sanity failed")
+}
+
+func ExecutorVerificationFailed(report ExecutorPhaseReport, err error) bool {
+	if err == nil || report.Total == 0 || report.Succeeded != report.Total || report.Failed != 0 || len(report.Failures) > 0 {
+		return false
+	}
+	for _, check := range report.Verification {
+		status := strings.ToLower(strings.TrimSpace(check.Status))
+		if strings.TrimSpace(check.Error) != "" || (status != "" && status != "ok" && status != "passed") {
+			return strings.Contains(strings.ToLower(err.Error()), "verification failed")
+		}
+	}
+	return false
 }
 
 func (r ExecutorPhaseReport) String() string {
@@ -129,6 +162,7 @@ type PatchHygieneAutoRepairReport struct {
 type PhaseEvidenceCheck struct {
 	Kind    string `json:"kind"`
 	Path    string `json:"path,omitempty"`
+	Command string `json:"command,omitempty"`
 	Status  string `json:"status"`
 	Summary string `json:"summary,omitempty"`
 	Error   string `json:"error,omitempty"`
@@ -164,6 +198,10 @@ func (r ReviewRepairPhaseReport) String() string {
 	return fmt.Sprintf("review-repair: %s, %d corrective edit(s), %d mechanical repair(s)", status, r.Repairs, r.AutoRepairs)
 }
 
+func ReviewRepairResolvedVerificationFailure(report ReviewRepairPhaseReport) bool {
+	return strings.TrimSpace(report.Status) == "repaired"
+}
+
 type ReviewRepairEvidence struct {
 	Diff          string
 	DiffCheck     string
@@ -185,6 +223,7 @@ type PhaseEvidenceBundle struct {
 	ExecutorHandoff    phaseEvidenceHandoff   `json:"executor_handoff"`
 	SubmittedPlan      []PhaseEvidenceCheck   `json:"submitted_plan_state,omitempty"`
 	SourceSanity       []PhaseEvidenceCheck   `json:"source_sanity,omitempty"`
+	Verification       []PhaseEvidenceCheck   `json:"verification,omitempty"`
 	PatchHygiene       PhaseEvidenceCheck     `json:"patch_hygiene"`
 	SuggestedTests     []PhaseEvidenceTest    `json:"suggested_tests,omitempty"`
 	UnresolvedGaps     []string               `json:"unresolved_gaps,omitempty"`

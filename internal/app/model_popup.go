@@ -86,7 +86,7 @@ func (m *Model) currentAliasForRole(role string) string {
 			}
 		}
 	}
-	return m.modelID
+	return m.activeModelDisplayID()
 }
 
 func (m *Model) collectAllAliases() []string {

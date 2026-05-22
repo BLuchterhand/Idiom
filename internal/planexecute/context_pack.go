@@ -105,19 +105,19 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 	}
 	timeout := opts.Timeout
 	if timeout <= 0 {
-		timeout = 45 * time.Second
+		timeout = 90 * time.Second
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	result := workspace.NewManager(wsCfg).Execute(ctx, workspace.ToolRequest{
+	result := executePromptContextPackWithFreshnessRecovery(ctx, workspace.NewManager(wsCfg), workspace.ToolRequest{
 		Tool:              "context_pack",
 		Task:              promptContextPackTask(opts, brief),
 		Mode:              promptContextPackMode(opts.Mode),
 		Limit:             limit,
 		BudgetTokens:      budgetTokens,
 		RequiredEditPaths: planExecuteUniqueRequiredPaths(opts.RequiredEditPaths),
-	})
+	}, stderr)
 	if strings.TrimSpace(result.Error) != "" {
 		if stderr != nil {
 			fmt.Fprintf(stderr, "plan-execute: context_pack skipped: %s\n", result.Error)
@@ -135,6 +135,51 @@ func BuildPromptContextPackSection(cfg config.Config, opts PromptContextPackOpti
 		fmt.Fprintf(stderr, "plan-execute: context_pack preloaded (%s)\n", result.Summary)
 	}
 	return section
+}
+
+func executePromptContextPackWithFreshnessRecovery(ctx context.Context, mgr *workspace.Manager, req workspace.ToolRequest, stderr io.Writer) workspace.ToolResult {
+	result := mgr.Execute(ctx, req)
+	if !promptContextPackNeedsFreshnessRecovery(result) {
+		return result
+	}
+	if stderr != nil {
+		fmt.Fprintln(stderr, "context_pack freshness blocked; refreshing context status before retry")
+	}
+	refresh := workspace.ToolRequest{
+		Tool:              "context_status",
+		Refresh:           true,
+		Limit:             50,
+		FreshnessMaxFiles: 2000,
+		RequiredEditPaths: append([]string(nil), req.RequiredEditPaths...),
+	}
+	if strings.TrimSpace(req.Language) != "" {
+		refresh.Language = req.Language
+	}
+	refreshResult := mgr.Execute(ctx, refresh)
+	if stderr != nil {
+		summary := strings.TrimSpace(refreshResult.Summary)
+		if summary == "" {
+			summary = strings.TrimSpace(refreshResult.Error)
+		}
+		if summary != "" {
+			fmt.Fprintf(stderr, "context_status refresh before context_pack retry: %s\n", collapsePromptContextWhitespace(summary, 220))
+		}
+	}
+	retry := mgr.Execute(ctx, req)
+	if strings.TrimSpace(retry.Error) == "" || strings.TrimSpace(refreshResult.Error) == "" {
+		return retry
+	}
+	return result
+}
+
+func promptContextPackNeedsFreshnessRecovery(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) == "freshness_blocker" {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
+	return strings.Contains(text, "freshness_blocker") ||
+		strings.Contains(text, "stale_unbounded_graph") ||
+		strings.Contains(text, "context freshness")
 }
 
 func RenderPromptContextPackSection(result workspace.ToolResult) (string, error) {

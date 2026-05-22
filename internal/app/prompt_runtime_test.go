@@ -633,6 +633,23 @@ Each submit_plan edit may include old_text/new_text copied from source evidence.
 	}
 }
 
+func TestPlanExecuteReviewRepairRuntimeBriefCarriesFailedPhaseObligations(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+		TaskFamily:                  agent.PlanThenExecuteReviewRepairTaskFamily,
+		ReviewRepairOpenObligations: []string{"verification_failed:go test ./..."},
+	}, io.Discard)
+	defer restore()
+
+	plan := model.buildPromptExecutionPlan(context.Background(), "review repair")
+	if plan.runtimeBrief.Readiness == nil || !slices.Contains(plan.runtimeBrief.Readiness.OpenObligations, "verification_failed:go test ./...") {
+		t.Fatalf("review-repair runtime brief should carry failed phase obligations, got %#v", plan.runtimeBrief.Readiness)
+	}
+}
+
 func TestPlanExecuteRuntimeBriefKeepsRealCandidateScopeExactSnippets(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},

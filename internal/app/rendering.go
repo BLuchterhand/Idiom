@@ -30,7 +30,7 @@ func (m *Model) View() string {
 		serverState = m.spinner.View() + " booting"
 	}
 	leftTitle := titleStyle.Render("◆ " + m.cfg.AppName)
-	rightInfo := statusStyle.Render(serverState + "  " + util.Fallback(m.modelID, "unknown"))
+	rightInfo := statusStyle.Render(serverState + "  " + util.Fallback(m.activeModelDisplayID(), "unknown"))
 	headerGap := w - lipgloss.Width(leftTitle) - lipgloss.Width(rightInfo)
 	if headerGap < 0 {
 		headerGap = 0

@@ -265,6 +265,9 @@ func TestClassifyPlanExecuteFailureRecognizesVerificationFailed(t *testing.T) {
 		reviewReasonClass string
 	}{
 		{name: "explicit_kind", kind: "verification_failed"},
+		{name: "source_sanity_kind", kind: "source_sanity_failed"},
+		{name: "source_sanity_reason", kind: "executor_failed", reason: "source_sanity failed for pkg/feature_test.go: go test compile failed"},
+		{name: "compile_reason", kind: "executor_failed", reason: "cmd/idiom: go test compile failed: undefined: missingHelper"},
 		{name: "executor_reason", kind: "executor_failed", reason: "required tests failed: go test ./internal/recovery"},
 		{name: "review_reason_class", kind: "review_repair_failed", reviewReasonClass: "verification_failed"},
 		{name: "fallback_reason", kind: "unknown", reason: "verification command failed: failing package ./cmd/idiom"},

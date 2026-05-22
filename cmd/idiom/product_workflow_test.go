@@ -302,6 +302,48 @@ func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {
 	}
 }
 
+func TestProductTDDCoverageGateReportsMissingTDDEvidence(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "implementation_ledger.jsonl", implementationLedgerWithoutTDDEvidenceJSONL())
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected lint to fail on missing TDD evidence, got code=%d", code)
+	}
+	var result productworkflow.LintSummaryResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, f := range result.Findings {
+		if f.Code == "coverage_tdd_evidence_missing" && f.Path == "tdd.json" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected coverage_tdd_evidence_missing finding, got: %#v", result.Findings)
+	}
+}
+
+func TestProductLintPassesWithValidTDDCoverageAndEvidence(t *testing.T) {
+	dir := writeValidTestEffort(t)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductLint([]string{"--effort-root", dir, "--json"}, &stdout, &stderr, nil)
+	if code != 0 {
+		t.Fatalf("expected lint to pass with valid TDD coverage and evidence, got code=%d\n%s", code, stdout.String())
+	}
+	var result productworkflow.LintSummaryResult
+	if err := json.Unmarshal(stdout.Bytes(), &result); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if result.Status != "pass" {
+		t.Fatalf("expected pass status, got %q: %#v", result.Status, result.Findings)
+	}
+}
+
 func TestProductLintDetectsBrokenTraceabilityLinks(t *testing.T) {
 	dir := t.TempDir()
 	writeTestFile(t, dir, "workflow_state.json", validTestWorkflowStateJSON())
@@ -790,7 +832,8 @@ func TestProductObsidianParityDurableFixturePasses(t *testing.T) {
 		`"effort_id":"test-effort"`, `"effort_id":"prd-adr-brief-workflow"`),
 		`"task_id":"impl-test"`, `"task_id":"impl-0032-phase-5-obsidian-parity-check"`))
 	writeTestFile(t, effortRoot, "implementation_ledger.jsonl",
-		`{"record_type":"atom_planned","task_id":"impl-0032-phase-5-obsidian-parity-check","effort_id":"prd-adr-brief-workflow","timestamp":"2026-05-18T16:05:00Z","complexity_tier":"C2","context_pack_id":"pack","implementor":{"id":"impl","runtime":"codex","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["cmd/idiom/product_workflow.go"],"forbidden":["internal/forbidden.go"],"forbidden_patterns":["docs/private/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`)
+		`{"record_type":"atom_planned","task_id":"impl-0032-phase-5-obsidian-parity-check","effort_id":"prd-adr-brief-workflow","timestamp":"2026-05-18T16:05:00Z","complexity_tier":"C2","context_pack_id":"pack","implementor":{"id":"impl","runtime":"codex","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["cmd/idiom/product_workflow.go"],"forbidden":["internal/forbidden.go"],"forbidden_patterns":["docs/private/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`+"\n"+
+			`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-18T16:06:00Z","tdd_obligations_satisfied":["TDD-001"]}`)
 
 	var stdout, stderr bytes.Buffer
 	code := runProductLint([]string{"--effort-root", effortRoot, "--json"}, &stdout, &stderr, nil)
@@ -3555,7 +3598,7 @@ func invalidCloseoutLedgerJSONL() string {
 	}, "\n")
 }
 
-func validTestImplementationLedgerJSONL() string {
+func implementationLedgerWithoutTDDEvidenceJSONL() string {
 	return strings.Join([]string{
 		`{"record_type":"atom_planned","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:00:00Z","complexity_tier":"C1","context_pack_id":"pack","implementor":{"id":"impl","runtime":"opencode","model":"test","command":"run"},"reviewer":{"id":"rev","model":"test","reasoning_effort":"medium","runtime":"codex"},"scope":{"expected_files":["test.go"],"forbidden_patterns":["cmd/**"]},"required_verification":["go test"],"report_paths":{"implementation":"reports/impl.json","review":"reports/rev.json","investigation":"reports/inv.json"}}`,
 		`{"record_type":"implementation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:01:00Z","implementor_id":"impl","commit_hash":"0000000000000000000000000000000000000000"}`,
@@ -3564,6 +3607,15 @@ func validTestImplementationLedgerJSONL() string {
 		`{"record_type":"post_effort_investigation_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:04:00Z"}`,
 		`{"record_type":"atom_closed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:05:00Z","open_blockers":[]}`,
 	}, "\n")
+}
+
+func validTestImplementationLedgerJSONL() string {
+	return strings.Replace(
+		implementationLedgerWithoutTDDEvidenceJSONL(),
+		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z"}`,
+		`{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-001"]}`,
+		1,
+	)
 }
 
 func validTestResearchProfileJSON() string {
@@ -3813,6 +3865,9 @@ func scopeGateLedgerPassingJSONL() string {
 func writeScopeGateEffort(t *testing.T, ledgerJSONL string) string {
 	t.Helper()
 	dir := writeValidTestEffort(t)
+	if !strings.Contains(ledgerJSONL, "tdd_obligations_satisfied") {
+		ledgerJSONL += "\n" + `{"record_type":"verification_completed","task_id":"impl-test","effort_id":"test-effort","timestamp":"2026-05-17T16:02:00Z","tdd_obligations_satisfied":["TDD-001"]}`
+	}
 	writeTestFile(t, dir, "implementation_ledger.jsonl", ledgerJSONL)
 	return dir
 }
@@ -5364,6 +5419,7 @@ func TestProductTDDCoverageGateBlocksUnknownPRDTDDObligation(t *testing.T) {
 	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
 	writeTestFile(t, dir, "prd.md", acceptedPRD)
 	writeTestFile(t, dir, "tdd.json", strings.Replace(validTestTDDJSON(), `"id":"TDD-001"`, `"id":"TDD-OTHER"`, 1))
+	writeTestFile(t, dir, "implementation_ledger.jsonl", implementationLedgerWithoutTDDEvidenceJSONL())
 
 	var stdout, stderr bytes.Buffer
 	code := runProductTDD([]string{

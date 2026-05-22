@@ -70,6 +70,7 @@ type ProgressExecutor struct {
 	Failed       int                   `json:"failed,omitempty"`
 	Failures     []string              `json:"failures,omitempty"`
 	SourceSanity []PhaseEvidenceCheck  `json:"source_sanity,omitempty"`
+	Verification []PhaseEvidenceCheck  `json:"verification,omitempty"`
 	Handoff      ExecutorHandoffPacket `json:"handoff,omitempty"`
 }
 
@@ -244,12 +245,21 @@ func (s *ProgressState) MarkExecutorComplete(report ExecutorPhaseReport, runErr 
 		Failed:       report.Failed,
 		Failures:     sanitizeProgressReasons(report.Failures),
 		SourceSanity: append([]PhaseEvidenceCheck(nil), report.SourceSanity...),
+		Verification: append([]PhaseEvidenceCheck(nil), report.Verification...),
 		Handoff:      report.Handoff,
 	}
 	if runErr != nil {
 		s.Status = ProgressStatusFailed
-		s.Executor.Status = ProgressStatusFailed
-		s.FailureKind = "executor_failed"
+		if ExecutorSourceSanityFailed(report, runErr) {
+			s.Executor.Status = ProgressStatusCompleted
+			s.FailureKind = RunFailureSourceSanityFailed
+		} else if ExecutorVerificationFailed(report, runErr) {
+			s.Executor.Status = ProgressStatusCompleted
+			s.FailureKind = RunFailureVerificationRequired
+		} else {
+			s.Executor.Status = ProgressStatusFailed
+			s.FailureKind = "executor_failed"
+		}
 		s.FailureReason = sanitizeProgressReason(runErr.Error())
 		return
 	}
@@ -325,7 +335,13 @@ func (s ProgressState) ReviewResumeReady() bool {
 	}
 	switch s.Phase {
 	case ProgressPhaseExecutor:
-		return s.Status == ProgressStatusCompleted
+		return s.Status == ProgressStatusCompleted ||
+			(s.Status == ProgressStatusFailed &&
+			s.FailureKind == RunFailureSourceSanityFailed &&
+				s.Executor.Status == ProgressStatusCompleted) ||
+			(s.Status == ProgressStatusFailed &&
+				s.FailureKind == RunFailureVerificationRequired &&
+				s.Executor.Status == ProgressStatusCompleted)
 	case ProgressPhaseReviewRepair:
 		switch s.Status {
 		case ProgressStatusRunning, ProgressStatusFailed, ProgressStatusDegraded:
@@ -342,6 +358,7 @@ func (s ProgressState) ExecutorPhaseReport() ExecutorPhaseReport {
 		Failed:       s.Executor.Failed,
 		Failures:     append([]string(nil), s.Executor.Failures...),
 		SourceSanity: append([]PhaseEvidenceCheck(nil), s.Executor.SourceSanity...),
+		Verification: append([]PhaseEvidenceCheck(nil), s.Executor.Verification...),
 		Handoff:      s.Executor.Handoff,
 	}
 }

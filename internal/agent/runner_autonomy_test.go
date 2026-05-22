@@ -1,14 +1,19 @@
 package agent
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"slices"
 	"testing"
+	"time"
 
 	"idiom/internal/autonomy"
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/llama"
 	"idiom/internal/workspace"
 )
 
@@ -127,6 +132,140 @@ func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *test
 	result := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "read_file", "no_approval_needed")
 	if result.Policy.Decision != autonomy.PolicyAllow || result.Policy.ApprovalRequired {
 		t.Fatalf("allow result should preserve no-approval-needed outcome: %#v", result.Policy)
+	}
+}
+
+func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"read_file", "submit_plan"},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         recorder.contract.ContractID,
+		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
+		Step:               1,
+		Brief:              brief,
+		Results:            results,
+		BaseAllowedTools:   []string{"submit_plan"},
+		TextualToolParser:  true,
+		VerificationStatus: "not_required",
+	})
+	recorder.emitTurnPhaseContract(contract)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var presented autonomy.Event
+	for _, event := range events {
+		if event.Type == autonomy.EventContractPresented &&
+			event.Lifecycle != nil &&
+			event.Lifecycle.TurnPhaseContract != nil {
+			presented = event
+			break
+		}
+	}
+	if presented.EventID == "" {
+		t.Fatalf("expected contract_presented turn phase event, got %#v", events)
+	}
+	phase := presented.Lifecycle.TurnPhaseContract
+	if phase.SchemaVersion != turnPhaseContractSchemaVersion ||
+		phase.PhaseID != turnPhaseSubmitReadyTextual ||
+		!slices.Contains(phase.ActionPolicy.AllowedActionClasses, actionSubmitPlan) ||
+		!slices.Contains(phase.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied) {
+		t.Fatalf("unexpected turn phase payload: %#v", phase)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if report.TurnPhaseCoverage.Total != 1 || len(report.TurnPhaseCoverage.Contradictions) != 0 {
+		t.Fatalf("expected clean turn phase audit coverage, got %#v", report.TurnPhaseCoverage)
+	}
+}
+
+func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"tool":"read_file","path":"a.go","start_line":1,"end_line":1}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{Root: root, CWD: root})
+	var runEvents []RunEvent
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 1, MaxModelCalls: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "plan-execute",
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "submit_plan",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+			AllowedTools:      []string{"read_file", "submit_plan"},
+		},
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{}, nil, nil, nil)
+	if requests != 1 {
+		t.Fatalf("expected one model request, got %d", requests)
+	}
+
+	turnPhaseIndex := -1
+	modelCallIndex := -1
+	postModelIndex := -1
+	for i, event := range runEvents {
+		switch event.Role {
+		case "model_call":
+			if modelCallIndex == -1 {
+				modelCallIndex = i
+			}
+		case "permission_decision", "next_action_state":
+			if postModelIndex == -1 {
+				postModelIndex = i
+			}
+		case runnerAutonomyEventRole:
+			var decoded autonomy.Event
+			if err := json.Unmarshal([]byte(event.Content), &decoded); err != nil {
+				t.Fatalf("decode autonomy event: %v", err)
+			}
+			if decoded.Type == autonomy.EventContractPresented &&
+				decoded.Lifecycle != nil &&
+				decoded.Lifecycle.TurnPhaseContract != nil &&
+				turnPhaseIndex == -1 {
+				turnPhaseIndex = i
+			}
+		}
+	}
+	if turnPhaseIndex == -1 || modelCallIndex == -1 || postModelIndex == -1 {
+		t.Fatalf("missing expected event order markers: turn_phase=%d model_call=%d post_model=%d roles=%#v", turnPhaseIndex, modelCallIndex, postModelIndex, eventRolesFor(runEvents))
+	}
+	if !(turnPhaseIndex < modelCallIndex && modelCallIndex < postModelIndex) {
+		t.Fatalf("expected turn phase before model_call before post-model events, got turn_phase=%d model_call=%d post_model=%d", turnPhaseIndex, modelCallIndex, postModelIndex)
 	}
 }
 
