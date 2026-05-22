@@ -200,6 +200,7 @@ func (m *Model) handleStreamDone(msg streamDoneMsg) (tea.Cmd, bool) {
 	m.streaming = false
 	m.workingFrame = 0
 	m.planPhaseText = ""
+	m.currentTurnBusyStatus = ""
 	if msg.err != nil {
 		m.failAgentHistoryTurn(msg.err)
 		m.setRuntimeError("Chat failed: " + msg.err.Error())
@@ -229,12 +230,20 @@ func (m *Model) handleInfoMessage(msg infoMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleToolTrace(msg toolTraceMsg) (tea.Cmd, bool) {
+	if strings.TrimSpace(msg.busyStatus) != "" {
+		m.currentTurnBusyStatus = msg.busyStatus
+	}
 	if m.traceMode == traceDisplayDetail && !msg.running {
 		m.insertBeforePendingAssistant(llama.ChatMessage{Role: "tool", Content: msg.text})
 		m.logMessage("tool", msg.text)
 	}
-	m.recordToolTraceInHistory(msg.step, msg.text, msg.intent, msg.running)
+	m.recordToolTraceInHistory(msg.step, msg.text, msg.intent, msg.running, msg.auditKind, msg.outcome, msg.auditEvents)
 	m.renderMessages(false)
+	return nil, false
+}
+
+func (m *Model) handleHistoryAudit(msg historyAuditMsg) (tea.Cmd, bool) {
+	m.recordHistoryAuditEvent(msg.event)
 	return nil, false
 }
 
@@ -281,6 +290,7 @@ func (m *Model) handlePlanPhase(msg planPhaseMsg) (tea.Cmd, bool) {
 	} else {
 		m.planPhaseText = formatPlanPhaseText(msg.phase, msg.detail)
 	}
+	m.recordHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "plan-execute " + strings.TrimSpace(msg.phase), detail: msg.detail, status: msg.phase})
 	m.renderMessages(false)
 	return nil, false
 }

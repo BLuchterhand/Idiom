@@ -32,18 +32,29 @@ func wrapLines(s string, width int) []string {
 // Consecutive same-sender messages collapse into one entry (contents grows);
 // a new entry is created as soon as the sender changes.
 type historyEntry struct {
-	sender     string            // "user" or "agent"
-	contents   []string          // each message in send order (newest appended)
-	toolCalls  []historyToolCall // tool-trace first lines, agent entries only
-	summary    string            // local fallback on append, overwritten by 9B when ready
-	inProgress bool              // true while the current agent turn is still running
+	sender      string              // "user" or "agent"
+	contents    []string            // each message in send order (newest appended)
+	toolCalls   []historyToolCall   // tool-trace first lines, agent entries only
+	auditEvents []historyAuditEvent // lane, contract, recovery, privacy, and cache events
+	summary     string              // local fallback on append, overwritten by 9B when ready
+	inProgress  bool                // true while the current agent turn is still running
 }
 
 type historyToolCall struct {
 	step    int
 	line    string
 	intent  string
+	kind    string
+	outcome string
 	running bool
+}
+
+type historyAuditEvent struct {
+	kind   string
+	label  string
+	detail string
+	status string
+	step   int
 }
 
 // historySummaryMsg is emitted by summarizeEntry when the 9B model returns.
@@ -117,6 +128,9 @@ func (m *Model) beginAgentHistoryTurn() {
 	m.currentTurnHistoryIndex = len(m.history.entries)
 
 	entry := historyEntry{sender: "agent", inProgress: true}
+	if privacy := m.historyPrivacyAuditEvent(); privacy.label != "" {
+		entry.auditEvents = append(entry.auditEvents, privacy)
+	}
 	entry.summary = localFallbackSummary(&entry)
 	m.history.entries = append(m.history.entries, entry)
 	m.history.selected = len(m.history.entries) - 1
@@ -139,13 +153,16 @@ func (m *Model) activeAgentHistoryEntry() (int, *historyEntry, bool) {
 	return idx, entry, true
 }
 
-func (m *Model) recordToolTraceInHistory(step int, text, intent string, running bool) {
+func (m *Model) recordToolTraceInHistory(step int, text, intent string, running bool, kind string, outcome string, auditEvents []historyAuditEvent) {
 	line := firstToolTraceLine(text)
-	if line == "" {
+	if line == "" && len(auditEvents) == 0 {
 		return
 	}
 	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
-		entry.upsertToolCall(step, line, intent, running)
+		if line != "" {
+			entry.upsertToolCall(step, line, intent, running, kind, outcome)
+		}
+		entry.auditEvents = append(entry.auditEvents, auditEvents...)
 		entry.summary = localFallbackSummary(entry)
 		m.requestHistoryPanelRender(false, true)
 		return
@@ -153,13 +170,19 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 	m.currentTurnTools = append(m.currentTurnTools, line)
 }
 
-func (entry *historyEntry) upsertToolCall(step int, line, intent string, running bool) {
+func (entry *historyEntry) upsertToolCall(step int, line, intent string, running bool, kind string, outcome string) {
 	if step > 0 {
 		for i := range entry.toolCalls {
 			if entry.toolCalls[i].step == step {
 				entry.toolCalls[i].line = line
 				if strings.TrimSpace(intent) != "" {
 					entry.toolCalls[i].intent = strings.TrimSpace(intent)
+				}
+				if strings.TrimSpace(kind) != "" {
+					entry.toolCalls[i].kind = strings.TrimSpace(kind)
+				}
+				if strings.TrimSpace(outcome) != "" {
+					entry.toolCalls[i].outcome = strings.TrimSpace(outcome)
 				}
 				entry.toolCalls[i].running = running
 				return
@@ -170,8 +193,22 @@ func (entry *historyEntry) upsertToolCall(step int, line, intent string, running
 		step:    step,
 		line:    line,
 		intent:  strings.TrimSpace(intent),
+		kind:    strings.TrimSpace(kind),
+		outcome: strings.TrimSpace(outcome),
 		running: running,
 	})
+}
+
+func (m *Model) recordHistoryAuditEvent(event historyAuditEvent) {
+	event = cleanHistoryAuditEvent(event)
+	if event.label == "" {
+		return
+	}
+	if _, entry, ok := m.activeAgentHistoryEntry(); ok {
+		entry.auditEvents = append(entry.auditEvents, event)
+		entry.summary = localFallbackSummary(entry)
+		m.requestHistoryPanelRender(false, true)
+	}
 }
 
 // recordAgentTurn flushes the just-completed agent response (last assistant
@@ -299,6 +336,9 @@ func (m *Model) flushHistoryPanelRender() {
 func localFallbackSummary(entry *historyEntry) string {
 	const maxSummary = 60
 	if entry.inProgress && len(entry.contents) == 0 && len(entry.toolCalls) == 0 {
+		if summary := historyAuditSummary(entry.auditEvents); summary != "" {
+			return truncateRunes(summary, maxSummary)
+		}
 		return "working…"
 	}
 	if len(entry.contents) > 0 {
@@ -330,7 +370,28 @@ func localFallbackSummary(entry *historyEntry) string {
 			return truncateRunes("tools: "+strings.Join(names, ", "), maxSummary)
 		}
 	}
+	if summary := historyAuditSummary(entry.auditEvents); summary != "" {
+		return truncateRunes(summary, maxSummary)
+	}
 	return "…"
+}
+
+func historyAuditSummary(events []historyAuditEvent) string {
+	for _, event := range events {
+		if strings.EqualFold(strings.TrimSpace(event.kind), "privacy") {
+			continue
+		}
+		label := strings.TrimSpace(event.label)
+		if label == "" {
+			continue
+		}
+		kind := strings.TrimSpace(event.kind)
+		if kind == "" {
+			return label
+		}
+		return kind + ": " + label
+	}
+	return ""
 }
 
 func collapseWhitespace(s string) string {
@@ -396,6 +457,19 @@ func (m *Model) summarizeEntry(idx int, entry historyEntry) {
 		if len(intents) > 0 {
 			sb.WriteString("Why: ")
 			sb.WriteString(strings.Join(intents, "; "))
+			sb.WriteString("\n")
+		}
+	}
+	if len(entry.auditEvents) > 0 {
+		events := make([]string, 0, len(entry.auditEvents))
+		for _, event := range entry.auditEvents {
+			if text := event.auditLine(); text != "" {
+				events = append(events, text)
+			}
+		}
+		if len(events) > 0 {
+			sb.WriteString("Audit: ")
+			sb.WriteString(strings.Join(events, "; "))
 			sb.WriteString("\n")
 		}
 	}

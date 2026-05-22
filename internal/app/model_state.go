@@ -244,6 +244,7 @@ type Model struct {
 	// Tool-call names collected during the current agent turn; consumed when
 	// streamDoneMsg fires and cleared before the next turn begins.
 	currentTurnTools         []string
+	currentTurnBusyStatus    string
 	currentTurnHistoryIndex  int
 	currentTurnHistoryActive bool
 }
@@ -266,10 +267,14 @@ type infoMsg struct {
 type historyPanelRefreshMsg struct{}
 
 type toolTraceMsg struct {
-	step    int
-	text    string
-	intent  string
-	running bool
+	step        int
+	text        string
+	intent      string
+	busyStatus  string
+	auditKind   string
+	outcome     string
+	auditEvents []historyAuditEvent
+	running     bool
 }
 
 type planRefreshMsg struct{}
@@ -637,6 +642,20 @@ func (m *Model) renderHistoryPanelContent() {
 					b.WriteString("\n")
 				}
 			}
+			for _, event := range entry.auditEvents {
+				line := event.auditLine()
+				if line == "" {
+					continue
+				}
+				for j, wl := range wrapLines(line, max(1, w-4)) {
+					prefix := "- "
+					if j > 0 {
+						prefix = "  "
+					}
+					b.WriteString(panelDetailStyle.Width(w).Render(prefix + wl))
+					b.WriteString("\n")
+				}
+			}
 			for _, tc := range entry.toolCalls {
 				for j, wl := range wrapLines(tc.line, max(1, w-4)) {
 					prefix := "▶ "
@@ -649,8 +668,15 @@ func (m *Model) renderHistoryPanelContent() {
 					b.WriteString(panelDetailStyle.Width(w).Render(prefix + wl))
 					b.WriteString("\n")
 				}
+				meta := joinNonEmpty(" · ", keyValue("type", tc.kind), keyValue("outcome", tc.outcome))
+				if meta != "" {
+					for _, wl := range wrapLines(meta, max(1, w-4)) {
+						b.WriteString(panelDetailStyle.Width(w).Render("  " + wl))
+						b.WriteString("\n")
+					}
+				}
 				if strings.TrimSpace(tc.intent) != "" {
-					for _, wl := range wrapLines("why: "+tc.intent, max(1, w-4)) {
+					for _, wl := range wrapLines("reason: "+tc.intent, max(1, w-4)) {
 						b.WriteString(panelDetailStyle.Width(w).Render("  " + wl))
 						b.WriteString("\n")
 					}
@@ -1073,6 +1099,9 @@ func profileForToolResult(event agent.ToolResultEvent) workspace.ToolDiscoveryPr
 }
 
 func (m *Model) logRunEvent(event agent.RunEvent) {
+	if audit, ok := historyAuditEventFromRunEvent(event); ok {
+		m.enqueueHistoryAuditEvent(audit)
+	}
 	switch event.Role {
 	case "model_call":
 		var payload struct {

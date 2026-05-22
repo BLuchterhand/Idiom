@@ -123,7 +123,7 @@ func TestRenderMessagesShowsSpinnerWhileStreaming(t *testing.T) {
 	m.renderMessages(true)
 
 	view := m.viewport.View()
-	if !strings.Contains(view, "Qwen is working on your request") {
+	if !strings.Contains(view, "Qwen is preparing a response") {
 		t.Fatalf("expected working affordance while streaming, got:\n%s", view)
 	}
 }
@@ -141,7 +141,7 @@ func TestRenderMessagesHidesSpinnerWhenNotStreaming(t *testing.T) {
 	m.renderMessages(true)
 
 	view := m.viewport.View()
-	if strings.Contains(view, "Qwen is working on your request") {
+	if strings.Contains(view, "Qwen is preparing a response") {
 		t.Fatalf("working affordance must not render when streaming=false, got:\n%s", view)
 	}
 }
@@ -161,7 +161,7 @@ func TestRenderMessagesSpinnerDoesNotDuplicateWithEmptyAssistant(t *testing.T) {
 	m.renderMessages(true)
 
 	view := m.viewport.View()
-	count := strings.Count(view, "Qwen is working on your request")
+	count := strings.Count(view, "Qwen is preparing a response")
 	if count != 1 {
 		t.Fatalf("expected exactly one working affordance, got %d in:\n%s", count, view)
 	}
@@ -199,7 +199,7 @@ func TestRenderMessagesEmptyStateOnlyWithoutStreaming(t *testing.T) {
 	if strings.Contains(view, "No messages yet") {
 		t.Fatalf("empty-state hint must not render while streaming, got:\n%s", view)
 	}
-	if !strings.Contains(view, "Qwen is working on your request") {
+	if !strings.Contains(view, "Qwen is preparing a response") {
 		t.Fatalf("expected working affordance on fresh streaming turn, got:\n%s", view)
 	}
 }

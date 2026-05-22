@@ -483,6 +483,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case historyAuditMsg:
+		cmd, done := m.handleHistoryAudit(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case historySummaryMsg:
 		cmd, done := m.handleHistorySummary(msg)
 		if done {
@@ -619,6 +627,7 @@ func (m *Model) saveTranscriptAsync() {
 func (m *Model) sendPromptAsync(prompt string) {
 	m.streaming = true
 	m.workingFrame = 0
+	m.currentTurnBusyStatus = busyStatusForPrompt(prompt)
 	m.beginAgentHistoryTurn()
 	go func() {
 		// The outer ctx intentionally has no deadline. Per-call HTTP timeouts
@@ -637,6 +646,7 @@ func (m *Model) sendPromptAsync(prompt string) {
 func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 	m.streaming = true
 	m.workingFrame = 0
+	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
 	m.beginAgentHistoryTurn()
 	go func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -666,9 +676,34 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 	if desc := strings.TrimSpace(req.Description); desc != "" {
 		return truncateRunes(collapseWhitespace(desc), 160)
 	}
+	if gap := strings.TrimSpace(req.NamedGap); gap != "" {
+		return "resolve named evidence gap: " + truncateRunes(collapseWhitespace(gap), 120)
+	}
 
 	target := truncateRunes(collapseWhitespace(toolRequestTraceTarget(req)), 96)
 	switch strings.TrimSpace(req.Tool) {
+	case "context_pack":
+		if target == "" {
+			target = strings.TrimSpace(req.Task)
+		}
+		if target == "" {
+			return "build a ranked context packet before choosing exact reads"
+		}
+		return "build a ranked context packet for " + truncateRunes(collapseWhitespace(target), 96)
+	case "context_query", "context_zoom", "context_impact", "dependency_graph":
+		if target == "" {
+			return "trace code relationships without broad file reads"
+		}
+		return "trace code relationships around " + target
+	case "discovery_query":
+		purpose := strings.TrimSpace(req.Purpose)
+		if purpose == "" {
+			purpose = "repository discovery"
+		}
+		if target == "" {
+			return "run structured " + purpose + " discovery"
+		}
+		return "run structured " + purpose + " discovery around " + target
 	case "list_files":
 		if target == "" {
 			target = "the current workspace"
@@ -686,7 +721,7 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		return "locate references to " + target
 	case "read_file":
 		if target == "" {
-			return "inspect source context before deciding the next step"
+			return "inspect source context needed for this turn"
 		}
 		return "inspect " + target + " for the relevant context"
 	case "go_file_outline", "rust_file_outline", "ts_file_outline", "python_file_outline", "java_file_outline", "cpp_file_outline":
@@ -710,7 +745,10 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 		if target == "" {
 			return "inspect or verify state with a command"
 		}
-		return "inspect or verify state by running " + target
+		if historyShellCommandLooksLikeVerification(target) {
+			return "verify the current state by running " + target
+		}
+		return "inspect workspace state by running " + target
 	case "child_task":
 		if target == "" {
 			return "delegate a bounded subtask while continuing the main task"
@@ -719,12 +757,12 @@ func toolRequestIntent(event agent.ToolRequestEvent) string {
 	}
 
 	if action := strings.TrimSpace(event.Action); action != "" {
-		return "take the next " + action + " step"
+		return "perform the requested " + truncateRunes(collapseWhitespace(action), 96) + " tool step"
 	}
 	if target != "" {
 		return "gather context from " + target
 	}
-	return "gather context for the next step"
+	return "gather context needed for this turn"
 }
 
 func toolRequestTraceTarget(req workspace.ToolRequest) string {
@@ -833,7 +871,14 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 		func(event agent.ToolRequestEvent) {
 			m.logToolRequest(event)
 			if !m.planExecuteActive {
-				m.events <- toolTraceMsg{step: event.Step, text: formatToolRequestTrace(event), intent: toolRequestIntent(event), running: true}
+				m.events <- toolTraceMsg{
+					step:       event.Step,
+					text:       formatToolRequestTrace(event),
+					intent:     toolRequestIntent(event),
+					busyStatus: busyStatusForToolRequest(event, prompt),
+					auditKind:  historyToolAuditKind(event),
+					running:    true,
+				}
 			}
 		},
 		func(event agent.ToolResultEvent) {
@@ -849,7 +894,13 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 				}
 			}
 			if !m.planExecuteActive {
-				m.events <- toolTraceMsg{step: event.Step, text: workspace.FormatToolTrace(event.Result)}
+				m.events <- toolTraceMsg{
+					step:        event.Step,
+					text:        workspace.FormatToolTrace(event.Result),
+					busyStatus:  busyStatusAfterToolResult(event),
+					outcome:     historyToolAuditOutcome(event),
+					auditEvents: historyAuditEventsForToolResult(event),
+				}
 			}
 			if workspace.IsWorkspaceWriteTool(event.Request.Tool) || event.Request.Tool == "task_ledger" || strings.TrimSpace(event.Result.Tool) == "submit_plan" {
 				m.events <- planRefreshMsg{}

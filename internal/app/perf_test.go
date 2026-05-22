@@ -189,11 +189,11 @@ func TestInvalidateMessageRenderCache_ClearsPerMessageCache(t *testing.T) {
 
 func TestHandleToolTrace_CompactMode_SkipsMainRender(t *testing.T) {
 	m := &Model{
-		ready:     true,
-		viewport:  viewport.New(48, 12),
-		events:    make(chan tea.Msg, 256),
-		messages:  []llama.ChatMessage{{Role: "user", Content: "hi"}},
-		traceMode: traceDisplayCompact,
+		ready:                    true,
+		viewport:                 viewport.New(48, 12),
+		events:                   make(chan tea.Msg, 256),
+		messages:                 []llama.ChatMessage{{Role: "user", Content: "hi"}},
+		traceMode:                traceDisplayCompact,
 		currentTurnHistoryActive: true,
 		currentTurnHistoryIndex:  1,
 		history: historyState{
@@ -352,9 +352,9 @@ func TestRenderHistoryPanelContent_PrecompiledStyles(t *testing.T) {
 	m := &Model{
 		history: historyState{
 			panelOpen: true,
-			focused:  true,
-			selected: 0,
-			expanded: true,
+			focused:   true,
+			selected:  0,
+			expanded:  true,
 			entries: []historyEntry{
 				{
 					sender:   "agent",
@@ -395,14 +395,14 @@ func TestRenderMessages_SpinnerStillUpdatesDuringStreaming(t *testing.T) {
 
 	m.renderMessages(false)
 	view1 := m.viewport.View()
-	if !strings.Contains(view1, "Qwen is working") {
+	if !strings.Contains(view1, "Qwen is preparing a response") {
 		t.Fatalf("streaming view should show working indicator:\n%s", view1)
 	}
 
 	m.workingFrame = 3
 	m.renderMessages(false)
 	view2 := m.viewport.View()
-	if !strings.Contains(view2, "Qwen is working") {
+	if !strings.Contains(view2, "Qwen is preparing a response") {
 		t.Fatalf("streaming view should still show working indicator:\n%s", view2)
 	}
 	if view1 == view2 {

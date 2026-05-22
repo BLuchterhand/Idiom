@@ -62,6 +62,7 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
 		m.logMessage("route_plan", summary)
+		m.enqueueHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "route selected", detail: summary, status: plan.route.InitialLane})
 	}
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
 	history := m.requestMessages()
@@ -234,6 +235,7 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 	}
 	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
 		m.logMessage("route_plan", summary)
+		m.enqueueHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "route selected", detail: summary, status: plan.route.InitialLane})
 	}
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(objective, plan))
 	requiredPaths := requiredEditPathsFromPrompt(objective)

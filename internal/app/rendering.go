@@ -154,22 +154,17 @@ func (m *Model) renderMessages(forceBottom bool) {
 	msgBodyStyle := bodyStyle.Width(max(1, m.viewport.Width))
 	base := m.renderedMessageBody()
 
-	// While a turn is in flight, render a live "Qwen is working" affordance
-	// after the last message. The in-flight reply is NOT kept in m.messages
-	// as an empty placeholder (that caused double-rendering via the reply
-	// bookkeeping path); we draw the spinner inline instead.
+	// While a turn is in flight, render a live busy affordance after the last
+	// message. The in-flight reply is NOT kept in m.messages as an empty
+	// placeholder (that caused double-rendering via the reply bookkeeping
+	// path); we draw the spinner inline instead.
 	var b strings.Builder
 	if base != "" {
 		b.WriteString(base)
 	}
 	if m.streaming {
 		label := assistantLabelStyle.Render("Qwen")
-		content := m.spinner.View()
-		if m.planPhaseText != "" {
-			content += " " + m.planPhaseText
-		} else {
-			content += " Qwen is working on your request" + m.workingDots()
-		}
+		content := m.spinner.View() + " " + m.streamingBusyText()
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
@@ -186,6 +181,17 @@ func (m *Model) renderMessages(forceBottom bool) {
 	if stickBottom {
 		m.viewport.GotoBottom()
 	}
+}
+
+func (m *Model) streamingBusyText() string {
+	if strings.TrimSpace(m.planPhaseText) != "" {
+		return m.planPhaseText
+	}
+	status := strings.TrimSpace(m.currentTurnBusyStatus)
+	if status == "" {
+		status = defaultBusyStatus
+	}
+	return status + m.workingDots()
 }
 
 func (m *Model) renderedMessageBody() string {
