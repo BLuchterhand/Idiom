@@ -46,6 +46,12 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 
 func deterministicHardTurnRoute(prompt string, fallback turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
 	words := plannerWordText(prompt)
+	if hasExplicitImplementationLaneInvocation(prompt, words) {
+		return normalizeTurnRoutePlan(turnRoutePlan{
+			Family: "implementation",
+			Reason: "explicit_implementation_lane_invocation",
+		}, mode), true
+	}
 	if (hasImplementationWorkflowContract(prompt, words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && (hasEffectiveEditIntent(words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && !isExplanationOnlyCodeQuestion(words) {
 		return normalizeTurnRoutePlan(turnRoutePlan{
 			Family: "implementation",
@@ -98,7 +104,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
-				"Prefer implementation-like families when the user is asking for file changes, tests, docs, config, scripts, prompts, or repairs.",
+				"Prefer implementation-like families when the user gives a directive to perform file changes, tests, docs, config, scripts, prompts, or repairs. Treat question-shaped wording such as can/could/would/should/how/what/why/whether/explain as conversation unless the user explicitly tells you to perform the change now.",
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
 				"Prefer architecture for broad design, boundary, or cross-component assessment. Use conversation for ordinary explanation-only questions unless the user asks for deep architecture/review.",
 				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
@@ -382,10 +388,6 @@ func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, pr
 	if fallbackFamily == "" || plannedFamily == "" || fallbackFamily == plannedFamily {
 		return false
 	}
-	words := plannerWordText(prompt)
-	if isImplementationLikeFamily(fallbackFamily) && !isImplementationLikeFamily(plannedFamily) && !isExplanationOnlyCodeQuestion(words) {
-		return true
-	}
 	return fallbackFamily != "conversation" && plannedFamily == "conversation"
 }
 
@@ -401,7 +403,7 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
 	case !editIntent && util.ContainsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
-	case !editIntent && util.ContainsAny(words, " smoke test ", " verify ", " test the ", " test this "):
+	case !editIntent && util.ContainsAny(words, " smoke test ", " verify ", " test the ", " test this ") && !hasLaneExerciseTarget(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
 	case isSuggestionOnlyArchitectureQuestion(words):
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
@@ -498,7 +500,7 @@ func isImplementationLikeFamily(family string) bool {
 }
 
 func isExplanationOnlyCodeQuestion(words string) bool {
-	if hasEditIntent(words) || util.ContainsAny(words,
+	if util.ContainsAny(words,
 		" review ",
 		" performance ",
 		" perf ",
@@ -517,9 +519,13 @@ func isExplanationOnlyCodeQuestion(words string) bool {
 		" how do ",
 		" how is ",
 		" how are ",
+		" explain ",
 		" explain how ",
 		" explain what ",
 		" what does ",
+		" what is ",
+		" what are ",
+		" difference between ",
 		" how this ",
 	) {
 		return false
@@ -583,68 +589,49 @@ func hasEditIntent(words string) bool {
 }
 
 func hasEffectiveEditIntent(words string) bool {
-	return (hasEditIntent(words) || hasQuestionShapedMutationIntent(words) || hasUILayoutMutationIntent(words)) && !explicitlyForbidsEdits(words)
+	if explicitlyForbidsEdits(words) || isQuestionShapedRequest(words) {
+		return false
+	}
+	return hasEditIntent(words)
 }
 
-func hasQuestionShapedMutationIntent(words string) bool {
-	if !util.ContainsAny(words,
+func hasExplicitImplementationLaneInvocation(prompt string, words string) bool {
+	if explicitlyForbidsEdits(words) || isExplanationOnlyCodeQuestion(words) || !hasEditIntent(words) {
+		return false
+	}
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "/implement")
+}
+
+func hasLaneExerciseTarget(words string) bool {
+	return util.ContainsAny(words,
+		" implement lane ",
+		" implementation lane ",
+		" /implement ",
+		" plan-execute lane ",
+		" plan execute lane ",
+		" /plan-execute ",
+	)
+}
+
+func isQuestionShapedRequest(words string) bool {
+	return util.ContainsAny(words,
 		" can we ",
 		" can you ",
 		" could we ",
 		" could you ",
+		" would we ",
 		" would you ",
-	) {
-		return false
-	}
-	if util.ContainsAny(words,
-		" explain ",
-		" whether ",
-		" why ",
-		" possible ",
-		" feasibility ",
 		" should we ",
+		" should you ",
 		" how can ",
 		" how could ",
-	) {
-		return false
-	}
-	if !util.ContainsAny(words,
-		" shorten ",
-		" shortening ",
-		" simplify ",
-		" simplifying ",
-		" reword ",
-		" rewording ",
-		" relabel ",
-		" relabeling ",
-		" restyle ",
-		" restyling ",
-		" rename ",
-		" renaming ",
-		" replace ",
-		" replacing ",
-		" change ",
-		" changing ",
-		" update ",
-		" updating ",
-		" show ",
-		" use ",
-		" make ",
-	) {
-		return false
-	}
-	return util.ContainsAny(words,
-		" to ",
-		" into ",
-		" as ",
-		" instead ",
-		" just ",
-		" be ",
-		" display ",
-		" shown ",
-		" label ",
-		" string ",
-		" text ",
+		" how should ",
+		" what would ",
+		" what should ",
+		" why ",
+		" whether ",
+		" explain ",
 	)
 }
 
@@ -701,36 +688,6 @@ func hasPlanExecuteWorkflowWords(words string) bool {
 		" prd to adr to plan to execute ",
 		" implementation lane ",
 		" default implementation lane ",
-	)
-}
-
-func hasUILayoutMutationIntent(words string) bool {
-	if !util.ContainsAny(words,
-		" input field ",
-		" text input ",
-		" textarea ",
-		" terminal ",
-		" tui ",
-		" ui ",
-		" viewport ",
-		" footer ",
-		" prompt box ",
-	) {
-		return false
-	}
-	return util.ContainsAny(words,
-		" re align ",
-		" realign ",
-		" align ",
-		" flush ",
-		" bottom ",
-		" wrap ",
-		" height ",
-		" off screen ",
-		" offscreen ",
-		" resize ",
-		" reposition ",
-		" move ",
 	)
 }
 

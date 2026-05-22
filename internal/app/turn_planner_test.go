@@ -2713,13 +2713,13 @@ func TestFallbackTurnRouteRecognizesSuggestionQuestionAsArchitecture(t *testing.
 	}
 }
 
-func TestFallbackTurnRouteRecognizesUILayoutMutation(t *testing.T) {
+func TestFallbackTurnRouteKeepsQuestionShapedUILayoutRequestReadOnly(t *testing.T) {
 	prompt := "can you re-align the text input field to be flush against the bottom of the terminal? When it needs to wrap to a new line, it should simply increase in height to avoid going off-screen"
 	plan := fallbackTurnRoute(prompt, agent.BuildMode())
-	if plan.Family != "implementation" {
-		t.Fatalf("family = %q, want implementation", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -5565,7 +5565,7 @@ func TestClassifyTurnRouteKeepsPlanExecuteHowToQuestionReadOnly(t *testing.T) {
 	}
 }
 
-func TestClassifyTurnRouteQuestionShapedMutationOverridesDirectQuestion(t *testing.T) {
+func TestClassifyTurnRouteKeepsQuestionShapedMutationReadOnly(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -5585,28 +5585,29 @@ func TestClassifyTurnRouteQuestionShapedMutationOverridesDirectQuestion(t *testi
 	}
 	prompt := "The current model string in the top-right portion of the banner shows a path with what seems to be a stripped filename. Can we shorten this to be just the model's alias?"
 	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
-	if plan.Family != "implementation" {
-		t.Fatalf("family = %q, want implementation", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 	if calls.Load() == 0 {
-		t.Fatal("expected classifier to be consulted before fallback override")
+		t.Fatal("expected classifier to be consulted before honoring the read-only route")
 	}
 }
 
-func TestClassifyTurnRouteQuestionShapedMutationFallbackIsImplementation(t *testing.T) {
+func TestClassifyTurnRouteQuestionShapedMutationFallbackIsReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	plan := m.classifyTurnRoute(context.Background(), "Can we shorten the displayed model label to just the alias?", agent.BuildMode())
-	if plan.Family != "implementation" || plan.InitialLane != "implement" {
-		t.Fatalf("question-shaped mutation should route implementation, got %#v", plan)
+	if isImplementationLikeFamily(plan.Family) {
+		t.Fatalf("question-shaped mutation should stay read-only, got %#v", plan)
 	}
 }
 
-func TestClassifyTurnRouteQuestionShapedMutationHonorsReadOnlyWording(t *testing.T) {
+func TestClassifyTurnRouteLaneNameQuestionStaysReadOnly(t *testing.T) {
 	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
 	for _, prompt := range []string{
+		"Can you explain to me what the difference is between the implement and plan-execute lanes?",
 		"Can you explain whether we can shorten the displayed model label to just the alias?",
 		"Can we shorten the displayed model label to just the alias without changing files?",
 	} {
@@ -5614,6 +5615,72 @@ func TestClassifyTurnRouteQuestionShapedMutationHonorsReadOnlyWording(t *testing
 		if isImplementationLikeFamily(plan.Family) {
 			t.Fatalf("%q should stay read-only, got %#v", prompt, plan)
 		}
+	}
+}
+
+func TestClassifyTurnRouteHonorsClassifierImplementationDirective(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	plan := m.classifyTurnRoute(context.Background(), "Shorten the displayed model label to just the alias.", agent.BuildMode())
+	if plan.Family != "implementation" || plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("classifier-selected directive should route implementation, got %#v", plan)
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("expected classifier call, got %d", calls.Load())
+	}
+}
+
+func TestClassifyTurnRouteExplicitImplementInvocationBeatsVerificationWording(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"verification_only","initial_lane":"main","reason":"verification_request","contract":"direct_answer"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	prompt := `I want to test the implement lane... can you use /implement to create and write a new file with the text "ben is cool"?`
+	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
+	if plan.Family != "implementation" || plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		t.Fatalf("explicit /implement write invocation should route implementation, got %#v", plan)
+	}
+	if plan.Reason != "explicit_implementation_lane_invocation" {
+		t.Fatalf("reason = %q, want explicit_implementation_lane_invocation", plan.Reason)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("explicit /implement invocation should be deterministic, got classifier calls=%d", calls.Load())
+	}
+}
+
+func TestFallbackTurnRouteLaneExerciseDoesNotBecomeVerificationOnly(t *testing.T) {
+	m := &Model{cfg: config.Config{RouteClassifier: config.RouteClassifier{Enabled: false}}}
+	plan := m.classifyTurnRoute(context.Background(), "I want to test the implementation lane.", agent.BuildMode())
+	if plan.Family == "verification_only" {
+		t.Fatalf("lane exercise wording should not auto-run tests, got %#v", plan)
 	}
 }
 
