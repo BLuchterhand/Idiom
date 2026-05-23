@@ -87,9 +87,6 @@ func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt
 	if strings.TrimSpace(plan.route.Family) == agent.PlanThenExecutePlannerTaskFamily {
 		return func() {}
 	}
-	if shouldDispatchImplementationToPlanExecute(plan, plan.mode, m.cfg, prompt) {
-		return func() {}
-	}
 	return m.applyExecutorPromptRoute(ctx, "implementation direct runner", false)
 }
 
@@ -125,9 +122,6 @@ func (m *Model) shouldPreloadDirectImplementationContext(prompt string, plan pro
 		return false
 	}
 	if !isImplementationLikeFamily(plan.route.Family) || isPlanExecuteInternalFamily(plan.route.Family) {
-		return false
-	}
-	if shouldDispatchImplementationToPlanExecute(plan, plan.mode, m.cfg, prompt) {
 		return false
 	}
 	if len(plan.runtimeBrief.TargetPacket) > 0 || len(plan.runtimeBrief.RequiredEditPaths) > 0 || len(plan.runtimeBrief.AllowedEditPaths) > 0 {
@@ -216,6 +210,19 @@ func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutio
 	}
 }
 
+func (m *Model) implementCommandExecutionPlan(objective string) promptExecutionPlan {
+	mode := agent.BuildMode()
+	route := normalizeTurnRoutePlan(turnRoutePlan{
+		Family: "implementation",
+		Reason: "typed_implement_command",
+	}, mode)
+	return promptExecutionPlan{
+		mode:         mode,
+		route:        route,
+		runtimeBrief: m.runtimeBriefForRouteMode(route, mode, objective),
+	}
+}
+
 func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string) (string, error) {
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
@@ -238,9 +245,51 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 		m.enqueueHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "route selected", detail: summary, status: plan.route.InitialLane})
 	}
 	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(objective, plan))
-	requiredPaths := requiredEditPathsFromPrompt(objective)
-	allowedPaths := allowedEditPathsFromPrompt(objective)
-	reply, err := m.runSingleImplementationPlanExecute(ctx, objective, plan, requiredPaths, allowedPaths, nil)
+	reply, err := m.runImplementationViaPlanExecute(ctx, objective, plan)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) runImplementCommandOnce(ctx context.Context, objective string) (string, error) {
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return "", fmt.Errorf("implement objective is required")
+	}
+	m.emitJSONStart(objective)
+	if err := m.ensureServerReady(ctx); err != nil {
+		m.emitJSONError("server_not_ready", err.Error())
+		return "", err
+	}
+	plan := m.implementCommandExecutionPlan(objective)
+	plan = m.recoverDirectImplementationContext(objective, plan)
+	restoreRoute := m.applyDirectImplementationPromptRoute(ctx, objective, plan)
+	defer restoreRoute()
+	chatOpts := tuneChatOptionsForPlan(m.chatOptions(), plan)
+	chatOpts = applyMaxTokensOverride(chatOpts, m.maxTokensOverride)
+	if m.workspace != nil {
+		m.workspace.PrimeDiscoveredPaths(pathparse.MentionedWorkspacePaths(objective))
+	}
+	suppressTranscript := m.suppressPromptTranscript
+	if !suppressTranscript {
+		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: objective})
+		m.logMessage("user", objective)
+	} else if m.debugLogger != nil {
+		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed nested implement command (%d chars)", len(objective)))
+	}
+	m.logMessage("thinking_config", samplingSummaryForOptions(chatOpts))
+	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
+		m.logMessage("route_plan", summary)
+		m.enqueueHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "route selected", detail: summary, status: plan.route.InitialLane})
+	}
+	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(objective, plan))
+	history := m.requestMessages()
+	if suppressTranscript {
+		history = append(history, llama.ChatMessage{Role: "user", Content: objective})
+	}
+	reply, err := m.runAgentTurn(ctx, objective, history, chatOpts, plan)
 	if err != nil {
 		m.emitJSONError("run_failed", err.Error())
 		return "", err
@@ -258,7 +307,12 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 	if brief.Objective == "" {
 		brief.Objective = strings.TrimSpace(prompt)
 	}
-	brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, pathparse.MentionedWorkspacePaths(prompt)...)
+	mentionedPaths := pathparse.MentionedWorkspacePaths(prompt)
+	if isImplementationLikeFamily(route.Family) && route.Family != agent.PlanThenExecutePlannerTaskFamily {
+		brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, mentionedPaths...)
+	} else {
+		brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, mentionedPaths...)
+	}
 	brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, promptContextEvidencePaths(prompt)...)
 	brief.TargetPacket = appendUniqueBriefStrings(brief.TargetPacket, promptContextPacketMarkers(prompt)...)
 	scopeContract, useTypedPlanExecuteScope := m.planExecuteRuntimeScopeContract(route)

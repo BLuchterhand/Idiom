@@ -36,10 +36,13 @@ func TestManagerPlanThenExecutePlannerModeSwapsManifest(t *testing.T) {
 	}
 	// Read-class tools should still be present so the planner can
 	// gather evidence before submitting the plan.
-	for _, read := range []string{"read_file", "search_content", "code_navigate", "context_pack", "harness_feedback", "submit_plan"} {
+	for _, read := range []string{"read_file", "search_content", "code_navigate", "context_pack", "harness_feedback", "recovery_inspect", "recovery_status", "product_efforts", "product_status", "submit_plan"} {
 		if !planModeManifestContains(plannerTools, read) {
 			t.Fatalf("planner-mode manifest must keep %s, got %v", read, plannerTools)
 		}
+	}
+	if planModeManifestContains(plannerTools, "recovery_decompose") {
+		t.Fatalf("planner-mode manifest must not expose recovery_decompose because it writes recovery packets, got %v", plannerTools)
 	}
 
 	// Toggling off restores the default surface.

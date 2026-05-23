@@ -34,6 +34,49 @@ func TestDeriveTurnPhaseContractPlanExecuteRequiredSource(t *testing.T) {
 	assertContains(t, contract.HiddenTools, "submit_plan")
 }
 
+func TestDeriveTurnPhaseContractPlanExecuteCandidateSourcePending(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools: []string{
+				"context_pack", "read_file", "code_navigate", "product_efforts", "product_status",
+				"submit_plan", "edit_file", "shell",
+			},
+		},
+	})
+
+	if contract.PhaseID != turnPhaseCandidateSource {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+	assertEqualSet(t, contract.AllowedTools, []string{"context_pack", "read_file", "code_navigate", "product_efforts", "product_status"})
+	assertContains(t, contract.HiddenTools, "submit_plan")
+}
+
+func TestDeriveTurnPhaseContractPlanExecuteCandidateSourceReadSubmitReady(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"context_pack", "read_file", "submit_plan"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read internal/workspace/product_tools.go lines 1-114 (total lines: 114)",
+			Output:  "func (m *Manager) productEfforts(req ToolRequest) ToolResult { return ToolResult{} }",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseSubmitReadyTextual {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
+	}
+	assertContains(t, contract.AllowedTools, "submit_plan")
+	assertContains(t, contract.HiddenTools, "read_file")
+}
+
 func TestDeriveTurnPhaseContractSubmitReadyNativeRequired(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

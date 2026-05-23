@@ -49,11 +49,11 @@ func TestLiveAgentHistoryEntryUpdatesToolCallInPlace(t *testing.T) {
 	if !agentEntry.toolCalls[0].running {
 		t.Fatal("tool line should be marked running")
 	}
-	if !strings.Contains(m.history.viewport.View(), "read_file | running internal/app/history.go") {
-		t.Fatalf("history viewport did not render running tool line:\n%s", m.history.viewport.View())
+	if !strings.Contains(m.history.viewport.View(), "Tools: 1 call(s) (1 read); 1 running") {
+		t.Fatalf("history viewport did not render compact tool summary:\n%s", m.history.viewport.View())
 	}
-	if !strings.Contains(m.history.viewport.View(), "reason: inspect the history model") {
-		t.Fatalf("history viewport did not render tool intent:\n%s", m.history.viewport.View())
+	if !strings.Contains(m.history.viewport.View(), "Latest: read_file running - inspect the history model") {
+		t.Fatalf("history viewport did not render latest tool intent:\n%s", m.history.viewport.View())
 	}
 
 	m.recordToolTraceInHistory(1, "read_file | Read internal/app/history.go lines 1-40", "", false, "", "ok: read 40 lines", nil)
@@ -129,7 +129,7 @@ func TestToolRequestIntentInfersSearchPurpose(t *testing.T) {
 	}
 }
 
-func TestHistoryRendersAuditEventsAndToolMetadata(t *testing.T) {
+func TestHistoryRendersCompactAuditDigest(t *testing.T) {
 	m := newHistoryPanelModel()
 	m.appendHistoryMessage("user", "inspect audit trail", nil)
 	m.beginAgentHistoryTurn()
@@ -150,8 +150,54 @@ func TestHistoryRendersAuditEventsAndToolMetadata(t *testing.T) {
 		[]historyAuditEvent{{kind: "cache", label: "context freshness refresh indexed 12 file(s)", detail: "reason=stale_unbounded_graph", status: "refresh"}},
 	)
 
-	view := m.history.viewport.View()
+	view := collapseWhitespace(m.history.viewport.View())
 	for _, want := range []string{
+		"Route: explore -> implement (implementation_result)",
+		"Tools: 1 call(s) (1 discovery)",
+		"Latest: context_pack ok - build a ranked context packet before choosing exact reads",
+		"Signals: cache refreshed",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("history viewport missing %q:\n%s", want, view)
+		}
+	}
+	for _, noisy := range []string{
+		"lane [explore]: route selected",
+		"type=discovery / context",
+		"outcome=ok: ranked 8 file(s)",
+		"reason: build a ranked context packet before choosing exact reads",
+	} {
+		if strings.Contains(view, noisy) {
+			t.Fatalf("compact history should not render raw detail %q:\n%s", noisy, view)
+		}
+	}
+}
+
+func TestHistoryTraceDetailRendersRawAuditEventsAndToolMetadata(t *testing.T) {
+	m := newHistoryPanelModel()
+	m.traceMode = traceDisplayDetail
+	m.appendHistoryMessage("user", "inspect audit trail", nil)
+	m.beginAgentHistoryTurn()
+
+	m.handleHistoryAudit(historyAuditMsg{event: historyAuditEvent{
+		kind:   "lane",
+		label:  "route selected",
+		detail: "initial=explore followup=implement contract=implementation_result",
+		status: "explore",
+	}})
+	m.recordToolTraceInHistory(
+		1,
+		"context_pack | ranked 8 files",
+		"build a ranked context packet before choosing exact reads",
+		false,
+		"discovery / context",
+		"ok: ranked 8 file(s)",
+		[]historyAuditEvent{{kind: "cache", label: "context freshness refresh indexed 12 file(s)", detail: "reason=stale_unbounded_graph", status: "refresh"}},
+	)
+
+	view := collapseWhitespace(m.history.viewport.View())
+	for _, want := range []string{
+		"Details:",
 		"lane [explore]: route selected",
 		"cache [refresh]: context freshness refresh indexed 12 file(s)",
 		"type=discovery / context",
@@ -159,7 +205,7 @@ func TestHistoryRendersAuditEventsAndToolMetadata(t *testing.T) {
 		"reason: build a ranked context packet before choosing exact reads",
 	} {
 		if !strings.Contains(view, want) {
-			t.Fatalf("history viewport missing %q:\n%s", want, view)
+			t.Fatalf("detail history viewport missing %q:\n%s", want, view)
 		}
 	}
 }

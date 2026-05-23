@@ -25,13 +25,18 @@ next-action guidance, ranker-learning evidence adapters, the CLI-ready operator
 status view model, the read-only effort browser, and status-migration
 plan/apply behavior.
 
-Open delivery blockers from the 2026-05-18 post-closeout review: status
-migration apply must harden predictable temp-path writes against pre-existing
-symlinks; the TUI continuation/handoff surface is not yet delivered; the
-coverage gate must reuse product lint/audit authority or run those checks as
-blocking preconditions; the durable two-ADR supersession fixture and
-index-vs-markdown divergence policy are still missing; Phase 7 `idiom tool`/MCP
-read-only product workflow exposure is not shipped; and operator UX/API parity
+Open delivery blockers from the 2026-05-18 post-closeout review, updated by
+the 2026-05-22 TUI lane smoke and follow-up fixes: status migration apply now
+rejects predictable temp-path symlinks before mutation; the TUI
+continuation/handoff surface is not yet delivered; the latest natural-language
+TUI dispatch reached the implementation lane but originally blocked before edits
+on evidence-gating around context packet candidates; that context-packet
+candidate read blocker is fixed for structured packet candidates. The coverage
+gate must reuse product lint/audit authority or run those checks as blocking
+preconditions; the durable two-ADR supersession fixture and index-vs-markdown
+divergence policy are still missing; Phase 7 read-only product workflow status
+and effort browsing now ship through `idiom tool` and the MCP discovery schema,
+while artifact-inspection exposure is still pending; and operator UX/API parity
 gaps remain for closed-effort actions, missing-state recovery, and JSON
 usage-error output.
 
@@ -230,6 +235,60 @@ The proposal should be read in two layers:
 | Lower harness substrate | Implemented: context graph tools, architect packets, artifact generation, brief lint, atom intake, lane dispatch, plan-execute progress state, lane history, product evidence, release evidence, telemetry, and audit. | The workflow can be composed from stable headless harness capabilities. |
 | Product workflow CLI | Partially implemented: durable effort folders/indexes, product lint/audit/status, research profile surfaces, evidence merge, PRD/ADR prompt renderers, acceptance/supersession checks, plan-only TDD obligation synthesis, deterministic coverage evaluation, brief rendering, execution feedback, metrics, Obsidian parity, effort browsing, and status migration. | These surfaces are usable as headless deterministic workflow contracts, but several design acceptance criteria remain open. |
 | Product workflow TUI/sidecar | Not complete: the shared operator status model exists for CLI use, but TUI continuation/handoff fixtures and read-only `idiom tool`/MCP product workflow exposure are not delivered. | Do not claim graceful interactive continuation or external-agent product workflow consumption until these slices close. |
+
+### Status Snapshot 2026-05-22
+
+Done or materially in place:
+
+- The lower harness substrate remains implemented: context graph discovery,
+  architect packets, lint/intake, lane dispatch, product/release evidence,
+  telemetry, audit, and execution feedback surfaces.
+- The product workflow CLI is partially implemented and can render deterministic
+  product lint/audit/status, effort browsing, PRD/ADR/TDD/brief helpers,
+  coverage-gate output, metrics, Obsidian parity checks, and status migration
+  plans/apply behavior.
+- The operator status model and read-only effort browser exist for CLI use.
+- Read-only product workflow status and effort browsing are exposed through
+  `idiom tool product_status` and `idiom tool product_efforts`, including the
+  discovery profile, MCP discovery schema, and sidecar envelope.
+- Explicit mutation entrypoints are available, including slash-command
+  invocation for implementation work.
+- Route activation has been tightened so fallback routing stays read-only when
+  the classifier is unavailable, while classifier-backed natural-language
+  directives such as "can you implement this feature: ..." can enter the
+  implementation lane without relying on trigger-word heuristics.
+- A 2026-05-22 live TUI smoke for the next Phase 7 atom confirmed the
+  classifier-backed path can reach `writer_mode=agentic_guarded` from natural
+  language.
+- The context-packet candidate read blocker observed in that TUI smoke has been
+  narrowed: structured `context_pack` candidate files can now be read as source
+  evidence instead of being rejected solely because no required edit path was
+  predeclared.
+- Status-migration apply hardening is implemented and covered by regression
+  tests that reject pre-existing workflow, events, and index temp symlinks
+  without partial durable mutation.
+
+Not done yet:
+
+- External agents cannot yet consume PRD/ADR/brief product workflow artifacts
+  through the intended read-only sidecar contract.
+- The 2026-05-22 TUI implementation attempt made no edits and ran no
+  verification. The specific structured-candidate read blocker has since been
+  fixed, but the full natural-language implementation flow still needs another
+  live TUI run to prove it proceeds from source evidence to write and
+  verification without manual technical wrangling.
+- Default local TUI behavior depends on configuration: a config with the route
+  classifier enabled can route explicit natural-language implementation
+  directives into the mutation lane; a config with the classifier disabled
+  should conservatively remain in conversation/read-only behavior.
+
+Next safe atom:
+
+- Run the next live TUI implementation smoke for the Phase 7 sidecar work and
+  confirm the natural-language path now proceeds from `context_pack` candidate
+  source reads to a write and verification.
+- Add read-only artifact inspection for product workflow PRD/ADR/brief artifacts
+  once their schemas are stable enough for external agents.
 
 For TUI users, the current implementation does not yet provide a first-class
 interactive product-workflow surface. Existing resume support can replay a prior
@@ -2031,10 +2090,12 @@ and fixture atoms. The investigation answers:
 
 Post-closeout review status as of 2026-05-18: the durable effort is in the
 `closed` status bucket after Atom 38, but the feature does not yet satisfy all
-criteria below. The remaining blockers are the status-migration temp-path
-hardening issue, Phase 6 TUI continuation/handoff completion, coverage-gate
-authority reuse, durable two-ADR supersession/divergence fixtures, Phase 7
-sidecar exposure, and operator UX/API parity gaps.
+criteria below. As of the 2026-05-22 follow-up fixes, status-migration
+temp-path hardening and Phase 7 `idiom tool` status/effort browsing are
+implemented. The remaining blockers are Phase 6 TUI continuation/handoff
+completion, coverage-gate authority reuse, durable two-ADR
+supersession/divergence fixtures, Phase 7 artifact-inspection exposure, and
+operator UX/API parity gaps.
 
 The feature is useful when a team can:
 

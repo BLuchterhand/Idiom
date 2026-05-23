@@ -76,31 +76,6 @@ type implementationDispatchRecoveryDecision struct {
 var implementationDispatchPlanDocumentPreflightRunner = defaultImplementationDispatchPlanDocumentPreflight
 var implementationDispatchPlanDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
 
-func shouldDispatchImplementationToPlanExecute(plan promptExecutionPlan, mode agent.Mode, cfg config.Config, prompt string) bool {
-	if !isImplementationLikeFamily(plan.route.Family) {
-		return false
-	}
-	if isPlanExecuteInternalFamily(plan.route.Family) {
-		return false
-	}
-	if mode.Name != "build" {
-		return false
-	}
-	if !cfg.Workspace.EnableWrites {
-		return false
-	}
-	if strings.TrimSpace(cfg.Chat.ImplementationDispatch) != "plan_execute" {
-		return false
-	}
-	if implementationDispatchPromptIsRefineScratchpad(prompt) {
-		return false
-	}
-	if implementationDispatchHasPlanExecuteReadyHandoff(prompt, plan, cfg) {
-		return true
-	}
-	return false
-}
-
 func isPlanExecuteInternalFamily(family string) bool {
 	switch strings.TrimSpace(family) {
 	case agent.PlanThenExecutePlannerTaskFamily, agent.PlanThenExecuteReviewRepairTaskFamily:
@@ -116,35 +91,6 @@ func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecu
 		len(allowedPaths) > 0 ||
 		len(planDocuments) > 0 ||
 		len(blockers) > 0
-}
-
-func implementationDispatchHasPlanExecuteReadyHandoff(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
-	requiredPaths, allowedPaths, planDocuments, blockers := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
-	if len(planDocuments) > 0 || len(blockers) > 0 {
-		return true
-	}
-	if implementationDispatchPromptHasExecutablePlanEdits(prompt, requiredPaths) {
-		return true
-	}
-	if len(requiredPaths) == 0 && implementationDispatchPromptHasExecutablePlanEdits(prompt, allowedPaths) {
-		return true
-	}
-	if implementationDispatchPromptExplicitPlanExecuteLaneRequest(prompt) &&
-		len(requiredPaths) >= 2 &&
-		implementationDispatchScopeHasSourceAndTestPath(requiredPaths) {
-		return true
-	}
-	if implementationDispatchHasSemanticSourceAndTestScope(prompt, plan, cfg) {
-		return false
-	}
-	return false
-}
-
-func implementationDispatchPromptExplicitPlanExecuteLaneRequest(prompt string) bool {
-	lower := strings.ToLower(strings.Join(strings.Fields(prompt), " "))
-	return strings.Contains(lower, "use the plan-execute lane") ||
-		strings.Contains(lower, "run through the plan-execute lane") ||
-		strings.Contains(lower, "send this through the plan-execute lane")
 }
 
 func implementationDispatchHasSemanticSourceAndTestScope(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
@@ -1378,6 +1324,9 @@ func implementationDispatchPromptRequiresResolvedPlanDocument(prompt string, pla
 	}
 	if !hasPlanDocumentRef {
 		return false
+	}
+	if strings.TrimSpace(plan.route.Reason) == "typed_plan_execute_command" {
+		return true
 	}
 	words := plannerWordText(prompt)
 	for _, phrase := range []string{

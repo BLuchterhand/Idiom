@@ -15,6 +15,14 @@ candidate write scope, exact snippets, edit-kind obligations, evidence paths,
 and recovery/resume state must be fields on a contract or durable progress
 record, not facts rediscovered from generated prompt prose.
 
+For human-facing lane activation, "typed" also means explicit. Do not use
+keyword, regex, path-shape, or phrase heuristics to move a TUI prompt into
+`implement`, `plan-execute`, `verification`, `locate`, `review`, or
+`architecture`. Natural language must either be classified by the route
+classifier or fall back conservatively to conversation. Essential lane entry
+points should be slash commands or other typed invocations, with the chosen
+route recorded in the run contract.
+
 When a capable model suddenly appears weak, repetitive, or unable to complete a
 task shape it normally handles, treat that as an alignment symptom before
 blaming model quality. Inspect the runtime configuration, selected role/model,

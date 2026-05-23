@@ -4,13 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	"idiom/internal/agent"
-	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/util"
@@ -31,9 +29,6 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 		return fallbackTurnRoute(prompt, mode)
 	}
 	fallback := fallbackTurnRoute(prompt, mode)
-	if plan, ok := deterministicHardTurnRoute(prompt, fallback, mode); ok {
-		return plan
-	}
 	if planned, ok := m.classifyTurnRouteWithModel(ctx, prompt, mode); ok {
 		planned = correctTurnRoutePlanForPrompt(planned, prompt, mode)
 		if shouldPreferFallbackRoute(fallback, planned, prompt) {
@@ -44,49 +39,12 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 	return fallback
 }
 
-func deterministicHardTurnRoute(prompt string, fallback turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
-	words := plannerWordText(prompt)
-	if hasExplicitImplementationLaneInvocation(prompt, words) {
-		return normalizeTurnRoutePlan(turnRoutePlan{
-			Family: "implementation",
-			Reason: "explicit_implementation_lane_invocation",
-		}, mode), true
-	}
-	if (hasImplementationWorkflowContract(prompt, words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && (hasEffectiveEditIntent(words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && !isExplanationOnlyCodeQuestion(words) {
-		return normalizeTurnRoutePlan(turnRoutePlan{
-			Family: "implementation",
-			Reason: "workflow_contract",
-		}, mode), true
-	}
-	if deterministicTurnRouteIsDecisive(fallback, prompt, mode) {
-		return fallback, true
-	}
-	return turnRoutePlan{}, false
-}
-
-func deterministicTurnRouteIsDecisive(plan turnRoutePlan, prompt string, mode agent.Mode) bool {
-	plan = normalizeTurnRoutePlan(plan, mode)
-	family := strings.TrimSpace(plan.Family)
-	if family == "" || family == "conversation" || family == "direct_question" || family == "multi_turn_state" || isImplementationLikeFamily(family) {
-		return false
-	}
-	words := plannerWordText(prompt)
-	if isAnalysisContinuationPrompt(words) {
-		return false
-	}
-	switch family {
-	case "debug_logs", "verification_only", "locate":
-		return true
-	default:
-		return false
-	}
-}
-
 func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, mode agent.Mode) (turnRoutePlan, bool) {
 	if m == nil {
 		return turnRoutePlan{}, false
 	}
 	if !m.cfg.RouteClassifier.Enabled {
+		m.logRouteClassifierDecision(map[string]any{"status": "disabled"})
 		return turnRoutePlan{}, false
 	}
 	history := renderRecentConversationForRouting(m.messages, 6)
@@ -97,14 +55,18 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"You classify coding-agent turns into one workflow family before execution.",
 				"Return strict JSON only.",
 				"Choose the best family from this enum:",
-				"conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
+				"conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
 				"Also return initial_lane, optional followup_lane, reason, contract, and optional thoroughness.",
 				"Use coarse OpenCode-shaped routing: conversation for normal question-answer turns, read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
 				"Prefer conversation by default for questions, status requests, how-to requests, and lightweight repo questions. Conversation may use efficient read-only workspace tools when the answer depends on code or logs.",
 				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
-				"Prefer implementation-like families when the user gives a directive to perform file changes, tests, docs, config, scripts, prompts, or repairs. Treat question-shaped wording such as can/could/would/should/how/what/why/whether/explain as conversation unless the user explicitly tells you to perform the change now.",
+				"Prefer implementation-like families when the user gives a directive to perform file changes, tests, docs, config, scripts, prompts, or repairs.",
+				"Prefer plan_then_execute_planner when the requested outcome is to dispatch a durable implementation atom or brief through the plan-execute workflow, where valid terminal outcomes include a submit_plan artifact, source-satisfied closeout, or typed blocker before execution.",
+				"Question-shaped wording is not a lane signal by itself. Classify by requested outcome: a polite request such as 'can you implement/fix/update/add...' is implementation when it asks the agent to perform the change now; a deliberative question such as 'can we/should we/how would we...' stays conversation when it asks about whether or how to change.",
+				"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive.",
+				"Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => plan_then_execute_planner; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.",
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
 				"Prefer architecture for broad design, boundary, or cross-component assessment. Use conversation for ordinary explanation-only questions unless the user asks for deep architecture/review.",
 				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
@@ -128,11 +90,13 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	opts := llama.ChatOptions{
 		MaxTokens:          256,
 		Temperature:        0.1,
+		TopP:               1,
 		EnableThinking:     &thinkingOff,
 		ChatTemplateKwargs: true,
 	}
 	client := m.routeClassifierChatClient()
 	if client == nil {
+		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "no_client"})
 		return turnRoutePlan{}, false
 	}
 	text, err := client.CompleteChat(classifyCtx, messages, opts)
@@ -140,14 +104,36 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		text, err = m.client.CompleteChat(classifyCtx, messages, opts)
 	}
 	if err != nil {
+		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "completion_error", "error": truncateImplementationDispatchText(err.Error(), 240)})
 		return turnRoutePlan{}, false
 	}
 	plan, err := parseTurnRoutePlan(text)
 	if err != nil {
+		m.logRouteClassifierDecision(map[string]any{"status": "parse_error", "error": truncateImplementationDispatchText(err.Error(), 240)})
 		return turnRoutePlan{}, false
 	}
 	plan = normalizeTurnRoutePlan(plan, mode)
+	m.logRouteClassifierDecision(map[string]any{
+		"status":       "accepted",
+		"family":       plan.Family,
+		"initial_lane": plan.InitialLane,
+		"reason":       plan.Reason,
+		"contract":     plan.Contract,
+	})
 	return plan, plan.Family != ""
+}
+
+func (m *Model) logRouteClassifierDecision(fields map[string]any) {
+	if m == nil {
+		return
+	}
+	if fields == nil {
+		fields = map[string]any{}
+	}
+	fields["schema_version"] = "idiom.route_classifier_decision.v1"
+	if body, err := json.Marshal(fields); err == nil {
+		m.logMessage("route_classifier_decision", string(body))
+	}
 }
 
 func (m *Model) routeClassifierChatClient() llama.LLMClient {
@@ -225,6 +211,10 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	plan.Contract = normalizeRouteValue(plan.Contract)
 	plan.Family = normalizeRouteValue(plan.Family)
 	plan.Thoroughness = normalizeRouteValue(plan.Thoroughness)
+	switch plan.Family {
+	case "plan_execute", "plan_execute_planner", "plan_then_execute":
+		plan.Family = agent.PlanThenExecutePlannerTaskFamily
+	}
 	if plan.Family == "" {
 		return fallbackTurnRoute("", mode)
 	}
@@ -295,7 +285,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
 		plan.Reason = util.FirstNonEmpty(plan.Reason, "direct_implementation")
-	case "plan_then_execute_planner":
+	case agent.PlanThenExecutePlannerTaskFamily:
 		// Planner phase of `idiom plan-execute`. Same lane shape as
 		// implementation (write-capable contract, single turn) but the
 		// only exposed write tool is submit_plan; per-edit writes are
@@ -329,18 +319,6 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	words := plannerWordText(prompt)
-	if (hasImplementationWorkflowContract(prompt, words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && (hasEffectiveEditIntent(words) || hasPlanExecuteSourceSatisfiedWorkflowContract(prompt, words)) && !isExplanationOnlyCodeQuestion(words) {
-		return normalizeTurnRoutePlan(turnRoutePlan{
-			Family: "implementation",
-			Reason: "workflow_contract",
-		}, mode)
-	}
-	if plan.Family == "verification_only" && hasEffectiveEditIntent(words) {
-		return normalizeTurnRoutePlan(turnRoutePlan{
-			Family: "implementation",
-			Reason: "edit_intent_overrides_verification",
-		}, mode)
-	}
 	if plan.Family == "debug_logs" && !util.ContainsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
 		return fallbackTurnRoute(prompt, mode)
 	}
@@ -392,85 +370,10 @@ func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, pr
 }
 
 func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
-	lower := " " + strings.ToLower(strings.TrimSpace(prompt)) + " "
-	words := plannerWordText(prompt)
-	mentionedPaths := pathparse.MentionedWorkspacePaths(prompt)
-	editIntent := hasEffectiveEditIntent(words)
-	namedPathWorkIntent := len(mentionedPaths) > 0 && !explicitlyForbidsEdits(words) && hasNamedWorkspaceTargetWorkIntent(words)
-	namedPathOrEditIntent := namedPathWorkIntent || editIntent
-	switch {
-	case util.ContainsAny(words, " log ", " logs ", " jsonl ", " trace ") && util.ContainsAny(words, " fail ", " failed ", " error ", " why ", " latest ", " recent "):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "debug_logs"}, mode)
-	case !editIntent && util.ContainsAny(words, " go test ", " test suite ", " run tests ", " run the tests ", " report failure ", " report failures ", " compile failure "):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
-	case !editIntent && util.ContainsAny(words, " smoke test ", " verify ", " test the ", " test this ") && !hasLaneExerciseTarget(words):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "verification_only"}, mode)
-	case isSuggestionOnlyArchitectureQuestion(words):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
-	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the ") && editIntent:
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate_then_implement"}, mode)
-	case util.ContainsAny(words, " find where ", " locate ", " where is ", " where the "):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "locate"}, mode)
-	case util.ContainsAny(words, " architecture ", " boundary ", " boundaries ", " coupling ", " refactor stage "):
-		if editIntent {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture_then_implement"}, mode)
-		}
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
-	case isExplanationOnlyCodeQuestion(words):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation"}, mode)
-	case util.ContainsAny(words, " security ", " prompt injection ", " adversarial "):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "security_review"}, mode)
-	case util.ContainsAny(words, " performance ", " perf ", " timeout ", " timed out ", " regression ", " slow "):
-		if editIntent {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "review_then_implement"}, mode)
-		}
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
-	case util.ContainsAny(words, " review ", " investigate "):
-		if editIntent {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "review_then_implement"}, mode)
-		}
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "performance_review"}, mode)
-	case util.ContainsAny(words, " write test ", " add regression test ", " add a test "):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "test_authoring"}, mode)
-	case util.ContainsAny(words, " readme ", " docs ", " documentation ", " doc ") && (namedPathOrEditIntent || util.ContainsAny(words, " write ", " writing ")):
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
-	case util.ContainsAny(lower, " config ", ".json", ".yaml", ".toml") && namedPathOrEditIntent:
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "config_edit"}, mode)
-	case strings.Contains(lower, ".gd") && namedPathOrEditIntent:
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "gdscript_edit"}, mode)
-	case util.ContainsAny(lower, " script ", ".sh", " shell ") && namedPathOrEditIntent:
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "script_edit"}, mode)
-	case util.ContainsAny(lower, " prompt ", " prompts ") && namedPathOrEditIntent:
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "prompt_edit_security"}, mode)
-	case namedPathWorkIntent:
-		if routeNamedWorkspaceTargetAsDocsEdit(prompt, words) {
-			return normalizeTurnRoutePlan(turnRoutePlan{Family: "docs_edit"}, mode)
-		}
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
-	case editIntent:
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "implementation"}, mode)
-	}
-	if util.ContainsAny(words,
-		" help me ",
-		" help test ",
-		" help with ",
-		" try out ",
-		" test out ",
-		" try the ",
-		" test the ",
-		" show me ",
-		" walk me ",
-		" walk through ",
-		" walk me through ",
-		" lets ",
-		" let's ",
-		" let me ",
-		" i want to ",
-		" i'd like to ",
-		" i need to ",
-	) {
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
-	}
+	// Human-facing TUI lane changes must never be inferred from prompt wording.
+	// If the classifier is unavailable or declines to route, stay conservative:
+	// natural language remains conversation, while typed slash commands enter
+	// their lanes through explicit command handlers outside this fallback.
 	if strings.EqualFold(mode.Name, "plan") {
 		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
 	}
@@ -595,25 +498,6 @@ func hasEffectiveEditIntent(words string) bool {
 	return hasEditIntent(words)
 }
 
-func hasExplicitImplementationLaneInvocation(prompt string, words string) bool {
-	if explicitlyForbidsEdits(words) || isExplanationOnlyCodeQuestion(words) || !hasEditIntent(words) {
-		return false
-	}
-	lower := strings.ToLower(prompt)
-	return strings.Contains(lower, "/implement")
-}
-
-func hasLaneExerciseTarget(words string) bool {
-	return util.ContainsAny(words,
-		" implement lane ",
-		" implementation lane ",
-		" /implement ",
-		" plan-execute lane ",
-		" plan execute lane ",
-		" /plan-execute ",
-	)
-}
-
 func isQuestionShapedRequest(words string) bool {
 	return util.ContainsAny(words,
 		" can we ",
@@ -635,62 +519,6 @@ func isQuestionShapedRequest(words string) bool {
 	)
 }
 
-func hasImplementationWorkflowContract(prompt string, words string) bool {
-	hasNamedRequiredPaths := len(pathparse.MentionedWorkspacePaths(prompt)) > 0 && hasRequiredEditPathContractWords(words)
-	hasPlanExecuteWorkflow := hasPlanExecuteWorkflowWords(words)
-	if hasNamedRequiredPaths && hasPlanExecuteWorkflow {
-		return true
-	}
-	if hasNamedRequiredPaths && util.ContainsAny(words,
-		" implementation ",
-		" implement ",
-		" source-satisfied ",
-		" source satisfied ",
-		" smoke test ",
-		" tdd ",
-	) {
-		return true
-	}
-	if hasPlanExecuteWorkflow && util.ContainsAny(words,
-		" smoke test ",
-		" run ",
-		" try ",
-		" verify ",
-		" tdd ",
-		" through ",
-	) {
-		return true
-	}
-	return false
-}
-
-func hasPlanExecuteSourceSatisfiedWorkflowContract(prompt string, words string) bool {
-	return util.ContainsAny(words, " source satisfied ") &&
-		hasPlanExecuteWorkflowWords(words) &&
-		(len(pathparse.MentionedWorkspacePaths(prompt)) > 0 || hasRequiredEditPathContractWords(words))
-}
-
-func hasRequiredEditPathContractWords(words string) bool {
-	return util.ContainsAny(words,
-		" required edit paths ",
-		" required edit path ",
-		" required paths ",
-		" required path ",
-	)
-}
-
-func hasPlanExecuteWorkflowWords(words string) bool {
-	return util.ContainsAny(words,
-		" plan execute ",
-		" prd to plan to execute ",
-		" prd to plan execute ",
-		" prd to adr to plan execute ",
-		" prd to adr to plan to execute ",
-		" implementation lane ",
-		" default implementation lane ",
-	)
-}
-
 func explicitlyForbidsEdits(words string) bool {
 	return util.ContainsAny(words,
 		" do not edit ",
@@ -705,86 +533,6 @@ func explicitlyForbidsEdits(words string) bool {
 		" without modifying ",
 		" no file changes ",
 	)
-}
-
-func isSuggestionOnlyArchitectureQuestion(words string) bool {
-	if !util.ContainsAny(words, " what can we ", " what should we ", " how can we ", " how should we ") {
-		return false
-	}
-	if !util.ContainsAny(words, " add ", " improve ", " make ", " increasing ", " increase ", " better ", " useful ", " usefulness ") {
-		return false
-	}
-	return util.ContainsAny(words,
-		" tool ",
-		" tools ",
-		" harness ",
-		" repo ",
-		" repository ",
-		" codebase ",
-		" system ",
-		" workflow ",
-		" architecture ",
-		" agent ",
-		" agents ",
-	)
-}
-
-func hasWorkOnTargetIntent(words string) bool {
-	return util.ContainsAny(words,
-		" start working on ",
-		" start work on ",
-		" start implementing ",
-		" begin working on ",
-		" begin work on ",
-		" begin implementing ",
-		" get started on ",
-		" work on ",
-		" working on ",
-		" implement ",
-		" implementing ",
-	)
-}
-
-func hasNamedWorkspaceTargetWorkIntent(words string) bool {
-	if hasWorkOnTargetIntent(words) {
-		return true
-	}
-	return util.ContainsAny(words,
-		" start ",
-		" begin ",
-		" started ",
-		" work ",
-		" working ",
-		" woring ",
-		" implement ",
-		" implementing ",
-		" update ",
-		" edit ",
-		" change ",
-		" fix ",
-		" add ",
-		" create ",
-	) && util.ContainsAny(words,
-		" on ",
-		" in ",
-		" to ",
-	)
-}
-
-func routeNamedWorkspaceTargetAsDocsEdit(prompt string, words string) bool {
-	if util.ContainsAny(words, " docs ", " documentation ", " doc ", " readme ") {
-		return true
-	}
-	for _, path := range pathparse.MentionedWorkspacePaths(prompt) {
-		switch strings.ToLower(filepath.Ext(path)) {
-		case ".md", ".mdx", ".markdown", ".rst", ".txt":
-			return true
-		}
-		if strings.EqualFold(filepath.Base(path), "README") {
-			return true
-		}
-	}
-	return false
 }
 
 func plannerWordText(prompt string) string {

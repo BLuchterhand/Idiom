@@ -642,43 +642,28 @@ func (m *Model) renderHistoryPanelContent() {
 					b.WriteString("\n")
 				}
 			}
-			for _, event := range entry.auditEvents {
-				line := event.auditLine()
-				if line == "" {
-					continue
-				}
-				for j, wl := range wrapLines(line, max(1, w-4)) {
-					prefix := "- "
-					if j > 0 {
-						prefix = "  "
-					}
-					b.WriteString(panelDetailStyle.Width(w).Render(prefix + wl))
-					b.WriteString("\n")
-				}
+			for _, line := range historyAuditDigestLines(entry) {
+				renderHistoryDetailLine(&b, w, "- ", line)
 			}
-			for _, tc := range entry.toolCalls {
-				for j, wl := range wrapLines(tc.line, max(1, w-4)) {
+			if m.traceMode == traceDisplayDetail {
+				renderHistoryDetailLine(&b, w, "", "Details:")
+				for _, event := range entry.auditEvents {
+					if line := event.auditLine(); line != "" {
+						renderHistoryDetailLine(&b, w, "- ", line)
+					}
+				}
+				for _, tc := range entry.toolCalls {
 					prefix := "▶ "
 					if tc.running {
 						prefix = "… "
 					}
-					if j > 0 {
-						prefix = "  "
+					renderHistoryDetailLine(&b, w, prefix, tc.line)
+					meta := joinNonEmpty(" · ", keyValue("type", tc.kind), keyValue("outcome", tc.outcome))
+					if meta != "" {
+						renderHistoryDetailLine(&b, w, "  ", meta)
 					}
-					b.WriteString(panelDetailStyle.Width(w).Render(prefix + wl))
-					b.WriteString("\n")
-				}
-				meta := joinNonEmpty(" · ", keyValue("type", tc.kind), keyValue("outcome", tc.outcome))
-				if meta != "" {
-					for _, wl := range wrapLines(meta, max(1, w-4)) {
-						b.WriteString(panelDetailStyle.Width(w).Render("  " + wl))
-						b.WriteString("\n")
-					}
-				}
-				if strings.TrimSpace(tc.intent) != "" {
-					for _, wl := range wrapLines("reason: "+tc.intent, max(1, w-4)) {
-						b.WriteString(panelDetailStyle.Width(w).Render("  " + wl))
-						b.WriteString("\n")
+					if strings.TrimSpace(tc.intent) != "" {
+						renderHistoryDetailLine(&b, w, "  ", "reason: "+tc.intent)
 					}
 				}
 			}
@@ -695,6 +680,21 @@ func (m *Model) renderHistoryPanelContent() {
 	}
 
 	m.history.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+}
+
+func renderHistoryDetailLine(b *strings.Builder, width int, prefix string, line string) {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return
+	}
+	for j, wl := range wrapLines(line, max(1, width-4)) {
+		rowPrefix := prefix
+		if j > 0 {
+			rowPrefix = strings.Repeat(" ", len([]rune(prefix)))
+		}
+		b.WriteString(panelDetailStyle.Width(width).Render(rowPrefix + wl))
+		b.WriteString("\n")
+	}
 }
 
 func (m *Model) resize() {

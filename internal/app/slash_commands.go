@@ -49,7 +49,7 @@ func (m *Model) slashQuit(_ string, _ []string) bool {
 }
 
 func (m *Model) slashHelp(_ string, _ []string) bool {
-	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /plan-execute <objective> /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
+	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /implement <objective> /plan-execute <objective> /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
 	return false
 }
 

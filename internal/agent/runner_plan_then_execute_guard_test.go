@@ -208,6 +208,184 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardEnforcesAllowedScopeWithoutCovera
 	}
 }
 
+func TestPlanThenExecuteUngroundedSubmitPlanRejectsUnscopedExistingFileEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "target.txt",
+			OldText: "old\n",
+			NewText: "new\n",
+			Purpose: "update target",
+		}},
+	}, nil)
+	if !got.Intercepted {
+		t.Fatal("unscoped submit_plan must require source-body evidence for existing-file edits")
+	}
+	if !strings.Contains(got.Result.Error, "target.txt") || !strings.Contains(got.Result.Error, "source-body evidence") {
+		t.Fatalf("grounding rejection should name the path and evidence requirement, got %q", got.Result.Error)
+	}
+}
+
+func TestPlanThenExecuteUngroundedSubmitPlanAllowsSourceReadEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "target.txt",
+			OldText: "old\n",
+			NewText: "new\n",
+			Purpose: "update target",
+		}},
+	}, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read target.txt lines 1-1 (total lines: 1)",
+		Output:  "old\n",
+	}})
+	if got.Intercepted {
+		t.Fatalf("source-body evidence should ground the unscoped submit_plan edit, got %#v", got)
+	}
+}
+
+func TestPlanThenExecuteUnscopedSubmitPlanCoverageGuardRejectsInvalidAnchor(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "target.txt",
+			OldText: "missing\n",
+			NewText: "new\n",
+			Purpose: "update target",
+		}},
+	})
+	if !got.Intercepted {
+		t.Fatal("unscoped submit_plan must still validate executable current-source anchors")
+	}
+	if !strings.Contains(got.Result.Error, "old_text not found") {
+		t.Fatalf("expected invalid-anchor rejection, got %q", got.Result.Error)
+	}
+}
+
+func TestDeterministicPlanExecuteGroundingRecoverySearchesAfterContextPack(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   PlanThenExecutePlannerTaskFamily,
+			Objective:    "expose read-only product workflow status and effort browsing through idiom tool direct-tool surface",
+			AllowedTools: []string{"context_pack", "search_content", "product_efforts", "product_status"},
+		},
+	}
+	req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("I need more evidence.", []workspace.ToolResult{
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: edit paths lack source grounding",
+			Error:   "missing source-body evidence for `cmd/idiom/main.go`",
+		},
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go","role":"editable"}]}`,
+		},
+	})
+	if !ok {
+		t.Fatal("expected deterministic grounding recovery after ungrounded submit_plan and context_pack")
+	}
+	if req.Tool != "search_content" || req.Path != "." || req.Pattern == "" {
+		t.Fatalf("expected targeted search_content request, got %#v", req)
+	}
+	if !strings.Contains(req.Pattern, "product_efforts") || !strings.Contains(req.Pattern, "product_status") {
+		t.Fatalf("expected search pattern to prefer matching allowed tool names, got %q", req.Pattern)
+	}
+}
+
+func TestDeterministicPlanExecuteGroundingRecoveryReadsSearchHitBeforePacketCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+			Objective:  "expose read-only product workflow status and effort browsing through idiom tool direct-tool surface",
+		},
+	}
+	req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("Still not ready.", []workspace.ToolResult{
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: edit paths lack source grounding",
+			Error:   "missing source-body evidence for `cmd/idiom/main.go`",
+		},
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go","role":"editable"}]}`,
+		},
+		{
+			Tool:    "search_content",
+			Summary: "Search results",
+			Output:  "internal/workspace/product_tools.go:12:func (m *Manager) productEfforts(req ToolRequest) ToolResult {\ninternal/agent/runner.go:10:plan-execute product workflow",
+		},
+	})
+	if !ok {
+		t.Fatal("expected deterministic grounding recovery to read a search hit")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/workspace/product_tools.go" {
+		t.Fatalf("expected highest-confidence search hit read, got %#v", req)
+	}
+}
+
+func TestDeterministicPlanExecuteGroundingRecoveryDoesNotStealTerminalReply(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+			Objective:  "expose read-only product workflow status and effort browsing through idiom tool direct-tool surface",
+		},
+	}
+	_, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("Decision: source-satisfied\nPath: internal/workspace/product_tools.go", []workspace.ToolResult{
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: edit paths lack source grounding",
+			Error:   "missing source-body evidence for `cmd/idiom/main.go`",
+		},
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go","role":"editable"}]}`,
+		},
+	})
+	if ok {
+		t.Fatal("terminal source-satisfied replies should go to the completion gate, not deterministic read recovery")
+	}
+}
+
 func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsPlaceholderBodiesWithTypedPath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -4595,6 +4773,35 @@ func TestPlanThenExecuteVisibleBriefKeepsSubmitPlanContract(t *testing.T) {
 	}
 }
 
+func TestPlanThenExecutePlannerSurfaceKeepsProductWorkflowBrowsers(t *testing.T) {
+	root := t.TempDir()
+	manager := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+	manager.SetPlanThenExecutePlannerMode(true)
+	runner := &Runner{
+		Workspace: manager,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"recovery_inspect", "recovery_status", "product_efforts", "product_status", "read_file", "submit_plan"},
+			RequiredTools:     []string{"submit_plan"},
+		},
+	}
+
+	allowed := runner.advertisedAllowedTools(manager.AllowedTools())
+	for _, tool := range []string{"recovery_inspect", "recovery_status", "product_efforts", "product_status"} {
+		if !slices.Contains(allowed, tool) {
+			t.Fatalf("planner surface lost %s; allowed=%#v", tool, allowed)
+		}
+		if summary, errorText, reject := currentToolSurfaceRejection(workspace.ToolRequest{Tool: tool}, allowed); reject {
+			t.Fatalf("%s should be callable in plan-execute planner surface, summary=%q error=%q allowed=%#v", tool, summary, errorText, allowed)
+		}
+	}
+	if slices.Contains(allowed, "recovery_decompose") {
+		t.Fatalf("planner surface must not expose recovery_decompose because it writes recovery packets, allowed=%#v", allowed)
+	}
+}
+
 func TestPlanThenExecuteControlRailsKeepSubmitPlanContract(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
@@ -5631,7 +5838,7 @@ func TestDeterministicNoWriteRecoverySearchesAfterFailedContextPack(t *testing.T
 	}
 }
 
-func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testing.T) {
+func TestUnscopedContextPackCandidateReadRecoveryAllowsStructuredCandidateRead(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
@@ -5643,6 +5850,24 @@ func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testin
 	summary, errText, prompt, rejected := runner.unscopedContextPackCandidateReadRecovery(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/model_popup.go"},
 		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/app/model_popup.go"}]}`}},
+	)
+	if rejected {
+		t.Fatalf("structured context_pack candidate read should be allowed, got summary=%q err=%q prompt=%q", summary, errText, prompt)
+	}
+}
+
+func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "replace the model path in the top-right banner with model alias",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	summary, errText, prompt, rejected := runner.unscopedContextPackCandidateReadRecovery(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/model_popup.go"},
+		[]workspace.ToolResult{{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/app/other.go"}]}`}},
 	)
 	if !rejected {
 		t.Fatalf("expected context-pack-only read to be rejected")

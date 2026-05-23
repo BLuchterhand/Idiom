@@ -656,6 +656,19 @@ func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 	}()
 }
 
+func (m *Model) sendImplementCommandAsync(objective string) {
+	m.streaming = true
+	m.workingFrame = 0
+	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
+	m.beginAgentHistoryTurn()
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, err := m.runImplementCommandOnce(ctx, objective)
+		m.events <- streamDoneMsg{err: err}
+	}()
+}
+
 func formatToolRequestTrace(event agent.ToolRequestEvent) string {
 	tool := strings.TrimSpace(event.Request.Tool)
 	if tool == "" {
@@ -814,9 +827,6 @@ func toolRequestTraceTarget(req workspace.ToolRequest) string {
 // already been folded into m.runner.MaxToolSteps.
 func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
 	mode := m.currentMode()
-	if shouldDispatchImplementationToPlanExecute(plan, mode, m.cfg, prompt) {
-		return m.runImplementationViaPlanExecute(ctx, prompt, plan)
-	}
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	runner := &agent.Runner{
 		Client:              m.client,

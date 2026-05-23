@@ -579,6 +579,9 @@ func (r *Runner) Run(
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRejectedRequiredPathRead(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery ignored non-tool implementation text and issued bounded read for unread required edit path %s", req.Path)})
+			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, collectedResults); recovered {
+				req, raw, ok = recoveredReq, recoveredRaw, true
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_grounding", Content: fmt.Sprintf("completion recovery ignored non-tool planner text after ungrounded submit_plan and issued %s", req.Tool)})
 			} else if strings.TrimSpace(reply) == "" {
 				if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRequiredSourceRead(collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
@@ -599,6 +602,13 @@ func (r *Runner) Run(
 					req, raw, ok = recoveredReq, recoveredRaw, true
 					r.emitEvent(RunEvent{Role: "completion_recovery_auto_read", Content: fmt.Sprintf("completion recovery found candidate path %s after literal search; issuing bounded read before another final-answer attempt", req.Path)})
 				}
+			}
+		}
+		if parseErr != nil {
+			if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest(reply, collectedResults); recovered {
+				req, raw, ok, parseErr = recoveredReq, recoveredRaw, true, nil
+				activeToolCall = nil
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_grounding", Content: fmt.Sprintf("completion recovery ignored malformed planner tool JSON after ungrounded submit_plan and issued %s", req.Tool)})
 			}
 		}
 		err = parseErr
@@ -634,6 +644,16 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_parse_recovery", Content: prompt})
 			}
 			continue
+		}
+		if ok && strings.TrimSpace(req.Tool) == "submit_plan" &&
+			planThenExecuteGroundingRejectedSeen(collectedResults) &&
+			!planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, collectedResults) &&
+			len(r.ungroundedSubmitPlanEditPaths(req, collectedResults)) > 0 {
+			if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteGroundingRecoveryRequest("", collectedResults); recovered {
+				req, raw = recoveredReq, recoveredRaw
+				activeToolCall = nil
+				r.emitEvent(RunEvent{Role: "completion_recovery_auto_grounding", Content: fmt.Sprintf("completion recovery replaced repeated ungrounded submit_plan with %s", req.Tool)})
+			}
 		}
 		if !ok {
 			if len(changedPathsFromToolResults(collectedResults)) == 0 {
@@ -1135,6 +1155,15 @@ func (r *Runner) Run(
 			if done {
 				return finish(answer, err, "plan_then_execute_candidate_post_readiness_discovery_rejected", true)
 			}
+			prompt := strings.TrimSpace(errorText) + "\n\nThe previous read/search request was rejected because plan-execute planner source evidence is already ready. Do not read, search, inspect, or verify again. The next visible action must be exactly one terminal outcome: a parser-readable `submit_plan`, `Decision: source-satisfied` citing the current source path(s), or `<<QUESTION>>:` naming the exact blocker. Do not report this recovery rejection itself as the blocker."
+			opts = forceVisibleActionChatOptions(opts)
+			if chatOptionsExposeTool(opts, "submit_plan") {
+				opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
+				opts.ToolChoice = "auto"
+			}
+			syncCurrentAllowedToolsFromOptions()
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_ready_terminal_required", Content: prompt})
 			continue
 		}
 		if summary, errorText, reject := r.repeatedRangeLessReadFileRejection(req, collectedResults); reject {
@@ -1741,6 +1770,12 @@ func (r *Runner) Run(
 				Role:    "plan_then_execute_write_guard",
 				Content: guard.Reason,
 			})
+		} else if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(req, collectedResults); guard.Intercepted {
+			result = guard.Result
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_plan_guard",
+				Content: guard.Reason,
+			})
 		} else if guard := r.preflightPlanThenExecuteSubmitPlanCoverageGuard(req); guard.Intercepted {
 			result = guard.Result
 			r.emitEvent(RunEvent{
@@ -1815,6 +1850,10 @@ func (r *Runner) Run(
 			ResetRejected:  true,
 			SetLastToolKey: true,
 		})
+		if completionGateRejections > 0 && strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.Tool) != "completion_gate" {
+			completionGateRejections = 0
+			r.emitEvent(RunEvent{Role: "completion_gate_recovery_progress", Content: "successful tool result reset the completion-gate retry streak"})
+		}
 		update := executionState.applyResult(req, result, currentFingerprint, r.Workspace, &requestBudget)
 		if autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
 			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(changedPathsFromToolResults([]workspace.ToolResult{result})))
@@ -1884,7 +1923,28 @@ func (r *Runner) Run(
 			emitAcceptedAnswerSignalsOnce(answer)
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
+		if r.planThenExecutePlannerPhase() && strings.TrimSpace(result.Summary) == "Candidate source already ready" {
+			prompt := strings.TrimSpace(result.Error) + "\n\nThe previous read/search request was rejected because plan-execute planner source evidence is already ready. Do not read, search, inspect, or verify again. The next visible action must be exactly one terminal outcome: a parser-readable `submit_plan`, `Decision: source-satisfied` citing the current source path(s), or `<<QUESTION>>:` naming the exact blocker. Do not report this recovery rejection itself as the blocker."
+			opts = forceVisibleActionChatOptions(opts)
+			if chatOptionsExposeTool(opts, "submit_plan") {
+				opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
+				opts.ToolChoice = "auto"
+			}
+			syncCurrentAllowedToolsFromOptions()
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "plan_then_execute_submit_ready_terminal_required", Content: prompt})
+			continue
+		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteSubmitPlanRejectedForCorrection(req, result) {
+			if planThenExecuteSubmitPlanGroundingRejectedResult(result) {
+				replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
+				prompt := "The previous `submit_plan` was rejected because this unscoped plan-execute atom has no grounded edit paths yet. Do not repeat `submit_plan`. Next visible action must be one read-only localization or source-evidence request: `context_pack`, `product_efforts`, `product_status`, targeted `search_content`, `read_file`, or `code_navigate` with `capability:\"read_symbol\"`/`extract_body`; or answer `Decision: source-satisfied` with observed current-state evidence; or answer `<<QUESTION>>:` with the exact blocker."
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				rebuildTools()
+				syncPlanThenExecuteRecoveryAllowedTools()
+				r.emitEvent(RunEvent{Role: "plan_then_execute_grounding_required", Content: prompt})
+				continue
+			}
 			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
 			rejectedAt := len(collectedResults) - 1
 			needsAnchorRefresh := planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults)
@@ -10147,6 +10207,9 @@ func (r *Runner) unscopedContextPackCandidateReadRecovery(req workspace.ToolRequ
 	if strings.TrimSpace(req.Tool) != "read_file" {
 		return "", "", "", false
 	}
+	if contextPackCandidateReadAllowed(req, results) {
+		return "", "", "", false
+	}
 	pattern := literalRecoverySearchPattern(r.RuntimeBrief.Objective)
 	if pattern == "" {
 		pattern = strings.TrimSpace(req.Path)
@@ -10158,6 +10221,277 @@ func (r *Runner) unscopedContextPackCandidateReadRecovery(req workspace.ToolRequ
 	errorText = fmt.Sprintf("context_pack has not established an exact edit target yet. %s is only a packet candidate, so recovery must first gather literal or semantic evidence tied to the user's requested behavior.", strings.TrimSpace(req.Path))
 	prompt = fmt.Sprintf("The context packet did not establish an exact edit target. Do not read or write packet candidates yet. Run one bounded fallback discovery action tied to the user's visible terms, for example:\n\n```tool\n{\"tool\":\"search_content\",\"path\":\".\",\"pattern\":\"%s\",\"named_gap\":\"locate exact current source for the requested UI/text/behavior\",\"why_not_answering\":\"need a grounded source hit before reading or writing\"}\n```\n\nAfter a concrete hit, read the highest-confidence path before writing.", pattern)
 	return summary, errorText, prompt, true
+}
+
+func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() || len(r.RuntimeBrief.RequiredEditPaths) > 0 || successfulSubmitPlanResultCount(results) > 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	if planThenExecuteTerminalReplyShape(reply) {
+		return workspace.ToolRequest{}, "", false
+	}
+	rejectedAt := -1
+	for i := len(results) - 1; i >= 0; i-- {
+		if planThenExecuteSubmitPlanGroundingRejectedResult(results[i]) {
+			rejectedAt = i
+			break
+		}
+	}
+	if rejectedAt < 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !successfulToolAfter(results, rejectedAt, "context_pack") {
+		task := strings.TrimSpace(r.RuntimeBrief.Objective)
+		if task == "" {
+			task = "localize candidate edit paths for the unscoped plan-execute atom"
+		}
+		req := workspace.ToolRequest{Tool: "context_pack", Task: task, Mode: "plan", Limit: 8}
+		return req, marshalToolRequestRaw(req), true
+	}
+	if !successfulToolAfter(results, rejectedAt, "search_content") {
+		if pattern := r.planExecuteGroundingSearchPattern(); pattern != "" {
+			req := workspace.ToolRequest{
+				Tool:            "search_content",
+				Path:            ".",
+				Pattern:         pattern,
+				NamedGap:        "locate exact current source for the requested plan-execute atom before submit_plan",
+				WhyNotAnswering: "need grounded source hits before plan-execute can submit edits or source-satisfied",
+			}
+			return req, marshalToolRequestRaw(req), true
+		}
+	}
+	candidates := append([]string{}, planThenExecuteCandidateScopePaths(r.RuntimeBrief, results[rejectedAt+1:], 8)...)
+	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePaths(results[rejectedAt+1:], 8)...)
+	read := readPathsFromResults(results[rejectedAt+1:])
+	if len(read) >= 4 {
+		return workspace.ToolRequest{}, "", false
+	}
+	for _, path := range candidates {
+		if _, ok := read[normalizeRunnerPath(path)]; ok {
+			continue
+		}
+		req := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         180,
+			NamedGap:        "current source evidence for the candidate edit path before submit_plan",
+			WhyNotAnswering: "need source-body evidence before plan-execute can submit edits or source-satisfied",
+		}
+		return req, marshalToolRequestRaw(req), true
+	}
+	return workspace.ToolRequest{}, "", false
+}
+
+func planThenExecuteGroundingRejectedSeen(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if planThenExecuteSubmitPlanGroundingRejectedResult(result) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) planExecuteGroundingSearchPattern() string {
+	if r == nil {
+		return ""
+	}
+	objectiveTerms := recoveryObjectiveSearchWords(r.RuntimeBrief.Objective, 24)
+	objectiveSet := map[string]struct{}{}
+	for _, term := range objectiveTerms {
+		objectiveSet[singularObjectiveWord(term)] = struct{}{}
+	}
+	patterns := make([]string, 0, 12)
+	seen := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		patterns = append(patterns, regexp.QuoteMeta(value))
+	}
+	for _, tool := range r.RuntimeBrief.AllowedTools {
+		tool = strings.TrimSpace(tool)
+		if !toolNameOverlapsObjective(tool, objectiveSet) {
+			continue
+		}
+		add(tool)
+		if len(patterns) >= 4 {
+			break
+		}
+	}
+	if len(patterns) > 0 {
+		return strings.Join(patterns, "|")
+	}
+	for _, term := range objectiveTerms {
+		add(term)
+		if len(patterns) >= 8 {
+			break
+		}
+	}
+	return strings.Join(patterns, "|")
+}
+
+func toolNameOverlapsObjective(tool string, objectiveSet map[string]struct{}) bool {
+	if strings.TrimSpace(tool) == "" || len(objectiveSet) == 0 {
+		return false
+	}
+	parts := strings.FieldsFunc(strings.ToLower(tool), func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	matches := 0
+	for _, part := range parts {
+		if len(part) < 4 {
+			continue
+		}
+		if _, ok := objectiveSet[singularObjectiveWord(part)]; ok {
+			matches++
+		}
+	}
+	return matches >= 2 || (len(parts) == 1 && matches == 1)
+}
+
+func recoveryObjectiveSearchWords(objective string, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	lower := strings.ToLower(strings.TrimSpace(objective))
+	if lower == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer("'", " ", "\"", " ", "`", " ", "’", " ", "-", " ", "_", " ", "/", " ")
+	lower = replacer.Replace(lower)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	stop := recoverySearchStopWords()
+	terms := make([]string, 0, max)
+	seen := make(map[string]struct{})
+	for _, word := range words {
+		word = strings.TrimSpace(word)
+		if len(word) < 4 {
+			continue
+		}
+		if _, skip := stop[word]; skip {
+			continue
+		}
+		if _, ok := seen[word]; ok {
+			continue
+		}
+		seen[word] = struct{}{}
+		terms = append(terms, word)
+		if len(terms) >= max {
+			break
+		}
+	}
+	return terms
+}
+
+func singularObjectiveWord(word string) string {
+	word = strings.TrimSpace(strings.ToLower(word))
+	if len(word) > 4 && strings.HasSuffix(word, "s") {
+		return strings.TrimSuffix(word, "s")
+	}
+	return word
+}
+
+func planThenExecuteTerminalReplyShape(reply string) bool {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" {
+		return false
+	}
+	return strings.HasPrefix(trimmed, "Decision: source-satisfied") ||
+		strings.HasPrefix(trimmed, "Decision: block") ||
+		strings.HasPrefix(trimmed, "<<QUESTION>>:")
+}
+
+func successfulToolAfter(results []workspace.ToolResult, index int, tool string) bool {
+	tool = strings.TrimSpace(tool)
+	for i := index + 1; i < len(results); i++ {
+		if strings.TrimSpace(results[i].Tool) == tool && strings.TrimSpace(results[i].Error) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func appendUniqueRunnerPaths(paths []string, more ...string) []string {
+	seen := map[string]struct{}{}
+	out := make([]string, 0, len(paths)+len(more))
+	for _, path := range append(paths, more...) {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || !pathparse.HasWorkspaceFileExtension(normalized) {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		out = append(out, normalized)
+	}
+	return out
+}
+
+func contextPackCandidateReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	target := normalizeRunnerPath(req.Path)
+	if target == "" || !pathparse.HasWorkspaceFileExtension(target) {
+		return false
+	}
+	candidates := contextPackCandidatePaths(results, 32)
+	for _, candidate := range candidates {
+		if candidate == target {
+			return true
+		}
+	}
+	return false
+}
+
+func contextPackCandidatePaths(results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, max)
+	add := func(path string) {
+		path = normalizeRunnerPath(path)
+		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "context_pack" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+		var view struct {
+			CandidateFiles []struct {
+				Path string `json:"path"`
+				Role string `json:"role"`
+			} `json:"candidate_files"`
+		}
+		if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
+			continue
+		}
+		for _, file := range view.CandidateFiles {
+			role := strings.TrimSpace(file.Role)
+			if role != "" && role != "editable" && role != "read_only_evidence" && role != "test" {
+				continue
+			}
+			add(file.Path)
+			if len(paths) >= max {
+				return paths
+			}
+		}
+	}
+	return paths
 }
 
 func recoverySearchPathLooksEditableSource(path string) bool {
@@ -10180,48 +10514,26 @@ func recoverySearchPathLooksEditableSource(path string) bool {
 }
 
 func literalRecoverySearchPattern(objective string) string {
-	lower := strings.ToLower(strings.TrimSpace(objective))
-	if lower == "" {
+	terms := recoveryObjectiveSearchWords(objective, 8)
+	if len(terms) == 0 {
 		return ""
 	}
-	replacer := strings.NewReplacer("'", " ", "\"", " ", "`", " ", "’", " ", "-", " ", "_", " ", "/", " ")
-	lower = replacer.Replace(lower)
-	words := strings.FieldsFunc(lower, func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	})
-	stop := map[string]struct{}{
+	quoted := make([]string, 0, len(terms))
+	for _, term := range terms {
+		quoted = append(quoted, regexp.QuoteMeta(term))
+	}
+	return strings.Join(quoted, "|")
+}
+
+func recoverySearchStopWords() map[string]struct{} {
+	return map[string]struct{}{
 		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "model": {}, "alias": {},
 		"continuing": {}, "continue": {}, "completion": {}, "complete": {}, "work": {}, "docs": {}, "document": {}, "design": {}, "implement": {}, "implementation": {}, "bounded": {}, "topic": {}, "only": {}, "must": {},
 		"against": {}, "existing": {}, "focus": {}, "focused": {}, "add": {}, "regression": {}, "tests": {}, "test": {}, "proving": {}, "without": {}, "partial": {}, "durable": {}, "mutation": {},
 		"repo": {}, "repository": {}, "discovery": {}, "first": {}, "make": {}, "minimal": {}, "code": {}, "changes": {}, "change": {}, "requested": {}, "request": {},
 		"tdd": {}, "prd": {}, "adr": {}, "brief": {}, "research": {}, "workflow": {}, "workflows": {}, "markdown": {},
+		"send": {}, "through": {}, "plan": {}, "execute": {}, "expose": {}, "read": {}, "external": {}, "agents": {},
 	}
-	terms := make([]string, 0, 8)
-	seen := make(map[string]struct{})
-	for _, word := range words {
-		word = strings.TrimSpace(word)
-		if len(word) < 4 {
-			continue
-		}
-		if _, skip := stop[word]; skip {
-			continue
-		}
-		if _, ok := seen[word]; ok {
-			continue
-		}
-		seen[word] = struct{}{}
-		terms = append(terms, regexp.QuoteMeta(word))
-		if len(terms) >= 8 {
-			break
-		}
-	}
-	if len(terms) == 0 {
-		return ""
-	}
-	if len(terms) > 8 {
-		terms = terms[:8]
-	}
-	return strings.Join(terms, "|")
 }
 
 func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {

@@ -254,6 +254,14 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		StopConditions:       append([]string(nil), spec.StopConditions...),
 		FinalCritic:          append([]string(nil), spec.FinalCritic...),
 	}
+	if spec.ToolProfile == CapabilityPlanSubmissionPlanner || spec.ToolProfile == CapabilityPlanSubmissionReview {
+		// The app often builds the brief before the workspace manager flips
+		// into plan-execute mode, so the pre-mode workspace snapshot can lack
+		// submit_plan even though the runner will enable it before execution.
+		// Keep the contract-required tool in the brief allow-list so later
+		// live-surface filtering does not remove the only valid planner write.
+		brief.AllowedTools = mergeStrings(brief.AllowedTools, []string{"submit_plan"})
+	}
 	if spec.PermissionProfile == "conversation_only" {
 		// Conversation mode is intentionally tool-free. Codebase questions
 		// should route to locate, architecture, review, or implementation
@@ -381,6 +389,10 @@ func planSubmissionPlannerToolNames() []string {
 		"file_stats",
 		"code_navigate",
 		"harness_feedback",
+		"recovery_inspect",
+		"recovery_status",
+		"product_efforts",
+		"product_status",
 		"context_status",
 		"context_query",
 		"context_zoom",
@@ -544,6 +556,11 @@ var builtinToolNames = map[string]struct{}{
 	"source_sanity":        {},
 	"harness_audit":        {},
 	"harness_feedback":     {},
+	"recovery_inspect":     {},
+	"recovery_status":      {},
+	"recovery_decompose":   {},
+	"product_efforts":      {},
+	"product_status":       {},
 	"context_index":        {},
 	"context_status":       {},
 	"context_query":        {},

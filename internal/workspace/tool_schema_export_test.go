@@ -263,8 +263,9 @@ func TestBuildMCPDiscoveryToolSchemasMCPDiscoveryProfileExposesExpandedSurface(t
 		if !slices.Contains(tool.Profiles, ToolProfileMCPDiscovery) {
 			t.Fatalf("mcp_discovery tool %s missing mcp_discovery profile: %#v", tool.Name, tool.Profiles)
 		}
-		if !slices.Contains(tool.Policy.Capabilities, autonomy.CapabilitySemanticDiscovery) {
-			t.Fatalf("mcp_discovery tool %s is not schema-classified as semantic discovery: %#v", tool.Name, tool.Policy.Capabilities)
+		if !slices.Contains(tool.Policy.Capabilities, autonomy.CapabilitySemanticDiscovery) &&
+			!slices.Contains(tool.Policy.Capabilities, autonomy.CapabilityBoundedRead) {
+			t.Fatalf("mcp_discovery tool %s is not schema-classified as semantic discovery or bounded read: %#v", tool.Name, tool.Policy.Capabilities)
 		}
 		if !ToolAllowedForProfile(tool.Name, ToolProfileMCPDiscovery).Allowed {
 			t.Fatalf("mcp_discovery tool %s is not allowed by mcp_discovery profile", tool.Name)
@@ -278,6 +279,7 @@ func TestBuildMCPDiscoveryToolSchemasMCPDiscoveryProfileExposesExpandedSurface(t
 		"history_range", "history_symbol", "blame_range",
 		"ctags_symbols", "code_navigate", "harness_audit",
 		"recovery_inspect", "recovery_status",
+		"product_efforts", "product_status",
 	} {
 		if !toolNames[required] {
 			names := make([]string, 0, len(toolNames))

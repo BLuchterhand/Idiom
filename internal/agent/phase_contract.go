@@ -12,6 +12,7 @@ const turnPhaseContractSchemaVersion = "idiom.turn_phase_contract.v1"
 
 const (
 	turnPhaseRequiredSource              = "plan_execute.required_source"
+	turnPhaseCandidateSource             = "plan_execute.candidate_source"
 	turnPhaseSubmitReadyNativeRequired   = "plan_execute.submit_ready.native_required"
 	turnPhaseSubmitReadyTextual          = "plan_execute.submit_ready.textual"
 	turnPhaseMalformedSubmitPlanRecovery = "plan_execute.malformed_submit_plan_recovery"
@@ -262,6 +263,8 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 		applySubmitReady(contract, input, baseTools)
 	case planThenExecuteUnreadRequiredSourceNudge(brief, input.Results) != "":
 		applyRequiredSource(contract, baseTools)
+	case planThenExecuteCandidateSourcePending(brief, input.Results):
+		applyCandidateSource(contract, baseTools)
 	case strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily &&
 		(strings.TrimSpace(input.PhaseHint) == turnPhaseReviewRepairTerminal ||
 			len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0):
@@ -293,6 +296,28 @@ func applyRequiredSource(contract *TurnPhaseContract, baseTools []string) {
 	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "source_refresh")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionBlocker}
+}
+
+func applyCandidateSource(contract *TurnPhaseContract, baseTools []string) {
+	contract.PhaseID = turnPhaseCandidateSource
+	contract.Phase = "candidate_source_pending"
+	contract.DerivationReason = "plan_execute_unscoped_candidate_source_pending"
+	contract.AllowedTools = filterPhaseTools(baseTools,
+		"context_pack", "context_query", "context_zoom", "discovery_query",
+		"search_files", "search_content", "read_file", "code_navigate",
+		"product_efforts", "product_status", "recovery_inspect", "recovery_status",
+	)
+	contract.RequiredNext = []string{"localize the candidate path with a read-only browse/discovery tool, read source-body evidence for each planned edit path, Decision: source-satisfied with observed current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.InvalidNext = []string{"submit_plan before source-body evidence for each planned edit path", "per-edit write in planner phase", "verify/build/test in planner phase"}
+	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.ActionPolicy = TurnActionClassPolicy{
+		AllowedActionClasses:   []string{actionRead, actionSearch, actionBlocker, actionSourceSatisfied},
+		InvalidActionClasses:   []string{actionSubmitPlan, actionPerEditWrite, actionVerify, actionGenericProbe},
+		TerminalResponseShapes: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		CallableToolNames:      contract.AllowedTools,
+	}
+	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "source_refresh")
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionBlocker}
 }
 
 func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string) {

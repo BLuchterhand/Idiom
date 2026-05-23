@@ -122,6 +122,22 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
+			Name:        "product_efforts",
+			Description: "Read product workflow effort summaries by status bucket without running inference or mutating workflow state.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"root":`+strProp("product efforts root; defaults to docs/product-workflows/efforts")+`,"status":{"type":"string","enum":["unstarted","started","closed","all"],"description":"optional status bucket filter; defaults to all"},"query":`+strProp("optional substring filter over effort summaries"),
+			),
+		},
+		{
+			Name:        "product_status",
+			Description: "Read one product workflow effort's status or operator continuation view without running inference or mutating workflow state.",
+			ParametersJSON: schemaObj(
+				nil,
+				`"effort_root":`+strProp("effort folder path containing workflow_state.json")+`,"path":`+strProp("alias for effort_root")+`,"operator_view":`+boolProp("when true, return the shared operator continuation status view"),
+			),
+		},
+		{
 			Name:           "pwd",
 			Description:    "Show the current working directory.",
 			ParametersJSON: `{"type":"object","properties":{}}`,

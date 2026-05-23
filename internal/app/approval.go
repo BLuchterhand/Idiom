@@ -59,12 +59,19 @@ func (m *Model) requestApproval(req workspace.ToolRequest, modeName string) bool
 	// blocking on the response channel hangs the lane forever. Auto-deny
 	// instead so the runner's doom-loop / approval-required path closes
 	// cleanly with the rejected-blocker shape callers expect.
-	if m.eventStream != nil {
+	if m.eventStream != nil || m.suppressPromptTranscript {
+		reason := "headless mode (json event stream active); no TUI available to approve"
+		if m.eventStream == nil {
+			reason = "headless prompt runner; no TUI available to approve"
+		}
+		if m.eventStream == nil {
+			return false
+		}
 		m.emitJSONEvent(map[string]any{
 			"event":   "approval_auto_denied",
 			"tool":    req.Tool,
 			"mode":    modeName,
-			"reason":  "headless mode (json event stream active); no TUI available to approve",
+			"reason":  reason,
 			"session": m.eventStream.sessionID,
 		})
 		return false

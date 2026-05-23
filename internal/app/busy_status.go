@@ -13,9 +13,9 @@ const defaultBusyStatus = "Qwen is preparing a response"
 
 func busyStatusForPrompt(prompt string) string {
 	if topic := genericBusyTopic(prompt); topic != "" {
-		return "Qwen is orienting around " + topic
+		return "Qwen is orienting around your request"
 	}
-	return "Qwen is identifying the right next step"
+	return "Qwen is considering its options"
 }
 
 func busyStatusForToolRequest(event agent.ToolRequestEvent, fallback string) string {

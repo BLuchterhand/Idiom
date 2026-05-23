@@ -164,6 +164,13 @@ Good: run metadata or a command mode declares the contract; the model receives a
 
 Bad: a strategy prompt or atom spec includes a magic phrase that a harness component parses to override route classification.
 
+For interactive lane activation, magic phrases are not allowed at all. A TUI
+prompt must not enter `implement`, `plan-execute`, `verification`, `locate`,
+`review`, or `architecture` because a keyword, path suffix, required-path
+heading, or sentence pattern matched a local heuristic. Use the classifier for
+natural language and explicit typed commands for operator-selected lanes; if
+classification is unavailable, fall back to conversation rather than guessing.
+
 ## Typed Authority Contracts
 
 Prompts may explain a contract, but they are not the contract's source of

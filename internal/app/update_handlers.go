@@ -112,7 +112,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		}
 		m.input.SetValue("")
 		if strings.HasPrefix(text, "/") {
-			if !m.handlePlanExecuteCommand(text) {
+			if !m.handlePlanExecuteCommand(text) && !m.handleImplementCommand(text) {
 				if quit := m.handleSlashCommand(text); quit {
 					return tea.Quit, true
 				}
@@ -149,6 +149,26 @@ func (m *Model) handlePlanExecuteCommand(raw string) bool {
 	m.appendHistoryMessage("user", objective, nil)
 	m.sendPlanExecuteCommandAsync(objective)
 	m.status = "Dispatching to plan-execute..."
+	return true
+}
+
+func (m *Model) handleImplementCommand(raw string) bool {
+	fields := strings.Fields(raw)
+	if len(fields) == 0 || fields[0] != "/implement" {
+		return false
+	}
+	objective := strings.TrimSpace(strings.TrimPrefix(raw, "/implement"))
+	if objective == "" {
+		m.status = "Usage: /implement <objective>"
+		return true
+	}
+	if m.streaming {
+		m.status = "A response is already in progress."
+		return true
+	}
+	m.appendHistoryMessage("user", objective, nil)
+	m.sendImplementCommandAsync(objective)
+	m.status = "Dispatching to implement..."
 	return true
 }
 

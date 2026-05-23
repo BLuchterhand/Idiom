@@ -10,8 +10,11 @@ import (
 
 func TestBusyStatusForPromptGenericizesRequest(t *testing.T) {
 	got := busyStatusForPrompt("Can we change the Qwen is working on your request affordance?")
-	if got != "Qwen is orienting around qwen affordance" {
+	if got != "Qwen is orienting around your request" {
 		t.Fatalf("unexpected prompt status: %q", got)
+	}
+	if strings.Contains(got, "working on your request") {
+		t.Fatalf("prompt status should not use the old static busy text: %q", got)
 	}
 }
 

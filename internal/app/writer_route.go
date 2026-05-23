@@ -10,7 +10,6 @@ import (
 )
 
 func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecutionPlan) writerroute.Decision {
-	dispatchToPlanExecute := shouldDispatchImplementationToPlanExecute(plan, plan.mode, m.cfg, prompt)
 	mode := writerroute.ModeReadOnly
 	lane := strings.TrimSpace(plan.mode.Name)
 	taskFamily := strings.TrimSpace(plan.route.Family)
@@ -26,20 +25,15 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		lane = "plan-execute"
 		reasonCodes = []string{"route.plan_execute_review_repair"}
 		verificationOwner = "planner_owned"
-	} else if dispatchToPlanExecute {
-		mode = writerroute.ModePlanSubmission
-		lane = "plan-execute"
-		taskFamily = agent.PlanThenExecutePlannerTaskFamily
-		reasonCodes = []string{"route.multi_file_plan_execute"}
-		if implementationDispatchPromptExplicitPlanExecuteLaneRequest(prompt) {
-			reasonCodes = []string{"route.explicit_plan_execute_lane"}
-		}
-		verificationOwner = "planner_owned"
 	} else if isImplementationLikeFamily(plan.route.Family) {
 		mode = writerroute.ModeAgenticGuarded
 		lane = "implement"
 		reasonCodes = []string{"route.local_model_default"}
-		if strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute" &&
+		if strings.TrimSpace(plan.route.Reason) == "typed_implement_command" {
+			reasonCodes = []string{"route.typed_implement_command"}
+		}
+		if strings.TrimSpace(plan.route.Reason) != "typed_implement_command" &&
+			strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute" &&
 			implementationDispatchHasSemanticSourceAndTestScope(prompt, plan, m.cfg) {
 			reasonCodes = []string{"route.semantic_source_test_executor"}
 		}

@@ -73,6 +73,19 @@ func TestParseToolRequestPreservesPostReadinessGapFields(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestUnwrapsNestedRequestPayload(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"request\":\"{\\\"tool\\\":\\\"code_navigate\\\",\\\"capability\\\":\\\"read_symbol\\\",\\\"path\\\":\\\"cmd/idiom/main.go\\\",\\\"pattern\\\":\\\"Run\\\"}\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/main.go" || req.Pattern != "Run" {
+		t.Fatalf("unexpected nested request repair: %#v", req)
+	}
+}
+
 func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"go_read_symbol\",\"path\":\"internal/agent/runner.go\",\"symbol\":\"Runner.Run\"}\n```")
 	if err != nil {

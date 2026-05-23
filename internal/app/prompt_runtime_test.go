@@ -494,24 +494,25 @@ func TestDefaultVerificationPlanPrefersGoTestWhenGoModExists(t *testing.T) {
 	}
 }
 
-func TestBuildPromptExecutionPlanCapturesEvidenceFirstTargetRefs(t *testing.T) {
+func TestBuildPromptExecutionPlanCapturesMentionedImplementationRefsAsEvidencePaths(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
 		agentModeName: "build",
 	}
+	model.SetForcedTaskFamily("review_then_implement")
 	plan := model.buildPromptExecutionPlan(context.Background(), "Investigate the routing flow in this codebase and then update docs/frontier-routing-implementation-plan.md with what you find.")
 
 	if plan.route.Family != "review_then_implement" {
 		t.Fatalf("unexpected family: %q", plan.route.Family)
 	}
-	if len(plan.runtimeBrief.TargetRefs) != 1 || plan.runtimeBrief.TargetRefs[0] != "docs/frontier-routing-implementation-plan.md" {
-		t.Fatalf("expected target ref to be captured, got %#v", plan.runtimeBrief.TargetRefs)
+	if len(plan.runtimeBrief.TargetRefs) != 0 {
+		t.Fatalf("natural implementation prose should not make mentioned paths target refs, got %#v", plan.runtimeBrief.TargetRefs)
 	}
-	if !slices.Contains(plan.runtimeBrief.RequiredNext, "gather source evidence before large reads of named target refs") {
-		t.Fatalf("expected evidence-first requirement in runtime brief, got %#v", plan.runtimeBrief.RequiredNext)
+	if !slices.Contains(plan.runtimeBrief.EvidencePaths, "docs/frontier-routing-implementation-plan.md") {
+		t.Fatalf("expected mentioned implementation path as evidence, got %#v", plan.runtimeBrief.EvidencePaths)
 	}
-	if !slices.Contains(plan.runtimeBrief.InvalidActions, "large read_file on named target refs before source evidence") {
-		t.Fatalf("expected target-read invalid action in runtime brief, got %#v", plan.runtimeBrief.InvalidActions)
+	if slices.Contains(plan.runtimeBrief.RequiredNext, "gather source evidence before large reads of named target refs") {
+		t.Fatalf("mentioned implementation evidence paths must not trigger target-read gate, got %#v", plan.runtimeBrief.RequiredNext)
 	}
 }
 
@@ -737,8 +738,8 @@ func TestBuildPromptExecutionPlanSkipsClassifierWhenDisabled(t *testing.T) {
 	}
 
 	plan := model.buildPromptExecutionPlan(context.Background(), "Run the tests and report failures.")
-	if plan.route.Family != "verification_only" {
-		t.Fatalf("expected fallback route when classifier disabled, got %#v", plan.route)
+	if plan.route.Family != "conversation" {
+		t.Fatalf("expected conservative fallback route when classifier disabled, got %#v", plan.route)
 	}
 	if got := atomic.LoadInt32(&classifierCalls); got != 0 {
 		t.Fatalf("disabled route classifier should not call model, got %d classifier calls", got)

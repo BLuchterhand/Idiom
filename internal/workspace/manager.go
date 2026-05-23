@@ -95,10 +95,13 @@ type ToolRequest struct {
 	ID                string              `json:"id,omitempty"`
 	Handle            string              `json:"handle,omitempty"`
 	Path              string              `json:"path,omitempty"`
+	Root              string              `json:"root,omitempty"`
+	EffortRoot        string              `json:"effort_root,omitempty"`
 	StartLine         int                 `json:"start_line,omitempty"`
 	EndLine           int                 `json:"end_line,omitempty"`
 	Pattern           string              `json:"pattern,omitempty"`
 	Query             string              `json:"query,omitempty"`
+	Status            string              `json:"status,omitempty"`
 	Symbol            string              `json:"symbol,omitempty"`
 	Task              string              `json:"task,omitempty"`
 	Purpose           string              `json:"purpose,omitempty"`
@@ -123,6 +126,7 @@ type ToolRequest struct {
 	IncludeSource     bool                `json:"include_source,omitempty"`
 	IncludeFiles      bool                `json:"include_files,omitempty"`
 	Refresh           bool                `json:"refresh,omitempty"`
+	OperatorView      bool                `json:"operator_view,omitempty"`
 	FreshnessPolicy   string              `json:"freshness_policy,omitempty"`
 	FreshnessMaxFiles int                 `json:"freshness_max_files,omitempty"`
 	Category          string              `json:"category,omitempty"`
@@ -805,6 +809,10 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.recoveryStatus(ctx, req)
 	case "recovery_decompose":
 		return m.recoveryDecompose(ctx, req)
+	case "product_efforts":
+		return m.productEfforts(req)
+	case "product_status":
+		return m.productStatus(req)
 	case "submit_plan":
 		return m.submitPlan(req)
 	case "context_index":
@@ -1451,6 +1459,9 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 // and singleton values for array-only fields. Native tool-calls and fenced JSON
 // requests both route through this helper so repair behavior stays consistent.
 func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
+	if nested, ok, err := decodeNestedToolRequestJSON(payload); ok || err != nil {
+		return nested, err
+	}
 	var req ToolRequest
 	stringifiedFields := stringifiedStructuredToolFields(payload)
 	if _, ok := stringifiedFields["edits"]; ok {
@@ -1488,6 +1499,33 @@ func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 	normalizeToolRequestAliases(&req)
 	repairEmbeddedQwenXMLToolParameters(&req)
 	return req, nil
+}
+
+func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
+	var envelope struct {
+		Tool    string `json:"tool"`
+		Request string `json:"request"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return ToolRequest{}, false, nil
+	}
+	outerTool := strings.TrimSpace(envelope.Tool)
+	request := strings.TrimSpace(envelope.Request)
+	if outerTool == "" || request == "" || !strings.HasPrefix(request, "{") {
+		return ToolRequest{}, false, nil
+	}
+	var nested ToolRequest
+	if err := json.Unmarshal([]byte(request), &nested); err != nil {
+		return ToolRequest{}, true, fmt.Errorf("decode nested request: %w", err)
+	}
+	if strings.TrimSpace(nested.Tool) == "" {
+		nested.Tool = outerTool
+	} else if strings.TrimSpace(nested.Tool) != outerTool {
+		return ToolRequest{}, true, fmt.Errorf("nested request tool %q does not match envelope tool %q", nested.Tool, outerTool)
+	}
+	normalizeToolRequestAliases(&nested)
+	repairEmbeddedQwenXMLToolParameters(&nested)
+	return nested, true, nil
 }
 
 func stringifiedStructuredToolFields(payload []byte) map[string]string {

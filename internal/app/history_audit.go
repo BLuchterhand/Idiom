@@ -566,6 +566,288 @@ func (event historyAuditEvent) auditLine() string {
 	return line
 }
 
+func historyAuditDigestLines(entry historyEntry) []string {
+	lines := make([]string, 0, 4)
+	if route := historyAuditRouteDigest(entry.auditEvents); route != "" {
+		lines = append(lines, route)
+	}
+	if tools := historyToolDigest(entry.toolCalls); tools != "" {
+		lines = append(lines, tools)
+	}
+	if latest := historyLatestToolDigest(entry.toolCalls); latest != "" {
+		lines = append(lines, latest)
+	}
+	if contracts := historyContractDigest(entry.auditEvents); contracts != "" {
+		lines = append(lines, contracts)
+	}
+	if signals := historySignalDigest(entry.auditEvents); signals != "" {
+		lines = append(lines, signals)
+	}
+	return lines
+}
+
+func historyAuditRouteDigest(events []historyAuditEvent) string {
+	for i := len(events) - 1; i >= 0; i-- {
+		event := cleanHistoryAuditEvent(events[i])
+		if event.kind != "lane" {
+			continue
+		}
+		if strings.EqualFold(event.label, "route selected") {
+			initial := util.FirstNonEmpty(auditDetailValue(event.detail, "initial"), event.status)
+			followup := auditDetailValue(event.detail, "followup")
+			contract := auditDetailValue(event.detail, "contract")
+			route := initial
+			if followup != "" {
+				route = joinNonEmpty(" -> ", route, followup)
+			}
+			if route == "" {
+				route = event.label
+			}
+			if contract != "" {
+				return "Route: " + route + " (" + contract + ")"
+			}
+			return "Route: " + route
+		}
+		if strings.HasPrefix(event.label, "plan-execute ") {
+			return "Plan-execute: " + strings.TrimPrefix(event.label, "plan-execute ")
+		}
+		if event.status != "" {
+			return "Lane: " + event.status
+		}
+		return "Lane: " + event.label
+	}
+	return ""
+}
+
+func historyToolDigest(toolCalls []historyToolCall) string {
+	if len(toolCalls) == 0 {
+		return ""
+	}
+	counts := make(map[string]int)
+	running := 0
+	failed := 0
+	for _, tc := range toolCalls {
+		kind := primaryHistoryToolKind(tc.kind)
+		if kind == "" {
+			kind = "tool"
+		}
+		counts[kind]++
+		if tc.running {
+			running++
+		}
+		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(tc.outcome)), "failed") {
+			failed++
+		}
+	}
+	parts := make([]string, 0, len(counts))
+	for _, kind := range []string{"discovery", "read", "write", "verification", "contract", "delegation", "recovery", "shell", "context", "tool"} {
+		if count := counts[kind]; count > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", count, kind))
+			delete(counts, kind)
+		}
+	}
+	for kind, count := range counts {
+		parts = append(parts, fmt.Sprintf("%d %s", count, kind))
+	}
+	line := fmt.Sprintf("Tools: %d call(s)", len(toolCalls))
+	if len(parts) > 0 {
+		line += " (" + strings.Join(parts, ", ") + ")"
+	}
+	if running > 0 {
+		line += fmt.Sprintf("; %d running", running)
+	}
+	if failed > 0 {
+		line += fmt.Sprintf("; %d failed", failed)
+	}
+	return line
+}
+
+func historyLatestToolDigest(toolCalls []historyToolCall) string {
+	for i := len(toolCalls) - 1; i >= 0; i-- {
+		tc := toolCalls[i]
+		name := historyToolName(tc.line)
+		if name == "" {
+			continue
+		}
+		state := "running"
+		if !tc.running {
+			state = "completed"
+		}
+		outcome := compactToolOutcome(tc.outcome)
+		if outcome != "" {
+			state = outcome
+		}
+		reason := truncateRunes(collapseWhitespace(strings.TrimSpace(tc.intent)), 100)
+		if reason != "" {
+			return "Latest: " + name + " " + state + " - " + reason
+		}
+		return "Latest: " + name + " " + state
+	}
+	return ""
+}
+
+func historyContractDigest(events []historyAuditEvent) string {
+	seen := map[string]struct{}{}
+	parts := make([]string, 0, 2)
+	for i := len(events) - 1; i >= 0 && len(parts) < 2; i-- {
+		event := cleanHistoryAuditEvent(events[i])
+		switch event.kind {
+		case "contract", "evidence", "gate", "obligation", "control rails":
+		default:
+			continue
+		}
+		text := compactAuditEventLabel(event)
+		if text == "" {
+			continue
+		}
+		if _, ok := seen[text]; ok {
+			continue
+		}
+		seen[text] = struct{}{}
+		parts = append(parts, text)
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	reverseStrings(parts)
+	return "Contracts: " + strings.Join(parts, "; ")
+}
+
+func historySignalDigest(events []historyAuditEvent) string {
+	signals := make([]string, 0, 4)
+	seen := map[string]struct{}{}
+	add := func(signal string) {
+		signal = strings.TrimSpace(signal)
+		if signal == "" {
+			return
+		}
+		if _, ok := seen[signal]; ok {
+			return
+		}
+		seen[signal] = struct{}{}
+		signals = append(signals, signal)
+	}
+	for _, event := range events {
+		event = cleanHistoryAuditEvent(event)
+		switch event.kind {
+		case "privacy":
+			add("redaction active")
+		case "cache", "freshness":
+			if event.status == "refresh" || strings.Contains(event.label, "refresh") {
+				add("cache refreshed")
+			} else if strings.Contains(event.label, "cache") {
+				add("cache " + util.FirstNonEmpty(event.status, "checked"))
+			} else {
+				add("freshness " + util.FirstNonEmpty(event.status, "checked"))
+			}
+		case "routing":
+			add("redirected")
+		case "recovery":
+			add("recovery guidance")
+		case "delegation":
+			add("delegated check")
+		case "permission":
+			add("permission " + util.FirstNonEmpty(event.status, "checked"))
+		case "tool surface":
+			add("tool surface changed")
+		}
+	}
+	if len(signals) == 0 {
+		return ""
+	}
+	if len(signals) > 4 {
+		signals = signals[:4]
+	}
+	return "Signals: " + strings.Join(signals, ", ")
+}
+
+func primaryHistoryToolKind(kind string) string {
+	kind = strings.TrimSpace(kind)
+	if kind == "" {
+		return ""
+	}
+	if idx := strings.Index(kind, "/"); idx >= 0 {
+		kind = kind[:idx]
+	}
+	return strings.TrimSpace(kind)
+}
+
+func historyToolName(line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	if idx := strings.Index(line, " | "); idx > 0 {
+		return strings.TrimSpace(line[:idx])
+	}
+	fields := strings.Fields(line)
+	if len(fields) == 0 {
+		return ""
+	}
+	return fields[0]
+}
+
+func compactToolOutcome(outcome string) string {
+	outcome = strings.ToLower(strings.TrimSpace(outcome))
+	switch {
+	case outcome == "":
+		return ""
+	case strings.HasPrefix(outcome, "failed"):
+		return "failed"
+	case strings.HasPrefix(outcome, "ok"):
+		return "ok"
+	default:
+		return truncateRunes(collapseWhitespace(outcome), 40)
+	}
+}
+
+func compactAuditEventLabel(event historyAuditEvent) string {
+	label := strings.TrimSpace(event.label)
+	if label == "" {
+		return ""
+	}
+	switch event.kind {
+	case "evidence":
+		if event.status != "" {
+			return "evidence " + event.status
+		}
+	case "contract":
+		if strings.HasPrefix(label, "contract ") {
+			return label
+		}
+	case "obligation":
+		if event.status != "" {
+			return "obligation " + event.status
+		}
+	case "gate":
+		if event.status != "" {
+			return "gate " + event.status
+		}
+	case "control rails":
+		if event.status != "" {
+			return "control rails " + event.status
+		}
+	}
+	return truncateRunes(label, 80)
+}
+
+func auditDetailValue(detail string, key string) string {
+	for _, field := range strings.Fields(detail) {
+		field = strings.Trim(field, ";,")
+		prefix := key + "="
+		if strings.HasPrefix(field, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(field, prefix))
+		}
+	}
+	return ""
+}
+
+func reverseStrings(values []string) {
+	for i, j := 0, len(values)-1; i < j; i, j = i+1, j-1 {
+		values[i], values[j] = values[j], values[i]
+	}
+}
+
 func safeHistoryAuditDetail(text string) string {
 	text = collapseWhitespace(strings.TrimSpace(text))
 	if text == "" {

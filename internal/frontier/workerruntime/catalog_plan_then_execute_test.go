@@ -37,6 +37,8 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 		"read_file", "search_content", "code_navigate", "shell", "git_diff",
 		"submit_plan", "edit_file", "apply_patch",
 		"task", "task_ledger",
+		"recovery_inspect", "recovery_status", "recovery_decompose",
+		"product_efforts", "product_status",
 		"gdscript_trace",
 	}
 	brief := RuntimeBriefForTaskFamily("plan_then_execute_planner", "main", available)
@@ -49,9 +51,30 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 	if !planThenExecuteToolListContains(brief.AllowedTools, "gdscript_trace") {
 		t.Fatalf("planner brief should preserve project discovery externals, got %v", brief.AllowedTools)
 	}
-	for _, forbidden := range []string{"edit_file", "apply_patch", "shell", "git_diff", "task", "task_ledger"} {
+	for _, expected := range []string{"recovery_inspect", "recovery_status", "product_efforts", "product_status"} {
+		if !planThenExecuteToolListContains(brief.AllowedTools, expected) {
+			t.Fatalf("planner brief must surface %s for read-only workflow/status evidence, got %v", expected, brief.AllowedTools)
+		}
+	}
+	for _, forbidden := range []string{"edit_file", "apply_patch", "shell", "git_diff", "task", "task_ledger", "recovery_decompose"} {
 		if planThenExecuteToolListContains(brief.AllowedTools, forbidden) {
 			t.Fatalf("planner brief must not advertise %s; got %v", forbidden, brief.AllowedTools)
+		}
+	}
+}
+
+func TestRuntimeBriefForPlanThenExecutePlannerAddsSubmitPlanBeforeWorkspacePlannerMode(t *testing.T) {
+	available := []string{
+		"read_file", "search_content", "code_navigate",
+		"product_efforts", "product_status",
+	}
+	brief := RuntimeBriefForTaskFamily("plan_then_execute_planner", "main", available)
+	if !planThenExecuteToolListContains(brief.AllowedTools, "submit_plan") {
+		t.Fatalf("planner brief must include submit_plan even before workspace planner mode enables it, got %v", brief.AllowedTools)
+	}
+	for _, expected := range []string{"product_efforts", "product_status"} {
+		if !planThenExecuteToolListContains(brief.AllowedTools, expected) {
+			t.Fatalf("planner brief lost %s from pre-mode workspace surface, got %v", expected, brief.AllowedTools)
 		}
 	}
 }

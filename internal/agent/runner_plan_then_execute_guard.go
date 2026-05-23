@@ -99,9 +99,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 		return verificationInterceptResult{}
 	}
 	scope := r.planThenExecuteRequiredEditScope()
-	if len(scope.coverage) == 0 && len(scope.allowedExact) == 0 && len(scope.directoryScopes) == 0 {
-		return verificationInterceptResult{}
-	}
+	scopeActive := len(scope.coverage) > 0 || len(scope.allowedExact) > 0 || len(scope.directoryScopes) > 0
 	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
 	planned := make(map[string]struct{}, len(edits))
 	var outside []string
@@ -113,18 +111,20 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 			continue
 		}
 		planned[path] = struct{}{}
-		if !scope.allowsPlanPath(path) {
+		if scopeActive && !scope.allowsPlanPath(path) {
 			outside = append(outside, path)
 		}
 	}
 	var missing []string
-	for _, path := range scope.coverage {
-		if _, ok := planned[path]; !ok {
-			missing = append(missing, path)
+	if scopeActive {
+		for _, path := range scope.coverage {
+			if _, ok := planned[path]; !ok {
+				missing = append(missing, path)
+			}
 		}
-	}
-	if len(scope.coverage) == 0 && len(scope.directoryScopes) > 0 && len(planned) == 0 {
-		missing = append(missing, scope.directoryScopes...)
+		if len(scope.coverage) == 0 && len(scope.directoryScopes) > 0 && len(planned) == 0 {
+			missing = append(missing, scope.directoryScopes...)
+		}
 	}
 	missingSnippets := r.missingSubmitPlanRequiredEditSnippets(req, planned)
 	invalidAnchors := r.invalidSubmitPlanAnchors(req)
@@ -166,17 +166,108 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	if len(placeholderBodies) > 0 {
 		parts = append(parts, "placeholder edit body path(s): "+quotedRunnerStrings(placeholderBodies))
 	}
+	requirement := "submit_plan edit entries must include `path` and executable edit bodies with valid current-source anchors or line ranges"
+	if scopeActive {
+		requirement = "submit_plan must include at least one edit entry for every required_edit_paths coverage entry when required paths are present, no edits outside " + scopeName + ", and coverage for every required_edit_snippets final-state snippet"
+	}
 	return verificationInterceptResult{
 		Intercepted: true,
 		Result: workspace.ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
 			Output:  planThenExecuteSubmitPlanCoverageDetailsJSON(details),
-			Error: "submit_plan must include at least one edit entry for every required_edit_paths coverage entry when required paths are present, no edits outside " + scopeName + ", and coverage for every required_edit_snippets final-state snippet; " +
+			Error: requirement + "; " +
 				strings.Join(parts, "; ") +
 				". Submit a corrected plan with `edits` as a JSON array, not a quoted string, and include `path` on every edit. Use insert_after_line/content only for small inline insertions/appends after an existing line; use old_text/new_text for exact replacements/deletions; use start_line/end_line/content to replace an exact inclusive current-source range, including large additions by replacing unchanged anchor line(s) with those line(s) plus inserted content. Edit bodies must be complete executable source text, not placeholders, ellipses, or prose; answer `Decision: source-satisfied` when current source already contains the requested final state, or answer with <<QUESTION>> and name the exact blocker for each skipped requirement.",
 		},
 		Reason: "plan-then-execute planner phase: submit_plan edits did not satisfy required path/snippet coverage",
+	}
+}
+
+// preflightPlanThenExecuteSubmitPlanGroundingGuard prevents unscoped
+// planner atoms from turning a guessed file path into an executor plan. When
+// required_edit_paths are absent, the planner may choose the candidate paths,
+// but each submitted edit still needs source-body evidence or an explicit
+// snippet/body contract that makes the edit executable.
+func (r *Runner) preflightPlanThenExecuteSubmitPlanGroundingGuard(req workspace.ToolRequest, results []workspace.ToolResult) verificationInterceptResult {
+	if r == nil || !r.planThenExecutePlannerPhase() || strings.TrimSpace(req.Tool) != "submit_plan" {
+		return verificationInterceptResult{}
+	}
+	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) > 0 {
+		return verificationInterceptResult{}
+	}
+	if len(normalizedRequiredEditPaths(r.RuntimeBrief.AllowedEditPaths)) > 0 ||
+		len(workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief).RequiredEditSnippets) > 0 {
+		return verificationInterceptResult{}
+	}
+	missing := r.ungroundedSubmitPlanEditPaths(req, results)
+	if len(missing) == 0 {
+		return verificationInterceptResult{}
+	}
+	sort.Strings(missing)
+	return verificationInterceptResult{
+		Intercepted: true,
+		Result: workspace.ToolResult{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: edit paths lack source grounding",
+			Error: "submit_plan edits for unscoped plan-execute atoms must be grounded before executor handoff; missing source-body evidence for " + quotedRunnerStrings(missing) + ". " +
+				"Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan. If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
+		},
+		Reason: "plan-then-execute planner phase: unscoped submit_plan lacked grounded edit paths",
+	}
+}
+
+func (r *Runner) ungroundedSubmitPlanEditPaths(req workspace.ToolRequest, results []workspace.ToolResult) []string {
+	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
+	if len(edits) == 0 {
+		return []string{"edits[]"}
+	}
+	root := ""
+	if r != nil && r.Workspace != nil {
+		root = strings.TrimSpace(r.Workspace.Root())
+	}
+	missing := make([]string, 0, len(edits))
+	seen := make(map[string]struct{}, len(edits))
+	for i, edit := range edits {
+		path := normalizeRunnerPath(edit.Path)
+		if path == "" {
+			path = planThenExecuteSubmitPlanEditName(i, edit)
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		if r.submitPlanEditPathGrounded(path, edit, root, results) {
+			continue
+		}
+		missing = append(missing, path)
+	}
+	return missing
+}
+
+func (r *Runner) submitPlanEditPathGrounded(path string, edit workspace.PlanEdit, root string, results []workspace.ToolResult) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if r != nil && planThenExecuteRequiredSourceEvidenceForPath(r.RuntimeBrief, results, path).Level == planThenExecuteEvidenceAnchorReady {
+		return true
+	}
+	return planThenExecuteCompleteNewFileEdit(edit, root, path)
+}
+
+func planThenExecuteCompleteNewFileEdit(edit workspace.PlanEdit, root string, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || strings.TrimSpace(root) == "" || filepath.IsAbs(path) {
+		return false
+	}
+	if !edit.ReplaceAll || strings.TrimSpace(edit.OldText) != "" || strings.TrimSpace(edit.NewText) == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(path))); err == nil {
+		return false
+	} else {
+		return os.IsNotExist(err)
 	}
 }
 
@@ -1044,6 +1135,11 @@ func planThenExecuteSubmitPlanRejectedResult(result workspace.ToolResult) bool {
 		return true
 	}
 	return strings.Contains(result.Summary, "submit_plan rejected") || strings.Contains(result.Error, "submit_plan must include")
+}
+
+func planThenExecuteSubmitPlanGroundingRejectedResult(result workspace.ToolResult) bool {
+	return strings.TrimSpace(result.Tool) == "submit_plan" &&
+		strings.Contains(strings.ToLower(result.Summary+"\n"+result.Error), "edit paths lack source grounding")
 }
 
 func submitPlanRejectionHasLargeInsertAfterLine(result workspace.ToolResult) bool {
@@ -2242,8 +2338,7 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 		return false
 	}
 	if len(required) == 0 {
-		return len(planThenExecuteAnchorReadyPaths(brief, results)) > 0 &&
-			planThenExecuteCandidateScopeFullyRead(brief, results, 4)
+		return len(planThenExecuteAnchorReadyPaths(brief, results)) > 0
 	}
 	if len(planThenExecuteAnchorReadyPaths(brief, results)) == 0 {
 		return false
@@ -2255,6 +2350,26 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 		if _, ok := planThenExecuteAnchorReadyPaths(brief, results)[normalizeRunnerPath(path)]; !ok {
 			return false
 		}
+	}
+	return true
+}
+
+func planThenExecuteCandidateSourcePending(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return false
+	}
+	if successfulSubmitPlanResultCount(results) > 0 {
+		return false
+	}
+	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 {
+		return false
+	}
+	normalized := workerruntime.NormalizeRuntimeBrief(brief)
+	if len(normalizedRequiredEditPaths(normalized.AllowedEditPaths)) > 0 || len(normalized.RequiredEditSnippets) > 0 {
+		return false
+	}
+	if len(planThenExecuteAnchorReadyPaths(brief, results)) > 0 {
+		return false
 	}
 	return true
 }

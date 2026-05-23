@@ -66,7 +66,7 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 		if !exportedToolSchemaHasProfile(tool, profile) {
 			continue
 		}
-		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) {
+		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) && !isToolSchemaProductWorkflowTool(tool.Name) {
 			continue
 		}
 		if profile == ToolProfileDiscovery && !mcpDiscoveryProfileTool(tool.Name) {
@@ -79,6 +79,15 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 
 func mcpDiscoveryProfileTool(tool string) bool {
 	return strings.HasPrefix(tool, "context_") || tool == "recovery_inspect" || tool == "recovery_status"
+}
+
+func isToolSchemaProductWorkflowTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "product_efforts", "product_status":
+		return true
+	default:
+		return false
+	}
 }
 
 func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolDefinition, profiles map[string][]string) (ToolSchemaExport, error) {
@@ -224,6 +233,8 @@ func toolSchemaPolicyForTool(tool string) ToolSchemaPolicyExport {
 func toolSchemaCapabilities(tool string) []autonomy.Capability {
 	switch {
 	case tool == "read_file" || tool == "pwd" || tool == "list_files" || tool == "file_stats" || tool == "git_status" || tool == "git_diff":
+		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
+	case isToolSchemaProductWorkflowTool(tool):
 		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
 	case tool == "search_files" || tool == "search_content":
 		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}

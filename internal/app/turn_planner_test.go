@@ -1,6 +1,7 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -67,8 +68,10 @@ func TestImplementationDispatchSkipsRefineScratchpadMetaBriefs(t *testing.T) {
 		"1. `.idiom/refine/example/iter-1/draft.md`",
 	}, "\n")
 
-	if shouldDispatchImplementationToPlanExecute(plan, agent.BuildMode(), cfg, prompt) {
-		t.Fatalf("refine scratchpad meta-brief should stay on implement lane instead of recursive plan-execute dispatch")
+	m := &Model{cfg: cfg}
+	decision := m.writerRouteDecisionForPrompt(prompt, plan)
+	if decision.Lane != "implement" {
+		t.Fatalf("refine scratchpad meta-brief should stay on implement lane, got %#v", decision)
 	}
 }
 
@@ -713,7 +716,7 @@ func TestImplementationDispatchCommandObligationMustBeProvenBeforeAtomComplete(t
 	}
 }
 
-func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
+func TestWriterRouteDecisionForPromptReportsGuardedImplementForExactEditPacket(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
@@ -753,8 +756,11 @@ func TestWriterRouteDecisionForPromptReportsPlanExecuteDispatch(t *testing.T) {
 	}, "\n")
 	decision := m.writerRouteDecisionForPrompt(prompt, plan)
 
-	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
 		t.Fatalf("unexpected writer route decision: %#v", decision)
+	}
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
 	if decision.PlannerModel != "planner-model" || decision.ExecutorModel != "executor-model" || decision.ClassifierModel != "classifier-model" {
 		t.Fatalf("unexpected model fields: %#v", decision)
@@ -790,7 +796,7 @@ func TestWriterRouteDecisionForPromptKeepsSemanticTDDScopeOnGuardedLane(t *testi
 	}
 }
 
-func TestWriterRouteDecisionForPromptHonorsExplicitPlanExecuteForSemanticTDDScope(t *testing.T) {
+func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForSemanticTDDScope(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
@@ -805,14 +811,14 @@ func TestWriterRouteDecisionForPromptHonorsExplicitPlanExecuteForSemanticTDDScop
 
 	decision := m.writerRouteDecisionForPrompt("Use the plan-execute lane to implement a TDD coverage-gate fix and add regression tests. Required edit paths: internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go.", plan)
 
-	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
-		t.Fatalf("explicit semantic TDD request should route to plan-execute, got %#v", decision)
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("plan-execute prose mention should not route to plan-execute, got %#v", decision)
 	}
-	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
-		t.Fatalf("task family = %q, want %q", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
-	if !slices.Contains(decision.ReasonCodes, "route.explicit_plan_execute_lane") {
-		t.Fatalf("explicit plan-execute reason missing: %#v", decision.ReasonCodes)
+	if !slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
+		t.Fatalf("semantic source/test reason missing: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -845,6 +851,119 @@ func TestPlanExecuteSlashCommandExecutionPlanUsesPlannerMetadata(t *testing.T) {
 	}
 	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
 		t.Fatalf("typed command writer metadata missing planner route, got %#v", decision)
+	}
+}
+
+func TestClassifierSelectedPlanExecuteFamilyUsesPlannerMetadata(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	m := &Model{cfg: cfg}
+	objective := "Can you send this product workflow implementation atom through the TUI plan-execute flow?"
+
+	for _, family := range []string{
+		"plan_then_execute_planner",
+		"plan_execute_planner",
+		"plan_execute",
+		"plan_then_execute",
+	} {
+		t.Run(family, func(t *testing.T) {
+			route := normalizeTurnRoutePlan(turnRoutePlan{
+				Family:      family,
+				InitialLane: "plan-execute",
+				Reason:      "classifier_atom_dispatch",
+				Contract:    "implementation_result",
+			}, agent.BuildMode())
+			plan := promptExecutionPlan{
+				mode:  agent.BuildMode(),
+				route: route,
+				runtimeBrief: workerruntime.WorkerRuntimeBrief{
+					TaskFamily: agent.PlanThenExecutePlannerTaskFamily,
+				},
+			}
+
+			decision := m.writerRouteDecisionForPrompt(objective, plan)
+
+			if route.Family != agent.PlanThenExecutePlannerTaskFamily {
+				t.Fatalf("normalized family = %q, want %s", route.Family, agent.PlanThenExecutePlannerTaskFamily)
+			}
+			if route.InitialLane != "implement" || route.Contract != "implementation_result" {
+				t.Fatalf("normalized route lost planner execution contract: %#v", route)
+			}
+			if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+				t.Fatalf("classifier-selected planner family should report plan-execute writer metadata, got %#v", decision)
+			}
+			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
+				t.Fatalf("classifier-selected planner route missing metadata, got %#v", decision)
+			}
+		})
+	}
+}
+
+func TestBuildPromptExecutionPlanPreservesClassifierSelectedPlanExecuteFamily(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"plan_then_execute_planner","initial_lane":"implement","reason":"classifier_atom_dispatch","contract":"implementation_result"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.RouteClassifier.Enabled = true
+	m := &Model{
+		cfg:    cfg,
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	objective := "Can you send this product workflow implementation atom through the TUI plan-execute flow?"
+
+	plan := m.buildPromptExecutionPlan(context.Background(), objective)
+	decision := m.writerRouteDecisionForPrompt(objective, plan)
+
+	if calls.Load() != 1 {
+		t.Fatalf("classifier calls = %d, want 1", calls.Load())
+	}
+	if plan.route.Family != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("route family = %q, want %s", plan.route.Family, agent.PlanThenExecutePlannerTaskFamily)
+	}
+	if plan.runtimeBrief.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		t.Fatalf("runtime brief task family = %q, want %s", plan.runtimeBrief.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	}
+	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
+		t.Fatalf("classifier-selected planner should flow through buildPromptExecutionPlan to plan-execute metadata, got %#v", decision)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
+		t.Fatalf("planner reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestImplementSlashCommandExecutionPlanUsesImplementMetadata(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	objective := "Create a small fixture file. Required edit paths only: tmp/typed-implement.txt."
+
+	plan := m.implementCommandExecutionPlan(objective)
+	decision := m.writerRouteDecisionForPrompt(objective, plan)
+
+	if plan.mode.Name != "build" {
+		t.Fatalf("mode = %q, want build", plan.mode.Name)
+	}
+	if plan.route.Family != "implementation" || plan.route.Reason != "typed_implement_command" {
+		t.Fatalf("typed command should set implementation route, got %#v", plan.route)
+	}
+	if plan.runtimeBrief.TaskFamily != "implementation" {
+		t.Fatalf("brief task family = %q, want implementation", plan.runtimeBrief.TaskFamily)
+	}
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("typed command should report implement writer metadata, got %#v", decision)
+	}
+	if decision.TaskFamily != "implementation" || !slices.Contains(decision.ReasonCodes, "route.typed_implement_command") {
+		t.Fatalf("typed command writer metadata missing implement route, got %#v", decision)
 	}
 }
 
@@ -955,7 +1074,7 @@ func TestWriterRouteDecisionForPromptKeepsSimpleScopedSourceTestImplementationOn
 	}
 }
 
-func TestWriterRouteDecisionForPromptDispatchesExactEditPacketToPlanExecute(t *testing.T) {
+func TestWriterRouteDecisionForPromptKeepsExactEditPacketOnGuardedLane(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
@@ -987,15 +1106,15 @@ func TestWriterRouteDecisionForPromptDispatchesExactEditPacketToPlanExecute(t *t
 
 	decision := m.writerRouteDecisionForPrompt(prompt, plan)
 
-	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
-		t.Fatalf("exact edit packet should dispatch to plan-execute, got %#v", decision)
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("exact edit packet should stay on guarded implement lane, got %#v", decision)
 	}
-	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
-		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
 }
 
-func TestWriterRouteDecisionForPromptHonorsExplicitPlanExecuteForExactEditPacket(t *testing.T) {
+func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForExactEditPacket(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
@@ -1037,11 +1156,11 @@ func TestWriterRouteDecisionForPromptHonorsExplicitPlanExecuteForExactEditPacket
 
 	decision := m.writerRouteDecisionForPrompt(prompt, plan)
 
-	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
-		t.Fatalf("explicit exact edit packet should dispatch to plan-execute, got %#v", decision)
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("plan-execute prose mention should not route exact edit packet to plan-execute, got %#v", decision)
 	}
-	if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
-		t.Fatalf("task family = %q, want %s", decision.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
+	if decision.TaskFamily != "implementation" {
+		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
 }
 
@@ -1757,9 +1876,9 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "update target.txt")
+	answer, err := model.runImplementCommandOnce(context.Background(), "update target.txt")
 	if err != nil {
-		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+		t.Fatalf("runImplementCommandOnce: %v\nanswer: %s", err, answer)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "target.txt"))
 	if err != nil {
@@ -1936,9 +2055,9 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement a semantic TDD feature fix and add regression tests. Required edit paths: pkg/feature.go, pkg/feature_test.go.")
+	answer, err := model.runImplementCommandOnce(context.Background(), "Implement a semantic TDD feature fix and add regression tests. Required edit paths: pkg/feature.go, pkg/feature_test.go.")
 	if err != nil {
-		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+		t.Fatalf("runImplementCommandOnce: %v\nanswer: %s", err, answer)
 	}
 	if plannerChatRequests.Load() != 0 {
 		t.Fatalf("semantic implementation should not use exact plan-execute planner, got %d request(s)", plannerChatRequests.Load())
@@ -1951,7 +2070,189 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 		t.Fatalf("read source: %v", err)
 	}
 	if !strings.Contains(string(gotSource), "return true") {
-		t.Fatalf("source was not updated:\n%s", string(gotSource))
+		t.Fatalf("source was not updated after %d executor request(s), answer=%q:\n%s", executorChatRequests.Load(), answer, string(gotSource))
+	}
+	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
+	if err != nil {
+		t.Fatalf("read test: %v", err)
+	}
+	if !strings.Contains(string(gotTest), "Covered = true") {
+		t.Fatalf("test was not updated:\n%s", string(gotTest))
+	}
+}
+
+func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *testing.T) {
+	root := t.TempDir()
+	disableQueueDaemonForTurnPlannerTest(t, root)
+	for _, dir := range []string{".idiom", "docs", "pkg"} {
+		if err := os.MkdirAll(filepath.Join(root, dir), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", dir, err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "docs", "tdd-feature.md"), []byte(strings.Join([]string{
+		"# TDD Feature Atom",
+		"",
+		"Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
+		"Acceptance: feature returns true and regression coverage marker is true.",
+		"",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write tdd feature atom: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Enabled() bool { return false }\n"), 0o644); err != nil {
+		t.Fatalf("write feature: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature_test.go"), []byte("package pkg\n\nconst Covered = false\n"), 0o644); err != nil {
+		t.Fatalf("write feature test: %v", err)
+	}
+
+	var classifierRequests atomic.Int64
+	var unexpectedPlannerRequests atomic.Int64
+	plannerServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "planner-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read planner request: %v", err)
+			}
+			requestText := string(body)
+			if strings.Contains(requestText, "Current user prompt:") && strings.Contains(requestText, "Return JSON now.") {
+				classifierRequests.Add(1)
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{
+						"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
+					}},
+				})
+				return
+			}
+			unexpectedPlannerRequests.Add(1)
+			t.Fatalf("natural-language TDD request should not enter planner/plan-execute path:\n%s", requestText)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer plannerServer.Close()
+
+	var executorChatRequests atomic.Int64
+	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeToolCall := func(id, name, arguments string) {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{
+					"message": map[string]any{
+						"role": "assistant",
+						"tool_calls": []map[string]any{{
+							"id":   id,
+							"type": "function",
+							"function": map[string]any{
+								"name":      name,
+								"arguments": arguments,
+							},
+						}},
+					},
+					"finish_reason": "tool_calls",
+				}},
+			})
+		}
+		switch r.URL.Path {
+		case "/v1/models":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"data": []map[string]any{{"id": "executor-model"}},
+			})
+		case "/v1/chat/completions":
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Fatalf("read executor request: %v", err)
+			}
+			requestText := string(body)
+			if !strings.Contains(requestText, `"model":"executor-model"`) {
+				t.Fatalf("natural-language implementation should use executor model, got request:\n%s", requestText)
+			}
+			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
+				t.Fatalf("natural-language implementation should not include plan-execute planner prompt:\n%s", requestText)
+			}
+			if !strings.Contains(requestText, "Can you implement this feature: docs/tdd-feature.md") {
+				t.Fatalf("executor prompt lost natural-language objective:\n%s", requestText)
+			}
+			switch executorChatRequests.Add(1) {
+			case 1:
+				writeToolCall("call_read_tdd", "read_file", `{"path":"docs/tdd-feature.md"}`)
+				return
+			case 2:
+				writeToolCall("call_read_feature_source", "read_file", `{"path":"pkg/feature.go"}`)
+				return
+			case 3:
+				writeToolCall("call_edit_feature_source", "edit_file", `{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","description":"enable feature behavior"}`)
+				return
+			case 4:
+				writeToolCall("call_read_feature_test", "read_file", `{"path":"pkg/feature_test.go"}`)
+				return
+			case 5:
+				writeToolCall("call_edit_feature_test", "edit_file", `{"path":"pkg/feature_test.go","old_text":"Covered = false","new_text":"Covered = true","description":"add regression coverage marker"}`)
+				return
+			default:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{
+						"message": map[string]string{"content": "Implemented docs/tdd-feature.md."},
+					}},
+				})
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer executorServer.Close()
+
+	backendsJSON := fmt.Sprintf(`{"profiles":{"local":{"models":[
+		{"alias":"planner-model","model":"planner-model","base_url":%q,"roles":["planner","classifier"]},
+		{"alias":"executor-model","model":"executor-model","base_url":%q,"roles":["executor"]}
+	]}}}`, plannerServer.URL, executorServer.URL)
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.LlamaServer.BaseURL = plannerServer.URL
+	cfg.LlamaServer.Model = "planner-model"
+	cfg.RouteClassifier.Enabled = true
+	cfg.Chat.AutoStartServer = false
+	cfg.Chat.AttachInstructionFiles = false
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	cfg.Chat.DebugLogDir = filepath.Join(root, "logs", "conversations")
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	cfg.Workspace.EnableShell = false
+	cfg.MCP = nil
+
+	model := New(cfg)
+	defer model.Close()
+	var eventBuf bytes.Buffer
+	model.SetJSONEventStream(&eventBuf, "natural-tdd-test")
+
+	answer, err := model.RunPromptOnce(context.Background(), "Can you implement this feature: docs/tdd-feature.md")
+	if err != nil {
+		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	}
+	if classifierRequests.Load() != 1 {
+		t.Fatalf("expected one classifier request, got %d", classifierRequests.Load())
+	}
+	if unexpectedPlannerRequests.Load() != 0 {
+		t.Fatalf("unexpected planner requests: %d", unexpectedPlannerRequests.Load())
+	}
+	if executorChatRequests.Load() == 0 {
+		t.Fatalf("expected guarded implementation executor chat")
+	}
+	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
+	if err != nil {
+		t.Fatalf("read source: %v", err)
+	}
+	if !strings.Contains(string(gotSource), "return true") {
+		t.Fatalf("source was not updated after %d executor request(s), answer=%q events=%s:\n%s", executorChatRequests.Load(), answer, eventBuf.String(), string(gotSource))
 	}
 	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
 	if err != nil {
@@ -2044,9 +2345,9 @@ func TestRunPromptOnceSemanticRequiredPathsFallsBackToActiveModelWhenExecutorUna
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement a semantic fix. Required edit paths: target.txt.")
+	answer, err := model.runImplementCommandOnce(context.Background(), "Implement a semantic fix. Required edit paths: target.txt.")
 	if err != nil {
-		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+		t.Fatalf("runImplementCommandOnce: %v\nanswer: %s", err, answer)
 	}
 	if plannerChatRequests.Load() == 0 {
 		t.Fatalf("expected active-model fallback to use planner chat")
@@ -2630,12 +2931,12 @@ func TestImplementationDispatchBriefLintBlockersDoNotTruncateActionableLine(t *t
 	}
 }
 
-func TestFallbackTurnRouteRecognizesDebugLogs(t *testing.T) {
+func TestFallbackTurnRouteDoesNotRecognizeDebugLogsFromHeuristics(t *testing.T) {
 	plan := fallbackTurnRoute("Check our most recent logs and explain why it failed.", agent.BuildMode())
-	if plan.Family != "debug_logs" {
-		t.Fatalf("family = %q, want debug_logs", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "explore" || plan.Contract != "grounded_explanation" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -2675,8 +2976,8 @@ func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testi
 
 func TestCorrectTurnRoutePlanUsesFallbackInsteadOfHardcodedConversation(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", agent.BuildMode())
-	if plan.Family != "verification_only" {
-		t.Fatalf("family = %q, want verification_only", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
@@ -2693,22 +2994,43 @@ func TestFallbackTurnRouteRecognizesCodeExplanationAsConversation(t *testing.T) 
 	}
 }
 
-func TestFallbackTurnRouteRecognizesVerificationOnlyWithNoEditConstraint(t *testing.T) {
+func TestFallbackTurnRouteNeverActivatesLanesFromPromptHeuristics(t *testing.T) {
+	prompts := []string{
+		"Run the tests and report failures.",
+		"Find where the banner text is rendered, then remove it.",
+		"Update the panel script in ui/status_panel.gd.",
+		"Use the plan-execute lane to apply these exact edits.",
+		"I want to test the implementation lane.",
+		"Implement docs/plan.md and add regression tests.",
+		"Check the most recent logs and explain why it failed.",
+	}
+	for _, prompt := range prompts {
+		plan := fallbackTurnRoute(prompt, agent.BuildMode())
+		if plan.Family != "conversation" {
+			t.Fatalf("fallback heuristic activated lane for %q: %#v", prompt, plan)
+		}
+		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+			t.Fatalf("unexpected conservative fallback for %q: %#v", prompt, plan)
+		}
+	}
+}
+
+func TestFallbackTurnRouteDoesNotRecognizeVerificationOnlyFromHeuristics(t *testing.T) {
 	plan := fallbackTurnRoute("Run the tests in the seeded failing fixture and report the failure without editing files.", agent.BuildMode())
-	if plan.Family != "verification_only" {
-		t.Fatalf("family = %q, want verification_only", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
 	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
 
-func TestFallbackTurnRouteRecognizesSuggestionQuestionAsArchitecture(t *testing.T) {
+func TestFallbackTurnRouteDoesNotRecognizeSuggestionQuestionAsArchitecture(t *testing.T) {
 	plan := fallbackTurnRoute("What can we add to our discovery tools in an effort at increasing their overall usefulness?", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -2724,47 +3046,47 @@ func TestFallbackTurnRouteKeepsQuestionShapedUILayoutRequestReadOnly(t *testing.
 	}
 }
 
-func TestFallbackTurnRouteKeepsNoEditLocateReadOnly(t *testing.T) {
+func TestFallbackTurnRouteDoesNotRecognizeLocateFromHeuristics(t *testing.T) {
 	plan := fallbackTurnRoute("Find where the nonexistent banner text is rendered. If it is not present, say that clearly and do not edit files.", agent.BuildMode())
-	if plan.Family != "locate" {
-		t.Fatalf("family = %q, want locate", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "locate" || plan.FollowupLane != "" || plan.Contract != "locate_targets" {
+	if plan.InitialLane != "main" || plan.FollowupLane != "" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
 
-func TestFallbackTurnRouteKeepsLocateThenRemoveAsImplementation(t *testing.T) {
+func TestFallbackTurnRouteDoesNotRecognizeLocateThenRemoveAsImplementation(t *testing.T) {
 	plan := fallbackTurnRoute("Find where the banner text is rendered, then remove it.", agent.BuildMode())
-	if plan.Family != "locate_then_implement" {
-		t.Fatalf("family = %q, want locate_then_implement", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "locate" || plan.FollowupLane != "implement" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != "main" || plan.FollowupLane != "" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
 
-func TestFallbackTurnRouteRecognizesGDScriptEdits(t *testing.T) {
+func TestFallbackTurnRouteDoesNotRecognizeGDScriptEditsFromHeuristics(t *testing.T) {
 	plan := fallbackTurnRoute("Update the panel script in ui/status_panel.gd.", agent.BuildMode())
-	if plan.Family != "gdscript_edit" {
-		t.Fatalf("family = %q, want gdscript_edit", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
 
-func TestFallbackTurnRouteRecognizesStartWorkingOnNamedDocAsDocsEdit(t *testing.T) {
+func TestFallbackTurnRouteDoesNotRecognizeStartWorkingOnNamedDocAsDocsEdit(t *testing.T) {
 	for _, prompt := range []string{
 		"can you please start working on docs/writer-route-decision-report-only-plan.md?",
 		"can you start woring on docs/writer-route-decision-report-only-plan.md?",
 		"can you start implementing docs/writer-route-decision-report-only-plan.md?",
 	} {
 		plan := fallbackTurnRoute(prompt, agent.BuildMode())
-		if plan.Family != "docs_edit" {
-			t.Fatalf("family for %q = %q, want docs_edit", prompt, plan.Family)
+		if plan.Family != "conversation" {
+			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
 		}
-		if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
 		}
 	}
@@ -2891,7 +3213,7 @@ func TestRunPromptOnceDispatchesStartImplementingPlanDocToPlanExecute(t *testing
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you start implementing plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -2969,7 +3291,7 @@ func TestRunPromptOnceBlocksAmbiguousPlanDocBasenameBeforePlanExecute(t *testing
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you start implementing plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce should return a typed ambiguity blocker, got err=%v answer=%q", err, answer)
 	}
@@ -3069,7 +3391,7 @@ func TestRunPromptOnceBlocksUnlintedPlanDocBeforePlanExecute(t *testing.T) {
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you start implementing docs/plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce should surface preflight blocker as an assistant answer, got err=%v answer=%q", err, answer)
 	}
@@ -3176,7 +3498,7 @@ func TestRunPromptOnceSurfacesRefinedCandidatePreflightBlocker(t *testing.T) {
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you start implementing docs/plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce should surface refined candidate blocker as an assistant answer, got err=%v answer=%q", err, answer)
 	}
@@ -3341,7 +3663,7 @@ func TestRunPromptOnceRefinesPlanDocBeforePlanExecuteDispatch(t *testing.T) {
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you start implementing docs/plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -3552,7 +3874,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you start implementing design.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "design.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -4445,7 +4767,7 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you please start working on docs/plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -4539,7 +4861,7 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you please start working on docs/plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce should surface planner blocker as an assistant answer, got err=%v answer=%q", err, answer)
 	}
@@ -4640,7 +4962,7 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "can you please start working on docs/plan.md?")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "docs/plan.md")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -4759,7 +5081,7 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t 
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -4897,7 +5219,7 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSati
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
@@ -5091,9 +5413,9 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 	model := New(cfg)
 	defer model.Close()
 
-	answer, err := model.RunPromptOnce(context.Background(), "Implement one bounded topic from docs/design.md: status migration apply must harden predictable temp-path writes against pre-existing symlinks. Add regression tests proving temp symlinks are rejected.")
+	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement one bounded topic from docs/design.md: status migration apply must harden predictable temp-path writes against pre-existing symlinks. Add regression tests proving temp symlinks are rejected.")
 	if err != nil {
-		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+		t.Fatalf("runPlanExecuteCommandOnce: %v\nanswer: %s", err, answer)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "internal", "productworkflow", "migration_apply.go"))
 	if err != nil {
@@ -5379,17 +5701,17 @@ func runtimeBriefForTest(targetRefs []string) workerruntime.WorkerRuntimeBrief {
 	return workerruntime.WorkerRuntimeBrief{TargetRefs: targetRefs}
 }
 
-func TestCorrectTurnRoutePlanUpgradesVerificationOnlyWithEditIntent(t *testing.T) {
+func TestCorrectTurnRoutePlanDoesNotUpgradeVerificationOnlyWithEditIntentHeuristic(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "verification_only"}, "Modify exactly one file and do not run tests.", agent.BuildMode())
-	if plan.Family != "implementation" {
-		t.Fatalf("family = %q, want implementation", plan.Family)
+	if plan.Family != "verification_only" {
+		t.Fatalf("family = %q, want verification_only", plan.Family)
 	}
-	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
 
-func TestFallbackTurnRouteKeepsEditAtomWithAcceptanceCommandsAsImplementation(t *testing.T) {
+func TestFallbackTurnRouteDoesNotUseEditAtomAsImplementationHeuristic(t *testing.T) {
 	prompt := `
 # IMPLEMENTATION REQUEST - EDIT FILES
 
@@ -5415,10 +5737,10 @@ git diff --check
 ` + "```" + `
 `
 	plan := fallbackTurnRoute(prompt, agent.BuildMode())
-	if plan.Family != "implementation" {
-		t.Fatalf("family = %q, want implementation", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -5433,17 +5755,17 @@ func TestCorrectTurnRoutePlanKeepsAnalysisContinuationReadOnly(t *testing.T) {
 	}
 }
 
-func TestShouldPreferFallbackRoutePreventsModelDowngradeToConversation(t *testing.T) {
+func TestShouldPreferFallbackRouteDoesNotOverrideConversationWithHeuristicFallback(t *testing.T) {
 	fallback := fallbackTurnRoute("Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?", agent.BuildMode())
-	if fallback.Family != "debug_logs" {
-		t.Fatalf("fallback family = %q, want debug_logs", fallback.Family)
+	if fallback.Family != "conversation" {
+		t.Fatalf("fallback family = %q, want conversation", fallback.Family)
 	}
 	planned := normalizeTurnRoutePlan(turnRoutePlan{Family: "direct_question"}, agent.BuildMode())
 	if planned.Family != "conversation" {
 		t.Fatalf("legacy direct_question should normalize to conversation, got %#v", planned)
 	}
-	if !shouldPreferFallbackRoute(fallback, planned, "Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?") {
-		t.Fatal("expected specialized fallback to override a generic conversation model route")
+	if shouldPreferFallbackRoute(fallback, planned, "Ok, check the most recent logs. Lots of weird decisions in there. Can this be made smarter?") {
+		t.Fatal("conservative fallback must not override a generic conversation model route")
 	}
 }
 
@@ -5499,7 +5821,7 @@ func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.
 	}
 }
 
-func TestClassifyTurnRouteSkipsClassifierForHardDebugLogSignal(t *testing.T) {
+func TestClassifyTurnRouteDoesNotSkipClassifierForDebugLogSignal(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -5518,21 +5840,21 @@ func TestClassifyTurnRouteSkipsClassifierForHardDebugLogSignal(t *testing.T) {
 		client: llama.NewClient(server.URL, time.Second),
 	}
 	plan := m.classifyTurnRoute(context.Background(), "Check the most recent logs and explain why it failed.", agent.BuildMode())
-	if plan.Family != "debug_logs" {
-		t.Fatalf("family = %q, want debug_logs", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if calls.Load() != 0 {
-		t.Fatalf("hard log signal should skip classifier model call, got %d calls", calls.Load())
+	if calls.Load() != 1 {
+		t.Fatalf("debug log wording should be classified by model, got %d calls", calls.Load())
 	}
 }
 
-func TestClassifyTurnRouteKeepsPlanExecuteSourceSatisfiedSmokeWriteShaped(t *testing.T) {
+func TestClassifyTurnRouteUsesClassifierForPlanExecuteSourceSatisfiedSmokeWriteShaped(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
-				"message": map[string]string{"content": `{"family":"architecture","initial_lane":"architecture","reason":"architecture_request","contract":"architecture_assessment"}`},
+				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
 			}},
 		})
 	}))
@@ -5552,8 +5874,8 @@ func TestClassifyTurnRouteKeepsPlanExecuteSourceSatisfiedSmokeWriteShaped(t *tes
 	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
-	if calls.Load() != 0 {
-		t.Fatalf("source-satisfied plan-execute workflow is a hard contract signal, got classifier calls=%d", calls.Load())
+	if calls.Load() != 1 {
+		t.Fatalf("source-satisfied plan-execute workflow should go through classifier, got classifier calls=%d", calls.Load())
 	}
 }
 
@@ -5593,6 +5915,47 @@ func TestClassifyTurnRouteKeepsQuestionShapedMutationReadOnly(t *testing.T) {
 	}
 	if calls.Load() == 0 {
 		t.Fatal("expected classifier to be consulted before honoring the read-only route")
+	}
+}
+
+func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T) {
+	var requestText string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read classifier request: %v", err)
+		}
+		requestText = string(body)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	plan := m.classifyTurnRoute(context.Background(), "Can you implement this feature: docs/design-prd-adr-brief-research-workflow.md Phase 7?", agent.BuildMode())
+	if plan.Family != "implementation" {
+		t.Fatalf("classifier-selected polite implementation directive should route implementation, got %#v", plan)
+	}
+	if !strings.Contains(requestText, `"top_p":1`) {
+		t.Fatalf("classifier request must use valid deterministic top_p, got:\n%s", requestText)
+	}
+	for _, want := range []string{
+		"Question-shaped wording is not a lane signal by itself",
+		"Classify by requested outcome",
+		"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive",
+		"Can you implement this feature: docs/tdd-feature.md",
+	} {
+		if !strings.Contains(requestText, want) {
+			t.Fatalf("classifier prompt missing %q:\n%s", want, requestText)
+		}
 	}
 }
 
@@ -5645,13 +6008,13 @@ func TestClassifyTurnRouteHonorsClassifierImplementationDirective(t *testing.T) 
 	}
 }
 
-func TestClassifyTurnRouteExplicitImplementInvocationBeatsVerificationWording(t *testing.T) {
+func TestClassifyTurnRouteImplementSlashMentionDoesNotBypassClassifier(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
-				"message": map[string]string{"content": `{"family":"verification_only","initial_lane":"main","reason":"verification_request","contract":"direct_answer"}`},
+				"message": map[string]string{"content": `{"family":"direct_question","initial_lane":"main","reason":"read_only_question","contract":"direct_answer"}`},
 			}},
 		})
 	}))
@@ -5665,14 +6028,11 @@ func TestClassifyTurnRouteExplicitImplementInvocationBeatsVerificationWording(t 
 	}
 	prompt := `I want to test the implement lane... can you use /implement to create and write a new file with the text "ben is cool"?`
 	plan := m.classifyTurnRoute(context.Background(), prompt, agent.BuildMode())
-	if plan.Family != "implementation" || plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
-		t.Fatalf("explicit /implement write invocation should route implementation, got %#v", plan)
+	if isImplementationLikeFamily(plan.Family) {
+		t.Fatalf("slash mention inside prose should not deterministically route implementation, got %#v", plan)
 	}
-	if plan.Reason != "explicit_implementation_lane_invocation" {
-		t.Fatalf("reason = %q, want explicit_implementation_lane_invocation", plan.Reason)
-	}
-	if calls.Load() != 0 {
-		t.Fatalf("explicit /implement invocation should be deterministic, got classifier calls=%d", calls.Load())
+	if calls.Load() != 1 {
+		t.Fatalf("expected classifier call, got %d", calls.Load())
 	}
 }
 
@@ -5684,13 +6044,13 @@ func TestFallbackTurnRouteLaneExerciseDoesNotBecomeVerificationOnly(t *testing.T
 	}
 }
 
-func TestClassifyTurnRouteKeepsPlanExecuteRequiredPathEditWriteShaped(t *testing.T) {
+func TestClassifyTurnRouteUsesClassifierForPlanExecuteRequiredPathEditWriteShaped(t *testing.T) {
 	var calls atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
-				"message": map[string]string{"content": `{"family":"architecture","initial_lane":"architecture","reason":"architecture_request","contract":"architecture_assessment"}`},
+				"message": map[string]string{"content": `{"family":"implementation","initial_lane":"implement","reason":"classifier_directive","contract":"implementation_result"}`},
 			}},
 		})
 	}))
@@ -5710,8 +6070,8 @@ func TestClassifyTurnRouteKeepsPlanExecuteRequiredPathEditWriteShaped(t *testing
 	if plan.InitialLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
-	if calls.Load() != 0 {
-		t.Fatalf("required-path plan-execute edit workflow is a hard contract signal, got classifier calls=%d", calls.Load())
+	if calls.Load() != 1 {
+		t.Fatalf("required-path plan-execute edit workflow should go through classifier, got classifier calls=%d", calls.Load())
 	}
 }
 
