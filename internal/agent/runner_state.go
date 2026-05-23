@@ -86,6 +86,7 @@ type runnerFailureFeedbackPacket struct {
 	InvalidNext        []string `json:"invalid_next,omitempty"`
 	ValidNext          []string `json:"valid_next,omitempty"`
 	StateSummary       string   `json:"state_summary,omitempty"`
+	RecoveryCard       string   `json:"recovery_card,omitempty"`
 	UserVisibleBlocker bool     `json:"user_visible_blocker,omitempty"`
 }
 
@@ -253,6 +254,7 @@ type runnerNextActionState struct {
 	InvalidNextActions []string `json:"invalid_next_actions,omitempty"`
 	NextValidActions   []string `json:"next_valid_actions,omitempty"`
 	StateSummary       string   `json:"state_summary,omitempty"`
+	RecoveryCard       string   `json:"recovery_card,omitempty"`
 }
 
 type runnerThinkingTrace struct {

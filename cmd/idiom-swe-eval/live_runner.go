@@ -112,6 +112,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		"IDIOM_SWE_TURNS_JSON="+string(turnsJSON),
 		"IDIOM_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
 		"IDIOM_SWE_TASK_ID="+strings.TrimSpace(task.ID),
+		"IDIOM_SWE_FAMILY="+strings.TrimSpace(task.Family),
 		"IDIOM_SWE_LOG="+logPath,
 		"IDIOM_SWE_FIXTURE="+fixture,
 		"IDIOM_SWE_TASK_TIMEOUT="+strconv.Itoa(taskTimeout),

@@ -80,7 +80,7 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 	if r.runner != nil {
 		r.runner.emitNextActionState(step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden)
 		if strings.TrimSpace(result.Error) != "" {
-			packet := buildRunnerFailureFeedbackPacket(r.runner.agentName(), step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden, r.runner.RuntimeBrief)
+			packet := buildRunnerFailureFeedbackPacketWithAllowedTools(r.runner.agentName(), step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden, r.runner.RuntimeBrief, r.runner.currentAllowedTools)
 			if len(packet.DoNotRepeat) > 0 || len(packet.RequiredNext) > 0 || strings.TrimSpace(packet.ResultError) != "" {
 				if data, err := json.Marshal(packet); err == nil {
 					r.runner.emitEvent(RunEvent{Role: "failure_feedback", Content: string(data)})

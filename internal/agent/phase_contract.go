@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 
 	"idiom/internal/autonomy"
@@ -18,6 +19,7 @@ const (
 	turnPhaseMalformedSubmitPlanRecovery = "plan_execute.malformed_submit_plan_recovery"
 	turnPhaseStaleAnchorRefresh          = "plan_execute.stale_anchor_refresh"
 	turnPhaseReviewRepairTerminal        = "plan_execute.review_repair_terminal"
+	turnPhaseImplementationTargetSource  = "implementation.target_source"
 	turnPhaseImplementationWriteReady    = "implementation.write_ready"
 	turnPhaseImplementationVerifyReady   = "implementation.verify_ready"
 	turnPhaseProductAcceptanceCloseout   = "product.acceptance_closeout"
@@ -230,7 +232,7 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	}
 
 	applyTurnPhase(&contract, input, brief, baseTools)
-	if phaseContractTextualOnly(input) {
+	if phaseContractTextualOnly(input, contract) {
 		contract.AllowedTools = nil
 		contract.ActionPolicy.CallableToolNames = nil
 	}
@@ -269,14 +271,18 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 		(strings.TrimSpace(input.PhaseHint) == turnPhaseReviewRepairTerminal ||
 			len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0):
 		applyReviewRepairTerminal(contract, brief, baseTools)
+	case implementationTargetSourceWriteReady(brief, input.Results):
+		applyImplementationTargetWriteReady(contract, baseTools)
+	case implementationTargetSourcePending(brief, input.Results):
+		applyImplementationTargetSource(contract, baseTools)
 	case implementationScopedEditSurfaceActive(brief, input.Results):
 		applyImplementationWriteReady(contract, baseTools)
 	case runnerBriefRequiresMutation(brief) &&
 		(hasPendingVerificationAfterWrites(input.Results, brief) ||
 			sourceEditsNeedSemanticVerification(brief, input.Results)):
-		applyImplementationVerifyReady(contract, baseTools)
+		applyImplementationVerifyReady(contract, brief, baseTools)
 	default:
-		applyGenericTurnPhase(contract, brief)
+		applyGenericTurnPhase(contract, brief, input.Results)
 	}
 }
 
@@ -412,6 +418,44 @@ func applyReviewRepairTerminal(contract *TurnPhaseContract, brief workerruntime.
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionReviewPass, actionSubmitPlan, actionBlocker}
 }
 
+func applyImplementationTargetSource(contract *TurnPhaseContract, baseTools []string) {
+	contract.PhaseID = turnPhaseImplementationTargetSource
+	contract.Phase = "target_source_pending"
+	contract.DerivationReason = "guarded_mutation_target_source_pending"
+	contract.AllowedTools = implementationTargetSourceAllowedTools(baseTools)
+	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, make one parser-readable write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence"}
+	contract.InvalidNext = []string{"final answer before a successful write, no-op, or blocker", "write before exact source-body evidence and replacement shape", "verification before a successful write", "generic probe without a named missing target or edit-safety fact"}
+	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
+	contract.ActionPolicy = TurnActionClassPolicy{
+		AllowedActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker},
+		InvalidActionClasses:   []string{actionFinalAnswer, actionVerify, actionGenericProbe, actionProseFinal},
+		TerminalResponseShapes: []string{"<<QUESTION>>:"},
+		CallableToolNames:      contract.AllowedTools,
+	}
+	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_source_or_write")
+	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_tool_or_blocker"
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
+}
+
+func applyImplementationTargetWriteReady(contract *TurnPhaseContract, baseTools []string) {
+	contract.PhaseID = turnPhaseImplementationWriteReady
+	contract.Phase = "target_write_ready"
+	contract.DerivationReason = "guarded_mutation_target_source_ready"
+	contract.AllowedTools = implementationTargetWriteReadyAllowedTools(baseTools)
+	contract.RequiredNext = []string{"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+	contract.InvalidNext = []string{"additional read/search after source-body evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
+	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
+	contract.ActionPolicy = TurnActionClassPolicy{
+		AllowedActionClasses:   []string{actionPerEditWrite, actionBlocker},
+		InvalidActionClasses:   []string{actionRead, actionSearch, actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer},
+		TerminalResponseShapes: []string{"<<QUESTION>>:"},
+		CallableToolNames:      contract.AllowedTools,
+	}
+	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_write_or_blocker")
+	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
+}
+
 func applyImplementationWriteReady(contract *TurnPhaseContract, baseTools []string) {
 	contract.PhaseID = turnPhaseImplementationWriteReady
 	contract.Phase = "write_ready"
@@ -429,7 +473,7 @@ func applyImplementationWriteReady(contract *TurnPhaseContract, baseTools []stri
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
 }
 
-func applyImplementationVerifyReady(contract *TurnPhaseContract, baseTools []string) {
+func applyImplementationVerifyReady(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
 	contract.PhaseID = turnPhaseImplementationVerifyReady
 	contract.Phase = "verification"
 	contract.DerivationReason = "implementation_post_write_verification_pending"
@@ -490,7 +534,7 @@ func applyProductAcceptanceCloseout(contract *TurnPhaseContract) {
 	}
 }
 
-func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief) {
+func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) {
 	contract.PhaseID = turnPhaseGeneric
 	contract.Phase = "generic"
 	contract.DerivationReason = "no_specialized_phase_matched"
@@ -505,12 +549,161 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.ActionPolicy.AllowedActionClasses = []string{actionVerify, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionFinalAnswer}
 	}
+	if genericReadOnlyEvidenceReady(brief, results) {
+		contract.Phase = "read_only_evidence_ready"
+		contract.DerivationReason = "read_only_workspace_evidence_ready"
+		contract.AllowedTools = nil
+		contract.RequiredNext = []string{"final answer from the gathered bounded evidence, or <<QUESTION>> with the exact unsupported claim"}
+		contract.InvalidNext = []string{"additional read/search without one exact unsupported claim", "workspace write", "shell/mutating command"}
+		contract.ActionPolicy = TurnActionClassPolicy{
+			AllowedActionClasses:   []string{actionFinalAnswer, actionBlocker},
+			InvalidActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionVerify, actionGenericProbe},
+			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
+			CallableToolNames:      nil,
+		}
+		contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
+		return
+	}
+	if genericReadOnlyEvidencePending(brief, contract.AllowedTools, results) {
+		contract.Phase = "read_only_evidence_pending"
+		contract.DerivationReason = "read_only_workspace_evidence_pending"
+		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
+		contract.RequiredNext = []string{"bounded read/search evidence for the question, final answer once evidence is sufficient, or <<QUESTION>> with the exact blocker"}
+		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "final answer before sufficient evidence"}
+		contract.ActionPolicy = TurnActionClassPolicy{
+			AllowedActionClasses:   []string{actionRead, actionSearch, actionBlocker},
+			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify, actionFinalAnswer},
+			TerminalResponseShapes: []string{"<<QUESTION>>:"},
+			CallableToolNames:      contract.AllowedTools,
+		}
+	}
 	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
+}
+
+func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return false
+	}
+	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
+		return true
+	}
+	return conversationEvidenceSatisfied(brief, results)
+}
+
+func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allowedTools []string, results []workspace.ToolResult) bool {
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return false
+	}
+	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
+		return false
+	}
+	if genericReadOnlyAnswerEvidenceReady(results) {
+		return false
+	}
+	return len(genericReadOnlyEvidenceTools(allowedTools)) > 0
+}
+
+func genericReadOnlyAnswerEvidenceReady(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if concreteSourceEvidenceResult(result) {
+			return true
+		}
+	}
+	return readOnlyAnalysisReadyFromEvidence(results)
+}
+
+func genericReadOnlyEvidenceSeen(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		tool := strings.TrimSpace(result.Tool)
+		if tool == "code_navigate" && (!routedSourceReadOutputHasBody(result.Output) || len(readPathsFromToolResult(result)) == 0) {
+			continue
+		}
+		switch tool {
+		case "task", "context_pack", "context_query", "context_zoom", "discovery_query",
+			"search_files", "search_content", "read_file", "code_navigate",
+			"file_stats", "structural_search",
+			"mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
+			return true
+		}
+	}
+	return false
+}
+
+func genericReadOnlyEvidenceTools(tools []string) []string {
+	return filterPhaseTools(tools,
+		"task",
+		"context_pack", "context_query", "context_zoom", "discovery_query",
+		"search_files", "search_content", "read_file", "code_navigate",
+		"file_stats", "structural_search",
+		"mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa",
+	)
 }
 
 func artifactFinalAnswerBrief(brief workerruntime.WorkerRuntimeBrief) bool {
 	return strings.TrimSpace(brief.TaskFamily) == workerruntime.ArtifactFinalAnswerTaskFamily ||
 		strings.TrimSpace(brief.Contract) == "artifact_final_answer"
+}
+
+func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
+		return false
+	}
+	if !guardedMutationBriefRequiresTargetSourceContract(brief) {
+		return false
+	}
+	if len(brief.RequiredEditPaths) > 0 || len(brief.RequiredEditSnippets) > 0 {
+		return false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return false
+	}
+	if implementationTargetSourceEvidenceReady(results) {
+		return false
+	}
+	return brief.Readiness == nil || !brief.Readiness.ReadyToWrite
+}
+
+func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
+	return filterPhaseTools(baseTools, "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit")
+}
+
+func implementationTargetWriteReadySurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	return implementationTargetSourceWriteReady(brief, results)
+}
+
+func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
+		return false
+	}
+	if !guardedMutationBriefRequiresTargetSourceContract(brief) {
+		return false
+	}
+	if len(brief.RequiredEditPaths) > 0 || len(brief.RequiredEditSnippets) > 0 {
+		return false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return false
+	}
+	return implementationTargetSourceEvidenceReady(results)
+}
+
+func implementationTargetSourceEvidenceReady(results []workspace.ToolResult) bool {
+	return len(concreteSourceBodyReadPaths(results)) == 1
+}
+
+func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.WorkerRuntimeBrief) bool {
+	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
+	if family == "delegated_isolated_implementation" {
+		return false
+	}
+	permission := strings.ToLower(strings.TrimSpace(brief.PermissionProfile))
+	return permission == "guarded_workspace_write" ||
+		permission == "workspace_write" ||
+		permission == "write_enabled" ||
+		strings.TrimSpace(brief.TaskFamily) == "implementation"
 }
 
 func phaseContractBaseTools(input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief) []string {
@@ -539,6 +732,18 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 		}
 	}
 	return uniquePhaseStrings(out)
+}
+
+func implementationTargetSourceAllowedTools(baseTools []string) []string {
+	writes := filterPhaseTools(baseTools,
+		"edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit",
+	)
+	reads := filterPhaseTools(baseTools,
+		"list_files", "search_files", "search_content", "rg",
+		"context_pack", "context_query", "context_zoom", "discovery_query",
+		"read_file", "code_navigate", "read_only_capability",
+	)
+	return uniquePhaseStrings(append(writes, reads...))
 }
 
 func hiddenPhaseTools(baseTools []string, allowedTools []string) []string {
@@ -582,9 +787,17 @@ func expectedVisibleOutput(input TurnPhaseContractInput) string {
 	}
 }
 
-func phaseContractTextualOnly(input TurnPhaseContractInput) bool {
-	return input.TextualToolParser ||
-		strings.EqualFold(strings.TrimSpace(input.ToolTransportMode), "textual")
+func phaseContractTextualOnly(input TurnPhaseContractInput, contract TurnPhaseContract) bool {
+	if !input.TextualToolParser && !strings.EqualFold(strings.TrimSpace(input.ToolTransportMode), "textual") {
+		return false
+	}
+	switch contract.PhaseID {
+	case turnPhaseSubmitReadyTextual, turnPhaseSubmitReadyNativeRequired,
+		turnPhaseMalformedSubmitPlanRecovery, turnPhaseReviewRepairTerminal:
+		return true
+	default:
+		return false
+	}
 }
 
 func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {

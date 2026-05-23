@@ -73,6 +73,29 @@ func TestParseToolRequestPreservesPostReadinessGapFields(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestRepairsRawControlCharsInsideStringValues(t *testing.T) {
+	raw := "{\n" +
+		"  \"tool\":\"edit_file\",\n" +
+		"  \"path\":\"internal/labels/labels.go\",\n" +
+		"  \"old_text\":\"func ShortLabel() string {\\n\treturn \\\"Save changes\\\"\\n}\",\n" +
+		"  \"new_text\":\"func ShortLabel() string {\\n\treturn \\\"Save\\\"\\n}\",\n" +
+		"  \"description\":\"shorten label\"\n" +
+		"}"
+	req, _, ok, err := ParseToolRequest("```tool\n" + raw + "\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest should repair raw tabs in JSON strings: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "edit_file" || req.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if !strings.Contains(req.OldText, "\treturn \"Save changes\"") || !strings.Contains(req.NewText, "\treturn \"Save\"") {
+		t.Fatalf("expected repaired text fields to preserve tabs, old=%q new=%q", req.OldText, req.NewText)
+	}
+}
+
 func TestParseToolRequestUnwrapsNestedRequestPayload(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"request\":\"{\\\"tool\\\":\\\"code_navigate\\\",\\\"capability\\\":\\\"read_symbol\\\",\\\"path\\\":\\\"cmd/idiom/main.go\\\",\\\"pattern\\\":\\\"Run\\\"}\"}\n```")
 	if err != nil {

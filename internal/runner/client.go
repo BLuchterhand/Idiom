@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"sync"
 	"time"
 )
 
@@ -80,11 +81,12 @@ type Lease struct {
 	JobID string
 	Pool  string
 
-	conn    net.Conn
-	updates chan int
-	granted chan struct{}
-	errCh   chan error
-	closed  chan struct{}
+	conn      net.Conn
+	updates   chan int
+	granted   chan struct{}
+	errCh     chan error
+	closed    chan struct{}
+	closeOnce sync.Once
 }
 
 // Updates returns a channel of position updates emitted while the
@@ -107,13 +109,12 @@ func (l *Lease) Err() <-chan error { return l.errCh }
 // successful Acquire — the slot stays held until the connection
 // closes, even if the caller has already finished its work.
 func (l *Lease) Close() error {
-	select {
-	case <-l.closed:
-		return nil
-	default:
-	}
-	close(l.closed)
-	return l.conn.Close()
+	var err error
+	l.closeOnce.Do(func() {
+		close(l.closed)
+		err = l.conn.Close()
+	})
+	return err
 }
 
 // Acquire opens a connection, sends an acquire request, and starts a

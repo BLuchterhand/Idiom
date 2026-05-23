@@ -133,6 +133,28 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 }
 
+func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "shorten the label"}},
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{
+			"status":               "clean",
+			"changed_before_reset": []any{"internal/labels/labels.go"},
+		}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done."}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "internal/labels/labels.go" {
+		t.Fatalf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+	if metrics.RecordTypes["idiom.live_contract.rollback"] != 1 {
+		t.Fatalf("expected rollback record type count, got %#v", metrics.RecordTypes)
+	}
+	if len(metrics.LiveContractRollbacks) != 1 || metrics.LiveContractRollbacks[0].Status != "clean" {
+		t.Fatalf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks)
+	}
+}
+
 func TestAnalyzeExtractsRunnerMetricsFromRunEvents(t *testing.T) {
 	records := []Record{
 		{Type: "run_event", Data: map[string]any{"role": "control_rails", "content": `{"task_family":"implementation","permission_profile":"guarded_workspace_write","allowed_tools":["read_file"]}`}},
@@ -202,6 +224,59 @@ func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(noDrift.Findings, "\n"), "plan execution drift was forbidden") {
 		t.Fatalf("expected no-drift finding, got %#v", noDrift.Findings)
+	}
+}
+
+func TestEvaluatePlanExecuteVerificationEventsSatisfyVerificationRequirement(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},
+		{Type: "idiom.plan_execute.verification", Data: map[string]any{
+			"command": "go test ./...",
+			"status":  "ok",
+		}},
+		{Type: "idiom.plan_execute.executor_complete", Data: map[string]any{
+			"verification_checked": 1,
+			"verification_status":  "passed",
+		}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "plan-execute-verification",
+		RequireVerification: "passed",
+	})
+	if !report.Passed {
+		t.Fatalf("expected plan-execute verification events to satisfy verification requirement, got %#v", report.Findings)
+	}
+	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationPassed {
+		t.Fatalf("expected one passed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
+	}
+}
+
+func TestEvaluatePlanExecuteVerificationFailureFailsPassedRequirement(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},
+		{Type: "idiom.plan_execute.verification", Data: map[string]any{
+			"command": "go test ./...",
+			"status":  "failed",
+		}},
+		{Type: "idiom.plan_execute.executor_complete", Data: map[string]any{
+			"verification_checked": 1,
+			"verification_status":  "failed",
+		}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "plan-execute-verification",
+		RequireVerification: "passed",
+	})
+	if report.Passed {
+		t.Fatalf("expected failed plan-execute verification to fail passed requirement")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "verification did not pass") {
+		t.Fatalf("expected verification failure finding, got %#v", report.Findings)
+	}
+	if report.Metrics.VerificationChecks != 1 || !report.Metrics.VerificationFailed || report.Metrics.VerificationPassed {
+		t.Fatalf("expected one failed verification check, got checks=%d passed=%t failed=%t", report.Metrics.VerificationChecks, report.Metrics.VerificationPassed, report.Metrics.VerificationFailed)
 	}
 }
 

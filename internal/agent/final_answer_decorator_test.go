@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -171,6 +173,152 @@ func TestDecorateFinalAnswerKeepsBlockerWhenLastFailureIsNonWriteTool(t *testing
 	})
 	if !strings.Contains(strings.ToLower(got), "blocker") {
 		t.Fatalf("decorator should preserve Blocker when last failure was non-write tool, got:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerSynthesizesReadOnlySourceReturnAnswer(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "rejection_retry_blocked",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\"", "No files were changed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated answer missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"Changing that returned string", "would be the source edit"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("decorated answer should not infer edit advice %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestDecorateFinalAnswerAnswersReadOnlyTextChangeQuestion(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can we shorten the save label in internal/labels/labels.go?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+	answer := "tool: read_file\n{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\"}"
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "conversation_evidence_sufficient",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{"At the source level, yes", "internal/labels/labels.go", "\"Save changes\"", "No files were changed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated answer missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "tool: read_file") || strings.Contains(got, `{"tool"`) {
+		t.Fatalf("decorated answer leaked internal tool request:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerTreatsLineOrientedJSONToolAsInternal(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+	answer := "tool: read_file\n{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":200}"
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "conversation_evidence_sufficient",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\"", "No files were changed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated answer missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "tool: read_file") || strings.Contains(got, `{"tool"`) {
+		t.Fatalf("decorated answer leaked internal tool request:\n%s", got)
+	}
+}
+
+func TestPresentableNoToolsFallbackDoesNotReadWorkspaceFromPathOnlyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "labels"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "labels", "labels.go"), []byte("package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+	}}
+	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
+
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, root)
+	if ok && strings.Contains(got, "\"Save changes\"") {
+		t.Fatalf("fallback must not promote path-only evidence into source-body evidence by reading the workspace:\n%s", got)
+	}
+}
+
+func TestPresentableNoToolsFallbackUsesSearchEvidenceBody(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line(s).",
+		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+	}}
+	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
+
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
+	if !ok {
+		t.Fatal("expected presentable fallback answer")
+	}
+	for _, want := range []string{"internal/labels/labels.go", "\"Save changes\"", "No files were changed"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fallback answer missing %q:\n%s", want, got)
+		}
 	}
 }
 

@@ -2013,6 +2013,90 @@ func TestReviewRepairNoopSubmitPlanGuardSuppressesMalformedPassPlan(t *testing.T
 	}
 }
 
+func TestReviewRepairNoopSubmitPlanForcesTerminalCloseout(t *testing.T) {
+	replies := []string{
+		`{"tool":"submit_plan","rationale":"Verification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: pending outside this lane.","edits":[]}`,
+		"Decision: pass\n\nVerification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: pending outside this lane.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "doom_loop_guard" {
+				t.Fatalf("review-repair noop submit_plan must close before doom-loop approval: %s", event.Content)
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "review the applied plan"}}, llama.ChatOptions{MaxTokens: 2048}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected one forced terminal closeout after noop submit_plan, got %d request(s)", requests)
+	}
+	if !strings.Contains(answer, "Decision: pass") || !strings.Contains(answer, "Verification Checklist") {
+		t.Fatalf("expected terminal review-repair pass, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanCloseoutRejectsContradictoryPass(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		Readiness: &workerruntime.ReadinessState{
+			OpenObligations: []string{"verification_failed:go test ./..."},
+		},
+	}
+	rejection, rejected := reviewRepairNoopSubmitPlanCloseoutRejection(brief, "Decision: pass\n\nVerification Checklist:\n- Required behavior: checked.\n- Scope safety: checked.\n- Test or command evidence: checked.")
+	if !rejected {
+		t.Fatal("expected contradictory no-op closeout pass to be rejected")
+	}
+	answer := reviewRepairNoopSubmitPlanDeterministicCloseout(brief, rejection)
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") || !strings.Contains(answer, "verification_failed:go test ./...") {
+		t.Fatalf("expected failed obligation blocker, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Decision: pass") {
+		t.Fatalf("contradictory pass should not be accepted:\n%s", answer)
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanCloseoutBlocksInvalidTerminalShape(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+	}
+	rejection, rejected := reviewRepairNoopSubmitPlanCloseoutRejection(brief, "I think this is fine now.")
+	if !rejected {
+		t.Fatal("expected invalid no-op closeout shape to be rejected")
+	}
+	answer := reviewRepairNoopSubmitPlanDeterministicCloseout(brief, rejection)
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") {
+		t.Fatalf("expected deterministic review-repair blocker, got:\n%s", answer)
+	}
+}
+
 func TestReviewRepairNoopSubmitPlanGuardSuppressesAlreadyAppliedPlan(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "widget_config.json"), []byte("{\n  \"labels\": [\"alpha\", \"beta\"]\n}\n"), 0o644); err != nil {
@@ -2621,6 +2705,63 @@ func TestRepeatedRangeLessReadFileAfterOutlineReturnsSourceBodyShape(t *testing.
 	if strings.Contains(errorText, `"tool":"read_file","path":"cmd/idiom/product_workflow.go"`) &&
 		!strings.Contains(errorText, `"start_line"`) {
 		t.Fatalf("outline-repeat rejection must not return a range-less full-file read shape:\n%s", errorText)
+	}
+}
+
+func TestRepeatedRangeLessReadFileAfterOutlineRedirectsToSourceBodyShape(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Objective: "update product workflow",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
+			Output:  "The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output: strings.Join([]string{
+				"capability: file_outline",
+				"route_summary: Outlined 2 top-level declaration(s) in cmd/idiom/product_workflow.go.",
+				"declarations:",
+				"- buildAuditResult lines 313-354 tags: core",
+				"- runProductWorkflow lines 1396-1671 tags: implementation",
+			}, "\n"),
+		},
+	}
+	redirected, raw, ok := runner.repeatedRangeLessReadFileRedirect(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "cmd/idiom/product_workflow.go",
+	}, results, []string{"read_file", "code_navigate"})
+	if !ok {
+		t.Fatal("expected repeated range-less read after outline redirect to be rewritten")
+	}
+	if redirected.Tool != "code_navigate" || redirected.Capability != "read_symbol" || redirected.Pattern != "runProductWorkflow" {
+		t.Fatalf("unexpected redirected request: %#v", redirected)
+	}
+	if !strings.Contains(raw, `"tool":"code_navigate"`) || !strings.Contains(raw, `"capability":"read_symbol"`) {
+		t.Fatalf("redirect raw should be parser-readable bounded source-body request, got %s", raw)
+	}
+}
+
+func TestRepeatedRangeLessReadFileRedirectDoesNotRewriteAfterConcreteSource(t *testing.T) {
+	runner := &Runner{}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read cmd/idiom/product_workflow.go lines 1-3 (total lines: 3)",
+			Output:  "1:package main\n2:\n3:func runProductWorkflow() {}\n",
+		},
+	}
+	_, _, ok := runner.repeatedRangeLessReadFileRedirect(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "cmd/idiom/product_workflow.go",
+	}, results, []string{"read_file", "code_navigate"})
+	if ok {
+		t.Fatal("full source evidence should keep duplicate range-less reads on the rejection path")
 	}
 }
 
@@ -5899,6 +6040,33 @@ func TestCompletionGateRetryLimitAllowsTwoUnscopedNoWriteRecoveries(t *testing.T
 	}
 	if !runner.unscopedNoWriteCompletionRecoveryApplies(results) {
 		t.Fatalf("expected unscoped no-write recovery to apply")
+	}
+}
+
+func TestUnscopedNoWriteRecoveryRequiresSourceBodyBeforeWrite(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "packet", Output: `{"candidate_files":[{"path":"internal/app/banner.go"}]}`},
+		{Tool: "completion_gate", Summary: "Mutation completion gate rejected final answer", Error: "no successful workspace write"},
+	}
+
+	prompt, _, ok := runner.completionGateRecoveryPrompt(results)
+	if !ok {
+		t.Fatal("expected unscoped no-write recovery prompt")
+	}
+	if strings.Contains(prompt, "call one write tool now") {
+		t.Fatalf("prompt should not tell the model to write before source-body evidence, got:\n%s", prompt)
+	}
+	for _, want := range []string{"source-body evidence", "exact replacement shape", "named_gap"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("expected prompt to contain %q, got:\n%s", want, prompt)
+		}
 	}
 }
 

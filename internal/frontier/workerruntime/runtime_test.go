@@ -788,6 +788,69 @@ func TestBuildStepInstructionUsesWriteReadyImplementationDirective(t *testing.T)
 	}
 }
 
+func TestBuildStepInstructionAddsGenericGuardedMutationContractAfterNoWriteGate(t *testing.T) {
+	instruction := BuildStepInstruction(RunState{
+		Lane:             "implement",
+		TaskFamily:       "implementation",
+		Contract:         "implementation_result",
+		Permission:       "guarded_workspace_write",
+		Phase:            "repair",
+		FailureClass:     "completion_gate",
+		InvalidActions:   []string{"final_answer_without_satisfying_completion_gate"},
+		VerificationPlan: []string{"go test ./internal/frontier/workerruntime"},
+		RequiredEvidence: []string{"changed_files_or_noop_reason", "verification_result"},
+		Readiness:        &ReadinessState{ReadyToAnswer: true},
+		LastResult:       ToolResultSummary{Tool: "completion_gate", Error: "no workspace changes were detected"},
+	})
+
+	for _, want := range []string{
+		"guarded workspace mutation without required_edit_paths",
+		"select the target before writing",
+		"source-body evidence",
+		"parser-readable",
+		"write when the exact target and edit shape are known",
+		"bounded discovery/read with a named_gap",
+		"<<QUESTION>>/no-op",
+		"concrete evidence",
+		"After a write, verify",
+	} {
+		if !strings.Contains(instruction.Directive, want) {
+			t.Fatalf("expected generic guarded mutation directive %q, got %q", want, instruction.Directive)
+		}
+	}
+	if strings.Contains(instruction.Directive, "answering is supported") {
+		t.Fatalf("generic mutation contract should not be presented as answer-only readiness: %q", instruction.Directive)
+	}
+}
+
+func TestPlanExecuteAllowedScopeDoesNotUseGenericGuardedMutationContract(t *testing.T) {
+	initial := BuildInitialStepInstruction(WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        "plan_then_execute_planner",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedEditPaths:  []string{"pkg/feature.go", "pkg/feature_test.go"},
+		AllowedTools:      []string{"context_pack", "read_file", "submit_plan", "edit_file"},
+	})
+	if strings.Contains(initial.Directive, "guarded workspace mutation without required_edit_paths") ||
+		strings.Contains(initial.Directive, "write when the exact target") {
+		t.Fatalf("plan-execute planner should not receive direct mutation target contract:\n%s", initial.Directive)
+	}
+
+	step := BuildStepInstruction(RunState{
+		Lane:             "plan-execute",
+		TaskFamily:       "plan_then_execute_planner",
+		Contract:         "implementation_result",
+		Permission:       "guarded_workspace_write",
+		AllowedEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
+		Readiness:        &ReadinessState{ReadyToAnswer: true},
+	})
+	if strings.Contains(step.Directive, "guarded workspace mutation without required_edit_paths") ||
+		strings.Contains(step.Directive, "write when the exact target") {
+		t.Fatalf("plan-execute planner step should not receive direct mutation target contract:\n%s", step.Directive)
+	}
+}
+
 func TestBuildStepInstructionOnlyUsesRemainingPathDirectiveForMissingPaths(t *testing.T) {
 	partial := BuildStepInstruction(RunState{
 		Lane:              "implement",
@@ -872,6 +935,49 @@ func TestRenderInitialRuntimeBriefAddsGuardedWriteFirstActionContract(t *testing
 	})
 	if strings.Contains(readOnly, "first assistant response must be either exactly one tool call") {
 		t.Fatalf("read-only runtime brief should not include guarded-write first-action directive:\n%s", readOnly)
+	}
+}
+
+func TestRenderInitialRuntimeBriefAddsGenericGuardedMutationContractWithoutRequiredPaths(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:                 "implement",
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		Objective:            "Update behavior",
+		PermissionProfile:    "guarded_workspace_write",
+		AllowedTools:         []string{"context_pack", "read_file", "edit_file"},
+		RequiredEvidence:     []string{"changed_files_or_noop_reason", "verification_result"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Readiness:            &ReadinessState{ReadyToAnswer: true},
+	})
+
+	for _, want := range []string{
+		"first assistant response must be either exactly one tool call",
+		"guarded workspace mutation without required_edit_paths",
+		"select the target before writing",
+		"source-body evidence",
+		"parser-readable",
+		"write when the exact target and edit shape are known",
+		"bounded discovery/read with a named_gap",
+		"<<QUESTION>>/no-op",
+		"After a write, verify",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("expected generic guarded mutation contract %q in:\n%s", want, rendered)
+		}
+	}
+	for _, forbidden := range []string{
+		"product workflow",
+		"PRD",
+		"ADR",
+		"brief",
+		"dispatch",
+		"status migration",
+		"answering is supported",
+	} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("generic guarded mutation contract should not include %q:\n%s", forbidden, rendered)
+		}
 	}
 }
 
@@ -1013,6 +1119,36 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 		!strings.Contains(step.Directive, "well formatted, on-topic prose/Markdown answer") ||
 		!strings.Contains(step.Directive, "Do not return tool summaries or JSON envelopes") {
 		t.Fatalf("conversation initial directive should explain the default read-only answer contract:\n%s", step.Directive)
+	}
+}
+
+func TestBuildInitialStepInstructionRequiresEvidenceToolWhenReadOnlyGateOpen(t *testing.T) {
+	step := BuildInitialStepInstruction(WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"read_file", "search_content", "context_pack"},
+		Readiness:         &ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+	})
+
+	for _, want := range []string{
+		"read-only workspace evidence gate is open",
+		"first assistant response must be exactly one parser-readable bounded evidence tool request",
+		"prose/final answer is valid only after the evidence tool returns",
+	} {
+		if !strings.Contains(step.Directive, want) {
+			t.Fatalf("expected %q in read-only evidence-pending directive:\n%s", want, step.Directive)
+		}
+	}
+}
+
+func TestInitialActionContractAppliesUsesExactMutationContracts(t *testing.T) {
+	if initialActionContractApplies(RunState{TaskFamily: "implementation_notes", Contract: "direct_answer", Permission: "read_only_workspace"}) {
+		t.Fatal("read-only implementation-adjacent wording must not activate a mutation contract")
+	}
+	if !initialActionContractApplies(RunState{TaskFamily: "implementation", Contract: "implementation_result", Permission: "guarded_workspace_write"}) {
+		t.Fatal("exact implementation contract should activate mutation contract")
 	}
 }
 

@@ -188,7 +188,6 @@ func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, resul
 		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
 		return false
 	}
-	successfulReads := 0
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
@@ -196,12 +195,19 @@ func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, resul
 		if !isReadClassTool(workspace.ToolRequest{Tool: result.Tool}) {
 			continue
 		}
-		successfulReads++
-		if successfulReads >= 2 {
+		if concreteSourceEvidenceResult(result) {
 			return true
 		}
 	}
-	return false
+	return readOnlyAnalysisReadyFromEvidence(results)
+}
+
+func (r *Runner) conversationEvidenceSatisfiedForceAnswerReady(results []workspace.ToolResult) bool {
+	if r == nil || !conversationEvidenceSatisfied(r.RuntimeBrief, results) ||
+		runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return false
+	}
+	return true
 }
 
 func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {

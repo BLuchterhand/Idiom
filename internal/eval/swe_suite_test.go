@@ -541,6 +541,33 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 	}
 }
 
+func TestEvaluateSWETaskRequiresCleanRollback(t *testing.T) {
+	task := SWETask{
+		ID:       "rollback",
+		Family:   "implementation",
+		Scenario: Scenario{Name: "rollback"},
+		Oracle:   SWEOracle{RequireCleanRollback: true},
+	}
+	records := []Record{
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{
+			"status":               "dirty_after_reset",
+			"baseline_tree":        "abc",
+			"post_reset_tree":      "def",
+			"changed_before_reset": []any{"internal/labels/labels.go"},
+			"changed_after_reset":  []any{"internal/labels/labels.go"},
+		}},
+	}
+
+	report := EvaluateSWETask("rollback.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected dirty rollback to fail")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "rollback status was not clean") {
+		t.Fatalf("expected rollback finding, got %q", joined)
+	}
+}
+
 func TestEvaluateSWETaskGroundednessBoostsContextFiles(t *testing.T) {
 	root := t.TempDir()
 	contextPath := "internal/runner.go"
@@ -666,6 +693,87 @@ func TestEvaluateSWETaskGroundednessLearningHonorsDisable(t *testing.T) {
 	}
 	if !strings.Contains(string(data), "\"state\":\"rejected\"") || !strings.Contains(string(data), "\"reason\":\"learning_disabled\"") {
 		t.Fatalf("learning log missing disabled rejection: %s", string(data))
+	}
+}
+
+func TestEvaluateSWETaskRequiresNoRunnerRejections(t *testing.T) {
+	task := SWETask{
+		ID:       "no-rejections",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "no-rejections"},
+		Oracle:   SWEOracle{RequireNoRunnerRejections: true},
+	}
+	records := []Record{{
+		Type: "turn_summary",
+		Data: map[string]any{
+			"rejected_actions":           1,
+			"completion_gate_rejections": 0,
+		},
+	}}
+
+	report := EvaluateSWETask("rejected.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected runner rejection to fail")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "runner rejections were forbidden") {
+		t.Fatalf("expected runner rejection finding, got %q", joined)
+	}
+	if !containsStringFold(taskOracleAssertions(task), "no_runner_rejections") {
+		t.Fatalf("expected no_runner_rejections assertion")
+	}
+}
+
+func TestEvaluateSWETaskRequiresTurnSummaryForNoRunnerRejections(t *testing.T) {
+	task := SWETask{
+		ID:       "no-rejections-summary",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "no-rejections-summary"},
+		Oracle:   SWEOracle{RequireNoRunnerRejections: true},
+	}
+
+	report := EvaluateSWETask("missing-summary.jsonl", []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can we shorten this?"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Yes."}},
+	}, task)
+
+	if report.Passed {
+		t.Fatal("expected missing turn_summary to fail no-runner-rejections oracle")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "no turn_summary was present") {
+		t.Fatalf("expected missing turn_summary finding, got %q", joined)
+	}
+}
+
+func TestEvaluateSWETaskRequiresNoRunnerRejectionsFromGateEvents(t *testing.T) {
+	task := SWETask{
+		ID:       "no-rejections-events",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "no-rejections-events"},
+		Oracle:   SWEOracle{RequireNoRunnerRejections: true},
+	}
+	records := []Record{
+		{
+			Type: "run_event",
+			Data: map[string]any{
+				"role":    "autonomy_event",
+				"content": `{"type":"gate_decision","gate":{"gate":"completion_gate","decision":"reject"}}`,
+			},
+		},
+		{
+			Type: "turn_summary",
+			Data: map[string]any{"rejected_actions": 0, "completion_gate_rejections": 0},
+		},
+	}
+
+	report := EvaluateSWETask("gate-rejected.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected gate rejection event to fail no-runner-rejections oracle")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "completion_gate_rejections=1") {
+		t.Fatalf("expected completion gate rejection finding, got %q", joined)
 	}
 }
 

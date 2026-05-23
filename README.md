@@ -356,6 +356,8 @@ make run
 make server
 make build
 make eval LOG=logs/conversations/20260418-055543.504.jsonl
+make live-contract-suite
+make live-contracts
 ```
 
 `make build` compiles the single source-build binary at `~/.idiom/bin/idiom`,
@@ -859,6 +861,17 @@ For faster iteration against a small checked-in subset, including the subagent e
 ```bash
 make swe-live-subset
 ```
+
+For prompt/contract changes that need a real local model and the built binary,
+run the frozen-repo live contract suite:
+
+```bash
+make live-contracts
+```
+
+It uses a disposable Git copy of `testdata/live-contracts/fixtures/frozen-label-repo`
+for each task and appends rollback evidence to the generated JSONL logs. See
+`docs/live-contract-suite.md`.
 
 ## Explore Mode
 

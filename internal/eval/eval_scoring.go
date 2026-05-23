@@ -79,6 +79,7 @@ func Analyze(records []Record) Metrics {
 	verifyHasFailure := false
 	laneSummaryTurns := 0
 	lastLaneSummary := ""
+	observedChangedFiles := []string(nil)
 	var firstTS time.Time
 	var lastTS time.Time
 	for _, record := range records {
@@ -200,6 +201,14 @@ func Analyze(records []Record) Metrics {
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
 			countMetricsRole(&metrics, role)
+			if runnerRejected, completionGateRejected := runnerRejectionSignalsFromRunEvent(role, content); runnerRejected || completionGateRejected {
+				if runnerRejected && metrics.RejectedActions < 1 {
+					metrics.RejectedActions = 1
+				}
+				if completionGateRejected && metrics.CompletionGateRejections < 1 {
+					metrics.CompletionGateRejections = 1
+				}
+			}
 			switch role {
 			case "budget_ledger":
 				if ledger := parseBudgetLedger(content); ledger.Raw != "" {
@@ -259,7 +268,18 @@ func Analyze(records []Record) Metrics {
 			}
 		case "tool_result":
 			summary := strings.ToLower(stringField(record.Data, "summary"))
+			tool := strings.TrimSpace(stringField(record.Data, "tool"))
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromText(stringField(record.Data, "summary"))...)
+			if tool == "completion_gate" && strings.TrimSpace(stringField(record.Data, "error")) != "" {
+				if metrics.CompletionGateRejections < 1 {
+					metrics.CompletionGateRejections = 1
+				}
+			}
+			if strings.Contains(summary, "rejected") && strings.TrimSpace(stringField(record.Data, "error")) != "" {
+				if metrics.RejectedActions < 1 {
+					metrics.RejectedActions = 1
+				}
+			}
 			if strings.Contains(summary, "repeated dead-end action rejected") {
 				metrics.RepeatedDeadEndRejections++
 			}
@@ -301,10 +321,38 @@ func Analyze(records []Record) Metrics {
 				ApprovalScopeID: stringField(record.Data, "approval_scope_id"),
 				PacketState:     stringField(record.Data, "packet_state"),
 			})
+		case "idiom.plan_execute.verification":
+			metrics.VerificationChecks++
+			recordVerificationStatus(&metrics, stringField(record.Data, "status"))
+		case "idiom.plan_execute.executor_complete":
+			if checked := intField(record.Data, "verification_checked"); checked > metrics.VerificationChecks {
+				metrics.VerificationChecks = checked
+			}
+			if metrics.VerificationChecks > 0 {
+				recordVerificationStatus(&metrics, stringField(record.Data, "verification_status"))
+			}
 		case "error":
 			if message := strings.TrimSpace(stringField(record.Data, "message")); message != "" {
 				metrics.Errors = append(metrics.Errors, message)
 			}
+		case "turn_summary":
+			metrics.TurnSummarySeen = true
+			if rejected := intField(record.Data, "rejected_actions"); rejected > metrics.RejectedActions {
+				metrics.RejectedActions = rejected
+			}
+			if rejected := intField(record.Data, "completion_gate_rejections"); rejected > metrics.CompletionGateRejections {
+				metrics.CompletionGateRejections = rejected
+			}
+		case "idiom.live_contract.rollback":
+			rollback := LiveContractRollbackSnapshot{
+				Status:             strings.TrimSpace(stringField(record.Data, "status")),
+				BaselineTree:       strings.TrimSpace(stringField(record.Data, "baseline_tree")),
+				PostResetTree:      strings.TrimSpace(stringField(record.Data, "post_reset_tree")),
+				ChangedBeforeReset: stringSliceField(record.Data, "changed_before_reset"),
+				ChangedAfterReset:  stringSliceField(record.Data, "changed_after_reset"),
+			}
+			metrics.LiveContractRollbacks = append(metrics.LiveContractRollbacks, rollback)
+			observedChangedFiles = append(observedChangedFiles, rollback.ChangedBeforeReset...)
 		}
 
 		if strings.Contains(strings.ToLower(stringField(record.Data, "summary")), "write approval required") ||
@@ -328,7 +376,7 @@ func Analyze(records []Record) Metrics {
 		metrics.VerificationFailed = verifyHasFailure
 		metrics.VerificationPassed = !verifyHasFailure && metrics.VerificationChecks > 0
 	}
-	metrics.ChangedFiles = extractChangedFiles(metrics.FinalAssistant)
+	metrics.ChangedFiles = util.UniqueNonEmpty(append(observedChangedFiles, extractChangedFiles(metrics.FinalAssistant)...))
 	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
 		metrics.DurationMillis = lastTS.Sub(firstTS).Milliseconds()
 	}
@@ -337,6 +385,58 @@ func Analyze(records []Record) Metrics {
 	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
 	return metrics
+}
+
+func recordVerificationStatus(metrics *Metrics, status string) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "ok", "pass", "passed", "success", "succeeded":
+		if !metrics.VerificationFailed {
+			metrics.VerificationPassed = true
+		}
+	case "fail", "failed", "error", "errored":
+		metrics.VerificationFailed = true
+		metrics.VerificationPassed = false
+	}
+}
+
+func runnerRejectionSignalsFromRunEvent(role string, content string) (runnerRejected bool, completionGateRejected bool) {
+	role = strings.TrimSpace(role)
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return false, false
+	}
+	if role == "next_action_state" || role == "failure_feedback" {
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(content), &payload); err == nil {
+			reason := strings.ToLower(strings.TrimSpace(stringField(payload, "reason")))
+			failureClass := strings.ToLower(strings.TrimSpace(stringField(payload, "failure_class")))
+			lastTool := strings.ToLower(strings.TrimSpace(stringField(payload, "last_tool")))
+			failedTool := strings.ToLower(strings.TrimSpace(stringField(payload, "failed_tool")))
+			if strings.Contains(reason, "rejected") || strings.Contains(failureClass, "completion_gate") || lastTool == "completion_gate" || failedTool == "completion_gate" {
+				return true, lastTool == "completion_gate" || failedTool == "completion_gate" || strings.Contains(failureClass, "completion_gate")
+			}
+		}
+	}
+	if role != "autonomy_event" {
+		return false, false
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return false, false
+	}
+	if strings.ToLower(strings.TrimSpace(stringField(payload, "type"))) != "gate_decision" &&
+		strings.ToLower(strings.TrimSpace(stringField(payload, "type"))) != "completion_gate_decision" {
+		return false, false
+	}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return false, false
+	}
+	lower := strings.ToLower(string(encoded))
+	if !strings.Contains(lower, `"decision":"reject"`) {
+		return false, false
+	}
+	return true, strings.Contains(lower, `"completion_gate"`)
 }
 
 func countMetricsRole(metrics *Metrics, role string) {

@@ -53,7 +53,9 @@ type SWEOracle struct {
 	RequireNoApproval           bool                        `json:"require_no_approval,omitempty"`
 	RequireNoShell              bool                        `json:"require_no_shell,omitempty"`
 	RequireNoSummaryRejections  bool                        `json:"require_no_summary_rejections,omitempty"`
+	RequireNoRunnerRejections   bool                        `json:"require_no_runner_rejections,omitempty"`
 	RequireSummaryRejectionLane []string                    `json:"require_summary_rejection_lane,omitempty"`
+	RequireCleanRollback        bool                        `json:"require_clean_rollback,omitempty"`
 	Groundedness                *SWEGroundednessOracle      `json:"groundedness,omitempty"`
 	ForbidGenericPhrases        bool                        `json:"forbid_generic_phrases,omitempty"`
 }
@@ -816,9 +818,22 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 	if oracle.RequireNoSummaryRejections && report.Metrics.SummaryRejections > 0 {
 		addFinding("summary rejections were forbidden but observed %d", report.Metrics.SummaryRejections)
 	}
+	if oracle.RequireNoRunnerRejections && !report.Metrics.TurnSummarySeen {
+		addFinding("runner rejections were forbidden but no turn_summary was present to prove aggregate rejection counters")
+	}
+	if oracle.RequireNoRunnerRejections && (report.Metrics.RejectedActions > 0 || report.Metrics.CompletionGateRejections > 0) {
+		addFinding("runner rejections were forbidden but observed rejected_actions=%d completion_gate_rejections=%d", report.Metrics.RejectedActions, report.Metrics.CompletionGateRejections)
+	}
 	for _, lane := range oracle.RequireSummaryRejectionLane {
 		if !containsStringFold(report.Metrics.SummaryRejectionLanes, lane) {
 			addFinding("summary rejection lanes do not include %q", lane)
+		}
+	}
+	if oracle.RequireCleanRollback {
+		if len(report.Metrics.LiveContractRollbacks) != 1 {
+			addFinding("clean rollback expected exactly one rollback record, got %d", len(report.Metrics.LiveContractRollbacks))
+		} else if finding := cleanRollbackFinding(report.Metrics.LiveContractRollbacks[0]); finding != "" {
+			addFinding("%s", finding)
 		}
 	}
 	if oracle.Groundedness != nil {
@@ -838,6 +853,22 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 		}
 	}
 	return report
+}
+
+func cleanRollbackFinding(rollback LiveContractRollbackSnapshot) string {
+	if !strings.EqualFold(strings.TrimSpace(rollback.Status), "clean") {
+		return fmt.Sprintf("rollback status was not clean: %q", rollback.Status)
+	}
+	if len(rollback.ChangedAfterReset) > 0 {
+		return fmt.Sprintf("rollback left changed files after reset: %v", rollback.ChangedAfterReset)
+	}
+	if strings.TrimSpace(rollback.BaselineTree) == "" || strings.TrimSpace(rollback.PostResetTree) == "" {
+		return "rollback did not record baseline and post-reset trees"
+	}
+	if strings.TrimSpace(rollback.BaselineTree) != strings.TrimSpace(rollback.PostResetTree) {
+		return fmt.Sprintf("rollback tree mismatch: baseline=%s post_reset=%s", rollback.BaselineTree, rollback.PostResetTree)
+	}
+	return ""
 }
 
 func evaluateGroundednessOracle(metrics Metrics, oracle SWEGroundednessOracle) (float64, string) {
@@ -1524,8 +1555,14 @@ func taskOracleAssertions(task SWETask) []string {
 	if oracle.RequireNoSummaryRejections {
 		assertions = append(assertions, "no_summary_rejections")
 	}
+	if oracle.RequireNoRunnerRejections {
+		assertions = append(assertions, "no_runner_rejections")
+	}
 	if len(oracle.RequireSummaryRejectionLane) > 0 {
 		assertions = append(assertions, "summary_rejection_lane")
+	}
+	if oracle.RequireCleanRollback {
+		assertions = append(assertions, "clean_rollback")
 	}
 	if oracle.Groundedness != nil {
 		assertions = append(assertions, "groundedness")

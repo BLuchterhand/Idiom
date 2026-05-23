@@ -1750,6 +1750,66 @@ func reviewRepairNoopSubmitPlanIntercept(reason string) verificationInterceptRes
 	}
 }
 
+func reviewRepairNoopSubmitPlanCloseoutRequired(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, result workspace.ToolResult) bool {
+	return strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily &&
+		strings.TrimSpace(req.Tool) == "submit_plan" &&
+		strings.TrimSpace(result.Tool) == "review_repair_noop_plan" &&
+		strings.TrimSpace(result.Error) == ""
+}
+
+func reviewRepairNoopSubmitPlanCloseoutPrompt(req workspace.ToolRequest, result workspace.ToolResult) string {
+	var b strings.Builder
+	b.WriteString("The review-repair `submit_plan` was ignored because it did not contain a new corrective edit. Tools are now disabled. ")
+	b.WriteString("Use the review checklist and phase evidence already gathered to emit exactly one terminal response: ")
+	b.WriteString("`Decision: pass` with the `Verification Checklist` if the checklist passes, or `<<QUESTION>>:` with the exact blocker if it does not. ")
+	b.WriteString("Do not call `submit_plan` again unless there is a new concrete corrective edit, and do not narrate the ignored tool call as the outcome.")
+	if rationale := strings.TrimSpace(req.Rationale); rationale != "" {
+		b.WriteString("\n\nPrior checklist/rationale from the ignored request:\n")
+		b.WriteString(rationale)
+	}
+	if output := strings.TrimSpace(result.Output); output != "" {
+		b.WriteString("\n\nHarness note:\n")
+		b.WriteString(output)
+	}
+	return b.String()
+}
+
+func reviewRepairNoopSubmitPlanCloseoutRejection(brief workerruntime.WorkerRuntimeBrief, answer string) (workspace.ToolResult, bool) {
+	if planThenExecuteReviewRepairAnswerDeclaresBlocker(answer) {
+		return workspace.ToolResult{}, false
+	}
+	if plancontract.ReviewRepairAnswerDeclaresPass(answer) && plancontract.ReviewRepairTextHasChecklist(answer) {
+		if failed := planThenExecuteReviewRepairFailedPhaseObligations(brief); len(failed) > 0 {
+			return workspace.ToolResult{
+				Tool:    "completion_gate",
+				Summary: "Review-repair completion gate rejected contradictory pass",
+				Error:   "review-repair phase evidence still has failed obligations " + quotedRunnerStrings(failed) + "; choose a corrective submit_plan inside allowed paths or `<<QUESTION>>:` with the exact blocker instead of `Decision: pass`.",
+			}, true
+		}
+		return workspace.ToolResult{}, false
+	}
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error: strings.Join([]string{
+			"review-repair must close with exactly one of:",
+			"`Decision: pass` with a `Verification Checklist`,",
+			"or `<<QUESTION>>:` naming the exact blocker after a no-op corrective plan.",
+		}, " "),
+	}, true
+}
+
+func reviewRepairNoopSubmitPlanDeterministicCloseout(brief workerruntime.WorkerRuntimeBrief, rejection workspace.ToolResult) string {
+	if failed := planThenExecuteReviewRepairFailedPhaseObligations(brief); len(failed) > 0 {
+		return "<<QUESTION>>: Review-repair phase evidence still has failed obligations: " + strings.Join(failed, ", ") + ". Submit a corrective plan inside the allowed repair paths or provide updated phase evidence before declaring pass."
+	}
+	errText := strings.TrimSpace(rejection.Error)
+	if errText == "" {
+		errText = "review-repair closeout did not produce `Decision: pass` with a `Verification Checklist` or a typed blocker"
+	}
+	return "<<QUESTION>>: " + errText
+}
+
 func planEditsHaveNoConcretePath(edits []workspace.PlanEdit) bool {
 	if len(edits) == 0 {
 		return true
@@ -2365,7 +2425,7 @@ func planThenExecuteCandidateSourcePending(brief workerruntime.WorkerRuntimeBrie
 		return false
 	}
 	normalized := workerruntime.NormalizeRuntimeBrief(brief)
-	if len(normalizedRequiredEditPaths(normalized.AllowedEditPaths)) > 0 || len(normalized.RequiredEditSnippets) > 0 {
+	if len(normalized.RequiredEditSnippets) > 0 {
 		return false
 	}
 	if len(planThenExecuteAnchorReadyPaths(brief, results)) > 0 {

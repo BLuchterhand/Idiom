@@ -1,6 +1,10 @@
 package workspace
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestBuildToolSidecarEnvelopeIncludesStructuredFreshness(t *testing.T) {
 	result := ToolResult{
@@ -186,4 +190,185 @@ func TestBuildToolSidecarEnvelopeBoundsGenericStructuredError(t *testing.T) {
 	if len(envelope.Error.Message) > maxToolSidecarErrorMessageBytes+len("...(truncated)") {
 		t.Fatalf("structured error message was not bounded: len=%d", len(envelope.Error.Message))
 	}
+}
+
+func TestBuildToolSidecarInspectionReportRendersReadOnlyArtifactBoundary(t *testing.T) {
+	report := BuildToolSidecarInspectionReport(ToolSidecarInspectionReportInput{
+		Artifact: ToolSidecarInspectionArtifact{
+			ID:     "artifact-123",
+			Kind:   "json",
+			Path:   "reports/sample.json",
+			Status: "available",
+		},
+		ReadStatus: ToolSidecarInspectionStatus{
+			Status:   "read",
+			Evidence: []string{"reports/sample.json:1"},
+		},
+		ParseStatus: ToolSidecarInspectionStatus{
+			Status: "parsed",
+		},
+		Freshness: map[string]any{
+			"policy":          "report_only",
+			"fresh_for_scope": true,
+		},
+		Provenance: map[string]any{
+			"source": "tool_output",
+		},
+		Findings: []ToolSidecarInspectionFinding{{
+			Code:     "field_present",
+			Severity: "low",
+			Message:  "field was present in parsed output",
+			Evidence: []string{"reports/sample.json:2"},
+		}},
+		Blockers: []ToolSidecarInspectionFinding{{
+			Code:    "parse_gap",
+			Message: "nested value could not be parsed",
+		}},
+		Warnings: []ToolSidecarWarning{{
+			Code:    "partial_read",
+			Message: "read was bounded",
+		}},
+		AuditEventIDs: []string{"event-2", "event-1", "event-2"},
+	})
+
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal inspection report: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal inspection report JSON: %v", err)
+	}
+	if payload["schema_version"] != ToolSidecarInspectionReportVersion {
+		t.Fatalf("schema_version = %#v, want %q", payload["schema_version"], ToolSidecarInspectionReportVersion)
+	}
+	if payload["side_effects"] != ToolSidecarInspectionNoSideEffects {
+		t.Fatalf("side_effects = %#v, want %q", payload["side_effects"], ToolSidecarInspectionNoSideEffects)
+	}
+	for _, forbiddenKey := range []string{"mutation", "mutations", "edit", "edits", "write", "writes", "write_paths", "required_edit_paths", "patch", "diff"} {
+		if jsonObjectContainsKey(payload, forbiddenKey) {
+			t.Fatalf("inspection report JSON should not expose mutation field %q: %s", forbiddenKey, encoded)
+		}
+	}
+	artifact, ok := payload["artifact"].(map[string]any)
+	if !ok {
+		t.Fatalf("artifact should be an object, got %#v", payload["artifact"])
+	}
+	if artifact["id"] != "artifact-123" || artifact["kind"] != "json" || artifact["path"] != "reports/sample.json" || artifact["status"] != "available" {
+		t.Fatalf("artifact identity not rendered: %#v", artifact)
+	}
+	readStatus, ok := payload["read_status"].(map[string]any)
+	if !ok || readStatus["status"] != "read" {
+		t.Fatalf("read_status not rendered: %#v", payload["read_status"])
+	}
+	parseStatus, ok := payload["parse_status"].(map[string]any)
+	if !ok || parseStatus["status"] != "parsed" {
+		t.Fatalf("parse_status not rendered: %#v", payload["parse_status"])
+	}
+	if _, ok := payload["freshness"].(map[string]any); !ok {
+		t.Fatalf("freshness should be preserved when available: %#v", payload["freshness"])
+	}
+	if _, ok := payload["provenance"].(map[string]any); !ok {
+		t.Fatalf("provenance should be preserved when available: %#v", payload["provenance"])
+	}
+	if findings, ok := payload["findings"].([]any); !ok || len(findings) != 1 {
+		t.Fatalf("findings not rendered: %#v", payload["findings"])
+	}
+	if blockers, ok := payload["blockers"].([]any); !ok || len(blockers) != 1 {
+		t.Fatalf("blockers not rendered: %#v", payload["blockers"])
+	}
+	if warnings, ok := payload["warnings"].([]any); !ok || len(warnings) != 1 {
+		t.Fatalf("warnings not rendered: %#v", payload["warnings"])
+	}
+	auditIDs, ok := payload["audit_event_ids"].([]any)
+	if !ok || len(auditIDs) != 2 || auditIDs[0] != "event-1" || auditIDs[1] != "event-2" {
+		t.Fatalf("audit IDs should be deduplicated and sorted: %#v", payload["audit_event_ids"])
+	}
+}
+
+func TestBuildToolSidecarInspectionReportDoesNotInjectProductLifecycleLanguage(t *testing.T) {
+	report := BuildToolSidecarInspectionReport(ToolSidecarInspectionReportInput{
+		Artifact: ToolSidecarInspectionArtifact{
+			Kind:   "markdown",
+			Path:   "docs/example.md",
+			Status: "available",
+		},
+		ReadStatus:  ToolSidecarInspectionStatus{Status: "read"},
+		ParseStatus: ToolSidecarInspectionStatus{Status: "parsed"},
+		Findings: []ToolSidecarInspectionFinding{{
+			Code:    "heading_seen",
+			Message: "heading was observed",
+		}},
+	})
+
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal inspection report: %v", err)
+	}
+	rendered := strings.ToLower(string(encoded))
+	for _, forbidden := range []string{"prd", "adr", "brief", "dispatch", "status migration", "lifecycle"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("inspection report should not inject product-specific lifecycle language %q: %s", forbidden, encoded)
+		}
+	}
+}
+
+func TestBuildToolSidecarInspectionReportSanitizesMetadataMutationKeys(t *testing.T) {
+	report := BuildToolSidecarInspectionReport(ToolSidecarInspectionReportInput{
+		Artifact:    ToolSidecarInspectionArtifact{Kind: "json", Path: "reports/sample.json", Status: "available"},
+		ReadStatus:  ToolSidecarInspectionStatus{Status: "read"},
+		ParseStatus: ToolSidecarInspectionStatus{Status: "parsed"},
+		Freshness: map[string]any{
+			"fresh_for_scope": true,
+			"patch":           "*** Begin Patch",
+			"nested": map[string]any{
+				"required_edit_paths": []any{"a.go"},
+				"source":              "audit",
+			},
+		},
+		Provenance: map[string]any{
+			"source": "tool_output",
+			"writes": []any{"a.go"},
+		},
+	})
+
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatalf("marshal inspection report: %v", err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(encoded, &payload); err != nil {
+		t.Fatalf("unmarshal inspection report JSON: %v", err)
+	}
+	for _, forbiddenKey := range []string{"mutation", "mutations", "edit", "edits", "write", "writes", "write_paths", "required_edit_paths", "patch", "diff"} {
+		if jsonObjectContainsKey(payload, forbiddenKey) {
+			t.Fatalf("inspection report JSON should sanitize metadata mutation field %q: %s", forbiddenKey, encoded)
+		}
+	}
+	freshness := payload["freshness"].(map[string]any)
+	if freshness["fresh_for_scope"] != true {
+		t.Fatalf("safe freshness metadata should be preserved: %#v", freshness)
+	}
+	nested := freshness["nested"].(map[string]any)
+	if nested["source"] != "audit" {
+		t.Fatalf("safe nested metadata should be preserved: %#v", nested)
+	}
+}
+
+func jsonObjectContainsKey(value any, key string) bool {
+	switch typed := value.(type) {
+	case map[string]any:
+		for objectKey, child := range typed {
+			if objectKey == key || jsonObjectContainsKey(child, key) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if jsonObjectContainsKey(child, key) {
+				return true
+			}
+		}
+	}
+	return false
 }

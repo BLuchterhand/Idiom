@@ -1292,6 +1292,14 @@ func TestExtractRequestedVerificationCommandsPreservesQuotedRunPattern(t *testin
 	}
 }
 
+func TestExtractRequestedVerificationCommandsHandlesRunAfterExecutorPhrase(t *testing.T) {
+	prompt := "After the executor applies the plan, run `go test ./...`."
+	got := ExtractRequestedVerificationCommands(prompt)
+	if len(got) != 1 || got[0] != "go test ./..." {
+		t.Fatalf("verification commands = %#v, want %#v", got, []string{"go test ./..."})
+	}
+}
+
 func TestExtractRequestedVerificationCommandsIgnoresSuggestedTests(t *testing.T) {
 	prompt := strings.Join([]string{
 		"# Plan",

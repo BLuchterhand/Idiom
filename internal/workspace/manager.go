@@ -1660,6 +1660,7 @@ func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
 	for range 4 {
 		stepRepaired := false
 		for _, repair := range []func([]byte) ([]byte, bool){
+			repairRawJSONControlChars,
 			repairStringifiedJSONToolFields,
 			repairSingletonArrayToolFields,
 			repairStringArrayToolFields,
@@ -1682,6 +1683,17 @@ func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return current, true
+}
+
+func repairRawJSONControlChars(payload []byte) ([]byte, bool) {
+	repaired := escapeRawControlCharsInJSONStringLiterals(string(payload))
+	if repaired == string(payload) {
+		return nil, false
+	}
+	if !json.Valid([]byte(repaired)) {
+		return nil, false
+	}
+	return []byte(repaired), true
 }
 
 func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {

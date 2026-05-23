@@ -77,6 +77,8 @@ func planExecuteLineRequestsVerificationCommand(line string) bool {
 		"requested test command",
 		"run this verification",
 		"run this test",
+		"run `go test",
+		"run go test",
 		"verify with",
 		"verification command",
 	)
@@ -167,7 +169,7 @@ func planExecuteTrimVerificationCommand(text string) string {
 	}
 	text = planExecuteTrimVerificationSentence(text)
 	text = strings.TrimSpace(text)
-	for strings.HasSuffix(text, ".") || strings.HasSuffix(text, ",") {
+	for (strings.HasSuffix(text, ".") && !strings.HasSuffix(text, "...")) || strings.HasSuffix(text, ",") {
 		text = strings.TrimSpace(text[:len(text)-1])
 	}
 	return text
@@ -215,6 +217,10 @@ func planExecuteVerificationCommands(commands []string) []string {
 		out = append(out, command)
 	}
 	return out
+}
+
+func VerificationCommands(commands []string) []string {
+	return planExecuteVerificationCommands(commands)
 }
 
 func planExecuteVerificationCommandAllowed(command string) bool {

@@ -815,6 +815,8 @@ func BuildStepInstruction(state RunState) StepInstruction {
 		directive = "Use this current-state packet for the next action. Required edit paths remain contractual until each one is changed or explicitly blocked. The available contract menu is remaining-path edits, semantic/context/declared project discovery or narrow remaining-path source reads with named_gap for exact edit-safety facts, or concrete blockers. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToVerify {
 		directive = "Use this current-state packet for the next action. The readiness state says verification is the open obligation; resolve verification status or report the concrete blocker before claiming completion. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
+	} else if genericGuardedMutationNeedsTargetContract(state) {
+		directive = "Use this current-state packet for the next action. " + genericGuardedMutationContract() + " Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
 		directive = "Use this current-state packet for the next action. The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker. Treat next_actions as ranked options, not mandatory commands. Do not repeat invalid actions."
 	} else if state.Readiness != nil && state.Readiness.ReadyToAnswer {
@@ -834,6 +836,9 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") && strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
 		directive += " Conversation lane is the default read-only answer lane: answer directly when visible context is enough; when workspace facts are needed, use efficient bounded reads/search/context tools, then return a concise, well formatted, on-topic prose/Markdown answer with the evidence named. Do not return tool summaries or JSON envelopes as the user-facing answer."
 	}
+	if readOnlyWorkspaceEvidencePendingState(state) {
+		directive += " The read-only workspace evidence gate is open: the first assistant response must be exactly one parser-readable bounded evidence tool request, or <<QUESTION>> with the exact evidence blocker. A prose/final answer is valid only after the evidence tool returns."
+	}
 	if initialActionContractApplies(state) {
 		directive += " For guarded workspace write tasks, the first assistant response must be either exactly one tool call or an explicit blocker/no-op answer; narrative-only implementation summaries are invalid before a successful write, no-op, or blocker."
 	}
@@ -841,6 +846,8 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		directive += " When required_edit_paths are present in plan-execute planner phase, they are submit_plan coverage scope, not permission for direct edit tools. The available contract menu is a required-path source-body read for exact edit-safety evidence, one parser-readable submit_plan with complete executable final edit bodies, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact blocker."
 	} else if implementationStateHasRequiredPathsForMutation(state) {
 		directive += " When required_edit_paths are present, treat the packet as the write scope. The available contract menu is an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker."
+	} else if genericGuardedMutationNeedsTargetContract(state) {
+		directive += " " + genericGuardedMutationContract()
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
 		directive += " The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker."
 	}
@@ -848,7 +855,8 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		state.Readiness.ReadyToAnswer &&
 		!state.Readiness.ReadyToWrite &&
 		!state.Readiness.ReadyToVerify &&
-		!implementationStateHasRequiredPathsForMutation(state) {
+		!implementationStateHasRequiredPathsForMutation(state) &&
+		!genericGuardedMutationNeedsTargetContract(state) {
 		directive += " The readiness state says answering is supported; continue only for one exact missing claim and one exact probe."
 	}
 	return StepInstruction{
@@ -865,10 +873,29 @@ func initialActionContractApplies(state RunState) bool {
 	permission := strings.ToLower(strings.TrimSpace(state.Permission))
 	contract := strings.ToLower(strings.TrimSpace(state.Contract))
 	family := strings.ToLower(strings.TrimSpace(state.TaskFamily))
-	return strings.Contains(permission, "write") ||
-		strings.Contains(contract, "implementation") ||
-		strings.Contains(family, "implement") ||
-		strings.Contains(family, "edit")
+	switch permission {
+	case "guarded_workspace_write", "isolated_workbranch_write", "analysis_read_only_then_guarded_writes":
+		return true
+	}
+	switch contract {
+	case "implementation_result", "patch_summary_with_verification", "repair_summary_with_verification":
+		return true
+	}
+	switch family {
+	case "implementation", "implementation_repair", "delegated_isolated_implementation", "docs_edit":
+		return true
+	}
+	return false
+}
+
+func readOnlyWorkspaceEvidencePendingState(state RunState) bool {
+	if !strings.EqualFold(strings.TrimSpace(state.Permission), "read_only_workspace") {
+		return false
+	}
+	if state.Readiness == nil || state.Readiness.ReadyToAnswer {
+		return false
+	}
+	return len(state.AllowedTools) > 0 || len(state.ToolManifest) > 0 || len(state.RequiredTools) > 0
 }
 
 func implementationStateHasRequiredPathsForMutation(state RunState) bool {
@@ -899,6 +926,26 @@ func implementationStateMissingRequiredPaths(state RunState) bool {
 		}
 	}
 	return false
+}
+
+func genericGuardedMutationNeedsTargetContract(state RunState) bool {
+	if !initialActionContractApplies(state) {
+		return false
+	}
+	if planThenExecutePlannerState(state) {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "delegated_isolated_implementation") {
+		return false
+	}
+	if len(state.RequiredEditPaths) > 0 || len(state.ChangedPaths) > 0 {
+		return false
+	}
+	return state.Readiness == nil || !state.Readiness.ReadyToWrite
+}
+
+func genericGuardedMutationContract() string {
+	return "For guarded workspace mutation without required_edit_paths, select the target before writing and get source-body evidence for that target first. The next visible action must be parser-readable: write when the exact target and edit shape are known, otherwise use bounded discovery/read with a named_gap for the missing target or edit-safety fact, or answer with <<QUESTION>>/no-op and concrete evidence. After a write, verify or report the concrete verification blocker before claiming completion."
 }
 
 // MergeRuntimeBriefIntoStateDelta is a slimmed-down variant of

@@ -3545,7 +3545,7 @@ func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, roo
 }
 
 func runPlanExecuteVerificationCommands(root string, commands []string, jsonEvents bool, stdout io.Writer) (int, []phaseEvidenceCheck, error) {
-	commands = planexecute.ExtractRequestedVerificationCommands(strings.Join(commands, "\n"))
+	commands = planexecute.VerificationCommands(commands)
 	evidence := make([]phaseEvidenceCheck, 0, len(commands))
 	for _, command := range commands {
 		check := runPlanExecuteVerificationCommand(root, command)

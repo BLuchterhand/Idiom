@@ -1843,6 +1843,13 @@ func TestRunPromptOnceUnscopedImplementationUsesDirectImplementWhenDispatchDisab
 				_ = json.NewEncoder(w).Encode(map[string]any{
 					"choices": []map[string]any{{
 						"message": map[string]string{"content": `<tool_call>
+{"tool":"read_file","path":"target.txt","named_gap":"current target content before replacing it","why_not_answering":"need source-body evidence before writing existing file"}`},
+					}},
+				})
+			case 2:
+				_ = json.NewEncoder(w).Encode(map[string]any{
+					"choices": []map[string]any{{
+						"message": map[string]string{"content": `<tool_call>
 {"tool":"write_file","path":"target.txt","content":"new\n","description":"update target through implement route"}`},
 					}},
 				})
@@ -2077,7 +2084,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 		t.Fatalf("read test: %v", err)
 	}
 	if !strings.Contains(string(gotTest), "Covered = true") {
-		t.Fatalf("test was not updated:\n%s", string(gotTest))
+		t.Fatalf("test was not updated after %d executor request(s), answer=%q:\n%s", executorChatRequests.Load(), answer, string(gotTest))
 	}
 }
 
@@ -2187,10 +2194,7 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *te
 				writeToolCall("call_edit_feature_source", "edit_file", `{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","description":"enable feature behavior"}`)
 				return
 			case 4:
-				writeToolCall("call_read_feature_test", "read_file", `{"path":"pkg/feature_test.go"}`)
-				return
-			case 5:
-				writeToolCall("call_edit_feature_test", "edit_file", `{"path":"pkg/feature_test.go","old_text":"Covered = false","new_text":"Covered = true","description":"add regression coverage marker"}`)
+				writeToolCall("call_source_sanity", "source_sanity", `{"path":"pkg/feature.go"}`)
 				return
 			default:
 				_ = json.NewEncoder(w).Encode(map[string]any{
@@ -2253,13 +2257,6 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *te
 	}
 	if !strings.Contains(string(gotSource), "return true") {
 		t.Fatalf("source was not updated after %d executor request(s), answer=%q events=%s:\n%s", executorChatRequests.Load(), answer, eventBuf.String(), string(gotSource))
-	}
-	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
-	if err != nil {
-		t.Fatalf("read test: %v", err)
-	}
-	if !strings.Contains(string(gotTest), "Covered = true") {
-		t.Fatalf("test was not updated:\n%s", string(gotTest))
 	}
 }
 

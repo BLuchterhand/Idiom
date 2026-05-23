@@ -225,7 +225,7 @@ type Scenario struct {
 	RequireFinalAnswerCritic     *FinalAnswerCriticExpectation     `json:"require_final_answer_critic,omitempty"`
 	RequireEffortPolicy          *EffortPolicyExpectation          `json:"require_effort_policy,omitempty"`
 	RequireLongHorizonState      *LongHorizonStateExpectation      `json:"require_long_horizon_state,omitempty"`
-	RequireWorkflowState         *WorkflowStateExpectation          `json:"require_workflow_state,omitempty"`
+	RequireWorkflowState         *WorkflowStateExpectation         `json:"require_workflow_state,omitempty"`
 	RequireBudgetLedger          *BudgetLedgerExpectation          `json:"require_budget_ledger,omitempty"`
 	RequireEvidenceDelta         *EvidenceDeltaExpectation         `json:"require_evidence_delta,omitempty"`
 	RequireClaimConfidence       *ClaimConfidenceExpectation       `json:"require_claim_confidence,omitempty"`
@@ -523,6 +523,9 @@ type Metrics struct {
 	BroadToolRequests         int                             `json:"broad_tool_requests"`
 	RepeatedDeadEndRejections int                             `json:"repeated_dead_end_rejections"`
 	RepeatedToolRejections    int                             `json:"repeated_tool_rejections"`
+	RejectedActions           int                             `json:"rejected_actions,omitempty"`
+	CompletionGateRejections  int                             `json:"completion_gate_rejections,omitempty"`
+	TurnSummarySeen           bool                            `json:"turn_summary_seen,omitempty"`
 	SummaryRejections         int                             `json:"summary_rejections"`
 	SummaryRejectionLanes     []string                        `json:"summary_rejection_lanes,omitempty"`
 	Tools                     map[string]int                  `json:"tools"`
@@ -557,10 +560,19 @@ type Metrics struct {
 	PlanExecutionDrift        []PlanExecutionDriftSnapshot    `json:"plan_execution_drift,omitempty"`
 	ChangedFiles              []string                        `json:"changed_files,omitempty"`
 	EvidencePaths             []string                        `json:"evidence_paths,omitempty"`
+	LiveContractRollbacks     []LiveContractRollbackSnapshot  `json:"live_contract_rollbacks,omitempty"`
 	LanguageCapabilities      []LanguageCapabilitySnapshot    `json:"language_capabilities,omitempty"`
 	MessageRoles              map[string]int                  `json:"message_roles,omitempty"`
 	RecordTypes               map[string]int                  `json:"record_types,omitempty"`
 	Errors                    []string                        `json:"errors,omitempty"`
+}
+
+type LiveContractRollbackSnapshot struct {
+	Status             string   `json:"status,omitempty"`
+	BaselineTree       string   `json:"baseline_tree,omitempty"`
+	PostResetTree      string   `json:"post_reset_tree,omitempty"`
+	ChangedBeforeReset []string `json:"changed_before_reset,omitempty"`
+	ChangedAfterReset  []string `json:"changed_after_reset,omitempty"`
 }
 
 type Report struct {

@@ -2819,6 +2819,69 @@ func TestForcedCompletionRepairsReadOnlyFallbackAnswer(t *testing.T) {
 	}
 }
 
+func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t *testing.T) {
+	replies := []string{
+		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":200}`,
+		"The file `internal/labels/labels.go` contains `ShortLabel()` returning `\"Save changes\"`.\n\nTo determine whether it can be shortened, I need one more probe:\n\n{\"tool\":\"search_content\",\"pattern\":\"ShortLabel\",\"path\":\".\"}",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Can we shorten the save label in internal/labels/labels.go?",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Can we shorten the save label in internal/labels/labels.go?"}},
+		llama.ChatOptions{},
+		results,
+		"The conversation lane has enough bounded evidence. Tools are now disabled. Answer the user's actual question now.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\"", "No files were changed"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected deterministic read-only fallback to include %q, got:\n%s", want, answer)
+		}
+	}
+	if answer == "." {
+		t.Fatalf("non-substantive retry answer should not be accepted")
+	}
+	if strings.Contains(answer, `"tool"`) || strings.Contains(answer, "I need one more probe") {
+		t.Fatalf("retry answer with an unexecuted tool request should not be accepted:\n%s", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected forced completion and invalid-answer retry, used %d/%d replies", requests, len(replies))
+	}
+}
+
 func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "line one\nline two\n"); err != nil {
@@ -4134,6 +4197,109 @@ func TestApplyLanePreflightForcesAnswerAfterConversationEvidence(t *testing.T) {
 	}
 }
 
+func TestConversationEvidenceSatisfiedForceAnswerReadyUsesGatheredSource(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+			Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+		},
+	}
+	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
+		t.Fatal("expected forced final-answer readiness after bounded conversation evidence")
+	}
+}
+
+func TestVisibleBriefForToolSurfaceNarrowsTargetWriteReadyManifest(t *testing.T) {
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         t.TempDir(),
+			EnableWrites: true,
+		}),
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "search_content", "edit_file", "apply_patch", "source_sanity"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		Output:  "func ShortLabel() string {\n\treturn \"Save changes\"\n}\n",
+	}}
+
+	visible := runner.visibleBriefForToolSurface(brief, results)
+	if slices.Contains(visible.AllowedTools, "read_file") || slices.Contains(visible.AllowedTools, "search_content") {
+		t.Fatalf("target-write-ready visible surface retained read/search tools: %#v", visible.AllowedTools)
+	}
+	for _, want := range []string{"edit_file", "apply_patch"} {
+		if !slices.Contains(visible.AllowedTools, want) {
+			t.Fatalf("target-write-ready visible surface missing %q: %#v", want, visible.AllowedTools)
+		}
+	}
+	if toolManifestHasTool(visible.ToolManifest, "read_file") {
+		t.Fatalf("target-write-ready tool manifest retained read_file: %#v", visible.ToolManifest)
+	}
+}
+
+func TestVisibleBriefForToolSurfaceStatesReadOnlyEvidenceGateBeforeAnswer(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"read_file", "search_content", "context_pack", "edit_file"},
+		Objective:         "Can we shorten the save label in internal/labels/labels.go?",
+		Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+	}
+
+	visible := runnerVisibleBriefForToolSurface(brief, nil)
+
+	if slices.Contains(visible.AllowedTools, "edit_file") {
+		t.Fatalf("read-only evidence-pending surface retained write tool: %#v", visible.AllowedTools)
+	}
+	if !slices.Contains(visible.RequiredTools, "bounded_workspace_evidence_tool") {
+		t.Fatalf("expected bounded evidence tool requirement, got %#v", visible.RequiredTools)
+	}
+	joined := strings.Join(append(append([]string{}, visible.RequiredNext...), visible.InvalidActions...), "\n")
+	for _, want := range []string{
+		"exactly one parser-readable bounded read/search/context tool call",
+		"prose/final answer before a successful bounded evidence tool result",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected %q in read-only evidence-pending guidance:\n%s", want, joined)
+		}
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionDoesNotAcceptShallowDiscovery(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_files", "read_file"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	}
+
+	_, rejected := runner.completionGateRejection(
+		"The label is probably in internal/labels/labels.go.",
+		[]workspace.ToolResult{{Tool: "search_files", Summary: "Matched 1 file", Output: "internal/labels/labels.go"}},
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatal("shallow discovery must not satisfy read-only final-answer evidence")
+	}
+}
+
 func TestEffectivePolicyHonorsRuntimeBriefBudget(t *testing.T) {
 	runner := &Runner{
 		MaxToolSteps: 12,
@@ -4974,6 +5140,7 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		} `json:"messages"`
+		Tools []llama.Tool `json:"tools"`
 	}
 	requests := 0
 	var postWriteRequest requestPayload
@@ -5067,6 +5234,13 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 	}
 	if !strings.Contains(postWriteText.String(), postWritePrompt) {
 		t.Fatalf("post-write verification prompt was not attached before the premature final answer:\n%s", postWriteText.String())
+	}
+	postWriteTools := map[string]bool{}
+	for _, tool := range postWriteRequest.Tools {
+		postWriteTools[strings.TrimSpace(tool.Function.Name)] = true
+	}
+	if !postWriteTools["source_sanity"] {
+		t.Fatalf("post-write verification request must expose source_sanity, got tools=%v", postWriteTools)
 	}
 	var recoveryText strings.Builder
 	for _, message := range recoveryRequest.Messages {
@@ -7276,10 +7450,683 @@ func TestRunnerRejectsUnexecutedToolJSONAsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestRunnerSalvagesVisibleCodeNavigateJSONMissingTool(t *testing.T) {
+	runner := &Runner{}
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(
+		`{"capability":"read_symbol","path":"cmd/idiom/product_workflow.go","pattern":"runProductBrief"}`,
+		nil,
+	)
+	if !ok {
+		t.Fatal("expected visible code_navigate payload missing tool field to be salvaged")
+	}
+	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/product_workflow.go" || req.Pattern != "runProductBrief" {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"code_navigate"`) {
+		t.Fatalf("salvaged raw request must include inferred tool, got %s", raw)
+	}
+}
+
+func TestRunnerDoesNotSalvageCapabilityShapedAnswerJSON(t *testing.T) {
+	runner := &Runner{}
+	_, _, ok := runner.salvageVisibleToolRequestFromProse(
+		`{"capability":"summarize","language":"go","path":"cmd/idiom/main.go","confidence":"high"}`,
+		nil,
+	)
+	if ok {
+		t.Fatal("ordinary capability-shaped answer JSON should not be salvaged as code_navigate")
+	}
+}
+
+func TestRunnerDoesNotSalvageExplicitUnknownCodeNavigateCapabilityJSON(t *testing.T) {
+	runner := &Runner{}
+	_, _, ok := runner.salvageVisibleToolRequestFromProse(
+		`{"tool":"code_navigate","capability":"summarize","path":"cmd/idiom/main.go"}`,
+		nil,
+	)
+	if ok {
+		t.Fatal("explicit code_navigate with unknown capability should not be salvaged")
+	}
+}
+
+func TestRunnerTargetSourceManifestHidesVerificationTools(t *testing.T) {
+	var payload struct {
+		Tools []llama.Tool `json:"tools,omitempty"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "<<QUESTION>>: Cannot edit because no concrete target is resolvable."},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"context_pack", "read_file", "search_content", "edit_file", "apply_patch", "source_sanity", "shell"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 2, MaxNoProgressTurns: 2},
+	}
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "update behavior"}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !chatOptionsExposeTool(llama.ChatOptions{Tools: payload.Tools}, "read_file") || !chatOptionsExposeTool(llama.ChatOptions{Tools: payload.Tools}, "edit_file") {
+		t.Fatalf("target-source manifest should expose read/write tools, got %#v", payload.Tools)
+	}
+	for _, forbidden := range []string{"source_sanity", "shell"} {
+		if chatOptionsExposeTool(llama.ChatOptions{Tools: payload.Tools}, forbidden) {
+			t.Fatalf("target-source manifest should hide %s before writes, got %#v", forbidden, payload.Tools)
+		}
+	}
+}
+
+func TestTargetSourceTextualProtocolHidesVerificationTools(t *testing.T) {
+	runner := &Runner{Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX)}
+	brief := runnerVisibleBriefForToolSurface(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"context_pack", "read_file", "search_content", "edit_file", "apply_patch", "source_sanity", "shell"},
+	}, nil)
+
+	prompt := runner.textualToolProtocolPrompt(brief)
+
+	for _, want := range []string{`"tool":"read_file"`, `"tool":"edit_file"`} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("target-source textual protocol missing %s:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"source_sanity", "shell", "verification_shell"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("target-source textual protocol advertised %s before write:\n%s", forbidden, prompt)
+		}
+	}
+}
+
+func TestRunnerTargetSourceRejectsWriteBeforeSourceBodyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.go", "package main\n\nconst value = \"before\"\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	replies := []string{
+		`{"tool":"edit_file","path":"target.go","old_text":"before","new_text":"after","description":"replace value"}`,
+		"<<QUESTION>>: Cannot write before source-body evidence for target.go.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejected bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+	onToolResult := func(event ToolResultEvent) {
+		if event.Result.Summary == "Write rejected before source-body evidence" {
+			rejected = true
+		}
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update target.go"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rejected {
+		t.Fatal("expected target-source write rejection before source-body evidence")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "target.go"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if strings.Contains(string(got), "after") {
+		t.Fatalf("write executed before source-body evidence:\n%s", got)
+	}
+}
+
+func TestRunnerTargetSourceRejectsExistingWriteFileBeforeSourceBodyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.go", "package main\n\nconst value = \"before\"\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	replies := []string{
+		`{"tool":"write_file","path":"target.go","content":"package main\n\nconst value = \"after\"\n","description":"replace file"}`,
+		"<<QUESTION>>: Cannot replace target.go before source-body evidence.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejected bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "write_file"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+	onToolResult := func(event ToolResultEvent) {
+		if event.Result.Summary == "Write rejected before source-body evidence" {
+			rejected = true
+		}
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update target.go"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rejected {
+		t.Fatal("expected target-source write_file rejection before source-body evidence")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "target.go"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if strings.Contains(string(got), "after") {
+		t.Fatalf("write_file executed before source-body evidence:\n%s", got)
+	}
+}
+
+func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\n\nconst a = \"read\"\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := writeTestFile(root, "b.go", "package main\n\nconst b = \"before\"\n"); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":3}`,
+		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
+		"<<QUESTION>>: Cannot write b.go before source-body evidence for b.go.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejected bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+	}
+	onToolResult := func(event ToolResultEvent) {
+		if event.Result.Summary == "Write rejected before source-body evidence" {
+			rejected = true
+		}
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update b.go after checking a.go"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rejected {
+		t.Fatal("expected target-source write rejection when only a different path was read")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "b.go"))
+	if err != nil {
+		t.Fatalf("read b: %v", err)
+	}
+	if strings.Contains(string(got), "after") {
+		t.Fatalf("write executed after reading a different path:\n%s", got)
+	}
+}
+
+func TestRunnerSalvagesPathOnlyFileOutlineJSONMissingTool(t *testing.T) {
+	runner := &Runner{}
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(
+		`{"capability":"file_outline","path":"cmd/idiom/product_workflow.go"}`,
+		nil,
+	)
+	if !ok {
+		t.Fatal("expected visible file_outline payload missing tool field to be salvaged")
+	}
+	if req.Tool != "code_navigate" || req.Capability != "file_outline" || req.Path != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"code_navigate"`) || !strings.Contains(raw, `"capability":"file_outline"`) {
+		t.Fatalf("salvaged raw request must include inferred code_navigate request, got %s", raw)
+	}
+}
+
+func TestRunnerExecutesCanonicalCodeNavigateForRepeatedRangeLessReadAfterOutline(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.test\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "cmd/idiom/product_workflow.go", "package main\n\nfunc runProductWorkflow() string {\n\treturn \"ok\"\n}\n"); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"cmd/idiom/product_workflow.go"}`,
+		"Done.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var toolRequests []ToolRequestEvent
+	var toolResults []ToolResultEvent
+	var rewriteEvent string
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Objective: "update product workflow",
+		},
+		SeedResults: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
+				Output:  "The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.",
+			},
+			{
+				Tool:    "code_navigate",
+				Summary: "Code navigation routed file_outline via go_file_outline",
+				Output: strings.Join([]string{
+					"capability: file_outline",
+					"route_summary: Outlined 1 top-level declaration(s) in cmd/idiom/product_workflow.go.",
+					"declarations:",
+					"- runProductWorkflow lines 3-5 tags: implementation",
+				}, "\n"),
+			},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "tool_request_rewrite" {
+				rewriteEvent = event.Content
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update product workflow"}},
+		llama.ChatOptions{},
+		nil,
+		func(event ToolRequestEvent) {
+			toolRequests = append(toolRequests, event)
+		},
+		func(event ToolResultEvent) {
+			toolResults = append(toolResults, event)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(toolRequests) != 1 {
+		t.Fatalf("expected one executed tool request, got %#v", toolRequests)
+	}
+	gotReq := toolRequests[0].Request
+	if gotReq.Tool != "code_navigate" || gotReq.Capability != "read_symbol" || gotReq.Pattern != "runProductWorkflow" {
+		t.Fatalf("expected canonical code_navigate read_symbol request, got %#v", gotReq)
+	}
+	if !strings.Contains(toolRequests[0].Raw, `"tool":"code_navigate"`) || !strings.Contains(toolRequests[0].Raw, `"capability":"read_symbol"`) {
+		t.Fatalf("onToolRequest raw should be canonical rewritten JSON, got %s", toolRequests[0].Raw)
+	}
+	if !strings.Contains(rewriteEvent, "repeated_rangeless_read_file_bounded_source") {
+		t.Fatalf("expected repeated range-less read rewrite event, got %q", rewriteEvent)
+	}
+	for _, event := range toolResults {
+		if event.Result.Error != "" || strings.Contains(strings.ToLower(event.Result.Summary), "reject") {
+			t.Fatalf("redirected request should execute without rejection, got %#v", event)
+		}
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
+func TestRunnerExecutesCapabilityOnlyCodeNavigateJSONMissingTool(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.test\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "main.go", "package main\n\nfunc main() {}\n"); err != nil {
+		t.Fatalf("write main.go: %v", err)
+	}
+
+	replies := []string{
+		`{"capability":"file_outline","path":"main.go"}`,
+		"Done.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var toolRequests []ToolRequestEvent
+	var salvageEvent string
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "visible_tool_salvage" {
+				salvageEvent = event.Content
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "outline main"}},
+		llama.ChatOptions{},
+		nil,
+		func(event ToolRequestEvent) {
+			toolRequests = append(toolRequests, event)
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if len(toolRequests) != 1 {
+		t.Fatalf("expected one salvaged tool request, got %#v", toolRequests)
+	}
+	gotReq := toolRequests[0].Request
+	if gotReq.Tool != "code_navigate" || gotReq.Capability != "file_outline" || gotReq.Path != "main.go" {
+		t.Fatalf("expected inferred code_navigate file_outline request, got %#v", gotReq)
+	}
+	if !strings.Contains(toolRequests[0].Raw, `"tool":"code_navigate"`) {
+		t.Fatalf("canonical raw request should include inferred tool, got %s", toolRequests[0].Raw)
+	}
+	if !strings.Contains(salvageEvent, "code_navigate") {
+		t.Fatalf("expected visible code_navigate salvage event, got %q", salvageEvent)
+	}
+}
+
+func TestRunnerSalvagesMalformedXMLWrapperBeforeToolParse(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "alpha\n"); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+
+	replies := []string{
+		`<function=read_file>I'll use {"tool":"read_file","path":"a.txt"}</function broken>`,
+		"Done.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var toolRequests []ToolRequestEvent
+	var toolParseResults int
+	var salvageEvent string
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "visible_tool_salvage" {
+				salvageEvent = event.Content
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "read a.txt"}},
+		llama.ChatOptions{},
+		nil,
+		func(event ToolRequestEvent) {
+			toolRequests = append(toolRequests, event)
+		},
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "tool_parse" || event.Result.Tool == "tool_parse" {
+				toolParseResults++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "Done." {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if toolParseResults != 0 {
+		t.Fatalf("recoverable malformed XML should be salvaged before tool_parse, got %d tool_parse result(s)", toolParseResults)
+	}
+	if len(toolRequests) != 1 || toolRequests[0].Request.Tool != "read_file" || toolRequests[0].Request.Path != "a.txt" {
+		t.Fatalf("expected salvaged read_file request, got %#v", toolRequests)
+	}
+	if !strings.Contains(salvageEvent, "before recording tool_parse") {
+		t.Fatalf("expected parse-error salvage event, got %q", salvageEvent)
+	}
+}
+
+func TestRunnerConcreteReadSymbolEvidenceDoesNotRestartRangeLessReadLoop(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.test\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "cmd/idiom/product_workflow.go", "package main\n\nfunc runProductWorkflow() string {\n\treturn \"ok\"\n}\n"); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"cmd/idiom/product_workflow.go"}`,
+		"Done.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var toolRequests []ToolRequestEvent
+	var rewriteEvent string
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Objective: "update product workflow",
+		},
+		SeedResults: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Redirected cmd/idiom/product_workflow.go to code_navigate",
+				Output:  "The request targets go code. Capability route: file_outline via adapter code_navigate instead of raw read_file.",
+			},
+			{
+				Tool:    "code_navigate",
+				Summary: "Code navigation routed file_outline via go_file_outline",
+				Output: strings.Join([]string{
+					"capability: file_outline",
+					"route_summary: Outlined 1 top-level declaration(s) in cmd/idiom/product_workflow.go.",
+					"declarations:",
+					"- runProductWorkflow lines 3-5 tags: implementation",
+				}, "\n"),
+			},
+			{
+				Tool:    "code_navigate",
+				Summary: "Code navigation routed read_symbol via go_read_symbol",
+				Output: strings.Join([]string{
+					"capability: read_symbol",
+					"route_summary: Read runProductWorkflow in cmd/idiom/product_workflow.go lines 3-5",
+					"func runProductWorkflow() string {",
+					"\treturn \"ok\"",
+					"}",
+				}, "\n"),
+			},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "tool_request_rewrite" {
+				rewriteEvent = event.Content
+			}
+		},
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update product workflow"}},
+		llama.ChatOptions{},
+		nil,
+		func(event ToolRequestEvent) {
+			toolRequests = append(toolRequests, event)
+		},
+		nil,
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if len(toolRequests) != 1 {
+		t.Fatalf("expected one model-requested tool execution, got %#v", toolRequests)
+	}
+	if toolRequests[0].Request.Tool != "read_file" {
+		t.Fatalf("concrete read_symbol evidence should not restart code_navigate loop, got %#v", toolRequests[0].Request)
+	}
+	if strings.Contains(rewriteEvent, "repeated_rangeless_read_file_bounded_source") {
+		t.Fatalf("did not expect repeated range-less read rewrite after concrete source evidence, got %q", rewriteEvent)
+	}
+}
+
 func TestLooksLikeTextualToolCallRejectsLineOrientedToolPayload(t *testing.T) {
 	payload := "tool: code_navigate\ncapability: read_symbol\npath: internal/app/turn_planner.go\npattern: classifyTurnRoute"
 	if !looksLikeTextualToolCall(payload) {
 		t.Fatalf("expected line-oriented tool payload to be rejected")
+	}
+	contextPayload := "tool: context_pack\ntask: plan a bounded change to ShortLabel in internal/labels/labels.go\nmode: plan\nlimit: 8"
+	if !looksLikeTextualToolCall(contextPayload) {
+		t.Fatalf("expected context-pack line-oriented tool payload to be rejected")
+	}
+	multilineJSONPayload := "tool: read_file\n{\n  \"tool\": \"read_file\",\n  \"path\": \"internal/labels/labels.go\"\n}"
+	if !looksLikeTextualToolCall(multilineJSONPayload) {
+		t.Fatalf("expected multiline JSON line-oriented tool payload to be rejected")
 	}
 	if looksLikeTextualToolCall("Tool: route classifier\n\nThis section explains the classifier in prose.") {
 		t.Fatalf("prose heading should not be rejected as a line-oriented tool payload")
@@ -10639,6 +11486,110 @@ func TestReadOnlyExplanationCompletionRejectionRejectsMetaScopeSummary(t *testin
 	}
 }
 
+func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        "conversation",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file"},
+			Objective:         "Can we shorten internal/labels/labels.go?",
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	}
+	result, rejected := runner.completionGateRejection(
+		"Yes, that label can be shortened.",
+		nil,
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected read-only final answer without evidence to be rejected")
+	}
+	if !strings.Contains(result.Error, "bounded codebase evidence") {
+		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
+	}
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{result})
+	if !ok || hideReads {
+		t.Fatalf("expected read-only evidence recovery prompt without hiding reads, got ok=%t hideReads=%t prompt=%q", ok, hideReads, prompt)
+	}
+	if !strings.Contains(prompt, `"tool":"read_file"`) || !strings.Contains(prompt, "internal/labels/labels.go") {
+		t.Fatalf("expected recovery prompt to request the named source path, got:\n%s", prompt)
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionAllowsAnswerAfterEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        "conversation",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file"},
+		},
+	}
+	_, rejected := runner.completionGateRejection(
+		"The inspected source shows `ShortLabel` returns \"Save changes\".",
+		[]workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5", Output: "func ShortLabel() string { return \"Save changes\" }"}},
+		1,
+		nil,
+		false,
+	)
+	if rejected {
+		t.Fatalf("did not expect read-only final answer to be rejected after source evidence")
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionRejectsNonSubstantiveAnswerAfterEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        "conversation",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	result, rejected := runner.completionGateRejection(
+		"tool",
+		[]workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5", Output: "func ShortLabel() string { return \"Save changes\" }"}},
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected non-substantive read-only answer to be rejected")
+	}
+	if !strings.Contains(result.Error, "substantive user-facing answer") {
+		t.Fatalf("expected substantive-answer rejection, got %#v", result)
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionDoesNotCountEmptyRoutedSymbolMiss(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        "conversation",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"code_navigate", "read_file"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	}
+	_, rejected := runner.completionGateRejection(
+		"No Go symbols matched `save`.",
+		[]workspace.ToolResult{{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: No Go symbols matched \"save\"",
+		}},
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("symbol miss without source body must not satisfy read-only evidence")
+	}
+}
+
 func TestReadOnlyExplanationCompletionRejectionRejectsUnsupportedExtraDetail(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -11912,6 +12863,120 @@ func TestZeroHitRetryBlocked(t *testing.T) {
 	if !found {
 		t.Fatalf("expected zero-hit retry guard to fire, events: %v", eventRolesFor(events))
 	}
+	assertRecoveryCardEvent(t, events, "evidence.zero_hit_not_absence", "Zero-hit retry blocked")
+}
+
+func TestRepeatedDeadEndReadEmitsRecoveryCard(t *testing.T) {
+	replies := []string{
+		`{"tool":"read_file","start_line":1}`,
+		`{"tool":"read_file","end_line":1}`,
+		"blocked",
+	}
+	root := t.TempDir()
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if step == 1 && req.Tool == "read_file" {
+				return &workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Read rejected",
+					Error:   "synthetic read guard",
+				}
+			}
+			return nil
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	_, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "inspect files"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	assertRecoveryCardEvent(t, events, "loop.repeated_dead_end", "Repeated dead-end action rejected")
+	assertRecoveryCardRole(t, events, "next_action_state", "loop.repeated_dead_end", "currently callable tools:", "read_file", "currently callable action classes:", "read")
+	assertRecoveryCardRole(t, events, "failure_feedback", "loop.repeated_dead_end", "currently callable tools:", "read_file", "currently callable action classes:", "read")
+}
+
+func assertRecoveryCardEvent(t *testing.T, events []RunEvent, invariantID string, summary string) {
+	t.Helper()
+	cardsByRole := recoveryCardsByRole(t, events)
+	var cards []string
+	for _, roleCards := range cardsByRole {
+		cards = append(cards, roleCards...)
+	}
+	for _, card := range cards {
+		if strings.Contains(card, invariantID) && strings.Contains(card, summary) {
+			assertRecoveryCardOmitsProjectWorkflowTerms(t, card)
+			return
+		}
+	}
+	t.Fatalf("expected emitted recovery card with invariant %q and summary %q, cards=%#v roles=%v", invariantID, summary, cards, eventRolesFor(events))
+}
+
+func assertRecoveryCardRole(t *testing.T, events []RunEvent, role string, wants ...string) {
+	t.Helper()
+	cardsByRole := recoveryCardsByRole(t, events)
+	for _, card := range cardsByRole[role] {
+		matches := true
+		for _, want := range wants {
+			if !strings.Contains(card, want) {
+				matches = false
+				break
+			}
+		}
+		if matches {
+			assertRecoveryCardOmitsProjectWorkflowTerms(t, card)
+			return
+		}
+	}
+	t.Fatalf("expected %s recovery card containing %#v, cards=%#v roles=%v", role, wants, cardsByRole[role], eventRolesFor(events))
+}
+
+func recoveryCardsByRole(t *testing.T, events []RunEvent) map[string][]string {
+	t.Helper()
+	cards := make(map[string][]string)
+	for _, event := range events {
+		switch event.Role {
+		case "next_action_state":
+			var state runnerNextActionState
+			if err := json.Unmarshal([]byte(event.Content), &state); err == nil && strings.TrimSpace(state.RecoveryCard) != "" {
+				cards[event.Role] = append(cards[event.Role], state.RecoveryCard)
+			}
+		case "failure_feedback":
+			var packet runnerFailureFeedbackPacket
+			if err := json.Unmarshal([]byte(event.Content), &packet); err == nil && strings.TrimSpace(packet.RecoveryCard) != "" {
+				cards[event.Role] = append(cards[event.Role], packet.RecoveryCard)
+			}
+		}
+	}
+	return cards
 }
 
 func TestSuccessfulSearchMustBeConsumedBeforeAnotherSearch(t *testing.T) {
@@ -12025,6 +13090,86 @@ func TestRejectionRetryBlocked(t *testing.T) {
 
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 1 {
 		t.Fatalf("expected exactly 1 rejection_retry_blocked event, got %d; events: %v", got, eventRolesFor(events))
+	}
+}
+
+func TestMutationRepeatedRejectedReadRecoversToWriteInsteadOfForcedAnswer(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string { return \"Save changes\" }\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`,
+		`{"tool":"source_sanity","path":"internal/labels/labels.go"}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	events := []RunEvent(nil)
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			EvidencePaths:     []string{"internal/labels/labels.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Shorten the save label in internal/labels/labels.go."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected recovery to close immediately after source-aware verification, got %d requests", requests)
+	}
+	if got := countEventsByRole(events, "mutation_rejected_retry_write_recovery"); got != 1 {
+		t.Fatalf("expected one mutation write recovery event, got %d; events=%v", got, eventRolesFor(events))
+	}
+	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
+		t.Fatalf("mutation no-write retry must not force-answer through rejection_retry_blocked, got %d; events=%v", got, eventRolesFor(events))
+	}
+	data, err := os.ReadFile(filepath.Join(root, "internal/labels/labels.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `return "Save"`) || strings.Contains(string(data), `Save changes`) {
+		t.Fatalf("expected edit to be applied, got:\n%s", string(data))
+	}
+	if !strings.Contains(answer, "internal/labels/labels.go") {
+		t.Fatalf("expected final answer to report changed path, got:\n%s", answer)
+	}
+	if !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final answer to report verification status, got:\n%s", answer)
 	}
 }
 

@@ -25,6 +25,8 @@ __pycache__/
 logs/
 models/
 transcripts/
+testdata/live-contracts/generated-logs/
+testdata/live-contracts/fixtures/**/logs/
 
 # Local agent / IDE state
 .claude/

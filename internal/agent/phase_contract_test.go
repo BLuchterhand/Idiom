@@ -275,12 +275,85 @@ func TestDeriveTurnPhaseContractImplementationWriteReady(t *testing.T) {
 	assertContains(t, contract.HiddenTools, "shell")
 }
 
+func TestDeriveTurnPhaseContractImplementationTargetSourcePending(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools: []string{
+				"context_pack", "search_content", "read_file", "code_navigate",
+				"edit_file", "write_file", "apply_patch", "source_sanity", "shell",
+			},
+		},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationTargetSource)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionVerify)
+	assertContains(t, contract.AllowedTools, "context_pack")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "edit_file")
+	assertContains(t, contract.HiddenTools, "source_sanity")
+	joinedNext := strings.Join(contract.RequiredNext, "\n")
+	for _, want := range []string{"source-body evidence", "parser-readable write", "<<QUESTION>>"} {
+		if !strings.Contains(joinedNext, want) {
+			t.Fatalf("RequiredNext missing %q: %#v", want, contract.RequiredNext)
+		}
+	}
+}
+
+func TestDeriveTurnPhaseContractImplementationTargetSourceDoesNotOverrideWriteReady(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "source_sanity"},
+			Readiness: &workerruntime.ReadinessState{
+				ReadyToWrite: true,
+			},
+		},
+	})
+
+	if contract.PhaseID == turnPhaseImplementationTargetSource {
+		t.Fatalf("write-ready packet should not use target-source phase: %#v", contract)
+	}
+}
+
+func TestDeriveTurnPhaseContractPlanExecuteAllowedScopeDoesNotUseImplementationTargetSource(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"context_pack", "read_file", "code_navigate", "search_content", "submit_plan", "edit_file", "apply_patch"},
+			AllowedEditPaths:  []string{"pkg/feature.go", "pkg/feature_test.go"},
+		},
+	})
+
+	if contract.PhaseID != turnPhaseCandidateSource {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
+	}
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertNotContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "apply_patch")
+}
+
 func TestDeriveTurnPhaseContractImplementationVerifyReady(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"internal/app/model_swap.go"},
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "source_sanity", "shell", "git_diff", "git_status"},
 		},
 		Results: []workspace.ToolResult{{
@@ -300,6 +373,175 @@ func TestDeriveTurnPhaseContractImplementationVerifyReady(t *testing.T) {
 	assertContains(t, contract.AllowedTools, "shell")
 	assertContains(t, contract.HiddenTools, "edit_file")
 	assertContains(t, contract.HiddenTools, "read_file")
+}
+
+func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerificationFirst(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "source_sanity", "shell", "git_diff", "git_status"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "edit_file",
+			Summary: "Edited pkg/feature.go",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationVerifyReady {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationVerifyReady)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "source_sanity")
+	assertNotContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.HiddenTools, "edit_file")
+	assertContains(t, contract.HiddenTools, "read_file")
+}
+
+func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "apply_patch", "source_sanity"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+			Output:  "func ShortLabel() string {\n\treturn \"Save changes\"\n}\n",
+		}},
+	})
+
+	if contract.Phase != "target_write_ready" {
+		t.Fatalf("Phase = %q, want target_write_ready", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "edit_file")
+	assertContains(t, contract.AllowedTools, "apply_patch")
+	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertNotContains(t, contract.AllowedTools, "search_content")
+}
+
+func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterSymbolMiss(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: No Go symbols matched \"save\"",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want target_source after symbol miss; contract=%#v", contract.PhaseID, contract)
+	}
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "code_navigate")
+}
+
+func TestDeriveTurnPhaseContractReadOnlyWorkspaceRequiresEvidenceBeforeAnswer(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_answer",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_files", "search_content", "read_file", "edit_file", "shell"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
+	assertNotContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "shell")
+}
+
+func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_answer",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		}},
+	})
+
+	if contract.Phase != "generic" {
+		t.Fatalf("Phase = %q, want generic after evidence", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+}
+
+func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceReadyDoesNotAdvertiseTools(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5"},
+			{Tool: "code_navigate", Summary: "Code navigation routed references via go_references"},
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_ready" {
+		t.Fatalf("Phase = %q, want read_only_evidence_ready", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	if len(contract.AllowedTools) != 0 {
+		t.Fatalf("read-only answer-ready phase must not advertise tools, got %#v", contract.AllowedTools)
+	}
+	if len(contract.ActionPolicy.CallableToolNames) != 0 {
+		t.Fatalf("read-only answer-ready policy must not advertise callable tools, got %#v", contract.ActionPolicy.CallableToolNames)
+	}
+}
+
+func TestDeriveTurnPhaseContractReadOnlyWorkspaceStaysPendingAfterShallowDiscovery(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_files", "context_pack", "read_file"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "search_files", Summary: "Matched 1 file", Output: "internal/labels/labels.go"},
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending after shallow discovery; contract=%#v", contract.Phase, contract)
+	}
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.AllowedTools, "read_file")
 }
 
 func TestDeriveTurnPhaseContractProductAcceptanceBlocksFinalWithOpenEvidence(t *testing.T) {

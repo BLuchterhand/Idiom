@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -78,6 +79,7 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 
 	command := strings.Join([]string{
 		`test "$IDIOM_SWE_TURN_COUNT" = "2"`,
+		`&& test "$IDIOM_SWE_FAMILY" = "direct_question"`,
 		`&& test "$IDIOM_SWE_TURNS_JSON" = '["first turn","second turn"]'`,
 		`&& printf '%s\n'`,
 		`'{"type":"message","role":"user","content":"first turn"}'`,
@@ -134,6 +136,113 @@ func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(logsDir, "second.jsonl")); err != nil {
 		t.Fatalf("expected second task log after first failure: %v", err)
+	}
+}
+
+func TestLiveContractRunnerRollsBackWorkspaceWithFakeBinary(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.json")
+	logPath := filepath.Join(dir, "contract.jsonl")
+	fakeBin := filepath.Join(dir, "fake-idiom")
+	if err := os.WriteFile(configPath, []byte(`{"chat":{"system_prompt_files":[]},"workspace":{},"llama_server":{},"implementer":{},"route_classifier":{}}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	fake := `#!/usr/bin/env bash
+set -euo pipefail
+config=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -config) config="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+python3 - "$config" <<'PY'
+import json
+import os
+import pathlib
+import sys
+cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+root = pathlib.Path(cfg["workspace"]["root"])
+debug = pathlib.Path(cfg["chat"]["debug_log_dir"])
+debug.mkdir(parents=True, exist_ok=True)
+pathlib.Path("logs/telemetry").mkdir(parents=True, exist_ok=True)
+pathlib.Path("logs/telemetry/cwd-leak.jsonl").write_text("{}\n", encoding="utf-8")
+(root / "internal/labels/labels.go").write_text('package labels\n\nfunc ShortLabel() string {\n\treturn "Save"\n}\n', encoding="utf-8")
+with (debug / "fake-session.jsonl").open("w", encoding="utf-8") as f:
+    f.write(json.dumps({"type":"session_start","workspace_root":str(root)}) + "\n")
+    f.write(json.dumps({"type":"message","role":"user","content":"Implement this feature"}) + "\n")
+    f.write(json.dumps({"type":"tool_request","step":1,"tool":"edit_file"}) + "\n")
+    f.write(json.dumps({"type":"tool_result","step":1,"tool":"edit_file","summary":"Edited internal/labels/labels.go","error":""}) + "\n")
+    f.write(json.dumps({"type":"phase","lane":"implement","phase":"verify","state":"done"}) + "\n")
+    f.write(json.dumps({"type":"message","role":"assistant","content":"Done."}) + "\n")
+PY
+`
+	if err := os.WriteFile(fakeBin, []byte(fake), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	scriptPath, err := filepath.Abs(filepath.Join("..", "..", "scripts", "live-contract-runner.sh"))
+	if err != nil {
+		t.Fatalf("script path: %v", err)
+	}
+	fixturePath, err := filepath.Abs(filepath.Join("..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
+	if err != nil {
+		t.Fatalf("fixture path: %v", err)
+	}
+	fixtureLeak := filepath.Join(fixturePath, "logs", "telemetry", "cwd-leak.jsonl")
+	_ = os.Remove(fixtureLeak)
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = fixturePath
+	cmd.Env = append(os.Environ(),
+		"IDIOM_BIN="+fakeBin,
+		"IDIOM_CONFIG="+configPath,
+		"IDIOM_SWE_FIXTURE="+fixturePath,
+		"IDIOM_SWE_LOG="+logPath,
+		"IDIOM_SWE_PROMPT=Implement this feature",
+		"IDIOM_SWE_TASK_TIMEOUT=15",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("live contract runner failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	for _, want := range []string{
+		`"type": "idiom.live_contract.workspace_prepared"`,
+		`"type": "idiom.live_contract.rollback"`,
+		`"status": "clean"`,
+		`"changed_before_reset": ["internal/labels/labels.go"]`,
+		`"changed_after_reset": []`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected log to contain %q, got:\n%s", want, data)
+		}
+	}
+	records, err := eval.LoadRecords(logPath)
+	if err != nil {
+		t.Fatalf("load records: %v", err)
+	}
+	metrics := eval.Analyze(records)
+	foundChanged := false
+	for _, path := range metrics.ChangedFiles {
+		if strings.EqualFold(strings.TrimSpace(path), "internal/labels/labels.go") {
+			foundChanged = true
+			break
+		}
+	}
+	if !foundChanged {
+		t.Fatalf("expected rollback changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+	if _, err := os.Stat(fixtureLeak); !os.IsNotExist(err) {
+		t.Fatalf("live runner leaked cwd telemetry into fixture source: %v", err)
 	}
 }
 
@@ -454,6 +563,22 @@ func TestCLIParityRegressionSuiteLintsClean(t *testing.T) {
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("cli parity regression suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Lint: PASS") {
+		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
+	}
+}
+
+func TestLiveContractSuiteLintsClean(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "live-contracts", "suite.json")
+	if _, err := os.Stat(suitePath); err != nil {
+		t.Fatalf("live contract suite missing: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("live contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
