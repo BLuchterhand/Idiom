@@ -90,6 +90,10 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState) string {
 	var b strings.Builder
 	b.WriteString("You are the feature planner. Produce exactly one JSON object.\n")
 	b.WriteString("Valid tools: submit_feature_plan or ask_planner_question.\n")
+	b.WriteString("For submit_feature_plan, return the FeaturePlan object itself with tool=\"submit_feature_plan\" at the top level. Do not nest the plan under a plan, payload, arguments, or input field.\n")
+	b.WriteString("Every atom must name at least one concrete required_edit_paths or allowed_edit_paths entry. A no-mutation planning test still names the intended source or test paths as allowed scope; do not return both arrays empty.\n")
+	b.WriteString("Required submit_feature_plan shape:\n")
+	b.WriteString(`{"tool":"submit_feature_plan","schema_version":"idiom.feature_plan.v1","feature_id":"feature-id","source_task":{"kind":"operator_prompt","summary":"..."},"summary":"...","top_level_scope":{"objective":"...","success_criteria":["..."]},"sdd_contract":{"refs":["docs/path.md:line"],"acceptance":["..."]},"tdd_contract":{"coverage_tier":"contract_high","required_before_implementation":true,"obligations":[{"id":"TDD-1","behavior":"...","command":"go test ./...","required_before":"implementation"}]},"atoms":[{"schema_version":"idiom.feature_atom.v1","id":"atom-1","title":"...","summary":"...","required_edit_paths":["internal/example/source.go"],"allowed_edit_paths":["internal/example/source.go","internal/example/source_test.go"],"sdd_refs":["docs/path.md:line"],"tdd_obligations":["TDD-1"],"required_tests":["go test ./..."],"test_first":{"obligation_refs":["TDD-1"],"commands":["go test ./..."],"baseline_required":true,"test_artifact_paths":["path_test.go"],"pre_execution_event_ids":["evt-tdd-1"],"expected_pre_execution_result":"red-confirmed","coverage_gate_event_id":"evt-tdd-1"},"planned_tdd_snapshot":{"snapshot_id":"snap-tdd-1","snapshot_digest":"sha256:...","obligation_ids":["TDD-1"],"test_commands":["go test ./..."],"test_artifact_paths":["path_test.go"],"expected_pre_execution_results":["red-confirmed"],"created_before_dispatch_event_id":"evt-tdd-1"},"prompt":"..."}]}` + "\n")
 	b.WriteString("Before any atom can be dispatched, every atom must carry SDD refs and test_first commands tied to TDD obligations required_before implementation.\n")
 	b.WriteString("Top-level scope is the smallest releasable feature objective; atoms are independently dispatchable implementation units.\n\n")
 	if len(state.OpenQuestions) > 0 {
@@ -230,8 +234,24 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	}
 	trimmed := strings.TrimSpace(raw)
 	if strings.HasPrefix(trimmed, "{") {
+		var envelope struct {
+			Tool            string `json:"tool"`
+			QuestionSummary string `json:"question_summary"`
+			BlockingClaim   string `json:"blocking_claim"`
+		}
+		_ = json.Unmarshal([]byte(trimmed), &envelope)
+		questionShaped := strings.TrimSpace(envelope.Tool) == ToolQuestionForPlanner ||
+			(strings.TrimSpace(envelope.Tool) == "" &&
+				strings.TrimSpace(envelope.QuestionSummary) != "" &&
+				strings.TrimSpace(envelope.BlockingClaim) != "")
 		var question PlannerQuestion
-		if err := json.Unmarshal([]byte(trimmed), &question); err == nil && (strings.TrimSpace(question.ID) != "" || strings.Contains(trimmed, ToolQuestionForPlanner)) {
+		if questionShaped {
+			err := json.Unmarshal([]byte(trimmed), &question)
+			if err != nil {
+				atom.Blockers = append(atom.Blockers, err.Error())
+				state.Status = FeatureStatePlanningRepair
+				return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
+			}
 			if strings.TrimSpace(question.QuestionSummary) == "" {
 				question.QuestionSummary = "implementor requested planner clarification"
 			}

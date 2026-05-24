@@ -17,6 +17,24 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 	}
 }
 
+func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
+	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()))
+
+	for _, want := range []string{
+		`return the FeaturePlan object itself`,
+		`Do not nest the plan under a plan, payload, arguments, or input field`,
+		`do not return both arrays empty`,
+		`"tool":"submit_feature_plan"`,
+		`"top_level_scope"`,
+		`"tdd_contract"`,
+		`"planned_tdd_snapshot"`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestApplyPlannerOutputAcceptsPlanAndQueuesAtoms(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	parsed := ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}
@@ -188,6 +206,33 @@ func TestRunKeepsImplementorQuestionAsPlannerRepairState(t *testing.T) {
 	}
 	if result.State.OpenQuestions[0].QuestionKind == "" || result.State.OpenQuestions[0].AuthorityRequired == "" {
 		t.Fatalf("planner question was not normalized: %+v", result.State.OpenQuestions[0])
+	}
+}
+
+func TestImplementorAtomJSONDoesNotOpenPlannerQuestion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	state.ActiveRuns = []ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        atom.ID,
+		LaneSessionID: "atom-1-run-1",
+		State:         "running",
+	}}
+	raw, err := json.Marshal(atom.FeatureAtomPlan)
+	if err != nil {
+		t.Fatalf("marshal atom: %v", err)
+	}
+
+	events := ApplyImplementorOutput(&state, atom, string(raw))
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; events=%+v", atom.State, events)
+	}
+	if len(state.OpenQuestions) != 0 {
+		t.Fatalf("atom JSON should not open planner question: %+v", state.OpenQuestions)
 	}
 }
 
