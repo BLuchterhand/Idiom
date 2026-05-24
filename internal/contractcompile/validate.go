@@ -11,6 +11,14 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 	if input.Runtime.EnforcementMode != "" && input.Runtime.EnforcementMode != "report_only" {
 		return fmt.Errorf("passive plan-execute planner compiler only supports report_only enforcement mode, got %q", input.Runtime.EnforcementMode)
 	}
+	if len(input.RequiredNext) > 0 {
+		return fmt.Errorf("passive plan-execute planner compiler does not accept free-form required_next directives")
+	}
+	for _, decision := range input.Runtime.DegradationDecisions {
+		if decision.Decision == "authorized_fallback" && len(decision.AuthorizedFallbacks) == 0 {
+			return fmt.Errorf("degradation decision %q authorizes fallback without naming a fallback", decision.InvariantID)
+		}
+	}
 	for _, tc := range []struct {
 		field string
 		tools []string
@@ -24,6 +32,27 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 			if !knownTool(tool) {
 				return fmt.Errorf("%s contains unmapped tool %q", tc.field, tool)
 			}
+		}
+	}
+	if overlap := firstStringOverlap(input.AllowedTools, input.ForbiddenTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both allowed and forbidden", overlap)
+	}
+	if overlap := firstStringOverlap(input.RequiredTools, input.ForbiddenTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both required and forbidden", overlap)
+	}
+	if overlap := firstStringOverlap(input.Protocol.VisibleTools, input.ForbiddenTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both visible and forbidden", overlap)
+	}
+	for _, tc := range []struct {
+		field string
+		tools []string
+	}{
+		{field: "allowed_tools", tools: input.AllowedTools},
+		{field: "required_tools", tools: input.RequiredTools},
+		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
+	} {
+		if exposedTool, forbiddenTool, capability := firstCapabilityOverlap(tc.tools, input.ForbiddenTools); capability != "" {
+			return fmt.Errorf("%s tool %q and forbidden tool %q both map to capability %q", tc.field, exposedTool, forbiddenTool, capability)
 		}
 	}
 	if strings.Contains(strings.ToLower(input.PermissionProfile), "read_only") {
@@ -42,6 +71,20 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 			}
 		}
 	}
+	for _, tc := range []struct {
+		field string
+		tools []string
+	}{
+		{field: "allowed_tools", tools: input.AllowedTools},
+		{field: "required_tools", tools: input.RequiredTools},
+		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
+	} {
+		for _, tool := range tc.tools {
+			if plannerForbiddenTool(tool) {
+				return fmt.Errorf("plan-execute planner cannot expose tool %q in %s", tool, tc.field)
+			}
+		}
+	}
 	if err := validateActionClasses("protocol.callable_action_classes", input.Protocol.CallableActionClasses); err != nil {
 		return err
 	}
@@ -52,6 +95,16 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 		return fmt.Errorf("protocol action class %q cannot be both callable and invalid", overlap)
 	}
 	return nil
+}
+
+func plannerForbiddenTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "shell", "source_sanity", "go_diagnostics", "cpp_diagnostics", "task",
+		"edit_file", "write_file", "append_file", "mkdir", "apply_patch":
+		return true
+	default:
+		return false
+	}
 }
 
 func validateProtocolProjection(protocol ModelProtocolProjection) error {
@@ -94,4 +147,19 @@ func firstStringOverlap(left []string, right []string) string {
 		}
 	}
 	return ""
+}
+
+func firstCapabilityOverlap(exposedTools []string, forbiddenTools []string) (string, string, autonomy.Capability) {
+	for _, exposedTool := range exposedTools {
+		for _, exposedCapability := range capabilitiesForTool(exposedTool) {
+			for _, forbiddenTool := range forbiddenTools {
+				for _, forbiddenCapability := range capabilitiesForTool(forbiddenTool) {
+					if exposedCapability != "" && exposedCapability == forbiddenCapability {
+						return exposedTool, forbiddenTool, exposedCapability
+					}
+				}
+			}
+		}
+	}
+	return "", "", ""
 }

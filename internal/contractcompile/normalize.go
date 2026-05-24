@@ -122,7 +122,7 @@ func normalizeDegradationDecisions(decisions []DegradationDecision, degradedInva
 			out = append(out, DegradationDecision{
 				InvariantID:         decision.InvariantID,
 				ReasonCode:          "declared_degraded_runtime_invariant",
-				Decision:            "authorized_fallback",
+				Decision:            degradationDecisionForFallbacks(decision.AuthorizedFallbacks),
 				AuthorizedFallbacks: append([]string(nil), decision.AuthorizedFallbacks...),
 			})
 		}
@@ -137,6 +137,13 @@ func normalizeDegradationDecisions(decisions []DegradationDecision, degradedInva
 		)
 	})
 	return out
+}
+
+func degradationDecisionForFallbacks(fallbacks []string) string {
+	if len(fallbacks) > 0 {
+		return "authorized_fallback"
+	}
+	return "degraded_no_fallback"
 }
 
 func legacyDegradationDecisions(degradedInvariants []string, authorizedFallbacks []string) []DegradationDecision {
@@ -170,8 +177,16 @@ func legacyFallbacksForInvariant(index int, invariantCount int, fallbacks []stri
 func normalizeDegradationDecision(decision DegradationDecision) DegradationDecision {
 	decision.InvariantID = strings.TrimSpace(decision.InvariantID)
 	decision.ReasonCode = firstNonEmpty(decision.ReasonCode, "declared_runtime_degradation")
-	decision.Decision = firstNonEmpty(decision.Decision, "authorized_fallback")
 	decision.AuthorizedFallbacks = uniqueStrings(decision.AuthorizedFallbacks)
+	if strings.TrimSpace(decision.Decision) == "" {
+		if len(decision.AuthorizedFallbacks) > 0 {
+			decision.Decision = "authorized_fallback"
+		} else {
+			decision.Decision = "degraded_no_fallback"
+		}
+	} else {
+		decision.Decision = strings.TrimSpace(decision.Decision)
+	}
 	return decision
 }
 
@@ -246,6 +261,12 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 	protocol.ProtocolHash = strings.TrimSpace(protocol.ProtocolHash)
 	protocol.PhaseID = strings.TrimSpace(protocol.PhaseID)
 	protocol.ParserMode = strings.TrimSpace(protocol.ParserMode)
+	protocol.ToolTransportMode = strings.TrimSpace(protocol.ToolTransportMode)
+	protocol.ParserTransportMode = strings.TrimSpace(protocol.ParserTransportMode)
+	protocol.ParserContract = strings.TrimSpace(protocol.ParserContract)
+	protocol.NativeToolPolicy = strings.TrimSpace(protocol.NativeToolPolicy)
+	protocol.ToolChoice = strings.TrimSpace(protocol.ToolChoice)
+	protocol.ResponseFormat = strings.TrimSpace(protocol.ResponseFormat)
 	protocol.ExpectedVisibleOutput = strings.TrimSpace(protocol.ExpectedVisibleOutput)
 	protocol.VisibleTools = uniqueStrings(protocol.VisibleTools)
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
@@ -259,6 +280,10 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 	protocol.PathRoleSummary = uniqueStrings(protocol.PathRoleSummary)
 	protocol.VerificationObligations = uniqueStrings(protocol.VerificationObligations)
 	protocol.SafeAlternatives = uniqueStrings(protocol.SafeAlternatives)
+	protocol.RequiredTools = uniqueStrings(protocol.RequiredTools)
+	protocol.ReadinessGate = uniqueStrings(protocol.ReadinessGate)
+	protocol.Constraints = uniqueStrings(protocol.Constraints)
+	protocol.InvalidActions = uniqueStrings(protocol.InvalidActions)
 	protocol.ActiveInvariantID = firstNonEmpty(protocol.ActiveInvariantID, InvariantActiveAuthority)
 }
 

@@ -96,6 +96,14 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		ContractVersion:         contract.SchemaVersion,
 		PhaseID:                 input.Protocol.PhaseID,
 		ParserMode:              firstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
+		ToolTransportMode:       runtime.ToolTransportMode,
+		ParserTransportMode:     runtime.ParserTransportMode,
+		ParserContract:          runtime.ParserContract,
+		NativeToolPolicy:        runtime.NativeToolPolicy,
+		SupportsNativeTools:     runtime.SupportsNativeTools,
+		ForceNativeTools:        runtime.ForceNativeTools,
+		ToolChoice:              runtime.ToolChoice,
+		ResponseFormat:          runtime.ResponseFormat,
 		ExpectedVisibleOutput:   input.Protocol.ExpectedVisibleOutput,
 		VisibleTools:            append([]string(nil), input.Protocol.VisibleTools...),
 		CallableActionClasses:   append([]string(nil), input.Protocol.CallableActionClasses...),
@@ -109,6 +117,10 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		PathRoleSummary:         compileProtocolPathRoleSummary(contract.PathRoles),
 		VerificationObligations: compileProtocolVerificationObligations(input),
 		SafeAlternatives:        compileProtocolSafeAlternatives(input),
+		RequiredTools:           append([]string(nil), input.RequiredTools...),
+		ReadinessGate:           append([]string(nil), input.ReadinessGate...),
+		Constraints:             append([]string(nil), input.Constraints...),
+		InvalidActions:          append([]string(nil), input.InvalidActions...),
 		RecoveryBudget:          input.Protocol.RecoveryBudget,
 		ActiveInvariantID:       InvariantActiveAuthority,
 	}
@@ -183,9 +195,7 @@ func compileProtocolVerificationObligations(input PlanExecutePlannerInput) []str
 }
 
 func compileProtocolSafeAlternatives(input PlanExecutePlannerInput) []string {
-	out := []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
-	out = append(out, input.RequiredNext...)
-	return uniqueStrings(out)
+	return uniqueStrings([]string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"})
 }
 
 func compileAuthority(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []autonomy.AuthoritySource {

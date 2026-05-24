@@ -51,6 +51,16 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	if result.Protocol.ParserMode != "submit_plan_json" {
 		t.Fatalf("protocol parser mode = %q", result.Protocol.ParserMode)
 	}
+	if result.Protocol.ToolTransportMode != "textual" ||
+		result.Protocol.ParserTransportMode != "textual_json_terminal" ||
+		result.Protocol.ParserContract != "submit_plan_json" {
+		t.Fatalf("protocol transport fields not preserved: %#v", result.Protocol)
+	}
+	if result.Protocol.NativeToolPolicy != "textual_unless_forced" ||
+		result.Protocol.ToolChoice != "none" ||
+		result.Protocol.ResponseFormat != "json" {
+		t.Fatalf("protocol runtime policy fields not preserved: %#v", result.Protocol)
+	}
 	if !slices.Contains(result.Protocol.RequiredEditCoverage, "internal/agent/runner.go") {
 		t.Fatalf("required edit coverage missing required path: %#v", result.Protocol.RequiredEditCoverage)
 	}
@@ -59,6 +69,16 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	}
 	if !slices.Contains(result.Protocol.VerificationObligations, "command:go test ./internal/contractcompile") {
 		t.Fatalf("verification obligations missing command: %#v", result.Protocol.VerificationObligations)
+	}
+	if !slices.Contains(result.Protocol.RequiredTools, "submit_plan") {
+		t.Fatalf("required tools missing submit_plan: %#v", result.Protocol.RequiredTools)
+	}
+	if !slices.Contains(result.Protocol.ReadinessGate, "source_body_before_submit_plan") {
+		t.Fatalf("readiness gate missing source_body_before_submit_plan: %#v", result.Protocol.ReadinessGate)
+	}
+	if !slices.Contains(result.Protocol.Constraints, "phase1_passive") ||
+		!slices.Contains(result.Protocol.InvalidActions, "planner_shell") {
+		t.Fatalf("protocol constraints/invalid actions not preserved: %#v", result.Protocol)
 	}
 	if !slices.Contains(result.Protocol.CallableActionClasses, string(autonomy.ActionClassSubmitPlan)) {
 		t.Fatalf("callable action classes missing submit_plan: %#v", result.Protocol.CallableActionClasses)
@@ -107,12 +127,15 @@ func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
 		AllowedTools:         []string{"submit_plan", "read_file", "context_pack", "search_content"},
 		ForbiddenTools:       []string{"apply_patch", "shell"},
 		RequiredEvidence:     []string{"source body for required edits"},
+		RequiredTools:        []string{"submit_plan"},
+		ReadinessGate:        []string{"source_body_before_submit_plan"},
 		VerificationContract: "go test ./internal/contractcompile",
 		VerificationPlan:     []string{"go test ./internal/contractcompile"},
 		StopConditions:       []string{"submit_plan accepted", "source_satisfied"},
 		FinalCritic:          []string{"protocol hash cited by prompt and gate"},
 		TargetPacket:         []string{"pack:e7818bd1b0006176"},
 		Constraints:          []string{"phase1_passive", "no_runner_wiring"},
+		InvalidActions:       []string{"planner_shell", "planner_write"},
 		Readiness: ReadinessInput{
 			ReadyToAnswer:       false,
 			ReadyToWrite:        false,
@@ -222,30 +245,100 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 			},
 		},
 		{
-			name: "read-only mutating allowed tool",
+			name: "mutating allowed tool forbidden for planner",
 			mutate: func(input *PlanExecutePlannerInput) {
-				input.PermissionProfile = "read_only"
 				input.AllowedTools = append(input.AllowedTools, "apply_patch")
 			},
 		},
 		{
-			name: "read-only mutating visible tool",
+			name: "mutating visible tool forbidden for planner",
 			mutate: func(input *PlanExecutePlannerInput) {
-				input.PermissionProfile = "read_only"
 				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "apply_patch")
 			},
 		},
 		{
-			name: "read-only mutating required tool",
+			name: "mutating required tool forbidden for planner",
 			mutate: func(input *PlanExecutePlannerInput) {
-				input.PermissionProfile = "read_only"
 				input.RequiredTools = append(input.RequiredTools, "apply_patch")
+			},
+		},
+		{
+			name: "workspace-write shell forbidden for planner",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.AllowedTools = append(input.AllowedTools, "shell")
+			},
+		},
+		{
+			name: "workspace-write source sanity forbidden for planner",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.RequiredTools = append(input.RequiredTools, "source_sanity")
+			},
+		},
+		{
+			name: "workspace-write delegation forbidden for planner",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "task")
+			},
+		},
+		{
+			name: "allowed forbidden overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.ForbiddenTools = append(input.ForbiddenTools, "read_file")
+			},
+		},
+		{
+			name: "allowed forbidden capability overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.ForbiddenTools = append(input.ForbiddenTools, "grep")
+			},
+		},
+		{
+			name: "required forbidden overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.ForbiddenTools = append(input.ForbiddenTools, "submit_plan")
+			},
+		},
+		{
+			name: "required forbidden capability overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.RequiredTools = append(input.RequiredTools, "rg")
+				input.ForbiddenTools = append(input.ForbiddenTools, "grep")
+			},
+		},
+		{
+			name: "visible forbidden overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.ForbiddenTools = append(input.ForbiddenTools, "search_content")
+			},
+		},
+		{
+			name: "visible forbidden capability overlap",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "rg")
+				input.ForbiddenTools = append(input.ForbiddenTools, "grep")
 			},
 		},
 		{
 			name: "non-passive enforcement mode",
 			mutate: func(input *PlanExecutePlannerInput) {
 				input.Runtime.EnforcementMode = "enforce"
+			},
+		},
+		{
+			name: "free-form required next rejected",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.RequiredNext = []string{"edit the file immediately"}
+			},
+		},
+		{
+			name: "authorized fallback requires fallback",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Runtime.DegradedInvariants = nil
+				input.Runtime.AuthorizedFallback = nil
+				input.Runtime.DegradationDecisions = []DegradationDecision{{
+					InvariantID: "runtime.queue_unavailable",
+					Decision:    "authorized_fallback",
+				}}
 			},
 		},
 	} {
@@ -346,6 +439,25 @@ func TestCompilePlanExecutePlannerPairsLegacyDegradedInvariantsByPosition(t *tes
 	}
 }
 
+func TestCompilePlanExecutePlannerLegacyDegradationWithoutFallbackIsNotAuthorizedFallback(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Runtime.DegradedInvariants = []string{"runtime.queue_unavailable"}
+	input.Runtime.AuthorizedFallback = nil
+	input.Runtime.DegradationDecisions = nil
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	decisions := degradationDecisionsByInvariant(result.Runtime.DegradationDecisions)
+	if got := decisions["runtime.queue_unavailable"].Decision; got != "degraded_no_fallback" {
+		t.Fatalf("legacy degradation decision = %q, want degraded_no_fallback", got)
+	}
+	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; len(got) != 0 {
+		t.Fatalf("legacy degradation fallbacks = %#v, want none", got)
+	}
+}
+
 func TestCompilePlanExecutePlannerPathRolesRemainDistinct(t *testing.T) {
 	result := compilePlannerFixture(t)
 	roleByPath := make(map[string][]autonomy.PathRoleKind)
@@ -423,12 +535,15 @@ func plannerFixtureInput() PlanExecutePlannerInput {
 		AllowedTools:         []string{"context_pack", "read_file", "search_content", "submit_plan"},
 		ForbiddenTools:       []string{"apply_patch", "shell"},
 		RequiredEvidence:     []string{"source body for required edits"},
+		RequiredTools:        []string{"submit_plan"},
+		ReadinessGate:        []string{"source_body_before_submit_plan"},
 		VerificationContract: "go test ./internal/contractcompile",
 		VerificationPlan:     []string{"go test ./internal/contractcompile"},
 		StopConditions:       []string{"submit_plan accepted", "source_satisfied"},
 		FinalCritic:          []string{"protocol hash cited by prompt and gate"},
 		TargetPacket:         []string{"pack:e7818bd1b0006176"},
 		Constraints:          []string{"phase1_passive", "no_runner_wiring"},
+		InvalidActions:       []string{"planner_shell", "planner_write"},
 		Readiness: ReadinessInput{
 			OpenObligations:     []string{"source_body"},
 			FurtherReadsRequire: "one exact missing source-body claim",

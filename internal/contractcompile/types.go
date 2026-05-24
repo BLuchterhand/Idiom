@@ -163,6 +163,14 @@ type ModelProtocolProjection struct {
 	ProtocolHash            string   `json:"protocol_hash"`
 	PhaseID                 string   `json:"phase_id,omitempty"`
 	ParserMode              string   `json:"parser_mode,omitempty"`
+	ToolTransportMode       string   `json:"tool_transport_mode,omitempty"`
+	ParserTransportMode     string   `json:"parser_transport_mode,omitempty"`
+	ParserContract          string   `json:"parser_contract,omitempty"`
+	NativeToolPolicy        string   `json:"native_tool_policy,omitempty"`
+	SupportsNativeTools     bool     `json:"supports_native_tools,omitempty"`
+	ForceNativeTools        bool     `json:"force_native_tools,omitempty"`
+	ToolChoice              string   `json:"tool_choice,omitempty"`
+	ResponseFormat          string   `json:"response_format,omitempty"`
 	ExpectedVisibleOutput   string   `json:"expected_visible_output,omitempty"`
 	VisibleTools            []string `json:"visible_tools,omitempty"`
 	CallableActionClasses   []string `json:"callable_action_classes,omitempty"`
@@ -176,6 +184,10 @@ type ModelProtocolProjection struct {
 	PathRoleSummary         []string `json:"path_role_summary,omitempty"`
 	VerificationObligations []string `json:"verification_obligations,omitempty"`
 	SafeAlternatives        []string `json:"safe_alternatives,omitempty"`
+	RequiredTools           []string `json:"required_tools,omitempty"`
+	ReadinessGate           []string `json:"readiness_gate,omitempty"`
+	Constraints             []string `json:"constraints,omitempty"`
+	InvalidActions          []string `json:"invalid_actions,omitempty"`
 	RecoveryBudget          int      `json:"recovery_budget,omitempty"`
 	ActiveInvariantID       string   `json:"active_invariant_id,omitempty"`
 }
