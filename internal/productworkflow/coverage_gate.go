@@ -153,6 +153,11 @@ func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
 	return strings.EqualFold(strings.TrimSpace(eval.Status), "blocked") || len(eval.Blockers) > 0
 }
 
+func EvaluateCoverageGateWithAuthorityPreflight(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, ledger TDDLedger, traceability TraceabilityMatrix, lintFindings []LintSummaryFinding, knownTDDIDs ...map[string]bool) CoverageGateEvaluation {
+	eval := EvaluateCoverageGate(prd, adrIndex, adrs, ledger, traceability, knownTDDIDs...)
+	return ApplyCoverageGateAuthorityPreflight(eval, lintFindings)
+}
+
 func BuildCoverageGateEvaluatedEvent(eval CoverageGateEvaluation, ledger TDDLedger) CoverageGateEvaluatedEvent {
 	effortID := strings.TrimSpace(eval.EffortID)
 	if effortID == "" {

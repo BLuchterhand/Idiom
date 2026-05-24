@@ -5630,6 +5630,74 @@ func TestProductTDDCoverageGatePreflightsAuthorityWhenInputsFail(t *testing.T) {
 	}
 }
 
+func TestProductBriefRenderUsesAuthorityPreflightCoverageGate(t *testing.T) {
+	t.Setenv("IDIOM_TELEMETRY", "1")
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR 1","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]},{"adr_id":"ADR-002","title":"Test ADR 2","status":"accepted","path":"ADR-002-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]}]}`)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", strings.Replace(validTestADRMarkdown(), "coverage_tier: unit", "coverage_tier: unit\nsupersedes:\n  - ADR-002", 1))
+	writeTestFile(t, dir, "adrs/ADR-002-test.md", strings.Replace(validTestADRMarkdown(), "adr_id: ADR-001", "adr_id: ADR-002", 1))
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", `{
+		"schema_version":"idiom.traceability_matrix.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"created_at":"2026-05-17T16:00:00Z",
+		"matrix":[
+			{"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-001","tdd_obligation":"TDD-001","brief":"briefs/test.md","report":"reports/test.json"},
+			{"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-002","tdd_obligation":"TDD-001","brief":"briefs/test.md","report":"reports/test.json"}
+		]
+	}`)
+	rec, err := telemetry.Open(telemetry.Options{
+		Dir:           t.TempDir(),
+		Command:       "product_brief",
+		Args:          []string{"product", "brief", "--render"},
+		WorkspaceRoot: dir,
+	})
+	if err != nil {
+		t.Fatalf("telemetry.Open: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductBrief([]string{
+		"--effort-root", dir,
+		"--render",
+		"--brief-output", "briefs/generated.md",
+		"--json",
+	}, &stdout, &stderr, rec)
+	if err := rec.Close(code); err != nil {
+		t.Fatalf("rec.Close: %v", err)
+	}
+	if code != 1 {
+		t.Fatalf("expected blocked exit, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out productBriefOutput
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("expected JSON output: %v\n%s", err, stdout.String())
+	}
+	if out.CoverageEvaluation == nil {
+		t.Fatalf("brief render should expose coverage gate evaluation: %#v", out)
+	}
+	found := false
+	for _, blocker := range out.CoverageEvaluation.Blockers {
+		if blocker.Criterion == "authority_preflight" && blocker.Kind == "adr_supersession_non_reciprocal" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected authority_preflight supersession blocker, got %#v", out.CoverageEvaluation.Blockers)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "briefs", "generated.md")); !os.IsNotExist(err) {
+		t.Fatalf("blocked render must not write requested output path, stat err=%v", err)
+	}
+	record := findTelemetryRecord(readMainTelemetryRecords(t, rec.Path()), "coverage_gate_evaluated")
+	if record == nil || record["source"] != "product_brief_render" || record["gate_result"] != "blocked" {
+		t.Fatalf("expected blocked product_brief_render coverage telemetry, got %#v", record)
+	}
+}
+
 func TestProductBriefRenderFailsClosedOnMissingInputs(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer

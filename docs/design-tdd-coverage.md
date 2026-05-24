@@ -732,7 +732,9 @@ This design composes with existing Idiom surfaces, not replaces them:
 - Add seven new obligation types to the obligation type enum. Implemented for
   ledger validation.
 - Add coverage gate as a mandatory step between TDD audit (stage 8) and brief
-  generation (stage 9) in the PRD-to-brief lifecycle.
+  generation (stage 9) in the PRD-to-brief lifecycle. Implemented in
+  `idiom product brief --render`, using the same authority-preflighted coverage
+  evaluation as `idiom product tdd --evaluate-coverage`.
 - No behavior change; schemas are passive.
 
 ### Phase 1: EARS And BDD Coverage Checks

@@ -1564,7 +1564,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 		}
 		if len(findings) == 0 {
 			knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(ledger, implementationRecords, prdDoc.FrontMatter.TaskID)
-			eval = productworkflow.EvaluateCoverageGate(prdDoc, adrIndex, parsedADRs, ledger, traceability, knownTDDIDs)
+			eval = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(prdDoc, adrIndex, parsedADRs, ledger, traceability, lintResult.Findings, knownTDDIDs)
 		} else {
 			for _, f := range findings {
 				msg := f.Message
@@ -1586,15 +1586,17 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				})
 			}
 		}
-		authorityPreflightFindings := append([]productworkflow.LintSummaryFinding(nil), lintResult.Findings...)
-		for _, f := range findings {
-			authorityPreflightFindings = append(authorityPreflightFindings, productworkflow.LintSummaryFinding{
-				Code:    f.Kind,
-				Path:    f.File,
-				Message: f.Message,
-			})
+		if len(findings) > 0 {
+			authorityPreflightFindings := append([]productworkflow.LintSummaryFinding(nil), lintResult.Findings...)
+			for _, f := range findings {
+				authorityPreflightFindings = append(authorityPreflightFindings, productworkflow.LintSummaryFinding{
+					Code:    f.Kind,
+					Path:    f.File,
+					Message: f.Message,
+				})
+			}
+			eval = productworkflow.ApplyCoverageGateAuthorityPreflight(eval, authorityPreflightFindings)
 		}
-		eval = productworkflow.ApplyCoverageGateAuthorityPreflight(eval, authorityPreflightFindings)
 		logCLIPhase(rec, "product_tdd_coverage_gate_evaluated", map[string]any{
 			"status":         eval.Status,
 			"finding_count":  len(eval.Findings),
@@ -2290,13 +2292,14 @@ func (m *multiValueFlag) Set(value string) error {
 }
 
 type productBriefOutput struct {
-	Status          string                                `json:"status"`
-	EffortRoot      string                                `json:"effort_root"`
-	BriefOutputPath string                                `json:"brief_output_path,omitempty"`
-	Generated       productworkflow.BriefGenerationResult `json:"generated"`
-	Lint            *briefLintReport                      `json:"lint,omitempty"`
-	Blocker         string                                `json:"blocker,omitempty"`
-	NextValidAction string                                `json:"next_valid_action,omitempty"`
+	Status             string                                  `json:"status"`
+	EffortRoot         string                                  `json:"effort_root"`
+	BriefOutputPath    string                                  `json:"brief_output_path,omitempty"`
+	Generated          productworkflow.BriefGenerationResult   `json:"generated"`
+	CoverageEvaluation *productworkflow.CoverageGateEvaluation `json:"coverage_evaluation,omitempty"`
+	Lint               *briefLintReport                        `json:"lint,omitempty"`
+	Blocker            string                                  `json:"blocker,omitempty"`
+	NextValidAction    string                                  `json:"next_valid_action,omitempty"`
 }
 
 func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
@@ -2339,6 +2342,21 @@ func runProductBrief(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		Status:     "blocked",
 		EffortRoot: absRoot,
 		Generated:  gen,
+	}
+	if strings.TrimSpace(input.CoverageEvaluation.Status) != "" {
+		coverageEvaluation := input.CoverageEvaluation
+		out.CoverageEvaluation = &coverageEvaluation
+		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(coverageEvaluation, input.TDD)
+		logCLIPhase(rec, coverageGateEvent.Event, map[string]any{
+			"event":           coverageGateEvent.Event,
+			"effort_id":       coverageGateEvent.EffortID,
+			"task_id":         coverageGateEvent.TaskID,
+			"coverage":        coverageGateEvent.Coverage,
+			"gate_result":     coverageGateEvent.GateResult,
+			"blocked_reasons": coverageGateEvent.BlockedReasons,
+			"waivers":         coverageGateEvent.Waivers,
+			"source":          "product_brief_render",
+		})
 	}
 
 	var cleanup func()
@@ -2592,7 +2610,8 @@ func loadBriefGenerationInput(effortRoot string) (productworkflow.BriefGeneratio
 	}
 	if len(blockers) == 0 {
 		knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(in.TDD, in.ImplementationRecords, in.PRD.FrontMatter.TaskID)
-		in.CoverageEvaluation = productworkflow.EvaluateCoverageGate(in.PRD, in.ADRIndex, in.ADRs, in.TDD, in.Traceability, knownTDDIDs)
+		lintResult := productworkflow.LintEffortFolder(effortRoot)
+		in.CoverageEvaluation = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(in.PRD, in.ADRIndex, in.ADRs, in.TDD, in.Traceability, lintResult.Findings, knownTDDIDs)
 		if productworkflow.CoverageGateHasBlockers(in.CoverageEvaluation) {
 			blockers = append(blockers, "coverage gate evaluation is blocked")
 		}
