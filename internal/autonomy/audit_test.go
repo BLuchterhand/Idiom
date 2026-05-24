@@ -1,11 +1,60 @@
 package autonomy
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 )
+
+func contractGateEventHasExtendedAuditFields() bool {
+	typ := reflect.TypeOf(ContractGateEvent{})
+	for _, name := range []string{"PackID", "EnforcementMode", "ObservedFacts", "SafeAlternatives"} {
+		if _, ok := typ.FieldByName(name); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func withGateAuditFields(t *testing.T, gate ContractGateEvent, packID, enforcementMode string, observedFacts, safeAlternatives []string) ContractGateEvent {
+	t.Helper()
+	value := reflect.ValueOf(&gate).Elem()
+	setGateStringField(t, value, "PackID", packID)
+	setGateStringField(t, value, "EnforcementMode", enforcementMode)
+	setGateStringSliceField(t, value, "ObservedFacts", observedFacts)
+	setGateStringSliceField(t, value, "SafeAlternatives", safeAlternatives)
+	return gate
+}
+
+func setGateStringField(t *testing.T, value reflect.Value, name, fieldValue string) {
+	t.Helper()
+	field := value.FieldByName(name)
+	if !field.IsValid() {
+		return
+	}
+	if field.Kind() != reflect.String || !field.CanSet() {
+		t.Fatalf("ContractGateEvent.%s is not a settable string field", name)
+	}
+	field.SetString(fieldValue)
+}
+
+func setGateStringSliceField(t *testing.T, value reflect.Value, name string, fieldValue []string) {
+	t.Helper()
+	field := value.FieldByName(name)
+	if !field.IsValid() {
+		return
+	}
+	if field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.String || !field.CanSet() {
+		t.Fatalf("ContractGateEvent.%s is not a settable []string field", name)
+	}
+	slice := reflect.MakeSlice(field.Type(), len(fieldValue), len(fieldValue))
+	for i, value := range fieldValue {
+		slice.Index(i).SetString(value)
+	}
+	field.Set(slice)
+}
 
 func TestAuditEventsReportsLifecycleOnlyCoverage(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
@@ -95,7 +144,7 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 		Owner:        OwnerHost,
 		RequiredBy:   "post_write_verification",
 	}, occurredAt.Add(2*time.Second), 3))
-	writeGate := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+	writeGate := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
 		Gate:            GateWrite,
 		Decision:        PolicyReject,
 		InvariantID:     "write.required_edit_paths",
@@ -104,8 +153,8 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 		ObligationRefs:  []string{"obl-write-runner"},
 		OpenObligations: []string{"obl-write-runner"},
 		Source:          "audit_test",
-	}, occurredAt.Add(3*time.Second), 4))
-	verifyGate := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+	}, string(ContractPackWriteRequiredPaths), string(EnforcementModeObserveOnly), []string{"write_gate_decision"}, nil), occurredAt.Add(3*time.Second), 4))
+	verifyGate := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
 		Gate:               GateVerification,
 		Decision:           PolicyReject,
 		InvariantID:        "verification.post_write",
@@ -115,7 +164,7 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 		ObligationRefs:     []string{"obl-verify"},
 		OpenObligations:    []string{"obl-verify"},
 		Source:             "audit_test",
-	}, occurredAt.Add(4*time.Second), 5))
+	}, string(ContractPackVerificationPostWrite), string(EnforcementModeObserveOnly), []string{"verification_gate_decision"}, nil), occurredAt.Add(4*time.Second), 5))
 
 	report := AuditEvents([]Event{compiled, writeOpened, verifyOpened, writeGate, verifyGate}, EventAuditOptions{})
 
@@ -141,6 +190,92 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 	}
 }
 
+func TestAuditEventsCountsExtendedGateDecisionFieldsWhenPresent(t *testing.T) {
+	if !contractGateEventHasExtendedAuditFields() {
+		t.Skip("ContractGateEvent extended audit fields are not present in this checkout")
+	}
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 18, 47, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	first := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
+		Gate:        GateCompletion,
+		Decision:    PolicyReject,
+		InvariantID: "completion.readiness",
+		ReasonCode:  "verification_required",
+		Source:      "audit_test",
+	}, string(ContractPackCompletionReadiness), string(EnforcementModeEnforce), []string{"completion_ready=false"}, []string{"<<QUESTION>>:"}), occurredAt.Add(time.Second), 2))
+	second := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
+		Gate:        GateReadOnly,
+		Decision:    PolicyObserve,
+		InvariantID: "sidecar.read_only_profile",
+		ReasonCode:  "read_only_contract",
+		Source:      "audit_test",
+	}, string(ContractPackCompletionReadiness), string(EnforcementModeObserveOnly), nil, nil), occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, first, second}, EventAuditOptions{})
+
+	if report.GateCoverage.DecisionCountsByPackID[string(ContractPackCompletionReadiness)] != 2 ||
+		report.GateCoverage.DecisionCountsByEnforcementMode["enforce"] != 1 ||
+		report.GateCoverage.DecisionCountsByEnforcementMode["observe_only"] != 1 {
+		t.Fatalf("expected gate decisions counted by pack and enforcement mode, got %#v", report.GateCoverage)
+	}
+	if report.GateCoverage.EventsWithObservedFacts != 1 || report.GateCoverage.EventsWithSafeAlternatives != 1 {
+		t.Fatalf("expected observed_fact and safe_alternative event counts, got %#v", report.GateCoverage)
+	}
+	if len(report.GateCoverage.MissingPackIDRefs) != 0 ||
+		len(report.GateCoverage.MissingEnforcementModeRefs) != 0 ||
+		len(report.GateCoverage.MissingSafeAlternativesRefs) != 0 {
+		t.Fatalf("complete extended fields should not be flagged: %#v", report.GateCoverage)
+	}
+}
+
+func TestAuditEventsFlagsMissingExtendedGateFieldsWhenPresent(t *testing.T) {
+	if !contractGateEventHasExtendedAuditFields() {
+		t.Skip("ContractGateEvent extended audit fields are not present in this checkout")
+	}
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 18, 48, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	missingPackAndAlternative := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
+		Gate:        GateCompletion,
+		Decision:    PolicyReject,
+		InvariantID: "completion.readiness",
+		ReasonCode:  "verification_required",
+		Source:      "audit_test",
+	}, "", string(EnforcementModeEnforce), []string{"completion_ready=false"}, nil), occurredAt.Add(time.Second), 2))
+	missingMode := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
+		Gate:        GateWrite,
+		Decision:    PolicyAllow,
+		InvariantID: "write.scope",
+		ReasonCode:  "in_scope",
+		Source:      "audit_test",
+	}, string(ContractPackWriteRequiredPaths), "", nil, nil), occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, missingPackAndAlternative, missingMode}, EventAuditOptions{})
+
+	if len(report.GateCoverage.MissingPackIDRefs) != 1 ||
+		report.GateCoverage.MissingPackIDRefs[0].Reference != "pack_id" {
+		t.Fatalf("expected missing pack_id ref, got %#v", report.GateCoverage.MissingPackIDRefs)
+	}
+	if len(report.GateCoverage.MissingEnforcementModeRefs) != 1 ||
+		report.GateCoverage.MissingEnforcementModeRefs[0].Reference != "enforcement_mode" {
+		t.Fatalf("expected missing enforcement_mode ref, got %#v", report.GateCoverage.MissingEnforcementModeRefs)
+	}
+	if len(report.GateCoverage.MissingSafeAlternativesRefs) != 1 ||
+		report.GateCoverage.MissingSafeAlternativesRefs[0].Reference != "safe_alternatives" {
+		t.Fatalf("expected missing safe_alternatives ref, got %#v", report.GateCoverage.MissingSafeAlternativesRefs)
+	}
+	for _, want := range []string{
+		"contract_event_gate_missing_pack_id",
+		"contract_event_gate_missing_enforcement_mode",
+		"contract_event_gate_missing_safe_alternatives",
+	} {
+		if !hasEventAuditFinding(report, want) {
+			t.Fatalf("expected finding %q, got %#v", want, report.Findings)
+		}
+	}
+}
+
 func TestAuditEventsFlagsGateOpenObligationRefsNotOpenAtGateSequence(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 18, 50, 0, 0, time.UTC)
@@ -160,7 +295,7 @@ func TestAuditEventsFlagsGateOpenObligationRefsNotOpenAtGateSequence(t *testing.
 		RequiredBy:   "sidecar_request",
 		EvidenceRef:  "event-context-pack-result",
 	}, occurredAt.Add(2*time.Second), 3))
-	gate := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+	gate := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
 		Gate:            GateReadOnly,
 		Decision:        PolicyObserve,
 		InvariantID:     "sidecar.read_only_profile",
@@ -169,7 +304,7 @@ func TestAuditEventsFlagsGateOpenObligationRefsNotOpenAtGateSequence(t *testing.
 		ObligationRefs:  []string{"obl-evidence"},
 		OpenObligations: []string{"obl-evidence"},
 		Source:          "audit_test",
-	}, occurredAt.Add(3*time.Second), 4))
+	}, string(ContractPackCompletionReadiness), string(EnforcementModeObserveOnly), []string{"sidecar_read_only_gate"}, nil), occurredAt.Add(3*time.Second), 4))
 
 	report := AuditEvents([]Event{compiled, opened, resolved, gate}, EventAuditOptions{})
 
@@ -298,7 +433,7 @@ func TestAuditEventsOrdersRepeatedContractRunsByOccurrenceBeforeSequence(t *test
 	firstResolved := resolveObligation(firstRun.Add(2*time.Second), 3)
 	secondCompiled := mustAutonomyEvent(NewContractCompiledEvent(contract, secondRun, 1))
 	secondOpened := openObligation(secondRun.Add(time.Second), 2)
-	secondGate := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+	secondGate := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
 		Gate:            GateReadOnly,
 		Decision:        PolicyReject,
 		InvariantID:     "sidecar.read_only_profile",
@@ -307,7 +442,7 @@ func TestAuditEventsOrdersRepeatedContractRunsByOccurrenceBeforeSequence(t *test
 		ObligationRefs:  []string{"obl-evidence"},
 		OpenObligations: []string{"obl-evidence"},
 		Source:          "audit_test",
-	}, secondRun.Add(2*time.Second), 4))
+	}, string(ContractPackCompletionReadiness), string(EnforcementModeObserveOnly), []string{"second_run_gate"}, nil), secondRun.Add(2*time.Second), 4))
 	secondResolved := resolveObligation(secondRun.Add(3*time.Second), 5)
 
 	report := AuditEvents([]Event{
@@ -851,17 +986,17 @@ func TestAuditEventsFlagsCompletionGateProtocolHashParity(t *testing.T) {
 			EnforcementMode: "observe_only",
 		},
 	}, occurredAt.Add(time.Second), 2))
-	missing := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+	missing := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
 		Gate:        GateCompletion,
 		Decision:    PolicyReject,
 		InvariantID: "completion.readiness",
-	}, occurredAt.Add(2*time.Second), 3))
-	mismatch := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+	}, string(ContractPackCompletionReadiness), string(EnforcementModeObserveOnly), []string{"completion_gate_missing_hash"}, nil), occurredAt.Add(2*time.Second), 3))
+	mismatch := mustAutonomyEvent(NewGateDecisionEvent(contract, withGateAuditFields(t, ContractGateEvent{
 		Gate:         GateCompletion,
 		Decision:     PolicyReject,
 		InvariantID:  "completion.readiness",
 		ProtocolHash: "sha256:other",
-	}, occurredAt.Add(3*time.Second), 4))
+	}, string(ContractPackCompletionReadiness), string(EnforcementModeObserveOnly), []string{"completion_gate_mismatched_hash"}, nil), occurredAt.Add(3*time.Second), 4))
 
 	report := AuditEvents([]Event{compiled, presented, missing, mismatch}, EventAuditOptions{})
 	var missingHash, mismatchedHash bool

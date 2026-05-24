@@ -2366,6 +2366,11 @@ func harnessAuditSummary(report harnessAuditReport) string {
 	}
 	if report.ContractCoverage != nil {
 		parts = append(parts, fmt.Sprintf("contract_events=%d", report.ContractCoverage.TotalEvents))
+		gate := report.ContractCoverage.GateCoverage
+		if gate.DecisionEvents > 0 {
+			missingGateFields := len(gate.MissingPackIDRefs) + len(gate.MissingEnforcementModeRefs) + len(gate.MissingSafeAlternativesRefs)
+			parts = append(parts, fmt.Sprintf("gate_decisions=%d packs=%d enforcement_modes=%d observed_facts=%d safe_alternatives=%d missing_gate_fields=%d", gate.DecisionEvents, len(gate.DecisionCountsByPackID), len(gate.DecisionCountsByEnforcementMode), gate.EventsWithObservedFacts, gate.EventsWithSafeAlternatives, missingGateFields))
+		}
 	}
 	if report.RankerLearning != nil && report.RankerLearning.LearningSummary != nil {
 		learning := report.RankerLearning.LearningSummary

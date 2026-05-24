@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/comprehension"
 )
 
@@ -168,6 +169,32 @@ func TestRankerLearningAuditSurfacesAcceptedRejectedReasons(t *testing.T) {
 	})
 	if !strings.Contains(summary, "ranker_learning_events=2 accepted=1 rejected=1 reasons=2") {
 		t.Fatalf("audit summary missing learning metrics: %s", summary)
+	}
+}
+
+func TestHarnessAuditSummaryIncludesExtendedGateCoverage(t *testing.T) {
+	summary := harnessAuditSummary(harnessAuditReport{
+		Purpose: "behavior",
+		ContractCoverage: &autonomy.EventAuditReport{
+			TotalEvents: 3,
+			GateCoverage: autonomy.GateEventCoverage{
+				DecisionEvents:                  2,
+				DecisionCountsByPackID:          map[string]int{"pack-alpha": 2},
+				DecisionCountsByEnforcementMode: map[string]int{"enforce": 1, "observe_only": 1},
+				EventsWithObservedFacts:         1,
+				EventsWithSafeAlternatives:      1,
+				MissingPackIDRefs:               []autonomy.EventAuditRef{{Reference: "pack_id"}},
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"contract_events=3",
+		"gate_decisions=2 packs=1 enforcement_modes=2 observed_facts=1 safe_alternatives=1 missing_gate_fields=1",
+	} {
+		if !strings.Contains(summary, want) {
+			t.Fatalf("audit summary missing %q: %s", want, summary)
+		}
 	}
 }
 

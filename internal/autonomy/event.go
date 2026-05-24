@@ -363,23 +363,27 @@ type ContractCompletionEvent struct {
 }
 
 type ContractGateEvent struct {
-	Gate                  GateKind           `json:"gate"`
-	Decision              ToolPolicyDecision `json:"decision"`
-	InvariantID           string             `json:"invariant_id,omitempty"`
-	ProtocolHash          string             `json:"protocol_hash,omitempty"`
-	ReasonCode            string             `json:"reason_code,omitempty"`
-	ToolCallID            string             `json:"tool_call_id,omitempty"`
-	ToolName              string             `json:"tool_name,omitempty"`
-	TargetRefs            []string           `json:"target_refs,omitempty"`
-	ObligationRefs        []string           `json:"obligation_refs,omitempty"`
-	OpenObligations       []string           `json:"open_obligations,omitempty"`
-	ResolvedObligations   []string           `json:"resolved_obligations,omitempty"`
-	ChangedPaths          []string           `json:"changed_paths,omitempty"`
-	VerificationStatus    string             `json:"verification_status,omitempty"`
-	Budget                *BudgetState       `json:"budget,omitempty"`
-	LoopFingerprintDigest string             `json:"loop_fingerprint_digest,omitempty"`
-	Attempts              int                `json:"attempts,omitempty"`
-	Source                string             `json:"source,omitempty"`
+	Gate                  GateKind               `json:"gate"`
+	Decision              ToolPolicyDecision     `json:"decision"`
+	PackID                ContractPackID         `json:"pack_id,omitempty"`
+	EnforcementMode       EnforcementMode        `json:"enforcement_mode,omitempty"`
+	InvariantID           string                 `json:"invariant_id,omitempty"`
+	ProtocolHash          string                 `json:"protocol_hash,omitempty"`
+	ReasonCode            string                 `json:"reason_code,omitempty"`
+	ToolCallID            string                 `json:"tool_call_id,omitempty"`
+	ToolName              string                 `json:"tool_name,omitempty"`
+	TargetRefs            []string               `json:"target_refs,omitempty"`
+	ObligationRefs        []string               `json:"obligation_refs,omitempty"`
+	OpenObligations       []string               `json:"open_obligations,omitempty"`
+	ResolvedObligations   []string               `json:"resolved_obligations,omitempty"`
+	ChangedPaths          []string               `json:"changed_paths,omitempty"`
+	ObservedFacts         []ContractObservedFact `json:"observed_facts,omitempty"`
+	SafeAlternatives      []string               `json:"safe_alternatives,omitempty"`
+	VerificationStatus    string                 `json:"verification_status,omitempty"`
+	Budget                *BudgetState           `json:"budget,omitempty"`
+	LoopFingerprintDigest string                 `json:"loop_fingerprint_digest,omitempty"`
+	Attempts              int                    `json:"attempts,omitempty"`
+	Source                string                 `json:"source,omitempty"`
 }
 
 type ContractGuardFrictionEvent struct {
@@ -869,12 +873,23 @@ func (e Event) validatePayload(problems *[]string) {
 		if !validGateKind(e.Gate.Gate) {
 			*problems = append(*problems, "gate.gate is invalid")
 		}
+		if e.Gate.PackID != "" && !validContractPackID(e.Gate.PackID) {
+			*problems = append(*problems, "gate.pack_id is invalid")
+		}
+		if e.Gate.EnforcementMode != "" && !validEnforcementMode(e.Gate.EnforcementMode) {
+			*problems = append(*problems, "gate.enforcement_mode is invalid")
+		}
 		if !validDecision(e.Gate.Decision) {
 			*problems = append(*problems, "gate.decision is required")
 		}
 		if e.Gate.Attempts < 0 {
 			*problems = append(*problems, "gate.attempts cannot be negative")
 		}
+		if e.Gate.Budget != nil {
+			validateBudget(*e.Gate.Budget, problems)
+		}
+		e.Gate.validateObservedFacts(problems)
+		e.Gate.validateRedactedFields(problems)
 	case EventGuardFriction:
 		if e.GuardFriction == nil {
 			*problems = append(*problems, "guard_friction payload is required for guard_friction")
@@ -1108,6 +1123,8 @@ func (c *ContractCompletionEvent) normalize() {
 }
 
 func (g *ContractGateEvent) normalize() {
+	g.PackID = ContractPackID(strings.TrimSpace(string(g.PackID)))
+	g.EnforcementMode = EnforcementMode(strings.TrimSpace(string(g.EnforcementMode)))
 	g.InvariantID = strings.TrimSpace(g.InvariantID)
 	g.ProtocolHash = strings.TrimSpace(g.ProtocolHash)
 	g.ReasonCode = strings.TrimSpace(g.ReasonCode)
@@ -1118,6 +1135,8 @@ func (g *ContractGateEvent) normalize() {
 	g.OpenObligations = compactStrings(g.OpenObligations)
 	g.ResolvedObligations = compactStrings(g.ResolvedObligations)
 	g.ChangedPaths = compactStrings(g.ChangedPaths)
+	g.ObservedFacts = compactObservedFacts(g.ObservedFacts)
+	g.SafeAlternatives = compactStrings(g.SafeAlternatives)
 	g.VerificationStatus = strings.TrimSpace(g.VerificationStatus)
 	if g.Budget != nil {
 		budget := *g.Budget
@@ -1190,6 +1209,52 @@ func (g ContractGuardFrictionEvent) validate(eventContractID string, problems *[
 	g.validateRedactedFields(problems)
 }
 
+func (g ContractGateEvent) validateObservedFacts(problems *[]string) {
+	for i, fact := range g.ObservedFacts {
+		if !validObservedFactLabel(string(fact)) {
+			*problems = append(*problems, fmt.Sprintf("gate.observed_facts[%d] is invalid", i))
+		}
+	}
+}
+
+func (g ContractGateEvent) validateRedactedFields(problems *[]string) {
+	values := []string{
+		string(g.PackID),
+		string(g.EnforcementMode),
+		g.InvariantID,
+		g.ProtocolHash,
+		g.ReasonCode,
+		g.ToolCallID,
+		g.ToolName,
+		g.VerificationStatus,
+		g.LoopFingerprintDigest,
+		g.Source,
+	}
+	values = append(values, g.TargetRefs...)
+	values = append(values, g.ObligationRefs...)
+	values = append(values, g.OpenObligations...)
+	values = append(values, g.ResolvedObligations...)
+	values = append(values, g.ChangedPaths...)
+	for _, value := range values {
+		if looksLikeRawContractEventContent(value) {
+			*problems = append(*problems, "gate fields must contain redaction-safe metadata only")
+			return
+		}
+	}
+	for _, fact := range g.ObservedFacts {
+		if looksLikeRawContractEventContent(string(fact)) {
+			*problems = append(*problems, "gate.observed_facts must contain redaction-safe metadata only")
+			return
+		}
+	}
+	for _, alternative := range g.SafeAlternatives {
+		if looksLikeRawContractEventContent(alternative) {
+			*problems = append(*problems, "gate.safe_alternatives must contain redaction-safe recovery options only")
+			return
+		}
+	}
+}
+
 func (g ContractGuardFrictionEvent) validateRedactedFields(problems *[]string) {
 	values := []string{
 		g.SessionID,
@@ -1215,6 +1280,25 @@ func (g ContractGuardFrictionEvent) validateRedactedFields(problems *[]string) {
 			return
 		}
 	}
+}
+
+func looksLikeRawContractEventContent(value string) bool {
+	return looksLikeRawGuardFrictionContent(value)
+}
+
+func validObservedFactLabel(fact string) bool {
+	fact = strings.TrimSpace(fact)
+	if !validContractLabel(fact, 160) {
+		return false
+	}
+	prefix, rest, hasPrefix := strings.Cut(fact, ":")
+	if !hasPrefix {
+		return true
+	}
+	if rest == "" || strings.ContainsAny(prefix, "/.-=@") {
+		return true
+	}
+	return validObservedFactKind(ObservedFactKind(prefix))
 }
 
 func validEventType(eventType EventType) bool {
@@ -1304,6 +1388,32 @@ func looksLikeRawGuardFrictionContent(value string) bool {
 		}
 	}
 	return false
+}
+
+func compactObservedFacts(values []ContractObservedFact) []ContractObservedFact {
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]ContractObservedFact, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(string(value))
+		if trimmed == "" {
+			continue
+		}
+		if _, ok := seen[trimmed]; ok {
+			continue
+		}
+		seen[trimmed] = struct{}{}
+		out = append(out, ContractObservedFact(trimmed))
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	slices.SortFunc(out, func(a, b ContractObservedFact) int {
+		return cmp.Compare(string(a), string(b))
+	})
+	return out
 }
 
 func copyEvent(in Event) Event {
@@ -1479,6 +1589,8 @@ func copyGateEvent(in *ContractGateEvent) *ContractGateEvent {
 	out.OpenObligations = append([]string(nil), in.OpenObligations...)
 	out.ResolvedObligations = append([]string(nil), in.ResolvedObligations...)
 	out.ChangedPaths = append([]string(nil), in.ChangedPaths...)
+	out.ObservedFacts = append([]ContractObservedFact(nil), in.ObservedFacts...)
+	out.SafeAlternatives = append([]string(nil), in.SafeAlternatives...)
 	if in.Budget != nil {
 		budget := *in.Budget
 		out.Budget = &budget

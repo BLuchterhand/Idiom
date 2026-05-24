@@ -184,9 +184,16 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 func TestGateDecisionEventSerializesTypedGatePayload(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 15, 30, 0, 0, time.UTC)
+	observedFacts := []ContractObservedFact{
+		"status:verification_status=pending",
+		"count:open_obligations=1",
+	}
+	safeAlternatives := []string{"apply_patch within required paths", "ask the operator for expanded scope"}
 	event, err := NewGateDecisionEvent(contract, ContractGateEvent{
 		Gate:               GateWrite,
 		Decision:           PolicyReject,
+		PackID:             ContractPackWriteRequiredPaths,
+		EnforcementMode:    EnforcementModeEnforce,
 		InvariantID:        "write.required_edit_paths",
 		ReasonCode:         "outside_required_edit_paths",
 		ToolName:           "apply_patch",
@@ -194,24 +201,48 @@ func TestGateDecisionEventSerializesTypedGatePayload(t *testing.T) {
 		ObligationRefs:     []string{"obl-write-runner"},
 		OpenObligations:    []string{"obl-write-runner"},
 		ChangedPaths:       []string{"internal/agent/runner.go"},
+		ObservedFacts:      observedFacts,
+		SafeAlternatives:   safeAlternatives,
 		VerificationStatus: "pending",
 		Source:             "event_test",
 	}, occurredAt, 1)
 	if err != nil {
 		t.Fatalf("NewGateDecisionEvent returned error: %v", err)
 	}
+	observedFacts[0] = "mutated"
+	safeAlternatives[0] = "mutated"
 	if event.Type != EventGateDecision || event.Gate == nil || event.Gate.Gate != GateWrite {
 		t.Fatalf("gate event payload mismatch: %#v", event)
 	}
 	if event.Gate.Decision != PolicyReject || event.Gate.InvariantID != "write.required_edit_paths" {
 		t.Fatalf("gate decision fields mismatch: %#v", event.Gate)
 	}
+	if event.Gate.PackID != ContractPackWriteRequiredPaths || event.Gate.EnforcementMode != EnforcementModeEnforce {
+		t.Fatalf("gate pack/mode fields mismatch: %#v", event.Gate)
+	}
+	if len(event.Gate.ObservedFacts) != 2 || event.Gate.ObservedFacts[1] == "mutated" {
+		t.Fatalf("gate observed facts should be copied and normalized: %#v", event.Gate.ObservedFacts)
+	}
+	if len(event.Gate.SafeAlternatives) != 2 || event.Gate.SafeAlternatives[0] == "mutated" {
+		t.Fatalf("gate safe alternatives should be copied: %#v", event.Gate.SafeAlternatives)
+	}
+	sink := NewMemoryEventSink()
+	if err := sink.Emit(event); err != nil {
+		t.Fatalf("emit gate event: %v", err)
+	}
+	stored := sink.Events()
+	stored[0].Gate.ObservedFacts[0] = "mutated"
+	stored[0].Gate.SafeAlternatives[0] = "mutated"
+	storedAgain := sink.Events()
+	if storedAgain[0].Gate.ObservedFacts[0] == "mutated" || storedAgain[0].Gate.SafeAlternatives[0] == "mutated" {
+		t.Fatalf("memory sink should return deep-copied gate payloads: %#v", storedAgain[0].Gate)
+	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal gate event: %v", err)
 	}
 	jsonText := string(encoded)
-	for _, want := range []string{`"type":"gate_decision"`, `"gate":"write_gate"`, `"decision":"reject"`, `"open_obligations":["obl-write-runner"]`} {
+	for _, want := range []string{`"type":"gate_decision"`, `"gate":"write_gate"`, `"decision":"reject"`, `"pack_id":"write/required_paths"`, `"enforcement_mode":"enforce"`, `"observed_facts":[`, `"safe_alternatives":["apply_patch within required paths","ask the operator for expanded scope"]`, `"open_obligations":["obl-write-runner"]`} {
 		if !strings.Contains(jsonText, want) {
 			t.Fatalf("gate event JSON missing %s: %s", want, jsonText)
 		}
@@ -220,6 +251,60 @@ func TestGateDecisionEventSerializesTypedGatePayload(t *testing.T) {
 		if strings.Contains(jsonText, forbidden) {
 			t.Fatalf("gate event JSON should not leak raw edit body or strategy field %q: %s", forbidden, jsonText)
 		}
+	}
+}
+
+func TestGateDecisionEventRejectsInvalidPackAndEnforcementMode(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 15, 35, 0, 0, time.UTC)
+
+	_, err := NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:            GateWrite,
+		Decision:        PolicyReject,
+		PackID:          ContractPackID("write/unknown"),
+		EnforcementMode: EnforcementModeEnforce,
+	}, occurredAt, 1)
+	if err == nil || !strings.Contains(err.Error(), "gate.pack_id is invalid") {
+		t.Fatalf("expected invalid pack_id validation error, got %v", err)
+	}
+
+	_, err = NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:            GateWrite,
+		Decision:        PolicyReject,
+		PackID:          ContractPackWriteRequiredPaths,
+		EnforcementMode: EnforcementMode("warn"),
+	}, occurredAt, 2)
+	if err == nil || !strings.Contains(err.Error(), "gate.enforcement_mode is invalid") {
+		t.Fatalf("expected invalid enforcement mode validation error, got %v", err)
+	}
+}
+
+func TestGateDecisionEventRejectsUnsafeFactOrAlternative(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 15, 40, 0, 0, time.UTC)
+
+	_, err := NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:            GateWrite,
+		Decision:        PolicyReject,
+		PackID:          ContractPackWriteRequiredPaths,
+		EnforcementMode: EnforcementModeEnforce,
+		ObservedFacts: []ContractObservedFact{
+			"raw_prompt:user_asked_for_source",
+		},
+	}, occurredAt, 1)
+	if err == nil || !strings.Contains(err.Error(), "gate.observed_facts must contain redaction-safe metadata only") {
+		t.Fatalf("expected unsafe observed fact validation error, got %v", err)
+	}
+
+	_, err = NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:             GateWrite,
+		Decision:         PolicyReject,
+		PackID:           ContractPackWriteRequiredPaths,
+		EnforcementMode:  EnforcementModeEnforce,
+		SafeAlternatives: []string{"paste the raw transcript:\nfull content"},
+	}, occurredAt, 2)
+	if err == nil || !strings.Contains(err.Error(), "gate.safe_alternatives must contain redaction-safe recovery options only") {
+		t.Fatalf("expected unsafe safe alternative validation error, got %v", err)
 	}
 }
 

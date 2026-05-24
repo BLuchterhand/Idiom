@@ -3,6 +3,7 @@ package autonomy
 import (
 	"cmp"
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -94,16 +95,23 @@ type ObligationEventCoverage struct {
 }
 
 type GateEventCoverage struct {
-	Total                          int             `json:"total"`
-	DecisionEvents                 int             `json:"decision_events"`
-	KindCounts                     map[string]int  `json:"kind_counts,omitempty"`
-	DecisionCounts                 map[string]int  `json:"decision_counts,omitempty"`
-	ReasonCounts                   map[string]int  `json:"reason_counts,omitempty"`
-	ToolCounts                     map[string]int  `json:"tool_counts,omitempty"`
-	ContractsWithGateEvents        []string        `json:"contracts_with_gate_events,omitempty"`
-	OpenObligationRefs             []string        `json:"open_obligation_refs,omitempty"`
-	ResolvedObligationRefs         []string        `json:"resolved_obligation_refs,omitempty"`
-	InconsistentOpenObligationRefs []EventAuditRef `json:"inconsistent_open_obligation_refs,omitempty"`
+	Total                           int             `json:"total"`
+	DecisionEvents                  int             `json:"decision_events"`
+	KindCounts                      map[string]int  `json:"kind_counts,omitempty"`
+	DecisionCounts                  map[string]int  `json:"decision_counts,omitempty"`
+	DecisionCountsByPackID          map[string]int  `json:"decision_counts_by_pack_id,omitempty"`
+	DecisionCountsByEnforcementMode map[string]int  `json:"decision_counts_by_enforcement_mode,omitempty"`
+	ReasonCounts                    map[string]int  `json:"reason_counts,omitempty"`
+	ToolCounts                      map[string]int  `json:"tool_counts,omitempty"`
+	EventsWithObservedFacts         int             `json:"events_with_observed_facts"`
+	EventsWithSafeAlternatives      int             `json:"events_with_safe_alternatives"`
+	ContractsWithGateEvents         []string        `json:"contracts_with_gate_events,omitempty"`
+	OpenObligationRefs              []string        `json:"open_obligation_refs,omitempty"`
+	ResolvedObligationRefs          []string        `json:"resolved_obligation_refs,omitempty"`
+	InconsistentOpenObligationRefs  []EventAuditRef `json:"inconsistent_open_obligation_refs,omitempty"`
+	MissingPackIDRefs               []EventAuditRef `json:"missing_pack_id_refs,omitempty"`
+	MissingEnforcementModeRefs      []EventAuditRef `json:"missing_enforcement_mode_refs,omitempty"`
+	MissingSafeAlternativesRefs     []EventAuditRef `json:"missing_safe_alternatives_refs,omitempty"`
 }
 
 type GuardFrictionCoverage struct {
@@ -272,8 +280,9 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 	state.report.TotalEvents = len(ordered)
 	for i := range ordered {
 		event := copyEvent(ordered[i])
+		rawGateFields := gateAuditExtendedFields(event.Gate)
 		event.Normalize()
-		state.addEvent(event)
+		state.addEvent(event, rawGateFields)
 	}
 	state.finish()
 	return state.report
@@ -300,7 +309,7 @@ func compareEventAuditOrder(a, b Event) int {
 	)
 }
 
-func (s *eventAuditState) addEvent(event Event) {
+func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnapshot) {
 	if event.ContractID == "" {
 		s.report.ReferenceCoverage.MissingContractIDEvents = append(s.report.ReferenceCoverage.MissingContractIDEvents, auditRef(event, "", "event has no contract_id"))
 	} else {
@@ -329,7 +338,7 @@ func (s *eventAuditState) addEvent(event Event) {
 	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
 		s.addObligation(event)
 	case EventGateDecision:
-		s.addGate(event)
+		s.addGate(event, rawGateFields)
 	case EventGuardFriction:
 		s.addGuardFriction(event)
 	}
@@ -559,7 +568,7 @@ func (s *eventAuditState) addObligation(event Event) {
 	}
 }
 
-func (s *eventAuditState) addGate(event Event) {
+func (s *eventAuditState) addGate(event Event, rawGateFields gateAuditFieldSnapshot) {
 	s.report.GateCoverage.Total++
 	if event.ContractID != "" {
 		incrementContractMap(s.contractCoverage(event.ContractID), "gate", string(event.Type))
@@ -576,6 +585,28 @@ func (s *eventAuditState) addGate(event Event) {
 	incrementStringMap(&s.report.GateCoverage.DecisionCounts, string(event.Gate.Decision))
 	incrementStringMap(&s.report.GateCoverage.ReasonCounts, event.Gate.ReasonCode)
 	incrementStringMap(&s.report.GateCoverage.ToolCounts, event.Gate.ToolName)
+	extended := gateAuditExtendedFields(event.Gate)
+	if rawGateFields.PackIDFieldPresent {
+		if rawGateFields.PackID == "" {
+			s.report.GateCoverage.MissingPackIDRefs = append(s.report.GateCoverage.MissingPackIDRefs, auditRef(event, "pack_id", "typed gate event missing pack_id"))
+		}
+	}
+	incrementStringMap(&s.report.GateCoverage.DecisionCountsByPackID, extended.PackID)
+	if rawGateFields.EnforcementModeFieldPresent {
+		if rawGateFields.EnforcementMode == "" {
+			s.report.GateCoverage.MissingEnforcementModeRefs = append(s.report.GateCoverage.MissingEnforcementModeRefs, auditRef(event, "enforcement_mode", "typed gate event missing enforcement_mode"))
+		}
+	}
+	incrementStringMap(&s.report.GateCoverage.DecisionCountsByEnforcementMode, extended.EnforcementMode)
+	if rawGateFields.ObservedFactsFieldPresent && len(rawGateFields.ObservedFacts) > 0 {
+		s.report.GateCoverage.EventsWithObservedFacts++
+	}
+	if rawGateFields.SafeAlternativesFieldPresent && len(rawGateFields.SafeAlternatives) > 0 {
+		s.report.GateCoverage.EventsWithSafeAlternatives++
+	}
+	if rawGateFields.SafeAlternativesFieldPresent && gateDecisionNeedsSafeAlternatives(event.Gate.Decision, extended.EnforcementMode) && len(rawGateFields.SafeAlternatives) == 0 {
+		s.report.GateCoverage.MissingSafeAlternativesRefs = append(s.report.GateCoverage.MissingSafeAlternativesRefs, auditRef(event, "safe_alternatives", "enforced reject/deny/stop gate event missing safe_alternatives"))
+	}
 	s.report.GateCoverage.OpenObligationRefs = append(s.report.GateCoverage.OpenObligationRefs, event.Gate.OpenObligations...)
 	s.report.GateCoverage.ResolvedObligationRefs = append(s.report.GateCoverage.ResolvedObligationRefs, event.Gate.ResolvedObligations...)
 	for _, obligationID := range event.Gate.OpenObligations {
@@ -798,6 +829,9 @@ func (s *eventAuditState) finish() {
 	sortAuditRefs(s.report.ReferenceCoverage.StaleContractReferences)
 	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedParentReferences)
 	sortAuditRefs(s.report.GateCoverage.InconsistentOpenObligationRefs)
+	sortAuditRefs(s.report.GateCoverage.MissingPackIDRefs)
+	sortAuditRefs(s.report.GateCoverage.MissingEnforcementModeRefs)
+	sortAuditRefs(s.report.GateCoverage.MissingSafeAlternativesRefs)
 	sortAuditRefs(s.report.GuardFrictionCoverage.UnclassifiedRefs)
 	sortTurnPhaseContradictions(s.report.TurnPhaseCoverage.Contradictions)
 	slices.Sort(s.report.ReferenceCoverage.MissingExpectedContracts)
@@ -862,6 +896,33 @@ func (s *eventAuditState) addFindings() {
 			ID:          "contract_event_gate_open_obligation_inconsistent",
 			Severity:    "medium",
 			Evidence:    fmt.Sprintf("%d gate open-obligation reference(s) were not open at the gate sequence", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.GateCoverage.MissingPackIDRefs; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_gate_missing_pack_id",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d typed gate event(s) lack pack_id", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.GateCoverage.MissingEnforcementModeRefs; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_gate_missing_enforcement_mode",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d typed gate event(s) lack enforcement_mode", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.GateCoverage.MissingSafeAlternativesRefs; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_gate_missing_safe_alternatives",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d enforced reject/deny/stop gate event(s) lack safe_alternatives", len(refs)),
 			EventIDs:    eventIDsFromAuditRefs(refs),
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
@@ -1004,6 +1065,70 @@ func guardFrictionUnclassified(event Event, friction ContractGuardFrictionEvent)
 		friction.Decision == "" ||
 		friction.GuardSurface == "" ||
 		(friction.ModelContractVisible && friction.ProtocolHash == "")
+}
+
+type gateAuditFieldSnapshot struct {
+	PackID                       string
+	EnforcementMode              string
+	ObservedFacts                []string
+	SafeAlternatives             []string
+	PackIDFieldPresent           bool
+	EnforcementModeFieldPresent  bool
+	ObservedFactsFieldPresent    bool
+	SafeAlternativesFieldPresent bool
+}
+
+func gateAuditExtendedFields(gate *ContractGateEvent) gateAuditFieldSnapshot {
+	if gate == nil {
+		return gateAuditFieldSnapshot{}
+	}
+	value := reflect.ValueOf(gate)
+	if value.Kind() != reflect.Pointer || value.IsNil() {
+		return gateAuditFieldSnapshot{}
+	}
+	elem := value.Elem()
+	return gateAuditFieldSnapshot{
+		PackID:                       stringFieldByName(elem, "PackID"),
+		EnforcementMode:              stringFieldByName(elem, "EnforcementMode"),
+		ObservedFacts:                stringSliceFieldByName(elem, "ObservedFacts"),
+		SafeAlternatives:             stringSliceFieldByName(elem, "SafeAlternatives"),
+		PackIDFieldPresent:           elem.FieldByName("PackID").IsValid(),
+		EnforcementModeFieldPresent:  elem.FieldByName("EnforcementMode").IsValid(),
+		ObservedFactsFieldPresent:    elem.FieldByName("ObservedFacts").IsValid(),
+		SafeAlternativesFieldPresent: elem.FieldByName("SafeAlternatives").IsValid(),
+	}
+}
+
+func gateDecisionNeedsSafeAlternatives(decision ToolPolicyDecision, enforcementMode string) bool {
+	if !strings.EqualFold(strings.TrimSpace(enforcementMode), "enforce") {
+		return false
+	}
+	switch decision {
+	case PolicyReject, PolicyDeny, PolicyStop:
+		return true
+	default:
+		return false
+	}
+}
+
+func stringFieldByName(value reflect.Value, fieldName string) string {
+	field := value.FieldByName(fieldName)
+	if !field.IsValid() || field.Kind() != reflect.String {
+		return ""
+	}
+	return strings.TrimSpace(field.String())
+}
+
+func stringSliceFieldByName(value reflect.Value, fieldName string) []string {
+	field := value.FieldByName(fieldName)
+	if !field.IsValid() || field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.String {
+		return nil
+	}
+	values := make([]string, 0, field.Len())
+	for i := 0; i < field.Len(); i++ {
+		values = append(values, field.Index(i).String())
+	}
+	return compactStrings(values)
 }
 
 func auditRef(event Event, reference string, reason string) EventAuditRef {

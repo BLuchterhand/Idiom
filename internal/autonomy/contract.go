@@ -98,6 +98,39 @@ const (
 	GateReadOnly     GateKind = "read_only_gate"
 )
 
+type ContractPackID string
+
+const (
+	ContractPackCompletionReadiness   ContractPackID = "completion/readiness"
+	ContractPackWriteRequiredPaths    ContractPackID = "write/required_paths"
+	ContractPackVerificationPostWrite ContractPackID = "verification/post_write"
+	ContractPackLoopRepeatedCall      ContractPackID = "loop/repeated_call"
+	ContractPackBudgetRunPolicy       ContractPackID = "budget/run_policy"
+	ContractPackPlanExecuteProtocol   ContractPackID = "plan_execute/protocol"
+	ContractPackSelfModifyGuardFiles  ContractPackID = "self_modify/guard_files"
+)
+
+type EnforcementMode string
+
+const (
+	EnforcementModeEnforce     EnforcementMode = "enforce"
+	EnforcementModeObserveOnly EnforcementMode = "observe_only"
+)
+
+type ObservedFactKind string
+
+const (
+	ObservedFactCount         ObservedFactKind = "count"
+	ObservedFactStatus        ObservedFactKind = "status"
+	ObservedFactReasonCode    ObservedFactKind = "reason_code"
+	ObservedFactPathRef       ObservedFactKind = "path_ref"
+	ObservedFactObligationRef ObservedFactKind = "obligation_ref"
+	ObservedFactToolName      ObservedFactKind = "tool_name"
+	ObservedFactProtocolHash  ObservedFactKind = "protocol_hash"
+)
+
+type ContractObservedFact string
+
 type ObligationStatus string
 
 const (
@@ -882,6 +915,60 @@ func validGateKind(kind GateKind) bool {
 	default:
 		return false
 	}
+}
+
+func validContractPackID(packID ContractPackID) bool {
+	switch packID {
+	case ContractPackCompletionReadiness, ContractPackWriteRequiredPaths, ContractPackVerificationPostWrite,
+		ContractPackLoopRepeatedCall, ContractPackBudgetRunPolicy, ContractPackPlanExecuteProtocol, ContractPackSelfModifyGuardFiles:
+		return true
+	default:
+		return strings.HasPrefix(string(packID), "pack-") && validContractLabel(string(packID), 96)
+	}
+}
+
+func validEnforcementMode(mode EnforcementMode) bool {
+	switch mode {
+	case EnforcementModeEnforce, EnforcementModeObserveOnly:
+		return true
+	default:
+		return false
+	}
+}
+
+func validObservedFactKind(kind ObservedFactKind) bool {
+	switch kind {
+	case ObservedFactCount, ObservedFactStatus, ObservedFactReasonCode, ObservedFactPathRef,
+		ObservedFactObligationRef, ObservedFactToolName, ObservedFactProtocolHash:
+		return true
+	default:
+		return false
+	}
+}
+
+func validContractLabel(value string, maxLen int) bool {
+	value = strings.TrimSpace(value)
+	if value == "" || len(value) > maxLen {
+		return false
+	}
+	for _, r := range value {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		switch r {
+		case '_', '-', '/', '.', ':', '=', '@':
+			continue
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 func validObligationStatus(status ObligationStatus) bool {

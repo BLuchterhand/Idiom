@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -17,6 +18,44 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/eval"
 )
+
+func withWorkspaceGateAuditFields(t *testing.T, gate autonomy.ContractGateEvent, packID, enforcementMode string, observedFacts, safeAlternatives []string) autonomy.ContractGateEvent {
+	t.Helper()
+	value := reflect.ValueOf(&gate).Elem()
+	setWorkspaceGateStringField(t, value, "PackID", packID)
+	setWorkspaceGateStringField(t, value, "EnforcementMode", enforcementMode)
+	setWorkspaceGateStringSliceField(t, value, "ObservedFacts", observedFacts)
+	setWorkspaceGateStringSliceField(t, value, "SafeAlternatives", safeAlternatives)
+	return gate
+}
+
+func setWorkspaceGateStringField(t *testing.T, value reflect.Value, name, fieldValue string) {
+	t.Helper()
+	field := value.FieldByName(name)
+	if !field.IsValid() {
+		return
+	}
+	if field.Kind() != reflect.String || !field.CanSet() {
+		t.Fatalf("ContractGateEvent.%s is not a settable string field", name)
+	}
+	field.SetString(fieldValue)
+}
+
+func setWorkspaceGateStringSliceField(t *testing.T, value reflect.Value, name string, fieldValue []string) {
+	t.Helper()
+	field := value.FieldByName(name)
+	if !field.IsValid() {
+		return
+	}
+	if field.Kind() != reflect.Slice || field.Type().Elem().Kind() != reflect.String || !field.CanSet() {
+		t.Fatalf("ContractGateEvent.%s is not a settable []string field", name)
+	}
+	slice := reflect.MakeSlice(field.Type(), len(fieldValue), len(fieldValue))
+	for i, value := range fieldValue {
+		slice.Index(i).SetString(value)
+	}
+	field.Set(slice)
+}
 
 func TestGenericDiscoveryToolsAreAdvertised(t *testing.T) {
 	tools := ToolManifestTools(ToolManifestToolOptions{})
@@ -2088,7 +2127,7 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 		}
 		lines = append(lines, string(encoded))
 	}
-	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, withWorkspaceGateAuditFields(t, autonomy.ContractGateEvent{
 		Gate:                autonomy.GateReadOnly,
 		Decision:            autonomy.PolicyObserve,
 		InvariantID:         "sidecar.read_only_profile",
@@ -2098,7 +2137,7 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 		ObligationRefs:      []string{"obl-evidence"},
 		ResolvedObligations: []string{"obl-evidence"},
 		Source:              "harness_audit_test",
-	}, occurredAt.Add(4*time.Second), 5))
+	}, string(autonomy.ContractPackCompletionReadiness), string(autonomy.EnforcementModeObserveOnly), []string{"resolved_obligation=obl-evidence"}, nil), occurredAt.Add(4*time.Second), 5))
 	encodedGateEvent, err := json.Marshal(gateEvent)
 	if err != nil {
 		t.Fatalf("marshal gate event: %v", err)

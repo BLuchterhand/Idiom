@@ -846,6 +846,107 @@ func TestRunnerAutonomyRecorderEmitsGateEventsForExistingGates(t *testing.T) {
 	}
 }
 
+func TestRunnerAutonomyRecorderGateDecisionPayloadIncludesPackModeFactsAndAlternatives(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:                 "implement",
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		RequiredEditPaths:    []string{"internal/agent/runner.go"},
+		AllowedTools:         []string{"read_file", "apply_patch", "shell"},
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Readiness: &workerruntime.ReadinessState{
+			ReadyToWrite:    true,
+			OpenObligations: []string{"write", "verify", "final_answer"},
+		},
+	}
+	policy := RunPolicy{MaxToolSteps: 5, MaxModelCalls: 2}
+	recorder := newRunnerAutonomyRecorder(runner, policy, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+
+	recorder.emitContractStarted(brief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         recorder.contract.ContractID,
+		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
+		Step:               1,
+		Brief:              brief,
+		BaseAllowedTools:   []string{"read_file", "apply_patch", "shell"},
+		VerificationStatus: "pending",
+	})
+	recorder.emitTurnPhaseContract(phase, contractcompile.ModelProtocolProjection{})
+	recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** Update File: README.md\n@@\n-x\n+y\n*** End Patch\n"}, autonomy.PolicyReject, "required_edit_scope_rejected", nil)
+	recorder.emitVerificationGate(workspace.ToolRequest{Tool: "shell"}, autonomy.PolicyReject, "verification_required_after_write", "pending")
+	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", nil)
+	recorder.emitLoopGate(workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"}, autonomy.PolicyStop, "repeated_tool_call", "read_file:internal/agent/runner.go", 3)
+	recorder.emitBudgetGate(policy, runnerMetrics{ToolCalls: 5, ModelCalls: 2}, "max_tool_steps", true)
+	recorder.emitGateDecision(runnerAutonomyGateDecision{
+		Gate:        autonomy.GateReadOnly,
+		Decision:    autonomy.PolicyObserve,
+		InvariantID: "read_only.readiness",
+		ReasonCode:  "evidence_status_observed",
+		Source:      "runner_read_only_gate",
+	})
+
+	_ = decodeRunnerAutonomyEventsForTest(t, runEvents)
+	rawGates := decodeRunnerAutonomyGatePayloadsForTest(t, runEvents)
+	expectedPacks := map[autonomy.GateKind]string{
+		autonomy.GateWrite:        "write/required_paths",
+		autonomy.GateVerification: "verification/post_write",
+		autonomy.GateCompletion:   "completion/readiness",
+		autonomy.GateLoop:         "loop/repeated_call",
+		autonomy.GateBudget:       "budget/run_policy",
+		autonomy.GateReadOnly:     "completion/readiness",
+	}
+	for gateKind, packID := range expectedPacks {
+		gate := mustRunnerAutonomyRawGateForTest(t, rawGates, gateKind)
+		if got := rawGateString(gate, "pack_id"); got != packID {
+			t.Fatalf("%s pack_id = %q, want %q in %#v", gateKind, got, packID, gate)
+		}
+		mode := "enforce"
+		if gateKind == autonomy.GateReadOnly {
+			mode = "observe_only"
+		}
+		if got := rawGateString(gate, "enforcement_mode"); got != mode {
+			t.Fatalf("%s enforcement_mode = %q, want %q in %#v", gateKind, got, mode, gate)
+		}
+		facts := rawGateObservedFacts(gate)
+		if len(facts) == 0 ||
+			!rawObservedFactsContainPrefix(facts, "reason_code:reason_code=") ||
+			!rawObservedFactsContainPrefix(facts, "status:decision=") {
+			t.Fatalf("%s missing bounded observed facts: %#v", gateKind, gate["observed_facts"])
+		}
+	}
+	for _, gateKind := range []autonomy.GateKind{
+		autonomy.GateWrite,
+		autonomy.GateVerification,
+		autonomy.GateCompletion,
+		autonomy.GateLoop,
+		autonomy.GateBudget,
+	} {
+		gate := mustRunnerAutonomyRawGateForTest(t, rawGates, gateKind)
+		if alternatives := rawGateStringSlice(gate, "safe_alternatives"); len(alternatives) == 0 {
+			t.Fatalf("%s should include safe alternatives for blocked decision: %#v", gateKind, gate)
+		}
+	}
+	writeGate := mustRunnerAutonomyRawGateForTest(t, rawGates, autonomy.GateWrite)
+	writeFacts := rawGateObservedFacts(writeGate)
+	if !rawObservedFactsContain(writeFacts, "tool_name:tool=apply_patch") {
+		t.Fatalf("write observed facts should include apply_patch tool in %#v", writeFacts)
+	}
+	if strings.Contains(mustRunnerAutonomyRawGateJSONForTest(t, runEvents, autonomy.GateWrite), "*** Begin Patch") {
+		t.Fatalf("gate payload leaked raw patch content")
+	}
+}
+
 func TestRunnerAutonomyRecorderLifecycleEventsCloseSuccessfulGateObligations(t *testing.T) {
 	for _, tc := range []struct {
 		name             string
@@ -1363,6 +1464,116 @@ func decodeRunnerAutonomyEventsForTest(t *testing.T, runEvents []RunEvent) []aut
 		t.Fatal("expected autonomy events")
 	}
 	return events
+}
+
+func decodeRunnerAutonomyGatePayloadsForTest(t *testing.T, runEvents []RunEvent) []map[string]any {
+	t.Helper()
+	var gates []map[string]any
+	for _, runEvent := range runEvents {
+		if runEvent.Role != runnerAutonomyEventRole {
+			continue
+		}
+		var event struct {
+			Type autonomy.EventType `json:"type"`
+			Gate map[string]any     `json:"gate"`
+		}
+		if err := json.Unmarshal([]byte(runEvent.Content), &event); err != nil {
+			t.Fatalf("decode raw autonomy event: %v\n%s", err, runEvent.Content)
+		}
+		if event.Type == autonomy.EventGateDecision && event.Gate != nil {
+			gates = append(gates, event.Gate)
+		}
+	}
+	if len(gates) == 0 {
+		t.Fatal("expected raw gate events")
+	}
+	return gates
+}
+
+func mustRunnerAutonomyRawGateForTest(t *testing.T, gates []map[string]any, gateKind autonomy.GateKind) map[string]any {
+	t.Helper()
+	for _, gate := range gates {
+		if rawGateString(gate, "gate") == string(gateKind) {
+			return gate
+		}
+	}
+	t.Fatalf("missing raw gate %q in %#v", gateKind, gates)
+	return nil
+}
+
+func mustRunnerAutonomyRawGateJSONForTest(t *testing.T, runEvents []RunEvent, gateKind autonomy.GateKind) string {
+	t.Helper()
+	for _, runEvent := range runEvents {
+		if runEvent.Role != runnerAutonomyEventRole {
+			continue
+		}
+		var event struct {
+			Type autonomy.EventType `json:"type"`
+			Gate map[string]any     `json:"gate"`
+		}
+		if err := json.Unmarshal([]byte(runEvent.Content), &event); err != nil {
+			t.Fatalf("decode raw autonomy event: %v\n%s", err, runEvent.Content)
+		}
+		if event.Type == autonomy.EventGateDecision && rawGateString(event.Gate, "gate") == string(gateKind) {
+			return runEvent.Content
+		}
+	}
+	t.Fatalf("missing raw gate JSON %q", gateKind)
+	return ""
+}
+
+func rawGateString(values map[string]any, key string) string {
+	if values == nil {
+		return ""
+	}
+	value, _ := values[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func rawGateStringSlice(values map[string]any, key string) []string {
+	if values == nil {
+		return nil
+	}
+	raw, _ := values[key].([]any)
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) != "" {
+			out = append(out, strings.TrimSpace(text))
+		}
+	}
+	return out
+}
+
+func rawGateObservedFacts(values map[string]any) []string {
+	if values == nil {
+		return nil
+	}
+	raw, _ := values["observed_facts"].([]any)
+	out := make([]string, 0, len(raw))
+	for _, value := range raw {
+		if fact, ok := value.(string); ok && strings.TrimSpace(fact) != "" {
+			out = append(out, strings.TrimSpace(fact))
+		}
+	}
+	return out
+}
+
+func rawObservedFactsContain(facts []string, want string) bool {
+	for _, fact := range facts {
+		if fact == want {
+			return true
+		}
+	}
+	return false
+}
+
+func rawObservedFactsContainPrefix(facts []string, prefix string) bool {
+	for _, fact := range facts {
+		if strings.HasPrefix(fact, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func countObligationKind(obligations []autonomy.Obligation, kind autonomy.ObligationKind) int {

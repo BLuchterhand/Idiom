@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -62,6 +63,13 @@ type runnerAutonomyPolicyEventInput struct {
 	ErrorClass       string
 	ChangedPaths     []string
 	Source           string
+}
+
+type runnerAutonomyGateEventFields struct {
+	PackID           autonomy.ContractPackID
+	EnforcementMode  autonomy.EnforcementMode
+	ObservedFacts    []autonomy.ContractObservedFact
+	SafeAlternatives []string
 }
 
 func newRunnerAutonomyRecorder(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) *runnerAutonomyRecorder {
@@ -583,6 +591,11 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 	} else {
 		gate.OpenObligations = a.openObligationIDsForRefs(gate.ObligationRefs)
 	}
+	gateFields := runnerAutonomyGateFields(input, gate, a)
+	gate.PackID = gateFields.PackID
+	gate.EnforcementMode = gateFields.EnforcementMode
+	gate.ObservedFacts = gateFields.ObservedFacts
+	gate.SafeAlternatives = gateFields.SafeAlternatives
 	gateEvent, err := autonomy.NewGateDecisionEvent(a.contract, gate, a.nextTime(), a.nextSequence())
 	a.emitNewEvent(gateEvent, err)
 	if err == nil {
@@ -599,6 +612,196 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 			ChangedPaths:         input.ChangedPaths,
 			RequiredPathStatus:   input.TargetRefs,
 		}, a.nextTime(), a.nextSequence()))
+	}
+}
+
+func runnerAutonomyGateFields(input runnerAutonomyGateDecision, gate autonomy.ContractGateEvent, recorder *runnerAutonomyRecorder) runnerAutonomyGateEventFields {
+	return runnerAutonomyGateEventFields{
+		PackID:           runnerAutonomyGatePackID(input),
+		EnforcementMode:  runnerAutonomyGateEnforcementMode(input.Decision),
+		ObservedFacts:    runnerAutonomyGateObservedFacts(input, gate),
+		SafeAlternatives: runnerAutonomyGateSafeAlternatives(input, recorder),
+	}
+}
+
+func runnerAutonomyGatePackID(input runnerAutonomyGateDecision) autonomy.ContractPackID {
+	switch strings.TrimSpace(input.InvariantID) {
+	case "completion.readiness":
+		return autonomy.ContractPackCompletionReadiness
+	case "write.required_edit_paths":
+		return autonomy.ContractPackWriteRequiredPaths
+	case "verification.post_write":
+		return autonomy.ContractPackVerificationPostWrite
+	case "loop.repeated_call":
+		return autonomy.ContractPackLoopRepeatedCall
+	case "budget.run_policy":
+		return autonomy.ContractPackBudgetRunPolicy
+	case "read_only.readiness":
+		return autonomy.ContractPackCompletionReadiness
+	}
+	switch input.Gate {
+	case autonomy.GateCompletion:
+		return autonomy.ContractPackCompletionReadiness
+	case autonomy.GateWrite:
+		return autonomy.ContractPackWriteRequiredPaths
+	case autonomy.GateVerification:
+		return autonomy.ContractPackVerificationPostWrite
+	case autonomy.GateLoop:
+		return autonomy.ContractPackLoopRepeatedCall
+	case autonomy.GateBudget:
+		return autonomy.ContractPackBudgetRunPolicy
+	case autonomy.GateReadOnly:
+		return autonomy.ContractPackCompletionReadiness
+	default:
+		return ""
+	}
+}
+
+func runnerAutonomyGateEnforcementMode(decision autonomy.ToolPolicyDecision) autonomy.EnforcementMode {
+	if decision == autonomy.PolicyObserve {
+		return autonomy.EnforcementModeObserveOnly
+	}
+	return autonomy.EnforcementModeEnforce
+}
+
+func runnerAutonomyGateObservedFacts(input runnerAutonomyGateDecision, gate autonomy.ContractGateEvent) []autonomy.ContractObservedFact {
+	var facts []autonomy.ContractObservedFact
+	addGateFactValue(&facts, autonomy.ObservedFactStatus, "gate", string(input.Gate))
+	addGateFactValue(&facts, autonomy.ObservedFactStatus, "decision", string(input.Decision))
+	addGateFactCount(&facts, "target_ref_count", len(gate.TargetRefs))
+	addGateFactCount(&facts, "obligation_ref_count", len(gate.ObligationRefs))
+	addGateFactCount(&facts, "open_obligation_count", len(gate.OpenObligations))
+	addGateFactCount(&facts, "resolved_obligation_count", len(gate.ResolvedObligations))
+	addGateFactCount(&facts, "changed_path_count", len(gate.ChangedPaths))
+	addGateFactValue(&facts, autonomy.ObservedFactReasonCode, "reason_code", runnerAutonomyReasonCode(input.ReasonCode))
+	addGateFactValue(&facts, autonomy.ObservedFactReasonCode, "source", runnerAutonomyReasonCode(input.Source))
+	addGateFactValue(&facts, autonomy.ObservedFactToolName, "tool", input.ToolName)
+	addGateFactValue(&facts, autonomy.ObservedFactStatus, "tool_call_id", input.ToolCallID)
+	addGateFactValue(&facts, autonomy.ObservedFactStatus, "verification_status", input.VerificationStatus)
+	addGateFactValue(&facts, autonomy.ObservedFactProtocolHash, "protocol_hash", gate.ProtocolHash)
+	addGateFactValue(&facts, autonomy.ObservedFactStatus, "loop_fingerprint_digest", gate.LoopFingerprintDigest)
+	addGateFactValues(&facts, autonomy.ObservedFactPathRef, "target_refs", gate.TargetRefs, 8)
+	addGateFactValues(&facts, autonomy.ObservedFactObligationRef, "obligation_refs", gate.ObligationRefs, 8)
+	addGateFactValues(&facts, autonomy.ObservedFactObligationRef, "open_obligations", gate.OpenObligations, 8)
+	addGateFactValues(&facts, autonomy.ObservedFactObligationRef, "resolved_obligations", gate.ResolvedObligations, 8)
+	if input.Attempts > 0 {
+		addGateFactCount(&facts, "attempts", input.Attempts)
+	}
+	if gate.Budget != nil {
+		addGateFactValue(&facts, autonomy.ObservedFactStatus, "budget_exhausted", runnerAutonomyBoolStatus(gate.Budget.Exhausted))
+		addGateFactCount(&facts, "budget_used_tool_steps", gate.Budget.UsedToolSteps)
+		addGateFactCount(&facts, "budget_max_tool_steps", gate.Budget.MaxToolSteps)
+		addGateFactCount(&facts, "budget_used_model_calls", gate.Budget.UsedModelCalls)
+		addGateFactCount(&facts, "budget_max_model_calls", gate.Budget.MaxModelCalls)
+		addGateFactValue(&facts, autonomy.ObservedFactReasonCode, "budget_exhaustion_reason", runnerAutonomyReasonCode(gate.Budget.ExhaustionReason))
+	}
+	return facts
+}
+
+func addGateFactValue(facts *[]autonomy.ContractObservedFact, kind autonomy.ObservedFactKind, name string, value string) {
+	name = strings.TrimSpace(name)
+	value = strings.TrimSpace(value)
+	if name == "" || value == "" {
+		return
+	}
+	if len(value) > 160 {
+		value = value[:160]
+	}
+	*facts = append(*facts, autonomy.ContractObservedFact(string(kind)+":"+name+"="+value))
+}
+
+func addGateFactCount(facts *[]autonomy.ContractObservedFact, name string, count int) {
+	name = strings.TrimSpace(name)
+	if count < 0 {
+		return
+	}
+	*facts = append(*facts, autonomy.ContractObservedFact(string(autonomy.ObservedFactCount)+":"+name+"="+runnerAutonomyIntString(count)))
+}
+
+func addGateFactValues(facts *[]autonomy.ContractObservedFact, kind autonomy.ObservedFactKind, name string, values []string, limit int) {
+	values = runnerAutonomyBoundedFactStrings(values, limit)
+	for _, value := range values {
+		addGateFactValue(facts, kind, name, value)
+	}
+}
+
+func runnerAutonomyBoolStatus(value bool) string {
+	if value {
+		return "true"
+	}
+	return "false"
+}
+
+func runnerAutonomyIntString(value int) string {
+	return strconv.Itoa(value)
+}
+
+func runnerAutonomyBoundedFactStrings(values []string, limit int) []string {
+	if limit <= 0 {
+		limit = 8
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, min(len(values), limit))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if len(value) > 160 {
+			value = value[:160]
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+		if len(out) >= limit {
+			break
+		}
+	}
+	return out
+}
+
+func runnerAutonomyGateSafeAlternatives(input runnerAutonomyGateDecision, recorder *runnerAutonomyRecorder) []string {
+	if !runnerAutonomyGateNeedsSafeAlternatives(input.Decision) {
+		return nil
+	}
+	var alternatives []string
+	if recorder != nil {
+		protocolVisible := recorder.currentModelProtocolHash() != ""
+		alternatives = runnerAutonomyFrictionSafeAlternatives(recorder.visibleModelProtocol(), recorder.lastTurnPhase, protocolVisible)
+	}
+	if len(alternatives) == 0 {
+		alternatives = runnerAutonomyDefaultGateSafeAlternatives(input.Gate)
+	}
+	return runnerAutonomyBoundedFactStrings(alternatives, 8)
+}
+
+func runnerAutonomyGateNeedsSafeAlternatives(decision autonomy.ToolPolicyDecision) bool {
+	switch decision {
+	case autonomy.PolicyAsk, autonomy.PolicyDeny, autonomy.PolicyNudge, autonomy.PolicyReject, autonomy.PolicyStop:
+		return true
+	default:
+		return false
+	}
+}
+
+func runnerAutonomyDefaultGateSafeAlternatives(gate autonomy.GateKind) []string {
+	switch gate {
+	case autonomy.GateCompletion:
+		return []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	case autonomy.GateWrite:
+		return []string{"edit required_edit_paths", "<<QUESTION>>:"}
+	case autonomy.GateVerification:
+		return []string{"run verification", "report verification blocker"}
+	case autonomy.GateLoop:
+		return []string{"change tool target", "Decision: source-satisfied"}
+	case autonomy.GateBudget:
+		return []string{"Decision: blocker", "Decision: source-satisfied"}
+	case autonomy.GateReadOnly:
+		return []string{"read evidence paths", "Decision: source-satisfied"}
+	default:
+		return []string{"choose allowed action", "<<QUESTION>>:"}
 	}
 }
 
