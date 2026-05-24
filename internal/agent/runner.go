@@ -33,6 +33,7 @@ var (
 	callLikeIdentifierPattern       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
 	qualifiedIdentifierPattern      = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{1,}\.[A-Za-z_][A-Za-z0-9_]{3,})\b`)
 	backtickedTokenPattern          = regexp.MustCompile("`([^`]+)`")
+	toolLocalSearchHandlePattern    = regexp.MustCompile(`\bf\d+\s+(?:[[:alnum:]_.-]+/)+[[:alnum:]_.-]+\.[[:alnum:]]+:\d+:`)
 	goFuncDeclPattern               = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 	codeShapedTokenPattern          = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
 	codeShapedSnakeCasePattern      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
@@ -92,6 +93,7 @@ type Runner struct {
 	DoomLoopGate         func(req workspace.ToolRequest, count int) bool
 	LastAssistantMessage llama.ChatMessage
 	currentAllowedTools  []string
+	activeAutonomy       *runnerAutonomyRecorder
 }
 
 func (r *Runner) supportsNativeTools() bool {
@@ -131,6 +133,9 @@ func (r *Runner) Run(
 	postReadinessProbeBudget := postReadinessProbeBudgetForBrief(r.RuntimeBrief)
 	implementationWriteOnlyRecoveryActive := false
 	requiredPathCompletionRecoveryActive := false
+	writeDescriptionRepairActive := false
+	writeDescriptionDetourRejections := 0
+	writeDescriptionRepairPath := ""
 	implementationWriteOnlyHiddenTools := make(map[string]bool)
 	scopedHiddenNonWriteRecoveryUsed := false
 	scratchpadCloseoutNonWriteRejections := 0
@@ -165,7 +170,10 @@ func (r *Runner) Run(
 	exactAnchorWriteOnlyActive := exactAnchorPreWriteSurfaceActive(r.RuntimeBrief, collectedResults)
 	exactAnchorWriteFailures := 0
 	currentAllowedTools := []string(nil)
-	defer func() { r.currentAllowedTools = nil }()
+	defer func() {
+		r.currentAllowedTools = nil
+		r.activeAutonomy = nil
+	}()
 	setCurrentAllowedTools := func(tools []string) {
 		r.currentAllowedTools = append(r.currentAllowedTools[:0], tools...)
 	}
@@ -335,6 +343,7 @@ func (r *Runner) Run(
 	var autonomyRecorder *runnerAutonomyRecorder
 	acceptedAnswerSignalsEmitted := false
 	completionStatusEmitted := false
+	completionGateRejections := 0
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
 		completionStatusEmitted = true
 		r.emitCompletionStatus(status, reason, blockerKind, results, userVisibleBlocker)
@@ -352,14 +361,14 @@ func (r *Runner) Run(
 		}
 		if blockerKind, _ := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" {
 			if autonomyRecorder != nil {
-				autonomyRecorder.emitCompletionGate(autonomy.PolicyReject, blockerKind, collectedResults)
+				autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, collectedResults, completionGateRejections)
 			}
 			if completionStatusEmitted {
 				acceptedAnswerSignalsEmitted = true
 				return
 			}
 		} else if autonomyRecorder != nil {
-			autonomyRecorder.emitCompletionGate(autonomy.PolicyAllow, "final_answer_accepted", collectedResults)
+			autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", collectedResults, completionGateRejections)
 		}
 		r.emitAcceptedAnswerSignals(answer, collectedResults)
 		acceptedAnswerSignalsEmitted = true
@@ -401,7 +410,6 @@ func (r *Runner) Run(
 	consecutiveRejectedActions := 0
 	reviewRepairTerminalRequiredRejects := 0
 	rejectionRecoveryNudgeUsed := false
-	completionGateRejections := 0
 	consecutiveNoProgress := 0
 	discoveryRedirect := NewDiscoveryRedirect()
 	taskLedger := newTaskLedgerState(r.TaskLedger)
@@ -411,6 +419,7 @@ func (r *Runner) Run(
 	}
 	visibleRuntimeBrief := r.visibleBriefForToolSurface(r.RuntimeBrief, collectedResults)
 	autonomyRecorder = newRunnerAutonomyRecorder(r, policy, visibleRuntimeBrief, collectedResults)
+	r.activeAutonomy = autonomyRecorder
 	if autonomyRecorder != nil {
 		autonomyRecorder.emitContractStarted(visibleRuntimeBrief)
 	}
@@ -454,6 +463,7 @@ func (r *Runner) Run(
 		metrics:                    &metrics,
 		requestBudget:              &requestBudget,
 		recorder:                   &recorder,
+		autonomyRecorder:           autonomyRecorder,
 		turnMessages:               &turnMessages,
 		collectedResults:           &collectedResults,
 		rejectedActions:            rejectedActions,
@@ -525,27 +535,39 @@ func (r *Runner) Run(
 		}
 
 		metrics.ModelCalls++
+		phaseHint := ""
+		if implementationWriteOnlyRecoveryActive && strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
+			phaseHint = turnPhaseReviewRepairTerminal
+		}
+		contractID := ""
 		if autonomyRecorder != nil {
-			phaseHint := ""
-			if implementationWriteOnlyRecoveryActive && strings.TrimSpace(r.RuntimeBrief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily {
-				phaseHint = turnPhaseReviewRepairTerminal
-			}
-			contract := r.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
-				ContractID:          autonomyRecorder.contract.ContractID,
-				ModelCallNumber:     metrics.ModelCalls,
-				Step:                stepNumber,
-				PhaseHint:           phaseHint,
-				Brief:               r.RuntimeBrief,
-				Results:             collectedResults,
-				AllowedTools:        currentAllowedTools,
-				HiddenTools:         turnHiddenTools,
-				Options:             opts,
-				SupportsNativeTools: terminalSubmitPlanNativeTools(),
-			})
-			autonomyRecorder.emitTurnPhaseContract(contract)
+			contractID = autonomyRecorder.contract.ContractID
+		}
+		phaseContract := r.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
+			ContractID:          contractID,
+			ModelCallNumber:     metrics.ModelCalls,
+			Step:                stepNumber,
+			PhaseHint:           phaseHint,
+			Brief:               r.RuntimeBrief,
+			Results:             collectedResults,
+			AllowedTools:        currentAllowedTools,
+			HiddenTools:         turnHiddenTools,
+			Options:             opts,
+			SupportsNativeTools: terminalSubmitPlanNativeTools(),
+		})
+		modelProtocol, hasModelProtocol := r.compileModelProtocolProjection(r.RuntimeBrief, collectedResults, phaseContract, policy, terminalSubmitPlanNativeTools())
+		if autonomyRecorder != nil {
+			autonomyRecorder.emitTurnPhaseContract(phaseContract, modelProtocol)
 		}
 		modelStart := time.Now()
-		requestMessages := chatMessagesForOptions(turnMessages, opts)
+		requestMessages := turnMessages
+		if hasModelProtocol {
+			requestMessages = modelMessagesWithProtocolProjection(requestMessages, modelProtocol)
+			if autonomyRecorder != nil {
+				autonomyRecorder.markModelProtocolPresented(modelProtocol)
+			}
+		}
+		requestMessages = chatMessagesForOptions(requestMessages, opts)
 		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
 		if err != nil {
 			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, opts, collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
@@ -761,9 +783,10 @@ func (r *Runner) Run(
 				// task family or project.
 				result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
 				if autonomyRecorder != nil {
-					autonomyRecorder.emitCompletionGate(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults)
+					autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
 				}
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
+				completionGateRejections = priorGateRejections + 1
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
 					result.Summary == "Completion gate rejected unresolved process narration" ||
 					(r.planThenExecutePlannerPhase() && result.Summary == "Plan-execute completion gate rejected final answer" && priorGateRejections < r.completionGateRetryLimit(collectedResults)) ||
@@ -911,6 +934,31 @@ func (r *Runner) Run(
 			raw = redirectedRaw
 		}
 		currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		if (writeDescriptionRepairActive ||
+			lastResultSummaryIs(collectedResults, "Missing write description") ||
+			lastResultSummaryIs(collectedResults, "Write-description repair rejected non-write detour")) &&
+			!r.writeOnlyRecoveryToolIsWrite(req.Tool) {
+			writeDescriptionRepairActive = true
+			writeDescriptionDetourRejections++
+			prompt := r.writeDescriptionRepairPrompt(req)
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: "Write-description repair rejected non-write detour",
+				Error:   fmt.Sprintf("%s is not available while write-description repair is pending. Reissue the same in-scope write with a non-empty description, or answer with <<QUESTION>> and the exact blocker.", strings.TrimSpace(req.Tool)),
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			r.emitWriteDescriptionValidatorDecision(stepNumber, req, "reject", "non_write_detour", "write_description_repair")
+			r.emitEvent(RunEvent{Role: "write_description_repair_recovery", Content: prompt})
+			if writeDescriptionDetourRejections >= 2 {
+				blockerKind := "write_description_repair_detour_repeated"
+				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+				answer := "<<QUESTION>>: write-description repair rejected repeated non-write detours. The required edit path remains unchanged; reissue the same in-scope write with a non-empty description, or provide the exact blocker."
+				return finish(answer, nil, blockerKind, true)
+			}
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			rebuildTools()
+			continue
+		}
 		if workspace.IsWorkspaceWriteTool(req.Tool) && implementationTargetSourceWriteTargetsHaveEvidence(req, collectedResults) {
 			clearRejectedFingerprintSummary(requestBudget.fingerprint.rejected, currentFingerprint, "Write rejected before source-body evidence")
 			delete(rejectedActions, toolActionClass(req))
@@ -986,6 +1034,17 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_source_discovery_recovery", Content: prompt})
 			continue
 		}
+		if summary, errorText, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
+			result := workspace.ToolResult{
+				Tool:    req.Tool,
+				Summary: summary,
+				Error:   errorText,
+			}
+			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_recovery", Content: prompt})
+			continue
+		}
 		scopedHiddenNonWrite := implementationScopedHiddenTools[strings.TrimSpace(req.Tool)] && !workspace.IsWorkspaceWriteTool(req.Tool)
 		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject && !(scopedHiddenNonWrite && scopedHiddenNonWriteRecoveryUsed) {
 			result := workspace.ToolResult{
@@ -1010,6 +1069,25 @@ func (r *Runner) Run(
 					Error:   errorText,
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+				if requestBudget.scopedReadRejections != nil {
+					key := currentFingerprint
+					if strings.TrimSpace(key) == "" {
+						key = scopedReadRecoveryRejectionKey(req)
+					}
+					requestBudget.scopedReadRejections[key]++
+					if requestBudget.scopedReadRejections[key] >= 2 {
+						blockerKind := "scoped_implementation_read_repeated"
+						emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
+						target := "the required edit path"
+						if paths := r.remainingRequiredEditPaths(collectedResults); len(paths) > 0 {
+							target = strings.Join(paths, ", ")
+						} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+							target = strings.Join(paths, ", ")
+						}
+						answer := fmt.Sprintf("<<QUESTION>>: scoped implementation recovery rejected the same %s request twice for %s. The next valid outcome is a required-path write from the packet and scoped evidence, or a blocker naming the exact missing edit-safety fact.", strings.TrimSpace(req.Tool), target)
+						return finish(answer, nil, blockerKind, true)
+					}
+				}
 				if hideNonWrite {
 					implementationWriteOnlyRecoveryActive = true
 					if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
@@ -1940,6 +2018,15 @@ func (r *Runner) Run(
 				}
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
+			if strings.TrimSpace(result.Error) == "" &&
+				strings.TrimSpace(r.RuntimeBrief.Contract) == "architecture_assessment" &&
+				questionPresentationBlock(r.RuntimeBrief.Objective) != "" &&
+				!runnerBriefRequiresMutation(r.RuntimeBrief) &&
+				postChildPacketActive {
+				if answer, ok := synthesizeDelegatedReadOnlyAnswer(r.RuntimeBrief.Objective, collectedResults); ok {
+					return finish(answer, nil, "child_packet_synthesized_answer", false)
+				}
+			}
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Tools are now disabled. Use the child-task result and gathered evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -2027,6 +2114,20 @@ func (r *Runner) Run(
 				IncrementRejectedStreak: true,
 				SetLastToolKey:          true,
 			})
+			writeDescriptionRepairActive = true
+			writeDescriptionDetourRejections = 0
+			writeDescriptionRepairPath = normalizeRunnerPath(req.Path)
+			implementationWriteOnlyRecoveryActive = true
+			if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
+				requiredPathCompletionRecoveryActive = true
+			}
+			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
+			hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+			rebuildTools()
+			prompt := r.writeDescriptionRepairPrompt(req)
+			r.emitWriteDescriptionValidatorDecision(stepNumber, req, "force_write_or_block", "write_description_missing", "write_description_repair")
+			r.emitEvent(RunEvent{Role: "write_description_repair_recovery", Content: prompt})
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			if consecutiveRejectedActions >= 2 {
 				answer, err := controller.completeWithoutMoreTools()
 				return finish(answer, err, "write_description_budget_exhausted", true)
@@ -2278,9 +2379,17 @@ func (r *Runner) Run(
 		if implementationWriteOnlyRecoveryActive && workspaceWriteResultCompleted(req, result) && len(r.remainingRequiredEditPaths(collectedResults)) == 0 {
 			implementationWriteOnlyRecoveryActive = false
 			requiredPathCompletionRecoveryActive = false
+			writeDescriptionRepairActive = false
+			writeDescriptionDetourRejections = 0
+			writeDescriptionRepairPath = ""
 			releaseHiddenTools(turnHiddenTools, implementationWriteOnlyHiddenTools)
 			rebuildTools()
 			r.emitEvent(RunEvent{Role: "tool_hidden", Content: "non-write tools restored after required implementation writes completed"})
+		}
+		if writeDescriptionRepairActive && workspaceWriteResultCompleted(req, result) && normalizeRunnerPath(req.Path) == writeDescriptionRepairPath {
+			writeDescriptionRepairActive = false
+			writeDescriptionDetourRejections = 0
+			writeDescriptionRepairPath = ""
 		}
 		if prompt, ok := r.scratchpadDeliverableFailedEvidenceNudge(req, result, collectedResults); ok {
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
@@ -3030,7 +3139,20 @@ func (r *Runner) emitNextActionState(step int, reason string, req workspace.Tool
 		return
 	}
 	brief := r.visibleBriefForToolSurface(r.RuntimeBrief, results)
-	state := buildRunnerNextActionStateWithAllowedTools(r.agentName(), step, reason, req, result, results, declarationMovesForbidden, brief, r.currentAllowedTools)
+	state, phaseContract := buildRunnerNextActionStateWithAllowedToolsAndContract(r.agentName(), step, reason, req, result, results, declarationMovesForbidden, brief, r.currentAllowedTools)
+	if r.activeAutonomy != nil {
+		r.activeAutonomy.emitTurnPhaseSurfaceSummary(turnPhaseSurfaceSummaryFromNextActionState(state, phaseContract), phaseContract)
+		if strings.TrimSpace(result.Error) != "" {
+			card := BuildRecoveryCard(RecoveryCardInput{
+				PhaseContract:       phaseContract,
+				CurrentAllowedTools: r.currentAllowedTools,
+				RejectedRequest:     req,
+				RejectedResult:      result,
+				EvidenceRefs:        state.EvidencePaths,
+			})
+			r.activeAutonomy.emitTurnPhaseSurfaceSummary(card.TurnPhaseSurfaceSummary(phaseContract), phaseContract)
+		}
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return
@@ -3999,6 +4121,11 @@ func buildRunnerNextActionState(agent string, step int, reason string, req works
 }
 
 func buildRunnerNextActionStateWithAllowedTools(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string) runnerNextActionState {
+	state, _ := buildRunnerNextActionStateWithAllowedToolsAndContract(agent, step, reason, req, result, results, declarationMovesForbidden, brief, currentAllowedTools)
+	return state
+}
+
+func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief, currentAllowedTools []string) (runnerNextActionState, TurnPhaseContract) {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" {
 		tool = strings.TrimSpace(result.Tool)
@@ -4067,14 +4194,14 @@ func buildRunnerNextActionStateWithAllowedTools(agent string, step int, reason s
 		state.InvalidNextActions = reviewRepairTerminalInvalidNextActions()
 		state.NextValidActions = reviewRepairTerminalValidNextActions()
 		state.StateSummary = runnerStateSummary(state)
-		return state
+		return state, phaseContract
 	}
 	state = applyDelegatedReadOnlyClosureBias(state, agent, brief, results)
 	state = applyPostChildClosureBias(state, agent, results)
 	state = applyScratchpadDeliverableCloseoutBias(state, brief, results)
 	state = applyClosurePromptRefinement(state)
 	state.StateSummary = runnerStateSummary(state)
-	return state
+	return state, phaseContract
 }
 
 func buildRunnerFailureFeedbackPacket(agent string, step int, reason string, req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult, declarationMovesForbidden bool, brief workerruntime.WorkerRuntimeBrief) runnerFailureFeedbackPacket {
@@ -5901,6 +6028,9 @@ func (r *Runner) completionGateRejection(reply string, results []workspace.ToolR
 	if result, rejected := r.readOnlyNonSubstantiveCompletionRejection(reply, results); rejected {
 		return result, true
 	}
+	if result, rejected := r.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
+		return result, true
+	}
 	if result, rejected := r.mutationCompletionRejection(reply, results); rejected {
 		return result, true
 	}
@@ -5956,7 +6086,10 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
 		return workspace.ToolResult{}, false
 	}
-	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
+	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
+		return workspace.ToolResult{}, false
+	}
+	if brief.Readiness == nil && !readOnlyExplanationGateApplies(brief) {
 		return workspace.ToolResult{}, false
 	}
 	if len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 {
@@ -6023,10 +6156,19 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		return workspace.ToolResult{}, false
 	}
 	if !containsAny(lower,
-		" let me search ", " let me inspect ", " let me read ", " let me refresh ", " let me run ", " let me check ",
-		" i need to search ", " i need to inspect ", " i need to find ", " i need to read ", " i need to refresh ", " i need to run ", " i need to check ",
-		" i'll search ", " i'll inspect ", " i'll read ", " i'll refresh ", " i'll run ", " i'll check ",
-		" i will search ", " i will inspect ", " i will read ", " i will refresh ", " i will run ", " i will check ",
+		" let me search ", " let me inspect ", " let me read ", " let me refresh ", " let me run ", " let me check ", " let me audit ", " let me investigate ", " let me explore ", " let me look ",
+		" let me call ", " let me use ",
+		" i need to search ", " i need to inspect ", " i need to find ", " i need to read ", " i need to refresh ", " i need to run ", " i need to check ", " i need to audit ", " i need to investigate ", " i need to explore ", " i need to look ",
+		" i need to call ", " i need to use ",
+		" i should search ", " i should inspect ", " i should find ", " i should read ", " i should refresh ", " i should run ", " i should check ", " i should audit ", " i should investigate ", " i should explore ", " i should look ",
+		" i should call ", " i should use ",
+		" i'll search ", " i'll inspect ", " i'll read ", " i'll refresh ", " i'll run ", " i'll check ", " i'll audit ", " i'll investigate ", " i'll explore ", " i'll look ",
+		" i'll call ", " i'll use ",
+		" i will search ", " i will inspect ", " i will read ", " i will refresh ", " i will run ", " i will check ", " i will audit ", " i will investigate ", " i will explore ", " i will look ",
+		" i will call ", " i will use ",
+		" i'm going to search ", " i'm going to inspect ", " i'm going to read ", " i'm going to run ", " i'm going to check ", " i'm going to audit ", " i'm going to investigate ", " i'm going to explore ", " i'm going to look ",
+		" i'm going to call ", " i'm going to use ",
+		" i'll start by ", " i will start by ",
 		" i'll ",
 		" i will ",
 	) {
@@ -6041,6 +6183,38 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		Tool:    "completion_gate",
 		Summary: "Completion gate rejected unresolved process narration",
 		Error:   "the reply describes an intended future search/read/inspection instead of completing the answer. Issue the needed tool call now, answer from gathered evidence, or state a concrete blocker.",
+	}, true
+}
+
+func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil {
+		return workspace.ToolResult{}, false
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return workspace.ToolResult{}, false
+	}
+	if !genericReadOnlyAnswerEvidenceReady(results) {
+		return workspace.ToolResult{}, false
+	}
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" || strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return workspace.ToolResult{}, false
+	}
+	lower := strings.ToLower(trimmed)
+	if !containsAny(lower,
+		"matching line(s)",
+		"returned hit(s)",
+		"the inspected source in `f",
+		" contains `f",
+		"tool-local",
+	) && !toolLocalSearchHandlePattern.MatchString(trimmed) {
+		return workspace.ToolResult{}, false
+	}
+	return workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Read-only completion gate rejected search-hit inventory",
+		Error:   "the reply inventories search handles or raw hit lines instead of answering the user's question. Synthesize the answer from the inspected evidence; do not expose tool-local handles or search-result scaffolding.",
 	}, true
 }
 
@@ -8853,6 +9027,9 @@ func (r *Runner) deterministicNoWriteRecoveryRead(results []workspace.ToolResult
 	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "search_content" {
 		return workspace.ToolRequest{}, "", false
 	}
+	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+		return workspace.ToolRequest{}, "", false
+	}
 	paths := planThenExecuteCandidateScopePaths(r.RuntimeBrief, results, 4)
 	if len(paths) == 0 || alreadyReadPath(results, paths[0]) {
 		return workspace.ToolRequest{}, "", false
@@ -9708,6 +9885,9 @@ func (r *Runner) deterministicNoWriteRecoveryUnreadCandidateRead(results []works
 	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) {
 		return workspace.ToolRequest{}, "", false
 	}
+	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+		return workspace.ToolRequest{}, "", false
+	}
 	if r.planThenExecutePlannerPhase() {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -9769,6 +9949,9 @@ func (r *Runner) deterministicNoWriteRecoveryTargetRead(results []workspace.Tool
 	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "" {
 		return workspace.ToolRequest{}, "", false
 	}
+	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+		return workspace.ToolRequest{}, "", false
+	}
 	for _, ref := range r.RuntimeBrief.TargetRefs {
 		path := strings.TrimSpace(filepath.ToSlash(ref))
 		if path == "" || !recoverySearchPathLooksEditableSource(path) || alreadyReadPath(results, path) {
@@ -9791,6 +9974,9 @@ func (r *Runner) deterministicNoWriteRecoverySearch(results []workspace.ToolResu
 	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || (lastNonGateTool(results) != "context_pack" && !lastNonGateAttemptWasUnavailableContextPack(results)) {
 		return workspace.ToolRequest{}, "", false
 	}
+	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+		return workspace.ToolRequest{}, "", false
+	}
 	if len(concreteRecoveryEvidencePaths(results, 1)) > 0 || successfulToolSeen(results, "search_content") {
 		return workspace.ToolRequest{}, "", false
 	}
@@ -9806,6 +9992,13 @@ func (r *Runner) deterministicNoWriteRecoverySearch(results []workspace.ToolResu
 		WhyNotAnswering: "need a grounded source hit before reading or writing",
 	}
 	return req, marshalToolRequestRaw(req), true
+}
+
+func (r *Runner) unscopedImplementationWriteReadyAfterNoWriteGate(results []workspace.ToolResult) bool {
+	if r == nil || !completionGateResultSeen(results) || r.planThenExecutePlannerPhase() {
+		return false
+	}
+	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
 }
 
 func successfulToolSeen(results []workspace.ToolResult, tool string) bool {
@@ -11497,6 +11690,20 @@ func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrie
 	return true
 }
 
+func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
+	if r == nil || !completionGateResultSeen(results) || !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return "", "", "", false
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "requested tool"
+	}
+	summary = "Implementation target write-ready tool rejected"
+	errorText = fmt.Sprintf("%s is outside the unscoped implementation target-write-ready surface. Source-body evidence is already available; the next valid action is a parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence.", tool)
+	prompt = "The implementation lane is target-write-ready. Do not inspect, search, or navigate more source before the first write. Use a parser-readable write tool for the sourced target path, or answer <<QUESTION>> with the exact blocker/no-op evidence."
+	return summary, errorText, prompt, true
+}
+
 func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
 	if r == nil || !implementationPreWriteToolSurfaceActive(r.RuntimeBrief, results) || r.writeOnlyRecoveryToolIsWrite(req.Tool) {
 		return "", "", "", false
@@ -11929,6 +12136,9 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 	if r != nil && r.Workspace != nil {
 		extReg = r.Workspace.ExternalToolsRegistry()
 	}
+	if lastResultSummaryIs(results, "Missing write description") {
+		return "", "", "", false
+	}
 	if r == nil || !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) || implementationScopedEditToolAllowedWithRegistry(req.Tool, extReg) {
 		return "", "", "", false
 	}
@@ -11947,6 +12157,47 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 	errorText = fmt.Sprintf("%s is outside the scoped required-path implementation surface for %s. The available contract outcomes are required-path write capability, semantic/context/declared project discovery for a named gap, a narrow raw read on a required path or evidence path, or <<QUESTION>> with the exact blocker.", tool, target)
 	prompt = fmt.Sprintf("The implementation packet defines the edit scope for %s. The available contract menu is: required-path edit, context/language/declared read-only project discovery for the exact edit-safety fact, narrow raw read only for anchor confirmation on a required path or evidence path, or <<QUESTION>> with the exact blocker. Do not use task planning, shell, opaque external tools, or broad raw search until the required-path contract is resolved.", target)
 	return summary, errorText, prompt, true
+}
+
+func lastResultSummaryIs(results []workspace.ToolResult, summary string) bool {
+	if len(results) == 0 {
+		return false
+	}
+	return strings.TrimSpace(results[len(results)-1].Summary) == strings.TrimSpace(summary)
+}
+
+func (r *Runner) writeDescriptionRepairPrompt(req workspace.ToolRequest) string {
+	path := normalizeRunnerPath(req.Path)
+	if path == "" {
+		path = "the required edit path"
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "the write tool"
+	}
+	return fmt.Sprintf("Write-description repair is active for %s on %s. Missing: a non-empty `description` field. Valid next actions: reissue the same in-scope write with `description`, or answer `<<QUESTION>>:` with the exact blocker. Invalid now: search, broad discovery, unrelated reads, unrelated writes, or prose final answer.", tool, path)
+}
+
+func (r *Runner) emitWriteDescriptionValidatorDecision(step int, req workspace.ToolRequest, status string, lastFailure string, recoveryID string) {
+	if r == nil {
+		return
+	}
+	path := normalizeRunnerPath(req.Path)
+	payload := map[string]any{
+		"schema":               "idiom.dynamic_validator_decision.v1",
+		"step":                 step,
+		"status":               strings.TrimSpace(status),
+		"invariant_id":         "write.description.required",
+		"recovery_id":          strings.TrimSpace(recoveryID),
+		"last_failure":         strings.TrimSpace(lastFailure),
+		"tool":                 strings.TrimSpace(req.Tool),
+		"path":                 path,
+		"missing":              []string{"write_description_missing"},
+		"valid_next_actions":   []string{"same_write_with_description", "typed_blocker"},
+		"invalid_next_actions": []string{"search", "broad_discovery", "unrelated_read", "unrelated_write", "prose_final"},
+		"hide_tools":           []string{"non_write_tools"},
+	}
+	r.emitEvent(marshalRunEvent("dynamic_validator_decision", payload))
 }
 
 func (r *Runner) writeReadyPacketReadWithoutGapRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, hideNonWrite bool, reject bool) {
@@ -12822,6 +13073,53 @@ func readRequestTargetsRequiredEditPath(req workspace.ToolRequest, requiredPaths
 	return false
 }
 
+func writeRequestTargetsRequiredEditPath(req workspace.ToolRequest, requiredPaths []string) bool {
+	required := normalizedRequiredEditPathSet(requiredPaths)
+	if len(required) == 0 {
+		return false
+	}
+	paths := writeRequestPaths(req)
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" {
+			return false
+		}
+		if _, ok := required[normalized]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func writeRequestTargetsPath(req workspace.ToolRequest, targetPath string) bool {
+	target := normalizeRunnerPath(targetPath)
+	if target == "" {
+		return false
+	}
+	paths := writeRequestPaths(req)
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if normalizeRunnerPath(path) == target {
+			return true
+		}
+	}
+	return false
+}
+
+func scopedReadRecoveryRejectionKey(req workspace.ToolRequest) string {
+	tool := strings.TrimSpace(req.Tool)
+	target := normalizeRunnerPath(util.FirstNonEmpty(req.Path, req.ID, req.Handle, req.Query, req.Pattern, req.Task, req.Command))
+	if target == "" {
+		target = "<empty-target>"
+	}
+	return tool + ":" + normalizeActionToken(target)
+}
+
 func requiredEditPathAllowsMkdir(dir string, required map[string]struct{}) bool {
 	dir = strings.Trim(strings.TrimSpace(dir), "/")
 	if dir == "" {
@@ -13675,6 +13973,7 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, 8)...)
 	paths = append(paths, pinnedPathsFromToolResults(results, 8)...)
 	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, 8)
+	paths = mergeQuestionExpectedEvidencePaths(objective, paths)
 	if len(paths) == 0 {
 		return "", false
 	}
@@ -13695,6 +13994,11 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		b.WriteString("- `")
 		b.WriteString(strings.TrimSpace(path))
 		b.WriteString("`\n")
+	}
+	if block := questionPresentationBlock(objective); block != "" {
+		b.WriteString("\n")
+		b.WriteString(block)
+		b.WriteString("\n")
 	}
 	b.WriteString("\nKey findings:\n")
 	for _, result := range limitFallbackResults(useful, 3) {
@@ -14308,11 +14612,12 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 			"evidence_paths": evidencePaths,
 		}))
 		r.emitEvent(marshalRunEvent("final_answer_critic", map[string]any{
-			"contract":     contract,
-			"passed":       false,
-			"action":       "block",
-			"reason":       reason,
-			"blocker_kind": blockerKind,
+			"contract":       contract,
+			"passed":         false,
+			"action":         "block",
+			"reason":         reason,
+			"blocker_kind":   blockerKind,
+			"evidence_paths": evidencePaths,
 		}))
 		r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
 			"lane":           lane,
@@ -14341,9 +14646,10 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	}
 	r.emitEvent(marshalRunEvent("readiness_check", readiness))
 	critic := map[string]any{
-		"contract": contract,
-		"passed":   true,
-		"action":   "accept",
+		"contract":       contract,
+		"passed":         true,
+		"action":         "accept",
+		"evidence_paths": evidencePaths,
 	}
 	r.emitEvent(marshalRunEvent("final_answer_critic", critic))
 	r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
@@ -14636,10 +14942,6 @@ func prefersEarlyReadOnlyDelegation(brief workerruntime.WorkerRuntimeBrief) bool
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return false
 	}
-	switch strings.TrimSpace(brief.Contract) {
-	case "architecture_assessment", "review_findings":
-		return false
-	}
 	if strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
 		return false
 	}
@@ -14682,8 +14984,16 @@ func (r *Runner) initialBootstrapInstruction() string {
 			"[delegated read-only bootstrap]",
 			"Consume the delegated scope first. Do not start with directory walking when the delegated prompt already names paths or components.",
 			"Use one exact-text or language-symbol capability to locate the mechanism, then inspect the best hit directly with a bounded read or symbol-read capability.",
+			"For broad architecture or boundary questions, prefer a composite discovery_query first, then inspect only the named paths or symbols that answer the delegated question.",
 			"After any successful search hit, inspect that hit before doing another filename or content search.",
 			"Stop as soon as the delegated question is answered. Return concise grounded findings with inspected paths and confidence.",
+		}, "\n")
+	case family == "architecture" && strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "architecture_assessment"):
+		return strings.Join([]string{
+			"[architecture bootstrap]",
+			"Start broad architecture questions with delegated read-only discovery when the task tool is available.",
+			"The delegated packet should establish inspected paths, boundary evidence, confidence, and named gaps before local follow-up.",
+			"After a child packet, answer unless one exact missing claim needs one bounded probe.",
 		}, "\n")
 	case family == "verification_only" || strings.EqualFold(profile, "read_only_verification_shell"):
 		cmd := "go test ./..."
@@ -15881,6 +16191,12 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, textOnlyOpts, collectedResults, metrics)
 	if err != nil {
 		return "", err
+	}
+	if result, rejected := r.completionGateRejection(answer, collectedResults, 0, nil, false); rejected {
+		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+			return fallback, nil
+		}
+		return "", fmt.Errorf("%s", result.Error)
 	}
 	if result, rejected := r.readOnlyNonSubstantiveCompletionRejection(answer, collectedResults); rejected {
 		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {

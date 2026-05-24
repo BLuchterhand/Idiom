@@ -30,9 +30,12 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 
 	wantIDs := []string{
 		string(ReadOnlyCapabilityFileOutline),
+		string(ReadOnlyCapabilityInspectSymbol),
 		string(ReadOnlyCapabilitySymbolLookup),
 		string(ReadOnlyCapabilityDefinition),
 		string(ReadOnlyCapabilityReferences),
+		string(ReadOnlyCapabilityCallsFrom),
+		string(ReadOnlyCapabilityCallsInto),
 		string(ReadOnlyCapabilityRelatedFiles),
 	}
 	gotIDs := make([]string, 0, len(registry.Capabilities))
@@ -319,6 +322,17 @@ func TestResolveReadOnlyCapabilityFiltersAvailableAdaptersAndAliases(t *testing.
 	if got := capabilityAdapterTools(outline.AvailableAdapters); !slices.Equal(got, []string{"code_navigate"}) {
 		t.Fatalf("outline available adapters = %#v", got)
 	}
+
+	inspect, ok := ResolveReadOnlyCapability("inspect_symbol", []string{"code_navigate", "go_read_symbol"})
+	if !ok {
+		t.Fatal("design vocabulary alias should resolve")
+	}
+	if inspect.Capability.ID != string(ReadOnlyCapabilityInspectSymbol) {
+		t.Fatalf("inspect capability ID = %q", inspect.Capability.ID)
+	}
+	if got := capabilityAdapterTools(inspect.AvailableAdapters); !slices.Equal(got, []string{"code_navigate", "go_read_symbol"}) {
+		t.Fatalf("inspect-symbol available adapters = %#v", got)
+	}
 }
 
 func TestReadOnlyCapabilityRuntimeResolutionDoesNotUseWorkspaceManifestDetection(t *testing.T) {
@@ -369,6 +383,48 @@ func TestReadOnlyCapabilityRuntimeResolutionDoesNotUseWorkspaceManifestDetection
 	}
 }
 
+func TestReadOnlyCapabilityPathLanguageBeatsConflictingOverride(t *testing.T) {
+	root := t.TempDir()
+	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/capability\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(root, "pkg", "runner.go"), "package pkg\n\nfunc Run() string {\n\treturn \"ok\"\n}\n")
+	mgr := NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		MaxDirectoryEntries:   1024,
+		EnableShell:           true,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       readOnlyCapabilityToolName,
+		Capability: string(ReadOnlyCapabilityDefinition),
+		Path:       filepath.Join("pkg", "runner.go"),
+		Language:   "python",
+		Pattern:    "Run",
+	})
+	if result.Error != "" {
+		t.Fatalf("read_only_capability returned error: %v\n%s", result.Error, result.Output)
+	}
+	var payload ReadOnlyCapabilityExecutionResult
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("decode capability payload: %v\n%s", err, result.Output)
+	}
+	if payload.UnderlyingResult == nil || !strings.Contains(payload.UnderlyingResult.Output, "routed_tool: go_definition") {
+		t.Fatalf("expected path-derived Go definition route, got %#v", payload.UnderlyingResult)
+	}
+	if got := capabilityAdapterTools(payload.AvailableAdapters); !slices.Equal(got, []string{"code_navigate", "go_definition"}) {
+		t.Fatalf("expected path-derived Go adapters only, got %#v", got)
+	}
+	if payload.ResolvedTarget.Language != "python" || payload.ResolvedTarget.Path != "pkg/runner.go" {
+		t.Fatalf("resolved target should preserve request target, got %#v", payload.ResolvedTarget)
+	}
+	if payload.FreshnessState == "" || payload.TruncationState.State == "" || payload.ResultCounts.OutputLineCount == 0 || len(payload.FollowUpCapabilities) == 0 {
+		t.Fatalf("expected result contract metadata, got freshness=%q truncation=%#v counts=%#v followups=%#v", payload.FreshnessState, payload.TruncationState, payload.ResultCounts, payload.FollowUpCapabilities)
+	}
+}
+
 func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T) {
 	root := t.TempDir()
 	writeTestFile(t, filepath.Join(root, "go.mod"), "module example.com/capability\n\ngo 1.22\n")
@@ -402,6 +458,17 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 			wantAdapter:    "go_file_outline",
 		},
 		{
+			name: "inspect symbol",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: "inspect_symbol",
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "Run",
+			},
+			wantCapability: string(ReadOnlyCapabilityInspectSymbol),
+			wantAdapter:    "go_read_symbol",
+		},
+		{
 			name: "symbol lookup",
 			req: ToolRequest{
 				Tool:       readOnlyCapabilityToolName,
@@ -433,6 +500,28 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 			},
 			wantCapability: string(ReadOnlyCapabilityDefinition),
 			wantAdapter:    "go_definition",
+		},
+		{
+			name: "calls from",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilityCallsFrom),
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "Run",
+			},
+			wantCapability: string(ReadOnlyCapabilityCallsFrom),
+			wantAdapter:    "go_calls_from",
+		},
+		{
+			name: "calls into",
+			req: ToolRequest{
+				Tool:       readOnlyCapabilityToolName,
+				Capability: string(ReadOnlyCapabilityCallsInto),
+				Path:       filepath.Join("pkg", "runner.go"),
+				Pattern:    "helper",
+			},
+			wantCapability: string(ReadOnlyCapabilityCallsInto),
+			wantAdapter:    "go_calls_into",
 		},
 		{
 			name: "related files",
@@ -576,7 +665,7 @@ func TestReadOnlyCapabilityReportsUnsupportedAbsentConfidence(t *testing.T) {
 	}
 	if payload.Status.Fallback.State != "unsupported" ||
 		payload.Status.Fallback.Reason != "unsupported_language" ||
-		!strings.Contains(payload.Status.Fallback.SourceReason, "unsupported language") {
+		!strings.Contains(payload.Status.Fallback.SourceReason, "no registered language route") {
 		t.Fatalf("expected unsupported-language fallback status, got %#v", payload.Status.Fallback)
 	}
 	if payload.Status.AbsenceConfidence == nil ||
@@ -628,7 +717,7 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 		!slices.Contains(coverage.FallbackStates, "unsupported") {
 		t.Fatalf("expected status/fallback state metrics in coverage: %#v", coverage)
 	}
-	if coverage.RoutedCapabilityCount != 5 ||
+	if coverage.RoutedCapabilityCount != 8 ||
 		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityDefinition)) ||
 		!slices.Contains(coverage.RoutedCapabilities, string(ReadOnlyCapabilityRelatedFiles)) {
 		t.Fatalf("expected routed read-only capabilities in coverage: %#v", coverage)
@@ -640,7 +729,7 @@ func TestReadOnlyCapabilityCoverageReportsUnmappedAdapters(t *testing.T) {
 		!slices.Contains(coverage.FallbackStates, "deferred") {
 		t.Fatalf("expected deferred fallback metrics in coverage: %#v", coverage)
 	}
-	if coverage.RouteStateCounts["routed"] != 5 || coverage.RouteStateCounts["deferred"] == 0 || len(coverage.RouteStates) == 0 {
+	if coverage.RouteStateCounts["routed"] != 8 || coverage.RouteStateCounts["deferred"] == 0 || len(coverage.RouteStates) == 0 {
 		t.Fatalf("expected routed/deferred route state metrics in coverage: %#v", coverage)
 	}
 	if coverage.DisabledCapabilityCount != 0 || len(coverage.DisabledCapabilities) != 0 {
@@ -708,6 +797,12 @@ func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
 	if report.ToolSurface == nil || report.ToolSurface.CapabilityRegistry == nil {
 		t.Fatalf("expected capability registry metrics, got %#v", report.ToolSurface)
 	}
+	if report.ToolSurface.CapabilityToolCounts["find_definition"] == 0 ||
+		report.ToolSurface.CapabilityToolCounts["audit_behavior"] == 0 ||
+		report.ToolSurface.CapabilityClassCounts[CapabilityClassCompatibilityAdapter] == 0 ||
+		report.ToolSurface.CapabilityClassCounts[CapabilityClassDeferred] == 0 {
+		t.Fatalf("expected capability grouping metrics, got tool_counts=%#v class_counts=%#v", report.ToolSurface.CapabilityToolCounts, report.ToolSurface.CapabilityClassCounts)
+	}
 	got := report.ToolSurface.CapabilityRegistry
 	want := ReadOnlyCapabilityCoverageForTools(toolManifestToolsAcrossBuiltInSurfaces())
 	if got.CapabilityCount != want.CapabilityCount ||
@@ -734,7 +829,7 @@ func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
 	if got.FallbackStateCount == 0 || !slices.Contains(got.FallbackStates, "disabled") {
 		t.Fatalf("harness audit should report fallback state metrics, got %#v", got)
 	}
-	if got.RouteStateCounts["routed"] != 5 || got.RouteStateCounts["deferred"] == 0 {
+	if got.RouteStateCounts["routed"] != 8 || got.RouteStateCounts["deferred"] == 0 {
 		t.Fatalf("harness audit should report routed/deferred route states, got %#v", got.RouteStateCounts)
 	}
 	if got.UnsafeMappedAdapterCount != 0 || len(got.UnsafeMappedAdapters) != 0 {

@@ -76,6 +76,7 @@ func (r liveSuiteRunner) prepareTaskLogPath(task eval.SWETask) (string, error) {
 	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
 		return "", fmt.Errorf("create log dir for %s: %w", task.ID, err)
 	}
+	_ = os.Remove(logPath)
 	return logPath, nil
 }
 
@@ -104,7 +105,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 	taskTimeout := liveTaskTimeoutSeconds(task)
 	start := time.Now()
 	fmt.Fprintf(r.progress, "[%d/%d] running %s (timeout=%ds)\n", index+1, total, strings.TrimSpace(task.ID), taskTimeout)
-	cmdCtx, cancel := context.WithTimeout(context.Background(), time.Duration(taskTimeout+15)*time.Second)
+	cmdCtx, cancel := context.WithTimeout(context.Background(), time.Duration(taskTimeout+45)*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(cmdCtx, "/bin/sh", "-lc", command)
 	cmd.Dir = firstNonEmpty(fixture, filepath.Dir(r.suitePath))
@@ -130,7 +131,7 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 	}
 	if err != nil {
 		if cmdCtx.Err() == context.DeadlineExceeded {
-			return fmt.Errorf("run live task %s: evaluator deadline exceeded after %ds", task.ID, taskTimeout+15)
+			return fmt.Errorf("run live task %s: evaluator deadline exceeded after %ds", task.ID, taskTimeout+45)
 		}
 		return fmt.Errorf("run live task %s: %w: %s", task.ID, err, strings.TrimSpace(string(output)))
 	}

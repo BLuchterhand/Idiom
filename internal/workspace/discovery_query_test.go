@@ -271,6 +271,14 @@ func TestDiscoveryQueryRejectsUnknownPurpose(t *testing.T) {
 	}
 }
 
+func TestDiscoveryQueryNormalizesArchitectureUsefulnessAliases(t *testing.T) {
+	for _, purpose := range []string{"tool_usefulness", "discovery_tools", "usefulness"} {
+		if got := normalizeDiscoveryQueryPurpose(purpose); got != "architecture_boundary" {
+			t.Fatalf("normalizeDiscoveryQueryPurpose(%q) = %q, want architecture_boundary", purpose, got)
+		}
+	}
+}
+
 func TestDiscoveryQueryLanguageCoverageFollowsRegistry(t *testing.T) {
 	for _, lang := range LanguageRegistry() {
 		glob := globForDiscoveryLanguage(lang.Name)

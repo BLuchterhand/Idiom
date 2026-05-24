@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
@@ -28,6 +29,7 @@ type RecoveryCard struct {
 
 	CallableTools         []string
 	CallableActionClasses []string
+	TerminalOutcomes      []string
 
 	DeterministicSafeNextAction string
 	ExactBlockerShape           string
@@ -73,6 +75,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		InvalidRepeats:              mergeRecoveryCardStrings(input.InvalidRepeats, recoveryCardInvalidRepeats(invariantID, contract)),
 		CallableTools:               recoveryCardCallableTools(contract, input.CurrentAllowedTools),
 		CallableActionClasses:       recoveryCardCallableActionClasses(contract, input.CurrentAllowedTools),
+		TerminalOutcomes:            recoveryCardTerminalOutcomes(contract),
 		DeterministicSafeNextAction: strings.TrimSpace(input.DeterministicSafeNextAction),
 		ExactBlockerShape:           firstRecoveryCardString(input.ExactBlockerShape, recoveryCardBlockerShape(contract)),
 	})
@@ -129,6 +132,7 @@ func NormalizeRecoveryCard(card RecoveryCard) RecoveryCard {
 	card.InvalidRepeats = uniqueRecoveryCardStrings(card.InvalidRepeats)
 	card.CallableTools = uniqueRecoveryCardStrings(card.CallableTools)
 	card.CallableActionClasses = uniqueRecoveryCardStrings(card.CallableActionClasses)
+	card.TerminalOutcomes = uniqueRecoveryCardStrings(card.TerminalOutcomes)
 	card.DeterministicSafeNextAction = strings.TrimSpace(card.DeterministicSafeNextAction)
 	card.ExactBlockerShape = sanitizeRecoveryCardBlockerShape(card.ExactBlockerShape)
 	return card
@@ -150,6 +154,24 @@ func (card RecoveryCard) Render() string {
 	writeRecoveryCardLine(&b, "deterministic safe next action", recoveryCardOptionalLabel(card.DeterministicSafeNextAction, "none available"))
 	writeRecoveryCardLine(&b, "exact blocker shape", recoveryCardOptionalLabel(card.ExactBlockerShape, "<<QUESTION>>: State the exact unsupported claim and the concrete evidence source that is unavailable or failed."))
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func (card RecoveryCard) TurnPhaseSurfaceSummary(contract TurnPhaseContract) autonomy.TurnPhaseSurfaceSummaryEvent {
+	card = NormalizeRecoveryCard(card)
+	return autonomy.TurnPhaseSurfaceSummaryEvent{
+		SchemaVersion:           autonomy.TurnPhaseSurfaceSummarySchemaVersion,
+		SurfaceID:               "recovery_card",
+		ContractID:              card.ContractID,
+		PhaseID:                 firstRecoveryCardString(card.PhaseID, contract.PhaseID),
+		ModelCallID:             contract.ModelCallID,
+		ProtocolHash:            contract.autonomyEventPayload().ProtocolHash,
+		InvariantID:             card.InvariantID,
+		AdvertisedActionClasses: append([]string(nil), card.CallableActionClasses...),
+		CallableTools:           append([]string(nil), card.CallableTools...),
+		TerminalOutcomes:        append([]string(nil), card.TerminalOutcomes...),
+		TerminalResponseShapes:  append([]string(nil), card.TerminalOutcomes...),
+		ObligationRefs:          append([]string(nil), card.EvidenceRefs...),
+	}
 }
 
 func sanitizeRecoveryCardBlockerShape(shape string) string {
@@ -381,6 +403,13 @@ func recoveryCardCallableActionClasses(contract TurnPhaseContract, currentAllowe
 		return contractClasses
 	}
 	return mergeRecoveryCardStrings(toolClasses, contractClasses)
+}
+
+func recoveryCardTerminalOutcomes(contract TurnPhaseContract) []string {
+	return firstNonEmptyRecoveryCardStrings(
+		contract.ActionPolicy.TerminalResponseShapes,
+		contract.TerminalOutcomes,
+	)
 }
 
 func recoveryCardCallableActionClassesForTools(tools []string, contractClasses []string) []string {

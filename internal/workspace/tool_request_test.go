@@ -156,6 +156,32 @@ func TestParseToolRequestUnwrapsNestedRequestPayload(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestUnwrapsNestedRequestObjectPayload(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"search_content\",\"request\":{\"pattern\":\"redacted\",\"path\":\"internal\"}}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "search_content" || req.Pattern != "redacted" || req.Path != "internal" {
+		t.Fatalf("unexpected nested object request repair: %#v", req)
+	}
+}
+
+func TestParseToolRequestUnwrapsNestedInputObjectPayload(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"input\":{\"tool\":\"read_symbol\",\"path\":\"internal/frontier/discovery.go\",\"symbol\":\"DiscoveryQuery\"}}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/frontier/discovery.go" || req.Symbol != "DiscoveryQuery" {
+		t.Fatalf("unexpected nested input object request repair: %#v", req)
+	}
+}
+
 func TestParseToolRequestTreatsSymbolAsPatternAlias(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"go_read_symbol\",\"path\":\"internal/agent/runner.go\",\"symbol\":\"Runner.Run\"}\n```")
 	if err != nil {

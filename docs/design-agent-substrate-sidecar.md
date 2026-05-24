@@ -14,7 +14,7 @@ Related docs:
 - [design-local-model-operations.md](design-local-model-operations.md)
 - [design-eval-audit-learning-flywheel.md](design-eval-audit-learning-flywheel.md)
 - [lane-architecture.md](lane-architecture.md)
-- [reusability-design.md](reusability-design.md)
+- [archive/2026-05-historical/reusability-design.md](archive/2026-05-historical/reusability-design.md)
 - [mcp-server-support.md](mcp-server-support.md)
 - [codebase-comprehension-memory-design.md](codebase-comprehension-memory-design.md)
 - [architect-packets.md](architect-packets.md)
@@ -806,7 +806,8 @@ This document should become the sidecar/substrate pillar and cross-link to:
 - Eval/audit/learning flywheel in
   [design-eval-audit-learning-flywheel.md](design-eval-audit-learning-flywheel.md):
   sidecar traces must be replayable evidence, not unstructured logs.
-- Reusable lane/project seams in [reusability-design.md](reusability-design.md):
+- Reusable lane/project seams in
+  [archive/2026-05-historical/reusability-design.md](archive/2026-05-historical/reusability-design.md):
   project-specific tooling stays project-specific while Idiom owns the generic
   sidecar contract.
 - MCP server mechanics in [mcp-server-support.md](mcp-server-support.md): MCP is

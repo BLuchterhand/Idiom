@@ -41,6 +41,7 @@ type WorkerRuntimeBrief struct {
 	AllowedTools         []string              `json:"allowed_tools,omitempty"`
 	ForbiddenTools       []string              `json:"forbidden_tools,omitempty"`
 	ToolManifest         []ToolManifestEntry   `json:"tool_manifest,omitempty"`
+	EvidenceCapabilities []string              `json:"available_evidence_capabilities,omitempty"`
 	RequiredEvidence     []string              `json:"required_evidence,omitempty"`
 	RequiredTools        []string              `json:"required_tools,omitempty"`
 	ReadinessGate        []string              `json:"readiness_gate,omitempty"`
@@ -114,6 +115,7 @@ type RunState struct {
 	AllowedTools         []string            `json:"allowed_tools,omitempty"`
 	ForbiddenTools       []string            `json:"forbidden_tools,omitempty"`
 	ToolManifest         []ToolManifestEntry `json:"tool_manifest,omitempty"`
+	EvidenceCapabilities []string            `json:"available_evidence_capabilities,omitempty"`
 	RequiredEvidence     []string            `json:"required_evidence,omitempty"`
 	RequiredTools        []string            `json:"required_tools,omitempty"`
 	ReadinessGate        []string            `json:"readiness_gate,omitempty"`
@@ -794,6 +796,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.Constraints = uniqueNonEmpty(state.Constraints)
 	state.AllowedTools = uniqueNonEmpty(state.AllowedTools)
 	state.ForbiddenTools = uniqueNonEmpty(state.ForbiddenTools)
+	state.EvidenceCapabilities = uniqueNonEmpty(state.EvidenceCapabilities)
 	state.RequiredEvidence = uniqueNonEmpty(state.RequiredEvidence)
 	state.RequiredTools = uniqueNonEmpty(state.RequiredTools)
 	state.ReadinessGate = uniqueNonEmpty(state.ReadinessGate)
@@ -833,6 +836,9 @@ func BuildStepInstruction(state RunState) StepInstruction {
 func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
 	directive := "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script."
+	if len(state.EvidenceCapabilities) > 0 {
+		directive += " Available evidence capabilities are summarized in current_state.available_evidence_capabilities; exact parser-readable tool names remain in current_state.tool_manifest."
+	}
 	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") && strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
 		directive += " Conversation lane is the default read-only answer lane: answer directly when visible context is enough; when workspace facts are needed, use efficient bounded reads/search/context tools, then return a concise, well formatted, on-topic prose/Markdown answer with the evidence named. Do not return tool summaries or JSON envelopes as the user-facing answer."
 	}
@@ -843,7 +849,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		directive += " For guarded workspace write tasks, the first assistant response must be either exactly one tool call or an explicit blocker/no-op answer; narrative-only implementation summaries are invalid before a successful write, no-op, or blocker."
 	}
 	if planThenExecutePlannerState(state) && len(state.RequiredEditPaths) > 0 {
-		directive += " When required_edit_paths are present in plan-execute planner phase, they are submit_plan coverage scope, not permission for direct edit tools. The available contract menu is a required-path source-body read for exact edit-safety evidence, one parser-readable submit_plan with complete executable final edit bodies, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact blocker."
+		directive += " When required_edit_paths are present in plan-execute planner phase, they are submit_plan coverage scope, not permission for direct edit tools. Follow the active contract protocol card when present; before source-body obligations close, the legal menu is a bounded required-path source-body read, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker. When source-body obligations are closed, submit exactly one parser-readable submit_plan with complete executable final edit bodies."
 	} else if implementationStateHasRequiredPathsForMutation(state) {
 		directive += " When required_edit_paths are present, treat the packet as the write scope. The available contract menu is an in-scope required-path edit, semantic/context/declared project discovery or a narrow required-path source read with named_gap for an exact edit-safety fact, or <<QUESTION>> with the exact blocker."
 	} else if genericGuardedMutationNeedsTargetContract(state) {
@@ -1037,6 +1043,9 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	if len(state.ToolManifest) == 0 {
 		state.ToolManifest = append([]ToolManifestEntry(nil), brief.ToolManifest...)
 	}
+	if len(state.EvidenceCapabilities) == 0 {
+		state.EvidenceCapabilities = append([]string(nil), brief.EvidenceCapabilities...)
+	}
 	if len(state.RequiredEvidence) == 0 {
 		state.RequiredEvidence = append([]string(nil), brief.RequiredEvidence...)
 	}
@@ -1094,6 +1103,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.UserBoundaries = uniqueNonEmpty(brief.UserBoundaries)
 	brief.AllowedTools = uniqueNonEmpty(brief.AllowedTools)
 	brief.ForbiddenTools = uniqueNonEmpty(brief.ForbiddenTools)
+	brief.EvidenceCapabilities = uniqueNonEmpty(brief.EvidenceCapabilities)
 	brief.RequiredEvidence = uniqueNonEmpty(brief.RequiredEvidence)
 	brief.RequiredTools = uniqueNonEmpty(brief.RequiredTools)
 	brief.ReadinessGate = uniqueNonEmpty(brief.ReadinessGate)
@@ -1112,10 +1122,14 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 		brief.AllowedTools = nil
 		brief.RequiredTools = nil
 		brief.ToolManifest = nil
+		brief.EvidenceCapabilities = nil
 		brief.DiscoveryExamples = nil
 	}
 	if len(brief.ToolManifest) == 0 && len(brief.AllowedTools) > 0 {
 		brief.ToolManifest = BuildToolManifest(brief.AllowedTools)
+	}
+	if len(brief.EvidenceCapabilities) == 0 && len(brief.ToolManifest) > 0 {
+		brief.EvidenceCapabilities = compactEvidenceCapabilitySummary(brief.ToolManifest)
 	}
 	return brief
 }
@@ -1260,6 +1274,79 @@ func toolAllowedInBrief(tools []string, want string) bool {
 		}
 	}
 	return false
+}
+
+type evidenceCapabilitySummaryInfo struct {
+	classes []string
+}
+
+func compactEvidenceCapabilitySummary(manifest []ToolManifestEntry) []string {
+	byCapability := make(map[string]*evidenceCapabilitySummaryInfo)
+	for _, entry := range manifest {
+		tool := strings.TrimSpace(entry.Tool)
+		if tool == "" || len(entry.EvidenceCapabilities) == 0 {
+			continue
+		}
+		classification := strings.TrimSpace(entry.CapabilityClassification)
+		for _, capability := range entry.EvidenceCapabilities {
+			capability = strings.TrimSpace(capability)
+			if capability == "" {
+				continue
+			}
+			info := byCapability[capability]
+			if info == nil {
+				info = &evidenceCapabilitySummaryInfo{}
+				byCapability[capability] = info
+			}
+			if classification != "" {
+				info.classes = appendUnique(info.classes, classification)
+			}
+		}
+	}
+	if len(byCapability) == 0 {
+		return nil
+	}
+	var summary []string
+	for _, capability := range evidenceCapabilityDisplayOrder() {
+		info := byCapability[capability]
+		if info == nil {
+			continue
+		}
+		summary = append(summary, formatEvidenceCapabilitySummary(capability, *info))
+		delete(byCapability, capability)
+	}
+	for capability, info := range byCapability {
+		summary = append(summary, formatEvidenceCapabilitySummary(capability, *info))
+	}
+	return uniqueNonEmpty(summary)
+}
+
+func evidenceCapabilityDisplayOrder() []string {
+	return []string{
+		"localize_change",
+		"query_context",
+		"inspect_file",
+		"inspect_symbol",
+		"find_definition",
+		"find_references",
+		"calls_from",
+		"calls_into",
+		"related_files",
+		"source_diagnostics",
+		"verify_edit",
+		"audit_behavior",
+	}
+}
+
+func formatEvidenceCapabilitySummary(capability string, info evidenceCapabilitySummaryInfo) string {
+	parts := []string{strings.TrimSpace(capability)}
+	if len(info.classes) > 0 {
+		parts = append(parts, strings.Join(uniqueNonEmpty(info.classes), "+"))
+	}
+	if len(parts) == 1 {
+		return parts[0]
+	}
+	return parts[0] + " (" + strings.Join(parts[1:], "; ") + ")"
 }
 
 func RenderRuntimeBriefSummary(brief WorkerRuntimeBrief) string {

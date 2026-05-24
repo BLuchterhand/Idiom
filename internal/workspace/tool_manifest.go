@@ -8,9 +8,11 @@ import (
 )
 
 type ToolManifestEntry struct {
-	Tool    string `json:"tool"`
-	Request string `json:"request"`
-	Purpose string `json:"purpose,omitempty"`
+	Tool                     string   `json:"tool"`
+	Request                  string   `json:"request"`
+	Purpose                  string   `json:"purpose,omitempty"`
+	EvidenceCapabilities     []string `json:"evidence_capabilities,omitempty"`
+	CapabilityClassification string   `json:"capability_classification,omitempty"`
 }
 
 type ToolManifestToolOptions struct {
@@ -410,6 +412,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 	}
 	out := make([]ToolManifestEntry, 0, len(entries))
 	for _, entry := range entries {
+		entry = attachToolManifestCapabilityMetadata(entry)
 		if includeAll {
 			out = append(out, entry)
 			continue

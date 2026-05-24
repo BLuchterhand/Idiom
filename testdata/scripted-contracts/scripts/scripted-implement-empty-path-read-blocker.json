@@ -1,0 +1,14 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"\",\"named_gap\":\"confirm exact required edit target before writing\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"\",\"named_gap\":\"confirm exact required edit target before writing\"}"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"should not be reached after repeated empty scoped reads\"}"
+    }
+  ]
+}

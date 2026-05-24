@@ -201,6 +201,36 @@ func TestCodeNavigateRoutesByPathLanguage(t *testing.T) {
 	}
 }
 
+func TestCodeNavigatePathLanguageBeatsConflictingOverride(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "pkg", "runner.go")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package pkg\n\nfunc Run() string {\n\treturn \"ok\"\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "read_symbol",
+		Path:       filepath.Join("pkg", "runner.go"),
+		Language:   "python",
+		Pattern:    "Run",
+	})
+
+	if result.Error != "" {
+		t.Fatalf("code_navigate returned error: %v\n%s", result.Error, result.Output)
+	}
+	if !strings.Contains(result.Summary, "go_read_symbol") || !strings.Contains(result.Output, "language: go") {
+		t.Fatalf("expected path-derived Go route to beat python override, got summary=%q output=\n%s", result.Summary, result.Output)
+	}
+}
+
 func TestCodeNavigateGenericFallbackForUnregisteredSource(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {

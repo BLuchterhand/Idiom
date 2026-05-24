@@ -3,7 +3,8 @@
 Status: accepted implementation migration plan
 Evidence snapshot: `context_pack` `e0a303010755de53`; `docs/decisioning-north-star.md`;
 `docs/design-contract-first-local-autonomy.md`;
-`docs/design-turn-phase-contract.md`; `docs/plan-execute-overhaul-proposal.md`;
+`docs/design-turn-phase-contract.md`;
+`docs/archive/2026-05-historical/plan-execute-overhaul-proposal.md`;
 `docs/live-contract-suite.md`
 
 ## Objective

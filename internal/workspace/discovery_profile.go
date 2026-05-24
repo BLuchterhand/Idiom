@@ -83,12 +83,18 @@ func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	switch normalizeReadOnlyCapabilityID(req.Capability) {
 	case string(ReadOnlyCapabilityFileOutline):
 		routed.Capability = string(CapFileOutline)
+	case string(ReadOnlyCapabilityInspectSymbol):
+		routed.Capability = string(CapReadSymbol)
 	case string(ReadOnlyCapabilitySymbolLookup):
 		routed.Capability = string(CapFindSymbol)
 	case string(ReadOnlyCapabilityDefinition):
 		routed.Capability = string(CapDefinition)
 	case string(ReadOnlyCapabilityReferences):
 		routed.Capability = string(CapReferences)
+	case string(ReadOnlyCapabilityCallsFrom):
+		routed.Capability = string(CapCallsFrom)
+	case string(ReadOnlyCapabilityCallsInto):
+		routed.Capability = string(CapCallsInto)
 	case string(ReadOnlyCapabilityRelatedFiles):
 		routed.Capability = string(CapRelatedFiles)
 	default:

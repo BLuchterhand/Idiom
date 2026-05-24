@@ -2,11 +2,16 @@
 
 **Status**: design sketch, implementation in progress.
 **Last touched**: 2026-05-11.
-**Supersedes (partial)**: section 5 of `generic-harness-architecture.md` (the four end-to-end-parity gaps re-factored here with corrected scoping).
+**Supersedes (partial)**: section 5 of
+`archive/2026-05-historical/generic-harness-architecture.md` (the four
+end-to-end-parity gaps re-factored here with corrected scoping).
 
 Closes the brief→ship loop so `idiom lane refine` produces a dispatchable brief with zero orchestrator hand-edits between phases. Generic for any project; Colony-friendly without Colony-specific flags.
 
-Sibling docs: `generic-harness-architecture.md` (broader harness genericization), `FEATURE_REQUEST_END_TO_END_QWEN_PARITY.md` (originating filing), `lane-architecture.md`.
+Sibling docs:
+`archive/2026-05-historical/generic-harness-architecture.md` (broader harness
+genericization), `FEATURE_REQUEST_END_TO_END_QWEN_PARITY.md` (originating
+filing), `lane-architecture.md`.
 
 ## 1. Problem
 

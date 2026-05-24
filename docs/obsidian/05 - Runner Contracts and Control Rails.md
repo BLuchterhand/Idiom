@@ -112,6 +112,21 @@ Redirects are recovery aids, not infinite loops. When the budget is exhausted
 or the missing evidence cannot be safely obtained, the runner should produce a
 typed blocker rather than keep the model cycling.
 
+## Dynamic Harness Validator
+
+The next consolidation step is a dynamic harness validator: one typed evaluator
+that computes missing obligations, the last failed invariant, valid next action
+classes, invalid next action classes, tool hiding, and typed blocker escalation
+from the active contract and result history.
+
+See [dynamic-harness-validator-design.md](../dynamic-harness-validator-design.md)
+for the implementation design. The first atom is implemented for
+missing-description repair on in-scope required-path writes: the runner emits a
+typed `dynamic_validator_decision`, renders a compact validator card, rejects
+non-write detours, allows the corrected write, and escalates repeated detours
+to a typed blocker. Later atoms broaden the same evaluator to scoped-read,
+completion-gate, audit, and plan-execute parity.
+
 ## Prompt Authority
 
 Prompt files are important, but they should not be the only source of authority

@@ -1693,6 +1693,8 @@ func TestHarnessAuditBehaviorScansLogs(t *testing.T) {
 		`{"type":"message","role":"user","content":"find missing code"}`,
 		`{"type":"tool_request","tool":"search_files","action":"search_files:_:Nope:_","raw":"{\"tool\":\"search_files\",\"pattern\":\"Nope\"}"}`,
 		`{"type":"tool_result","tool":"search_files","summary":"No file matches for \"Nope\"","error":""}`,
+		`{"type":"tool_request","tool":"code_navigate","action":"code_navigate:read_symbol:a.go:main","raw":"{\"tool\":\"code_navigate\",\"path\":\"a.go\",\"symbol\":\"main\",\"capability\":\"read_symbol\"}"}`,
+		`{"type":"tool_result","tool":"code_navigate","summary":"Read symbol main","error":""}`,
 		"",
 	}, "\n"))
 	writeWorkspaceFile(t, filepath.Join(root, "atom.md"), "# atom\n")
@@ -1718,6 +1720,26 @@ func TestHarnessAuditBehaviorScansLogs(t *testing.T) {
 		return hit.Name == "zero_hit_search" && hit.TotalCount == 1
 	}) {
 		t.Fatalf("expected zero_hit_search pattern, got %#v", report.LogBehavior.TopPatterns)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.CapabilityMix, func(row harnessAuditCapabilityMix) bool {
+		return row.Capability == "find_references" && row.Calls == 1
+	}) {
+		t.Fatalf("expected observed behavior capability mix for search_files, got %#v", report.LogBehavior.CapabilityMix)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.CapabilityMix, func(row harnessAuditCapabilityMix) bool {
+		return row.Capability == "inspect_symbol" && row.Calls == 1
+	}) {
+		t.Fatalf("expected observed behavior capability mix for code_navigate read_symbol, got %#v", report.LogBehavior.CapabilityMix)
+	}
+	if slices.ContainsFunc(report.LogBehavior.CapabilityMix, func(row harnessAuditCapabilityMix) bool {
+		return row.Capability == "find_definition" && row.Calls != 0
+	}) {
+		t.Fatalf("code_navigate read_symbol must not expand to every static code_navigate capability, got %#v", report.LogBehavior.CapabilityMix)
+	}
+	if !slices.ContainsFunc(report.LogBehavior.TopCapabilities, func(row harnessAuditCapabilityMix) bool {
+		return row.Capability == "find_references" && row.Calls == 1
+	}) {
+		t.Fatalf("expected top capability rollup, got %#v", report.LogBehavior.TopCapabilities)
 	}
 	if report.LogBehavior.LaneHistory == nil ||
 		report.LogBehavior.LaneHistory.Runs != 2 ||
@@ -2090,6 +2112,38 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 		t.Fatalf("marshal wrapped gate event: %v", err)
 	}
 	lines = append(lines, string(wrappedGateLine))
+	frictionEvent := mustWorkspaceAutonomyEvent(autonomy.NewGuardFrictionEvent(contract, autonomy.ContractGuardFrictionEvent{
+		Step:                 5,
+		Lane:                 "sidecar",
+		Phase:                "discovery",
+		PhaseID:              "sidecar.discovery",
+		ProtocolHash:         "protocol-test",
+		InvariantID:          "completion.readiness",
+		Subject:              autonomy.GuardFrictionSubjectFinalAnswer,
+		Decision:             autonomy.GuardFrictionDecisionReject,
+		GuardSurface:         autonomy.GuardFrictionSurfaceCompletionGate,
+		FirstInvalidAction:   "final_answer",
+		VisibleActionClasses: []string{"final_answer", "blocker"},
+		VisibleTools:         []string{"context_pack"},
+		SafeAlternatives:     []string{"<<QUESTION>>:"},
+		ModelContractVisible: true,
+		RetryOutcome:         autonomy.GuardFrictionRetryNotApplicable,
+		Avoidability:         autonomy.GuardFrictionAvoidabilityUnknown,
+		EvidenceRefs:         []string{"event-contract-coverage"},
+	}, occurredAt.Add(5*time.Second), 6))
+	encodedFrictionEvent, err := json.Marshal(frictionEvent)
+	if err != nil {
+		t.Fatalf("marshal friction event: %v", err)
+	}
+	wrappedFrictionLine, err := json.Marshal(map[string]string{
+		"type":    "message",
+		"role":    "autonomy_event",
+		"content": string(encodedFrictionEvent),
+	})
+	if err != nil {
+		t.Fatalf("marshal wrapped friction event: %v", err)
+	}
+	lines = append(lines, string(wrappedFrictionLine))
 	lines = append(lines, "")
 	writeWorkspaceFile(t, filepath.Join(root, "logs", "telemetry", "contracts.jsonl"), strings.Join(lines, "\n"))
 	mgr := NewManager(config.Workspace{Root: root, CWD: root})
@@ -2102,14 +2156,21 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
 		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
 	}
-	if report.ContractCoverage == nil || report.ContractCoverage.TotalEvents != 5 {
-		t.Fatalf("expected contract coverage for five events, got %#v", report.ContractCoverage)
+	if report.ContractCoverage == nil || report.ContractCoverage.TotalEvents != 6 {
+		t.Fatalf("expected contract coverage for six events, got %#v", report.ContractCoverage)
+	}
+	if report.LogBehavior == nil || report.LogBehavior.GuardFriction == nil ||
+		report.LogBehavior.GuardFriction.Total != 1 ||
+		report.LogBehavior.GuardFriction.UnclassifiedFriction != 1 {
+		t.Fatalf("expected log behavior guard friction rollup, got %#v", report.LogBehavior)
 	}
 	if !report.ContractCoverage.AllClear ||
 		report.ContractCoverage.PolicyCoverage.DecisionEvents != 1 ||
 		report.ContractCoverage.ObligationCoverage.Resolved != 1 ||
 		report.ContractCoverage.GateCoverage.DecisionEvents != 1 ||
 		report.ContractCoverage.GateCoverage.KindCounts[string(autonomy.GateReadOnly)] != 1 ||
+		report.ContractCoverage.GuardFrictionCoverage.Total != 1 ||
+		report.ContractCoverage.GuardFrictionCoverage.GuardSurfaceCounts[string(autonomy.GuardFrictionSurfaceCompletionGate)] != 1 ||
 		report.ContractCoverage.SidecarToolCorrelation.CorrelatedEventCount == 0 {
 		t.Fatalf("unexpected contract coverage: %#v", report.ContractCoverage)
 	}
@@ -2117,7 +2178,7 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 		len(report.ContractCoverage.GateCoverage.InconsistentOpenObligationRefs) != 0 {
 		t.Fatalf("expected resolved gate obligations with no open refs, got %#v", report.ContractCoverage.GateCoverage)
 	}
-	if !strings.Contains(result.Summary, "contract_events=5") {
+	if !strings.Contains(result.Summary, "contract_events=6") {
 		t.Fatalf("expected summary to include contract event count, got %q", result.Summary)
 	}
 }

@@ -23,12 +23,14 @@ type ToolSchemaExport struct {
 }
 
 type ExportedToolSchema struct {
-	Name             string                 `json:"name"`
-	Description      string                 `json:"description,omitempty"`
-	InputSchema      json.RawMessage        `json:"input_schema"`
-	Profiles         []string               `json:"profiles,omitempty"`
-	ManifestPurposes []string               `json:"manifest_purposes,omitempty"`
-	Policy           ToolSchemaPolicyExport `json:"policy"`
+	Name                     string                 `json:"name"`
+	Description              string                 `json:"description,omitempty"`
+	InputSchema              json.RawMessage        `json:"input_schema"`
+	Profiles                 []string               `json:"profiles,omitempty"`
+	ManifestPurposes         []string               `json:"manifest_purposes,omitempty"`
+	EvidenceCapabilities     []string               `json:"evidence_capabilities,omitempty"`
+	CapabilityClassification string                 `json:"capability_classification,omitempty"`
+	Policy                   ToolSchemaPolicyExport `json:"policy"`
 }
 
 type ToolSchemaPolicyExport struct {
@@ -157,12 +159,14 @@ func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolD
 	for _, name := range names {
 		def := defsByTool[name]
 		out.Tools = append(out.Tools, ExportedToolSchema{
-			Name:             name,
-			Description:      strings.TrimSpace(def.Description),
-			InputSchema:      json.RawMessage(def.ParametersJSON),
-			Profiles:         append([]string(nil), profiles[name]...),
-			ManifestPurposes: compactToolExportStrings(purposesByTool[name]),
-			Policy:           toolSchemaPolicyForTool(name),
+			Name:                     name,
+			Description:              strings.TrimSpace(def.Description),
+			InputSchema:              json.RawMessage(def.ParametersJSON),
+			Profiles:                 append([]string(nil), profiles[name]...),
+			ManifestPurposes:         compactToolExportStrings(purposesByTool[name]),
+			EvidenceCapabilities:     EvidenceCapabilitiesForTool(name),
+			CapabilityClassification: CapabilityClassificationForTool(name),
+			Policy:                   toolSchemaPolicyForTool(name),
 		})
 	}
 	return out, nil

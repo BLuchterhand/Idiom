@@ -243,6 +243,14 @@ func normalizeProtocolInput(protocol *ProtocolInput) {
 	protocol.ParserMode = strings.TrimSpace(protocol.ParserMode)
 	protocol.ExpectedVisibleOutput = strings.TrimSpace(protocol.ExpectedVisibleOutput)
 	protocol.VisibleTools = uniqueStrings(protocol.VisibleTools)
+	if protocol.CallableTools != nil {
+		protocol.CallableToolsSpecified = true
+	}
+	if protocol.CallableToolsSpecified {
+		protocol.CallableTools = uniqueStrings(protocol.CallableTools)
+	} else {
+		protocol.CallableTools = nil
+	}
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
 	protocol.TerminalResponseShapes = uniqueStrings(protocol.TerminalResponseShapes)
@@ -269,6 +277,7 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 	protocol.ResponseFormat = strings.TrimSpace(protocol.ResponseFormat)
 	protocol.ExpectedVisibleOutput = strings.TrimSpace(protocol.ExpectedVisibleOutput)
 	protocol.VisibleTools = uniqueStrings(protocol.VisibleTools)
+	protocol.CallableTools = uniqueStrings(protocol.CallableTools)
 	protocol.CallableActionClasses = canonicalActionClassStrings(protocol.CallableActionClasses)
 	protocol.InvalidActionClasses = canonicalActionClassStrings(protocol.InvalidActionClasses)
 	protocol.TerminalResponseShapes = uniqueStrings(protocol.TerminalResponseShapes)
@@ -305,7 +314,9 @@ func capabilitiesForTool(tool string) []autonomy.Capability {
 		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
 	case "search_files", "search_content", "rg", "grep":
 		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}
-	case "context_pack", "context_query", "context_zoom", "discovery_query", "go_read_symbol", "go_find_symbol", "cpp_read_symbol", "cpp_find_symbol":
+	case "context_pack", "context_query", "context_zoom", "context_status", "discovery_query", "code_navigate",
+		"go_read_symbol", "go_find_symbol", "cpp_read_symbol", "cpp_find_symbol",
+		"product_efforts", "product_status", "recovery_inspect", "recovery_status":
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
 	case "edit_file", "write_file", "append_file", "mkdir":
 		return []autonomy.Capability{autonomy.CapabilitySourceEdit}

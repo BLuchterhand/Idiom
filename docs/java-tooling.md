@@ -130,5 +130,6 @@ untouched.
 
 ## Integration points
 
-Four centralized files must have Java entries added. Snippets live in
-[`java-tooling-integration.md`](./java-tooling-integration.md).
+Java entries are already wired into the centralized registry, dispatcher,
+schemas, and manifest. The historical handoff snippets are archived at
+[`archive/2026-05-historical/java-tooling-integration.md`](./archive/2026-05-historical/java-tooling-integration.md).

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
@@ -54,6 +55,11 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 	}
 	if len(contract.RequiredNext) > 0 {
 		state.NextValidActions = append([]string(nil), contract.RequiredNext...)
+	} else if turnPhaseContractTerminalOutcomesDriveNextActions(contract) {
+		state.NextValidActions = append([]string(nil), contract.TerminalOutcomes...)
+		if containsPhaseString(contract.TerminalOutcomes, actionSubmitPlan) {
+			state.NextValidActions = []string{"submit_plan with one ordered edit entry for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+		}
 	}
 	if len(contract.InvalidNext) > 0 {
 		state.InvalidNextActions = append([]string(nil), contract.InvalidNext...)
@@ -61,6 +67,108 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 	state.Constraints = mergeRunnerStateStrings(state.Constraints, contract.Constraints)
 	state.StateSummary = runnerStateSummary(state)
 	return state
+}
+
+func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, contract TurnPhaseContract) autonomy.TurnPhaseSurfaceSummaryEvent {
+	payload := contract.autonomyEventPayload()
+	advertisedClasses := turnPhaseSurfaceActionClassesFromText(state.NextValidActions)
+	return autonomy.TurnPhaseSurfaceSummaryEvent{
+		SchemaVersion:           autonomy.TurnPhaseSurfaceSummarySchemaVersion,
+		SurfaceID:               "next_action_state",
+		ContractID:              contract.ContractID,
+		PhaseID:                 contract.PhaseID,
+		ModelCallID:             contract.ModelCallID,
+		ProtocolHash:            payload.ProtocolHash,
+		AdvertisedActionClasses: advertisedClasses,
+		InvalidActionClasses:    turnPhaseSurfaceInvalidActionClassesFromText(state.InvalidNextActions),
+		ObligationRefs:          append([]string(nil), state.EvidencePaths...),
+	}
+}
+
+func turnPhaseSurfaceActionClassesFromText(values []string) []string {
+	var classes []string
+	for _, value := range values {
+		lower := strings.ToLower(strings.TrimSpace(value))
+		if lower == "" {
+			continue
+		}
+		if strings.Contains(lower, "submit_plan") {
+			classes = append(classes, actionSubmitPlan)
+		}
+		if strings.Contains(lower, "source-satisfied") {
+			classes = append(classes, actionSourceSatisfied)
+		}
+		if strings.Contains(lower, "<<question>>") || strings.Contains(lower, "blocker") {
+			classes = append(classes, actionBlocker)
+		}
+		if strings.Contains(lower, "decision: pass") {
+			classes = append(classes, actionReviewPass)
+		}
+		if strings.Contains(lower, "final answer") || strings.Contains(lower, "answer directly") || strings.Contains(lower, "answer from") {
+			classes = append(classes, actionFinalAnswer)
+		}
+		if phaseActionTextHasTerm(lower, "read") || phaseActionTextHasTerm(lower, "inspect") {
+			classes = append(classes, actionRead)
+		}
+		if phaseActionTextHasTerm(lower, "search") || phaseActionTextHasTerm(lower, "discovery") || phaseActionTextHasTerm(lower, "context") {
+			classes = append(classes, actionSearch)
+		}
+		if !strings.Contains(lower, "submit_plan") && (strings.Contains(lower, "write") || strings.Contains(lower, "edit") || strings.Contains(lower, "patch")) {
+			classes = append(classes, actionPerEditWrite)
+		}
+		if phaseActionTextHasTerm(lower, "verify") || phaseActionTextHasTerm(lower, "test") || phaseActionTextHasTerm(lower, "command") {
+			classes = append(classes, actionVerify)
+		}
+	}
+	return uniquePhaseStrings(classes)
+}
+
+func phaseActionTextHasTerm(value string, term string) bool {
+	if value == "" || term == "" {
+		return false
+	}
+	fields := strings.FieldsFunc(value, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_')
+	})
+	for _, field := range fields {
+		if field == term {
+			return true
+		}
+	}
+	return false
+}
+
+func turnPhaseContractTerminalOutcomesDriveNextActions(contract TurnPhaseContract) bool {
+	if len(contract.TerminalOutcomes) == 0 {
+		return false
+	}
+	phaseID := strings.TrimSpace(contract.PhaseID)
+	return strings.Contains(phaseID, "submit_ready") ||
+		strings.Contains(phaseID, "review_repair") ||
+		strings.Contains(phaseID, "final")
+}
+
+func phaseStringsIntersect(left []string, right []string) bool {
+	for _, value := range left {
+		if containsPhaseString(right, value) {
+			return true
+		}
+	}
+	return false
+}
+
+func turnPhaseSurfaceInvalidActionClassesFromText(values []string) []string {
+	classes := turnPhaseSurfaceActionClassesFromText(values)
+	out := classes[:0]
+	for _, actionClass := range classes {
+		switch actionClass {
+		case actionSubmitPlan, actionSourceSatisfied, actionBlocker, actionReviewPass, actionFinalAnswer:
+			continue
+		default:
+			out = append(out, actionClass)
+		}
+	}
+	return out
 }
 
 type runnerTurnPhaseContractInput struct {

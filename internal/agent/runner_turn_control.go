@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/llama"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
@@ -17,6 +18,7 @@ type runnerTurnController struct {
 	metrics                    *runnerMetrics
 	requestBudget              *runnerRequestBudgetState
 	recorder                   *runnerTurnRecorder
+	autonomyRecorder           *runnerAutonomyRecorder
 	turnMessages               *[]llama.ChatMessage
 	collectedResults           *[]workspace.ToolResult
 	rejectedActions            map[string]int
@@ -144,10 +146,37 @@ func (c *runnerTurnController) recordParseFailure(step int, activeToolCall *llam
 		Output:  strings.TrimSpace(raw),
 	}
 	c.recorder.activeToolCall = activeToolCall
+	if c.autonomyRecorder != nil {
+		c.autonomyRecorder.emitPolicyResult(workspace.ToolRequest{Tool: "tool_parse"}, runnerAutonomyPolicyEventInput{
+			Decision:      autonomy.PolicyReject,
+			InvariantID:   "parser.tool_request",
+			ReasonCode:    "malformed_tool_request",
+			Transport:     autonomy.ToolTransportTextualCall,
+			ParserFailure: runnerAutonomyParserFailureClass(raw, parseErr),
+			Result:        "rejected",
+			ErrorClass:    "tool_parse",
+			Source:        "runner_tool_parse",
+		})
+	}
 	c.recorder.recordWithOptions(step, workspace.ToolRequest{Tool: "tool_parse"}, result, "tool_parse_rejected", runnerRecordOptions{
 		CountRejected:  true,
 		SetLastToolKey: false,
 	})
+}
+
+func runnerAutonomyParserFailureClass(raw string, parseErr error) autonomy.ParserFailureClass {
+	switch toolRequestParserFailureClass(raw, parseErr) {
+	case "malformed_json":
+		return autonomy.ParserFailureMalformedJSON
+	case "submit_plan_edits_string", "schema_type_mismatch", "nested_tool_mismatch":
+		return autonomy.ParserFailureSchemaMismatch
+	case "missing_tool":
+		return autonomy.ParserFailureMissingToolName
+	case "":
+		return autonomy.ParserFailureNone
+	default:
+		return autonomy.ParserFailureAmbiguousToolCall
+	}
 }
 
 func toolParseErrorFeedback(raw string, parseErr error) string {

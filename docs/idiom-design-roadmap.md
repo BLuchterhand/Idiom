@@ -101,6 +101,20 @@ The executable implementation plan is
   cross-pillar refactor plan for stability, readability, and maintenance, with
   reviewer evidence recorded in
   [contract-capability-architecture-overhaul-review.md](evidence/contract-capability-architecture-overhaul-review.md).
+- [Harness optimization program](design-harness-optimization-program.md)
+  defines the sequence for reducing avoidable friction between models and
+  Idiom's guards without weakening invariants. The first implementation wave is
+  now verified: passive guard-friction events and audit grouping are present,
+  plan-execute planner calls receive an active protocol projection, covered
+  turn-phase surfaces reconcile in report-only mode, and the read/navigation
+  interface has capability-shaped metadata and runtime summaries. The fresh
+  replay baseline, gate consumption, rendering migration, and static-prompt
+  pruning remain staged. Its focused designs are
+  [guard friction observability](design-guard-friction-observability.md),
+  [contract protocol projection](design-contract-protocol-projection.md),
+  [turn-phase contract reconciliation](design-turn-phase-contract-reconciliation.md),
+  and
+  [capability-first model interface](design-capability-first-model-interface.md).
 
 ## System Shape
 

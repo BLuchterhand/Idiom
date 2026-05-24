@@ -11,7 +11,7 @@ are not mutually exclusive. Pick by need:
 | You want a clean planner / executor split where the planner enumerates ALL edits up front | **Option C — `idiom plan-execute`** |
 
 Background on the failure mode this targets is in
-[`docs/planner-executor-delegation-design.md`](docs/planner-executor-delegation-design.md).
+[`planner-executor-delegation-design.md`](planner-executor-delegation-design.md).
 
 ---
 

@@ -24,6 +24,7 @@ const (
 	toolRequestNormalizerTransportKeyValueArgs            = "key_value_args"
 	toolRequestNormalizerTransportFunctionCall            = "function_call"
 	toolRequestNormalizerTransportNestedArguments         = "nested_arguments"
+	toolRequestNormalizerTransportIdiomCLI                = "idiom_cli"
 	toolRequestNormalizerTransportStringifiedSubmitRepair = "stringified_submit_plan_repair"
 )
 
@@ -115,6 +116,9 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 	}
 	if fenced := normalizeFencedJSONToolRequestSyntax(message.Content); fenced.EventOutcome != "" {
 		return fenced
+	}
+	if idiomCLI := normalizeIdiomCLIToolRequestSyntax(message.Content); idiomCLI.EventOutcome != "" {
+		return idiomCLI
 	}
 	if functionCall := normalizeFunctionCallToolRequestSyntax(message.Content); functionCall.EventOutcome != "" {
 		return functionCall
@@ -271,6 +275,61 @@ func repairStringifiedSubmitPlanEditsToolRequest(raw string, activeToolCall *lla
 	}
 	req.Tool = "submit_plan"
 	return req, string(repaired), true
+}
+
+func normalizeIdiomCLIToolRequestSyntax(text string) toolRequestSyntaxNormalization {
+	req, raw, ok, unsafe := parseIdiomCLIToolRequestSyntax(text)
+	if !ok {
+		if unsafe {
+			return toolRequestSyntaxNormalization{
+				EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+				EventTransport: toolRequestNormalizerTransportIdiomCLI,
+			}
+		}
+		return toolRequestSyntaxNormalization{}
+	}
+	result := toolRequestSyntaxNormalization{
+		Request:        req,
+		Raw:            raw,
+		OK:             true,
+		EventOutcome:   toolRequestNormalizerOutcomeNormalized,
+		EventTransport: toolRequestNormalizerTransportIdiomCLI,
+		Repaired:       true,
+	}
+	normalizeParsedToolRequestSyntax(&result)
+	return result
+}
+
+func parseIdiomCLIToolRequestSyntax(text string) (workspace.ToolRequest, string, bool, bool) {
+	trimmed := strings.TrimSpace(text)
+	lower := strings.ToLower(trimmed)
+	if !strings.HasPrefix(lower, "idiom tool ") {
+		return workspace.ToolRequest{}, "", false, false
+	}
+	objectStart := strings.Index(trimmed, "{")
+	if objectStart < 0 {
+		return workspace.ToolRequest{}, "", false, true
+	}
+	prefix := strings.TrimSpace(trimmed[:objectStart])
+	parts := strings.Fields(prefix)
+	if len(parts) < 3 || !strings.EqualFold(parts[0], "idiom") || !strings.EqualFold(parts[1], "tool") || !toolRequestSyntaxIdentifier(parts[2]) {
+		return workspace.ToolRequest{}, "", false, true
+	}
+	object, _, ok := extractJSONObjectAt(trimmed, objectStart)
+	if !ok {
+		return workspace.ToolRequest{}, "", false, true
+	}
+	req, err := workspace.DecodeToolRequestJSON([]byte(object))
+	if err != nil {
+		return workspace.ToolRequest{}, "", false, true
+	}
+	if strings.TrimSpace(req.Tool) == "" {
+		req.Tool = parts[2]
+	}
+	if !strings.EqualFold(strings.TrimSpace(req.Tool), parts[2]) {
+		return workspace.ToolRequest{}, "", false, true
+	}
+	return req, object, true, false
 }
 
 func normalizeFencedJSONToolRequestSyntax(text string) toolRequestSyntaxNormalization {

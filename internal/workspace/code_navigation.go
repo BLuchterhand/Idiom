@@ -89,12 +89,6 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 }
 
 func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool, string) {
-	if language := strings.TrimSpace(req.Language); language != "" {
-		if lang, ok := LanguageForName(language); ok {
-			return lang, true, ""
-		}
-		return LanguageSupport{}, false, fmt.Sprintf("unsupported language %q", language)
-	}
 	if path := strings.TrimSpace(req.Path); path != "" {
 		if lang, ok := LanguageForFile(path); ok {
 			return lang, true, ""
@@ -102,6 +96,12 @@ func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool
 		if m.codeNavigationPathIsFile(path, req.Workdir) || filepath.Ext(path) != "" {
 			return LanguageSupport{}, false, fmt.Sprintf("no registered language route for %s", filepath.ToSlash(path))
 		}
+	}
+	if language := strings.TrimSpace(req.Language); language != "" {
+		if lang, ok := LanguageForName(language); ok {
+			return lang, true, ""
+		}
+		return LanguageSupport{}, false, fmt.Sprintf("unsupported language %q", language)
 	}
 	if m != nil {
 		active := m.ActiveLanguages()

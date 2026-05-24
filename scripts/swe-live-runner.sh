@@ -25,6 +25,16 @@ save_dir="$run_dir/transcripts"
 stdout_path="$run_dir/stdout.txt"
 stderr_path="$run_dir/stderr.txt"
 
+copy_latest_log() {
+  local latest_log
+  latest_log="$(find "$debug_log_dir" -maxdepth 1 -type f -name '*.jsonl' -print | sort | tail -n 1)"
+  if [[ -n "$latest_log" ]]; then
+    cp "$latest_log" "$log_path"
+    return 0
+  fi
+  return 1
+}
+
 mkdir -p "$debug_log_dir" "$save_dir" "$(dirname "$log_path")" "$workspace_root"
 printf '%s\n' "$turns_json" > "$turns_file"
 
@@ -108,6 +118,7 @@ worker_pid=$!
   fi
 ) &
 watchdog_pid=$!
+trap 'copy_latest_log || true; kill -TERM "$worker_pid" "$watchdog_pid" 2>/dev/null || true; pkill -P "$watchdog_pid" 2>/dev/null || true; exit 143' TERM INT
 # With `set -e` at the top of the script, a non-zero `wait` exit would
 # abort before we can capture the code. Explicit || assignment keeps
 # the exit status available without aborting on a watchdog SIGTERM.
@@ -130,13 +141,10 @@ elif [[ $worker_exit -ne 0 ]]; then
   echo "idiom exit=$worker_exit" >&2
 fi
 
-latest_log="$(find "$debug_log_dir" -maxdepth 1 -type f -name '*.jsonl' -print | sort | tail -n 1)"
-if [[ -z "$latest_log" ]]; then
+if ! copy_latest_log; then
   echo "no debug log produced; stdout:" >&2
   cat "$stdout_path" >&2 || true
   echo "stderr:" >&2
   cat "$stderr_path" >&2 || true
   exit 1
 fi
-
-cp "$latest_log" "$log_path"

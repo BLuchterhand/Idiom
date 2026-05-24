@@ -7184,6 +7184,84 @@ func TestUnscopedNoWriteRecoveryRequiresSourceBodyBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestUnscopedNoWriteRecoveryDoesNotAutoReadAfterWriteReadyGate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "packet",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 docs/design-tdd-coverage.md lines 1-180 (total lines: 815)",
+			Output:  "Phase 1: EARS And BDD Coverage Checks\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/productworkflow/coverage_gate.go lines 1-180 (total lines: 552)",
+			Output:  "func EvaluateCoverageGate() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present",
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("test setup should be in unscoped implementation write-ready state")
+	}
+	if req, raw, ok := runner.deterministicNoWriteRecoveryUnreadCandidateRead(results); ok {
+		t.Fatalf("write-ready recovery must not inject another candidate read after no-write gate, got %#v raw=%s", req, raw)
+	}
+}
+
+func TestUnscopedImplementationWriteReadyRejectsNonWriteTools(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-120 (total lines: 552)",
+		Output:  "func EvaluateCoverageGate() {}\n",
+	}, {
+		Tool:    "completion_gate",
+		Summary: "Mutation completion gate rejected final answer",
+		Error:   "this task asks for a workspace change, but no successful write tool result is present",
+	}}
+
+	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go"},
+		results,
+	)
+	if !reject {
+		t.Fatal("expected non-write tool to be rejected once unscoped implementation is write-ready")
+	}
+	joined := summary + " " + errorText + " " + prompt
+	for _, want := range []string{"target-write-ready", "parser-readable write", "<<QUESTION>>"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected recovery text to contain %q, got %q", want, joined)
+		}
+	}
+	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "edit_file", Path: "internal/productworkflow/coverage_gate.go"},
+		results,
+	); reject {
+		t.Fatal("write tools must remain available in target-write-ready recovery")
+	}
+}
+
 func TestCompletionGateRetryLimitAllowsTwoTextualRequiredPathRecoveries(t *testing.T) {
 	runner := &Runner{
 		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),

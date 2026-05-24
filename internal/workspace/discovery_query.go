@@ -495,7 +495,7 @@ func normalizeDiscoveryQueryPurpose(value string) string {
 		return "impact_analysis"
 	case "trace", "function_trace", "function_tracing":
 		return "function_tracing"
-	case "architecture", "architecture_boundary", "boundary":
+	case "architecture", "architecture_boundary", "boundary", "tool_usefulness", "tooling_usefulness", "discovery_tooling", "discovery_tools", "usefulness":
 		return "architecture_boundary"
 	case "security", "security_review":
 		return "security_review"
@@ -759,5 +759,3 @@ func isRegularFile(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()
 }
-
-

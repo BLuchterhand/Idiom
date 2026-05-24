@@ -188,6 +188,88 @@ func TestAuditEventsFlagsGateOpenObligationRefsNotOpenAtGateSequence(t *testing.
 	}
 }
 
+func TestAuditEventsGroupsGuardFrictionWithoutFailingAllClear(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 18, 52, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	first := mustAutonomyEvent(NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		Step:                 4,
+		PhaseID:              "planner.submit_ready",
+		ModelCallID:          "call-1",
+		SourceEventID:        "gate-1",
+		ContractVersion:      "2",
+		ProtocolHash:         "protocol-abc",
+		InvariantID:          "completion.submit_plan_or_terminal",
+		ObligationID:         "required_edit_paths.coverage",
+		Subject:              GuardFrictionSubjectToolCall,
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		FirstInvalidAction:   "search_content",
+		VisibleActionClasses: []string{"submit_plan", "source_satisfied"},
+		VisibleTools:         []string{"submit_plan"},
+		SafeAlternatives:     []string{"submit_plan", "Decision: source-satisfied"},
+		ModelContractVisible: true,
+		RetryOutcome:         GuardFrictionRetryNotApplicable,
+		Avoidability:         GuardFrictionAvoidabilityUnknown,
+		EvidenceRefs:         []string{"conversation:record-id"},
+	}, occurredAt.Add(time.Second), 2))
+	second := mustAutonomyEvent(NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		Step:                 5,
+		PhaseID:              "planner.submit_ready",
+		ModelCallID:          "call-2",
+		SourceEventID:        "gate-2",
+		ContractVersion:      "2",
+		InvariantID:          "tool_surface.submit_plan",
+		Subject:              GuardFrictionSubjectToolCall,
+		Decision:             GuardFrictionDecisionNudge,
+		GuardSurface:         GuardFrictionSurfaceToolPolicy,
+		FirstInvalidAction:   "submit_plan",
+		VisibleActionClasses: []string{"source_satisfied"},
+		RetryNumber:          1,
+		RetryOutcome:         GuardFrictionRetrySuccess,
+		Avoidability:         GuardFrictionAvoidabilityToolSurfaceGap,
+		EvidenceRefs:         []string{"telemetry:event-id"},
+	}, occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, first, second}, EventAuditOptions{})
+
+	coverage := report.GuardFrictionCoverage
+	if coverage.Total != 2 || coverage.AvoidableFriction != 1 || coverage.UnclassifiedFriction != 1 {
+		t.Fatalf("expected guard friction totals, got %#v", coverage)
+	}
+	if coverage.LaneCounts["implement"] != 2 || coverage.PhaseCounts["planner.submit_ready"] != 2 {
+		t.Fatalf("expected lane/phase friction grouping, got %#v", coverage)
+	}
+	if coverage.AvoidabilityCounts[string(GuardFrictionAvoidabilityUnknown)] != 1 ||
+		coverage.AvoidabilityCounts[string(GuardFrictionAvoidabilityToolSurfaceGap)] != 1 {
+		t.Fatalf("expected avoidability grouping, got %#v", coverage.AvoidabilityCounts)
+	}
+	if coverage.FirstInvalidActionCounts["search_content"] != 1 ||
+		coverage.RetryOutcomeCounts[string(GuardFrictionRetrySuccess)] != 1 ||
+		coverage.GuardSurfaceCounts[string(GuardFrictionSurfaceCompletionGate)] != 1 {
+		t.Fatalf("expected action/retry/surface grouping, got %#v", coverage)
+	}
+	if coverage.SafeAlternativeCoverage.EventsWithSafeAlternatives != 1 ||
+		coverage.SafeAlternativeCoverage.EventsMissingSafeAlternatives != 1 ||
+		coverage.SafeAlternativeCoverage.SafeAlternativeCounts["submit_plan"] != 1 ||
+		coverage.SafeAlternativeCoverage.VisibleActionClassCounts["source_satisfied"] != 2 ||
+		coverage.SafeAlternativeCoverage.VisibleToolCounts["submit_plan"] != 1 {
+		t.Fatalf("expected safe alternative coverage, got %#v", coverage.SafeAlternativeCoverage)
+	}
+	if len(coverage.TopContracts) != 1 ||
+		coverage.TopContracts[0].ContractID != contract.ContractID ||
+		coverage.TopContracts[0].AvoidableFriction != 1 ||
+		coverage.TopContracts[0].UnclassifiedFriction != 1 {
+		t.Fatalf("expected top contract friction grouping, got %#v", coverage.TopContracts)
+	}
+	if len(coverage.UnclassifiedRefs) != 1 || coverage.UnclassifiedRefs[0].EventID != first.EventID {
+		t.Fatalf("expected unclassified friction ref for unknown avoidability, got %#v", coverage.UnclassifiedRefs)
+	}
+	if !report.AllClear || len(report.Findings) != 0 {
+		t.Fatalf("guard friction activity should not fail all_clear, all_clear=%v findings=%#v", report.AllClear, report.Findings)
+	}
+}
+
 func TestAuditEventsOrdersRepeatedContractRunsByOccurrenceBeforeSequence(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	firstRun := time.Date(2026, 5, 13, 18, 55, 0, 0, time.UTC)
@@ -475,6 +557,373 @@ func TestAuditEventsFlagsToolWhenNoManifestToolsAreAllowed(t *testing.T) {
 	}
 }
 
+func TestAuditEventsReconcilesTurnPhaseSurfaceSummary(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 27, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason: "turn_phase_contract",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "plan_execute.submit_ready.textual",
+			ModelCallID:   "call-1",
+			ProtocolHash:  "sha256:phase",
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses:   []string{"submit_plan", "source_satisfied", "blocker"},
+				InvalidActionClasses:   []string{"read", "search", "verify", "per_edit_write"},
+				TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+			},
+			TerminalOutcomes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "submit_plan_json",
+				ResponseFormat:           "json",
+				ExpressibleActionClasses: []string{"submit_plan", "source_satisfied", "blocker"},
+			},
+			EnforcementMode: "observe_only",
+		},
+		SurfaceSummaries: []TurnPhaseSurfaceSummaryEvent{{
+			SchemaVersion:           TurnPhaseSurfaceSummarySchemaVersion,
+			SurfaceID:               "next_action_state",
+			ContractID:              contract.ContractID,
+			PhaseID:                 "plan_execute.submit_ready.textual",
+			ModelCallID:             "call-1",
+			ProtocolHash:            "sha256:phase",
+			AdvertisedActionClasses: []string{"read"},
+			TerminalOutcomes:        []string{"submit_plan"},
+			TerminalResponseShapes:  []string{"submit_plan"},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "submit_plan_json",
+				ResponseFormat:           "json",
+				ExpressibleActionClasses: []string{"submit_plan", "source_satisfied", "blocker"},
+			},
+		}},
+	}, occurredAt.Add(time.Second), 2))
+
+	report := AuditEvents([]Event{compiled, presented}, EventAuditOptions{})
+
+	if report.TurnPhaseCoverage.SurfaceCounts["next_action_state"] != 1 {
+		t.Fatalf("expected next_action_state surface coverage, got %#v", report.TurnPhaseCoverage.SurfaceCounts)
+	}
+	if len(report.TurnPhaseCoverage.Contradictions) == 0 {
+		t.Fatalf("expected surface contradictions, got none")
+	}
+	var sawInvalidRead bool
+	for _, issue := range report.TurnPhaseCoverage.Contradictions {
+		if issue.SurfacePair != "turn_phase_contract,next_action_state" || issue.SurfaceID != "next_action_state" {
+			t.Fatalf("expected surface-pair attribution, got %#v", issue)
+		}
+		if issue.InvariantID == "turn_phase.action.invalid_advertised" && issue.ActionClass == "read" {
+			sawInvalidRead = true
+		}
+	}
+	if !sawInvalidRead {
+		t.Fatalf("expected invalid read contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") || report.AllClear {
+		t.Fatalf("expected contradiction finding and all_clear=false, all_clear=%v findings=%#v", report.AllClear, report.Findings)
+	}
+}
+
+func TestAuditEventsReconcilesModelProtocolSurface(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 28, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason:       "turn_phase_contract",
+		ProtocolHash: "sha256:protocol",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "plan_execute.submit_ready.textual",
+			ModelCallID:   "call-1",
+			ProtocolHash:  "sha256:protocol",
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses:   []string{"submit_plan", "source_satisfied", "blocker"},
+				InvalidActionClasses:   []string{"read", "search", "verify", "per_edit_write"},
+				TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+				CallableToolNames:      []string{"submit_plan"},
+			},
+			TerminalOutcomes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "submit_plan_json",
+				ResponseFormat:           "json",
+				ExpressibleActionClasses: []string{"submit_plan", "source_satisfied", "blocker"},
+			},
+			EnforcementMode: "observe_only",
+		},
+		ModelProtocol: &ModelProtocolEvent{
+			SchemaVersion:          "idiom.model_protocol_projection.v1",
+			ContractID:             contract.ContractID,
+			ProtocolHash:           "sha256:protocol",
+			PhaseID:                "plan_execute.submit_ready.textual",
+			ToolTransportMode:      "textual",
+			ParserContract:         "submit_plan_json",
+			ResponseFormat:         "json",
+			CallableActionClasses:  []string{"submit_plan", "source_satisfied", "blocker", "read"},
+			CallableTools:          []string{"submit_plan"},
+			TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+		},
+	}, occurredAt.Add(time.Second), 2))
+
+	report := AuditEvents([]Event{compiled, presented}, EventAuditOptions{})
+
+	if report.TurnPhaseCoverage.SurfaceCounts["model_protocol"] != 1 {
+		t.Fatalf("expected model_protocol surface coverage, got %#v", report.TurnPhaseCoverage.SurfaceCounts)
+	}
+	if len(report.TurnPhaseCoverage.Contradictions) != 1 {
+		t.Fatalf("expected one model-protocol contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+	issue := report.TurnPhaseCoverage.Contradictions[0]
+	if issue.SurfacePair != "turn_phase_contract,model_protocol" ||
+		issue.InvariantID != "turn_phase.action.invalid_advertised" ||
+		issue.ActionClass != "read" {
+		t.Fatalf("expected invalid read model-protocol contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+}
+
+func TestReconcileTurnPhaseSurfaceAllowsNativeSubmitOnly(t *testing.T) {
+	phase := TurnPhaseContractEvent{
+		PhaseID:          "plan_execute.submit_ready.native_required",
+		ModelCallID:      "call-native",
+		ProtocolHash:     "sha256:native",
+		AllowedTools:     []string{"submit_plan"},
+		TerminalOutcomes: []string{"submit_plan"},
+		ActionPolicy: TurnActionClassPolicyEvent{
+			AllowedActionClasses:   []string{"submit_plan"},
+			InvalidActionClasses:   []string{"read", "search", "source_satisfied", "blocker"},
+			TerminalResponseShapes: []string{"submit_plan"},
+			CallableToolNames:      []string{"submit_plan"},
+		},
+		RuntimeCall: RuntimeCallContractEvent{
+			ToolTransportMode:        "native",
+			ToolChoice:               "required",
+			ParserContract:           "native_submit_plan",
+			ExpressibleActionClasses: []string{"submit_plan"},
+		},
+	}
+	surface := TurnPhaseSurfaceSummaryEvent{
+		SurfaceID:               "runtime_brief",
+		PhaseID:                 phase.PhaseID,
+		ModelCallID:             phase.ModelCallID,
+		ProtocolHash:            phase.ProtocolHash,
+		AdvertisedActionClasses: []string{"submit_plan"},
+		CallableTools:           []string{"submit_plan"},
+		TerminalOutcomes:        []string{"submit_plan"},
+		TerminalResponseShapes:  []string{"submit_plan"},
+		RuntimeCall:             phase.RuntimeCall,
+	}
+
+	if issues := ReconcileTurnPhaseSurface(phase, surface); len(issues) != 0 {
+		t.Fatalf("native submit-only surface should be clean, got %#v", issues)
+	}
+}
+
+func TestReconcileTurnPhaseSurfaceFlagsProtocolHashParity(t *testing.T) {
+	phase := TurnPhaseContractEvent{
+		ContractID:       "contract-active",
+		PhaseID:          "plan_execute.submit_ready.native_required",
+		ModelCallID:      "call-native",
+		ProtocolHash:     "sha256:phase",
+		TerminalOutcomes: []string{"submit_plan"},
+		ActionPolicy: TurnActionClassPolicyEvent{
+			AllowedActionClasses:   []string{"submit_plan"},
+			TerminalResponseShapes: []string{"submit_plan"},
+			CallableToolNames:      []string{"submit_plan"},
+		},
+		RuntimeCall: RuntimeCallContractEvent{
+			ToolTransportMode:        "native",
+			ParserContract:           "native_submit_plan",
+			ExpressibleActionClasses: []string{"submit_plan"},
+		},
+	}
+	baseSurface := TurnPhaseSurfaceSummaryEvent{
+		SurfaceID:               "runtime_brief",
+		ContractID:              phase.ContractID,
+		PhaseID:                 phase.PhaseID,
+		ModelCallID:             phase.ModelCallID,
+		ProtocolHash:            phase.ProtocolHash,
+		AdvertisedActionClasses: []string{"submit_plan"},
+		CallableTools:           []string{"submit_plan"},
+		TerminalOutcomes:        []string{"submit_plan"},
+		TerminalResponseShapes:  []string{"submit_plan"},
+		RuntimeCall:             phase.RuntimeCall,
+	}
+	if issues := ReconcileTurnPhaseSurface(phase, baseSurface); len(issues) != 0 {
+		t.Fatalf("matching protocol hash should be clean, got %#v", issues)
+	}
+
+	missingSurface := baseSurface
+	missingSurface.ProtocolHash = ""
+	missingIssues := ReconcileTurnPhaseSurface(phase, missingSurface)
+	if !hasTurnPhaseInvariant(missingIssues, "turn_phase.identity.protocol_hash", "missing protocol_hash") {
+		t.Fatalf("expected missing protocol hash issue, got %#v", missingIssues)
+	}
+
+	mismatchedSurface := baseSurface
+	mismatchedSurface.ProtocolHash = "sha256:other"
+	mismatchIssues := ReconcileTurnPhaseSurface(phase, mismatchedSurface)
+	if !hasTurnPhaseInvariant(mismatchIssues, "turn_phase.identity.protocol_hash", "differs") {
+		t.Fatalf("expected mismatched protocol hash issue, got %#v", mismatchIssues)
+	}
+
+	mismatchedContract := baseSurface
+	mismatchedContract.ContractID = "contract-other"
+	contractIssues := ReconcileTurnPhaseSurface(phase, mismatchedContract)
+	if !hasTurnPhaseInvariant(contractIssues, "turn_phase.identity.contract_id", "differs") {
+		t.Fatalf("expected mismatched contract id issue, got %#v", contractIssues)
+	}
+}
+
+func TestReconcileTurnPhaseSurfaceFlagsRuntimeParserParity(t *testing.T) {
+	phase := TurnPhaseContractEvent{
+		PhaseID:          "plan_execute.required_source",
+		ModelCallID:      "call-runtime",
+		ProtocolHash:     "sha256:runtime",
+		TerminalOutcomes: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		ActionPolicy: TurnActionClassPolicyEvent{
+			AllowedActionClasses:   []string{"read", "source_satisfied", "blocker"},
+			InvalidActionClasses:   []string{"submit_plan"},
+			TerminalResponseShapes: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+			CallableToolNames:      []string{"read_file"},
+		},
+		RuntimeCall: RuntimeCallContractEvent{
+			ToolTransportMode:        "textual",
+			ParserContract:           "source_refresh",
+			ResponseFormat:           "json",
+			ExpectedVisibleOutput:    "visible_text_tool_request",
+			ExpressibleActionClasses: []string{"read", "source_satisfied", "blocker"},
+		},
+	}
+	surface := TurnPhaseSurfaceSummaryEvent{
+		SurfaceID:               "model_protocol",
+		PhaseID:                 phase.PhaseID,
+		ModelCallID:             phase.ModelCallID,
+		ProtocolHash:            phase.ProtocolHash,
+		AdvertisedActionClasses: []string{"read", "source_satisfied", "blocker"},
+		CallableTools:           []string{"read_file"},
+		TerminalOutcomes:        []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		TerminalResponseShapes:  []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		RuntimeCall: RuntimeCallContractEvent{
+			ToolTransportMode:        "textual",
+			ParserContract:           "submit_plan_json",
+			ResponseFormat:           "text",
+			ExpectedVisibleOutput:    "submit_plan",
+			ExpressibleActionClasses: []string{"read", "source_satisfied", "blocker"},
+		},
+	}
+
+	issues := ReconcileTurnPhaseSurface(phase, surface)
+	for _, want := range []string{
+		"turn_phase.runtime.parser_contract",
+		"turn_phase.runtime.response_format",
+		"turn_phase.runtime.expected_visible_output",
+	} {
+		if !hasTurnPhaseInvariant(issues, want, "differs") {
+			t.Fatalf("expected %s issue, got %#v", want, issues)
+		}
+	}
+}
+
+func TestAuditEventsFlagsCompletionGateProtocolHashParity(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 29, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason:       "turn_phase_contract",
+		ProtocolHash: "sha256:phase",
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "plan_execute.submit_ready.native_required",
+			ModelCallID:   "call-gate",
+			ProtocolHash:  "sha256:phase",
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses:   []string{"submit_plan"},
+				TerminalResponseShapes: []string{"submit_plan"},
+			},
+			TerminalOutcomes: []string{"submit_plan"},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "native",
+				ParserContract:           "native_submit_plan",
+				ExpressibleActionClasses: []string{"submit_plan"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(time.Second), 2))
+	missing := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:        GateCompletion,
+		Decision:    PolicyReject,
+		InvariantID: "completion.readiness",
+	}, occurredAt.Add(2*time.Second), 3))
+	mismatch := mustAutonomyEvent(NewGateDecisionEvent(contract, ContractGateEvent{
+		Gate:         GateCompletion,
+		Decision:     PolicyReject,
+		InvariantID:  "completion.readiness",
+		ProtocolHash: "sha256:other",
+	}, occurredAt.Add(3*time.Second), 4))
+
+	report := AuditEvents([]Event{compiled, presented, missing, mismatch}, EventAuditOptions{})
+	var missingHash, mismatchedHash bool
+	for _, issue := range report.TurnPhaseCoverage.Contradictions {
+		if issue.SurfaceID != "completion_gate" || issue.InvariantID != "turn_phase.identity.protocol_hash" {
+			continue
+		}
+		if strings.Contains(issue.Reason, "missing") {
+			missingHash = true
+		}
+		if strings.Contains(issue.Reason, "differs") {
+			mismatchedHash = true
+		}
+	}
+	if missingHash || !mismatchedHash {
+		t.Fatalf("expected only mismatched completion-gate protocol hash issue, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+}
+
+func TestReconcileTurnPhaseSurfaceBlocksReviewPassWithFailedObligations(t *testing.T) {
+	phase := TurnPhaseContractEvent{
+		PhaseID:          "plan_execute.review_repair_terminal",
+		ModelCallID:      "call-review",
+		ProtocolHash:     "sha256:review",
+		TerminalOutcomes: []string{"submit_plan", "<<QUESTION>>:"},
+		ActionPolicy: TurnActionClassPolicyEvent{
+			AllowedActionClasses:   []string{"submit_plan", "blocker"},
+			InvalidActionClasses:   []string{"review_pass", "read", "search", "verify"},
+			TerminalResponseShapes: []string{"submit_plan", "<<QUESTION>>:"},
+			CallableToolNames:      []string{"submit_plan"},
+		},
+		RuntimeCall: RuntimeCallContractEvent{
+			ToolTransportMode:        "native",
+			ExpressibleActionClasses: []string{"submit_plan", "blocker"},
+		},
+		EvidenceState: PhaseEvidenceStateEvent{
+			ResidualBlockers: []string{"source_sanity_failed:internal/example.go"},
+		},
+	}
+	surface := TurnPhaseSurfaceSummaryEvent{
+		SurfaceID:               "recovery_card",
+		PhaseID:                 phase.PhaseID,
+		ModelCallID:             phase.ModelCallID,
+		ProtocolHash:            phase.ProtocolHash,
+		AdvertisedActionClasses: []string{"review_pass", "submit_plan", "blocker"},
+		TerminalOutcomes:        []string{"Decision: pass", "submit_plan", "<<QUESTION>>:"},
+		TerminalResponseShapes:  []string{"Decision: pass", "submit_plan", "<<QUESTION>>:"},
+		RuntimeCall:             phase.RuntimeCall,
+	}
+
+	issues := ReconcileTurnPhaseSurface(phase, surface)
+	var sawReviewPass bool
+	for _, issue := range issues {
+		if issue.InvariantID == "turn_phase.action.invalid_advertised" && issue.ActionClass == "review_pass" {
+			sawReviewPass = true
+		}
+	}
+	if !sawReviewPass {
+		t.Fatalf("expected invalid review_pass contradiction, got %#v", issues)
+	}
+}
+
 func TestAuditEventsAllClearCoverageCarriesClassificationAndProductSignals(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 20, 30, 0, 0, time.UTC)
@@ -531,6 +980,15 @@ func mustAutonomyEvent(event Event, err error) Event {
 func hasEventAuditFinding(report EventAuditReport, id string) bool {
 	for _, finding := range report.Findings {
 		if finding.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func hasTurnPhaseInvariant(issues []TurnPhaseContradiction, invariantID string, reasonContains string) bool {
+	for _, issue := range issues {
+		if issue.InvariantID == invariantID && strings.Contains(issue.Reason, reasonContains) {
 			return true
 		}
 	}

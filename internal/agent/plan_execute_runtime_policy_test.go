@@ -268,6 +268,19 @@ func TestToolRequestNormalizerClassifiesParserFailure(t *testing.T) {
 	}
 }
 
+func TestToolRequestNormalizerParsesIdiomToolCLIShape(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{Content: `idiom tool task {"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect subagent flow."}`})
+	if !result.OK {
+		t.Fatalf("expected idiom tool CLI shape to parse, outcome=%s raw=%s", result.EventOutcome, result.Raw)
+	}
+	if result.EventTransport != toolRequestNormalizerTransportIdiomCLI {
+		t.Fatalf("EventTransport = %q, want %q", result.EventTransport, toolRequestNormalizerTransportIdiomCLI)
+	}
+	if result.Request.Tool != "task" || result.Request.Agent != "explorer" || result.Request.Mode != "read_only" {
+		t.Fatalf("unexpected parsed request: %#v", result.Request)
+	}
+}
+
 func assertStringField(t *testing.T, payload map[string]any, key string, want string) {
 	t.Helper()
 	if got, ok := payload[key].(string); !ok || got != want {

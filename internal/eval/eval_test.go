@@ -1125,6 +1125,24 @@ func TestAnalyzePromotesReadinessEvidencePaths(t *testing.T) {
 	}
 }
 
+func TestAnalyzePromotesRunEventSidecarRoles(t *testing.T) {
+	records := []Record{
+		{Type: "run_event", Data: map[string]any{"role": "readiness_check", "content": `{"action":"answer","lane":"architecture","ready":true,"evidence_paths":["internal/agent/runner.go","internal/agent/runner_child_tasks.go"]}`}},
+		{Type: "run_event", Data: map[string]any{"role": "final_answer_critic", "content": `{"contract":"architecture_assessment","passed":true,"action":"accept"}`}},
+		{Type: "run_event", Data: map[string]any{"role": "control_rails_enforcement", "content": `{"action":"accept","evidence_paths":["internal/agent/answer_composer.go"]}`}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ReadinessChecks) != 1 || len(metrics.FinalAnswerCritics) != 1 {
+		t.Fatalf("expected run_event sidecar roles to be analyzed, got readiness=%#v critic=%#v", metrics.ReadinessChecks, metrics.FinalAnswerCritics)
+	}
+	for _, want := range []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go", "internal/agent/answer_composer.go"} {
+		if !containsStringFold(metrics.EvidencePaths, want) {
+			t.Fatalf("expected run_event readiness evidence path %q in metrics, got %#v", want, metrics.EvidencePaths)
+		}
+	}
+}
+
 func TestEvaluateDiscoveryBalanceAssertions(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "find insecure eval"}},

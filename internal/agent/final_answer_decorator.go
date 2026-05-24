@@ -122,6 +122,19 @@ func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief,
 }
 
 func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput) (string, bool) {
+	if exact, ok := presentableExactProbeAnswer(input.Brief, input.Results); ok {
+		return exact, true
+	}
+	if strings.TrimSpace(input.Brief.Contract) == "architecture_assessment" {
+		if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
+			if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+				return cleaned, true
+			}
+			if !finalAnswerNeedsDecoration(answer) || questionPresentationBlock(input.Brief.Objective) != "" {
+				return answer, true
+			}
+		}
+	}
 	if output, ok := bestTaskResultOutput(input.Results); ok {
 		if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
 			return cleaned, true

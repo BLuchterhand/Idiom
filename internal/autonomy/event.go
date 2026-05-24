@@ -31,49 +31,111 @@ const (
 	EventReadinessStateUpdated  EventType = "readiness_state_updated"
 	EventCompletionGateDecision EventType = "completion_gate_decision"
 	EventGateDecision           EventType = "gate_decision"
+	EventGuardFriction          EventType = "guard_friction"
 )
 
 type EventEffect string
 
 const EventEffectObserveOnly EventEffect = "observe_only"
 
+const GuardFrictionSchemaVersion = "idiom.guard_friction.v1"
+
+type GuardFrictionSubject string
+
+const (
+	GuardFrictionSubjectToolCall          GuardFrictionSubject = "tool_call"
+	GuardFrictionSubjectFinalAnswer       GuardFrictionSubject = "final_answer"
+	GuardFrictionSubjectMalformedToolCall GuardFrictionSubject = "malformed_tool_call"
+	GuardFrictionSubjectRouteTransition   GuardFrictionSubject = "route_transition"
+)
+
+type GuardFrictionDecision string
+
+const (
+	GuardFrictionDecisionNudge   GuardFrictionDecision = "nudge"
+	GuardFrictionDecisionReject  GuardFrictionDecision = "reject"
+	GuardFrictionDecisionStop    GuardFrictionDecision = "stop"
+	GuardFrictionDecisionRecover GuardFrictionDecision = "recover"
+	GuardFrictionDecisionBlock   GuardFrictionDecision = "block"
+	GuardFrictionDecisionReopen  GuardFrictionDecision = "reopen"
+)
+
+type GuardFrictionSurface string
+
+const (
+	GuardFrictionSurfaceCompletionGate GuardFrictionSurface = "completion_gate"
+	GuardFrictionSurfaceToolPolicy     GuardFrictionSurface = "tool_policy"
+	GuardFrictionSurfaceParser         GuardFrictionSurface = "parser"
+	GuardFrictionSurfaceRecovery       GuardFrictionSurface = "recovery"
+	GuardFrictionSurfaceRunnerLoop     GuardFrictionSurface = "runner_loop"
+	GuardFrictionSurfaceWriteGate      GuardFrictionSurface = "write_gate"
+	GuardFrictionSurfaceVerification   GuardFrictionSurface = "verification_gate"
+	GuardFrictionSurfaceBudget         GuardFrictionSurface = "budget_gate"
+	GuardFrictionSurfaceReadiness      GuardFrictionSurface = "readiness_gate"
+)
+
+type GuardFrictionRetryOutcome string
+
+const (
+	GuardFrictionRetryNotApplicable    GuardFrictionRetryOutcome = "not_applicable"
+	GuardFrictionRetrySuccess          GuardFrictionRetryOutcome = "success"
+	GuardFrictionRetrySameFailure      GuardFrictionRetryOutcome = "same_failure"
+	GuardFrictionRetryDifferentFailure GuardFrictionRetryOutcome = "different_failure"
+)
+
+type GuardFrictionAvoidability string
+
+const (
+	GuardFrictionAvoidabilityUnknown                     GuardFrictionAvoidability = "unknown"
+	GuardFrictionAvoidabilityRealInvariant               GuardFrictionAvoidability = "real_invariant"
+	GuardFrictionAvoidabilityContractNotVisible          GuardFrictionAvoidability = "contract_not_visible"
+	GuardFrictionAvoidabilityContradictoryContract       GuardFrictionAvoidability = "contradictory_contract"
+	GuardFrictionAvoidabilityToolSurfaceGap              GuardFrictionAvoidability = "tool_surface_gap"
+	GuardFrictionAvoidabilityParserSurfaceGap            GuardFrictionAvoidability = "parser_surface_gap"
+	GuardFrictionAvoidabilityRuntimeStateGap             GuardFrictionAvoidability = "runtime_state_gap"
+	GuardFrictionAvoidabilityEvidenceTimingGap           GuardFrictionAvoidability = "evidence_timing_gap"
+	GuardFrictionAvoidabilityModelIgnoredVisibleContract GuardFrictionAvoidability = "model_ignored_visible_contract"
+)
+
 type Event struct {
-	SchemaVersion string                   `json:"schema_version"`
-	EventID       string                   `json:"event_id"`
-	Type          EventType                `json:"type"`
-	Effect        EventEffect              `json:"effect"`
-	OccurredAt    time.Time                `json:"occurred_at"`
-	Sequence      int64                    `json:"sequence"`
-	ContractID    string                   `json:"contract_id"`
-	ParentID      string                   `json:"parent_id,omitempty"`
-	Correlation   EventCorrelation         `json:"correlation,omitempty"`
-	Lifecycle     *ContractLifecycleEvent  `json:"lifecycle,omitempty"`
-	Policy        *ContractPolicyEvent     `json:"policy,omitempty"`
-	Obligation    *ContractObligationEvent `json:"obligation,omitempty"`
-	Readiness     *ContractReadinessEvent  `json:"readiness,omitempty"`
-	Completion    *ContractCompletionEvent `json:"completion,omitempty"`
-	Gate          *ContractGateEvent       `json:"gate,omitempty"`
-	EvidenceRefs  []string                 `json:"evidence_refs,omitempty"`
-	Metadata      ContractMetadata         `json:"metadata,omitempty"`
+	SchemaVersion string                      `json:"schema_version"`
+	EventID       string                      `json:"event_id"`
+	Type          EventType                   `json:"type"`
+	Effect        EventEffect                 `json:"effect"`
+	OccurredAt    time.Time                   `json:"occurred_at"`
+	Sequence      int64                       `json:"sequence"`
+	ContractID    string                      `json:"contract_id"`
+	ParentID      string                      `json:"parent_id,omitempty"`
+	Correlation   EventCorrelation            `json:"correlation,omitempty"`
+	Lifecycle     *ContractLifecycleEvent     `json:"lifecycle,omitempty"`
+	Policy        *ContractPolicyEvent        `json:"policy,omitempty"`
+	Obligation    *ContractObligationEvent    `json:"obligation,omitempty"`
+	Readiness     *ContractReadinessEvent     `json:"readiness,omitempty"`
+	Completion    *ContractCompletionEvent    `json:"completion,omitempty"`
+	Gate          *ContractGateEvent          `json:"gate,omitempty"`
+	GuardFriction *ContractGuardFrictionEvent `json:"guard_friction,omitempty"`
+	EvidenceRefs  []string                    `json:"evidence_refs,omitempty"`
+	Metadata      ContractMetadata            `json:"metadata,omitempty"`
 }
 
 type EventInput struct {
-	EventID      string
-	Type         EventType
-	Effect       EventEffect
-	OccurredAt   time.Time
-	Sequence     int64
-	ContractID   string
-	ParentID     string
-	Correlation  EventCorrelation
-	Lifecycle    *ContractLifecycleEvent
-	Policy       *ContractPolicyEvent
-	Obligation   *ContractObligationEvent
-	Readiness    *ContractReadinessEvent
-	Completion   *ContractCompletionEvent
-	Gate         *ContractGateEvent
-	EvidenceRefs []string
-	Metadata     ContractMetadata
+	EventID       string
+	Type          EventType
+	Effect        EventEffect
+	OccurredAt    time.Time
+	Sequence      int64
+	ContractID    string
+	ParentID      string
+	Correlation   EventCorrelation
+	Lifecycle     *ContractLifecycleEvent
+	Policy        *ContractPolicyEvent
+	Obligation    *ContractObligationEvent
+	Readiness     *ContractReadinessEvent
+	Completion    *ContractCompletionEvent
+	Gate          *ContractGateEvent
+	GuardFriction *ContractGuardFrictionEvent
+	EvidenceRefs  []string
+	Metadata      ContractMetadata
 }
 
 type EventCorrelation struct {
@@ -93,27 +155,32 @@ type EventCorrelation struct {
 }
 
 type ContractLifecycleEvent struct {
-	Summary              *ContractSummary        `json:"summary,omitempty"`
-	OldContractID        string                  `json:"old_contract_id,omitempty"`
-	NewContractID        string                  `json:"new_contract_id,omitempty"`
-	Reason               string                  `json:"reason,omitempty"`
-	StateDelta           []string                `json:"state_delta,omitempty"`
-	RailsHash            string                  `json:"rails_hash,omitempty"`
-	AllowedTools         []string                `json:"allowed_tools,omitempty"`
-	HiddenTools          []string                `json:"hidden_tools,omitempty"`
-	RequiredEvidence     []string                `json:"required_evidence,omitempty"`
-	ReadinessGate        string                  `json:"readiness_gate,omitempty"`
-	VerificationContract string                  `json:"verification_contract,omitempty"`
-	InvariantID          string                  `json:"invariant_id,omitempty"`
-	RemainingObligations []string                `json:"remaining_obligations,omitempty"`
-	TurnPhaseContract    *TurnPhaseContractEvent `json:"turn_phase_contract,omitempty"`
+	Summary              *ContractSummary               `json:"summary,omitempty"`
+	OldContractID        string                         `json:"old_contract_id,omitempty"`
+	NewContractID        string                         `json:"new_contract_id,omitempty"`
+	Reason               string                         `json:"reason,omitempty"`
+	StateDelta           []string                       `json:"state_delta,omitempty"`
+	RailsHash            string                         `json:"rails_hash,omitempty"`
+	ProtocolHash         string                         `json:"protocol_hash,omitempty"`
+	AllowedTools         []string                       `json:"allowed_tools,omitempty"`
+	HiddenTools          []string                       `json:"hidden_tools,omitempty"`
+	RequiredEvidence     []string                       `json:"required_evidence,omitempty"`
+	ReadinessGate        string                         `json:"readiness_gate,omitempty"`
+	VerificationContract string                         `json:"verification_contract,omitempty"`
+	InvariantID          string                         `json:"invariant_id,omitempty"`
+	RemainingObligations []string                       `json:"remaining_obligations,omitempty"`
+	TurnPhaseContract    *TurnPhaseContractEvent        `json:"turn_phase_contract,omitempty"`
+	ModelProtocol        *ModelProtocolEvent            `json:"model_protocol,omitempty"`
+	SurfaceSummaries     []TurnPhaseSurfaceSummaryEvent `json:"surface_summaries,omitempty"`
 }
 
 type TurnPhaseContractEvent struct {
 	SchemaVersion    string   `json:"schema_version,omitempty"`
+	ContractID       string   `json:"contract_id,omitempty"`
 	PhaseID          string   `json:"phase_id,omitempty"`
 	PhaseEpoch       int      `json:"phase_epoch,omitempty"`
 	ModelCallID      string   `json:"model_call_id,omitempty"`
+	ProtocolHash     string   `json:"protocol_hash,omitempty"`
 	Step             int      `json:"step,omitempty"`
 	Phase            string   `json:"phase,omitempty"`
 	DerivationReason string   `json:"derivation_reason,omitempty"`
@@ -132,6 +199,54 @@ type TurnPhaseContractEvent struct {
 	RuntimeCall     RuntimeCallContractEvent   `json:"runtime_call,omitempty"`
 	EvidenceState   PhaseEvidenceStateEvent    `json:"evidence_state,omitempty"`
 	EnforcementMode string                     `json:"enforcement_mode,omitempty"`
+}
+
+type ModelProtocolEvent struct {
+	SchemaVersion           string   `json:"schema_version,omitempty"`
+	ContractID              string   `json:"contract_id,omitempty"`
+	ContractVersion         string   `json:"contract_version,omitempty"`
+	ProtocolHash            string   `json:"protocol_hash,omitempty"`
+	PhaseID                 string   `json:"phase_id,omitempty"`
+	ParserMode              string   `json:"parser_mode,omitempty"`
+	ToolTransportMode       string   `json:"tool_transport_mode,omitempty"`
+	ParserTransportMode     string   `json:"parser_transport_mode,omitempty"`
+	ParserContract          string   `json:"parser_contract,omitempty"`
+	NativeToolPolicy        string   `json:"native_tool_policy,omitempty"`
+	SupportsNativeTools     bool     `json:"supports_native_tools,omitempty"`
+	ForceNativeTools        bool     `json:"force_native_tools,omitempty"`
+	ToolChoice              string   `json:"tool_choice,omitempty"`
+	ResponseFormat          string   `json:"response_format,omitempty"`
+	ExpectedVisibleOutput   string   `json:"expected_visible_output,omitempty"`
+	VisibleTools            []string `json:"visible_tools,omitempty"`
+	CallableTools           []string `json:"callable_tools,omitempty"`
+	CallableActionClasses   []string `json:"callable_action_classes,omitempty"`
+	InvalidActionClasses    []string `json:"invalid_action_classes,omitempty"`
+	TerminalResponseShapes  []string `json:"terminal_response_shapes,omitempty"`
+	SourceBodyObligations   []string `json:"source_body_obligations,omitempty"`
+	RequiredEditCoverage    []string `json:"required_edit_coverage,omitempty"`
+	PathRoleSummary         []string `json:"path_role_summary,omitempty"`
+	VerificationObligations []string `json:"verification_obligations,omitempty"`
+	SafeAlternatives        []string `json:"safe_alternatives,omitempty"`
+	MalformedOutputPolicy   string   `json:"malformed_output_policy,omitempty"`
+	RecoveryBudget          int      `json:"recovery_budget,omitempty"`
+	ActiveInvariantID       string   `json:"active_invariant_id,omitempty"`
+}
+
+type TurnPhaseSurfaceSummaryEvent struct {
+	SchemaVersion           string                   `json:"schema_version,omitempty"`
+	SurfaceID               string                   `json:"surface_id,omitempty"`
+	ContractID              string                   `json:"contract_id,omitempty"`
+	PhaseID                 string                   `json:"phase_id,omitempty"`
+	ModelCallID             string                   `json:"model_call_id,omitempty"`
+	ProtocolHash            string                   `json:"protocol_hash,omitempty"`
+	InvariantID             string                   `json:"invariant_id,omitempty"`
+	AdvertisedActionClasses []string                 `json:"advertised_action_classes,omitempty"`
+	CallableTools           []string                 `json:"callable_tools,omitempty"`
+	TerminalOutcomes        []string                 `json:"terminal_outcomes,omitempty"`
+	TerminalResponseShapes  []string                 `json:"terminal_response_shapes,omitempty"`
+	InvalidActionClasses    []string                 `json:"invalid_action_classes,omitempty"`
+	ObligationRefs          []string                 `json:"obligation_refs,omitempty"`
+	RuntimeCall             RuntimeCallContractEvent `json:"runtime_call,omitempty"`
 }
 
 type TurnActionClassPolicyEvent struct {
@@ -240,6 +355,7 @@ type ContractReadinessEvent struct {
 type ContractCompletionEvent struct {
 	Decision             ToolPolicyDecision `json:"decision"`
 	InvariantID          string             `json:"invariant_id,omitempty"`
+	ProtocolHash         string             `json:"protocol_hash,omitempty"`
 	RemainingObligations []string           `json:"remaining_obligations,omitempty"`
 	VerificationStatus   string             `json:"verification_status,omitempty"`
 	ChangedPaths         []string           `json:"changed_paths,omitempty"`
@@ -250,6 +366,7 @@ type ContractGateEvent struct {
 	Gate                  GateKind           `json:"gate"`
 	Decision              ToolPolicyDecision `json:"decision"`
 	InvariantID           string             `json:"invariant_id,omitempty"`
+	ProtocolHash          string             `json:"protocol_hash,omitempty"`
 	ReasonCode            string             `json:"reason_code,omitempty"`
 	ToolCallID            string             `json:"tool_call_id,omitempty"`
 	ToolName              string             `json:"tool_name,omitempty"`
@@ -263,6 +380,35 @@ type ContractGateEvent struct {
 	LoopFingerprintDigest string             `json:"loop_fingerprint_digest,omitempty"`
 	Attempts              int                `json:"attempts,omitempty"`
 	Source                string             `json:"source,omitempty"`
+}
+
+type ContractGuardFrictionEvent struct {
+	Schema                   string                    `json:"schema"`
+	SessionID                string                    `json:"session_id,omitempty"`
+	Step                     int                       `json:"step,omitempty"`
+	Lane                     string                    `json:"lane,omitempty"`
+	Phase                    string                    `json:"phase,omitempty"`
+	PhaseID                  string                    `json:"phase_id,omitempty"`
+	ModelCallID              string                    `json:"model_call_id,omitempty"`
+	SourceEventID            string                    `json:"source_event_id,omitempty"`
+	ContractID               string                    `json:"contract_id,omitempty"`
+	ContractVersion          string                    `json:"contract_version,omitempty"`
+	ProtocolHash             string                    `json:"protocol_hash,omitempty"`
+	InvariantID              string                    `json:"invariant_id,omitempty"`
+	ObligationID             string                    `json:"obligation_id,omitempty"`
+	Subject                  GuardFrictionSubject      `json:"subject"`
+	Decision                 GuardFrictionDecision     `json:"decision"`
+	GuardSurface             GuardFrictionSurface      `json:"guard_surface"`
+	FirstInvalidAction       string                    `json:"first_invalid_action,omitempty"`
+	VisibleActionClasses     []string                  `json:"visible_action_classes,omitempty"`
+	VisibleTools             []string                  `json:"visible_tools,omitempty"`
+	SafeAlternatives         []string                  `json:"safe_alternatives,omitempty"`
+	ModelContractVisible     bool                      `json:"model_contract_visible"`
+	ContradictorySurfaceSeen bool                      `json:"contradictory_surface_seen,omitempty"`
+	RetryNumber              int                       `json:"retry_number,omitempty"`
+	RetryOutcome             GuardFrictionRetryOutcome `json:"retry_outcome"`
+	Avoidability             GuardFrictionAvoidability `json:"avoidability"`
+	EvidenceRefs             []string                  `json:"evidence_refs,omitempty"`
 }
 
 type EventSink interface {
@@ -291,6 +437,7 @@ func NewEvent(input EventInput) (Event, error) {
 		Readiness:     copyReadinessEvent(input.Readiness),
 		Completion:    copyCompletionEvent(input.Completion),
 		Gate:          copyGateEvent(input.Gate),
+		GuardFriction: copyGuardFrictionEvent(input.GuardFriction),
 		EvidenceRefs:  append([]string(nil), input.EvidenceRefs...),
 		Metadata:      copyMetadata(input.Metadata),
 	}
@@ -408,6 +555,35 @@ func NewGateDecisionEvent(contract AutonomyContract, gate ContractGateEvent, occ
 	})
 }
 
+func NewGuardFrictionEvent(contract AutonomyContract, friction ContractGuardFrictionEvent, occurredAt time.Time, sequence int64) (Event, error) {
+	friction.ContractID = firstNonEmptyEventValue(friction.ContractID, contract.ContractID)
+	friction.Lane = firstNonEmptyEventValue(friction.Lane, contract.Scope.Lane)
+	friction.Phase = firstNonEmptyEventValue(friction.Phase, contract.Scope.Phase)
+	if len(friction.EvidenceRefs) == 0 {
+		friction.EvidenceRefs = nil
+	}
+	return NewEvent(EventInput{
+		Type:          EventGuardFriction,
+		OccurredAt:    occurredAt,
+		Sequence:      sequence,
+		ContractID:    contract.ContractID,
+		ParentID:      contract.ParentID,
+		Correlation:   CorrelationFromContract(contract),
+		GuardFriction: &friction,
+		EvidenceRefs:  friction.EvidenceRefs,
+		Metadata:      contract.Metadata,
+	})
+}
+
+func firstNonEmptyEventValue(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
 func CorrelationFromContract(contract AutonomyContract) EventCorrelation {
 	correlation := EventCorrelation{
 		Lane:              contract.Scope.Lane,
@@ -523,6 +699,9 @@ func (e *Event) Normalize() {
 	if e.Gate != nil {
 		e.Gate.normalize()
 	}
+	if e.GuardFriction != nil {
+		e.GuardFriction.normalize()
+	}
 	e.EvidenceRefs = compactStrings(e.EvidenceRefs)
 	e.Metadata.normalize()
 }
@@ -605,6 +784,9 @@ func (e Event) validatePayload(problems *[]string) {
 		payloads++
 	}
 	if e.Gate != nil {
+		payloads++
+	}
+	if e.GuardFriction != nil {
 		payloads++
 	}
 	if payloads != 1 {
@@ -693,6 +875,12 @@ func (e Event) validatePayload(problems *[]string) {
 		if e.Gate.Attempts < 0 {
 			*problems = append(*problems, "gate.attempts cannot be negative")
 		}
+	case EventGuardFriction:
+		if e.GuardFriction == nil {
+			*problems = append(*problems, "guard_friction payload is required for guard_friction")
+			return
+		}
+		e.GuardFriction.validate(e.ContractID, problems)
 	}
 }
 
@@ -732,6 +920,7 @@ func (e *ContractLifecycleEvent) normalize() {
 	e.Reason = strings.TrimSpace(e.Reason)
 	e.StateDelta = compactStrings(e.StateDelta)
 	e.RailsHash = strings.TrimSpace(e.RailsHash)
+	e.ProtocolHash = strings.TrimSpace(e.ProtocolHash)
 	e.AllowedTools = compactStrings(e.AllowedTools)
 	e.HiddenTools = compactStrings(e.HiddenTools)
 	e.RequiredEvidence = compactStrings(e.RequiredEvidence)
@@ -742,12 +931,26 @@ func (e *ContractLifecycleEvent) normalize() {
 	if e.TurnPhaseContract != nil {
 		e.TurnPhaseContract.normalize()
 	}
+	if e.ModelProtocol != nil {
+		e.ModelProtocol.normalize()
+	}
+	for i := range e.SurfaceSummaries {
+		e.SurfaceSummaries[i].normalize()
+	}
+	slices.SortFunc(e.SurfaceSummaries, func(a, b TurnPhaseSurfaceSummaryEvent) int {
+		if c := cmp.Compare(a.SurfaceID, b.SurfaceID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ModelCallID, b.ModelCallID)
+	})
 }
 
 func (p *TurnPhaseContractEvent) normalize() {
 	p.SchemaVersion = strings.TrimSpace(p.SchemaVersion)
+	p.ContractID = strings.TrimSpace(p.ContractID)
 	p.PhaseID = strings.TrimSpace(p.PhaseID)
 	p.ModelCallID = strings.TrimSpace(p.ModelCallID)
+	p.ProtocolHash = strings.TrimSpace(p.ProtocolHash)
 	p.Phase = strings.TrimSpace(p.Phase)
 	p.DerivationReason = strings.TrimSpace(p.DerivationReason)
 	p.InvariantIDs = compactStrings(p.InvariantIDs)
@@ -763,6 +966,51 @@ func (p *TurnPhaseContractEvent) normalize() {
 	p.RuntimeCall.normalize()
 	p.EvidenceState.normalize()
 	p.EnforcementMode = strings.TrimSpace(p.EnforcementMode)
+}
+
+func (p *ModelProtocolEvent) normalize() {
+	p.SchemaVersion = strings.TrimSpace(p.SchemaVersion)
+	p.ContractID = strings.TrimSpace(p.ContractID)
+	p.ContractVersion = strings.TrimSpace(p.ContractVersion)
+	p.ProtocolHash = strings.TrimSpace(p.ProtocolHash)
+	p.PhaseID = strings.TrimSpace(p.PhaseID)
+	p.ParserMode = strings.TrimSpace(p.ParserMode)
+	p.ToolTransportMode = strings.TrimSpace(p.ToolTransportMode)
+	p.ParserTransportMode = strings.TrimSpace(p.ParserTransportMode)
+	p.ParserContract = strings.TrimSpace(p.ParserContract)
+	p.NativeToolPolicy = strings.TrimSpace(p.NativeToolPolicy)
+	p.ToolChoice = strings.TrimSpace(p.ToolChoice)
+	p.ResponseFormat = strings.TrimSpace(p.ResponseFormat)
+	p.ExpectedVisibleOutput = strings.TrimSpace(p.ExpectedVisibleOutput)
+	p.VisibleTools = compactStrings(p.VisibleTools)
+	p.CallableTools = compactStrings(p.CallableTools)
+	p.CallableActionClasses = compactStrings(p.CallableActionClasses)
+	p.InvalidActionClasses = compactStrings(p.InvalidActionClasses)
+	p.TerminalResponseShapes = compactStrings(p.TerminalResponseShapes)
+	p.SourceBodyObligations = compactStrings(p.SourceBodyObligations)
+	p.RequiredEditCoverage = compactStrings(p.RequiredEditCoverage)
+	p.PathRoleSummary = compactStrings(p.PathRoleSummary)
+	p.VerificationObligations = compactStrings(p.VerificationObligations)
+	p.SafeAlternatives = compactStrings(p.SafeAlternatives)
+	p.MalformedOutputPolicy = strings.TrimSpace(p.MalformedOutputPolicy)
+	p.ActiveInvariantID = strings.TrimSpace(p.ActiveInvariantID)
+}
+
+func (s *TurnPhaseSurfaceSummaryEvent) normalize() {
+	s.SchemaVersion = strings.TrimSpace(s.SchemaVersion)
+	s.SurfaceID = strings.TrimSpace(s.SurfaceID)
+	s.ContractID = strings.TrimSpace(s.ContractID)
+	s.PhaseID = strings.TrimSpace(s.PhaseID)
+	s.ModelCallID = strings.TrimSpace(s.ModelCallID)
+	s.ProtocolHash = strings.TrimSpace(s.ProtocolHash)
+	s.InvariantID = strings.TrimSpace(s.InvariantID)
+	s.AdvertisedActionClasses = compactStrings(s.AdvertisedActionClasses)
+	s.CallableTools = compactStrings(s.CallableTools)
+	s.TerminalOutcomes = compactStrings(s.TerminalOutcomes)
+	s.TerminalResponseShapes = compactStrings(s.TerminalResponseShapes)
+	s.InvalidActionClasses = compactStrings(s.InvalidActionClasses)
+	s.ObligationRefs = compactStrings(s.ObligationRefs)
+	s.RuntimeCall.normalize()
 }
 
 func (p *TurnActionClassPolicyEvent) normalize() {
@@ -852,6 +1100,7 @@ func (r *ContractReadinessEvent) normalize() {
 
 func (c *ContractCompletionEvent) normalize() {
 	c.InvariantID = strings.TrimSpace(c.InvariantID)
+	c.ProtocolHash = strings.TrimSpace(c.ProtocolHash)
 	c.RemainingObligations = compactStrings(c.RemainingObligations)
 	c.VerificationStatus = strings.TrimSpace(c.VerificationStatus)
 	c.ChangedPaths = compactStrings(c.ChangedPaths)
@@ -860,6 +1109,7 @@ func (c *ContractCompletionEvent) normalize() {
 
 func (g *ContractGateEvent) normalize() {
 	g.InvariantID = strings.TrimSpace(g.InvariantID)
+	g.ProtocolHash = strings.TrimSpace(g.ProtocolHash)
 	g.ReasonCode = strings.TrimSpace(g.ReasonCode)
 	g.ToolCallID = strings.TrimSpace(g.ToolCallID)
 	g.ToolName = strings.TrimSpace(g.ToolName)
@@ -877,16 +1127,183 @@ func (g *ContractGateEvent) normalize() {
 	g.Source = strings.TrimSpace(g.Source)
 }
 
+func (g *ContractGuardFrictionEvent) normalize() {
+	if g.Schema == "" {
+		g.Schema = GuardFrictionSchemaVersion
+	}
+	g.Schema = strings.TrimSpace(g.Schema)
+	g.SessionID = strings.TrimSpace(g.SessionID)
+	g.Lane = strings.TrimSpace(g.Lane)
+	g.Phase = strings.TrimSpace(g.Phase)
+	g.PhaseID = strings.TrimSpace(g.PhaseID)
+	g.ModelCallID = strings.TrimSpace(g.ModelCallID)
+	g.SourceEventID = strings.TrimSpace(g.SourceEventID)
+	g.ContractID = strings.TrimSpace(g.ContractID)
+	g.ContractVersion = strings.TrimSpace(g.ContractVersion)
+	g.ProtocolHash = strings.TrimSpace(g.ProtocolHash)
+	g.InvariantID = strings.TrimSpace(g.InvariantID)
+	g.ObligationID = strings.TrimSpace(g.ObligationID)
+	g.FirstInvalidAction = strings.TrimSpace(g.FirstInvalidAction)
+	g.VisibleActionClasses = compactStrings(g.VisibleActionClasses)
+	g.VisibleTools = compactStrings(g.VisibleTools)
+	g.SafeAlternatives = compactStrings(g.SafeAlternatives)
+	if g.RetryOutcome == "" {
+		g.RetryOutcome = GuardFrictionRetryNotApplicable
+	}
+	if g.Avoidability == "" {
+		g.Avoidability = GuardFrictionAvoidabilityUnknown
+	}
+	g.EvidenceRefs = compactStrings(g.EvidenceRefs)
+}
+
+func (g ContractGuardFrictionEvent) validate(eventContractID string, problems *[]string) {
+	if g.Schema != GuardFrictionSchemaVersion {
+		*problems = append(*problems, "guard_friction.schema must be "+GuardFrictionSchemaVersion)
+	}
+	if g.ContractID != "" && eventContractID != "" && g.ContractID != eventContractID {
+		*problems = append(*problems, "guard_friction.contract_id must match event contract_id")
+	}
+	if !validGuardFrictionSubject(g.Subject) {
+		*problems = append(*problems, "guard_friction.subject is invalid")
+	}
+	if !validGuardFrictionDecision(g.Decision) {
+		*problems = append(*problems, "guard_friction.decision is invalid")
+	}
+	if !validGuardFrictionSurface(g.GuardSurface) {
+		*problems = append(*problems, "guard_friction.guard_surface is invalid")
+	}
+	if !validGuardFrictionRetryOutcome(g.RetryOutcome) {
+		*problems = append(*problems, "guard_friction.retry_outcome is invalid")
+	}
+	if !validGuardFrictionAvoidability(g.Avoidability) {
+		*problems = append(*problems, "guard_friction.avoidability is invalid")
+	}
+	if g.RetryNumber < 0 {
+		*problems = append(*problems, "guard_friction.retry_number cannot be negative")
+	}
+	if g.InvariantID == "" {
+		*problems = append(*problems, "guard_friction.invariant_id is required")
+	}
+	if g.ModelContractVisible && g.ProtocolHash == "" {
+		*problems = append(*problems, "guard_friction.protocol_hash is required when model_contract_visible is true")
+	}
+	g.validateRedactedFields(problems)
+}
+
+func (g ContractGuardFrictionEvent) validateRedactedFields(problems *[]string) {
+	values := []string{
+		g.SessionID,
+		g.Lane,
+		g.Phase,
+		g.PhaseID,
+		g.ModelCallID,
+		g.SourceEventID,
+		g.ContractID,
+		g.ContractVersion,
+		g.ProtocolHash,
+		g.InvariantID,
+		g.ObligationID,
+		g.FirstInvalidAction,
+	}
+	values = append(values, g.VisibleActionClasses...)
+	values = append(values, g.VisibleTools...)
+	values = append(values, g.SafeAlternatives...)
+	values = append(values, g.EvidenceRefs...)
+	for _, value := range values {
+		if looksLikeRawGuardFrictionContent(value) {
+			*problems = append(*problems, "guard_friction fields must contain redaction-safe metadata only")
+			return
+		}
+	}
+}
+
 func validEventType(eventType EventType) bool {
 	switch eventType {
 	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped,
 		EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult,
 		EventObligationOpened, EventObligationResolved, EventObligationWaived, EventReadinessStateUpdated,
-		EventCompletionGateDecision, EventGateDecision:
+		EventCompletionGateDecision, EventGateDecision, EventGuardFriction:
 		return true
 	default:
 		return false
 	}
+}
+
+func validGuardFrictionSubject(subject GuardFrictionSubject) bool {
+	switch subject {
+	case GuardFrictionSubjectToolCall, GuardFrictionSubjectFinalAnswer, GuardFrictionSubjectMalformedToolCall, GuardFrictionSubjectRouteTransition:
+		return true
+	default:
+		return false
+	}
+}
+
+func validGuardFrictionDecision(decision GuardFrictionDecision) bool {
+	switch decision {
+	case GuardFrictionDecisionNudge, GuardFrictionDecisionReject, GuardFrictionDecisionStop, GuardFrictionDecisionRecover, GuardFrictionDecisionBlock, GuardFrictionDecisionReopen:
+		return true
+	default:
+		return false
+	}
+}
+
+func validGuardFrictionSurface(surface GuardFrictionSurface) bool {
+	switch surface {
+	case GuardFrictionSurfaceCompletionGate, GuardFrictionSurfaceToolPolicy, GuardFrictionSurfaceParser, GuardFrictionSurfaceRecovery,
+		GuardFrictionSurfaceRunnerLoop, GuardFrictionSurfaceWriteGate, GuardFrictionSurfaceVerification, GuardFrictionSurfaceBudget, GuardFrictionSurfaceReadiness:
+		return true
+	default:
+		return false
+	}
+}
+
+func validGuardFrictionRetryOutcome(outcome GuardFrictionRetryOutcome) bool {
+	switch outcome {
+	case GuardFrictionRetryNotApplicable, GuardFrictionRetrySuccess, GuardFrictionRetrySameFailure, GuardFrictionRetryDifferentFailure:
+		return true
+	default:
+		return false
+	}
+}
+
+func validGuardFrictionAvoidability(avoidability GuardFrictionAvoidability) bool {
+	switch avoidability {
+	case GuardFrictionAvoidabilityUnknown, GuardFrictionAvoidabilityRealInvariant, GuardFrictionAvoidabilityContractNotVisible,
+		GuardFrictionAvoidabilityContradictoryContract, GuardFrictionAvoidabilityToolSurfaceGap, GuardFrictionAvoidabilityParserSurfaceGap,
+		GuardFrictionAvoidabilityRuntimeStateGap, GuardFrictionAvoidabilityEvidenceTimingGap, GuardFrictionAvoidabilityModelIgnoredVisibleContract:
+		return true
+	default:
+		return false
+	}
+}
+
+func looksLikeRawGuardFrictionContent(value string) bool {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return false
+	}
+	lowered := strings.ToLower(trimmed)
+	for _, marker := range []string{
+		"\n",
+		"raw_prompt",
+		"raw prompt",
+		"raw_transcript",
+		"raw transcript",
+		"transcript:",
+		"file_body",
+		"file body",
+		"old_text",
+		"new_text",
+		"-----begin",
+		"api_key",
+		"secret=",
+		"password=",
+	} {
+		if strings.Contains(lowered, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func copyEvent(in Event) Event {
@@ -906,6 +1323,7 @@ func copyEvent(in Event) Event {
 		Readiness:     copyReadinessEvent(in.Readiness),
 		Completion:    copyCompletionEvent(in.Completion),
 		Gate:          copyGateEvent(in.Gate),
+		GuardFriction: copyGuardFrictionEvent(in.GuardFriction),
 		EvidenceRefs:  append([]string(nil), in.EvidenceRefs...),
 		Metadata:      copyMetadata(in.Metadata),
 	}
@@ -926,6 +1344,8 @@ func copyLifecycleEvent(in *ContractLifecycleEvent) *ContractLifecycleEvent {
 	out.RequiredEvidence = append([]string(nil), in.RequiredEvidence...)
 	out.RemainingObligations = append([]string(nil), in.RemainingObligations...)
 	out.TurnPhaseContract = copyTurnPhaseContractEvent(in.TurnPhaseContract)
+	out.ModelProtocol = copyModelProtocolEvent(in.ModelProtocol)
+	out.SurfaceSummaries = copyTurnPhaseSurfaceSummaryEvents(in.SurfaceSummaries)
 	return &out
 }
 
@@ -952,6 +1372,54 @@ func copyTurnPhaseContractEvent(in *TurnPhaseContractEvent) *TurnPhaseContractEv
 	out.EvidenceState.VerificationEvidenceRefs = append([]string(nil), in.EvidenceState.VerificationEvidenceRefs...)
 	out.EvidenceState.RecoveryPacketRefs = append([]string(nil), in.EvidenceState.RecoveryPacketRefs...)
 	out.EvidenceState.ResidualBlockers = append([]string(nil), in.EvidenceState.ResidualBlockers...)
+	return &out
+}
+
+func copyModelProtocolEvent(in *ModelProtocolEvent) *ModelProtocolEvent {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.VisibleTools = append([]string(nil), in.VisibleTools...)
+	out.CallableTools = append([]string(nil), in.CallableTools...)
+	out.CallableActionClasses = append([]string(nil), in.CallableActionClasses...)
+	out.InvalidActionClasses = append([]string(nil), in.InvalidActionClasses...)
+	out.TerminalResponseShapes = append([]string(nil), in.TerminalResponseShapes...)
+	out.SourceBodyObligations = append([]string(nil), in.SourceBodyObligations...)
+	out.RequiredEditCoverage = append([]string(nil), in.RequiredEditCoverage...)
+	out.PathRoleSummary = append([]string(nil), in.PathRoleSummary...)
+	out.VerificationObligations = append([]string(nil), in.VerificationObligations...)
+	out.SafeAlternatives = append([]string(nil), in.SafeAlternatives...)
+	return &out
+}
+
+func copyTurnPhaseSurfaceSummaryEvents(in []TurnPhaseSurfaceSummaryEvent) []TurnPhaseSurfaceSummaryEvent {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]TurnPhaseSurfaceSummaryEvent, len(in))
+	for i := range in {
+		out[i] = in[i]
+		out[i].AdvertisedActionClasses = append([]string(nil), in[i].AdvertisedActionClasses...)
+		out[i].CallableTools = append([]string(nil), in[i].CallableTools...)
+		out[i].TerminalOutcomes = append([]string(nil), in[i].TerminalOutcomes...)
+		out[i].TerminalResponseShapes = append([]string(nil), in[i].TerminalResponseShapes...)
+		out[i].InvalidActionClasses = append([]string(nil), in[i].InvalidActionClasses...)
+		out[i].ObligationRefs = append([]string(nil), in[i].ObligationRefs...)
+		out[i].RuntimeCall.ExpressibleActionClasses = append([]string(nil), in[i].RuntimeCall.ExpressibleActionClasses...)
+	}
+	return out
+}
+
+func copyGuardFrictionEvent(in *ContractGuardFrictionEvent) *ContractGuardFrictionEvent {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.VisibleActionClasses = append([]string(nil), in.VisibleActionClasses...)
+	out.VisibleTools = append([]string(nil), in.VisibleTools...)
+	out.SafeAlternatives = append([]string(nil), in.SafeAlternatives...)
+	out.EvidenceRefs = append([]string(nil), in.EvidenceRefs...)
 	return &out
 }
 

@@ -1256,6 +1256,45 @@ func TestRequiredEditPathsCaptureInlineColonList(t *testing.T) {
 	}
 }
 
+func TestImplementationAtomPromptPreservesRequiredEditPathsAfterDesignDocReference(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetForcedTaskFamily("implementation")
+
+	prompt := `Implement one bounded TDD capability atom from docs/design-tdd-coverage.md, Phase 1: EARS and BDD Coverage Checks.
+
+Goal: extend the product workflow TDD coverage gate so behavior_standard-or-higher coverage fails closed when EARS requirements are unmapped or BDD scenarios lack concrete data, using the existing tdd.json coverage metadata fields.
+
+Context evidence: context_pack pack_id=059dc319e5447ef9 identified internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go, and cmd/idiom/product_workflow_test.go as the relevant implementation/test surfaces.
+
+Required edit paths:
+- internal/productworkflow/coverage_gate.go
+- internal/productworkflow/coverage_gate_test.go
+- cmd/idiom/product_workflow_test.go
+
+Acceptance:
+- Add or update focused tests that fail before the change.
+- Preserve the current durable product workflow fixture pass path.`
+
+	plan := model.buildPromptExecutionPlan(context.Background(), prompt)
+	want := []string{
+		"internal/productworkflow/coverage_gate.go",
+		"internal/productworkflow/coverage_gate_test.go",
+		"cmd/idiom/product_workflow_test.go",
+	}
+	if !slices.Equal(plan.runtimeBrief.RequiredEditPaths, want) {
+		t.Fatalf("required edit paths = %#v, want %#v", plan.runtimeBrief.RequiredEditPaths, want)
+	}
+	if slices.Contains(plan.runtimeBrief.RequiredEditPaths, "docs/design-tdd-coverage.md") {
+		t.Fatalf("design doc evidence must not become required edit scope: %#v", plan.runtimeBrief.RequiredEditPaths)
+	}
+	if !slices.Contains(plan.runtimeBrief.Constraints, "required_edit_paths_define_write_scope") {
+		t.Fatalf("expected required-path write scope constraint, got %#v", plan.runtimeBrief.Constraints)
+	}
+}
+
 func TestRequiredEditPathsRejectDirectoryLikeObligations(t *testing.T) {
 	prompt := `
 ## Files To Modify

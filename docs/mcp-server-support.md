@@ -2,7 +2,7 @@
 
 Status: draft
 Owner: tbd
-Related: [internal/mcp/client.go](../internal/mcp/client.go), [internal/workspace/tool_manifest.go](../internal/workspace/tool_manifest.go), [docs/opencode-fixes-design.md](opencode-fixes-design.md) §8
+Related: [internal/mcp/client.go](../internal/mcp/client.go), [internal/workspace/tool_manifest.go](../internal/workspace/tool_manifest.go), [archive/2026-05-historical/opencode-fixes-design.md](archive/2026-05-historical/opencode-fixes-design.md) §8
 
 ## Goals
 

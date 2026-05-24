@@ -2990,6 +2990,34 @@ func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testi
 	}
 }
 
+func TestCorrectTurnRoutePlanUpgradesRepoInternalArchitectureQuestions(t *testing.T) {
+	prompts := []string{
+		"What does the debug log redacted mode do?",
+		"Can you tell me how this harness uses subagents?",
+		"What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+	}
+	for _, prompt := range prompts {
+		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
+		if plan.Family != "architecture" {
+			t.Fatalf("family for %q = %q, want architecture", prompt, plan.Family)
+		}
+		if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
+			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
+		}
+	}
+}
+
+func TestCorrectTurnRoutePlanKeepsQuestionShapedUILayoutConversation(t *testing.T) {
+	prompt := "The current model string in the top-right portion of the banner shows a path with what seems to be a stripped filename. Can we shorten this to be just the model's alias?"
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
+	}
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestCorrectTurnRoutePlanDoesNotUsePromptFallbackHeuristics(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", agent.BuildMode())
 	if plan.Family != "debug_logs" {

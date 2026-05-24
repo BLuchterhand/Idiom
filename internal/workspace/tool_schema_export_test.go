@@ -115,6 +115,58 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 	}
 }
 
+func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
+	manifest := BuildToolManifest([]string{"code_navigate", "go_definition", "read_file", "source_sanity", "context_trace_pack", "apply_patch", "harness_audit"})
+	byTool := make(map[string]ToolManifestEntry, len(manifest))
+	for _, entry := range manifest {
+		byTool[entry.Tool] = entry
+	}
+	cases := []struct {
+		tool           string
+		capability     string
+		classification string
+	}{
+		{tool: "code_navigate", capability: "inspect_symbol", classification: CapabilityClassRouted},
+		{tool: "go_definition", capability: "find_definition", classification: CapabilityClassCompatibilityAdapter},
+		{tool: "read_file", capability: "inspect_file", classification: CapabilityClassFallback},
+		{tool: "source_sanity", capability: "verify_edit", classification: CapabilityClassDeferred},
+		{tool: "context_trace_pack", capability: "verify_edit", classification: CapabilityClassDeferred},
+		{tool: "apply_patch", capability: "", classification: CapabilityClassWriteSideEffect},
+		{tool: "harness_audit", capability: "audit_behavior", classification: CapabilityClassRouted},
+	}
+	for _, tc := range cases {
+		entry := byTool[tc.tool]
+		if entry.Tool == "" {
+			t.Fatalf("manifest missing %s: %#v", tc.tool, manifest)
+		}
+		if tc.capability != "" && !slices.Contains(entry.EvidenceCapabilities, tc.capability) {
+			t.Fatalf("%s manifest capabilities = %#v, want %s", tc.tool, entry.EvidenceCapabilities, tc.capability)
+		}
+		if entry.CapabilityClassification != tc.classification {
+			t.Fatalf("%s manifest classification = %q, want %q", tc.tool, entry.CapabilityClassification, tc.classification)
+		}
+	}
+
+	export, err := BuildToolSchemaExport([]string{"code_navigate", "go_definition", "source_sanity"})
+	if err != nil {
+		t.Fatalf("BuildToolSchemaExport returned error: %v", err)
+	}
+	exported := make(map[string]ExportedToolSchema, len(export.Tools))
+	for _, tool := range export.Tools {
+		exported[tool.Name] = tool
+	}
+	if !slices.Contains(exported["code_navigate"].EvidenceCapabilities, "find_references") {
+		t.Fatalf("code_navigate export capabilities = %#v", exported["code_navigate"].EvidenceCapabilities)
+	}
+	if exported["go_definition"].CapabilityClassification != CapabilityClassCompatibilityAdapter {
+		t.Fatalf("go_definition export classification = %q", exported["go_definition"].CapabilityClassification)
+	}
+	if exported["source_sanity"].CapabilityClassification != CapabilityClassDeferred ||
+		!slices.Contains(exported["source_sanity"].EvidenceCapabilities, "verify_edit") {
+		t.Fatalf("source_sanity export metadata = %#v", exported["source_sanity"])
+	}
+}
+
 func TestWriteToolManifestGuidanceIncludesRequiredDescription(t *testing.T) {
 	writeTools := map[string]bool{
 		"edit_file":   true,

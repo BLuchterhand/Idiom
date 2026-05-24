@@ -256,6 +256,78 @@ func TestGateDecisionEventCoversReadOnlySidecarContract(t *testing.T) {
 	}
 }
 
+func TestGuardFrictionEventSerializesPassiveRedactedPayload(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 15, 50, 0, 0, time.UTC)
+	event, err := NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		SessionID:            "session-123",
+		Step:                 4,
+		PhaseID:              "plan_execute.submit_ready",
+		ModelCallID:          "call-1",
+		SourceEventID:        "gate-event-1",
+		ContractVersion:      "2",
+		ProtocolHash:         "protocol-abc",
+		InvariantID:          "completion.submit_plan_or_terminal",
+		ObligationID:         "required_edit_paths.coverage",
+		Subject:              GuardFrictionSubjectToolCall,
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		FirstInvalidAction:   "search_content",
+		VisibleActionClasses: []string{"submit_plan", "source_satisfied", "blocker"},
+		VisibleTools:         []string{"submit_plan"},
+		SafeAlternatives:     []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+		ModelContractVisible: true,
+		RetryOutcome:         GuardFrictionRetryNotApplicable,
+		Avoidability:         GuardFrictionAvoidabilityUnknown,
+		EvidenceRefs:         []string{"conversation:record-id", "telemetry:event-id"},
+	}, occurredAt, 1)
+	if err != nil {
+		t.Fatalf("NewGuardFrictionEvent returned error: %v", err)
+	}
+	if event.Type != EventGuardFriction || event.GuardFriction == nil {
+		t.Fatalf("guard friction event payload mismatch: %#v", event)
+	}
+	if event.GuardFriction.Schema != GuardFrictionSchemaVersion {
+		t.Fatalf("guard friction schema mismatch: %#v", event.GuardFriction)
+	}
+	if event.GuardFriction.ContractID != contract.ContractID || event.GuardFriction.Lane != "implement" || event.GuardFriction.Phase != "execute" {
+		t.Fatalf("guard friction event should inherit contract identity: %#v", event.GuardFriction)
+	}
+	encoded, err := json.Marshal(event)
+	if err != nil {
+		t.Fatalf("marshal guard friction event: %v", err)
+	}
+	jsonText := string(encoded)
+	for _, want := range []string{`"type":"guard_friction"`, `"schema":"idiom.guard_friction.v1"`, `"guard_surface":"completion_gate"`, `"safe_alternatives":["\u003c\u003cQUESTION\u003e\u003e:","Decision: source-satisfied","submit_plan"]`} {
+		if !strings.Contains(jsonText, want) {
+			t.Fatalf("guard friction JSON missing %s: %s", want, jsonText)
+		}
+	}
+	for _, forbidden := range []string{"raw_prompt", "raw_transcript", "file_body", "old_text", "new_text", "secret="} {
+		if strings.Contains(jsonText, forbidden) {
+			t.Fatalf("guard friction JSON should not leak raw content marker %q: %s", forbidden, jsonText)
+		}
+	}
+
+	event.GuardFriction.SafeAlternatives[0] = "mutated"
+	stored, err := NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		ProtocolHash:         "protocol-abc",
+		InvariantID:          "completion.submit_plan_or_terminal",
+		Subject:              GuardFrictionSubjectToolCall,
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		VisibleActionClasses: []string{"submit_plan"},
+		SafeAlternatives:     []string{"submit_plan"},
+		ModelContractVisible: true,
+	}, occurredAt, 2)
+	if err != nil {
+		t.Fatalf("second guard friction event returned error: %v", err)
+	}
+	if stored.GuardFriction.RetryOutcome != GuardFrictionRetryNotApplicable || stored.GuardFriction.Avoidability != GuardFrictionAvoidabilityUnknown {
+		t.Fatalf("guard friction defaults not normalized: %#v", stored.GuardFriction)
+	}
+}
+
 func TestObligationEventCarriesClientClassificationAndProductMetadata(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 16, 0, 0, 0, time.UTC)
@@ -326,6 +398,42 @@ func TestEventValidationRejectsInvalidPayloadShape(t *testing.T) {
 	}, time.Date(2026, 5, 13, 17, 45, 0, 0, time.UTC), 3)
 	if err == nil || !strings.Contains(err.Error(), "gate.attempts cannot be negative") {
 		t.Fatalf("expected negative attempts validation error, got %v", err)
+	}
+
+	_, err = NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		InvariantID:          "completion.submit_plan_or_terminal",
+		ProtocolHash:         "protocol-abc",
+		Subject:              GuardFrictionSubject("raw_prompt"),
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		ModelContractVisible: true,
+	}, time.Date(2026, 5, 13, 17, 50, 0, 0, time.UTC), 4)
+	if err == nil || !strings.Contains(err.Error(), "guard_friction.subject is invalid") {
+		t.Fatalf("expected invalid guard friction subject error, got %v", err)
+	}
+
+	_, err = NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		InvariantID:          "completion.submit_plan_or_terminal",
+		Subject:              GuardFrictionSubjectToolCall,
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		ModelContractVisible: true,
+	}, time.Date(2026, 5, 13, 17, 55, 0, 0, time.UTC), 5)
+	if err == nil || !strings.Contains(err.Error(), "protocol_hash is required") {
+		t.Fatalf("expected missing protocol hash validation error, got %v", err)
+	}
+
+	_, err = NewGuardFrictionEvent(contract, ContractGuardFrictionEvent{
+		InvariantID:          "completion.submit_plan_or_terminal",
+		ProtocolHash:         "protocol-abc",
+		Subject:              GuardFrictionSubjectToolCall,
+		Decision:             GuardFrictionDecisionReject,
+		GuardSurface:         GuardFrictionSurfaceCompletionGate,
+		FirstInvalidAction:   "raw_prompt: user said to paste a transcript",
+		ModelContractVisible: true,
+	}, time.Date(2026, 5, 13, 17, 56, 0, 0, time.UTC), 6)
+	if err == nil || !strings.Contains(err.Error(), "redaction-safe metadata") {
+		t.Fatalf("expected raw-content validation error, got %v", err)
 	}
 }
 

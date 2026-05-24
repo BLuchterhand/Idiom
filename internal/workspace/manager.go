@@ -1549,22 +1549,41 @@ func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 
 func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 	var envelope struct {
-		Tool    string `json:"tool"`
-		Request string `json:"request"`
+		Tool    string          `json:"tool"`
+		Request json.RawMessage `json:"request"`
+		Input   json.RawMessage `json:"input"`
 	}
 	if err := json.Unmarshal(payload, &envelope); err != nil {
 		return ToolRequest{}, false, nil
 	}
 	outerTool := strings.TrimSpace(envelope.Tool)
-	request := strings.TrimSpace(envelope.Request)
-	if outerTool == "" || request == "" || !strings.HasPrefix(request, "{") {
+	request := bytes.TrimSpace(envelope.Request)
+	if len(request) == 0 {
+		request = bytes.TrimSpace(envelope.Input)
+	}
+	if outerTool == "" || len(request) == 0 {
+		return ToolRequest{}, false, nil
+	}
+	if len(request) > 0 && request[0] == '"' {
+		var encoded string
+		if err := json.Unmarshal(request, &encoded); err != nil {
+			return ToolRequest{}, true, fmt.Errorf("decode nested request: %w", err)
+		}
+		request = []byte(strings.TrimSpace(encoded))
+	}
+	if len(request) == 0 || request[0] != '{' {
 		return ToolRequest{}, false, nil
 	}
 	var nested ToolRequest
-	if err := json.Unmarshal([]byte(request), &nested); err != nil {
+	if err := json.Unmarshal(request, &nested); err != nil {
 		return ToolRequest{}, true, fmt.Errorf("decode nested request: %w", err)
 	}
 	if strings.TrimSpace(nested.Tool) == "" {
+		nested.Tool = outerTool
+	} else if outerTool == "code_navigate" && codeNavigateCapabilityAlias(nested.Tool) != "" {
+		if strings.TrimSpace(nested.Capability) == "" {
+			nested.Capability = codeNavigateCapabilityAlias(nested.Tool)
+		}
 		nested.Tool = outerTool
 	} else if strings.TrimSpace(nested.Tool) != outerTool {
 		return ToolRequest{}, true, fmt.Errorf("nested request tool %q does not match envelope tool %q", nested.Tool, outerTool)
@@ -1572,6 +1591,15 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 	normalizeToolRequestAliases(&nested)
 	repairEmbeddedQwenXMLToolParameters(&nested)
 	return nested, true, nil
+}
+
+func codeNavigateCapabilityAlias(tool string) string {
+	switch strings.TrimSpace(tool) {
+	case "file_outline", "find_symbol", "workspace_symbol", "read_symbol", "definition", "references", "calls_from", "calls_into", "implementations", "related_files":
+		return strings.TrimSpace(tool)
+	default:
+		return ""
+	}
 }
 
 func stringifiedStructuredToolFields(payload []byte) map[string]string {

@@ -5,7 +5,8 @@ and how project repos overlay it. It is the canonical reference for
 "what does idiom give me, and what do I bring."
 
 For the migration plan that lifts more of today's project-side
-plumbing into idiom, see `docs/reusability-design.md`.
+plumbing into idiom, see
+`docs/archive/2026-05-historical/reusability-design.md`.
 
 ## What is a lane?
 
@@ -303,7 +304,8 @@ lane subcommand reads via `--prompt-file <path>`. Convention:
 
 ## What's coming after the reusability migration
 
-Phases shipped (`docs/reusability-design.md`):
+Phases shipped
+(`docs/archive/2026-05-historical/reusability-design.md`):
 
 - Phase 1-2 — `idiom lane <mode>` wrapper with overlay seam
 - Phase 3 — canonical lane preambles/postambles via `go:embed`,
@@ -630,11 +632,11 @@ writes directly to the conversation log.
 
 ## Where to learn more
 
-- `docs/reusability-design.md` — phased plan to lift Colony-side
+- `docs/archive/2026-05-historical/reusability-design.md` — phased plan to lift Colony-side
   plumbing into idiom.
 - `docs/planner-executor-usage.md` — user guide for the three options
   (intercept, delegate_edit, plan-execute).
 - `docs/planner-executor-delegation-design.md` — original design
   doc for the three options.
-- `docs/colony-extraction-plan.md` — raw inventory of Colony's
+- `docs/archive/2026-05-historical/colony-extraction-plan.md` — raw inventory of Colony's
   scripts/rules and migration targets.

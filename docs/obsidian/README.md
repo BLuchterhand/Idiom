@@ -37,6 +37,12 @@ checked against source or command output before being treated as release claims.
 21. [[20 - Product Workflow and Behavioral Coverage]]
 22. [[21 - Recovery and Decomposition]]
 23. [[22 - Ground-Up Implementation Plan]]
+24. [[23 - Major Systems Architectural Onboarding]]
+
+Use [[23 - Major Systems Architectural Onboarding]] as the per-system entry
+point when assigning or reviewing work. It links each major system to its
+ownership boundary, source anchors, expected verification, and common failure
+signals.
 
 ## Source Documents
 

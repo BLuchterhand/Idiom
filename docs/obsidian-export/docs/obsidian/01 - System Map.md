@@ -47,20 +47,20 @@ auditable conditions.
 
 ## Major Systems
 
-| System | Primary package or docs | Responsibility |
-| --- | --- | --- |
-| CLI and lanes | `cmd/harness`, [[04 - Runtime Lanes]] | Repeatable command surface, lane orchestration, plan-execute, implement, atom intake |
-| TUI/session lifecycle | `internal/app`, [[19 - CLI TUI and Operator Surface]] | Interactive operator surface, prompt-mode dispatch, slash-command presenters, debug logs |
-| Runner and contracts | `internal/agent`, [[05 - Runner Contracts and Control Rails]] | Model loop, tool-call parsing, runtime briefs, recovery nudges, readiness, completion gates |
-| Workspace tools | `internal/workspace`, [[06 - Workspace Tools and Capability Routing]] | Tool schemas, permissions, source sanity, discovery tools, sidecar envelopes |
-| Repository memory | `internal/comprehension`, `internal/discovery`, [[07 - Repository Memory and Context Graph]] | Persistent graph, context packets, freshness, trace packs, cached views |
-| Planning and handoff | `cmd/harness/plan_execute.go`, `internal/architect`, [[08 - Planning Packets and Handoff]] | Structured plans, `submit_plan`, packet inheritance, executor handoff |
-| Verification/readiness | `internal/workspace/source_sanity.go`, `internal/agent`, [[09 - Verification Readiness and Completion]] | Post-write proof, changed-path evidence, readiness closure |
-| Telemetry/audit/eval | `internal/telemetry`, `internal/eval`, `harness_audit`, [[10 - Telemetry Audit Eval and Learning]] | Conversation logs, command telemetry, behavior audit, eval and ranker feedback* |
-| Local model operations | `internal/backends`, `internal/llama`, [[11 - Local Model Operations]] | Backend profiles, route models, queueing, degraded mode, readiness checks |
-| Sidecar/integrations | `internal/mcp`, `harness tool`, [[12 - Sidecar and LLM Agent Integrations]] | LLM agent access to evidence, tools, recovery status, and schemas |
-| Product workflow | `internal/productworkflow`, `cmd/harness/product_workflow.go`, [[20 - Product Workflow and Behavioral Coverage]] | Research evidence, PRD, ADR, TDD obligations, coverage gate, dispatch briefs |
-| Recovery | `internal/recovery`, `cmd/harness/recover.go`, [[21 - Recovery and Decomposition]] | Failure records, decomposition packets, recovery atoms, reconciliation |
+| System | Primary package or docs | Responsibility | Onboarding |
+| --- | --- | --- | --- |
+| CLI and lanes | `cmd/harness`, [[04 - Runtime Lanes]] | Repeatable command surface, lane orchestration, plan-execute, implement, atom intake | [[23 - Major Systems Architectural Onboarding#CLI And Lanes|Start here]] |
+| TUI/session lifecycle | `internal/app`, [[19 - CLI TUI and Operator Surface]] | Interactive operator surface, prompt-mode dispatch, slash-command presenters, debug logs | [[23 - Major Systems Architectural Onboarding#TUI And Session Lifecycle|Start here]] |
+| Runner and contracts | `internal/agent`, [[05 - Runner Contracts and Control Rails]] | Model loop, tool-call parsing, runtime briefs, recovery nudges, readiness, completion gates | [[23 - Major Systems Architectural Onboarding#Runner And Contracts|Start here]] |
+| Workspace tools | `internal/workspace`, [[06 - Workspace Tools and Capability Routing]] | Tool schemas, permissions, source sanity, discovery tools, sidecar envelopes | [[23 - Major Systems Architectural Onboarding#Workspace Tools And Capability Routing|Start here]] |
+| Repository memory | `internal/comprehension`, `internal/discovery`, [[07 - Repository Memory and Context Graph]] | Persistent graph, context packets, freshness, trace packs, cached views | [[23 - Major Systems Architectural Onboarding#Repository Memory And Context Graph|Start here]] |
+| Planning and handoff | `cmd/harness/plan_execute.go`, `internal/architect`, [[08 - Planning Packets and Handoff]] | Structured plans, `submit_plan`, packet inheritance, executor handoff | [[23 - Major Systems Architectural Onboarding#Planning And Handoff|Start here]] |
+| Verification/readiness | `internal/workspace/source_sanity.go`, `internal/agent`, [[09 - Verification Readiness and Completion]] | Post-write proof, changed-path evidence, readiness closure | [[23 - Major Systems Architectural Onboarding#Verification Readiness And Completion|Start here]] |
+| Telemetry/audit/eval | `internal/telemetry`, `internal/eval`, `harness_audit`, [[10 - Telemetry Audit Eval and Learning]] | Conversation logs, command telemetry, behavior audit, eval and ranker feedback* | [[23 - Major Systems Architectural Onboarding#Telemetry Audit Eval And Learning|Start here]] |
+| Local model operations | `internal/backends`, `internal/llama`, [[11 - Local Model Operations]] | Backend profiles, route models, queueing, degraded mode, readiness checks | [[23 - Major Systems Architectural Onboarding#Local Model Operations|Start here]] |
+| Sidecar/integrations | `internal/mcp`, `harness tool`, [[12 - Sidecar and LLM Agent Integrations]] | LLM agent access to evidence, tools, recovery status, and schemas | [[23 - Major Systems Architectural Onboarding#Sidecar And LLM Agent Integrations|Start here]] |
+| Product workflow | `internal/productworkflow`, `cmd/harness/product_workflow.go`, [[20 - Product Workflow and Behavioral Coverage]] | Research evidence, PRD, ADR, TDD obligations, coverage gate, dispatch briefs | [[23 - Major Systems Architectural Onboarding#Product Workflow And Behavioral Coverage|Start here]] |
+| Recovery | `internal/recovery`, `cmd/harness/recover.go`, [[21 - Recovery and Decomposition]] | Failure records, decomposition packets, recovery atoms, reconciliation | [[23 - Major Systems Architectural Onboarding#Recovery And Decomposition|Start here]] |
 
 ## Literal Harness Flow
 

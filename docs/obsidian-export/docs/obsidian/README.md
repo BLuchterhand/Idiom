@@ -36,6 +36,12 @@ tables, diagrams, command lists, and prose. Treat every note as guidance until t
 21. [[20 - Product Workflow and Behavioral Coverage]]
 22. [[21 - Recovery and Decomposition]]
 23. [[22 - Ground-Up Implementation Plan]]
+24. [[23 - Major Systems Architectural Onboarding]]
+
+Use [[23 - Major Systems Architectural Onboarding]] as the per-system entry
+point when assigning or reviewing work. It links each major target system to
+its ownership boundary, source anchors, expected verification, and common
+failure signals.
 
 ## Source Documents
 

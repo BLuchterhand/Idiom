@@ -23,7 +23,7 @@ The executable source of truth is `TestRepresentativeSWEPromptSuiteRoutesTypical
 - `Run the Go test suite and report any failures.`
 - `Find where the "Qwen is working" banner is rendered.`
 - `Find where the "Qwen is working" banner is rendered and remove it.`
-- `Explore the routing flow in this codebase and then update docs/frontier-routing-implementation-plan.md with what you find.`
+- `Explore the routing flow in this codebase and then update docs/archive/2026-05-historical/frontier-routing-implementation-plan.md with what you find.`
 - `Do a thorough investigation of the guarded write flow in this codebase, then update the implementation if a gap is confirmed.`
 - `Review this codebase for regressions and apply the fix if you find a bounded issue.`
 - `Audit this repo for security vulnerabilities.`

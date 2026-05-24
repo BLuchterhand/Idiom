@@ -151,6 +151,7 @@ func Analyze(records []Record) Metrics {
 			case "final_answer_critic":
 				if critic := parseFinalAnswerCritic(content); critic.Raw != "" {
 					metrics.FinalAnswerCritics = append(metrics.FinalAnswerCritics, critic)
+					metrics.EvidencePaths = append(metrics.EvidencePaths, critic.EvidencePaths...)
 				}
 			case "effort_policy":
 				if policy := parseEffortPolicy(content); policy.Raw != "" {
@@ -200,6 +201,7 @@ func Analyze(records []Record) Metrics {
 			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
 				metrics.LanguageCapabilities = mergeLanguageCapabilities(metrics.LanguageCapabilities, caps)
 			}
+			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromJSONContent(content)...)
 		case "run_event":
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
@@ -216,13 +218,55 @@ func Analyze(records []Record) Metrics {
 				}
 			}
 			switch role {
+			case "readiness_check":
+				if readiness := parseReadinessCheck(content); readiness.Raw != "" {
+					metrics.ReadinessChecks = append(metrics.ReadinessChecks, readiness)
+					metrics.EvidencePaths = append(metrics.EvidencePaths, readiness.EvidencePaths...)
+				}
+			case "deepening_attempt":
+				if deepening := parseDeepeningAttempt(content); deepening.Raw != "" {
+					metrics.DeepeningAttempts = append(metrics.DeepeningAttempts, deepening)
+				}
+			case "final_answer_critic":
+				if critic := parseFinalAnswerCritic(content); critic.Raw != "" {
+					metrics.FinalAnswerCritics = append(metrics.FinalAnswerCritics, critic)
+					metrics.EvidencePaths = append(metrics.EvidencePaths, critic.EvidencePaths...)
+				}
+			case "effort_policy":
+				if policy := parseEffortPolicy(content); policy.Raw != "" {
+					metrics.EffortPolicies = append(metrics.EffortPolicies, policy)
+				}
+			case "long_horizon_state":
+				if state := parseLongHorizonState(content); state.Raw != "" {
+					metrics.LongHorizonStates = append(metrics.LongHorizonStates, state)
+				}
+			case "workflow_state":
+				if state := parseWorkflowState(content); state.Raw != "" {
+					metrics.WorkflowStates = append(metrics.WorkflowStates, state)
+				}
 			case "budget_ledger":
 				if ledger := parseBudgetLedger(content); ledger.Raw != "" {
 					metrics.BudgetLedgers = append(metrics.BudgetLedgers, ledger)
 				}
+			case "evidence_delta":
+				if delta := parseEvidenceDelta(content); delta.Raw != "" {
+					metrics.EvidenceDeltas = append(metrics.EvidenceDeltas, delta)
+				}
+			case "claim_confidence":
+				if confidence := parseClaimConfidence(content); confidence.Raw != "" {
+					metrics.ClaimConfidences = append(metrics.ClaimConfidences, confidence)
+				}
 			case "context_compaction":
 				if compaction := parseContextCompaction(content); compaction.Raw != "" {
 					metrics.ContextCompactions = append(metrics.ContextCompactions, compaction)
+				}
+			case "verification_feedback":
+				if feedback := parseVerificationFeedback(content); feedback.Raw != "" {
+					metrics.VerificationFeedback = append(metrics.VerificationFeedback, feedback)
+				}
+			case "tool_failure_confidence":
+				if failure := parseToolFailureConfidence(content); failure.Raw != "" {
+					metrics.ToolFailureConfidence = append(metrics.ToolFailureConfidence, failure)
 				}
 			case "control_rails":
 				if rails := parseControlRails(content); rails.Raw != "" {
@@ -232,6 +276,7 @@ func Analyze(records []Record) Metrics {
 			if caps := parseLanguageCapabilities(content); len(caps) > 0 {
 				metrics.LanguageCapabilities = mergeLanguageCapabilities(metrics.LanguageCapabilities, caps)
 			}
+			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromJSONContent(content)...)
 		case "tool_request":
 			metrics.ToolRequests++
 			tool := stringField(record.Data, "tool")
@@ -1173,6 +1218,7 @@ func parseFinalAnswerCritic(content string) FinalAnswerCriticSnapshot {
 	critic.Contract = strings.TrimSpace(critic.Contract)
 	critic.Action = strings.TrimSpace(critic.Action)
 	critic.Findings = util.UniqueNonEmpty(critic.Findings)
+	critic.EvidencePaths = util.UniqueNonEmpty(critic.EvidencePaths)
 	return critic
 }
 
@@ -1994,6 +2040,20 @@ func evidencePathsFromText(text string) []string {
 		paths = append(paths, candidate)
 	}
 	return paths
+}
+
+func evidencePathsFromJSONContent(content string) []string {
+	content = strings.TrimSpace(content)
+	if content == "" || !strings.HasPrefix(content, "{") {
+		return nil
+	}
+	var payload struct {
+		EvidencePaths []string `json:"evidence_paths"`
+	}
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return nil
+	}
+	return util.UniqueNonEmpty(payload.EvidencePaths)
 }
 
 func looksLikeEvidencePath(path string) bool {

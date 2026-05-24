@@ -129,12 +129,35 @@ serve.
 | Audit classification | `internal/eval`, `harness_audit`, telemetry fixtures |
 | Local backend readiness | `internal/backends`, `internal/autodetect`, `internal/llama`, local ops docs |
 
+## Onboarding By System
+
+For subsystem entry paths, read [[23 - Major Systems Architectural Onboarding]]
+before editing. It connects the package map in this note to ownership rules,
+verification expectations, and the friction signals that usually mean a change
+belongs at a boundary.
+
+| System | Start with |
+| --- | --- |
+| CLI and lanes | [[23 - Major Systems Architectural Onboarding#CLI And Lanes]] |
+| TUI/session lifecycle | [[23 - Major Systems Architectural Onboarding#TUI And Session Lifecycle]] |
+| Runner and contracts | [[23 - Major Systems Architectural Onboarding#Runner And Contracts]] |
+| Workspace tools and capability routing | [[23 - Major Systems Architectural Onboarding#Workspace Tools And Capability Routing]] |
+| Repository memory and context graph | [[23 - Major Systems Architectural Onboarding#Repository Memory And Context Graph]] |
+| Planning and handoff | [[23 - Major Systems Architectural Onboarding#Planning And Handoff]] |
+| Verification readiness and completion | [[23 - Major Systems Architectural Onboarding#Verification Readiness And Completion]] |
+| Telemetry, audit, eval, and learning | [[23 - Major Systems Architectural Onboarding#Telemetry Audit Eval And Learning]] |
+| Local model operations | [[23 - Major Systems Architectural Onboarding#Local Model Operations]] |
+| Sidecar and LLM agent integrations | [[23 - Major Systems Architectural Onboarding#Sidecar And LLM Agent Integrations]] |
+| Product workflow and behavioral coverage | [[23 - Major Systems Architectural Onboarding#Product Workflow And Behavioral Coverage]] |
+| Recovery and decomposition | [[23 - Major Systems Architectural Onboarding#Recovery And Decomposition]] |
+
 ## Related Notes
 
 - [[03 - Architecture Layers]]
 - [[06 - Workspace Tools and Capability Routing]]
 - [[11 - Local Model Operations]]
 - [[19 - CLI TUI and Operator Surface]]
+- [[23 - Major Systems Architectural Onboarding]]
 
 ## Rule Of Thumb
 

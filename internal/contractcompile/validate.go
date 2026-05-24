@@ -27,6 +27,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 		{field: "forbidden_tools", tools: input.ForbiddenTools},
 		{field: "required_tools", tools: input.RequiredTools},
 		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
+		{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
 	} {
 		for _, tool := range tc.tools {
 			if !knownTool(tool) {
@@ -43,6 +44,9 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 	if overlap := firstStringOverlap(input.Protocol.VisibleTools, input.ForbiddenTools); overlap != "" {
 		return fmt.Errorf("tool %q cannot be both visible and forbidden", overlap)
 	}
+	if overlap := firstStringOverlap(input.Protocol.CallableTools, input.ForbiddenTools); overlap != "" {
+		return fmt.Errorf("tool %q cannot be both callable and forbidden", overlap)
+	}
 	for _, tc := range []struct {
 		field string
 		tools []string
@@ -50,6 +54,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 		{field: "allowed_tools", tools: input.AllowedTools},
 		{field: "required_tools", tools: input.RequiredTools},
 		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
+		{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
 	} {
 		if exposedTool, forbiddenTool, capability := firstCapabilityOverlap(tc.tools, input.ForbiddenTools); capability != "" {
 			return fmt.Errorf("%s tool %q and forbidden tool %q both map to capability %q", tc.field, exposedTool, forbiddenTool, capability)
@@ -63,6 +68,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 			{field: "allowed_tools", tools: input.AllowedTools},
 			{field: "required_tools", tools: input.RequiredTools},
 			{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
+			{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
 		} {
 			for _, tool := range tc.tools {
 				if sideEffectForTool(tool) != autonomy.SideEffectReadOnly {
@@ -78,6 +84,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 		{field: "allowed_tools", tools: input.AllowedTools},
 		{field: "required_tools", tools: input.RequiredTools},
 		{field: "protocol.visible_tools", tools: input.Protocol.VisibleTools},
+		{field: "protocol.callable_tools", tools: input.Protocol.CallableTools},
 	} {
 		for _, tool := range tc.tools {
 			if plannerForbiddenTool(tool) {
@@ -120,6 +127,11 @@ func validateProtocolProjection(protocol ModelProtocolProjection) error {
 	for _, tool := range protocol.VisibleTools {
 		if !knownTool(tool) {
 			return fmt.Errorf("model_protocol.visible_tools contains unmapped tool %q", tool)
+		}
+	}
+	for _, tool := range protocol.CallableTools {
+		if !knownTool(tool) {
+			return fmt.Errorf("model_protocol.callable_tools contains unmapped tool %q", tool)
 		}
 	}
 	return nil

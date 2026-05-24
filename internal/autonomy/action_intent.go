@@ -48,6 +48,7 @@ const (
 	ActionClassSubmitPlan       ActionClass = "submit_plan"
 	ActionClassSourceSatisfied  ActionClass = "source_satisfied"
 	ActionClassBlocker          ActionClass = "blocker"
+	ActionClassReviewPass       ActionClass = "review_pass"
 	ActionClassPerEditWrite     ActionClass = "per_edit_write"
 	ActionClassDeliverableWrite ActionClass = "deliverable_write"
 	ActionClassVerify           ActionClass = "verify"
@@ -292,7 +293,7 @@ func CanonicalParserFailureClass(value ParserFailureClass) ParserFailureClass {
 		return ParserFailureNone
 	case "malformed", "malformed_json", "json":
 		return ParserFailureMalformedJSON
-	case "schema", "schema_mismatch", "invalid_schema":
+	case "schema", "schema_mismatch", "invalid_schema", "submit_plan_edits_string":
 		return ParserFailureSchemaMismatch
 	case "missing_tool", "missing_tool_name":
 		return ParserFailureMissingToolName
@@ -356,6 +357,8 @@ func CanonicalActionClass(value ActionClass) ActionClass {
 		return ActionClassSourceSatisfied
 	case "blocker", "blocked":
 		return ActionClassBlocker
+	case "review_pass", "review_passed", "decision_pass":
+		return ActionClassReviewPass
 	case "write", "edit", "per_edit_write", "source_edit":
 		return ActionClassPerEditWrite
 	case "deliverable_write", "artifact_write":
@@ -377,7 +380,7 @@ func CanonicalActionClass(value ActionClass) ActionClass {
 
 func ValidActionClass(value ActionClass) bool {
 	switch value {
-	case ActionClassUnknown, ActionClassRead, ActionClassSearch, ActionClassSubmitPlan, ActionClassSourceSatisfied, ActionClassBlocker, ActionClassPerEditWrite, ActionClassDeliverableWrite, ActionClassVerify, ActionClassFinalAnswer, ActionClassProseFinal, ActionClassGenericProbe, ActionClassDelegate:
+	case ActionClassUnknown, ActionClassRead, ActionClassSearch, ActionClassSubmitPlan, ActionClassSourceSatisfied, ActionClassBlocker, ActionClassReviewPass, ActionClassPerEditWrite, ActionClassDeliverableWrite, ActionClassVerify, ActionClassFinalAnswer, ActionClassProseFinal, ActionClassGenericProbe, ActionClassDelegate:
 		return true
 	default:
 		return false

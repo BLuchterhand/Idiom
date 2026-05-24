@@ -45,6 +45,12 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	if result.Protocol.ContractID != result.Contract.ContractID {
 		t.Fatalf("protocol contract id = %q, want %q", result.Protocol.ContractID, result.Contract.ContractID)
 	}
+	if result.Protocol.ProtocolHash == "" {
+		t.Fatal("protocol hash is empty")
+	}
+	if result.Protocol.PhaseID != "plan_execute.required_source" {
+		t.Fatalf("protocol phase id = %q", result.Protocol.PhaseID)
+	}
 	if result.Protocol.ActiveInvariantID != InvariantActiveAuthority {
 		t.Fatalf("protocol active invariant = %q", result.Protocol.ActiveInvariantID)
 	}
@@ -55,6 +61,9 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 		result.Protocol.ParserTransportMode != "textual_json_terminal" ||
 		result.Protocol.ParserContract != "submit_plan_json" {
 		t.Fatalf("protocol transport fields not preserved: %#v", result.Protocol)
+	}
+	if !slices.Contains(result.Protocol.CallableTools, "read_file") {
+		t.Fatalf("callable tools missing read_file: %#v", result.Protocol.CallableTools)
 	}
 	if result.Protocol.NativeToolPolicy != "textual_unless_forced" ||
 		result.Protocol.ToolChoice != "none" ||
@@ -108,6 +117,42 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	}
 	if !hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/agent/runner.go", "submit_plan_required_edit_coverage") {
 		t.Fatalf("planner required edit path was not represented as submit-plan coverage: %#v", result.Contract.Obligations)
+	}
+}
+
+func TestCompilePlanExecutePlannerProtocolUsesActiveParentContractID(t *testing.T) {
+	input := plannerFixtureInput()
+	input.ParentID = "contract_active_runner"
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	if result.Protocol.ContractID != input.ParentID {
+		t.Fatalf("protocol contract id = %q, want active parent %q", result.Protocol.ContractID, input.ParentID)
+	}
+	if result.Contract.ContractID == "" {
+		t.Fatal("compiled child contract id is empty")
+	}
+	if result.Protocol.ProtocolHash == "" {
+		t.Fatal("protocol hash is empty")
+	}
+}
+
+func TestCompilePlanExecutePlannerPreservesExplicitEmptyCallableTools(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Protocol.CallableTools = []string{}
+	input.Protocol.CallableToolsSpecified = true
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	if len(result.Protocol.VisibleTools) == 0 {
+		t.Fatal("fixture should retain visible tools")
+	}
+	if len(result.Protocol.CallableTools) != 0 {
+		t.Fatalf("callable tools = %#v, want explicit empty list", result.Protocol.CallableTools)
 	}
 }
 
@@ -455,6 +500,20 @@ func TestCompilePlanExecutePlannerLegacyDegradationWithoutFallbackIsNotAuthorize
 	}
 	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; len(got) != 0 {
 		t.Fatalf("legacy degradation fallbacks = %#v, want none", got)
+	}
+}
+
+func TestCompilePlanExecutePlannerSafeAlternativesFollowTerminalShapes(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Protocol.TerminalResponseShapes = []string{"submit_plan"}
+	input.Protocol.CallableActionClasses = []string{"submit_plan"}
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	if !slices.Equal(result.Protocol.SafeAlternatives, []string{"submit_plan"}) {
+		t.Fatalf("safe alternatives = %#v, want only submit_plan", result.Protocol.SafeAlternatives)
 	}
 }
 

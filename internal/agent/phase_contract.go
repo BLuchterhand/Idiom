@@ -100,6 +100,7 @@ type RuntimeCallContract struct {
 func (contract TurnPhaseContract) autonomyEventPayload() autonomy.TurnPhaseContractEvent {
 	return autonomy.TurnPhaseContractEvent{
 		SchemaVersion:    contract.SchemaVersion,
+		ContractID:       contract.ContractID,
 		PhaseID:          contract.PhaseID,
 		PhaseEpoch:       contract.PhaseEpoch,
 		ModelCallID:      contract.ModelCallID,
@@ -328,8 +329,8 @@ func applyRequiredSource(contract *TurnPhaseContract, baseTools []string, state 
 		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
 		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
 	}
-	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "source_refresh")
-	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionBlocker}
+	contract.RuntimeCall.ParserContract = "source_refresh"
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 }
 
 func applyCandidateSource(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
@@ -656,6 +657,9 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 
 func genericReadOnlyAnswerEvidenceReady(results []workspace.ToolResult) bool {
 	for _, result := range results {
+		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" && childPacketContainsGroundedAnswerEvidence("", result.Output) {
+			return true
+		}
 		if concreteSourceEvidenceResult(result) {
 			return true
 		}
@@ -742,7 +746,14 @@ func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief
 }
 
 func implementationTargetSourceEvidenceReady(results []workspace.ToolResult) bool {
-	return len(concreteSourceBodyReadPaths(results)) == 1
+	for _, path := range concreteSourceBodyReadPaths(results) {
+		lower := strings.ToLower(path)
+		if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".mdx") {
+			continue
+		}
+		return true
+	}
+	return false
 }
 
 func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.WorkerRuntimeBrief) bool {

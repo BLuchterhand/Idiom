@@ -285,6 +285,524 @@
       }
     },
     {
+      "id": "scripted-implement-design-doc-required-paths",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement one bounded TDD capability atom from docs/design-tdd-coverage.md, Phase 1: EARS and BDD Coverage Checks.\n\nGoal: update the frozen fixture label behavior using the current source.\n\nContext evidence: context_pack pack_id=scripted-design-doc-scope identified internal/labels/labels.go as the relevant implementation surface.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run the source-aware verification step.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-design-doc-required-paths",
+        "prompt_contains": [
+          "docs/design-tdd-coverage.md",
+          "Required edit paths:",
+          "- internal/labels/labels.go"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-missing-description-repair",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "dynamic-validator"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-missing-description-repair",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- internal/labels/labels.go",
+          "Run source-aware verification"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "dynamic_validator_decision",
+          "write_description_repair_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-missing-description-detour-blocker",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the required write cannot be made, return a typed blocker.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "dynamic-validator",
+        "negative"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-missing-description-detour-blocker",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- internal/labels/labels.go",
+          "typed blocker"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "final_assistant_contains": [
+          "<<QUESTION>>",
+          "write-description repair rejected repeated non-write detours"
+        ],
+        "require_run_events": [
+          "dynamic_validator_decision",
+          "completion_status",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-empty-path-read-blocker",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the required edit target cannot be read safely, return a typed blocker instead of repeating the same invalid read.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "typed-blocker",
+        "repeated-rejection",
+        "negative"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-empty-path-read-blocker",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- internal/labels/labels.go",
+          "typed blocker"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "final_assistant_contains": [
+          "<<QUESTION>>",
+          "scoped implementation recovery rejected the same read_file request twice",
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "completion_status",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-premature-final-required-path-blocker",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Do not claim completion until a required-path write has actually succeeded.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "typed-blocker",
+        "recovery",
+        "negative"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-premature-final-required-path-blocker",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- internal/labels/labels.go",
+          "Do not claim completion"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "final_assistant_contains": [
+          "Implemented the label change",
+          "internal/labels/labels.go",
+          "Verification: Source sanity passed"
+        ],
+        "require_run_events": [
+          "completion_gate_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-out-of-scope-write-recovers",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Do not edit related tests or other files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "recovery",
+        "negative"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-out-of-scope-write-recovers",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- internal/labels/labels.go",
+          "Do not edit related tests"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-partial-required-paths-blocker",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this documentation atom in the frozen fixture.\n\nRequired edit paths:\n- README.md\n- AGENTS.md\n\nAcceptance:\n- Update README.md to describe the fixture as deterministic.\n- Update AGENTS.md to keep the fixture guidance consistent.\n- Do not claim completion until both required paths are written.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "implement",
+        "rollback",
+        "control-rails",
+        "typed-blocker",
+        "repeated-rejection",
+        "negative"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-partial-required-paths-blocker",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- README.md",
+          "- AGENTS.md"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "README.md",
+            "AGENTS.md"
+          ]
+        },
+        "final_assistant_contains": [
+          "<<QUESTION>>",
+          "Required edit paths not changed",
+          "AGENTS.md",
+          "README.md"
+        ],
+        "require_changed_files": [
+          "README.md"
+        ],
+        "require_run_events": [
+          "completion_gate_recovery",
+          "completion_status",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "README.md"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "AGENTS.md",
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-post-write-verification-recovery",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Report completion only after source-aware verification.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "recovery"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-post-write-verification-recovery",
+        "prompt_contains": [
+          "Required edit paths:",
+          "- internal/labels/labels.go",
+          "source-aware verification"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "post_write_verification_required",
+          "completion_gate_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
       "id": "scripted-classifier-natural-language-implement-short-label",
       "family": "implementation",
       "runner_mode": "auto",

@@ -91,8 +91,9 @@ func compileRuntimeEnvelope(input PlanExecutePlannerInput) RuntimeEnvelope {
 }
 
 func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnvelope, contract autonomy.AutonomyContract) (ModelProtocolProjection, error) {
+	activeContractID := firstNonEmpty(input.ParentID, contract.ContractID)
 	protocol := ModelProtocolProjection{
-		ContractID:              contract.ContractID,
+		ContractID:              activeContractID,
 		ContractVersion:         contract.SchemaVersion,
 		PhaseID:                 input.Protocol.PhaseID,
 		ParserMode:              firstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
@@ -106,6 +107,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		ResponseFormat:          runtime.ResponseFormat,
 		ExpectedVisibleOutput:   input.Protocol.ExpectedVisibleOutput,
 		VisibleTools:            append([]string(nil), input.Protocol.VisibleTools...),
+		CallableTools:           append([]string(nil), input.Protocol.CallableTools...),
 		CallableActionClasses:   append([]string(nil), input.Protocol.CallableActionClasses...),
 		InvalidActionClasses:    append([]string(nil), input.Protocol.InvalidActionClasses...),
 		TerminalResponseShapes:  append([]string(nil), input.Protocol.TerminalResponseShapes...),
@@ -116,7 +118,6 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		RequiredEditCoverage:    append([]string(nil), input.RequiredEditPaths...),
 		PathRoleSummary:         compileProtocolPathRoleSummary(contract.PathRoles),
 		VerificationObligations: compileProtocolVerificationObligations(input),
-		SafeAlternatives:        compileProtocolSafeAlternatives(input),
 		RequiredTools:           append([]string(nil), input.RequiredTools...),
 		ReadinessGate:           append([]string(nil), input.ReadinessGate...),
 		Constraints:             append([]string(nil), input.Constraints...),
@@ -126,6 +127,9 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	}
 	if len(protocol.VisibleTools) == 0 {
 		protocol.VisibleTools = append([]string(nil), input.AllowedTools...)
+	}
+	if !input.Protocol.CallableToolsSpecified && len(protocol.CallableTools) == 0 {
+		protocol.CallableTools = append([]string(nil), protocol.VisibleTools...)
 	}
 	if protocol.PhaseID == "" {
 		protocol.PhaseID = "plan_execute.required_source"
@@ -152,6 +156,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	if len(protocol.TerminalResponseShapes) == 0 {
 		protocol.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	}
+	protocol.SafeAlternatives = compileProtocolSafeAlternatives(protocol.TerminalResponseShapes, protocol.CallableActionClasses)
 	if len(protocol.StructuredSchemaNames) == 0 {
 		protocol.StructuredSchemaNames = []string{"submit_plan"}
 	}
@@ -194,8 +199,23 @@ func compileProtocolVerificationObligations(input PlanExecutePlannerInput) []str
 	return uniqueStrings(out)
 }
 
-func compileProtocolSafeAlternatives(input PlanExecutePlannerInput) []string {
-	return uniqueStrings([]string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"})
+func compileProtocolSafeAlternatives(terminalShapes []string, actionClasses []string) []string {
+	alternatives := append([]string(nil), terminalShapes...)
+	if len(alternatives) == 0 {
+		for _, actionClass := range actionClasses {
+			switch strings.TrimSpace(actionClass) {
+			case string(autonomy.ActionClassSubmitPlan):
+				alternatives = append(alternatives, "submit_plan")
+			case string(autonomy.ActionClassSourceSatisfied):
+				alternatives = append(alternatives, "Decision: source-satisfied")
+			case string(autonomy.ActionClassBlocker):
+				alternatives = append(alternatives, "<<QUESTION>>:")
+			case string(autonomy.ActionClassReviewPass):
+				alternatives = append(alternatives, "Decision: pass")
+			}
+		}
+	}
+	return uniqueStrings(alternatives)
 }
 
 func compileAuthority(input PlanExecutePlannerInput, runtime RuntimeEnvelope) []autonomy.AuthoritySource {

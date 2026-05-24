@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/autonomy"
+	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
@@ -25,6 +27,77 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 		if !strings.Contains(got, want) {
 			t.Fatalf("feedback missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRunnerTurnControllerRecordParseFailureEmitsParserGuardFriction(t *testing.T) {
+	root := t.TempDir()
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"submit_plan"},
+		RequiredTools:     []string{"submit_plan"},
+	}
+	autonomyRecorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+	if autonomyRecorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	autonomyRecorder.emitContractStarted(brief)
+	collected := []workspace.ToolResult{}
+	turnMessages := []llama.ChatMessage{}
+	recorder := runnerTurnRecorder{
+		collectedResults: &collected,
+		turnMessages:     &turnMessages,
+		metrics:          &runnerMetrics{},
+	}
+	controller := runnerTurnController{
+		runner:           runner,
+		recorder:         &recorder,
+		autonomyRecorder: autonomyRecorder,
+	}
+	controller.recordParseFailure(1, nil, `{"edits":"[]"}`, errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit"))
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var policy *autonomy.ContractPolicyEvent
+	var policyEventID string
+	var friction *autonomy.ContractGuardFrictionEvent
+	for _, event := range events {
+		if event.Type == autonomy.EventToolPolicyResult {
+			policy = event.Policy
+			policyEventID = event.EventID
+		}
+		if event.Type == autonomy.EventGuardFriction {
+			friction = event.GuardFriction
+		}
+	}
+	if policy == nil || policy.ParserFailure != autonomy.ParserFailureSchemaMismatch {
+		t.Fatalf("expected schema-mismatch parser policy event, got %#v", policy)
+	}
+	if friction == nil {
+		t.Fatalf("expected parser guard friction, got roles=%#v", eventRolesFor(runEvents))
+	}
+	if friction.SourceEventID != policyEventID ||
+		friction.GuardSurface != autonomy.GuardFrictionSurfaceParser ||
+		friction.FirstInvalidAction != "tool_parse" ||
+		friction.ModelContractVisible {
+		t.Fatalf("unexpected parser friction: source=%q friction=%#v", policyEventID, friction)
+	}
+	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "edits") ||
+		strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw") {
+		t.Fatalf("parser friction leaked raw parse details: %#v", friction.EvidenceRefs)
 	}
 }
 

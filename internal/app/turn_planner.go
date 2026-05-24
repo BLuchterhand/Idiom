@@ -70,7 +70,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive.",
 				"Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => plan_then_execute_planner; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.",
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
-				"Prefer architecture for broad design, boundary, or cross-component assessment. Use conversation for ordinary explanation-only questions unless the user asks for deep architecture/review.",
+				"Prefer architecture for broad design, boundary, cross-component assessment, or repo-internal subsystem explanations where the answer depends on harness/tool/control-flow implementation evidence. Use conversation for ordinary explanation-only questions that do not need repository architecture evidence.",
 				"If the prompt is a continuation like 'continue investigating', 'go deeper', or 'be more confident', keep the turn read-only unless the user now asks for edits.",
 				"Prefer performance_review, security_review, or architecture when the user asks for that style of analysis without edits.",
 				"Use contracts from this enum: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
@@ -407,11 +407,56 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 }
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
-	// Human-facing lane changes are owned by explicit commands or by the
-	// classifier's typed route. This hook intentionally performs only enum
-	// normalization; it must not inspect prompt wording to override a classifier
-	// decision.
-	return normalizeTurnRoutePlan(plan, mode)
+	normalized := normalizeTurnRoutePlan(plan, mode)
+	if shouldUpgradeConversationRouteToArchitecture(normalized, prompt) {
+		normalized.Family = "architecture"
+		normalized.InitialLane = "architecture"
+		normalized.FollowupLane = ""
+		normalized.Contract = "architecture_assessment"
+		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "repo_internal_architecture_question")
+		return normalizeTurnRoutePlan(normalized, mode)
+	}
+	return normalized
+}
+
+func shouldUpgradeConversationRouteToArchitecture(plan turnRoutePlan, prompt string) bool {
+	if strings.TrimSpace(plan.Family) != "conversation" ||
+		strings.TrimSpace(plan.Contract) != "direct_answer" {
+		return false
+	}
+	words := plannerWordText(prompt)
+	if !plannerWordsContainAny(words,
+		"harness",
+		"subagent", "subagents", "sub agent", "sub agents",
+		"discovery tool", "discovery tools",
+		"debug log", "debug logs", "debuglog",
+		"redacted mode", "redaction",
+		"control rail", "control rails",
+		"readiness", "runner",
+		"workspace tool", "workspace tools",
+	) {
+		return false
+	}
+	if plannerWordsContainAny(words,
+		"implement", "fix", "update", "edit", "modify", "remove", "rename", "refactor",
+	) && !plannerWordsContainAny(words, "what can we add", "can we add", "could we add", "should we add") {
+		return false
+	}
+	return plannerWordsContainAny(words,
+		"how", "what", "why", "explain", "tell me", "can you tell", "what does",
+		"what can we add", "increase", "usefulness", "improve", "improvements",
+	)
+}
+
+func plannerWordsContainAny(words string, phrases ...string) bool {
+	words = strings.ToLower(words)
+	for _, phrase := range phrases {
+		phraseWords := plannerWordText(phrase)
+		if strings.Contains(words, strings.TrimSpace(phraseWords)) {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, prompt string) bool {

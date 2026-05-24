@@ -120,7 +120,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
-	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "edit_file", "write_file"}
+	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "read_only_capability", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "edit_file", "write_file"}
 
 	artifact := RuntimeBriefForTaskFamily(ArtifactFinalAnswerTaskFamily, "main", available)
 	if artifact.Contract != "artifact_final_answer" || artifact.PermissionProfile != "conversation_only" {
@@ -150,7 +150,7 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	if brief.Budget.MaxToolSteps != 4 || brief.Budget.MaxModelCalls != 6 {
 		t.Fatalf("conversation should carry a tight read-only budget, got %#v", brief.Budget)
 	}
-	for _, expected := range []string{"read_file", "search_files", "search_content", "context_query"} {
+	for _, expected := range []string{"read_file", "search_files", "search_content", "read_only_capability", "context_query"} {
 		if !slices.Contains(brief.AllowedTools, expected) {
 			t.Fatalf("conversation missing read-only tool %q in %#v", expected, brief.AllowedTools)
 		}
@@ -162,7 +162,7 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	}
 
 	verify := RuntimeBriefForTaskFamily("verification_only", "main", available)
-	if slices.Contains(verify.AllowedTools, "pwd") || slices.Contains(verify.AllowedTools, "edit_file") {
+	if slices.Contains(verify.AllowedTools, "pwd") || slices.Contains(verify.AllowedTools, "edit_file") || slices.Contains(verify.AllowedTools, "read_only_capability") {
 		t.Fatalf("verification_only allowed unexpected tools: %#v", verify.AllowedTools)
 	}
 	for _, expected := range []string{"shell", "read_file", "search_files", "search_content"} {
@@ -171,20 +171,20 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 		}
 	}
 
-	archAvailable := []string{"task", "list_files", "search_files", "search_content", "read_file", "file_stats", "harness_audit", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_overview", "go_workspace_symbol", "go_read_symbol", "go_file_outline", "shell"}
+	archAvailable := []string{"task", "list_files", "search_files", "search_content", "read_file", "file_stats", "code_navigate", "read_only_capability", "harness_audit", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_trace_pack", "discovery_query", "structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "go_overview", "go_workspace_symbol", "go_read_symbol", "go_file_outline", "shell"}
 	arch := RuntimeBriefForTaskFamily("architecture", "main", archAvailable)
 	for _, unexpected := range []string{"go_overview", "shell", "context_trace_pack", "context_index", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan", "list_files", "go_workspace_symbol", "go_read_symbol", "go_file_outline"} {
 		if slices.Contains(arch.AllowedTools, unexpected) {
 			t.Fatalf("architecture should advertise the lean read-only discovery surface, got unexpected %q in %#v", unexpected, arch.AllowedTools)
 		}
 	}
-	for _, expected := range []string{"task", "search_content", "read_file", "file_stats", "context_status", "context_query", "context_zoom", "context_pack", "discovery_query", "structural_search"} {
+	for _, expected := range []string{"task", "search_content", "read_file", "file_stats", "code_navigate", "read_only_capability", "context_status", "context_query", "context_zoom", "context_pack", "discovery_query", "structural_search"} {
 		if !slices.Contains(arch.AllowedTools, expected) {
 			t.Fatalf("architecture missing %q in %#v", expected, arch.AllowedTools)
 		}
 	}
-	if slices.Contains(arch.SearchPolicy, "delegate_broad_discovery_when_needed") {
-		t.Fatalf("architecture should not bias toward delegated broad discovery, got %#v", arch.SearchPolicy)
+	if !slices.Contains(arch.SearchPolicy, "delegate_broad_discovery_when_needed") {
+		t.Fatalf("architecture should delegate broad read-only discovery before local probing, got %#v", arch.SearchPolicy)
 	}
 	if !slices.Contains(arch.SearchPolicy, "prefer_discovery_query_for_architecture_boundary") || !slices.Contains(arch.SearchPolicy, "use_discovery_query_for_boundary_import_or_evolution_questions") || !slices.Contains(arch.SearchPolicy, "name_heavy_graph_or_history_need_if_unresolved") {
 		t.Fatalf("architecture search policy should steer generic discovery tools, got %#v", arch.SearchPolicy)
@@ -225,8 +225,15 @@ func TestManifestToolsForCapabilityProfileExposeExpectedSurfaces(t *testing.T) {
 	if !slices.Contains(readOnly, "task") {
 		t.Fatalf("conversation read-only manifest should include task, got %#v", readOnly)
 	}
+	if !slices.Contains(readOnly, "read_only_capability") {
+		t.Fatalf("conversation read-only manifest should include read_only_capability, got %#v", readOnly)
+	}
 	if slices.Contains(readOnly, "edit_file") {
 		t.Fatalf("conversation read-only manifest should not include edit_file, got %#v", readOnly)
+	}
+	verificationOnly := ManifestToolsForCapabilityProfile(CapabilityVerificationOnly)
+	if slices.Contains(verificationOnly, "read_only_capability") {
+		t.Fatalf("verification-only manifest should not include read_only_capability, got %#v", verificationOnly)
 	}
 
 	guardedWrite := ManifestToolsForCapabilityProfile(CapabilityGuardedWrite)

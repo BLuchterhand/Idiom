@@ -72,6 +72,10 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
+	if redirected, ok := r.delegatedReadOnlyDiscoveryQueryRepairRequest(input.Results, decision.Request); ok {
+		decision.Request = redirected
+		decision.Raw = marshalToolRequestRaw(redirected)
+	}
 	if redirected, ok := r.delegatedReadOnlyBootstrapQueryRequest(input.Results, decision.Request); ok {
 		decision.Request = redirected
 		decision.Raw = marshalToolRequestRaw(redirected)
@@ -237,6 +241,8 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 
 func shouldDelegateMainReadOnlyBootstrapRequest(req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
+	case "context_pack", "context_query", "context_status", "discovery_query", "harness_audit":
+		return true
 	case "list_files":
 		return true
 	case "search_files":
@@ -280,6 +286,46 @@ func hasTruncatedGoReadSymbolResult(results []workspace.ToolResult, path string)
 		}
 	}
 	return false
+}
+
+func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" || len(results) > 0 {
+		return workspace.ToolRequest{}, false
+	}
+	if strings.TrimSpace(req.Tool) != "discovery_query" {
+		return workspace.ToolRequest{}, false
+	}
+	repaired := req
+	changed := false
+	if delegatedObjectiveIsDiscoveryToolUsefulness(r.RuntimeBrief.Objective) && strings.TrimSpace(repaired.Purpose) != "architecture_boundary" {
+		repaired.Purpose = "architecture_boundary"
+		changed = true
+	} else if !validDelegatedDiscoveryPurpose(repaired.Purpose) {
+		repaired.Purpose = delegatedReadOnlyDiscoveryPurpose(r.RuntimeBrief.Objective)
+		changed = true
+	}
+	if strings.TrimSpace(repaired.Path) == "" {
+		repaired.Path = delegatedReadOnlyBootstrapScope(r.RuntimeBrief.Objective)
+		changed = true
+	}
+	if strings.TrimSpace(repaired.Pattern) == "" {
+		repaired.Pattern = delegatedReadOnlyBootstrapPattern(r.RuntimeBrief.Objective)
+		changed = true
+	}
+	if repaired.MaxDepth <= 0 {
+		repaired.MaxDepth = 2
+		changed = true
+	}
+	return repaired, changed
+}
+
+func validDelegatedDiscoveryPurpose(purpose string) bool {
+	switch strings.TrimSpace(purpose) {
+	case "impact_analysis", "function_tracing", "architecture_boundary", "security_review", "history_context":
+		return true
+	default:
+		return false
+	}
 }
 
 func (r *Runner) delegatedReadOnlyBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
@@ -346,6 +392,8 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 func delegatedReadOnlyDiscoveryPurpose(objective string) string {
 	lower := strings.ToLower(objective)
 	switch {
+	case delegatedObjectiveIsDiscoveryToolUsefulness(objective):
+		return "architecture_boundary"
 	case containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
 		return "security_review"
 	case containsAny(lower, "history", "evolution", "changed over time", "regression introduced"):
@@ -480,6 +528,9 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 }
 
 func delegatedReadOnlyBootstrapPattern(objective string) string {
+	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) {
+		return "discovery|context[-_ ]?pack|context[-_ ]?query|answer[-_ ]?composer|runner"
+	}
 	terms := make([]string, 0, 6)
 	for _, line := range strings.Split(objective, "\n") {
 		line = strings.TrimSpace(line)
@@ -514,6 +565,12 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 		}
 	}
 	return strings.Join(terms, "|")
+}
+
+func delegatedObjectiveIsDiscoveryToolUsefulness(objective string) bool {
+	lower := strings.ToLower(delegatedDisplayQuestion(objective))
+	return containsAny(lower, "discovery tool", "discovery tools") &&
+		containsAny(lower, "useful", "usefulness", "improve", "improvement", "add")
 }
 
 func delegatedReadOnlyQuestionText(objective string) string {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/contractcompile"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/util"
 	"idiom/internal/workspace"
@@ -18,14 +19,18 @@ import (
 const runnerAutonomyEventRole = "autonomy_event"
 
 type runnerAutonomyRecorder struct {
-	runner            *Runner
-	brief             workerruntime.WorkerRuntimeBrief
-	contract          autonomy.AutonomyContract
-	sequence          int64
-	occurredAt        time.Time
-	obligations       []autonomy.Obligation
-	openObligations   map[string]autonomy.Obligation
-	closedObligations map[string]struct{}
+	runner             *Runner
+	brief              workerruntime.WorkerRuntimeBrief
+	contract           autonomy.AutonomyContract
+	sequence           int64
+	occurredAt         time.Time
+	obligations        []autonomy.Obligation
+	openObligations    map[string]autonomy.Obligation
+	closedObligations  map[string]struct{}
+	lastTurnPhase      TurnPhaseContract
+	lastTurnPhaseEvent autonomy.TurnPhaseContractEvent
+	lastModelProtocol  contractcompile.ModelProtocolProjection
+	lastModelPresented bool
 }
 
 type runnerAutonomyGateDecision struct {
@@ -453,14 +458,26 @@ func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerR
 	}
 }
 
-func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContract) {
+func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContract, protocol contractcompile.ModelProtocolProjection) {
 	if a == nil {
 		return
 	}
+	a.lastTurnPhase = contract
+	a.lastModelProtocol = protocol
+	a.lastModelPresented = false
 	payload := contract.autonomyEventPayload()
+	protocolPayload := modelProtocolEventPayload(protocol)
+	if strings.TrimSpace(protocolPayload.ProtocolHash) != "" {
+		payload.ProtocolHash = protocolPayload.ProtocolHash
+	}
+	if strings.TrimSpace(payload.ProtocolHash) == "" {
+		payload.ProtocolHash = runnerTurnPhaseProtocolHash(payload)
+	}
+	a.lastTurnPhaseEvent = payload
 	lifecycle := autonomy.ContractLifecycleEvent{
 		Reason:               "turn_phase_contract",
 		StateDelta:           []string{payload.PhaseID, payload.DerivationReason},
+		ProtocolHash:         payload.ProtocolHash,
 		AllowedTools:         append([]string(nil), contract.AllowedTools...),
 		HiddenTools:          append([]string(nil), contract.HiddenTools...),
 		RequiredEvidence:     append([]string(nil), contract.EvidenceState.AcceptanceRefs...),
@@ -468,6 +485,74 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContrac
 		VerificationContract: contract.EvidenceState.VerificationStatus,
 		RemainingObligations: a.openObligationIDs(),
 		TurnPhaseContract:    &payload,
+		SurfaceSummaries: []autonomy.TurnPhaseSurfaceSummaryEvent{
+			autonomy.SurfaceSummaryFromTurnPhaseContract(payload),
+		},
+	}
+	if strings.TrimSpace(protocolPayload.ProtocolHash) != "" {
+		lifecycle.ModelProtocol = &protocolPayload
+	}
+	a.emitNewEvent(autonomy.NewContractPresentedEvent(a.contract, lifecycle, a.nextTime(), a.nextSequence()))
+}
+
+func (a *runnerAutonomyRecorder) markModelProtocolPresented(protocol contractcompile.ModelProtocolProjection) {
+	if a == nil || strings.TrimSpace(protocol.ProtocolHash) == "" {
+		return
+	}
+	a.lastModelProtocol = protocol
+	a.lastModelPresented = true
+}
+
+func runnerTurnPhaseProtocolHash(payload autonomy.TurnPhaseContractEvent) string {
+	payload.ProtocolHash = ""
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return ""
+	}
+	return "sha256:" + digestRunnerAutonomyValue(string(data))
+}
+
+func (a *runnerAutonomyRecorder) emitTurnPhaseSurfaceSummary(surface autonomy.TurnPhaseSurfaceSummaryEvent, phase TurnPhaseContract) {
+	if a == nil || strings.TrimSpace(surface.SurfaceID) == "" {
+		return
+	}
+	if strings.TrimSpace(phase.ContractID) == "" {
+		phase.ContractID = a.contract.ContractID
+	}
+	if strings.TrimSpace(phase.ModelCallID) == "" {
+		phase.ModelCallID = a.lastTurnPhaseEvent.ModelCallID
+	}
+	if len(phase.RuntimeCall.ExpressibleActionClasses) == 0 {
+		phase.RuntimeCall = a.lastTurnPhase.RuntimeCall
+	}
+	phasePayload := phase.autonomyEventPayload()
+	if hash := a.currentModelProtocolHash(); hash != "" {
+		phasePayload.ProtocolHash = hash
+	} else if strings.TrimSpace(phasePayload.ProtocolHash) == "" {
+		phasePayload.ProtocolHash = a.lastTurnPhaseEvent.ProtocolHash
+	}
+	if strings.TrimSpace(surface.ContractID) == "" {
+		surface.ContractID = a.contract.ContractID
+	}
+	if strings.TrimSpace(surface.ModelCallID) == "" {
+		surface.ModelCallID = phasePayload.ModelCallID
+	}
+	if hash := a.currentModelProtocolHash(); hash != "" {
+		surface.ProtocolHash = hash
+	} else if strings.TrimSpace(surface.ProtocolHash) == "" {
+		surface.ProtocolHash = phasePayload.ProtocolHash
+	}
+	if strings.TrimSpace(surface.PhaseID) == "" {
+		surface.PhaseID = phasePayload.PhaseID
+	}
+	lifecycle := autonomy.ContractLifecycleEvent{
+		Reason:            "turn_phase_surface_summary",
+		StateDelta:        []string{surface.SurfaceID, surface.PhaseID},
+		ProtocolHash:      surface.ProtocolHash,
+		TurnPhaseContract: &phasePayload,
+		SurfaceSummaries: []autonomy.TurnPhaseSurfaceSummaryEvent{
+			surface,
+		},
 	}
 	a.emitNewEvent(autonomy.NewContractPresentedEvent(a.contract, lifecycle, a.nextTime(), a.nextSequence()))
 }
@@ -480,6 +565,7 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 		Gate:                  input.Gate,
 		Decision:              input.Decision,
 		InvariantID:           input.InvariantID,
+		ProtocolHash:          a.currentModelProtocolHash(),
 		ReasonCode:            input.ReasonCode,
 		ToolCallID:            input.ToolCallID,
 		ToolName:              input.ToolName,
@@ -501,11 +587,13 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 	a.emitNewEvent(gateEvent, err)
 	if err == nil {
 		a.emitResolvedObligations(gate.ResolvedObligations, gateEvent.EventID)
+		a.emitGateFriction(input, gate, gateEvent.EventID)
 	}
 	if input.Gate == autonomy.GateCompletion {
 		a.emitNewEvent(autonomy.NewCompletionGateDecisionEvent(a.contract, autonomy.ContractCompletionEvent{
 			Decision:             input.Decision,
 			InvariantID:          input.InvariantID,
+			ProtocolHash:         gate.ProtocolHash,
 			RemainingObligations: gate.OpenObligations,
 			VerificationStatus:   input.VerificationStatus,
 			ChangedPaths:         input.ChangedPaths,
@@ -820,6 +908,10 @@ func (a *runnerAutonomyRecorder) emitVerificationGate(req workspace.ToolRequest,
 }
 
 func (a *runnerAutonomyRecorder) emitCompletionGate(decision autonomy.ToolPolicyDecision, reasonCode string, results []workspace.ToolResult) {
+	a.emitCompletionGateAttempt(decision, reasonCode, results, 0)
+}
+
+func (a *runnerAutonomyRecorder) emitCompletionGateAttempt(decision autonomy.ToolPolicyDecision, reasonCode string, results []workspace.ToolResult, attempts int) {
 	if a == nil {
 		return
 	}
@@ -832,8 +924,168 @@ func (a *runnerAutonomyRecorder) emitCompletionGate(decision autonomy.ToolPolicy
 		ChangedPaths:       changed,
 		VerificationStatus: runnerAutonomyVerificationStatus(results, a.brief),
 		TargetRefs:         runnerAutonomyRequiredPathStatus(a.contract, results),
+		Attempts:           attempts,
 		Source:             "runner_completion_gate",
 	})
+}
+
+func (a *runnerAutonomyRecorder) emitGateFriction(input runnerAutonomyGateDecision, gate autonomy.ContractGateEvent, sourceEventID string) {
+	if a == nil {
+		return
+	}
+	decision, ok := runnerAutonomyGateFrictionDecision(input)
+	if !ok {
+		return
+	}
+	phase := a.lastTurnPhase
+	protocol := a.visibleModelProtocol()
+	protocolHash := a.currentModelProtocolHash()
+	friction := autonomy.ContractGuardFrictionEvent{
+		Step:                 phase.Step,
+		Lane:                 a.contract.Scope.Lane,
+		Phase:                phase.Phase,
+		PhaseID:              phase.PhaseID,
+		ModelCallID:          phase.ModelCallID,
+		SourceEventID:        sourceEventID,
+		ContractVersion:      a.contract.SchemaVersion,
+		ProtocolHash:         protocolHash,
+		InvariantID:          input.InvariantID,
+		ObligationID:         firstRunnerAutonomyString(gate.OpenObligations),
+		Subject:              runnerAutonomyFrictionSubject(input),
+		Decision:             decision,
+		GuardSurface:         runnerAutonomyFrictionSurface(input.Gate),
+		FirstInvalidAction:   runnerAutonomyFrictionInvalidAction(input),
+		VisibleActionClasses: runnerAutonomyFrictionVisibleActionClasses(protocol, phase, protocolHash != ""),
+		VisibleTools:         runnerAutonomyFrictionVisibleTools(protocol, phase, protocolHash != ""),
+		SafeAlternatives:     runnerAutonomyFrictionSafeAlternatives(protocol, phase, protocolHash != ""),
+		ModelContractVisible: protocolHash != "",
+		RetryNumber:          input.Attempts,
+		RetryOutcome:         runnerAutonomyFrictionRetryOutcome(input),
+		Avoidability:         autonomy.GuardFrictionAvoidabilityUnknown,
+		EvidenceRefs:         runnerAutonomyFrictionEvidenceRefs(input),
+	}
+	a.emitNewEvent(autonomy.NewGuardFrictionEvent(a.contract, friction, a.nextTime(), a.nextSequence()))
+}
+
+func (a *runnerAutonomyRecorder) currentModelProtocolHash() string {
+	if a == nil || !a.lastModelPresented {
+		return ""
+	}
+	return strings.TrimSpace(a.lastModelProtocol.ProtocolHash)
+}
+
+func (a *runnerAutonomyRecorder) visibleModelProtocol() contractcompile.ModelProtocolProjection {
+	if a == nil || !a.lastModelPresented {
+		return contractcompile.ModelProtocolProjection{}
+	}
+	return a.lastModelProtocol
+}
+
+func runnerAutonomyFrictionDecision(decision autonomy.ToolPolicyDecision) (autonomy.GuardFrictionDecision, bool) {
+	switch decision {
+	case autonomy.PolicyReject, autonomy.PolicyDeny:
+		return autonomy.GuardFrictionDecisionReject, true
+	case autonomy.PolicyNudge, autonomy.PolicyAsk:
+		return autonomy.GuardFrictionDecisionNudge, true
+	case autonomy.PolicyStop:
+		return autonomy.GuardFrictionDecisionStop, true
+	default:
+		return "", false
+	}
+}
+
+func runnerAutonomyGateFrictionDecision(input runnerAutonomyGateDecision) (autonomy.GuardFrictionDecision, bool) {
+	if input.Gate == autonomy.GateCompletion && input.Decision == autonomy.PolicyAllow && input.Attempts > 0 {
+		return autonomy.GuardFrictionDecisionRecover, true
+	}
+	return runnerAutonomyFrictionDecision(input.Decision)
+}
+
+func runnerAutonomyFrictionSurface(gate autonomy.GateKind) autonomy.GuardFrictionSurface {
+	switch gate {
+	case autonomy.GateCompletion:
+		return autonomy.GuardFrictionSurfaceCompletionGate
+	case autonomy.GateWrite:
+		return autonomy.GuardFrictionSurfaceWriteGate
+	case autonomy.GateVerification:
+		return autonomy.GuardFrictionSurfaceVerification
+	case autonomy.GateLoop:
+		return autonomy.GuardFrictionSurfaceRunnerLoop
+	case autonomy.GateBudget:
+		return autonomy.GuardFrictionSurfaceBudget
+	case autonomy.GateReadOnly:
+		return autonomy.GuardFrictionSurfaceReadiness
+	default:
+		return autonomy.GuardFrictionSurfaceToolPolicy
+	}
+}
+
+func runnerAutonomyFrictionSubject(input runnerAutonomyGateDecision) autonomy.GuardFrictionSubject {
+	if input.Gate == autonomy.GateCompletion {
+		return autonomy.GuardFrictionSubjectFinalAnswer
+	}
+	return autonomy.GuardFrictionSubjectToolCall
+}
+
+func runnerAutonomyFrictionInvalidAction(input runnerAutonomyGateDecision) string {
+	if tool := strings.TrimSpace(input.ToolName); tool != "" {
+		return tool
+	}
+	if input.Gate == autonomy.GateCompletion {
+		return actionFinalAnswer
+	}
+	return strings.TrimSpace(string(input.Gate))
+}
+
+func runnerAutonomyFrictionRetryOutcome(input runnerAutonomyGateDecision) autonomy.GuardFrictionRetryOutcome {
+	if input.Gate == autonomy.GateCompletion && input.Decision == autonomy.PolicyAllow && input.Attempts > 0 {
+		return autonomy.GuardFrictionRetrySuccess
+	}
+	if input.Attempts > 0 && (input.Decision == autonomy.PolicyReject || input.Decision == autonomy.PolicyStop) {
+		return autonomy.GuardFrictionRetrySameFailure
+	}
+	return autonomy.GuardFrictionRetryNotApplicable
+}
+
+func runnerAutonomyFrictionEvidenceRefs(input runnerAutonomyGateDecision) []string {
+	refs := []string{"reason:" + runnerAutonomyReasonCode(input.ReasonCode)}
+	if input.Source != "" {
+		refs = append(refs, "source:"+runnerAutonomyReasonCode(input.Source))
+	}
+	return refs
+}
+
+func runnerAutonomyFrictionVisibleActionClasses(protocol contractcompile.ModelProtocolProjection, phase TurnPhaseContract, modelProtocolVisible bool) []string {
+	if modelProtocolVisible {
+		return append([]string(nil), protocol.CallableActionClasses...)
+	}
+	return append([]string(nil), phase.ActionPolicy.AllowedActionClasses...)
+}
+
+func runnerAutonomyFrictionVisibleTools(protocol contractcompile.ModelProtocolProjection, phase TurnPhaseContract, modelProtocolVisible bool) []string {
+	if modelProtocolVisible {
+		return append([]string(nil), protocol.VisibleTools...)
+	}
+	return append([]string(nil), phase.AllowedTools...)
+}
+
+func runnerAutonomyFrictionSafeAlternatives(protocol contractcompile.ModelProtocolProjection, phase TurnPhaseContract, modelProtocolVisible bool) []string {
+	if modelProtocolVisible {
+		return append([]string(nil), protocol.SafeAlternatives...)
+	}
+	if len(phase.TerminalOutcomes) > 0 {
+		return append([]string(nil), phase.TerminalOutcomes...)
+	}
+	return append([]string(nil), protocol.SafeAlternatives...)
+}
+
+func firstRunnerAutonomyString(values []string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func (a *runnerAutonomyRecorder) emitLoopGate(req workspace.ToolRequest, decision autonomy.ToolPolicyDecision, reasonCode string, fingerprint string, attempts int) {
@@ -930,6 +1182,81 @@ func (a *runnerAutonomyRecorder) emitPolicyEvent(req workspace.ToolRequest, inpu
 	policy := a.policyEventForRequest(req, input)
 	event, err := autonomy.NewPolicyEvent(input.EventType, a.contract, policy, a.nextTime(), a.nextSequence())
 	a.emitNewEvent(event, err)
+	if err == nil && input.EventType == autonomy.EventToolPolicyResult {
+		a.emitPolicyFriction(req, input, policy, event.EventID)
+	}
+}
+
+func (a *runnerAutonomyRecorder) emitPolicyFriction(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput, policy autonomy.ContractPolicyEvent, sourceEventID string) {
+	if a == nil || runnerAutonomyPolicyFrictionSuppressed(input) {
+		return
+	}
+	decision, ok := runnerAutonomyFrictionDecision(policy.Decision)
+	if !ok {
+		return
+	}
+	phase := a.lastTurnPhase
+	protocol := a.visibleModelProtocol()
+	protocolVisible := a.currentModelProtocolHash() != ""
+	friction := autonomy.ContractGuardFrictionEvent{
+		Step:                 phase.Step,
+		Lane:                 a.contract.Scope.Lane,
+		Phase:                phase.Phase,
+		PhaseID:              phase.PhaseID,
+		ModelCallID:          phase.ModelCallID,
+		SourceEventID:        sourceEventID,
+		ContractVersion:      a.contract.SchemaVersion,
+		ProtocolHash:         a.currentModelProtocolHash(),
+		InvariantID:          strings.TrimSpace(policy.InvariantID),
+		ObligationID:         firstRunnerAutonomyString(a.openObligationIDs()),
+		Subject:              autonomy.GuardFrictionSubjectToolCall,
+		Decision:             decision,
+		GuardSurface:         runnerAutonomyPolicyFrictionSurface(policy),
+		FirstInvalidAction:   runnerAutonomyPolicyFrictionInvalidAction(req, policy),
+		VisibleActionClasses: runnerAutonomyFrictionVisibleActionClasses(protocol, phase, protocolVisible),
+		VisibleTools:         runnerAutonomyFrictionVisibleTools(protocol, phase, protocolVisible),
+		SafeAlternatives:     runnerAutonomyFrictionSafeAlternatives(protocol, phase, protocolVisible),
+		ModelContractVisible: protocolVisible,
+		RetryOutcome:         autonomy.GuardFrictionRetryNotApplicable,
+		Avoidability:         autonomy.GuardFrictionAvoidabilityUnknown,
+		EvidenceRefs:         runnerAutonomyPolicyFrictionEvidenceRefs(input, policy),
+	}
+	a.emitNewEvent(autonomy.NewGuardFrictionEvent(a.contract, friction, a.nextTime(), a.nextSequence()))
+}
+
+func runnerAutonomyPolicyFrictionSuppressed(input runnerAutonomyPolicyEventInput) bool {
+	return strings.TrimSpace(input.Source) == "runner_required_edit_scope"
+}
+
+func runnerAutonomyPolicyFrictionSurface(policy autonomy.ContractPolicyEvent) autonomy.GuardFrictionSurface {
+	if policy.ParserFailure != "" && policy.ParserFailure != autonomy.ParserFailureNone {
+		return autonomy.GuardFrictionSurfaceParser
+	}
+	return autonomy.GuardFrictionSurfaceToolPolicy
+}
+
+func runnerAutonomyPolicyFrictionInvalidAction(req workspace.ToolRequest, policy autonomy.ContractPolicyEvent) string {
+	if tool := strings.TrimSpace(policy.ToolName); tool != "" {
+		return tool
+	}
+	if tool := strings.TrimSpace(req.Tool); tool != "" {
+		return tool
+	}
+	return "tool_call"
+}
+
+func runnerAutonomyPolicyFrictionEvidenceRefs(input runnerAutonomyPolicyEventInput, policy autonomy.ContractPolicyEvent) []string {
+	refs := []string{"reason:" + runnerAutonomyReasonCode(policy.ReasonCode)}
+	if policy.Source != "" {
+		refs = append(refs, "source:"+runnerAutonomyReasonCode(policy.Source))
+	}
+	if policy.ParserFailure != "" && policy.ParserFailure != autonomy.ParserFailureNone {
+		refs = append(refs, "parser_failure:"+runnerAutonomyReasonCode(string(policy.ParserFailure)))
+	}
+	if input.ErrorClass != "" {
+		refs = append(refs, "error_class:"+runnerAutonomyReasonCode(input.ErrorClass))
+	}
+	return refs
 }
 
 func (a *runnerAutonomyRecorder) policyEventForRequest(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) autonomy.ContractPolicyEvent {

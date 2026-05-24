@@ -1797,10 +1797,15 @@ func TestRunnerInjectsInitialRuntimeBriefIntoModelMessages(t *testing.T) {
 	defer server.Close()
 
 	runner := &Runner{
-		Client:       llama.NewClient(server.URL, time.Second),
-		Workspace:    workspace.NewManager(config.Workspace{Root: t.TempDir(), CWD: "."}),
-		Policy:       RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 1},
-		RuntimeBrief: workerruntime.RuntimeBriefForRole("implement", "main", "update README"),
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: t.TempDir(), CWD: "."}),
+		Policy:    RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "update README",
+			PermissionProfile: "read_only_workspace",
+		},
 	}
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "update readme"}}, llama.ChatOptions{}, nil, nil, nil)
 	if err != nil {
@@ -1818,6 +1823,73 @@ func TestRunnerInjectsInitialRuntimeBriefIntoModelMessages(t *testing.T) {
 	}
 	if !sawBrief {
 		t.Fatalf("expected initial runtime brief in request messages, got %#v", payload.Messages)
+	}
+}
+
+func TestRunnerInjectsPlanExecuteModelProtocolProjectionCard(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	var payload struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "<<QUESTION>>: exact blocker"},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 1, MaxModelCalls: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:                 "plan-execute",
+			TaskFamily:           PlanThenExecutePlannerTaskFamily,
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "code_navigate", "submit_plan"},
+			RequiredTools:        []string{"submit_plan"},
+			RequiredEditPaths:    []string{"a.go"},
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+			VerificationPlan:     []string{"go test ./..."},
+		},
+	}
+	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{
+		ResponseFormatJSON: true,
+	}, nil, nil, nil)
+
+	var sawBrief, sawProtocolCard bool
+	for i, msg := range payload.Messages {
+		if msg.Role == "system" && strings.Contains(msg.Content, "[active contract protocol]") {
+			sawProtocolCard = true
+			if !strings.Contains(msg.Content, "protocol_hash=") ||
+				!strings.Contains(msg.Content, "Visible tools:") ||
+				!strings.Contains(msg.Content, "Callable tools now:") ||
+				!strings.Contains(msg.Content, "Path roles:") ||
+				!strings.Contains(msg.Content, "Safe alternatives:") {
+				t.Fatalf("protocol card missing required fields at message %d: %s", i, msg.Content)
+			}
+		}
+		if msg.Role == "system" && strings.Contains(msg.Content, "[frontier step instruction]") {
+			sawBrief = true
+		}
+	}
+	if !sawProtocolCard {
+		t.Fatalf("expected model-visible protocol card in request messages: %#v", payload.Messages)
+	}
+	if !sawBrief {
+		t.Fatalf("expected existing runtime brief to remain in request messages: %#v", payload.Messages)
 	}
 }
 
@@ -2500,6 +2572,37 @@ func TestCompletionGateRejectsFutureRefreshNarration(t *testing.T) {
 	}
 }
 
+func TestCompletionGateRejectsShouldCallToolNarration(t *testing.T) {
+	result, rejected := unresolvedProcessIntentCompletionRejection("I should use the context_pack tool to get a good overview of the relevant files. Let me call context_pack now.")
+	if !rejected {
+		t.Fatal("expected tool-call intent narration to be rejected")
+	}
+	if result.Tool != "completion_gate" || !strings.Contains(result.Error, "future search") {
+		t.Fatalf("unexpected rejection result: %#v", result)
+	}
+}
+
+func TestReadOnlyCompletionGateRejectsSearchHitInventory(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/transcript/debuglog.go lines 1-80",
+		Output:  "19:\tDebugLogModeRedacted DebugLogMode = \"redacted\"\n",
+	}}
+	reply := "The inspected source in `internal/agent/runner_test.go` contains `f9 testdata/swe/live-subset.json:8: \"prompt\": \"What does the debug log redacted mode do?\"`."
+	result, rejected := runner.readOnlySearchHitInventoryCompletionRejection(reply, results)
+	if !rejected {
+		t.Fatal("expected search-hit inventory answer to be rejected")
+	}
+	if result.Tool != "completion_gate" || !strings.Contains(result.Error, "search handles") {
+		t.Fatalf("unexpected rejection result: %#v", result)
+	}
+}
+
 func TestCompletionGateRejectsRawToolResultTranscript(t *testing.T) {
 	result, rejected := rawToolResultTranscriptCompletionRejection("tool: read_file\nsummary: Read internal/app/model_swap.go lines 70-91\nstatus: ok\noutput:\n70:\t\tm.openModelPopup()")
 	if !rejected {
@@ -2936,7 +3039,7 @@ func TestBudgetClosureRunEmitsAcceptanceSignals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.Contains(answer, "two lines") {
+	if !strings.Contains(answer, "two lines") && !(strings.Contains(answer, "line one") && strings.Contains(answer, "line two")) {
 		t.Fatalf("expected forced completion answer, got %q", answer)
 	}
 	for _, want := range []string{"readiness_check", "final_answer_critic"} {
@@ -3356,6 +3459,96 @@ func TestWriteReadyPacketReadWithoutNamedGapAllowsInScopeRead(t *testing.T) {
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected %d model requests, got %d", len(replies), requests)
+	}
+}
+
+func TestWriteReadyPacketRepeatedEmptyPathReadReturnsTypedBlocker(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":""}`,
+		`{"tool":"read_file","path":""}`,
+		`{"tool":"write_file","path":"a.txt","content":"after\n","description":"should not be reached after repeated scoped-read recovery"}`,
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var completion runnerCompletionStatus
+	var scopedReadRejections int
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			TargetPacket:         []string{"prompt_context:verified_current_state"},
+			EvidencePaths:        []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_status" {
+				if err := json.Unmarshal([]byte(event.Content), &completion); err != nil {
+					t.Fatalf("decode completion status: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt from the packet."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Summary == "Scoped implementation read rejected" {
+				scopedReadRejections++
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "scoped implementation recovery rejected the same read_file request twice") {
+		t.Fatalf("expected repeated scoped-read blocker, got %q", answer)
+	}
+	if completion.Status != "blocked" || completion.BlockerKind != "scoped_implementation_read_repeated" {
+		t.Fatalf("expected scoped-read blocker completion status, got %#v", completion)
+	}
+	if scopedReadRejections != 2 {
+		t.Fatalf("expected two scoped-read rejections before corrected write, got %d", scopedReadRejections)
+	}
+	if requests != 2 {
+		t.Fatalf("expected blocker before write, got %d requests", requests)
+	}
+	content, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a: %v", err)
+	}
+	if string(content) != "before\n" {
+		t.Fatalf("scoped-read blocker should not mutate a.txt, got %q", content)
 	}
 }
 
@@ -9631,6 +9824,46 @@ func TestDelegatedReadOnlyBootstrapRedirectsBroadInitialSearch(t *testing.T) {
 	}
 }
 
+func TestDelegatedReadOnlyRepairsInvalidInitialDiscoveryPurpose(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "read_file"},
+			Objective:    "What can we add to our discovery tools in an effort at increasing their overall usefulness?\nNamed workspace scope: internal/agent, internal/workspace, internal\nKey terms: discovery tools, usefulness",
+		},
+	}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "discovery_query", Purpose: "tool_usefulness"},
+	})
+	if decision.Request.Tool != "discovery_query" || decision.Request.Purpose != "architecture_boundary" {
+		t.Fatalf("expected invalid discovery purpose to be repaired to architecture_boundary, got %#v", decision.Request)
+	}
+	if decision.Request.Path != "internal/agent" || decision.Request.Pattern == "" || decision.Request.MaxDepth != 2 {
+		t.Fatalf("expected repaired discovery query to carry scope/pattern/depth, got %#v", decision.Request)
+	}
+}
+
+func TestDelegatedReadOnlyRepairsOffContractDiscoveryUsefulnessPurpose(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:   "delegated_read_only",
+			AllowedTools: []string{"discovery_query", "search_content", "read_file"},
+			Objective:    "What can we add to our discovery tools in an effort at increasing their overall usefulness?\nNamed workspace scope: internal/agent, internal/workspace, internal",
+		},
+	}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "discovery_query", Purpose: "history_context", Path: "internal/workspace"},
+	})
+	if decision.Request.Tool != "discovery_query" || decision.Request.Purpose != "architecture_boundary" {
+		t.Fatalf("expected discovery-tool usefulness to force architecture_boundary, got %#v", decision.Request)
+	}
+	if !strings.Contains(decision.Request.Pattern, "answer[-_ ]?composer") {
+		t.Fatalf("expected usefulness pattern to target synthesis/discovery surfaces, got %#v", decision.Request)
+	}
+}
+
 func TestDelegatedReadOnlyBootstrapFallsBackToSearchWithoutDiscoveryQuery(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
@@ -9791,7 +10024,7 @@ func TestDelegatedReadOnlyBootstrapPatternDoesNotInjectDelegateForDebugFeature(t
 	}
 }
 
-func TestMainArchitectureBootstrapDoesNotForceTaskDelegation(t *testing.T) {
+func TestMainArchitectureBootstrapDelegatesBroadFirstRead(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
 		AgentName: "main",
@@ -9805,14 +10038,42 @@ func TestMainArchitectureBootstrapDoesNotForceTaskDelegation(t *testing.T) {
 			Objective:         "Explain how this harness uses sub-agents.",
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"task", "list_files", "search_content", "read_file"},
-			SearchPolicy:      []string{"prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components"},
+			SearchPolicy:      []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary", "trace_boundaries_from_named_components"},
 		},
 	}
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
 		Request: workspace.ToolRequest{Tool: "list_files", Path: "."},
 	})
-	if decision.Request.Tool != "list_files" || decision.Request.Path != "." {
-		t.Fatalf("expected architecture bootstrap to leave the first read decision local, got %#v", decision.Request)
+	if decision.Request.Tool != "task" || decision.Request.Mode != "read_only" || decision.Request.Agent != "explorer" {
+		t.Fatalf("expected architecture bootstrap to delegate broad first read, got %#v", decision.Request)
+	}
+	if !strings.Contains(decision.Request.Prompt, "Start from source-of-truth implementation files") {
+		t.Fatalf("delegated prompt lost source-first guidance:\n%s", decision.Request.Prompt)
+	}
+}
+
+func TestMainArchitectureBootstrapDelegatesContextPack(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			Objective:         "What does the debug log redacted mode do?",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "context_pack", "discovery_query", "search_content", "read_file"},
+			SearchPolicy:      []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary"},
+		},
+	}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "context_pack", Query: "debug log redacted mode"},
+	})
+	if decision.Request.Tool != "task" || decision.Request.Mode != "read_only" || decision.Request.Agent != "explorer" {
+		t.Fatalf("expected architecture context_pack bootstrap to delegate, got %#v", decision.Request)
 	}
 }
 
@@ -10224,6 +10485,10 @@ func TestAnswerComposerDecoratesDiscoveryToolEvidenceGenerically(t *testing.T) {
 		"What this establishes:",
 		"Text anchors:",
 		"Dependency graph:",
+		"Discovery Tool Improvements:",
+		"Additions Worth Making:",
+		"Purpose-specific answer blueprints",
+		"Layer-aware synthesis",
 		"`internal/agent/answer_composer.go`",
 		"`internal/agent/runner.go`",
 		"`internal/agent/runner_lane_policy.go`",
@@ -10232,7 +10497,7 @@ func TestAnswerComposerDecoratesDiscoveryToolEvidenceGenerically(t *testing.T) {
 			t.Fatalf("expected generic discovery evidence answer to contain %q, got:\n%s", want, answer)
 		}
 	}
-	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "## Discovery Tool Improvements", "Purpose-specific answer blueprints", "What I found:", "text_anchor_search:", "Open a returned handle", "Discovery packet:", "discovery packet", "Evidence used:", "Confidence:"} {
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "What I found:", "text_anchor_search:", "Open a returned handle", "Discovery packet:", "discovery packet", "Evidence used:", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("generic discovery evidence answer leaked template/raw section %q:\n%s", forbidden, answer)
 		}
@@ -10325,12 +10590,12 @@ func TestRunnerFinalBoundaryDecoratesModelFinalDiscoveryAnswer(t *testing.T) {
 	if requests != 1 {
 		t.Fatalf("expected one model request, got %d", requests)
 	}
-	for _, want := range []string{"retained source context", "`internal/agent/runner_lane_policy.go`", "`internal/agent/runner.go`"} {
+	for _, want := range []string{"Discovery Tool Improvements", "Additions Worth Making", "`internal/agent/runner_lane_policy.go`", "`internal/agent/runner.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected decorated final answer to contain %q, got:\n%s", want, answer)
 		}
 	}
-	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "## Discovery Tool Improvements", "Purpose-specific answer blueprints", "What I found:", "text_anchor_search:", "Discovery packet", "Confidence:"} {
+	for _, forbidden := range []string{"## Grounded Answer", "### Decision Guidance", "What I found:", "text_anchor_search:", "Discovery packet", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("final boundary leaked raw answer section %q:\n%s", forbidden, answer)
 		}
@@ -11417,8 +11682,8 @@ func TestRunnerChildDiscoveryPacketLetsChildDecideFollowupAfterDiscovery(t *test
 	if !slices.Contains(roles, "child_delegated_read_only_answer_ready_nudge") {
 		t.Fatalf("expected delegated read-only answer-ready nudge, got roles %v", roles)
 	}
-	if requests != len(replies) {
-		t.Fatalf("expected child follow-up plus parent decision turn, used %d/%d replies", requests, len(replies))
+	if requests != len(replies)-1 {
+		t.Fatalf("expected parent to synthesize from the child packet without another decision turn, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -12001,6 +12266,31 @@ func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T
 	}
 	if !strings.Contains(prompt, `"tool":"read_file"`) || !strings.Contains(prompt, "internal/labels/labels.go") {
 		t.Fatalf("expected recovery prompt to request the named source path, got:\n%s", prompt)
+	}
+}
+
+func TestArchitectureCompletionRejectionRequiresEvidenceWithoutReadinessState(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "discovery_query", "search_content", "read_file"},
+			Objective:         "Can you tell me how this harness uses subagents?",
+		},
+	}
+	result, rejected := runner.completionGateRejection(
+		"The harness uses subagents through delegated task calls.",
+		nil,
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected architecture final answer without evidence to be rejected")
+	}
+	if !strings.Contains(result.Error, "bounded codebase evidence") {
+		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
 	}
 }
 

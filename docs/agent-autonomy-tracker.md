@@ -24,7 +24,8 @@ See [decisioning-north-star.md](decisioning-north-star.md) for the repo-wide dec
 
 ## Implementation Plan
 
-Detailed design for the remaining frontier capabilities lives in [frontier-agent-implementation-plan.md](frontier-agent-implementation-plan.md).
+Historical design for the earlier frontier capability plan lives in
+[archive/2026-05-historical/frontier-agent-implementation-plan.md](archive/2026-05-historical/frontier-agent-implementation-plan.md).
 
 - [x] Add a structured intent classifier snapshot for every prompt execution plan.
 - [x] Add a selective model-backed intent verifier for ambiguous, risky, boundary-constrained, or conflicting route decisions.

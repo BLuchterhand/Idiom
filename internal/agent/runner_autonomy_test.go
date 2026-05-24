@@ -13,6 +13,7 @@ import (
 
 	"idiom/internal/autonomy"
 	"idiom/internal/config"
+	"idiom/internal/contractcompile"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
@@ -175,7 +176,11 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 		TextualToolParser:  true,
 		VerificationStatus: "not_required",
 	})
-	recorder.emitTurnPhaseContract(contract)
+	modelProtocol, ok := runner.compileModelProtocolProjection(brief, results, contract, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("expected model protocol projection")
+	}
+	recorder.emitTurnPhaseContract(contract, modelProtocol)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
 	var presented autonomy.Event
@@ -193,13 +198,75 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 	phase := presented.Lifecycle.TurnPhaseContract
 	if phase.SchemaVersion != turnPhaseContractSchemaVersion ||
 		phase.PhaseID != turnPhaseSubmitReadyTextual ||
+		phase.ProtocolHash != modelProtocol.ProtocolHash ||
 		!slices.Contains(phase.ActionPolicy.AllowedActionClasses, actionSubmitPlan) ||
 		!slices.Contains(phase.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied) {
 		t.Fatalf("unexpected turn phase payload: %#v", phase)
 	}
+	if presented.Lifecycle.ProtocolHash != modelProtocol.ProtocolHash ||
+		presented.Lifecycle.ModelProtocol == nil ||
+		presented.Lifecycle.ModelProtocol.ProtocolHash != modelProtocol.ProtocolHash {
+		t.Fatalf("contract_presented missing model protocol hash: %#v", presented.Lifecycle)
+	}
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	if report.TurnPhaseCoverage.Total != 1 || len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("expected clean turn phase audit coverage, got %#v", report.TurnPhaseCoverage)
+	}
+}
+
+func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"read_file", "submit_plan"},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         recorder.contract.ContractID,
+		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
+		Step:               1,
+		Brief:              brief,
+		Results:            results,
+		BaseAllowedTools:   []string{"submit_plan"},
+		TextualToolParser:  true,
+		VerificationStatus: "not_required",
+	})
+	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("expected model protocol projection")
+	}
+	recorder.emitTurnPhaseContract(phase, protocol)
+	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
+		Lane:   "main",
+		Phase:  "generic",
+		Step:   1,
+		Reason: "test",
+	}, phase)
+
+	recorder.emitTurnPhaseSurfaceSummary(turnPhaseSurfaceSummaryFromNextActionState(state, phase), phase)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if report.TurnPhaseCoverage.SurfaceCounts["next_action_state"] != 1 {
+		t.Fatalf("expected next_action_state surface coverage, got %#v", report.TurnPhaseCoverage.SurfaceCounts)
+	}
+	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
+		t.Fatalf("expected clean emitted next-action surface, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
 }
 
@@ -273,6 +340,169 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 	}
 	if !(turnPhaseIndex < modelCallIndex && modelCallIndex < postModelIndex) {
 		t.Fatalf("expected turn phase before model_call before post-model events, got turn_phase=%d model_call=%d post_model=%d", turnPhaseIndex, modelCallIndex, postModelIndex)
+	}
+}
+
+func TestRunnerRunCompletionFrictionDoesNotClaimUnpresentedModelProtocol(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	var requestBodies []struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var payload struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requestBodies = append(requestBodies, payload)
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "Done."},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var runEvents []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 1, MaxModelCalls: 1},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "plan-execute",
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "submit_plan",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+			AllowedTools:      []string{"read_file", "submit_plan"},
+			RequiredTools:     []string{"submit_plan"},
+		},
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{}, nil, nil, nil)
+	if len(requestBodies) == 0 {
+		t.Fatalf("expected model request")
+	}
+	if !slices.ContainsFunc(requestBodies[0].Messages, func(message struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}) bool {
+		return message.Role == "system" &&
+			strings.Contains(message.Content, "[active contract protocol]") &&
+			strings.Contains(message.Content, "protocol_hash=")
+	}) {
+		t.Fatalf("expected model-visible protocol card with hash: %#v", requestBodies)
+	}
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var protocolHash string
+	var friction *autonomy.ContractGuardFrictionEvent
+	for _, event := range events {
+		if event.Type == autonomy.EventContractPresented && event.Lifecycle != nil && event.Lifecycle.ModelProtocol != nil {
+			protocolHash = event.Lifecycle.ModelProtocol.ProtocolHash
+		}
+		if event.Type == autonomy.EventGuardFriction && event.GuardFriction != nil &&
+			event.GuardFriction.GuardSurface == autonomy.GuardFrictionSurfaceCompletionGate {
+			friction = event.GuardFriction
+		}
+	}
+	if friction == nil {
+		t.Fatalf("expected completion guard friction, got roles=%#v", eventRolesFor(runEvents))
+	}
+	if protocolHash == "" {
+		t.Fatalf("expected lifecycle model protocol hash, got events=%#v", events)
+	}
+	if friction.ProtocolHash != protocolHash || !friction.ModelContractVisible {
+		t.Fatalf("completion friction must cite presented model protocol %q: %#v", protocolHash, friction)
+	}
+}
+
+func TestRunnerRunRepeatedCompletionRejectionEmitsRetryFriction(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	replies := []string{
+		"Done.",
+		"Still done.",
+		"<<QUESTION>>: a.go cannot be edited because the exact requested change is missing from the brief.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d", requests+1)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var runEvents []RunEvent
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxModelCalls: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "plan-execute",
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "submit_plan",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+			AllowedTools:      []string{"read_file", "submit_plan"},
+			RequiredTools:     []string{"submit_plan"},
+		},
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	_, _ = runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edit"}}, llama.ChatOptions{}, nil, nil, nil)
+	if requests < 3 {
+		t.Fatalf("expected retry through accepted blocker, got %d request(s); roles=%#v", requests, eventRolesFor(runEvents))
+	}
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var sawSameFailure bool
+	var protocolHash string
+	for _, event := range events {
+		if event.Type == autonomy.EventContractPresented && event.Lifecycle != nil && event.Lifecycle.ModelProtocol != nil {
+			protocolHash = event.Lifecycle.ModelProtocol.ProtocolHash
+		}
+		if event.Type != autonomy.EventGuardFriction || event.GuardFriction == nil ||
+			event.GuardFriction.GuardSurface != autonomy.GuardFrictionSurfaceCompletionGate {
+			continue
+		}
+		friction := event.GuardFriction
+		if friction.RetryNumber == 1 &&
+			friction.RetryOutcome == autonomy.GuardFrictionRetrySameFailure &&
+			friction.FirstInvalidAction == actionFinalAnswer {
+			sawSameFailure = true
+		}
+		if friction.ProtocolHash != protocolHash || !friction.ModelContractVisible {
+			t.Fatalf("completion retry friction must cite presented protocol %q: %#v", protocolHash, friction)
+		}
+	}
+	if !sawSameFailure {
+		t.Fatalf("missing repeated same-failure completion friction; events=%#v", events)
 	}
 }
 
@@ -354,6 +584,65 @@ func TestRunnerAutonomyRecorderPolicyEventsMapProtectedForbiddenAndApprovalOutco
 	approved := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "apply_patch", "approved")
 	if approved.Policy.Decision != autonomy.PolicyAllow || !approved.Policy.ApprovalRequired {
 		t.Fatalf("approved event mismatch: %#v", approved.Policy)
+	}
+}
+
+func TestRunnerAutonomyRecorderDeniedPolicyEmitsGuardFriction(t *testing.T) {
+	root := t.TempDir()
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/agent/runner.go"},
+		AllowedTools:      []string{"read_file", "apply_patch"},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+	req := workspace.ToolRequest{Tool: "read_file", Path: ".git/config"}
+	recorder.emitPolicyResult(req, runnerAutonomyPolicyEventInput{
+		Decision:   autonomy.PolicyDeny,
+		ReasonCode: "permission_policy",
+		Result:     "denied",
+		ErrorClass: "permission_policy",
+		Source:     "runner_permission_policy",
+	})
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var policyEventID string
+	var friction *autonomy.ContractGuardFrictionEvent
+	for _, event := range events {
+		if event.Type == autonomy.EventToolPolicyResult {
+			policyEventID = event.EventID
+		}
+		if event.Type == autonomy.EventGuardFriction {
+			friction = event.GuardFriction
+		}
+	}
+	if friction == nil {
+		t.Fatalf("expected policy guard friction, got roles=%#v", eventRolesFor(runEvents))
+	}
+	if friction.SourceEventID != policyEventID || friction.GuardSurface != autonomy.GuardFrictionSurfaceToolPolicy {
+		t.Fatalf("unexpected policy friction source/surface: source=%q friction=%#v", policyEventID, friction)
+	}
+	if friction.Decision != autonomy.GuardFrictionDecisionReject ||
+		friction.FirstInvalidAction != "read_file" ||
+		friction.ModelContractVisible {
+		t.Fatalf("unexpected policy friction classification: %#v", friction)
 	}
 }
 
@@ -852,6 +1141,150 @@ func TestRunnerAutonomyRecorderRejectedCompletionReportsOnlyCurrentlyOpenObligat
 	}
 }
 
+func TestRunnerAutonomyRecorderRejectedCompletionEmitsGuardFriction(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "plan-execute",
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "submit_plan",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+			AllowedTools:      []string{"read_file", "submit_plan"},
+			RequiredTools:     []string{"submit_plan"},
+		},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, runner.RuntimeBrief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(runner.RuntimeBrief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         recorder.contract.ContractID,
+		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
+		Step:               1,
+		Brief:              runner.RuntimeBrief,
+		Results:            results,
+		BaseAllowedTools:   []string{"submit_plan"},
+		TextualToolParser:  true,
+		VerificationStatus: "not_required",
+	})
+	protocol, ok := runner.compileModelProtocolProjection(runner.RuntimeBrief, results, phase, RunPolicy{MaxToolSteps: 2}, false)
+	if !ok {
+		t.Fatal("expected plan-execute model protocol projection")
+	}
+	recorder.emitTurnPhaseContract(phase, protocol)
+	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var friction *autonomy.ContractGuardFrictionEvent
+	var completionGate *autonomy.ContractGateEvent
+	var completionDecision *autonomy.ContractCompletionEvent
+	for _, event := range events {
+		if event.Type == autonomy.EventGuardFriction {
+			friction = event.GuardFriction
+		}
+		if event.Type == autonomy.EventGateDecision && event.Gate != nil && event.Gate.Gate == autonomy.GateCompletion {
+			completionGate = event.Gate
+		}
+		if event.Type == autonomy.EventCompletionGateDecision {
+			completionDecision = event.Completion
+		}
+	}
+	if friction == nil {
+		t.Fatalf("expected guard friction event, got event roles=%#v", eventRolesFor(runEvents))
+	}
+	if completionGate == nil || completionGate.ProtocolHash != "" {
+		t.Fatalf("completion gate must not claim a model-visible protocol hash without prompt presentation: %#v", completionGate)
+	}
+	if completionDecision == nil || completionDecision.ProtocolHash != "" {
+		t.Fatalf("completion decision must not claim a model-visible protocol hash without prompt presentation: %#v", completionDecision)
+	}
+	if friction.GuardSurface != autonomy.GuardFrictionSurfaceCompletionGate ||
+		friction.Decision != autonomy.GuardFrictionDecisionReject ||
+		friction.FirstInvalidAction != actionFinalAnswer {
+		t.Fatalf("unexpected completion friction classification: %#v", friction)
+	}
+	if friction.ProtocolHash != "" || friction.ModelContractVisible {
+		t.Fatalf("friction must not claim model-visible protocol without prompt presentation: %#v", friction)
+	}
+	if !slices.Contains(friction.SafeAlternatives, "Decision: source-satisfied") ||
+		!slices.Contains(friction.SafeAlternatives, "<<QUESTION>>:") {
+		t.Fatalf("friction should carry safe terminal alternatives: %#v", friction.SafeAlternatives)
+	}
+	if strings.Contains(strings.Join(friction.EvidenceRefs, " "), "raw_prompt") {
+		t.Fatalf("friction evidence refs leaked raw prompt marker: %#v", friction.EvidenceRefs)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if report.GuardFrictionCoverage.Total != 1 ||
+		report.GuardFrictionCoverage.GuardSurfaceCounts[string(autonomy.GuardFrictionSurfaceCompletionGate)] != 1 {
+		t.Fatalf("expected audit to group completion-gate friction, got %#v", report.GuardFrictionCoverage)
+	}
+}
+
+func TestRunnerAutonomyRecorderRejectedWriteGateEmitsGuardFriction(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "implement",
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"internal/agent/runner.go"},
+			AllowedTools:      []string{"apply_patch", "shell"},
+		},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 5}, runner.RuntimeBrief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(runner.RuntimeBrief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:       recorder.contract.ContractID,
+		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
+		Step:             2,
+		Brief:            runner.RuntimeBrief,
+		BaseAllowedTools: []string{"apply_patch", "shell"},
+	})
+	recorder.emitTurnPhaseContract(phase, contractcompile.ModelProtocolProjection{})
+	recorder.emitWriteGate(workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** Update File: README.md\n@@\n-x\n+y\n*** End Patch\n"}, autonomy.PolicyReject, "required_edit_scope_rejected", nil)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var gateEventID string
+	var friction *autonomy.ContractGuardFrictionEvent
+	for _, event := range events {
+		if event.Type == autonomy.EventGateDecision && event.Gate != nil && event.Gate.Gate == autonomy.GateWrite {
+			gateEventID = event.EventID
+		}
+		if event.Type == autonomy.EventGuardFriction {
+			friction = event.GuardFriction
+		}
+	}
+	if friction == nil {
+		t.Fatalf("expected write gate friction event, got roles=%#v", eventRolesFor(runEvents))
+	}
+	if friction.SourceEventID != gateEventID || gateEventID == "" {
+		t.Fatalf("friction should reference source gate event %q: %#v", gateEventID, friction)
+	}
+	if friction.GuardSurface != autonomy.GuardFrictionSurfaceWriteGate ||
+		friction.Subject != autonomy.GuardFrictionSubjectToolCall ||
+		friction.FirstInvalidAction != "apply_patch" {
+		t.Fatalf("unexpected write friction classification: %#v", friction)
+	}
+	if friction.ProtocolHash != "" || friction.ModelContractVisible {
+		t.Fatalf("write friction should not claim model-visible protocol without a projection: %#v", friction)
+	}
+}
+
 func TestRunnerAutonomyRecorderCompletionAllowDoesNotResolveFailedVerification(t *testing.T) {
 	root := t.TempDir()
 	var runEvents []RunEvent
@@ -940,6 +1373,15 @@ func countObligationKind(obligations []autonomy.Obligation, kind autonomy.Obliga
 		}
 	}
 	return count
+}
+
+func hasTurnPhaseIssueForSurface(issues []autonomy.TurnPhaseContradiction, surfaceID string, invariantID string) bool {
+	for _, issue := range issues {
+		if issue.SurfaceID == surfaceID && issue.InvariantID == invariantID {
+			return true
+		}
+	}
+	return false
 }
 
 func hasPathRole(roles []autonomy.PathRole, kind autonomy.PathRoleKind, pattern string) bool {

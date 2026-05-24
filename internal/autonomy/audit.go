@@ -24,6 +24,7 @@ type EventAuditReport struct {
 	PolicyCoverage         PolicyEventCoverage            `json:"policy_coverage"`
 	ObligationCoverage     ObligationEventCoverage        `json:"obligation_coverage"`
 	GateCoverage           GateEventCoverage              `json:"gate_coverage"`
+	GuardFrictionCoverage  GuardFrictionCoverage          `json:"guard_friction_coverage"`
 	TurnPhaseCoverage      TurnPhaseEventCoverage         `json:"turn_phase_coverage"`
 	ReferenceCoverage      ContractReferenceCoverage      `json:"reference_coverage"`
 	SidecarToolCorrelation SidecarToolCorrelationCoverage `json:"sidecar_tool_correlation"`
@@ -47,6 +48,7 @@ type ContractEventCoverage struct {
 	GateEvents             map[string]int `json:"gate_events,omitempty"`
 	GateDecisionCounts     map[string]int `json:"gate_decision_counts,omitempty"`
 	GateKindCounts         map[string]int `json:"gate_kind_counts,omitempty"`
+	GuardFrictionCounts    map[string]int `json:"guard_friction_counts,omitempty"`
 	OpenObligations        []string       `json:"open_obligations,omitempty"`
 	ResolvedObligations    []string       `json:"resolved_obligations,omitempty"`
 	WaivedObligations      []string       `json:"waived_obligations,omitempty"`
@@ -104,24 +106,60 @@ type GateEventCoverage struct {
 	InconsistentOpenObligationRefs []EventAuditRef `json:"inconsistent_open_obligation_refs,omitempty"`
 }
 
+type GuardFrictionCoverage struct {
+	Total                    int                                  `json:"guards_fired"`
+	AvoidableFriction        int                                  `json:"avoidable_friction"`
+	UnclassifiedFriction     int                                  `json:"unclassified_friction"`
+	LaneCounts               map[string]int                       `json:"lane_counts,omitempty"`
+	PhaseCounts              map[string]int                       `json:"phase_counts,omitempty"`
+	AvoidabilityCounts       map[string]int                       `json:"avoidability_counts,omitempty"`
+	FirstInvalidActionCounts map[string]int                       `json:"first_invalid_action_counts,omitempty"`
+	RetryOutcomeCounts       map[string]int                       `json:"retry_outcome_counts,omitempty"`
+	GuardSurfaceCounts       map[string]int                       `json:"guard_surface_counts,omitempty"`
+	DecisionCounts           map[string]int                       `json:"decision_counts,omitempty"`
+	TopContracts             []GuardFrictionContractCoverage      `json:"top_contracts,omitempty"`
+	SafeAlternativeCoverage  GuardFrictionSafeAlternativeCoverage `json:"safe_alternative_coverage"`
+	UnclassifiedRefs         []EventAuditRef                      `json:"unclassified_refs,omitempty"`
+}
+
+type GuardFrictionContractCoverage struct {
+	ContractID           string `json:"contract_id"`
+	Total                int    `json:"total"`
+	AvoidableFriction    int    `json:"avoidable_friction"`
+	UnclassifiedFriction int    `json:"unclassified_friction"`
+}
+
+type GuardFrictionSafeAlternativeCoverage struct {
+	EventsWithSafeAlternatives    int            `json:"events_with_safe_alternatives"`
+	EventsMissingSafeAlternatives int            `json:"events_missing_safe_alternatives"`
+	SafeAlternativeCounts         map[string]int `json:"safe_alternative_counts,omitempty"`
+	VisibleActionClassCounts      map[string]int `json:"visible_action_class_counts,omitempty"`
+	VisibleToolCounts             map[string]int `json:"visible_tool_counts,omitempty"`
+}
+
 type TurnPhaseEventCoverage struct {
 	Total                  int                      `json:"total"`
 	ContractsWithTurnPhase []string                 `json:"contracts_with_turn_phase,omitempty"`
 	PhaseCounts            map[string]int           `json:"phase_counts,omitempty"`
+	SurfaceCounts          map[string]int           `json:"surface_counts,omitempty"`
 	EnforcementModeCounts  map[string]int           `json:"enforcement_mode_counts,omitempty"`
 	Contradictions         []TurnPhaseContradiction `json:"contradictions,omitempty"`
 }
 
 type TurnPhaseContradiction struct {
-	EventID     string `json:"event_id,omitempty"`
-	Type        string `json:"type,omitempty"`
-	Sequence    int64  `json:"sequence,omitempty"`
-	ContractID  string `json:"contract_id,omitempty"`
-	PhaseID     string `json:"phase_id,omitempty"`
-	ModelCallID string `json:"model_call_id,omitempty"`
-	ToolName    string `json:"tool_name,omitempty"`
-	ActionClass string `json:"action_class,omitempty"`
-	Reason      string `json:"reason,omitempty"`
+	EventID      string `json:"event_id,omitempty"`
+	Type         string `json:"type,omitempty"`
+	Sequence     int64  `json:"sequence,omitempty"`
+	ContractID   string `json:"contract_id,omitempty"`
+	PhaseID      string `json:"phase_id,omitempty"`
+	ModelCallID  string `json:"model_call_id,omitempty"`
+	ProtocolHash string `json:"protocol_hash,omitempty"`
+	SurfaceID    string `json:"surface_id,omitempty"`
+	SurfacePair  string `json:"surface_pair,omitempty"`
+	InvariantID  string `json:"invariant_id,omitempty"`
+	ToolName     string `json:"tool_name,omitempty"`
+	ActionClass  string `json:"action_class,omitempty"`
+	Reason       string `json:"reason,omitempty"`
 }
 
 type ContractReferenceCoverage struct {
@@ -189,17 +227,18 @@ type EventAuditFinding struct {
 }
 
 type eventAuditState struct {
-	report               EventAuditReport
-	contracts            map[string]*ContractEventCoverage
-	expectedContracts    map[string]struct{}
-	lifecycleContracts   map[string]struct{}
-	referencedContracts  map[string]struct{}
-	staleAfterSequence   map[string]staleContractState
-	openObligations      map[string]ObligationAuditRef
-	sidecarRequestIDs    map[string]struct{}
-	toolCallIDs          map[string]struct{}
-	turnPhaseContracts   map[string]TurnPhaseContractEvent
-	turnPhaseContractIDs map[string]struct{}
+	report                 EventAuditReport
+	contracts              map[string]*ContractEventCoverage
+	expectedContracts      map[string]struct{}
+	lifecycleContracts     map[string]struct{}
+	referencedContracts    map[string]struct{}
+	staleAfterSequence     map[string]staleContractState
+	openObligations        map[string]ObligationAuditRef
+	sidecarRequestIDs      map[string]struct{}
+	toolCallIDs            map[string]struct{}
+	turnPhaseContracts     map[string]TurnPhaseContractEvent
+	turnPhaseContractIDs   map[string]struct{}
+	guardFrictionContracts map[string]*GuardFrictionContractCoverage
 }
 
 type staleContractState struct {
@@ -212,16 +251,17 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 		report: EventAuditReport{
 			SchemaVersion: AuditReportSchemaVersion,
 		},
-		contracts:            make(map[string]*ContractEventCoverage),
-		expectedContracts:    make(map[string]struct{}),
-		lifecycleContracts:   make(map[string]struct{}),
-		referencedContracts:  make(map[string]struct{}),
-		staleAfterSequence:   make(map[string]staleContractState),
-		openObligations:      make(map[string]ObligationAuditRef),
-		sidecarRequestIDs:    make(map[string]struct{}),
-		toolCallIDs:          make(map[string]struct{}),
-		turnPhaseContracts:   make(map[string]TurnPhaseContractEvent),
-		turnPhaseContractIDs: make(map[string]struct{}),
+		contracts:              make(map[string]*ContractEventCoverage),
+		expectedContracts:      make(map[string]struct{}),
+		lifecycleContracts:     make(map[string]struct{}),
+		referencedContracts:    make(map[string]struct{}),
+		staleAfterSequence:     make(map[string]staleContractState),
+		openObligations:        make(map[string]ObligationAuditRef),
+		sidecarRequestIDs:      make(map[string]struct{}),
+		toolCallIDs:            make(map[string]struct{}),
+		turnPhaseContracts:     make(map[string]TurnPhaseContractEvent),
+		turnPhaseContractIDs:   make(map[string]struct{}),
+		guardFrictionContracts: make(map[string]*GuardFrictionContractCoverage),
 	}
 	for _, contractID := range compactStrings(opts.ExpectedContractIDs) {
 		state.expectedContracts[contractID] = struct{}{}
@@ -290,6 +330,8 @@ func (s *eventAuditState) addEvent(event Event) {
 		s.addObligation(event)
 	case EventGateDecision:
 		s.addGate(event)
+	case EventGuardFriction:
+		s.addGuardFriction(event)
 	}
 }
 
@@ -304,6 +346,14 @@ func (s *eventAuditState) addLifecycle(event Event) {
 	}
 	if event.Lifecycle != nil && event.Lifecycle.TurnPhaseContract != nil {
 		s.addTurnPhaseContract(event, *event.Lifecycle.TurnPhaseContract)
+		if event.Lifecycle.ModelProtocol != nil {
+			s.addTurnPhaseSurfaceSummary(event, SurfaceSummaryFromModelProtocol(*event.Lifecycle.ModelProtocol, *event.Lifecycle.TurnPhaseContract))
+		}
+	}
+	if event.Lifecycle != nil {
+		for _, surface := range event.Lifecycle.SurfaceSummaries {
+			s.addTurnPhaseSurfaceSummary(event, surface)
+		}
 	}
 	switch event.Type {
 	case EventContractCompiled:
@@ -385,6 +435,25 @@ func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContr
 	}
 }
 
+func (s *eventAuditState) addTurnPhaseSurfaceSummary(event Event, surface TurnPhaseSurfaceSummaryEvent) {
+	surface.normalize()
+	if surface.SurfaceID == "" {
+		return
+	}
+	incrementStringMap(&s.report.TurnPhaseCoverage.SurfaceCounts, surface.SurfaceID)
+	phase, ok := s.turnPhaseContracts[event.ContractID]
+	if !ok || phase.PhaseID == "" {
+		return
+	}
+	for _, issue := range ReconcileTurnPhaseSurface(phase, surface) {
+		issue.EventID = event.EventID
+		issue.Type = string(event.Type)
+		issue.Sequence = event.Sequence
+		issue.ContractID = firstNonEmptyAuditValue(issue.ContractID, event.ContractID)
+		s.report.TurnPhaseCoverage.Contradictions = append(s.report.TurnPhaseCoverage.Contradictions, issue)
+	}
+}
+
 func (s *eventAuditState) addTurnPhasePolicyObservation(event Event) {
 	if event.Policy == nil || event.ContractID == "" {
 		return
@@ -417,15 +486,19 @@ func (s *eventAuditState) addTurnPhasePolicyObservation(event Event) {
 
 func (s *eventAuditState) addTurnPhaseContradiction(event Event, phase TurnPhaseContractEvent, toolName string, actionClass string, reason string) {
 	s.report.TurnPhaseCoverage.Contradictions = append(s.report.TurnPhaseCoverage.Contradictions, TurnPhaseContradiction{
-		EventID:     event.EventID,
-		Type:        string(event.Type),
-		Sequence:    event.Sequence,
-		ContractID:  event.ContractID,
-		PhaseID:     phase.PhaseID,
-		ModelCallID: phase.ModelCallID,
-		ToolName:    strings.TrimSpace(toolName),
-		ActionClass: strings.TrimSpace(actionClass),
-		Reason:      strings.TrimSpace(reason),
+		EventID:      event.EventID,
+		Type:         string(event.Type),
+		Sequence:     event.Sequence,
+		ContractID:   event.ContractID,
+		PhaseID:      phase.PhaseID,
+		ModelCallID:  phase.ModelCallID,
+		ProtocolHash: phase.ProtocolHash,
+		SurfaceID:    "observed_tool_policy",
+		SurfacePair:  turnPhaseSurfacePair("turn_phase_contract", "observed_tool_policy"),
+		InvariantID:  turnPhaseInvariantIDForReason(reason),
+		ToolName:     strings.TrimSpace(toolName),
+		ActionClass:  strings.TrimSpace(actionClass),
+		Reason:       strings.TrimSpace(reason),
 	})
 }
 
@@ -498,6 +571,7 @@ func (s *eventAuditState) addGate(event Event) {
 	if event.Gate == nil {
 		return
 	}
+	s.addGateProtocolHashParity(event)
 	incrementStringMap(&s.report.GateCoverage.KindCounts, string(event.Gate.Gate))
 	incrementStringMap(&s.report.GateCoverage.DecisionCounts, string(event.Gate.Decision))
 	incrementStringMap(&s.report.GateCoverage.ReasonCounts, event.Gate.ReasonCode)
@@ -513,6 +587,77 @@ func (s *eventAuditState) addGate(event Event) {
 		coverage := s.contractCoverage(event.ContractID)
 		incrementStringMap(&coverage.GateDecisionCounts, string(event.Gate.Decision))
 		incrementStringMap(&coverage.GateKindCounts, string(event.Gate.Gate))
+	}
+}
+
+func (s *eventAuditState) addGateProtocolHashParity(event Event) {
+	if event.Gate == nil || event.ContractID == "" {
+		return
+	}
+	phase, ok := s.turnPhaseContracts[event.ContractID]
+	if !ok || phase.PhaseID == "" {
+		return
+	}
+	if event.Gate.Gate != GateCompletion {
+		return
+	}
+	gateHash := strings.TrimSpace(event.Gate.ProtocolHash)
+	phaseHash := strings.TrimSpace(phase.ProtocolHash)
+	switch {
+	case phaseHash != "" && gateHash != "" && gateHash != phaseHash:
+		s.addTurnPhaseContradiction(event, phase, "", "", "completion gate protocol_hash differs from latest turn_phase_contract")
+	}
+	if n := len(s.report.TurnPhaseCoverage.Contradictions); n > 0 && strings.TrimSpace(s.report.TurnPhaseCoverage.Contradictions[n-1].EventID) == event.EventID {
+		s.report.TurnPhaseCoverage.Contradictions[n-1].SurfaceID = "completion_gate"
+		s.report.TurnPhaseCoverage.Contradictions[n-1].SurfacePair = turnPhaseSurfacePair("turn_phase_contract", "completion_gate")
+		s.report.TurnPhaseCoverage.Contradictions[n-1].ProtocolHash = firstNonEmptyAuditValue(gateHash, phaseHash)
+	}
+}
+
+func (s *eventAuditState) addGuardFriction(event Event) {
+	s.report.GuardFrictionCoverage.Total++
+	if event.ContractID != "" {
+		incrementStringMap(&s.contractCoverage(event.ContractID).GuardFrictionCounts, string(EventGuardFriction))
+	}
+	if event.GuardFriction == nil {
+		s.report.GuardFrictionCoverage.UnclassifiedFriction++
+		s.report.GuardFrictionCoverage.UnclassifiedRefs = append(s.report.GuardFrictionCoverage.UnclassifiedRefs, auditRef(event, event.ContractID, "guard_friction payload missing"))
+		return
+	}
+	friction := *event.GuardFriction
+	friction.normalize()
+	contractID := firstNonEmptyAuditValue(friction.ContractID, event.ContractID)
+	incrementStringMap(&s.report.GuardFrictionCoverage.LaneCounts, firstNonEmptyAuditValue(friction.Lane, event.Correlation.Lane))
+	incrementStringMap(&s.report.GuardFrictionCoverage.PhaseCounts, firstNonEmptyAuditValue(friction.PhaseID, friction.Phase, event.Correlation.Phase))
+	incrementStringMap(&s.report.GuardFrictionCoverage.AvoidabilityCounts, string(friction.Avoidability))
+	incrementStringMap(&s.report.GuardFrictionCoverage.FirstInvalidActionCounts, friction.FirstInvalidAction)
+	incrementStringMap(&s.report.GuardFrictionCoverage.RetryOutcomeCounts, string(friction.RetryOutcome))
+	incrementStringMap(&s.report.GuardFrictionCoverage.GuardSurfaceCounts, string(friction.GuardSurface))
+	incrementStringMap(&s.report.GuardFrictionCoverage.DecisionCounts, string(friction.Decision))
+	if len(friction.SafeAlternatives) > 0 {
+		s.report.GuardFrictionCoverage.SafeAlternativeCoverage.EventsWithSafeAlternatives++
+		for _, alternative := range friction.SafeAlternatives {
+			incrementStringMap(&s.report.GuardFrictionCoverage.SafeAlternativeCoverage.SafeAlternativeCounts, alternative)
+		}
+	} else {
+		s.report.GuardFrictionCoverage.SafeAlternativeCoverage.EventsMissingSafeAlternatives++
+	}
+	for _, actionClass := range friction.VisibleActionClasses {
+		incrementStringMap(&s.report.GuardFrictionCoverage.SafeAlternativeCoverage.VisibleActionClassCounts, actionClass)
+	}
+	for _, tool := range friction.VisibleTools {
+		incrementStringMap(&s.report.GuardFrictionCoverage.SafeAlternativeCoverage.VisibleToolCounts, tool)
+	}
+	contractCoverage := s.guardFrictionContractCoverage(contractID)
+	contractCoverage.Total++
+	if guardFrictionAvoidable(friction.Avoidability) {
+		s.report.GuardFrictionCoverage.AvoidableFriction++
+		contractCoverage.AvoidableFriction++
+	}
+	if guardFrictionUnclassified(event, friction) {
+		s.report.GuardFrictionCoverage.UnclassifiedFriction++
+		contractCoverage.UnclassifiedFriction++
+		s.report.GuardFrictionCoverage.UnclassifiedRefs = append(s.report.GuardFrictionCoverage.UnclassifiedRefs, auditRef(event, contractID, "guard_friction lacks enough structured classification evidence"))
 	}
 }
 
@@ -643,6 +788,7 @@ func (s *eventAuditState) finish() {
 	s.report.TurnPhaseCoverage.ContractsWithTurnPhase = sortedKeys(s.turnPhaseContractIDs)
 	s.report.MetadataCoverage.ClientClassifications = sortedMapKeys(s.report.MetadataCoverage.ClientClassificationCounts)
 	s.report.MetadataCoverage.ProductSignals = sortedMapKeys(s.report.MetadataCoverage.ProductSignalCounts)
+	s.report.GuardFrictionCoverage.TopContracts = sortedGuardFrictionContractCoverages(s.guardFrictionContracts)
 	s.report.Contracts = sortedContractCoverages(s.contracts)
 	sortObligationRefs(s.report.ObligationCoverage.OpenObligations)
 	sortObligationRefs(s.report.ObligationCoverage.UnresolvedObligations)
@@ -652,6 +798,7 @@ func (s *eventAuditState) finish() {
 	sortAuditRefs(s.report.ReferenceCoverage.StaleContractReferences)
 	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedParentReferences)
 	sortAuditRefs(s.report.GateCoverage.InconsistentOpenObligationRefs)
+	sortAuditRefs(s.report.GuardFrictionCoverage.UnclassifiedRefs)
 	sortTurnPhaseContradictions(s.report.TurnPhaseCoverage.Contradictions)
 	slices.Sort(s.report.ReferenceCoverage.MissingExpectedContracts)
 	sortSidecarIssues(s.report.SidecarToolCorrelation.UnmatchedCorrelations)
@@ -749,6 +896,20 @@ func (s *eventAuditState) contractCoverage(contractID string) *ContractEventCove
 	return coverage
 }
 
+func (s *eventAuditState) guardFrictionContractCoverage(contractID string) *GuardFrictionContractCoverage {
+	contractID = strings.TrimSpace(contractID)
+	if contractID == "" {
+		contractID = "(missing)"
+	}
+	coverage, ok := s.guardFrictionContracts[contractID]
+	if ok {
+		return coverage
+	}
+	coverage = &GuardFrictionContractCoverage{ContractID: contractID}
+	s.guardFrictionContracts[contractID] = coverage
+	return coverage
+}
+
 func (s *eventAuditState) contractKnown(contractID string) bool {
 	if contractID == "" {
 		return false
@@ -778,6 +939,10 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 			if len(coverage.GateEvents) > 0 {
 				set[contractID] = struct{}{}
 			}
+		case "guard_friction":
+			if len(coverage.GuardFrictionCounts) > 0 {
+				set[contractID] = struct{}{}
+			}
 		}
 	}
 	return sortedKeys(set)
@@ -786,7 +951,7 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 func (s *eventAuditState) lifecycleOnlyContracts() []string {
 	set := make(map[string]struct{})
 	for contractID, coverage := range s.contracts {
-		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.GateEvents) == 0 {
+		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.GateEvents) == 0 && len(coverage.GuardFrictionCounts) == 0 {
 			set[contractID] = struct{}{}
 		}
 	}
@@ -815,6 +980,30 @@ func incrementStringMap(target *map[string]int, key string) {
 		*target = make(map[string]int)
 	}
 	(*target)[key]++
+}
+
+func guardFrictionAvoidable(avoidability GuardFrictionAvoidability) bool {
+	switch avoidability {
+	case GuardFrictionAvoidabilityContractNotVisible,
+		GuardFrictionAvoidabilityContradictoryContract,
+		GuardFrictionAvoidabilityToolSurfaceGap,
+		GuardFrictionAvoidabilityParserSurfaceGap,
+		GuardFrictionAvoidabilityRuntimeStateGap,
+		GuardFrictionAvoidabilityEvidenceTimingGap:
+		return true
+	default:
+		return false
+	}
+}
+
+func guardFrictionUnclassified(event Event, friction ContractGuardFrictionEvent) bool {
+	return friction.Avoidability == "" ||
+		friction.Avoidability == GuardFrictionAvoidabilityUnknown ||
+		firstNonEmptyAuditValue(friction.ContractID, event.ContractID) == "" ||
+		friction.InvariantID == "" ||
+		friction.Decision == "" ||
+		friction.GuardSurface == "" ||
+		(friction.ModelContractVisible && friction.ProtocolHash == "")
 }
 
 func auditRef(event Event, reference string, reason string) EventAuditRef {
@@ -942,6 +1131,27 @@ func sortedContractCoverages(values map[string]*ContractEventCoverage) []Contrac
 	slices.SortFunc(out, func(a, b ContractEventCoverage) int {
 		return cmp.Compare(a.ContractID, b.ContractID)
 	})
+	return out
+}
+
+func sortedGuardFrictionContractCoverages(values map[string]*GuardFrictionContractCoverage) []GuardFrictionContractCoverage {
+	out := make([]GuardFrictionContractCoverage, 0, len(values))
+	for _, coverage := range values {
+		out = append(out, *coverage)
+	}
+	slices.SortFunc(out, func(a, b GuardFrictionContractCoverage) int {
+		if c := cmp.Compare(b.AvoidableFriction, a.AvoidableFriction); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(b.Total, a.Total); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.ContractID, b.ContractID)
+	})
+	const maxTopGuardFrictionContracts = 10
+	if len(out) > maxTopGuardFrictionContracts {
+		out = out[:maxTopGuardFrictionContracts]
+	}
 	return out
 }
 

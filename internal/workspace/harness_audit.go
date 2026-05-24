@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -148,6 +149,8 @@ type harnessAuditToolSurface struct {
 	SchemaToolCount               int                            `json:"schema_tool_count"`
 	ExportedSchemaToolCount       int                            `json:"exported_schema_tool_count"`
 	DriftFindingCount             int                            `json:"drift_finding_count"`
+	CapabilityToolCounts          map[string]int                 `json:"capability_tool_counts,omitempty"`
+	CapabilityClassCounts         map[string]int                 `json:"capability_class_counts,omitempty"`
 	DuplicateManifestTools        []string                       `json:"duplicate_manifest_tools,omitempty"`
 	ManifestWithoutSchema         []string                       `json:"manifest_without_schema,omitempty"`
 	SchemaWithoutManifest         []string                       `json:"schema_without_manifest,omitempty"`
@@ -210,11 +213,21 @@ type harnessAuditLogBehavior struct {
 	Aggregate          eval.PerfAggregate              `json:"aggregate"`
 	TopPatterns        []eval.PerfPatternHit           `json:"top_patterns,omitempty"`
 	TopTools           []eval.PerfToolMix              `json:"top_tools,omitempty"`
+	CapabilityMix      []harnessAuditCapabilityMix     `json:"capability_mix,omitempty"`
+	TopCapabilities    []harnessAuditCapabilityMix     `json:"top_capabilities,omitempty"`
 	WorstOffenders     []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
 	MalformedOutput    *harnessAuditMalformedOutput    `json:"malformed_output,omitempty"`
+	GuardFriction      *autonomy.GuardFrictionCoverage `json:"guard_friction,omitempty"`
 	LaneHistory        *harnessAuditLaneHistory        `json:"lane_history,omitempty"`
 	InProgressSessions []harnessAuditInProgressSession `json:"in_progress_sessions,omitempty"`
 	IncompleteSessions []harnessAuditIncompleteSession `json:"incomplete_sessions,omitempty"`
+}
+
+type harnessAuditCapabilityMix struct {
+	Capability string  `json:"capability"`
+	Calls      int     `json:"calls"`
+	Share      float64 `json:"share"`
+	AvgPerLog  float64 `json:"avg_per_log"`
 }
 
 type harnessAuditMalformedOutput struct {
@@ -433,6 +446,8 @@ func auditToolSurfaceFromSources(manifest []string, schemaDefs []ToolDefinition,
 		StaleUseBlockerCoverage:       coverage,
 		StaleUseBlockerMissingTools:   missingBlockers,
 		StaleUseReportOnlyTools:       reportOnlyTools,
+		CapabilityToolCounts:          auditCapabilityToolCounts(export),
+		CapabilityClassCounts:         auditCapabilityClassCounts(export),
 	}
 	capabilityCoverage := ReadOnlyCapabilityCoverageForTools(manifest)
 	surface.CapabilityRegistry = &capabilityCoverage
@@ -468,6 +483,38 @@ func auditExportedToolNames(export ToolSchemaExport) []string {
 		}
 	}
 	return names
+}
+
+func auditCapabilityToolCounts(export ToolSchemaExport) map[string]int {
+	counts := make(map[string]int)
+	for _, tool := range export.Tools {
+		for _, capability := range tool.EvidenceCapabilities {
+			capability = strings.TrimSpace(capability)
+			if capability == "" {
+				continue
+			}
+			counts[capability]++
+		}
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
+}
+
+func auditCapabilityClassCounts(export ToolSchemaExport) map[string]int {
+	counts := make(map[string]int)
+	for _, tool := range export.Tools {
+		class := strings.TrimSpace(tool.CapabilityClassification)
+		if class == "" {
+			continue
+		}
+		counts[class]++
+	}
+	if len(counts) == 0 {
+		return nil
+	}
+	return counts
 }
 
 func auditStaleUseBlockerCoverage(export ToolSchemaExport) ([]harnessAuditStaleUseCoverage, []string, []string) {
@@ -789,6 +836,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
 	}
 	aggregate := eval.Aggregate(reports)
+	capabilityMix := auditObservedCapabilityMix(paths, aggregate.LogCount, &warnings, m.displayPath)
 	behavior := &harnessAuditLogBehavior{
 		LogLimit:           limit,
 		LogsConsidered:     len(paths),
@@ -798,8 +846,11 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		Aggregate:          aggregate,
 		TopPatterns:        firstAuditPatterns(aggregate.PatternHitRate, 8),
 		TopTools:           firstAuditTools(aggregate.ToolMix, 10),
+		CapabilityMix:      capabilityMix,
+		TopCapabilities:    firstAuditCapabilities(capabilityMix, 10),
 		WorstOffenders:     aggregate.WorstOffenders,
 		MalformedOutput:    malformedOutput,
+		GuardFriction:      harnessAuditGuardFrictionCoverage(contractCoverage),
 		LaneHistory:        buildHarnessAuditLaneHistory(m.cfg.Root, 8),
 		InProgressSessions: inProgressSessions,
 		IncompleteSessions: incompleteSessions,
@@ -807,6 +858,14 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	findings := logBehaviorFindings(aggregate, incompleteSessions)
 	findings = append(findings, contractCoverageWarningFindings(contractWarnings)...)
 	return behavior, contractCoverage, findings, logBehaviorQuestions(aggregate), nil
+}
+
+func harnessAuditGuardFrictionCoverage(report *autonomy.EventAuditReport) *autonomy.GuardFrictionCoverage {
+	if report == nil || report.GuardFrictionCoverage.Total == 0 {
+		return nil
+	}
+	coverage := report.GuardFrictionCoverage
+	return &coverage
 }
 
 var malformedOutputAuditRoles = map[string]struct{}{
@@ -2333,6 +2392,161 @@ func firstAuditTools(in []eval.PerfToolMix, n int) []eval.PerfToolMix {
 		return append([]eval.PerfToolMix(nil), in...)
 	}
 	return append([]eval.PerfToolMix(nil), in[:n]...)
+}
+
+func auditObservedCapabilityMix(paths []string, logCount int, warnings *[]string, displayPath func(string) string) []harnessAuditCapabilityMix {
+	callsByCapability := make(map[string]int)
+	total := 0
+	for _, path := range paths {
+		records, err := eval.LoadRecords(path)
+		if err != nil {
+			if warnings != nil {
+				label := path
+				if displayPath != nil {
+					label = displayPath(path)
+				}
+				*warnings = append(*warnings, fmt.Sprintf("%s: capability mix scan: %v", label, err))
+			}
+			continue
+		}
+		for _, record := range records {
+			if record.Type != "tool_request" {
+				continue
+			}
+			for _, capability := range auditObservedCapabilitiesForToolRequest(record) {
+				callsByCapability[capability]++
+				total++
+			}
+		}
+	}
+	if len(callsByCapability) == 0 {
+		return nil
+	}
+	out := make([]harnessAuditCapabilityMix, 0, len(callsByCapability))
+	for capability, calls := range callsByCapability {
+		row := harnessAuditCapabilityMix{
+			Capability: capability,
+			Calls:      calls,
+		}
+		if total > 0 {
+			row.Share = float64(calls) / float64(total)
+		}
+		if logCount > 0 {
+			row.AvgPerLog = float64(calls) / float64(logCount)
+		}
+		out = append(out, row)
+	}
+	slices.SortFunc(out, func(a, b harnessAuditCapabilityMix) int {
+		if c := cmp.Compare(b.Calls, a.Calls); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Capability, b.Capability)
+	})
+	return out
+}
+
+func auditObservedCapabilitiesForToolRequest(record eval.Record) []string {
+	tool := auditRecordString(record.Data, "tool")
+	raw := auditRecordString(record.Data, "raw")
+	rawFields := auditRawToolRequestFields(raw)
+	capability := auditRecordString(record.Data, "capability")
+	if capability == "" {
+		capability = auditRecordString(rawFields, "capability")
+	}
+	if capability == "" {
+		capability = auditRecordString(rawFields, "operation")
+	}
+	if capability == "" {
+		capability = auditRecordString(rawFields, "resolution")
+	}
+	if capability != "" {
+		if mapped := auditObservedCapabilityForToolCapability(tool, capability); mapped != "" {
+			return []string{mapped}
+		}
+	}
+	if tool == "read_only_capability" {
+		for _, key := range []string{"id", "action", "query"} {
+			if mapped := auditObservedCapabilityForToolCapability(tool, auditRecordString(rawFields, key)); mapped != "" {
+				return []string{mapped}
+			}
+		}
+	}
+	static := EvidenceCapabilitiesForTool(tool)
+	if len(static) == 1 && strings.TrimSpace(static[0]) != "" {
+		return []string{strings.TrimSpace(static[0])}
+	}
+	return nil
+}
+
+func auditRawToolRequestFields(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	fields := make(map[string]any)
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return nil
+	}
+	return fields
+}
+
+func auditRecordString(data map[string]any, key string) string {
+	if len(data) == 0 {
+		return ""
+	}
+	switch value := data[key].(type) {
+	case string:
+		return strings.TrimSpace(value)
+	case fmt.Stringer:
+		return strings.TrimSpace(value.String())
+	default:
+		return ""
+	}
+}
+
+func auditObservedCapabilityForToolCapability(tool, capability string) string {
+	capability = strings.TrimSpace(capability)
+	if capability == "" {
+		return ""
+	}
+	if mapped := evidenceCapabilityForLanguageCapability(Capability(capability)); mapped != "" {
+		return mapped
+	}
+	if tool == "read_only_capability" {
+		normalized := normalizeReadOnlyCapabilityID(capability)
+		switch normalized {
+		case "file-outline":
+			return "inspect_file"
+		case "inspect-symbol", "symbol-lookup":
+			return "inspect_symbol"
+		case "definition":
+			return "find_definition"
+		case "references":
+			return "find_references"
+		case "calls-from":
+			return "calls_from"
+		case "calls-into":
+			return "calls_into"
+		case "related-files":
+			return "related_files"
+		case "source-sanity":
+			return "source_diagnostics"
+		}
+	}
+	switch strings.ReplaceAll(strings.ToLower(capability), "-", "_") {
+	case "inspect_file", "inspect_symbol", "find_definition", "find_references",
+		"calls_from", "calls_into", "related_files", "query_context",
+		"source_diagnostics", "verify_edit":
+		return strings.ReplaceAll(strings.ToLower(capability), "-", "_")
+	}
+	return ""
+}
+
+func firstAuditCapabilities(in []harnessAuditCapabilityMix, n int) []harnessAuditCapabilityMix {
+	if len(in) <= n {
+		return append([]harnessAuditCapabilityMix(nil), in...)
+	}
+	return append([]harnessAuditCapabilityMix(nil), in[:n]...)
 }
 
 func auditTopCount(values map[string]int) string {

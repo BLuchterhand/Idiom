@@ -1,10 +1,11 @@
 package workspace
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
-	"cmp"
 	"os"
+	"path/filepath"
 	"reflect"
 	"slices"
 	"strings"
@@ -22,14 +23,25 @@ const (
 	readOnlyCapabilityPublicStatusEnv   = "IDIOM_READ_ONLY_CAPABILITY_PUBLIC_STATUS"
 )
 
+const (
+	CapabilityClassRouted               = "routed"
+	CapabilityClassCompatibilityAdapter = "compatibility_adapter"
+	CapabilityClassDeferred             = "deferred"
+	CapabilityClassFallback             = "fallback"
+	CapabilityClassWriteSideEffect      = "write_side_effect"
+)
+
 type ReadOnlyCapabilityID string
 
 const (
-	ReadOnlyCapabilityFileOutline  ReadOnlyCapabilityID = "file-outline"
-	ReadOnlyCapabilitySymbolLookup ReadOnlyCapabilityID = "symbol-lookup"
-	ReadOnlyCapabilityDefinition   ReadOnlyCapabilityID = "definition"
-	ReadOnlyCapabilityReferences   ReadOnlyCapabilityID = "references"
-	ReadOnlyCapabilityRelatedFiles ReadOnlyCapabilityID = "related-files"
+	ReadOnlyCapabilityFileOutline   ReadOnlyCapabilityID = "file-outline"
+	ReadOnlyCapabilityInspectSymbol ReadOnlyCapabilityID = "inspect-symbol"
+	ReadOnlyCapabilitySymbolLookup  ReadOnlyCapabilityID = "symbol-lookup"
+	ReadOnlyCapabilityDefinition    ReadOnlyCapabilityID = "definition"
+	ReadOnlyCapabilityReferences    ReadOnlyCapabilityID = "references"
+	ReadOnlyCapabilityCallsFrom     ReadOnlyCapabilityID = "calls-from"
+	ReadOnlyCapabilityCallsInto     ReadOnlyCapabilityID = "calls-into"
+	ReadOnlyCapabilityRelatedFiles  ReadOnlyCapabilityID = "related-files"
 )
 
 type ReadOnlyCapabilityRegistry struct {
@@ -90,16 +102,42 @@ type ReadOnlyCapabilityExecutionResult struct {
 	SchemaVersion          string                              `json:"schema_version"`
 	RequestedCapability    string                              `json:"requested_capability"`
 	Capability             string                              `json:"capability,omitempty"`
+	ResolvedTarget         ReadOnlyCapabilityResolvedTarget    `json:"resolved_target,omitempty"`
 	ResolverRuntimeEnabled bool                                `json:"resolver_runtime_enabled"`
 	DirectToolFallback     bool                                `json:"direct_tool_fallback"`
 	Routed                 bool                                `json:"routed"`
 	RoutedTool             string                              `json:"routed_tool,omitempty"`
 	RoutedAdapter          *ReadOnlyCapabilityAdapterSpec      `json:"routed_adapter,omitempty"`
 	FallbackReason         string                              `json:"fallback_reason,omitempty"`
+	FreshnessState         string                              `json:"freshness_state,omitempty"`
+	ResultCounts           ReadOnlyCapabilityResultCounts      `json:"result_counts,omitempty"`
+	TruncationState        ReadOnlyCapabilityTruncationState   `json:"truncation_state,omitempty"`
+	FollowUpCapabilities   []string                            `json:"follow_up_capabilities,omitempty"`
 	Status                 ReadOnlyCapabilityStatus            `json:"status"`
 	AvailableAdapters      []ReadOnlyCapabilityAdapterSpec     `json:"available_adapters,omitempty"`
 	UnavailableAdapters    []ReadOnlyCapabilityAdapterSpec     `json:"unavailable_adapters,omitempty"`
 	UnderlyingResult       *ReadOnlyCapabilityUnderlyingResult `json:"underlying_result,omitempty"`
+}
+
+type ReadOnlyCapabilityResolvedTarget struct {
+	Path      string `json:"path,omitempty"`
+	Handle    string `json:"handle,omitempty"`
+	Pattern   string `json:"pattern,omitempty"`
+	Query     string `json:"query,omitempty"`
+	Language  string `json:"language,omitempty"`
+	StartLine int    `json:"start_line,omitempty"`
+	EndLine   int    `json:"end_line,omitempty"`
+}
+
+type ReadOnlyCapabilityResultCounts struct {
+	RelationshipCount int `json:"relationship_count,omitempty"`
+	OutputLineCount   int `json:"output_line_count,omitempty"`
+	OutputByteCount   int `json:"output_byte_count,omitempty"`
+}
+
+type ReadOnlyCapabilityTruncationState struct {
+	State           string `json:"state,omitempty"`
+	OutputByteCount int    `json:"output_byte_count,omitempty"`
 }
 
 type ReadOnlyCapabilityStatus struct {
@@ -198,6 +236,14 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 				),
 			),
 			readOnlyCapability(
+				ReadOnlyCapabilityInspectSymbol,
+				"Read a symbol body or exact symbol range after anchoring.",
+				append(
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapReadSymbol)},
+					languageCapabilityAdapters(CapReadSymbol)...,
+				),
+			),
+			readOnlyCapability(
 				ReadOnlyCapabilitySymbolLookup,
 				"Find candidate symbols by name or pattern without reading or changing source.",
 				append(
@@ -225,6 +271,22 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 				),
 			),
 			readOnlyCapability(
+				ReadOnlyCapabilityCallsFrom,
+				"Locate outgoing call evidence from a named symbol.",
+				append(
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapCallsFrom)},
+					languageCapabilityAdapters(CapCallsFrom)...,
+				),
+			),
+			readOnlyCapability(
+				ReadOnlyCapabilityCallsInto,
+				"Locate incoming call evidence for a named symbol.",
+				append(
+					[]ReadOnlyCapabilityAdapterSpec{codeNavigateCapabilityAdapter(CapCallsInto)},
+					languageCapabilityAdapters(CapCallsInto)...,
+				),
+			),
+			readOnlyCapability(
 				ReadOnlyCapabilityRelatedFiles,
 				"Find files related to a symbol, file, or implementation topic.",
 				append(
@@ -233,6 +295,107 @@ func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 				),
 			),
 		},
+	}
+}
+
+func attachToolManifestCapabilityMetadata(entry ToolManifestEntry) ToolManifestEntry {
+	entry.EvidenceCapabilities = EvidenceCapabilitiesForTool(entry.Tool)
+	entry.CapabilityClassification = CapabilityClassificationForTool(entry.Tool)
+	return entry
+}
+
+func EvidenceCapabilitiesForTool(tool string) []string {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return nil
+	}
+	if capabilities := languageToolEvidenceCapabilities(tool); len(capabilities) > 0 {
+		return capabilities
+	}
+	switch tool {
+	case readOnlyCapabilityToolName:
+		return []string{"inspect_file", "inspect_symbol", "find_definition", "find_references", "calls_from", "calls_into", "related_files"}
+	case "code_navigate":
+		return []string{"inspect_file", "inspect_symbol", "find_definition", "find_references", "calls_from", "calls_into", "related_files"}
+	case "context_pack", "context_impact", "discovery_query":
+		return []string{"localize_change"}
+	case "context_query", "context_zoom", "context_status":
+		return []string{"localize_change", "query_context"}
+	case "read_file":
+		return []string{"inspect_file"}
+	case "search_files", "search_content", "ctags_symbols", "structural_search":
+		return []string{"find_references"}
+	case "dependency_graph":
+		return []string{"related_files"}
+	case "source_sanity":
+		return []string{"source_diagnostics", "verify_edit"}
+	case "context_trace_pack":
+		return []string{"verify_edit"}
+	case "harness_audit":
+		return []string{"audit_behavior"}
+	case "shell":
+		return []string{"verify_edit"}
+	default:
+		return nil
+	}
+}
+
+func CapabilityClassificationForTool(tool string) string {
+	tool = strings.TrimSpace(tool)
+	switch {
+	case tool == "":
+		return ""
+	case IsWorkspaceWriteTool(tool) || tool == "submit_plan":
+		return CapabilityClassWriteSideEffect
+	case tool == "source_sanity" || tool == "context_trace_pack" || tool == "shell" || isToolSchemaDiagnosticTool(tool):
+		return CapabilityClassDeferred
+	case tool == readOnlyCapabilityToolName || tool == "code_navigate" || strings.HasPrefix(tool, "context_") || tool == "discovery_query":
+		return CapabilityClassRouted
+	case len(languageToolEvidenceCapabilities(tool)) > 0:
+		return CapabilityClassCompatibilityAdapter
+	case slices.Contains([]string{"read_file", "search_files", "search_content", "ctags_symbols", "structural_search", "dependency_graph"}, tool):
+		return CapabilityClassFallback
+	case tool == "harness_audit":
+		return CapabilityClassRouted
+	default:
+		return ""
+	}
+}
+
+func languageToolEvidenceCapabilities(tool string) []string {
+	for _, lang := range LanguageRegistry() {
+		for capability, candidate := range lang.Tools {
+			if candidate != tool {
+				continue
+			}
+			if id := evidenceCapabilityForLanguageCapability(capability); id != "" {
+				return []string{id}
+			}
+		}
+	}
+	return nil
+}
+
+func evidenceCapabilityForLanguageCapability(capability Capability) string {
+	switch capability {
+	case CapFileOutline:
+		return "inspect_file"
+	case CapReadSymbol:
+		return "inspect_symbol"
+	case CapDefinition:
+		return "find_definition"
+	case CapReferences:
+		return "find_references"
+	case CapCallsFrom:
+		return "calls_from"
+	case CapCallsInto:
+		return "calls_into"
+	case CapRelatedFiles:
+		return "related_files"
+	case CapDiagnostics:
+		return "source_diagnostics"
+	default:
+		return ""
 	}
 }
 
@@ -329,40 +492,41 @@ func ReadOnlyCapabilityCoverageForTools(tools []string) ReadOnlyCapabilityCovera
 
 func (m *Manager) readOnlyCapability(ctx context.Context, req ToolRequest) ToolResult {
 	requested := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.ID))
+	target := readOnlyCapabilityResolvedTarget(req)
 	if requested == "" {
-		return readOnlyCapabilityFallbackResult(requested, ReadOnlyCapabilityResolution{}, "invalid_input", "capability is required")
+		return readOnlyCapabilityFallbackResult(requested, target, ReadOnlyCapabilityResolution{}, "invalid_input", "capability is required")
 	}
 
 	resolution, ok := resolveReadOnlyCapabilityForRequest(requested, req)
 	if !ok {
 		if deferred, ok := deferredReadOnlyCapabilityAdapter(requested); ok {
-			return readOnlyCapabilityDeferredResult(requested, deferred)
+			return readOnlyCapabilityDeferredResult(requested, target, deferred)
 		}
-		return readOnlyCapabilityFallbackResult(requested, ReadOnlyCapabilityResolution{
+		return readOnlyCapabilityFallbackResult(requested, target, ReadOnlyCapabilityResolution{
 			ResolverRuntimeEnabled: readOnlyCapabilityResolverRuntimeEnabled(),
 			DirectToolFallback:     true,
 		}, "capability_unmapped", "")
 	}
 	if !resolution.ResolverRuntimeEnabled {
-		return readOnlyCapabilityFallbackResult(requested, resolution, "resolver_runtime_disabled", "")
+		return readOnlyCapabilityFallbackResult(requested, target, resolution, "resolver_runtime_disabled", "")
 	}
 	if isReadOnlyCapabilityRouteDisabled(resolution.Capability.ID) {
-		return readOnlyCapabilityFallbackResult(requested, resolution, "capability_route_disabled", "")
+		return readOnlyCapabilityFallbackResult(requested, target, resolution, "capability_route_disabled", "")
 	}
 	if !isReadOnlyCapabilityRuntimeRouted(resolution.Capability.ID) {
-		return readOnlyCapabilityFallbackResult(requested, resolution, "capability_not_runtime_routed", "")
+		return readOnlyCapabilityFallbackResult(requested, target, resolution, "capability_not_runtime_routed", "")
 	}
 
 	adapter, fallbackReason, ok := selectReadOnlyCapabilityAdapter(resolution.AvailableAdapters)
 	if !ok {
-		return readOnlyCapabilityFallbackResult(requested, resolution, fallbackReason, "")
+		return readOnlyCapabilityFallbackResult(requested, target, resolution, fallbackReason, "")
 	}
 
 	routedReq := req
 	routedReq.Tool = adapter.Tool
 	routedReq.Capability = adapter.Capability
 	result := m.Execute(ctx, routedReq)
-	return readOnlyCapabilityWrapResult(requested, resolution, adapter, result)
+	return readOnlyCapabilityWrapResult(requested, target, resolution, adapter, result)
 }
 
 func resolveReadOnlyCapabilityForRequest(id string, req ToolRequest) (ReadOnlyCapabilityResolution, bool) {
@@ -380,20 +544,34 @@ func readOnlyCapabilityResolverTools(req ToolRequest) []string {
 }
 
 func readOnlyCapabilityRequestLanguage(req ToolRequest) (LanguageSupport, bool) {
+	if path := strings.TrimSpace(req.Path); path != "" {
+		if lang, ok := LanguageForFile(path); ok {
+			return lang, true
+		}
+	}
 	if language := strings.TrimSpace(req.Language); language != "" {
 		return LanguageForName(language)
-	}
-	if path := strings.TrimSpace(req.Path); path != "" {
-		return LanguageForFile(path)
 	}
 	return LanguageSupport{}, false
 }
 
-func readOnlyCapabilityFallbackResult(requested string, resolution ReadOnlyCapabilityResolution, reason string, detail string) ToolResult {
+func readOnlyCapabilityResolvedTarget(req ToolRequest) ReadOnlyCapabilityResolvedTarget {
+	return ReadOnlyCapabilityResolvedTarget{
+		Path:      filepath.ToSlash(strings.TrimSpace(req.Path)),
+		Handle:    strings.TrimSpace(req.Handle),
+		Pattern:   strings.TrimSpace(req.Pattern),
+		Query:     strings.TrimSpace(req.Query),
+		Language:  strings.TrimSpace(req.Language),
+		StartLine: req.StartLine,
+		EndLine:   req.EndLine,
+	}
+}
+
+func readOnlyCapabilityFallbackResult(requested string, target ReadOnlyCapabilityResolvedTarget, resolution ReadOnlyCapabilityResolution, reason string, detail string) ToolResult {
 	if reason == "" {
 		reason = "no_available_read_only_adapter"
 	}
-	payload := readOnlyCapabilityExecutionPayload(requested, resolution)
+	payload := readOnlyCapabilityExecutionPayload(requested, target, resolution)
 	payload.FallbackReason = reason
 	if detail != "" {
 		payload.UnderlyingResult = &ReadOnlyCapabilityUnderlyingResult{
@@ -410,8 +588,8 @@ func readOnlyCapabilityFallbackResult(requested string, resolution ReadOnlyCapab
 	}
 }
 
-func readOnlyCapabilityDeferredResult(requested string, adapter ReadOnlyCapabilityDeferredAdapterSpec) ToolResult {
-	payload := readOnlyCapabilityExecutionPayload(requested, ReadOnlyCapabilityResolution{
+func readOnlyCapabilityDeferredResult(requested string, target ReadOnlyCapabilityResolvedTarget, adapter ReadOnlyCapabilityDeferredAdapterSpec) ToolResult {
+	payload := readOnlyCapabilityExecutionPayload(requested, target, ReadOnlyCapabilityResolution{
 		Capability: ReadOnlyCapabilitySpec{
 			ID:          strings.TrimSpace(adapter.Capability),
 			Description: "Deferred from read-only capability execution because the direct tool schema is not read-only-only.",
@@ -436,8 +614,8 @@ func readOnlyCapabilityDeferredResult(requested string, adapter ReadOnlyCapabili
 	}
 }
 
-func readOnlyCapabilityWrapResult(requested string, resolution ReadOnlyCapabilityResolution, adapter ReadOnlyCapabilityAdapterSpec, result ToolResult) ToolResult {
-	payload := readOnlyCapabilityExecutionPayload(requested, resolution)
+func readOnlyCapabilityWrapResult(requested string, target ReadOnlyCapabilityResolvedTarget, resolution ReadOnlyCapabilityResolution, adapter ReadOnlyCapabilityAdapterSpec, result ToolResult) ToolResult {
+	payload := readOnlyCapabilityExecutionPayload(requested, target, resolution)
 	payload.Routed = true
 	payload.RoutedTool = strings.TrimSpace(adapter.Tool)
 	adapterCopy := adapter
@@ -468,16 +646,33 @@ func readOnlyCapabilityWrapResult(requested string, resolution ReadOnlyCapabilit
 	}
 }
 
-func readOnlyCapabilityExecutionPayload(requested string, resolution ReadOnlyCapabilityResolution) ReadOnlyCapabilityExecutionResult {
+func readOnlyCapabilityExecutionPayload(requested string, target ReadOnlyCapabilityResolvedTarget, resolution ReadOnlyCapabilityResolution) ReadOnlyCapabilityExecutionResult {
 	return ReadOnlyCapabilityExecutionResult{
 		SchemaVersion:          readOnlyCapabilityResultVersion,
 		RequestedCapability:    strings.TrimSpace(requested),
 		Capability:             strings.TrimSpace(resolution.Capability.ID),
+		ResolvedTarget:         target,
 		ResolverRuntimeEnabled: resolution.ResolverRuntimeEnabled,
 		DirectToolFallback:     resolution.DirectToolFallback,
 		AvailableAdapters:      cloneCapabilityAdapters(resolution.AvailableAdapters),
 		UnavailableAdapters:    cloneCapabilityAdapters(resolution.UnavailableAdapters),
+		FollowUpCapabilities:   readOnlyCapabilityFollowUps(resolution.Capability.ID),
 	}
+}
+
+func readOnlyCapabilityFollowUps(current string) []string {
+	current = normalizeReadOnlyCapabilityID(current)
+	registry := BuildReadOnlyCapabilityRegistry()
+	var out []string
+	for _, capability := range registry.Capabilities {
+		id := strings.TrimSpace(capability.ID)
+		if id == "" || id == current || !isReadOnlyCapabilityRuntimeRouted(id) || isReadOnlyCapabilityRouteDisabled(id) {
+			continue
+		}
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return out
 }
 
 func marshalReadOnlyCapabilityExecutionResult(payload ReadOnlyCapabilityExecutionResult) string {
@@ -492,12 +687,17 @@ type readOnlyCapabilityPublicResult struct {
 	SchemaVersion          string                              `json:"schema_version"`
 	RequestedCapability    string                              `json:"requested_capability"`
 	Capability             string                              `json:"capability,omitempty"`
+	ResolvedTarget         ReadOnlyCapabilityResolvedTarget    `json:"resolved_target,omitempty"`
 	ResolverRuntimeEnabled bool                                `json:"resolver_runtime_enabled"`
 	DirectToolFallback     bool                                `json:"direct_tool_fallback"`
 	Routed                 bool                                `json:"routed"`
 	RoutedTool             string                              `json:"routed_tool,omitempty"`
 	RoutedAdapter          *ReadOnlyCapabilityAdapterSpec      `json:"routed_adapter,omitempty"`
 	FallbackReason         string                              `json:"fallback_reason,omitempty"`
+	FreshnessState         string                              `json:"freshness_state,omitempty"`
+	ResultCounts           ReadOnlyCapabilityResultCounts      `json:"result_counts,omitempty"`
+	TruncationState        ReadOnlyCapabilityTruncationState   `json:"truncation_state,omitempty"`
+	FollowUpCapabilities   []string                            `json:"follow_up_capabilities,omitempty"`
 	Status                 *ReadOnlyCapabilityStatus           `json:"status,omitempty"`
 	AvailableAdapters      []ReadOnlyCapabilityAdapterSpec     `json:"available_adapters,omitempty"`
 	UnavailableAdapters    []ReadOnlyCapabilityAdapterSpec     `json:"unavailable_adapters,omitempty"`
@@ -509,12 +709,17 @@ func readOnlyCapabilityPublicExecutionResult(payload ReadOnlyCapabilityExecution
 		SchemaVersion:          payload.SchemaVersion,
 		RequestedCapability:    payload.RequestedCapability,
 		Capability:             payload.Capability,
+		ResolvedTarget:         payload.ResolvedTarget,
 		ResolverRuntimeEnabled: payload.ResolverRuntimeEnabled,
 		DirectToolFallback:     payload.DirectToolFallback,
 		Routed:                 payload.Routed,
 		RoutedTool:             payload.RoutedTool,
 		RoutedAdapter:          payload.RoutedAdapter,
 		FallbackReason:         payload.FallbackReason,
+		FreshnessState:         payload.FreshnessState,
+		ResultCounts:           payload.ResultCounts,
+		TruncationState:        payload.TruncationState,
+		FollowUpCapabilities:   append([]string(nil), payload.FollowUpCapabilities...),
 		AvailableAdapters:      payload.AvailableAdapters,
 		UnavailableAdapters:    payload.UnavailableAdapters,
 		UnderlyingResult:       payload.UnderlyingResult,
@@ -533,6 +738,9 @@ func readOnlyCapabilityAttachStatus(payload *ReadOnlyCapabilityExecutionResult, 
 	fallback := readOnlyCapabilityFallbackStatusFor(payload.FallbackReason)
 	absence := readOnlyCapabilityAbsenceConfidenceFor(result)
 	precisionTier := readOnlyCapabilityStatusPrecisionTier(result, payload.UnderlyingResult)
+	payload.FreshnessState = readOnlyCapabilityFreshnessState(payload, result)
+	payload.ResultCounts = readOnlyCapabilityResultCounts(result, payload.UnderlyingResult)
+	payload.TruncationState = readOnlyCapabilityTruncationState(result, payload.UnderlyingResult)
 	payload.Status = ReadOnlyCapabilityStatus{
 		State:             readOnlyCapabilityStatusState(payload.Routed, fallback, absence),
 		SelectedAdapter:   readOnlyCapabilitySelectedAdapterStatus(adapter),
@@ -598,6 +806,66 @@ func readOnlyCapabilityRouteConfidence(precisionTier string, fallback ReadOnlyCa
 		return "low"
 	}
 	return "observed"
+}
+
+func readOnlyCapabilityFreshnessState(payload *ReadOnlyCapabilityExecutionResult, result *ToolResult) string {
+	if result != nil {
+		lower := strings.ToLower(strings.TrimSpace(result.Output + "\n" + result.Summary))
+		switch {
+		case strings.Contains(lower, "stale"):
+			return "stale_reported"
+		case strings.Contains(lower, "fresh"):
+			return "fresh_reported"
+		}
+	}
+	if payload != nil && payload.Routed {
+		return "not_reported"
+	}
+	return "unavailable"
+}
+
+func readOnlyCapabilityResultCounts(result *ToolResult, underlying *ReadOnlyCapabilityUnderlyingResult) ReadOnlyCapabilityResultCounts {
+	var counts ReadOnlyCapabilityResultCounts
+	if result != nil {
+		counts.RelationshipCount = len(result.Relationships)
+		counts.OutputLineCount = nonEmptyLineCount(result.Output)
+		counts.OutputByteCount = len(result.Output)
+		return counts
+	}
+	if underlying != nil {
+		counts.RelationshipCount = len(underlying.Relationships)
+		counts.OutputLineCount = nonEmptyLineCount(underlying.Output)
+		counts.OutputByteCount = len(underlying.Output)
+	}
+	return counts
+}
+
+func readOnlyCapabilityTruncationState(result *ToolResult, underlying *ReadOnlyCapabilityUnderlyingResult) ReadOnlyCapabilityTruncationState {
+	output := ""
+	if result != nil {
+		output = result.Output
+	} else if underlying != nil {
+		output = underlying.Output
+	}
+	state := "not_reported"
+	if strings.Contains(strings.ToLower(output), "truncated") {
+		state = "truncated_reported"
+	}
+	return ReadOnlyCapabilityTruncationState{State: state, OutputByteCount: len(output)}
+}
+
+func nonEmptyLineCount(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	count := 0
+	for _, line := range strings.Split(value, "\n") {
+		if strings.TrimSpace(line) != "" {
+			count++
+		}
+	}
+	return count
 }
 
 func readOnlyCapabilityStatusState(routed bool, fallback ReadOnlyCapabilityFallbackStatus, absence *ReadOnlyCapabilityAbsenceConfidence) string {
@@ -914,27 +1182,6 @@ func readOnlyCapabilityPublicStatusEnabled() bool {
 	}
 }
 
-func readOnlyCapabilityRuntimeRoutedIDs(registry ReadOnlyCapabilityRegistry, tools []string) []string {
-	if !registry.ResolverRuntimeEnabled {
-		return nil
-	}
-	var routed []string
-	for _, capability := range registry.Capabilities {
-		if isReadOnlyCapabilityRouteDisabled(capability.ID) {
-			continue
-		}
-		if !isReadOnlyCapabilityRuntimeRouted(capability.ID) {
-			continue
-		}
-		available, _ := filterCapabilityAdapters(capability.Adapters, tools)
-		if _, _, ok := selectReadOnlyCapabilityAdapter(available); ok {
-			routed = append(routed, capability.ID)
-		}
-	}
-	slices.Sort(routed)
-	return routed
-}
-
 func readOnlyCapabilityRouteStates(registry ReadOnlyCapabilityRegistry, tools []string) []ReadOnlyCapabilityRouteState {
 	var states []ReadOnlyCapabilityRouteState
 	for _, capability := range registry.Capabilities {
@@ -1017,9 +1264,12 @@ func readOnlyCapabilityRouteStateCounts(states []ReadOnlyCapabilityRouteState) m
 func isReadOnlyCapabilityRuntimeRouted(id string) bool {
 	switch normalizeReadOnlyCapabilityID(id) {
 	case string(ReadOnlyCapabilityFileOutline),
+		string(ReadOnlyCapabilityInspectSymbol),
 		string(ReadOnlyCapabilitySymbolLookup),
 		string(ReadOnlyCapabilityDefinition),
 		string(ReadOnlyCapabilityReferences),
+		string(ReadOnlyCapabilityCallsFrom),
+		string(ReadOnlyCapabilityCallsInto),
 		string(ReadOnlyCapabilityRelatedFiles):
 		return true
 	default:
@@ -1168,12 +1418,18 @@ func normalizeReadOnlyCapabilityID(id string) string {
 	switch key {
 	case "outline", "fileoutline":
 		return string(ReadOnlyCapabilityFileOutline)
+	case "read-symbol", "read-symbols", "readsymbol", "inspect-symbol", "inspectsymbol", "symbol-body", "symbolbody":
+		return string(ReadOnlyCapabilityInspectSymbol)
 	case "symbol", "lookup", "symbol-search", "symbollookup", "workspace-symbol", "workspace-symbols":
 		return string(ReadOnlyCapabilitySymbolLookup)
-	case "definition", "declaration", "go-to-definition", "goto-definition":
+	case "definition", "declaration", "find-definition", "go-to-definition", "goto-definition":
 		return string(ReadOnlyCapabilityDefinition)
-	case "reference", "references", "refs", "usages":
+	case "reference", "references", "refs", "usages", "find-reference", "find-references":
 		return string(ReadOnlyCapabilityReferences)
+	case "calls-from", "callees":
+		return string(ReadOnlyCapabilityCallsFrom)
+	case "calls-into", "callers":
+		return string(ReadOnlyCapabilityCallsInto)
 	case "related", "related-file", "related-files":
 		return string(ReadOnlyCapabilityRelatedFiles)
 	default:

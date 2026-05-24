@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
@@ -602,6 +603,74 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 	assertNotContains(t, contract.AllowedTools, "search_content")
 }
 
+func TestDeriveTurnPhaseContractUnscopedImplementationDesignDocReadStaysTargetSource(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "context_pack", "search_content", "edit_file", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 docs/design-tdd-coverage.md lines 1-200 (total lines: 815)",
+			Output:  "Phase 1: EARS And BDD Coverage Checks\n",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want target source after design-doc-only read", contract.PhaseID)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "context_pack")
+	assertContains(t, contract.AllowedTools, "edit_file")
+}
+
+func TestDeriveTurnPhaseContractUnscopedImplementationStaysWriteReadyAfterMultipleSourceReads(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch", "source_sanity"},
+		},
+		Results: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 docs/design-tdd-coverage.md lines 1-20 (total lines: 100)",
+				Output:  "Phase 1: EARS And BDD Coverage Checks\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f2 internal/productworkflow/coverage_gate_test.go lines 1-20 (total lines: 100)",
+				Output:  "func TestCoverageGate(t *testing.T) {}\n",
+			},
+		},
+	})
+
+	if contract.Phase != "target_write_ready" {
+		t.Fatalf("Phase = %q, want target_write_ready", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertNotContains(t, contract.AllowedTools, "code_navigate")
+}
+
+func TestTurnPhaseSurfaceSummaryDoesNotClassifyParserReadableWriteAsRead(t *testing.T) {
+	classes := turnPhaseSurfaceActionClassesFromText([]string{
+		"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+	})
+
+	assertContains(t, classes, actionPerEditWrite)
+	assertContains(t, classes, actionBlocker)
+	assertNotContains(t, classes, actionRead)
+}
+
 func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterSymbolMiss(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -810,10 +879,136 @@ func TestApplyTurnPhaseContractToNextActionStateReplacesForbiddenProbeGuidance(t
 	}
 }
 
+func TestNextActionStateSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "submit_plan"},
+			RequiredEditPaths: []string{"a.go"},
+		},
+		Results:           []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}},
+		TextualToolParser: true,
+	})
+	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
+		Phase: "generic",
+		Step:  4,
+	}, contract)
+	state.NextValidActions = append([]string(nil), contract.TerminalOutcomes...)
+
+	summary := turnPhaseSurfaceSummaryFromNextActionState(state, contract)
+	issues := autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary)
+	if len(issues) != 0 {
+		t.Fatalf("next-action summary should reconcile cleanly, got %#v", issues)
+	}
+
+	invalidActionClass := actionPerEditWrite
+	if !slices.Contains(contract.ActionPolicy.InvalidActionClasses, invalidActionClass) {
+		t.Fatalf("expected %s to be invalid in submit-ready contract: %#v", invalidActionClass, contract.ActionPolicy)
+	}
+	state.NextValidActions = []string{phaseTestActionClassPrompt(invalidActionClass)}
+	summary = turnPhaseSurfaceSummaryFromNextActionState(state, contract)
+	if !slices.Contains(summary.AdvertisedActionClasses, invalidActionClass) {
+		t.Fatalf("summary did not classify rendered invalid action %s: %#v", invalidActionClass, summary)
+	}
+	issues = autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary)
+	if len(issues) == 0 {
+		t.Fatalf("next-action summary should report rendered invalid %s guidance", invalidActionClass)
+	}
+	foundInvalid := false
+	for _, issue := range issues {
+		if issue.SurfacePair == "turn_phase_contract,next_action_state" &&
+			issue.InvariantID == "turn_phase.action.invalid_advertised" &&
+			issue.ActionClass == invalidActionClass {
+			foundInvalid = true
+		}
+	}
+	if !foundInvalid {
+		t.Fatalf("expected invalid %s contradiction from rendered next-action state, got %#v", invalidActionClass, issues)
+	}
+}
+
+func TestRequiredSourceSelfSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+			RequiredEditPaths: []string{"a.go"},
+		},
+	})
+
+	issues := autonomy.ReconcileTurnPhaseSurface(
+		contract.autonomyEventPayload(),
+		autonomy.SurfaceSummaryFromTurnPhaseContract(contract.autonomyEventPayload()),
+	)
+	if len(issues) != 0 {
+		t.Fatalf("required-source self-summary should reconcile cleanly, got %#v", issues)
+	}
+}
+
+func TestRecoveryCardSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			PermissionProfile: "plan_submission_review",
+			AllowedTools:      []string{"read_file", "search_content", "submit_plan"},
+			Readiness: &workerruntime.ReadinessState{
+				OpenObligations: []string{"source_sanity_failed:internal/example.go"},
+			},
+		},
+	})
+	card := BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"submit_plan"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "completion_gate"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Review-repair pass rejected",
+			Error:   "failed obligations remain",
+		},
+	})
+
+	summary := card.TurnPhaseSurfaceSummary(contract)
+	issues := autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary)
+	if len(issues) != 0 {
+		t.Fatalf("recovery-card summary should reconcile cleanly, got %#v", issues)
+	}
+	assertNotContains(t, card.CallableActionClasses, actionReviewPass)
+	assertNotContains(t, card.TerminalOutcomes, "Decision: pass")
+}
+
 func assertContains(t *testing.T, values []string, want string) {
 	t.Helper()
 	if !slices.Contains(values, want) {
 		t.Fatalf("expected %q in %#v", want, values)
+	}
+}
+
+func firstPhaseTestActionClass(values []string) string {
+	for _, value := range values {
+		switch value {
+		case actionRead, actionSearch, actionPerEditWrite, actionVerify, actionFinalAnswer:
+			return value
+		}
+	}
+	return ""
+}
+
+func phaseTestActionClassPrompt(actionClass string) string {
+	switch actionClass {
+	case actionRead:
+		return "read another source file before submitting"
+	case actionSearch:
+		return "search the repository before submitting"
+	case actionPerEditWrite:
+		return "write another file before submitting"
+	case actionVerify:
+		return "run another verification command before submitting"
+	case actionFinalAnswer:
+		return "answer directly before submitting"
+	default:
+		return actionClass
 	}
 }
 

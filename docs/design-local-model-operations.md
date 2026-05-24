@@ -13,7 +13,7 @@ make local-model operation a product strength. It also depends on the
 planner-quality context design in
 [local-model-planning-quality-design.md](local-model-planning-quality-design.md)
 and the Qwen-specific backlog in
-[qwen-harness-optimizations.md](qwen-harness-optimizations.md).
+[archive/2026-05-historical/qwen-harness-optimizations.md](archive/2026-05-historical/qwen-harness-optimizations.md).
 
 The thesis-level rule remains unchanged:
 

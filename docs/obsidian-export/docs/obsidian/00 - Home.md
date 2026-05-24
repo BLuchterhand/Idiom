@@ -42,6 +42,7 @@ treat it as greenfield guidance to adapt during implementation.
 
 - [[22 - Ground-Up Implementation Plan]]
 - [[03 - Architecture Layers]]
+- [[23 - Major Systems Architectural Onboarding]]
 - [[04 - Runtime Lanes]]
 - [[05 - Runner Contracts and Control Rails]]
 - [[06 - Workspace Tools and Capability Routing]]
@@ -97,6 +98,19 @@ before discussing enterprise or regulated use.
 - [[20 - Product Workflow and Behavioral Coverage]]
 - [[21 - Recovery and Decomposition]]
 - [[22 - Ground-Up Implementation Plan]]
+- [[23 - Major Systems Architectural Onboarding]]
+
+## Major System Onboarding
+
+Use [[23 - Major Systems Architectural Onboarding]] when entering a subsystem
+for the first time or assigning work to another agent. It maps each major target
+system to:
+
+- what the system owns and must not own
+- the packages and docs to inspect first
+- the verification commands and evidence products that should prove changes
+- the common friction signals that usually mean the edit belongs at a contract
+  boundary instead of inside an adapter
 
 ## Product Workflow and Recovery
 

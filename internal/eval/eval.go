@@ -344,12 +344,13 @@ type DeepeningSnapshot struct {
 }
 
 type FinalAnswerCriticSnapshot struct {
-	Contract string   `json:"contract,omitempty"`
-	Passed   bool     `json:"passed"`
-	Action   string   `json:"action,omitempty"`
-	Repaired bool     `json:"repaired,omitempty"`
-	Findings []string `json:"findings,omitempty"`
-	Raw      string   `json:"raw,omitempty"`
+	Contract      string   `json:"contract,omitempty"`
+	Passed        bool     `json:"passed"`
+	Action        string   `json:"action,omitempty"`
+	Repaired      bool     `json:"repaired,omitempty"`
+	Findings      []string `json:"findings,omitempty"`
+	EvidencePaths []string `json:"evidence_paths,omitempty"`
+	Raw           string   `json:"raw,omitempty"`
 }
 
 type EffortPolicySnapshot struct {

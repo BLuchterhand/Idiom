@@ -1047,14 +1047,18 @@ func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.
 		TaskFamily:        "architecture",
 		Contract:          "architecture_assessment",
 		PermissionProfile: "read_only_workspace",
-		AllowedTools:      []string{"search_content", "read_file", "discovery_query"},
+		AllowedTools:      []string{"search_content", "read_file", "code_navigate", "read_only_capability", "discovery_query"},
 	})
 
 	for _, needle := range []string{
+		"Available evidence capabilities",
+		`"available_evidence_capabilities"`,
 		`"discovery_examples"`,
 		"For broad architecture, impact, tracing, security, or history questions",
 		"bounded discovery-packet capability",
 		"choose purpose from the tool schema",
+		"find_definition",
+		"read_only_capability",
 	} {
 		if !strings.Contains(rendered, needle) {
 			t.Fatalf("expected %q in deterministic discovery guidance:\n%s", needle, rendered)
@@ -1071,6 +1075,38 @@ func TestRenderInitialRuntimeBriefAddsDeterministicDiscoveryExamples(t *testing.
 	} {
 		if strings.Contains(strings.ToLower(rendered), strings.ToLower(forbidden)) {
 			t.Fatalf("runtime brief should avoid prescriptive raw-tool phrase %q:\n%s", forbidden, rendered)
+		}
+	}
+}
+
+func TestNormalizeRuntimeBriefSummarizesCapabilitiesWithoutLanguageAdapterList(t *testing.T) {
+	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "architecture",
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools: []string{
+			"code_navigate",
+			"read_only_capability",
+			"go_definition",
+			"go_references",
+			"python_read_symbol",
+			"read_file",
+		},
+	})
+
+	if len(brief.EvidenceCapabilities) == 0 {
+		t.Fatalf("expected compact capability summary, got %#v", brief)
+	}
+	joined := strings.Join(brief.EvidenceCapabilities, "\n")
+	for _, want := range []string{"inspect_file", "inspect_symbol", "find_definition", "find_references", workspace.CapabilityClassCompatibilityAdapter} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("capability summary missing %q:\n%s", want, joined)
+		}
+	}
+	for _, verboseAdapter := range []string{"go_definition", "go_references", "python_read_symbol", "language adapters", "tools:"} {
+		if strings.Contains(joined, verboseAdapter) {
+			t.Fatalf("capability summary should collapse language adapter %q:\n%s", verboseAdapter, joined)
 		}
 	}
 }
@@ -1248,7 +1284,7 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 			t.Fatalf("child read-only role must not advertise %q, got %#v", forbidden, spec.AllowedTools)
 		}
 	}
-	for _, want := range []string{"read_file", "search_files", "search_content", "file_stats", "code_navigate", "context_pack", "discovery_query", "structural_search"} {
+	for _, want := range []string{"read_file", "search_files", "search_content", "file_stats", "code_navigate", "read_only_capability", "context_pack", "discovery_query", "structural_search"} {
 		if !slices.Contains(spec.AllowedTools, want) {
 			t.Fatalf("expected child read-only role to allow %q, got %#v", want, spec.AllowedTools)
 		}

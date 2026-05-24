@@ -30,7 +30,7 @@ To enable: copy the `mcp` block from `config.example.json` into your
 1. **Web search.** Let the model search the public web via Exa AI's
    hosted MCP endpoint, the same backend OpenCode uses.
 2. **Finish the MCP integration.** [internal/mcp](internal/mcp/) was
-   landed as Fix 8 in [docs/opencode-fixes-design.md](docs/opencode-fixes-design.md)
+   landed as Fix 8 in [opencode-fixes-design.md](opencode-fixes-design.md)
    but is not actually wired into the runner. Any user MCP server
    configured in `config.json` today is silently ignored. This change
    fixes that on the way through.
@@ -917,5 +917,5 @@ Track separately, do not bundle:
 - idiom Mode rules: [internal/agent/modes.go](internal/agent/modes.go)
 - idiom tool-rule evaluator: [internal/workspace/tool_rules.go](internal/workspace/tool_rules.go)
 - idiom lane policy: [internal/agent/runner_lane_policy.go](internal/agent/runner_lane_policy.go)
-- Precedent design-doc style: [docs/opencode-fixes-design.md](docs/opencode-fixes-design.md)
-- Original Fix 8 (the MCP scaffold this completes): [docs/opencode-fixes-design.md](docs/opencode-fixes-design.md) §8
+- Precedent design-doc style: [opencode-fixes-design.md](opencode-fixes-design.md)
+- Original Fix 8 (the MCP scaffold this completes): [opencode-fixes-design.md](opencode-fixes-design.md) §8

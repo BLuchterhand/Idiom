@@ -38,6 +38,7 @@ type runnerRequestBudgetState struct {
 	readCallCount                    int
 	readCallsSinceWrite              int
 	postReadinessNoGapRejections     int
+	scopedReadRejections             map[string]int
 }
 
 func (s runnerRequestBudgetState) postChildActive() bool {
@@ -113,6 +114,7 @@ func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetSta
 			zeroHit:    make(map[string]string),
 			rejected:   make(map[string]string),
 		},
+		scopedReadRejections: make(map[string]int),
 		postChild: postChildBudgetState{
 			readBudget:       postChildReadBudget,
 			readFamilies:     make(map[string]int),
