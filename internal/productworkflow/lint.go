@@ -278,6 +278,12 @@ func LintEffortFolder(root string) LintSummaryResult {
 		for _, se := range supersessionErrs {
 			addFinding(se.Code, se.ADRPath, se.Message)
 		}
+		if parsedADRIndex != nil {
+			consistencyErrs := ValidateADRIndexFrontMatterConsistency(*parsedADRIndex, parsedADRs)
+			for _, ce := range consistencyErrs {
+				addFinding(ce.Code, ce.Path, ce.Message)
+			}
+		}
 	}
 
 	if parsedPRD != nil {

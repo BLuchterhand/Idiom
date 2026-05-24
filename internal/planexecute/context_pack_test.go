@@ -245,11 +245,8 @@ func TestPlanExecuteEditSetObligationsDoNotPromoteAllowedPathsToRequiredPaths(t 
 		}
 	}
 	obligations := planExecuteEditSetObligations(Options{}, prompt)
-	if !obligations.Has(EditSetObligationKindTestEdit) {
-		t.Fatalf("expected test edit obligation, got %#v", obligations)
-	}
-	if !obligations.Has(EditSetObligationKindImplementationEdit) {
-		t.Fatalf("expected implementation edit obligation, got %#v", obligations)
+	if len(obligations) != 0 {
+		t.Fatalf("prompt prose must not create edit-set obligations, got %#v", obligations)
 	}
 }
 

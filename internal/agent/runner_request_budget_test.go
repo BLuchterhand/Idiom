@@ -38,6 +38,35 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	}
 }
 
+func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
+	fingerprint := "read_file|README.md"
+	state.fingerprint.rejected[fingerprint] = "Plan-execute submit_plan required"
+	state.noteFingerprint(fingerprint)
+	state.noteFingerprint(fingerprint)
+	state.noteFingerprint(fingerprint)
+
+	decision := state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
+	if !decision.Handled {
+		t.Fatal("expected terminal artifact retry to be handled")
+	}
+	if decision.ForceAnswerReason != "" || decision.ForceAnswerPrompt != "" {
+		t.Fatalf("terminal artifact retry must preserve submit_plan surface, got %#v", decision)
+	}
+	if decision.Nudge == "" || decision.EventRole != "terminal_artifact_retry_recovery" {
+		t.Fatalf("expected terminal artifact repair nudge, got %#v", decision)
+	}
+	if !strings.Contains(decision.Nudge, "submit_plan") || strings.Contains(decision.Nudge, "Tools are now disabled") {
+		t.Fatalf("nudge should require submit_plan without no-tools closeout: %q", decision.Nudge)
+	}
+
+	early := state.earlyRejectedFingerprintDecision(req, fingerprint)
+	if !early.Handled || early.ForceAnswerReason != "" || !strings.Contains(early.Nudge, "terminal plan artifact") {
+		t.Fatalf("early repeated rejection should also preserve terminal artifact recovery, got %#v", early)
+	}
+}
+
 func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) {
 	for _, summary := range []string{
 		"Repeated range-less read_file redirected to bounded source request",

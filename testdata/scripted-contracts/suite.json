@@ -1,0 +1,1136 @@
+{
+  "name": "scripted-contracts",
+  "version": 1,
+  "coverage": {
+    "min_tasks": 19,
+    "required_families": [
+      "direct_question",
+      "implementation",
+      "verification_only",
+      "plan_then_execute_planner"
+    ],
+    "required_tags": [
+      "deterministic",
+      "fake-model",
+      "rollback",
+      "read-only",
+      "implement",
+      "plan-execute",
+      "source-satisfied",
+      "typed-blocker",
+      "recovery",
+      "json-normalization",
+      "classifier-routing",
+      "ambiguous-question",
+      "slash-command",
+      "multi-turn",
+      "parse-recovery",
+      "repeated-rejection",
+      "empty-submit-plan",
+      "open-candidate"
+    ],
+    "required_scenario_assertions": [
+      "prompt_contains",
+      "run_events",
+      "tools",
+      "forbid_tools",
+      "final_assistant_contains",
+      "route_plan",
+      "assistant_for_each_user"
+    ],
+    "required_oracle_assertions": [
+      "changed_files",
+      "no_changed_files",
+      "clean_rollback",
+      "no_approval",
+      "no_runner_rejections",
+      "no_shell",
+      "no_timeout",
+      "allow_source_satisfied",
+      "forbid_typed_blocker",
+      "min_user_turns",
+      "min_assistant_turns"
+    ]
+  },
+  "tasks": [
+    {
+      "id": "scripted-question-does-not-mutate-label",
+      "family": "direct_question",
+      "runner_mode": "auto",
+      "prompt": "Can we shorten the save label in internal/labels/labels.go? Answer the question from the codebase. Do not edit files or run tests.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-question-does-not-mutate-label",
+        "prompt_contains": [
+          "Can we shorten the save label",
+          "Do not edit files"
+        ],
+        "final_assistant_contains": [
+          "Save changes"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-ambiguous-question-read-only",
+      "family": "direct_question",
+      "runner_mode": "auto",
+      "prompt": "Can we shorten the save label in internal/labels/labels.go?",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "rollback",
+        "classifier-routing",
+        "ambiguous-question"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-classifier-ambiguous-question-read-only",
+        "prompt_contains": [
+          "Can we shorten the save label"
+        ],
+        "require_route_plan": {
+          "initial_lane": "main",
+          "reason": "read_only_question",
+          "contract": "direct_answer"
+        },
+        "final_assistant_contains": [
+          "Save changes",
+          "did not edit files"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-short-label",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nCurrent exact source:\n```go\npackage labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n```\n\nMake the edit from the supplied exact source first, then verify the changed source with a source-aware check.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-short-label",
+        "prompt_contains": [
+          "Implement this feature",
+          "ShortLabel returns"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-natural-language-implement-short-label",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Please make the frozen fixture use the shorter save label. ShortLabel in internal/labels/labels.go should return \"Save\". This is an implementation request, not a question.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "natural-language",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-natural-language-implement-short-label",
+        "prompt_contains": [
+          "shorter save label",
+          "implementation request"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-natural-language-implement-short-label",
+      "family": "implementation",
+      "runner_mode": "auto",
+      "prompt": "Please implement the shorter save label in internal/labels/labels.go so ShortLabel returns \"Save\".",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "natural-language",
+        "rollback",
+        "classifier-routing"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-classifier-natural-language-implement-short-label",
+        "prompt_contains": [
+          "Please implement",
+          "ShortLabel returns \"Save\""
+        ],
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "classifier_directive",
+          "contract": "implementation_result"
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-slash-implement-short-label",
+      "family": "implementation",
+      "runner_mode": "auto",
+      "prompt": "/implement update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "classifier-routing",
+        "slash-command"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-classifier-slash-implement-short-label",
+        "prompt_contains": [
+          "/implement",
+          "ShortLabel returns \"Save\""
+        ],
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "classifier_directive",
+          "contract": "implementation_result"
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-multi-turn-question-then-implement",
+      "family": "implementation",
+      "runner_mode": "auto",
+      "turns": [
+        "Can we shorten the save label in internal/labels/labels.go?",
+        "Actually implement the shorter save label now so ShortLabel returns \"Save\"."
+      ],
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "classifier-routing",
+        "ambiguous-question",
+        "multi-turn"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-classifier-multi-turn-question-then-implement",
+        "prompt_contains": [
+          "Actually implement",
+          "ShortLabel returns \"Save\""
+        ],
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "classifier_directive",
+          "contract": "implementation_result"
+        },
+        "require_assistant_for_each_user": true,
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "min_user_turns": 2,
+        "min_assistant_turns": 2,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-verification-only-runs-tests-without-edits",
+      "family": "verification_only",
+      "runner_mode": "auto",
+      "prompt": "Can you verify the frozen fixture by running go test ./...? Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "verification",
+        "rollback"
+      ],
+      "fixture": "fixtures/already-save-label-repo",
+      "scenario": {
+        "name": "scripted-verification-only-runs-tests-without-edits",
+        "prompt_contains": [
+          "running go test ./...",
+          "Do not edit files"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell"
+        ],
+        "final_assistant_contains": [
+          "cannot run shell verification"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-short-label",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-short-label",
+        "prompt_contains": [
+          "Use plan-execute",
+          "required_edit_paths: internal/labels/labels.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.required_edit_paths_resolved",
+          "idiom.plan_execute.writer_route_decision",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-source-satisfied",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to ensure internal/labels/labels.go keeps ShortLabel returning \"Save\".\n\nrequired_edit_paths: internal/labels/labels.go",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "rollback",
+        "source-satisfied"
+      ],
+      "fixture": "fixtures/already-save-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-source-satisfied",
+        "prompt_contains": [
+          "keeps ShortLabel returning \"Save\"",
+          "required_edit_paths: internal/labels/labels.go"
+        ],
+        "final_assistant_contains": [
+          "Decision: source-satisfied",
+          "internal/labels/labels.go"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_source_satisfied": true,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-typed-blocker",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/missing.go so MissingLabel returns \"Save\".\n\nrequired_edit_paths: internal/labels/missing.go",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "plan-execute",
+        "rollback",
+        "typed-blocker"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-typed-blocker",
+        "prompt_contains": [
+          "internal/labels/missing.go",
+          "required_edit_paths"
+        ],
+        "final_assistant_contains": [
+          "<<QUESTION>>",
+          "internal/labels/missing.go"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-placeholder-recovery",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-placeholder-recovery",
+        "prompt_contains": [
+          "ShortLabel returns \"Save\"",
+          "required_edit_paths: internal/labels/labels.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.plan_execute.review_repair_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "max_errors": 2,
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-missing-path-recovery",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-missing-path-recovery",
+        "prompt_contains": [
+          "required_edit_paths: internal/labels/labels.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "max_errors": 1,
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-stringified-edits-normalized",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "json-normalization",
+        "plan-execute",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-stringified-edits-normalized",
+        "prompt_contains": [
+          "ShortLabel returns \"Save\"",
+          "required_edit_paths"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "submit_plan_stringified_edits_repaired",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "max_errors": 0,
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-empty-submit-plan-recovery",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to shorten the save label in the frozen fixture. ShortLabel in internal/labels/labels.go should return \"Save\" instead of \"Save changes\". Let the planner localize the target from the repository before submitting a plan.\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "recovery",
+        "empty-submit-plan",
+        "open-candidate",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-empty-submit-plan-recovery",
+        "prompt_contains": [
+          "Let the planner localize the target",
+          "ShortLabel"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "plan_then_execute_empty_submit_plan_recovery",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "context_pack",
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 1,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-open-candidate-non-tool-recovery",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to shorten the save label in the frozen fixture. ShortLabel should return \"Save\" instead of \"Save changes\". Do not provide required_edit_paths; the planner should use repository evidence to select the edit path.\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "recovery",
+        "open-candidate",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-open-candidate-non-tool-recovery",
+        "prompt_contains": [
+          "Do not provide required_edit_paths",
+          "repository evidence"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "completion_gate_recovery",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "context_pack",
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 1,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-unrepairable-stringified-edits-recovery",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "json-normalization",
+        "parse-recovery",
+        "plan-execute",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-unrepairable-stringified-edits-recovery",
+        "prompt_contains": [
+          "ShortLabel returns \"Save\"",
+          "required_edit_paths"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "plan_then_execute_submit_plan_parse_recovery",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "max_errors": 1,
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-repeated-invalid-plan-blocker",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "plan-execute",
+        "recovery",
+        "repeated-rejection",
+        "rollback",
+        "typed-blocker"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-repeated-invalid-plan-blocker",
+        "prompt_contains": [
+          "ShortLabel returns \"Save\"",
+          "required_edit_paths"
+        ],
+        "final_assistant_contains": [
+          "<<QUESTION>>",
+          "required_edit_paths: internal/labels/labels.go"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch"
+        ],
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "completion_status",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-trailing-prose-tool-normalized",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The model may include harmless trailing prose after a JSON tool request; the harness should salvage the tool request without treating the prose as a separate command.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "json-normalization",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-trailing-prose-tool-normalized",
+        "prompt_contains": [
+          "harmless trailing prose",
+          "salvage the tool request"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    }
+  ]
+}

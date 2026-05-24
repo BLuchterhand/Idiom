@@ -106,6 +106,9 @@ func Analyze(records []Record) Metrics {
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
 			countMetricsRole(&metrics, role)
+			if role == "assistant" {
+				recordTerminalOutcomeSignals(&metrics, content)
+			}
 			if strings.Contains(strings.ToLower(content), "summary rejected") {
 				metrics.SummaryRejections++
 				if lane := summaryRejectionLane(role); lane != "" {
@@ -201,6 +204,9 @@ func Analyze(records []Record) Metrics {
 			role := stringField(record.Data, "role")
 			content := stringField(record.Data, "content")
 			countMetricsRole(&metrics, role)
+			if role == "plan_then_execute_low_value_action" {
+				metrics.LowValueActions++
+			}
 			if runnerRejected, completionGateRejected := runnerRejectionSignalsFromRunEvent(role, content); runnerRejected || completionGateRejected {
 				if runnerRejected && metrics.RejectedActions < 1 {
 					metrics.RejectedActions = 1
@@ -313,6 +319,12 @@ func Analyze(records []Record) Metrics {
 				PacketState:         stringField(record.Data, "packet_state"),
 				Reason:              stringField(record.Data, "reason"),
 			})
+		case "idiom.plan_execute.planner_blocked":
+			metrics.TypedBlockers++
+		case "idiom.plan_execute.source_satisfied", "idiom.plan_execute.auto_exact_plan_source_satisfied":
+			metrics.SourceSatisfiedOutcomes++
+		case "idiom.live_contract.timeout":
+			metrics.LiveContractTimeouts++
 		case "idiom.plan_execute.plan_scope_drift":
 			metrics.PlanExecutionDrift = append(metrics.PlanExecutionDrift, PlanExecutionDriftSnapshot{
 				Path:            stringField(record.Data, "path"),
@@ -325,6 +337,7 @@ func Analyze(records []Record) Metrics {
 			metrics.VerificationChecks++
 			recordVerificationStatus(&metrics, stringField(record.Data, "status"))
 		case "idiom.plan_execute.executor_complete":
+			metrics.ExecutorCompletes++
 			if checked := intField(record.Data, "verification_checked"); checked > metrics.VerificationChecks {
 				metrics.VerificationChecks = checked
 			}
@@ -385,6 +398,20 @@ func Analyze(records []Record) Metrics {
 	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
 	return metrics
+}
+
+func recordTerminalOutcomeSignals(metrics *Metrics, content string) {
+	if metrics == nil {
+		return
+	}
+	trimmed := strings.TrimSpace(content)
+	lower := strings.ToLower(trimmed)
+	switch {
+	case strings.HasPrefix(trimmed, "<<QUESTION>>"), strings.HasPrefix(lower, "decision: block"), strings.HasPrefix(lower, "decision: blocked"):
+		metrics.TypedBlockers++
+	case strings.HasPrefix(lower, "decision: source-satisfied"), strings.HasPrefix(lower, "decision: source satisfied"), strings.HasPrefix(lower, "source-satisfied:"):
+		metrics.SourceSatisfiedOutcomes++
+	}
 }
 
 func recordVerificationStatus(metrics *Metrics, status string) {

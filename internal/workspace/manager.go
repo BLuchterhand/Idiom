@@ -106,6 +106,8 @@ type ToolRequest struct {
 	Task              string              `json:"task,omitempty"`
 	Purpose           string              `json:"purpose,omitempty"`
 	Capability        string              `json:"capability,omitempty"`
+	Operation         string              `json:"operation,omitempty"`
+	Action            string              `json:"action,omitempty"`
 	Language          string              `json:"language,omitempty"`
 	Glob              string              `json:"glob,omitempty"`
 	Workdir           string              `json:"workdir,omitempty"`
@@ -226,6 +228,7 @@ type TaskLedgerItem struct {
 
 type ToolResult struct {
 	Tool          string
+	Code          string `json:"code,omitempty"`
 	Summary       string
 	Output        string
 	Error         string
@@ -1430,6 +1433,27 @@ func (m *Manager) gitDiff(ctx context.Context, req ToolRequest) ToolResult {
 func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 	payload, ok := extractToolPayload(text)
 	if !ok {
+		payload, ok = extractTaggedJSONObjectToolPayload(text)
+	}
+	if !ok {
+		var embeddedErr error
+		payload, ok, embeddedErr = extractLineAnchoredToolJSONObjectPayload(text)
+		if ok {
+			if embeddedErr != nil {
+				return ToolRequest{}, payload, true, embeddedErr
+			}
+		}
+	}
+	if !ok {
+		var embeddedErr error
+		payload, ok, embeddedErr = extractBareToolJSONObjectPayload(text)
+		if ok {
+			if embeddedErr != nil {
+				return ToolRequest{}, payload, true, embeddedErr
+			}
+		}
+	}
+	if !ok {
 		var err error
 		payload, ok, err = extractQwenXMLToolPayload(text)
 		if !ok {
@@ -1451,6 +1475,28 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 		return ToolRequest{}, payload, true, fmt.Errorf("tool request is missing tool")
 	}
 	return req, payload, true, nil
+}
+
+func extractTaggedJSONObjectToolPayload(text string) (string, bool) {
+	for _, tag := range []string{"tool", "tool_code"} {
+		open := "<" + tag + ">"
+		close := "</" + tag + ">"
+		start := strings.Index(text, open)
+		if start < 0 {
+			continue
+		}
+		start += len(open)
+		end := strings.Index(text[start:], close)
+		if end >= 0 {
+			end += start
+		} else {
+			end = len(text)
+		}
+		if object, ok := extractFirstJSONObject(text[start:end]); ok {
+			return object, true
+		}
+	}
+	return "", false
 }
 
 // DecodeToolRequestJSON decodes a built-in tool request payload. It accepts a
@@ -2019,6 +2065,36 @@ func normalizeToolRequestAliases(req *ToolRequest) {
 	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Symbol) != "" {
 		req.Pattern = req.Symbol
 	}
+	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Operation) != "" {
+		req.Capability = req.Operation
+	}
+	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Action) != "" && toolRequestUsesCapabilityAlias(req.Tool) {
+		req.Capability = req.Action
+	}
+	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Resolution) != "" && toolRequestUsesCapabilityAlias(req.Tool) {
+		req.Capability = req.Resolution
+	}
+	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && toolRequestUsesPatternAlias(req.Tool) {
+		req.Pattern = req.Query
+	}
+}
+
+func toolRequestUsesCapabilityAlias(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "code_navigate", "read_only_capability":
+		return true
+	default:
+		return false
+	}
+}
+
+func toolRequestUsesPatternAlias(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "search_content", "rg", "grep", "search_files":
+		return true
+	default:
+		return false
+	}
 }
 
 func repairNumericStringToolFields(payload []byte) ([]byte, bool) {
@@ -2211,10 +2287,178 @@ func FormatToolResultForModel(result ToolResult) string {
 	}
 	if strings.TrimSpace(result.Output) != "" {
 		b.WriteString("output:\n")
-		b.WriteString(strings.TrimSpace(result.Output))
+		b.WriteString(formatToolResultOutputForModel(result))
 		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func formatToolResultOutputForModel(result ToolResult) string {
+	output := strings.TrimSpace(result.Output)
+	if strings.TrimSpace(result.Tool) == "context_pack" {
+		if compact := compactContextPackOutputForModel(output); compact != "" {
+			return compact
+		}
+	}
+	return output
+}
+
+type compactContextPackView struct {
+	PackID           string                     `json:"pack_id"`
+	ContextArtifact  string                     `json:"context_artifact_path"`
+	ArtifactPath     string                     `json:"artifact_path"`
+	CandidateFiles   []compactContextPackFile   `json:"candidate_files"`
+	CandidateSymbols []compactContextPackSymbol `json:"candidate_symbols"`
+	Tests            []compactContextPackTest   `json:"tests"`
+}
+
+type compactContextPackFile struct {
+	Path    string `json:"path"`
+	Role    string `json:"role"`
+	Reason  string `json:"reason"`
+	Summary string `json:"summary"`
+}
+
+type compactContextPackSymbol struct {
+	Name          string `json:"name"`
+	QualifiedName string `json:"qualified_name"`
+	Symbol        string `json:"symbol"`
+	Path          string `json:"path"`
+	Kind          string `json:"kind"`
+	Signature     string `json:"signature"`
+	StartLine     int    `json:"start_line"`
+	EndLine       int    `json:"end_line"`
+}
+
+type compactContextPackTest struct {
+	Command string `json:"command"`
+	Path    string `json:"path"`
+	Reason  string `json:"reason"`
+	Summary string `json:"summary"`
+}
+
+func compactContextPackOutputForModel(output string) string {
+	var view compactContextPackView
+	if err := json.Unmarshal([]byte(output), &view); err != nil {
+		return ""
+	}
+	if len(view.CandidateFiles) == 0 && len(view.CandidateSymbols) == 0 && len(view.Tests) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("context_pack_summary:\n")
+	if strings.TrimSpace(view.PackID) != "" {
+		b.WriteString("pack_id: " + strings.TrimSpace(view.PackID) + "\n")
+	}
+	artifact := strings.TrimSpace(view.ArtifactPath)
+	if artifact == "" {
+		artifact = strings.TrimSpace(view.ContextArtifact)
+	}
+	if artifact != "" {
+		b.WriteString("artifact_path: " + artifact + "\n")
+	}
+	writeCompactContextPackFileList(&b, "candidate_files", view.CandidateFiles, 10)
+	writeCompactContextPackSymbolList(&b, view.CandidateSymbols, 12)
+	writeCompactContextPackTestList(&b, view.Tests, 8)
+	b.WriteString("evidence_note: context_pack is localization evidence, not source-body evidence.\n")
+	return strings.TrimSpace(b.String())
+}
+
+func writeCompactContextPackFileList(b *strings.Builder, label string, files []compactContextPackFile, max int) {
+	if len(files) == 0 {
+		return
+	}
+	b.WriteString(label + ":\n")
+	for i, file := range files {
+		if i >= max {
+			fmt.Fprintf(b, "- ... %d more\n", len(files)-max)
+			return
+		}
+		path := strings.TrimSpace(file.Path)
+		if path == "" {
+			continue
+		}
+		detail := firstNonEmptyWorkspaceString(file.Role, file.Reason, file.Summary)
+		if detail != "" {
+			fmt.Fprintf(b, "- %s: %s\n", path, truncateWorkspaceModelLine(detail, 180))
+		} else {
+			fmt.Fprintf(b, "- %s\n", path)
+		}
+	}
+}
+
+func writeCompactContextPackSymbolList(b *strings.Builder, symbols []compactContextPackSymbol, max int) {
+	if len(symbols) == 0 {
+		return
+	}
+	b.WriteString("candidate_symbols:\n")
+	for i, symbol := range symbols {
+		if i >= max {
+			fmt.Fprintf(b, "- ... %d more\n", len(symbols)-max)
+			return
+		}
+		path := strings.TrimSpace(symbol.Path)
+		name := firstNonEmptyWorkspaceString(symbol.Name, symbol.QualifiedName, symbol.Symbol, symbol.Signature, symbol.Kind)
+		if path == "" && name == "" {
+			continue
+		}
+		lineSuffix := ""
+		if symbol.StartLine > 0 {
+			if symbol.EndLine >= symbol.StartLine {
+				lineSuffix = fmt.Sprintf(" lines %d-%d", symbol.StartLine, symbol.EndLine)
+			} else {
+				lineSuffix = fmt.Sprintf(" line %d", symbol.StartLine)
+			}
+		}
+		if name != "" {
+			fmt.Fprintf(b, "- %s in %s%s\n", truncateWorkspaceModelLine(name, 120), path, lineSuffix)
+		} else {
+			fmt.Fprintf(b, "- %s%s\n", path, lineSuffix)
+		}
+	}
+}
+
+func writeCompactContextPackTestList(b *strings.Builder, tests []compactContextPackTest, max int) {
+	if len(tests) == 0 {
+		return
+	}
+	b.WriteString("tests:\n")
+	for i, test := range tests {
+		if i >= max {
+			fmt.Fprintf(b, "- ... %d more\n", len(tests)-max)
+			return
+		}
+		path := strings.TrimSpace(test.Path)
+		if path == "" {
+			continue
+		}
+		detail := firstNonEmptyWorkspaceString(test.Command, test.Reason, test.Summary)
+		if detail != "" {
+			fmt.Fprintf(b, "- %s: %s\n", path, truncateWorkspaceModelLine(detail, 180))
+		} else {
+			fmt.Fprintf(b, "- %s\n", path)
+		}
+	}
+}
+
+func firstNonEmptyWorkspaceString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func truncateWorkspaceModelLine(value string, max int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
 }
 
 func FormatToolTrace(result ToolResult) string {
@@ -2267,14 +2511,78 @@ func extractToolPayload(text string) (string, bool) {
 		return payload, true
 	}
 
-	if strings.HasPrefix(trimmed, "{") && strings.Contains(trimmed, `"tool"`) {
+	if strings.HasPrefix(trimmed, "{") {
 		if object, ok := extractFirstJSONObject(trimmed); ok {
-			return object, true
+			if bareJSONObjectIsToolPayload(object) {
+				return object, true
+			}
+			return "", false
 		}
-		return trimmed, true
+		if strings.Contains(trimmed, `"tool"`) {
+			return trimmed, true
+		}
 	}
 
 	return "", false
+}
+
+func bareJSONObjectIsToolPayload(payload string) bool {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		return false
+	}
+	if _, ok := fields["tool"]; ok {
+		return true
+	}
+	if _, ok := fields["capability"]; ok {
+		return false
+	}
+	var req ToolRequest
+	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+		return false
+	}
+	return bareJSONMissingToolPayloadIsReadOnly(req)
+}
+
+func bareJSONMissingToolPayloadIsReadOnly(req ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "" {
+		return true
+	}
+	if len(req.Todos) > 0 || len(req.Items) > 0 {
+		return false
+	}
+	if strings.TrimSpace(req.Command) != "" ||
+		strings.TrimSpace(req.Prompt) != "" ||
+		strings.TrimSpace(req.Agent) != "" ||
+		strings.TrimSpace(req.Destination) != "" ||
+		len(req.Declarations) > 0 ||
+		len(req.Moves) > 0 ||
+		strings.HasPrefix(strings.TrimSpace(req.Pattern), "tag:") ||
+		strings.TrimSpace(req.OldText) != "" ||
+		strings.TrimSpace(req.NewText) != "" ||
+		strings.TrimSpace(req.Content) != "" ||
+		len(req.Edits) > 0 ||
+		req.PlanArtifact != nil ||
+		strings.TrimSpace(req.Rationale) != "" {
+		return false
+	}
+	if strings.TrimSpace(req.Glob) != "" && strings.TrimSpace(req.Pattern) != "" {
+		return true
+	}
+	return req.StartLine != 0 || req.EndLine != 0 || looksLikeFileHandleID(req.ID)
+}
+
+func looksLikeFileHandleID(id string) bool {
+	id = strings.TrimSpace(id)
+	if len(id) < 2 || id[0] != 'f' {
+		return false
+	}
+	for _, r := range id[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func extractPlainToolPrefixPayload(text string) (string, bool) {
@@ -2299,14 +2607,121 @@ func extractPlainToolPrefixPayload(text string) (string, bool) {
 }
 
 var (
-	qwenXMLFunctionPattern  = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
-	qwenXMLParameterPattern = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
+	qwenXMLFunctionPattern      = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
+	qwenXMLParameterPattern     = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
+	lineAnchoredToolJSONPattern = regexp.MustCompile(`(?m)(^|\n)\s*tool\s*:\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*(\{)`)
+	knownBareJSONToolNamesOnce  sync.Once
+	knownBareJSONToolNames      map[string]struct{}
 )
+
+func extractLineAnchoredToolJSONObjectPayload(text string) (string, bool, error) {
+	match := lineAnchoredToolJSONPattern.FindStringSubmatchIndex(text)
+	if match == nil || len(match) < 8 {
+		return "", false, nil
+	}
+	tool := strings.TrimSpace(text[match[4]:match[5]])
+	if tool == "" {
+		return "", true, fmt.Errorf("line-anchored tool request is missing tool name")
+	}
+	objectStart := match[6]
+	object, ok := extractFirstJSONObject(text[objectStart:])
+	if !ok {
+		return "", true, fmt.Errorf("line-anchored tool request is missing JSON arguments object")
+	}
+	payload, err := normalizeExplicitToolJSONObjectPayload("line-anchored", tool, object)
+	if err != nil {
+		return object, true, err
+	}
+	return payload, true, nil
+}
+
+func extractBareToolJSONObjectPayload(text string) (string, bool, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" || strings.HasPrefix(trimmed, "{") {
+		return "", false, nil
+	}
+	tool, rest, ok := splitBareToolJSONObjectPrefix(trimmed)
+	if !ok || !knownBareToolJSONObjectName(tool) {
+		return "", false, nil
+	}
+	object, ok := extractFirstJSONObject(rest)
+	if !ok {
+		return "", true, fmt.Errorf("bare tool request %q is missing JSON arguments object", tool)
+	}
+	payload, err := normalizeExplicitToolJSONObjectPayload("bare", tool, object)
+	if err != nil {
+		return object, true, err
+	}
+	return payload, true, nil
+}
+
+func splitBareToolJSONObjectPrefix(text string) (string, string, bool) {
+	toolEnd := -1
+	for i, r := range text {
+		if r == '_' || r == '.' || r == '-' || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || (i > 0 && '0' <= r && r <= '9') {
+			continue
+		}
+		toolEnd = i
+		break
+	}
+	if toolEnd <= 0 {
+		return "", "", false
+	}
+	tool := strings.TrimSpace(text[:toolEnd])
+	rest := strings.TrimSpace(text[toolEnd:])
+	if tool == "" || rest == "" || !strings.HasPrefix(rest, "{") {
+		return "", "", false
+	}
+	return tool, rest, true
+}
+
+func knownBareToolJSONObjectName(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if tool == "" {
+		return false
+	}
+	knownBareJSONToolNamesOnce.Do(func() {
+		knownBareJSONToolNames = make(map[string]struct{})
+		for _, name := range toolManifestToolsAcrossBuiltInSurfaces() {
+			if name = strings.TrimSpace(name); name != "" {
+				knownBareJSONToolNames[name] = struct{}{}
+			}
+		}
+	})
+	_, ok := knownBareJSONToolNames[tool]
+	return ok
+}
+
+func normalizeExplicitToolJSONObjectPayload(source string, tool string, object string) (string, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(object), &fields); err != nil {
+		return "", err
+	}
+	if rawTool, exists := fields["tool"]; exists {
+		var explicit string
+		if err := json.Unmarshal(rawTool, &explicit); err != nil {
+			return "", fmt.Errorf("%s tool request has non-string tool field", source)
+		}
+		if explicit = strings.TrimSpace(explicit); explicit != "" && explicit != tool {
+			return "", fmt.Errorf("%s tool name %q does not match JSON tool %q", source, tool, explicit)
+		}
+	}
+	toolRaw, _ := json.Marshal(tool)
+	fields["tool"] = toolRaw
+	payload, err := json.Marshal(fields)
+	if err != nil {
+		return "", err
+	}
+	return string(payload), nil
+}
 
 func extractQwenXMLToolPayload(text string) (string, bool, error) {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || (!strings.Contains(trimmed, "<function=") && !strings.Contains(trimmed, "<tool_call>")) {
+	if trimmed == "" || (!strings.Contains(trimmed, "<function=") && !strings.Contains(trimmed, "<tool_call>") && !strings.Contains(trimmed, "<tool_")) {
 		return "", false, nil
+	}
+	if payload, ok, err := extractQwenXMLPrefixedToolPayload(trimmed); ok || err != nil {
+		return payload, ok, err
 	}
 	envelope, ok := trimQwenXMLToolEnvelope(trimmed)
 	if !ok {
@@ -2322,7 +2737,171 @@ func extractQwenXMLToolPayload(text string) (string, bool, error) {
 		}
 		return payload, true, nil
 	}
+	if payload, ok, err := extractQwenXMLNamedToolPayload(envelope); ok || err != nil {
+		return payload, ok, err
+	}
 	return extractQwenXMLFunctionPayload(envelope)
+}
+
+func extractQwenXMLPrefixedToolPayload(text string) (string, bool, error) {
+	text = strings.TrimSpace(text)
+	start := strings.Index(text, "<tool_")
+	for start >= 0 {
+		tagStart := start + len("<tool_")
+		tagEnd := strings.Index(text[tagStart:], ">")
+		if tagEnd < 0 {
+			return "", true, fmt.Errorf("malformed prefixed XML tool request")
+		}
+		tagEnd += tagStart
+		tool := strings.TrimSpace(text[tagStart:tagEnd])
+		if tool == "call" || tool == "code" || tool == "name" || !xmlToolNameIsSafe(tool) {
+			next := strings.Index(text[tagEnd+1:], "<tool_")
+			if next < 0 {
+				return "", false, nil
+			}
+			start = tagEnd + 1 + next
+			continue
+		}
+		closeTag := "</tool_" + tool + ">"
+		closeStart := strings.Index(text[tagEnd+1:], closeTag)
+		if closeStart < 0 {
+			body := qwenXMLUnclosedPrefixedToolBody(text[tagEnd+1:])
+			if payload, ok, err := extractQwenXMLPrefixedToolBodyPayload(tool, body); ok || err != nil {
+				return payload, ok, err
+			}
+			return "", false, nil
+		}
+		closeStart += tagEnd + 1
+		body := text[tagEnd+1 : closeStart]
+		if payload, ok, err := extractQwenXMLPrefixedToolBodyPayload(tool, body); ok || err != nil {
+			return payload, ok, err
+		}
+		if !strings.Contains(body, "<parameter=") {
+			next := strings.Index(text[closeStart+len(closeTag):], "<tool_")
+			if next < 0 {
+				return "", false, nil
+			}
+			start = closeStart + len(closeTag) + next
+			continue
+		}
+		return "", true, fmt.Errorf("prefixed XML tool request %q is missing close tag", tool)
+	}
+	return "", false, nil
+}
+
+func extractQwenXMLPrefixedToolBodyPayload(tool string, body string) (string, bool, error) {
+	if object, ok := extractFirstJSONObject(body); ok {
+		payload, err := normalizeExplicitToolJSONObjectPayload("prefixed XML", tool, object)
+		if err != nil {
+			return object, true, err
+		}
+		return payload, true, nil
+	}
+	if strings.Contains(body, "<parameter=") {
+		payload, ok, err := extractQwenXMLFunctionPayload("<function=" + tool + ">" + body + "</function>")
+		if ok && err == nil {
+			return payload, true, nil
+		}
+		return "", true, fmt.Errorf("prefixed XML tool request %q is missing close tag", tool)
+	}
+	return "", false, nil
+}
+
+func qwenXMLUnclosedPrefixedToolBody(body string) string {
+	body = strings.TrimSpace(body)
+	for _, marker := range []string{"</tool_call>", "<tool_"} {
+		if idx := strings.Index(body, marker); idx >= 0 {
+			body = strings.TrimSpace(body[:idx])
+		}
+	}
+	return body
+}
+
+func xmlToolNameIsSafe(tool string) bool {
+	if strings.TrimSpace(tool) == "" {
+		return false
+	}
+	for _, r := range tool {
+		if r == '_' || r == '-' || r == '.' || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z') || ('0' <= r && r <= '9') {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func extractQwenXMLNamedToolPayload(envelope string) (string, bool, error) {
+	tool, ok := extractQwenXMLTagValue(envelope, "tool_name")
+	if !ok {
+		tool, ok = extractQwenXMLTagValue(envelope, "name")
+	}
+	tool = strings.TrimSpace(tool)
+	if !ok || tool == "" {
+		return "", false, nil
+	}
+	arguments, ok := extractQwenXMLTagValue(envelope, "arguments")
+	if !ok {
+		arguments, ok = extractQwenXMLTagValue(envelope, "args")
+	}
+	if !ok {
+		return envelope, true, fmt.Errorf("qwen XML named tool request is missing arguments")
+	}
+	var args map[string]json.RawMessage
+	arguments = strings.TrimSpace(arguments)
+	if arguments == "" {
+		args = map[string]json.RawMessage{}
+	} else if err := json.Unmarshal([]byte(arguments), &args); err != nil {
+		if escaped, repaired := repairStringifiedJSONControlChars(arguments); repaired {
+			if repairErr := json.Unmarshal(escaped, &args); repairErr == nil {
+				err = nil
+			}
+		}
+		if err != nil {
+			return envelope, true, fmt.Errorf("qwen XML named tool arguments must decode to an object: %w", err)
+		}
+	}
+	fields := map[string]json.RawMessage{}
+	toolRaw, _ := json.Marshal(tool)
+	fields["tool"] = toolRaw
+	for key, value := range args {
+		if strings.TrimSpace(key) == "" || key == "tool" {
+			continue
+		}
+		fields[key] = value
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return envelope, true, err
+	}
+	return string(data), true, nil
+}
+
+func extractQwenXMLTagValue(envelope string, tag string) (string, bool) {
+	tag = strings.TrimSpace(tag)
+	if tag == "" {
+		return "", false
+	}
+	open := "<" + tag + ">"
+	close := "</" + tag + ">"
+	start := strings.Index(envelope, open)
+	if start < 0 {
+		return extractQwenXMLSplitTagValue(envelope, tag)
+	}
+	start += len(open)
+	end := strings.Index(envelope[start:], close)
+	if end < 0 {
+		return extractQwenXMLSplitTagValue(envelope, tag)
+	}
+	return envelope[start : start+end], true
+}
+
+func extractQwenXMLSplitTagValue(envelope string, tag string) (string, bool) {
+	pattern := regexp.MustCompile(`(?s)<\s*` + regexp.QuoteMeta(tag) + `\s*>(.*?)<\s*/\s*` + regexp.QuoteMeta(tag) + `\s*>`)
+	match := pattern.FindStringSubmatch(envelope)
+	if len(match) != 2 {
+		return "", false
+	}
+	return match[1], true
 }
 
 func extractQwenXMLFunctionPayload(envelope string) (string, bool, error) {
@@ -2345,6 +2924,9 @@ func extractQwenXMLFunctionPayload(envelope string) (string, bool, error) {
 		name := strings.TrimSpace(param[1])
 		if name == "" {
 			continue
+		}
+		if name == "operation" {
+			name = "capability"
 		}
 		raw, err := qwenXMLParameterRaw(name, param[2])
 		if err != nil {
@@ -2449,10 +3031,15 @@ func qwenJSONToolArguments(fields map[string]json.RawMessage) (map[string]json.R
 
 func trimQwenXMLToolEnvelope(text string) (string, bool) {
 	text = strings.TrimSpace(text)
-	if strings.HasPrefix(text, "<tool_call>") {
-		text = strings.TrimSpace(strings.TrimPrefix(text, "<tool_call>"))
-		text = strings.TrimSpace(strings.TrimSuffix(text, "</tool_call>"))
+	if idx := strings.Index(text, "<tool_call>"); idx >= 0 {
+		text = strings.TrimSpace(text[idx+len("<tool_call>"):])
+		if end := strings.Index(text, "</tool_call>"); end >= 0 {
+			text = strings.TrimSpace(text[:end])
+		}
 		return text, true
+	}
+	if envelope, ok := extractQwenXMLTagValue(text, "tool_call"); ok {
+		return strings.TrimSpace(envelope), true
 	}
 	if strings.HasPrefix(text, "<function=") {
 		return text, true
@@ -4149,8 +4736,12 @@ func (m *Manager) goTestCompileDiagnostic(ctx context.Context, pkg string) (stri
 func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, goplsCommand string, req ToolRequest, successSummary string) ToolResult {
 	match, err := m.selectGoSymbolMatch(req)
 	if err != nil {
+		if goSymbolNoMatchError(err) {
+			return ToolResult{Tool: toolName, Summary: "Go location query found no matching symbol", Output: err.Error()}
+		}
 		return ToolResult{Tool: toolName, Summary: "Go location query rejected", Error: err.Error()}
 	}
+	var goplsErr error
 	if m.goplsBinary() != "" {
 		args := []string{goplsCommand, m.goSymbolPosition(match)}
 		if toolName == "go_references" {
@@ -4163,11 +4754,8 @@ func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, gopls
 			Output:  m.formatGoLocationOutput(output),
 		}
 		if err != nil {
-			result.Summary = "gopls location query failed"
-			result.Error = err.Error()
-			return result
-		}
-		if strings.TrimSpace(result.Output) != "" {
+			goplsErr = err
+		} else if strings.TrimSpace(result.Output) != "" {
 			return result
 		}
 	}
@@ -4180,8 +4768,8 @@ func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, gopls
 		}
 		return ToolResult{
 			Tool:    toolName,
-			Summary: "Resolved Go definition via semantic fallback",
-			Output:  fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, goQualifiedSymbol(match)),
+			Summary: goLocationFallbackSummary("Resolved Go definition via semantic fallback", goplsErr),
+			Output:  goLocationFallbackOutput(fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, goQualifiedSymbol(match)), goplsErr),
 		}
 	case "go_references":
 		refReq := ToolRequest{Pattern: "\\b" + match.Name + "\\b", Path: ".", Glob: "*.go"}
@@ -4190,7 +4778,8 @@ func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, gopls
 		}
 		result := m.searchContent(ctx, refReq, toolName)
 		if result.Error == "" {
-			result.Summary = "Resolved Go references via semantic/rg fallback"
+			result.Summary = goLocationFallbackSummary("Resolved Go references via semantic/rg fallback", goplsErr)
+			result.Output = goLocationFallbackOutput(result.Output, goplsErr)
 		}
 		return result
 	case "go_implementations":
@@ -4198,6 +4787,31 @@ func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, gopls
 	default:
 		return ToolResult{Tool: toolName, Summary: "Unsupported Go location query", Error: "unsupported query"}
 	}
+}
+
+func goSymbolNoMatchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.HasPrefix(lower, "no go symbols matched ")
+}
+
+func goLocationFallbackSummary(summary string, goplsErr error) string {
+	if goplsErr == nil {
+		return summary
+	}
+	return summary + " (gopls failed)"
+}
+
+func goLocationFallbackOutput(output string, goplsErr error) string {
+	if goplsErr == nil {
+		return output
+	}
+	if strings.TrimSpace(output) == "" {
+		return "gopls_error: " + goplsErr.Error()
+	}
+	return output + "\n\ngopls_error: " + goplsErr.Error()
 }
 
 func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, error) {
@@ -5274,8 +5888,8 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 				"edit_file needs either old_text (for an exact-match replace) or start_line+end_line (for a range replace). "+
 					"You provided `content` with neither.\n"+
 					"For an existing source/test file, use a bounded edit_file shape instead of whole-file replacement:\n"+
-					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
-					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
+					"  (a) exact-match: use path %q, old_text copied from the file, complete new_text, and a concrete description.\n"+
+					"  (b) line range: use path %q, concrete start_line/end_line values, complete replacement content, and a concrete description.\n"+
 					"Do not re-submit the same call shape.",
 				display, display,
 			)
@@ -5284,10 +5898,10 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 				"edit_file needs either old_text (for an exact-match replace) or start_line+end_line (for a range replace). "+
 					"You provided `content` with neither.\n"+
 					"If you want to REPLACE THE WHOLE FILE for a new, small, or non-source deliverable, use write_file instead:\n"+
-					"  {\"tool\":\"write_file\",\"path\":%q,\"content\":\"<full file contents>\",\"description\":\"<one sentence on what this file is for and why it is being written>\"}\n"+
+					"  use path %q, complete file content, and a concrete description.\n"+
 					"If you want a PARTIAL edit, pick one of these two edit_file shapes:\n"+
-					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
-					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
+					"  (a) exact-match: use path %q, old_text copied from the file, complete new_text, and a concrete description.\n"+
+					"  (b) line range: use path %q, concrete start_line/end_line values, complete replacement content, and a concrete description.\n"+
 					"Do not re-submit the same call shape.",
 				display, display, display,
 			)
@@ -5295,8 +5909,8 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			example = fmt.Sprintf(
 				"edit_file requires old_text (and new_text) OR start_line/end_line (and content). You provided neither.\n"+
 					"Valid shapes:\n"+
-					"  (a) exact-match:  {\"tool\":\"edit_file\",\"path\":%q,\"old_text\":\"<substring present in file>\",\"new_text\":\"<replacement>\",\"description\":\"<one sentence on what this change is and why>\"}\n"+
-					"  (b) line range:   {\"tool\":\"edit_file\",\"path\":%q,\"start_line\":<N>,\"end_line\":<M>,\"content\":\"<replacement lines>\",\"description\":\"<one sentence on what this change is and why>\"}",
+					"  (a) exact-match: use path %q, old_text copied from the file, complete new_text, and a concrete description.\n"+
+					"  (b) line range: use path %q, concrete start_line/end_line values, complete replacement content, and a concrete description.",
 				display, display,
 			)
 		}

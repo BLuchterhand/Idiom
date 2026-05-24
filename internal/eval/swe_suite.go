@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -29,15 +30,18 @@ type SWESuite struct {
 }
 
 type SWETask struct {
-	ID       string    `json:"id"`
-	Family   string    `json:"family"`
-	Prompt   string    `json:"prompt"`
-	Turns    []string  `json:"turns,omitempty"`
-	Tags     []string  `json:"tags,omitempty"`
-	Fixture  string    `json:"fixture,omitempty"`
-	LogPath  string    `json:"log_path,omitempty"`
-	Scenario Scenario  `json:"scenario"`
-	Oracle   SWEOracle `json:"oracle,omitempty"`
+	ID            string            `json:"id"`
+	Family        string            `json:"family"`
+	Prompt        string            `json:"prompt"`
+	Turns         []string          `json:"turns,omitempty"`
+	Tags          []string          `json:"tags,omitempty"`
+	Env           map[string]string `json:"env,omitempty"`
+	Fixture       string            `json:"fixture,omitempty"`
+	FixtureGitRef string            `json:"fixture_git_ref,omitempty"`
+	RunnerMode    string            `json:"runner_mode,omitempty"`
+	LogPath       string            `json:"log_path,omitempty"`
+	Scenario      Scenario          `json:"scenario"`
+	Oracle        SWEOracle         `json:"oracle,omitempty"`
 }
 
 type SWEOracle struct {
@@ -54,6 +58,13 @@ type SWEOracle struct {
 	RequireNoShell              bool                        `json:"require_no_shell,omitempty"`
 	RequireNoSummaryRejections  bool                        `json:"require_no_summary_rejections,omitempty"`
 	RequireNoRunnerRejections   bool                        `json:"require_no_runner_rejections,omitempty"`
+	RequireExecutorHandoff      bool                        `json:"require_executor_handoff,omitempty"`
+	RequireNoTimeout            bool                        `json:"require_no_timeout,omitempty"`
+	MaxLowValueActions          *int                        `json:"max_low_value_actions,omitempty"`
+	AllowNoWrite                bool                        `json:"allow_no_write,omitempty"`
+	AllowSourceSatisfied        bool                        `json:"allow_source_satisfied,omitempty"`
+	ForbidTypedBlocker          bool                        `json:"forbid_typed_blocker,omitempty"`
+	ForbidSourceSatisfied       bool                        `json:"forbid_source_satisfied,omitempty"`
 	RequireSummaryRejectionLane []string                    `json:"require_summary_rejection_lane,omitempty"`
 	RequireCleanRollback        bool                        `json:"require_clean_rollback,omitempty"`
 	Groundedness                *SWEGroundednessOracle      `json:"groundedness,omitempty"`
@@ -304,6 +315,30 @@ func LintSWESuite(suite SWESuite) []string {
 		if err := validateFixturePathSyntax(task.Fixture); err != nil {
 			addFinding(task, "fixture path is invalid: %v", err)
 		}
+		if strings.TrimSpace(task.Fixture) != "" && strings.TrimSpace(task.FixtureGitRef) != "" {
+			addFinding(task, "fixture and fixture_git_ref are mutually exclusive")
+		}
+		if !validSWERunnerMode(task.RunnerMode) {
+			addFinding(task, "runner_mode %q is invalid; use auto, implement, or plan-execute", task.RunnerMode)
+		}
+		for key, value := range task.Env {
+			if key == "" || strings.ContainsAny(key, "\x00=\r\n") {
+				addFinding(task, "env key %q is invalid", key)
+			}
+			if ReservedSWETaskEnvKey(key) {
+				addFinding(task, "env key %q is reserved by the live runner", key)
+			}
+			if strings.ContainsAny(value, "\x00\r\n") {
+				addFinding(task, "env value for %q contains invalid control characters", key)
+			}
+		}
+		fixtureGitRef := strings.TrimSpace(task.FixtureGitRef)
+		if strings.ContainsAny(fixtureGitRef, "\x00\r\n") {
+			addFinding(task, "fixture_git_ref contains invalid control characters")
+		}
+		if strings.HasPrefix(fixtureGitRef, "-") {
+			addFinding(task, "fixture_git_ref must not begin with '-'")
+		}
 		if taskHasTag(task, "read-only") && !task.Oracle.RequireNoChangedFiles {
 			addFinding(task, "read-only task must require no changed files")
 		}
@@ -315,6 +350,15 @@ func LintSWESuite(suite SWESuite) []string {
 		}
 		if taskHasTag(task, "implement") && taskStartsInLane(task, "implement") && !taskRequiresChangedFilesOrApproval(task) {
 			addFinding(task, "direct implementation task must require changed files or approval")
+		}
+		if taskRequiresChangedFilesOrApproval(task) && taskIsPlanExecuteFamily(task) && !task.Oracle.AllowNoWrite && !task.Oracle.RequireExecutorHandoff {
+			addFinding(task, "plan-execute implementation task must require executor handoff or explicitly allow no-write")
+		}
+		if task.Oracle.AllowSourceSatisfied && task.Oracle.ForbidSourceSatisfied {
+			addFinding(task, "source-satisfied cannot be both allowed and forbidden")
+		}
+		if task.Oracle.AllowNoWrite && len(task.Oracle.RequireChangedFiles) > 0 && !task.Oracle.AllowSourceSatisfied {
+			addFinding(task, "allow_no_write with required changed files must also allow source-satisfied or remove the changed-file requirement")
 		}
 		if len(task.Turns) > 0 && (task.Oracle.MinUserTurns == nil || *task.Oracle.MinUserTurns < len(task.Turns)) {
 			addFinding(task, "multi-turn task must require at least %d user turns", len(task.Turns))
@@ -353,6 +397,28 @@ func LintSWESuite(suite SWESuite) []string {
 	return findings
 }
 
+func validSWERunnerMode(mode string) bool {
+	switch strings.TrimSpace(mode) {
+	case "", "auto", "implement", "plan-execute":
+		return true
+	default:
+		return false
+	}
+}
+
+func ReservedSWETaskEnvKey(key string) bool {
+	key = strings.TrimSpace(key)
+	if strings.HasPrefix(key, "IDIOM_SWE_") {
+		return true
+	}
+	switch key {
+	case "IDIOM_BIN", "IDIOM_CONFIG":
+		return true
+	default:
+		return false
+	}
+}
+
 func ValidateSWESuiteFixtures(suite SWESuite, suitePath string) error {
 	findings := LintSWESuiteFixtures(suite, suitePath)
 	if len(findings) > 0 {
@@ -366,24 +432,46 @@ func LintSWESuiteFixtures(suite SWESuite, suitePath string) []string {
 	baseDir := filepath.Dir(filepath.Clean(suitePath))
 	for _, task := range suite.Tasks {
 		fixture := strings.TrimSpace(task.Fixture)
-		if fixture == "" {
-			continue
+		if fixture != "" {
+			if err := validateFixturePathSyntax(fixture); err != nil {
+				findings = append(findings, fmt.Sprintf("%s: fixture invalid: %v", task.ID, err))
+				continue
+			}
+			fixturePath := filepath.Join(baseDir, filepath.Clean(fixture))
+			stat, err := os.Stat(fixturePath)
+			if err != nil {
+				findings = append(findings, fmt.Sprintf("%s: fixture missing: %v", task.ID, err))
+				continue
+			}
+			if !stat.IsDir() {
+				findings = append(findings, fmt.Sprintf("%s: fixture is not a directory: %s", task.ID, fixturePath))
+			}
 		}
-		if err := validateFixturePathSyntax(fixture); err != nil {
-			findings = append(findings, fmt.Sprintf("%s: fixture invalid: %v", task.ID, err))
-			continue
-		}
-		fixturePath := filepath.Join(baseDir, filepath.Clean(fixture))
-		stat, err := os.Stat(fixturePath)
-		if err != nil {
-			findings = append(findings, fmt.Sprintf("%s: fixture missing: %v", task.ID, err))
-			continue
-		}
-		if !stat.IsDir() {
-			findings = append(findings, fmt.Sprintf("%s: fixture is not a directory: %s", task.ID, fixturePath))
+		if ref := strings.TrimSpace(task.FixtureGitRef); ref != "" {
+			if err := validateFixtureGitRefReachable(baseDir, ref); err != nil {
+				findings = append(findings, fmt.Sprintf("%s: fixture_git_ref invalid: %v", task.ID, err))
+			}
 		}
 	}
 	return findings
+}
+
+func validateFixtureGitRefReachable(repoDir string, ref string) error {
+	if strings.ContainsAny(ref, "\x00\r\n") {
+		return fmt.Errorf("contains invalid control characters")
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("must not begin with '-'")
+	}
+	out, err := exec.Command("git", "-C", repoDir, "rev-parse", "--verify", ref+"^{commit}").CombinedOutput()
+	if err != nil {
+		text := strings.TrimSpace(string(out))
+		if text == "" {
+			text = err.Error()
+		}
+		return fmt.Errorf("not a reachable commit from suite repository: %s", text)
+	}
+	return nil
 }
 
 func EvaluateSWESuiteDefinitionWithFixtures(suite SWESuite, suitePath string) SWESuiteReport {
@@ -823,6 +911,31 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 	}
 	if oracle.RequireNoRunnerRejections && (report.Metrics.RejectedActions > 0 || report.Metrics.CompletionGateRejections > 0) {
 		addFinding("runner rejections were forbidden but observed rejected_actions=%d completion_gate_rejections=%d", report.Metrics.RejectedActions, report.Metrics.CompletionGateRejections)
+	}
+	if oracle.RequireExecutorHandoff && !planExecutionHasHandoffID(report.Metrics.PlanExecutionHandoffs) {
+		addFinding("executor handoff was required but not observed")
+	}
+	if oracle.RequireNoTimeout && report.Metrics.LiveContractTimeouts > 0 {
+		addFinding("timeouts were forbidden but observed %d live-contract timeout event(s)", report.Metrics.LiveContractTimeouts)
+	}
+	if oracle.MaxLowValueActions != nil && report.Metrics.LowValueActions > *oracle.MaxLowValueActions {
+		addFinding("low-value actions exceeded oracle limit: got %d want <= %d", report.Metrics.LowValueActions, *oracle.MaxLowValueActions)
+	}
+	if oracle.ForbidTypedBlocker && report.Metrics.TypedBlockers > 0 {
+		addFinding("typed blockers were forbidden but observed %d", report.Metrics.TypedBlockers)
+	}
+	if oracle.ForbidSourceSatisfied && report.Metrics.SourceSatisfiedOutcomes > 0 {
+		addFinding("source-satisfied outcomes were forbidden but observed %d", report.Metrics.SourceSatisfiedOutcomes)
+	}
+	if taskRequiresImplementationWrite(task) {
+		noExecutorHandoff := !planExecutionHasHandoffID(report.Metrics.PlanExecutionHandoffs)
+		noChangedFiles := len(report.Metrics.ChangedFiles) == 0
+		if report.Metrics.TypedBlockers > 0 && noChangedFiles && noExecutorHandoff && !oracle.AllowNoWrite {
+			addFinding("implementation-required fixture ended blocker-only without allow_no_write")
+		}
+		if report.Metrics.SourceSatisfiedOutcomes > 0 && noChangedFiles && noExecutorHandoff && !oracle.AllowSourceSatisfied {
+			addFinding("implementation-required fixture ended source-satisfied-only without allow_source_satisfied")
+		}
 	}
 	for _, lane := range oracle.RequireSummaryRejectionLane {
 		if !containsStringFold(report.Metrics.SummaryRejectionLanes, lane) {
@@ -1558,6 +1671,27 @@ func taskOracleAssertions(task SWETask) []string {
 	if oracle.RequireNoRunnerRejections {
 		assertions = append(assertions, "no_runner_rejections")
 	}
+	if oracle.RequireExecutorHandoff {
+		assertions = append(assertions, "executor_handoff")
+	}
+	if oracle.RequireNoTimeout {
+		assertions = append(assertions, "no_timeout")
+	}
+	if oracle.MaxLowValueActions != nil {
+		assertions = append(assertions, "max_low_value_actions")
+	}
+	if oracle.AllowNoWrite {
+		assertions = append(assertions, "allow_no_write")
+	}
+	if oracle.AllowSourceSatisfied {
+		assertions = append(assertions, "allow_source_satisfied")
+	}
+	if oracle.ForbidTypedBlocker {
+		assertions = append(assertions, "forbid_typed_blocker")
+	}
+	if oracle.ForbidSourceSatisfied {
+		assertions = append(assertions, "forbid_source_satisfied")
+	}
 	if len(oracle.RequireSummaryRejectionLane) > 0 {
 		assertions = append(assertions, "summary_rejection_lane")
 	}
@@ -1603,6 +1737,15 @@ func taskRequiresChangedFilesOrApproval(task SWETask) bool {
 		return true
 	}
 	return len(task.Scenario.RequireChangedFiles) > 0 || len(task.Oracle.RequireChangedFiles) > 0
+}
+
+func taskRequiresImplementationWrite(task SWETask) bool {
+	return len(task.Scenario.RequireChangedFiles) > 0 || len(task.Oracle.RequireChangedFiles) > 0
+}
+
+func taskIsPlanExecuteFamily(task SWETask) bool {
+	family := normalizedCoverageKey(task.Family)
+	return strings.HasPrefix(family, "plan_then_execute") || strings.HasPrefix(family, "plan_execute")
 }
 
 func taskStartsInLane(task SWETask, lane string) bool {

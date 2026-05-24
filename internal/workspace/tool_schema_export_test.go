@@ -115,7 +115,7 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 	}
 }
 
-func TestWriteToolManifestExamplesIncludeRequiredDescription(t *testing.T) {
+func TestWriteToolManifestGuidanceIncludesRequiredDescription(t *testing.T) {
 	writeTools := map[string]bool{
 		"edit_file":   true,
 		"write_file":  true,
@@ -128,12 +128,11 @@ func TestWriteToolManifestExamplesIncludeRequiredDescription(t *testing.T) {
 			continue
 		}
 		seen[entry.Tool]++
-		var request map[string]any
-		if err := json.Unmarshal([]byte(entry.Request), &request); err != nil {
-			t.Fatalf("%s manifest request is not valid JSON: %v\n%s", entry.Tool, err, entry.Request)
+		if strings.Contains(entry.Request, "relative/file") || strings.Contains(entry.Request, "replacement text") {
+			t.Fatalf("%s manifest request should not expose placeholder JSON: %s", entry.Tool, entry.Request)
 		}
-		if got, _ := request["description"].(string); strings.TrimSpace(got) == "" {
-			t.Fatalf("%s manifest request must include non-empty description because the write guard requires it: %s", entry.Tool, entry.Request)
+		if !strings.Contains(strings.ToLower(entry.Purpose), "description") {
+			t.Fatalf("%s manifest purpose must mention description because the write guard requires it: %s", entry.Tool, entry.Purpose)
 		}
 	}
 	for tool := range writeTools {

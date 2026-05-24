@@ -215,8 +215,9 @@ func TestRunRejectsSourceSatisfiedAnswerWhenRequestedTestEditMissing(t *testing.
 
 	var stdout, stderr bytes.Buffer
 	result := Run(cfg, Options{
-		Prompt:     "Fix parser behavior and add regression tests.",
-		JSONEvents: true,
+		Prompt:             "Fix parser behavior and add regression tests.",
+		JSONEvents:         true,
+		EditSetObligations: EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
 	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
 		return "Decision: source-satisfied\n- pkg/parser.go: parser behavior is already present; no changes needed.", nil
 	}, nil, &stdout, &stderr)
@@ -255,8 +256,9 @@ func TestRunRejectsSourceSatisfiedAnswerWhenRequestedImplementationEditMissing(t
 
 	var stdout, stderr bytes.Buffer
 	result := Run(cfg, Options{
-		Prompt:     "Implement the feature and add tests.",
-		JSONEvents: true,
+		Prompt:             "Implement the feature and add tests.",
+		JSONEvents:         true,
+		EditSetObligations: EditSetObligations{}.With(EditSetObligationKindImplementationEdit, "test"),
 	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
 		return "Decision: source-satisfied\n- pkg/feature_test.go: feature tests are already present.", nil
 	}, nil, &stdout, &stderr)
@@ -737,9 +739,10 @@ func TestRunRejectsInitialPlanWhenRequestedTestEditMissingBeforeWrites(t *testin
 	var stdout, stderr bytes.Buffer
 
 	result := Run(cfg, Options{
-		Prompt:           "Implement the hardening and add regression tests proving the edge case is rejected.",
-		JSONEvents:       true,
-		SkipReviewRepair: true,
+		Prompt:             "Implement the hardening and add regression tests proving the edge case is rejected.",
+		JSONEvents:         true,
+		SkipReviewRepair:   true,
+		EditSetObligations: EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -784,9 +787,10 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 	var stdout, stderr bytes.Buffer
 
 	result := Run(cfg, Options{
-		Prompt:           "Implement the feature. Start by adding failing tests, then implement.",
-		JSONEvents:       true,
-		SkipReviewRepair: true,
+		Prompt:             "Implement the feature. Start by adding failing tests, then implement.",
+		JSONEvents:         true,
+		SkipReviewRepair:   true,
+		EditSetObligations: EditSetObligations{}.With(EditSetObligationKindImplementationEdit, "test"),
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -840,7 +844,10 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.
 		nil,
 		nil,
 		ExecutorPhaseReport{},
-		Options{JSONEvents: true},
+		Options{
+			JSONEvents:         true,
+			EditSetObligations: EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
+		},
 		&stdout,
 		func(_ config.Config, prompt string, _ RunOptions, _ io.Writer) (string, error) {
 			gotPrompt = prompt
@@ -975,7 +982,10 @@ func TestRunReviewRepairPhaseRejectsPassWhenRequestedImplementationEditMissing(t
 		nil,
 		nil,
 		ExecutorPhaseReport{},
-		Options{JSONEvents: true},
+		Options{
+			JSONEvents:         true,
+			EditSetObligations: EditSetObligations{}.With(EditSetObligationKindImplementationEdit, "test"),
+		},
 		&stdout,
 		func(_ config.Config, prompt string, _ RunOptions, _ io.Writer) (string, error) {
 			gotPrompt = prompt
@@ -1025,7 +1035,10 @@ func TestRunReviewRepairPhaseRejectsPassThatAdmitsCommandWasNotRun(t *testing.T)
 		nil,
 		nil,
 		ExecutorPhaseReport{},
-		Options{JSONEvents: true},
+		Options{
+			JSONEvents:         true,
+			EditSetObligations: EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
+		},
 		&stdout,
 		func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
 			return "Decision: pass\n\nVerification Checklist:\n- Required behavior: diff looks scoped.\n- Test or command evidence: We didn't run `go test ./cmd/idiom`.", nil
@@ -1198,7 +1211,10 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 		nil,
 		nil,
 		ExecutorPhaseReport{},
-		Options{JSONEvents: true},
+		Options{
+			JSONEvents:         true,
+			EditSetObligations: EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
+		},
 		&stdout,
 		func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
@@ -1230,46 +1246,20 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 	}
 }
 
-func TestPlanExecuteRequestedTestEditDetectionHandlesNegationAndCommonPaths(t *testing.T) {
+func TestPlanExecutePromptProseDoesNotCreateEditSetObligations(t *testing.T) {
 	for _, prompt := range []string{
-		"fix this, do not add tests",
-		"implement the parser change with no test changes",
-		"write code only without tests",
-	} {
-		if planExecutePromptRequiresTestEdit(prompt) {
-			t.Fatalf("prompt should not require test edits: %q", prompt)
-		}
-	}
-	for _, prompt := range []string{
+		"Implement the feature and add tests.",
 		"add a regression test for parser routes",
-		"write a test proving invalid routes fail",
-		"add a unit test for parser routes",
-		"add regression tests proving no tests are skipped",
-		"add tests and do not skip tests",
+		"Harden temp symlink writes and add regression tests.",
 	} {
-		if !planExecutePromptRequiresTestEdit(prompt) {
-			t.Fatalf("prompt should require test edits: %q", prompt)
+		if obligations := EditSetObligationsFromPrompt(prompt); len(obligations) != 0 {
+			t.Fatalf("prompt prose must not create hidden edit-set obligations: %q -> %#v", prompt, obligations)
 		}
 	}
 	for _, path := range []string{"tests/parser_test.py", "test/foo.py", "tests/panel_contract.gd"} {
 		if !planExecuteChangedPathsIncludeTest([]string{path}) {
 			t.Fatalf("path should count as a test path: %s", path)
 		}
-	}
-	if reason := planExecuteRequestedEditCoverageRejectionReason("Implement the feature and add tests.", []string{"pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
-		t.Fatalf("test-only feature plan should require implementation edit, got %q", reason)
-	}
-	if reason := planExecuteRequestedEditCoverageRejectionReason("Add tests only for the existing parser.", []string{"pkg/parser_test.go"}); reason != "" {
-		t.Fatalf("tests-only prompt should allow test-only changes, got %q", reason)
-	}
-	if reason := planExecuteRequestedEditCoverageRejectionReason("Implement the feature and add tests.", []string{"pkg/feature.go", "pkg/feature_test.go"}); reason != "" {
-		t.Fatalf("source+test plan should satisfy edit coverage, got %q", reason)
-	}
-	if reason := planExecuteRequestedEditCoverageRejectionReason("Harden temp symlink writes and add regression tests.", []string{"pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
-		t.Fatalf("behavior verbs plus tests should require implementation edit, got %q", reason)
-	}
-	if reason := planExecuteRequestedEditCoverageRejectionReason("Add regression coverage for an existing parser fix.", []string{"pkg/parser_test.go"}); reason != "" {
-		t.Fatalf("coverage-only prompt should not infer implementation edit, got %q", reason)
 	}
 	if reason := (EditSetObligations{}).With(EditSetObligationKindImplementationEdit, "test").RejectionReason([]string{"docs/feature.md", "pkg/feature_test.go"}); reason != "missing_requested_implementation_edit" {
 		t.Fatalf("docs plus tests should not satisfy implementation edit obligation, got %q", reason)

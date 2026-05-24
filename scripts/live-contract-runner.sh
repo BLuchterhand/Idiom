@@ -3,13 +3,28 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 base_config="${IDIOM_CONFIG:-"$repo_root/config.json"}"
-fixture_source="${IDIOM_SWE_FIXTURE:?IDIOM_SWE_FIXTURE is required}"
+fixture_source="${IDIOM_SWE_FIXTURE:-}"
+fixture_git_ref="${IDIOM_SWE_FIXTURE_GIT_REF:-}"
+fixture_git_repo="${IDIOM_SWE_FIXTURE_GIT_REPO:-$repo_root}"
 log_path="${IDIOM_SWE_LOG:?IDIOM_SWE_LOG is required}"
 idiom_bin="${IDIOM_BIN:-"$HOME/.idiom/bin/idiom"}"
 turns_json="${IDIOM_SWE_TURNS_JSON:-}"
+runner_mode="${IDIOM_SWE_RUNNER_MODE:-auto}"
 
 if [[ ! -x "$idiom_bin" ]]; then
   echo "live-contract runner requires built idiom binary at $idiom_bin; run make build or set IDIOM_BIN" >&2
+  exit 2
+fi
+if [[ -z "$fixture_source" && -z "$fixture_git_ref" ]]; then
+  echo "live-contract runner requires IDIOM_SWE_FIXTURE or IDIOM_SWE_FIXTURE_GIT_REF" >&2
+  exit 2
+fi
+if [[ -n "$fixture_source" && -n "$fixture_git_ref" ]]; then
+  echo "live-contract runner accepts only one of IDIOM_SWE_FIXTURE or IDIOM_SWE_FIXTURE_GIT_REF" >&2
+  exit 2
+fi
+if [[ "$fixture_git_ref" == -* ]]; then
+  echo "live-contract runner refuses fixture git refs that begin with '-'" >&2
   exit 2
 fi
 if [[ -z "$turns_json" ]]; then
@@ -200,13 +215,23 @@ PY
 }
 trap finish EXIT
 
-(cd "$fixture_source" && tar \
-  --exclude .git \
-  --exclude .idiom \
-  --exclude .cache \
-  --exclude transcripts \
-  --exclude logs \
-  -cf - .) | (cd "$workspace_root" && tar -xf -)
+source_commit=""
+source_tree=""
+source_kind="directory"
+if [[ -n "$fixture_git_ref" ]]; then
+  source_kind="git_ref"
+  source_commit="$(git -C "$fixture_git_repo" rev-parse "$fixture_git_ref^{commit}")"
+  source_tree="$(git -C "$fixture_git_repo" rev-parse "$fixture_git_ref^{tree}")"
+  git -C "$fixture_git_repo" archive --format=tar "$fixture_git_ref" | (cd "$workspace_root" && tar -xf -)
+else
+  (cd "$fixture_source" && tar \
+    --exclude .git \
+    --exclude .idiom \
+    --exclude .cache \
+    --exclude transcripts \
+    --exclude logs \
+    -cf - .) | (cd "$workspace_root" && tar -xf -)
+fi
 
 git -C "$workspace_root" init -q
 git -C "$workspace_root" config user.email "live-contracts@example.invalid"
@@ -214,16 +239,21 @@ git -C "$workspace_root" config user.name "Idiom Live Contracts"
 git -C "$workspace_root" add -A
 git -C "$workspace_root" commit -q -m "baseline live contract fixture"
 baseline_tree="$(git -C "$workspace_root" rev-parse HEAD^{tree})"
-append_record "idiom.live_contract.workspace_prepared" "$(python3 - "$workspace_root" "$baseline_tree" "$fixture_source" <<'PY'
+append_record "idiom.live_contract.workspace_prepared" "$(python3 - "$workspace_root" "$baseline_tree" "$fixture_source" "$fixture_git_repo" "$fixture_git_ref" "$source_kind" "$source_commit" "$source_tree" <<'PY'
 import json
 import os
 import sys
 
-workspace, tree, fixture = sys.argv[1:]
+workspace, tree, fixture, git_repo, git_ref, source_kind, source_commit, source_tree = sys.argv[1:]
 print(json.dumps({
     "workspace_root": workspace,
     "baseline_tree": tree,
-    "fixture": os.path.abspath(fixture),
+    "fixture": os.path.abspath(fixture) if fixture else "",
+    "fixture_git_repo": os.path.abspath(git_repo) if git_repo else "",
+    "fixture_git_ref": git_ref,
+    "fixture_source_kind": source_kind,
+    "source_commit": source_commit,
+    "source_tree": source_tree,
     "rollback_strategy": "git reset --hard HEAD && git clean -fdx",
 }))
 PY
@@ -273,6 +303,8 @@ if classifier.get("server_model"):
     classifier["server_model"] = repo_path(classifier["server_model"])
 if classifier.get("log_file"):
     classifier["log_file"] = os.path.join(run_dir, "route-classifier.log")
+classifier_timeout = int(os.environ.get("IDIOM_LIVE_ROUTE_CLASSIFIER_TIMEOUT_SECONDS", "60"))
+classifier["timeout_seconds"] = max(int(classifier.get("timeout_seconds") or 0), classifier_timeout)
 
 chat = cfg.setdefault("chat", {})
 chat["debug_log_dir"] = debug_log_dir
@@ -288,6 +320,24 @@ workspace["root"] = workspace_root
 workspace["cwd"] = workspace_root
 workspace["enable_writes"] = os.environ.get("IDIOM_ENABLE_WRITES", "true").lower() != "false"
 workspace["enable_shell"] = os.environ.get("IDIOM_ENABLE_SHELL", "true").lower() != "false"
+
+scripted_base_url = os.environ.get("IDIOM_SCRIPTED_MODEL_BASE_URL", "").strip().rstrip("/")
+if scripted_base_url:
+    scripted_model = os.environ.get("IDIOM_SCRIPTED_MODEL_ID", "scripted-model").strip() or "scripted-model"
+    scripted_classifier = os.environ.get("IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER", "").lower() in ("1", "true", "yes")
+    chat["auto_start_server"] = False
+    for section_name in ("llama_server", "implementer"):
+        section = cfg.setdefault(section_name, {})
+        section["kind"] = "mlx"
+        section["base_url"] = scripted_base_url
+        section["model"] = scripted_model
+        section["host"] = "127.0.0.1"
+        section["port"] = 48881 if section_name == "llama_server" else 48882
+        section["binary"] = "scripted-model-server"
+    classifier["enabled"] = scripted_classifier
+    classifier["base_url"] = scripted_base_url
+    classifier["model"] = scripted_model
+    classifier["auto_start_server"] = False
 
 if os.environ.get("IDIOM_LIVE_ENABLE_MCP", "").lower() not in ("1", "true", "yes"):
     cfg["mcp"] = []
@@ -311,6 +361,7 @@ classifier = cfg.get("route_classifier", {})
 chat = cfg.get("chat", {})
 print(json.dumps({
     "config_path": config_path,
+    "scripted_model_enabled": bool(os.environ.get("IDIOM_SCRIPTED_MODEL_BASE_URL", "").strip()),
     "planner_kind": planner.get("kind", ""),
     "planner_model_exists": bool(planner.get("model")) and os.path.exists(planner.get("model")),
     "implementer_kind": implementer.get("kind", ""),
@@ -328,10 +379,15 @@ PY
 task_timeout="${IDIOM_SWE_TASK_TIMEOUT:-240}"
 (
   cd "$run_dir"
-  if [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; then
+  if [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
     IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
-  else
+  elif [[ "$runner_mode" == "implement" ]]; then
+    IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+  elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
     IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
+  else
+    echo "unsupported IDIOM_SWE_RUNNER_MODE: $runner_mode" >&2
+    exit 2
   fi
 ) >"$stdout_path" 2>"$stderr_path" &
 worker_pid=$!
@@ -354,6 +410,18 @@ pkill -P "$watchdog_pid" 2>/dev/null || true
 wait "$watchdog_pid" 2>/dev/null || true
 
 if [[ $worker_exit -eq 143 ]] || [[ $worker_exit -eq 137 ]]; then
+  append_record "idiom.live_contract.timeout" "$(python3 - "$task_timeout" "$worker_exit" <<'PY'
+import json
+import sys
+
+timeout_seconds, exit_code = sys.argv[1:]
+print(json.dumps({
+    "timeout_seconds": int(timeout_seconds),
+    "exit_code": int(exit_code),
+    "signal": "SIGTERM" if int(exit_code) == 143 else "SIGKILL",
+}))
+PY
+)"
   echo "live-contract: task was watchdog-killed (exit=$worker_exit); preserving partial log" >&2
 elif [[ $worker_exit -ne 0 ]]; then
   echo "idiom exit=$worker_exit" >&2

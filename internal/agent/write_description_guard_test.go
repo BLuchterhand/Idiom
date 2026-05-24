@@ -77,8 +77,8 @@ func TestCheckWriteDescriptionRejectsEachDescribedTool(t *testing.T) {
 		if got.Summary != "Missing write description" {
 			t.Errorf("%s: guard Summary = %q", tool, got.Summary)
 		}
-		// The redirect-style nudge must name the offending tool and end
-		// with a concrete "Try:" reshaping so the model can fix and retry.
+		// The redirect-style nudge must name the offending tool and include
+		// a non-copyable "Try:" reshaping so the model can fix and retry.
 		if !strings.Contains(got.Error, tool) {
 			t.Errorf("%s: guard error should mention the tool name, got: %q", tool, got.Error)
 		}
@@ -91,34 +91,27 @@ func TestCheckWriteDescriptionRejectsEachDescribedTool(t *testing.T) {
 	}
 }
 
-// TestCheckWriteDescriptionApplyPatchExampleOmitsPath verifies the Try:
-// example for apply_patch — which doesn't take a path — avoids dangling
-// empty "path":"" stubs that would mislead the model on retry.
-func TestCheckWriteDescriptionApplyPatchExampleOmitsPath(t *testing.T) {
+func TestCheckWriteDescriptionTryGuidanceAvoidsCopyablePlaceholders(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "apply_patch"}
 	got := checkWriteDescription(req)
 	if got == nil {
 		t.Fatal("apply_patch without description should be rejected")
 	}
-	if strings.Contains(got.Error, `"path":""`) {
-		t.Errorf("apply_patch Try: should not print empty path, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, `"content"`) {
-		t.Errorf("apply_patch Try: should reference content, got: %q", got.Error)
+	for _, forbidden := range []string{`"path":""`, `"<one sentence`, `"description":"`} {
+		if strings.Contains(got.Error, forbidden) {
+			t.Errorf("write description Try guidance must not include copyable placeholder %q, got: %q", forbidden, got.Error)
+		}
 	}
 }
 
-// TestCheckWriteDescriptionEditFileExampleIncludesPath verifies that
-// the non-apply_patch branch still echoes the path stub, since that is
-// the primary argument the model needs to reissue correctly.
-func TestCheckWriteDescriptionEditFileExampleIncludesPath(t *testing.T) {
+func TestCheckWriteDescriptionEditFileGuidanceNamesSameArguments(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "pkg/foo.go"}
 	got := checkWriteDescription(req)
 	if got == nil {
 		t.Fatal("edit_file without description should be rejected")
 	}
-	if !strings.Contains(got.Error, `"path":"pkg/foo.go"`) {
-		t.Errorf("edit_file Try: should echo path, got: %q", got.Error)
+	if !strings.Contains(got.Error, "same concrete tool arguments") {
+		t.Errorf("edit_file Try guidance should tell the model to preserve concrete arguments, got: %q", got.Error)
 	}
 }
 
@@ -384,9 +377,7 @@ func TestWriteDescriptionNoEllipsisInTryExamples(t *testing.T) {
 	}
 }
 
-// TestEditFileTryIncludesOldTextNewText verifies that when edit_file is
-// called with old_text/new_text, those values appear in the Try example.
-func TestWriteDescriptionEditFileTryIncludesOldTextNewText(t *testing.T) {
+func TestWriteDescriptionGuidancePreservesConcreteArgumentsInProse(t *testing.T) {
 	req := workspace.ToolRequest{
 		Tool:    "edit_file",
 		Path:    "foo.go",
@@ -395,85 +386,12 @@ func TestWriteDescriptionEditFileTryIncludesOldTextNewText(t *testing.T) {
 	}
 	got := checkWriteDescription(req)
 	t.Log(got.Error)
-	if !strings.Contains(got.Error, `"old_text"`) {
-		t.Errorf("edit_file Try: should include old_text key, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, `"new_text"`) {
-		t.Errorf("edit_file Try: should include new_text key, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, `"old stuff"`) {
-		t.Errorf("edit_file Try: should include old_text value, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, `"new stuff"`) {
-		t.Errorf("edit_file Try: should include new_text value, got: %q", got.Error)
+	if !strings.Contains(got.Error, "same concrete tool arguments") {
+		t.Errorf("Try guidance should preserve existing concrete arguments by instruction, got: %q", got.Error)
 	}
 }
 
-// TestEditFileTryIncludesLineRange verifies that when edit_file is called
-// with start_line/end_line, those values appear in the Try example.
-func TestWriteDescriptionEditFileTryIncludesLineRange(t *testing.T) {
-	req := workspace.ToolRequest{
-		Tool:      "edit_file",
-		Path:      "foo.go",
-		StartLine: 10,
-		EndLine:   20,
-		Content:   "replacement",
-	}
-	got := checkWriteDescription(req)
-	t.Log(got.Error)
-	if !strings.Contains(got.Error, `"start_line"`) {
-		t.Errorf("edit_file Try: should include start_line key, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, `"end_line"`) {
-		t.Errorf("edit_file Try: should include end_line key, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, "start_line\":10") {
-		t.Errorf("edit_file Try: should include start_line value, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, "end_line\":20") {
-		t.Errorf("edit_file Try: should include end_line value, got: %q", got.Error)
-	}
-}
-
-// TestWriteFileTryIncludesContent verifies that write_file includes its
-// content value in the Try example.
-func TestWriteDescriptionWriteFileTryIncludesContent(t *testing.T) {
-	req := workspace.ToolRequest{
-		Tool:    "write_file",
-		Path:    "foo.go",
-		Content: "package foo\n",
-	}
-	got := checkWriteDescription(req)
-	t.Log(got.Error)
-	if !strings.Contains(got.Error, `"content"`) {
-		t.Errorf("write_file Try: should include content key, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, "package foo") {
-		t.Errorf("write_file Try: should include content value, got: %q", got.Error)
-	}
-}
-
-// TestAppendFileTryIncludesContent verifies that append_file includes its
-// content value in the Try example.
-func TestWriteDescriptionAppendFileTryIncludesContent(t *testing.T) {
-	req := workspace.ToolRequest{
-		Tool:    "append_file",
-		Path:    "foo.go",
-		Content: "// new line\n",
-	}
-	got := checkWriteDescription(req)
-	t.Log(got.Error)
-	if !strings.Contains(got.Error, `"content"`) {
-		t.Errorf("append_file Try: should include content key, got: %q", got.Error)
-	}
-	if !strings.Contains(got.Error, "// new line") {
-		t.Errorf("append_file Try: should include content value, got: %q", got.Error)
-	}
-}
-
-// TestTryExampleIsRetriableJSON verifies that the Try example for
-// edit_file with old_text/new_text is valid JSON when parsed.
-func TestWriteDescriptionTryExampleIsRetriableJSON(t *testing.T) {
+func TestWriteDescriptionTryGuidanceIsNotCopyableJSON(t *testing.T) {
 	req := workspace.ToolRequest{
 		Tool:    "edit_file",
 		Path:    "foo.go",
@@ -482,38 +400,9 @@ func TestWriteDescriptionTryExampleIsRetriableJSON(t *testing.T) {
 	}
 	got := checkWriteDescription(req)
 	t.Log(got.Error)
-
-	// Extract the JSON portion from the Try line.
-	const tryPrefix = "Try: "
-	const examplePrefix = "Example: "
-	lines := strings.Split(got.Error, "\n")
-	var tryLine string
-	for _, line := range lines {
-		if strings.HasPrefix(line, tryPrefix) {
-			// The Try line is: "Try: reissue... Example: {json}"
-			// Extract just the JSON after "Example: ".
-			if idx := strings.Index(line, examplePrefix); idx >= 0 {
-				tryLine = line[idx+len(examplePrefix):]
-			} else {
-				tryLine = strings.TrimPrefix(line, tryPrefix)
-			}
-			break
-		}
-	}
-	if tryLine == "" {
-		t.Fatalf("no Try line found in: %q", got.Error)
-	}
-
-	// Parse as JSON to confirm it's valid.
-	var parsed map[string]any
-	if err := json.Unmarshal([]byte(tryLine), &parsed); err != nil {
-		t.Errorf("Try example is not valid JSON: %v\nraw: %q", err, tryLine)
-	}
-
-	// Verify key fields are present.
-	for _, key := range []string{"tool", "path", "description", "old_text", "new_text"} {
-		if _, ok := parsed[key]; !ok {
-			t.Errorf("Try JSON missing key %q: %q", key, tryLine)
+	for _, forbidden := range []string{`{"tool"`, `"old_text"`, `"new_text"`, `"description":`} {
+		if strings.Contains(got.Error, forbidden) {
+			t.Errorf("Try guidance should not include copyable JSON field %q: %q", forbidden, got.Error)
 		}
 	}
 }

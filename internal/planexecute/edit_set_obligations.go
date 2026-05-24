@@ -1,10 +1,6 @@
 package planexecute
 
-import (
-	"strings"
-
-	"idiom/internal/frontier/pathparse"
-)
+import "strings"
 
 type EditSetObligationKind string
 
@@ -24,15 +20,7 @@ type EditSetObligation struct {
 type EditSetObligations []EditSetObligation
 
 func EditSetObligationsFromPrompt(prompt string) EditSetObligations {
-	prompt = pathparse.ScopeToBriefBody(prompt)
-	var obligations EditSetObligations
-	if planExecutePromptRequiresTestEdit(prompt) {
-		obligations = obligations.with(EditSetObligationKindTestEdit, "prompt")
-	}
-	if planExecutePromptRequiresImplementationEdit(prompt) {
-		obligations = obligations.with(EditSetObligationKindImplementationEdit, "prompt")
-	}
-	return obligations
+	return nil
 }
 
 func planExecuteEditSetObligations(opts Options, prompt string) EditSetObligations {
@@ -308,7 +296,7 @@ func (obligations EditSetObligations) Kinds() []string {
 }
 
 func (obligations EditSetObligations) Normalized() EditSetObligations {
-	return obligations.normalizedWithDefaultSource("prompt")
+	return obligations.normalizedWithDefaultSource("typed")
 }
 
 func (obligations EditSetObligations) WithDefaultSource(defaultSource string) EditSetObligations {
@@ -374,9 +362,9 @@ func (obligations EditSetObligations) MissingOpenObligations(changedPaths []stri
 func EditSetObligationFailureMessage(reason string) string {
 	switch reason {
 	case EditSetFailureMissingRequestedTestEdit:
-		return reason + ": original prompt requested test edits, but submitted evidence changed no test path"
+		return reason + ": typed test-edit obligation is unsatisfied because submitted evidence changed no test path"
 	case EditSetFailureMissingRequestedImplementationEdit:
-		return reason + ": original prompt requested implementation behavior, but submitted evidence changed only test paths"
+		return reason + ": typed implementation-edit obligation is unsatisfied because submitted evidence changed only test paths"
 	default:
 		return reason
 	}

@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +125,12 @@ func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *test
 	intent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolIntentClassified, "read_file", "")
 	if intent.Policy.SideEffect != autonomy.SideEffectReadOnly || intent.Policy.Capability != autonomy.CapabilityBoundedRead {
 		t.Fatalf("intent event did not classify read-only bounded read: %#v", intent.Policy)
+	}
+	if intent.Policy.ActionClass != autonomy.ActionClassRead || intent.Policy.Transport != autonomy.ToolTransportTextualCall {
+		t.Fatalf("intent event did not classify canonical read/textual action: %#v", intent.Policy)
+	}
+	if intent.Policy.ActionKey == "" || !strings.Contains(intent.Policy.ActionKey, "read_file") {
+		t.Fatalf("intent event should carry stable normalized action key: %#v", intent.Policy)
 	}
 	paths := mustAutonomyPolicyEvent(t, events, autonomy.EventPathRolesResolved, "read_file", "")
 	if !slices.Contains(policyEventPaths(paths.Policy), "docs/decisioning-north-star.md") {
@@ -375,6 +382,30 @@ func TestRunnerAutonomyShellSideEffectClassifiesConservatively(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			if got := runnerAutonomyShellSideEffect(tt.command); got != tt.want {
 				t.Fatalf("runnerAutonomyShellSideEffect(%q) = %q, want %q", tt.command, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunnerAutonomyActionClassForRequestUsesCanonicalVocabulary(t *testing.T) {
+	tests := []struct {
+		name string
+		req  workspace.ToolRequest
+		want autonomy.ActionClass
+	}{
+		{name: "read", req: workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"}, want: autonomy.ActionClassRead},
+		{name: "search", req: workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "needle"}, want: autonomy.ActionClassSearch},
+		{name: "plan", req: workspace.ToolRequest{Tool: "submit_plan"}, want: autonomy.ActionClassSubmitPlan},
+		{name: "source write", req: workspace.ToolRequest{Tool: "write_file", Path: "internal/agent/runner.go"}, want: autonomy.ActionClassPerEditWrite},
+		{name: "deliverable write", req: workspace.ToolRequest{Tool: "write_file", Path: "docs/report.md"}, want: autonomy.ActionClassDeliverableWrite},
+		{name: "verify shell", req: workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/agent"}, want: autonomy.ActionClassVerify},
+		{name: "unknown shell probe", req: workspace.ToolRequest{Tool: "shell", Command: "touch tmp"}, want: autonomy.ActionClassGenericProbe},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := runnerAutonomyActionClassForRequest(tt.req); got != tt.want {
+				t.Fatalf("runnerAutonomyActionClassForRequest(%#v) = %q, want %q", tt.req, got, tt.want)
 			}
 		})
 	}

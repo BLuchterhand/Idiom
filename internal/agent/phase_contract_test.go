@@ -31,7 +31,25 @@ func TestDeriveTurnPhaseContractPlanExecuteRequiredSource(t *testing.T) {
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionPerEditWrite)
 	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
-	assertContains(t, contract.HiddenTools, "submit_plan")
+	assertNotContains(t, contract.ActionPolicy.CallableToolNames, "submit_plan")
+}
+
+func TestPlanExecutePlanningStateRequiredSourceProjectionSplitsParserVisibleSubmit(t *testing.T) {
+	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+	}}, PlanExecutePlanningTransport{TextualToolParser: true})
+
+	if state.Mode != PlanExecutePlanningModeRequiredSource {
+		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeRequiredSource)
+	}
+	assertContains(t, state.ParserVisibleTools, "submit_plan")
+	assertNotContains(t, state.CallableTools, "submit_plan")
+	assertNotContains(t, state.AllowedActionClasses, actionSubmitPlan)
+	assertContains(t, state.InvalidActionClasses, actionSubmitPlan)
 }
 
 func TestDeriveTurnPhaseContractPlanExecuteCandidateSourcePending(t *testing.T) {
@@ -53,15 +71,49 @@ func TestDeriveTurnPhaseContractPlanExecuteCandidateSourcePending(t *testing.T) 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 	assertEqualSet(t, contract.AllowedTools, []string{"context_pack", "read_file", "code_navigate", "product_efforts", "product_status"})
-	assertContains(t, contract.HiddenTools, "submit_plan")
+	assertNotContains(t, contract.ActionPolicy.CallableToolNames, "submit_plan")
 }
 
-func TestDeriveTurnPhaseContractPlanExecuteCandidateSourceReadSubmitReady(t *testing.T) {
+func TestPlanExecutePlanningStateCandidateProjectionRequiresSelectedPathForSubmit(t *testing.T) {
+	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}, nil, PlanExecutePlanningTransport{TextualToolParser: true})
+
+	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
+		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeAllowedCandidate)
+	}
+	assertContains(t, state.ParserVisibleTools, "submit_plan")
+	assertNotContains(t, state.CallableTools, "submit_plan")
+	assertNotContains(t, state.AllowedActionClasses, actionSubmitPlan)
+	assertContains(t, state.InvalidActionClasses, actionSubmitPlan)
+}
+
+func TestPlanExecutePlanningStateCandidateProjectionAllowsSubmitWithSelectedPath(t *testing.T) {
+	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"a.go", "b.go"},
+	}, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+	}}, PlanExecutePlanningTransport{TextualToolParser: true})
+
+	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
+		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeAllowedCandidate)
+	}
+	assertContains(t, state.SelectedEditPaths, "a.go")
+	assertContains(t, state.ParserVisibleTools, "submit_plan")
+	assertContains(t, state.CallableTools, "submit_plan")
+	assertContains(t, state.AllowedActionClasses, actionSubmitPlan)
+	assertNotContains(t, state.InvalidActionClasses, actionSubmitPlan)
+	assertContains(t, state.TerminalResponseShapes, "submit_plan")
+}
+
+func TestDeriveTurnPhaseContractPlanExecuteOpenCandidateSourceRequiresConcreteSelectedPathBeforeSubmit(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"context_pack", "read_file", "submit_plan"},
+			AllowedTools:      []string{"context_pack", "read_file", "search_content", "submit_plan"},
 		},
 		Results: []workspace.ToolResult{{
 			Tool:    "read_file",
@@ -70,11 +122,37 @@ func TestDeriveTurnPhaseContractPlanExecuteCandidateSourceReadSubmitReady(t *tes
 		}},
 	})
 
-	if contract.PhaseID != turnPhaseSubmitReadyTextual {
-		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
+	if contract.PhaseID != turnPhaseCandidateSource {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
 	}
-	assertContains(t, contract.AllowedTools, "submit_plan")
-	assertContains(t, contract.HiddenTools, "read_file")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+}
+
+func TestDeriveTurnPhaseContractPlanExecuteTerminalRecoveryHidesReadActions(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"submit_plan"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read internal/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
+			Output:  "func EvaluateCoverageGate() {}",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseCandidateSource {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseCandidateSource)
+	}
+	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
+		t.Fatalf("candidate source without selected edit paths must not advertise submit_plan as callable, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 }
 
 func TestDeriveTurnPhaseContractSubmitReadyNativeRequired(t *testing.T) {
@@ -89,6 +167,12 @@ func TestDeriveTurnPhaseContractSubmitReadyNativeRequired(t *testing.T) {
 			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
 			{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)"},
 		},
+		Temperature:         0,
+		TopP:                1,
+		TopK:                20,
+		MinP:                0.05,
+		PresencePenalty:     0.1,
+		RepetitionPenalty:   1.1,
 		SupportsNativeTools: true,
 	})
 
@@ -97,10 +181,13 @@ func TestDeriveTurnPhaseContractSubmitReadyNativeRequired(t *testing.T) {
 	}
 	assertEqualSet(t, contract.AllowedTools, []string{"submit_plan"})
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan})
-	assertContains(t, contract.TerminalOutcomes, "Decision: source-satisfied")
+	assertEqualSet(t, contract.TerminalOutcomes, []string{"submit_plan"})
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
 	if contract.RuntimeCall.ToolChoice != "required" {
 		t.Fatalf("ToolChoice = %q, want required", contract.RuntimeCall.ToolChoice)
+	}
+	if contract.RuntimeCall.Temperature != 0 || contract.RuntimeCall.TopP != 1 || contract.RuntimeCall.TopK != 20 || contract.RuntimeCall.MinP != 0.05 || contract.RuntimeCall.PresencePenalty != 0.1 || contract.RuntimeCall.RepetitionPenalty != 1.1 {
+		t.Fatalf("runtime sampling not projected into phase contract: %#v", contract.RuntimeCall)
 	}
 }
 
@@ -134,6 +221,37 @@ func TestDeriveTurnPhaseContractSubmitReadyTextual(t *testing.T) {
 	if contract.RuntimeCall.ResponseFormat != "json" {
 		t.Fatalf("ResponseFormat = %q, want json", contract.RuntimeCall.ResponseFormat)
 	}
+}
+
+func TestPlanExecutePlanningStateSubmitReadyProjectionMatchesTransport(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+	}}
+
+	textual := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true, ResponseFormatJSON: true})
+	if textual.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("textual Mode = %q, want %q", textual.Mode, PlanExecutePlanningModeSubmitReady)
+	}
+	assertEqualSet(t, textual.ParserVisibleTools, []string{"submit_plan"})
+	assertEqualSet(t, textual.CallableTools, []string{"submit_plan"})
+	assertEqualSet(t, textual.AllowedActionClasses, []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker})
+	assertContains(t, textual.InvalidActionClasses, actionRead)
+	assertEqualSet(t, textual.TerminalResponseShapes, []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"})
+
+	native := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: true})
+	if native.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("native Mode = %q, want %q", native.Mode, PlanExecutePlanningModeSubmitReady)
+	}
+	assertEqualSet(t, native.ParserVisibleTools, []string{"submit_plan"})
+	assertEqualSet(t, native.CallableTools, []string{"submit_plan"})
+	assertEqualSet(t, native.AllowedActionClasses, []string{actionSubmitPlan})
+	assertContains(t, native.InvalidActionClasses, actionRead)
+	assertEqualSet(t, native.TerminalResponseShapes, []string{"submit_plan"})
 }
 
 func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
@@ -184,6 +302,62 @@ func TestDeriveTurnPhaseContractStaleAnchorRefreshWinsOverUnreadRequiredSource(t
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+}
+
+func TestDeriveTurnPhaseContractGroundingRejectedPlanUsesSourceRefresh(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-120 (total lines: 2894)"},
+			{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: edit paths lack source grounding",
+				Error:   "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `internal/productworkflow/tdd.go`. Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan.",
+			},
+		},
+		TextualToolParser: true,
+	})
+
+	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
+}
+
+func TestDeriveTurnPhaseContractSubmitCorrectionAfterAnchorRefresh(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan"},
+			RequiredEditPaths: []string{"a.go"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: required edit path coverage mismatch",
+				Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+			},
+			{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in a.go lines 1-10\n1:package a"},
+		},
+		TextualToolParser: true,
+	})
+
+	if contract.PhaseID != turnPhaseSubmitReadyTextual {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	if contract.DerivationReason != "plan_execute_submit_plan_correction" {
+		t.Fatalf("DerivationReason = %q, want plan_execute_submit_plan_correction", contract.DerivationReason)
+	}
 }
 
 func TestDeriveTurnPhaseContractMalformedSubmitPlanRecoveryUsesTextualOutput(t *testing.T) {

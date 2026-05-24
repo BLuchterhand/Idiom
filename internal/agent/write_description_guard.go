@@ -1,49 +1,11 @@
 package agent
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"idiom/internal/workspace"
 )
-
-// buildTryExample returns compact JSON that re-issues the original
-// ToolRequest with a description field added.
-func buildTryExample(req workspace.ToolRequest) string {
-	example := map[string]any{
-		"tool":        req.Tool,
-		"description": "<one sentence on what this change is and why>",
-	}
-
-	switch req.Tool {
-	case "apply_patch":
-		// apply_patch takes a unified diff in "content" rather than a path.
-		example["content"] = req.Content
-	case "edit_file":
-		example["path"] = req.Path
-		// Preserve the active edit shape when present.
-		if req.OldText != "" || req.NewText != "" {
-			example["old_text"] = req.OldText
-			example["new_text"] = req.NewText
-		} else if req.StartLine != 0 || req.EndLine != 0 {
-			example["start_line"] = req.StartLine
-			example["end_line"] = req.EndLine
-			example["content"] = req.Content
-		}
-	case "write_file", "append_file":
-		example["path"] = req.Path
-		if req.Content != "" {
-			example["content"] = req.Content
-		}
-	}
-
-	data, err := json.Marshal(example)
-	if err != nil {
-		return fmt.Sprintf(`{"tool":%q,"description":"<one sentence on what this change is and why>"}`, req.Tool)
-	}
-	return string(data)
-}
 
 // isDescribedWriteTool reports whether the given tool must carry a
 // non-empty Description. The subset is the diff-producing writes —
@@ -76,7 +38,7 @@ func checkWriteDescription(req workspace.ToolRequest) *workspace.ToolResult {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s requires a \"description\" field — one sentence on what this change is and why.\n", req.Tool)
 	b.WriteString("The plan panel labels each write with this description so the user can scan intent at a glance; missing it leaves the plan blank.\n")
-	fmt.Fprintf(&b, "Try: reissue the same call with \"description\":\"<one sentence>\". Example: %s\n", buildTryExample(req))
+	b.WriteString("Try: reissue the same call with the same concrete tool arguments plus a non-empty `description` field containing one specific sentence about what this change is and why. Do not copy placeholder descriptions or schema examples.\n")
 	b.WriteString("Once set, the call executes normally.")
 	return &workspace.ToolResult{
 		Tool:    req.Tool,

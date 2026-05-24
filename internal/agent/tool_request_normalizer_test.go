@@ -1,0 +1,505 @@
+package agent
+
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"idiom/internal/llama"
+)
+
+func TestNormalizeToolRequestSyntaxNativeToolCall(t *testing.T) {
+	rawArgs := `{"pattern":"needle","path":"internal","glob":"*.go"}`
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		ToolCalls: []llama.ToolCall{{
+			Function: llama.ToolCallFunc{
+				Name:      "search_content",
+				Arguments: rawArgs,
+			},
+		}},
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected native tool call to normalize")
+	}
+	if result.Request.Tool != "search_content" || result.Request.Pattern != "needle" || result.Request.Path != "internal" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.Raw != rawArgs {
+		t.Fatalf("Raw = %q, want %q", result.Raw, rawArgs)
+	}
+	if result.ActiveToolCall == nil {
+		t.Fatal("expected active native tool call context")
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportNative {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxTextualJSON(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected textual JSON tool request to normalize")
+	}
+	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" || result.Request.StartLine != 1 || result.Request.EndLine != 20 {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.ActiveToolCall != nil {
+		t.Fatal("textual normalization must not create native tool-call context")
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxBareToolJSONObject(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"submit_plan",
+			"",
+			"{",
+			`  "rationale": "Verification Checklist:\n- source_sanity failed for target.txt, so submit a corrective replacement.",`,
+			`  "edits": [{"path":"target.txt","old_text":"old","new_text":"new","purpose":"repair target"}]`,
+			"}",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected bare submit_plan JSON request to normalize")
+	}
+	if result.Request.Tool != "submit_plan" || result.Request.Rationale == "" || len(result.Request.Edits) != 1 || result.Request.Edits[0].Path != "target.txt" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxFencedJSON(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "```json\n{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":20}\n```",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected exact fenced JSON tool request to normalize")
+	}
+	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" || result.Request.StartLine != 1 || result.Request.EndLine != 20 {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFencedJSON {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxKeyValue(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: read_file\npath: README.md\nstart_line: 1\nend_line: 20\nnamed_gap: inspect intro",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key/value tool request to normalize")
+	}
+	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" || result.Request.StartLine != 1 || result.Request.EndLine != 20 || result.Request.NamedGap != "inspect intro" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxKeyValueActionAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: code_navigate\naction: read_symbol\npath: internal/productworkflow/coverage_gate.go\nsymbol: EvaluateCoverageGate",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key/value tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" || result.Request.Capability != "read_symbol" || result.Request.Pattern != "EvaluateCoverageGate" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithSymbol(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: code_navigate\npath: cmd/idiom/product_workflow.go\nsymbol: Run\nstart_line: 1\nend_line: 100",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key/value tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "read_symbol" ||
+		result.Request.Path != "cmd/idiom/product_workflow.go" ||
+		result.Request.Pattern != "Run" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if !result.Repaired {
+		t.Fatal("expected missing capability repair to be marked repaired")
+	}
+}
+
+func TestNormalizeToolRequestSyntaxCodeNavigateDefaultsMissingCapabilityWithPathOnly(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"code_navigate","path":"cmd/idiom/product_workflow.go","symbol":"read_symbol"}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected textual JSON tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "file_outline" ||
+		result.Request.Path != "cmd/idiom/product_workflow.go" ||
+		result.Request.Pattern != "" ||
+		result.Request.Symbol != "" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if !result.Repaired {
+		t.Fatal("expected missing capability repair to be marked repaired")
+	}
+}
+
+func TestNormalizeToolRequestSyntaxCodeReadAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"code_read","path":"internal/productworkflow/coverage_gate.go","start_line":1,"end_line":125}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected textual JSON tool request to normalize")
+	}
+	if result.Request.Tool != "read_file" ||
+		result.Request.Path != "internal/productworkflow/coverage_gate.go" ||
+		result.Request.StartLine != 1 ||
+		result.Request.EndLine != 125 {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if !result.Repaired {
+		t.Fatal("expected code_read alias repair to be marked repaired")
+	}
+}
+
+func TestNormalizeToolRequestSyntaxResolutionAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"code_navigate","path":"internal/productworkflow/coverage_gate.go","pattern":"func EvaluateCoverageGate","resolution":"definition"}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected textual JSON tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "definition" ||
+		result.Request.Path != "internal/productworkflow/coverage_gate.go" ||
+		result.Request.Pattern != "func EvaluateCoverageGate" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxKeyValueArgsJSON(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool_call:code:navigate",
+			"summary: Looking up symbol definition for RunAudit",
+			"tool: code_navigate",
+			"args:",
+			"{",
+			`  "path": "cmd/idiom/audit.go",`,
+			`  "symbol": "RunAudit",`,
+			`  "kind": "definition"`,
+			"}",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key/value args JSON tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "definition" ||
+		result.Request.Path != "cmd/idiom/audit.go" ||
+		result.Request.Pattern != "RunAudit" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxKeyValueArgsJSONRejectsToolMismatch(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: code_navigate\nargs:\n{\"tool\":\"read_file\",\"path\":\"cmd/idiom/audit.go\"}",
+	})
+
+	if result.OK {
+		t.Fatalf("mismatched key/value args request must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxFunctionCall(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `tool: code_navigate(capability="read_symbol", path="internal/productworkflow/coverage_gate.go", language="go", symbol="EvaluateCoverageGate")`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected function-call-shaped tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "read_symbol" ||
+		result.Request.Path != "internal/productworkflow/coverage_gate.go" ||
+		result.Request.Language != "go" ||
+		result.Request.Symbol != "EvaluateCoverageGate" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxFunctionCallOperationAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `tool: code_navigate(operation="read_symbol", path="internal/productworkflow/coverage_gate.go", symbol="EvaluateCoverageGate")`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected function-call-shaped tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "read_symbol" ||
+		result.Request.Path != "internal/productworkflow/coverage_gate.go" ||
+		result.Request.Pattern != "EvaluateCoverageGate" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxFunctionCallActionAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `tool: code_navigate(action="read_symbol", path="internal/productworkflow/coverage_gate.go", symbol="EvaluateCoverageGate")`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected function-call-shaped tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "read_symbol" ||
+		result.Request.Path != "internal/productworkflow/coverage_gate.go" ||
+		result.Request.Pattern != "EvaluateCoverageGate" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxRejectsUnsafeFunctionCallFields(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `tool: edit_file(path="README.md", old_text="old", new_text="new")`,
+	})
+
+	if result.OK {
+		t.Fatalf("function-call edit body shape must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxBareJSONMissingToolInferred(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"path":"README.md","start_line":1,"end_line":20}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected safe bare JSON read shape to normalize")
+	}
+	if result.Request.Tool != "read_file" || result.Request.Path != "README.md" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeMissingToolInferred || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONEdit(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"path":"README.md","old_text":"old","new_text":"new"}`,
+	})
+
+	if result.OK {
+		t.Fatalf("unsafe missing-tool edit shape must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxDoesNotInferNarrativeFencedJSON(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "Please run this:\n```json\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+	})
+
+	if result.OK {
+		t.Fatalf("narrative-wrapped fenced JSON must stay out of the syntax normalizer: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFencedJSON {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxRejectsUnsafeKeyValueFields(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: edit_file\npath: README.md\nold_text: old\nnew_text: new",
+	})
+
+	if result.OK {
+		t.Fatalf("key/value edit body shape must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestRepairToolRequestSyntaxStringifiedSubmitPlanEdits(t *testing.T) {
+	inner := `[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update a"}]`
+	payload, err := json.Marshal(map[string]any{
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	call := llama.ToolCall{Function: llama.ToolCallFunc{Name: "submit_plan", Arguments: string(payload)}}
+	result := repairToolRequestSyntax(toolRequestSyntaxNormalization{
+		Raw:            string(payload),
+		ParseErr:       errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits"),
+		ActiveToolCall: &call,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("repair should clear parse error: %v", result.ParseErr)
+	}
+	if !result.OK || !result.Repaired {
+		t.Fatalf("expected repaired normalization, got ok=%v repaired=%v", result.OK, result.Repaired)
+	}
+	if result.Request.Tool != "submit_plan" || len(result.Request.Edits) != 1 || result.Request.Edits[0].Path != "a.go" {
+		t.Fatalf("unexpected repaired request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportStringifiedSubmitRepair {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxRepairsTextualStringifiedSubmitPlanEditsBeforeReportingParse(t *testing.T) {
+	inner := `[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update a"}]`
+	payload, err := json.Marshal(map[string]any{
+		"tool":      "submit_plan",
+		"rationale": "plan",
+		"edits":     inner,
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+
+	result := normalizeToolRequestSyntax(llama.ChatMessage{Content: string(payload)})
+
+	if result.ParseErr != nil {
+		t.Fatalf("textual stringified edits repair should clear parse error: %v", result.ParseErr)
+	}
+	if !result.OK || !result.Repaired {
+		t.Fatalf("expected repaired textual normalization, got ok=%v repaired=%v", result.OK, result.Repaired)
+	}
+	if result.Request.Tool != "submit_plan" || len(result.Request.Edits) != 1 || result.Request.Edits[0].Path != "a.go" {
+		t.Fatalf("unexpected repaired request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportStringifiedSubmitRepair {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+	if result.ParserFailureClass != "" {
+		t.Fatalf("repaired parse failure should not remain classified, got %q", result.ParserFailureClass)
+	}
+}
+
+func TestRepairToolRequestSyntaxNestedArgumentsObject(t *testing.T) {
+	payload := `{"arguments":{"tool":"read_file","path":"cmd/idiom/audit.go","start_line":1,"end_line":100}}`
+	result := normalizeToolRequestSyntax(llama.ChatMessage{Content: payload})
+
+	if result.ParseErr != nil {
+		t.Fatalf("nested arguments repair should clear parse error: %v", result.ParseErr)
+	}
+	if !result.OK || !result.Repaired {
+		t.Fatalf("expected repaired normalization, got ok=%v repaired=%v", result.OK, result.Repaired)
+	}
+	if result.Request.Tool != "read_file" || result.Request.Path != "cmd/idiom/audit.go" || result.Request.StartLine != 1 || result.Request.EndLine != 100 {
+		t.Fatalf("unexpected repaired request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportNestedArguments {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestRepairToolRequestSyntaxNestedArgumentsRejectsMixedWrapper(t *testing.T) {
+	payload := `{"tool":"read_file","arguments":{"tool":"write_file","path":"README.md","content":"unsafe"}}`
+	result := normalizeToolRequestSyntax(llama.ChatMessage{Content: payload})
+
+	if result.OK && result.EventTransport == toolRequestNormalizerTransportNestedArguments {
+		t.Fatalf("mixed wrapper must not be repaired through nested arguments: %#v", result.Request)
+	}
+}

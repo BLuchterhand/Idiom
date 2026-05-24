@@ -1,0 +1,17 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before submit_plan\",\"why_not_answering\":\"required_edit_paths need source-body evidence before submit_plan\"}"
+    },
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Bad first attempt with placeholder body to exercise recovery.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"TODO\",\"purpose\":\"placeholder attempt that must be rejected\"}]}"
+    },
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Verification Checklist:\\n- Required behavior fails because the current diff contains TODO instead of returning Save.\\n- Failing item: source_sanity_failed:internal/labels/labels.go, repair the applied placeholder inside the allowed path.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"\\tTODO\",\"new_text\":\"\\treturn \\\"Save\\\"\",\"purpose\":\"Replace the invalid placeholder with the executable ShortLabel return value\"}]}"
+    },
+    {
+      "content": "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the corrected submitted edit.\n- Scope safety: Only internal/labels/labels.go changed, which is inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+    }
+  ]
+}

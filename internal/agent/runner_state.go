@@ -264,6 +264,7 @@ type runnerThinkingTrace struct {
 	EnableThinking     string `json:"enable_thinking"`
 	PreserveThinking   bool   `json:"preserve_thinking"`
 	ContentChars       int    `json:"content_chars"`
+	ContentPreview     string `json:"content_preview,omitempty"`
 	ReasoningChars     int    `json:"reasoning_chars"`
 	PreservedInHistory bool   `json:"preserved_in_history"`
 }

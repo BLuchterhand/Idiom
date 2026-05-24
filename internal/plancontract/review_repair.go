@@ -37,6 +37,16 @@ func ReviewRepairLineIsChecklistHeading(line string) bool {
 	return strings.EqualFold(line, "Verification Checklist") || strings.EqualFold(line, "Verification Checklist:")
 }
 
+func ReviewRepairLineIsPlaceholderChecklist(line string) bool {
+	line = strings.ToLower(strings.TrimSpace(line))
+	line = strings.TrimLeft(line, "-*0123456789.[] x")
+	line = strings.TrimSpace(line)
+	return strings.Contains(line, "cite a checked fact") ||
+		strings.Contains(line, "required behavior: cite") ||
+		strings.Contains(line, "scope safety: cite") ||
+		strings.Contains(line, "test or command evidence: cite")
+}
+
 func ReviewRepairTerminalTemplates() string {
 	return strings.Join([]string{
 		"## Terminal Output Templates",
@@ -47,15 +57,14 @@ func ReviewRepairTerminalTemplates() string {
 		"Decision: pass",
 		"",
 		"Verification Checklist:",
-		"- Required behavior: <checked fact from Phase/Diff Evidence>.",
-		"- Scope safety: <checked fact from changed paths and allowed repair paths>.",
-		"- Test or command evidence: <checked fact, or pending outside this lane>.",
+		"",
+		"For the pass shape, write your own checklist bullets under `Verification Checklist:`. Each bullet must cite a concrete fact from Phase/Diff Evidence, changed paths, allowed repair paths, or an explicitly successful command. Do not copy placeholder checklist text.",
 		"",
 		"Corrective plan shape:",
-		"{\"tool\":\"submit_plan\",\"rationale\":\"Verification Checklist:\\n- <checked fact>.\\n- Failing item: <why this corrective edit is required>.\",\"edits\":[{\"path\":\"path/from/Allowed Repair Paths\",\"old_text\":\"exact current source snippet\\n\",\"new_text\":\"complete replacement snippet\\n\",\"purpose\":\"fix the failing checklist item\"}]}",
+		"Emit one parser-readable submit_plan object whose rationale starts with `Verification Checklist:` and whose edits use only real allowed repair paths plus executable source text from the evidence. Do not copy placeholder paths, snippets, ellipses, or schema examples.",
 		"",
 		"Blocker shape:",
-		"<<QUESTION>>: <exact blocker, including the path or checklist item that cannot be resolved inside Allowed Repair Paths>",
+		"<<QUESTION>>: followed by the exact blocker, including the path or checklist item that cannot be resolved inside Allowed Repair Paths.",
 		"",
 	}, "\n")
 }

@@ -3222,6 +3222,40 @@ func TestCommitHashNotValidatedOnOtherRecordTypes(t *testing.T) {
 	}
 }
 
+func TestValidateADRIndexFrontMatterConsistencyCoversAuthorityFields(t *testing.T) {
+	errs := ValidateADRIndexFrontMatterConsistency(ADRIndex{ADRs: []ADRIndexEntry{{
+		ADRID:        "ADR-001",
+		Status:       "accepted",
+		Path:         "ADR-001-test.md",
+		CoverageTier: "unit",
+		PRDRefs:      []string{"REQ-INDEX"},
+		Supersedes:   []string{"ADR-OLD"},
+		SupersededBy: []string{"ADR-NEW"},
+	}}}, []ParsedADR{{
+		RelPath: "adrs/ADR-001-test.md",
+		Doc: ADRDocument{FrontMatter: ADRFrontMatter{
+			ADRID:        "ADR-001-MD",
+			Status:       "draft",
+			CoverageTier: "behavior_standard",
+			PRDRefs:      []string{"REQ-MARKDOWN"},
+			Supersedes:   []string{"ADR-OLDER"},
+			SupersededBy: []string{"ADR-NEWER"},
+		}},
+	}})
+	fields := map[string]bool{}
+	for _, err := range errs {
+		fields[err.Field] = true
+		if err.Code != "adr_index_frontmatter_mismatch" || err.Path != "adrs/index.json" {
+			t.Fatalf("unexpected consistency error: %#v", err)
+		}
+	}
+	for _, want := range []string{"adr_id", "status", "coverage_tier", "prd_refs", "supersedes", "superseded_by"} {
+		if !fields[want] {
+			t.Fatalf("expected mismatch for %s, got %#v", want, errs)
+		}
+	}
+}
+
 func repoRoot(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()

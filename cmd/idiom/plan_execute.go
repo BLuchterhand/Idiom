@@ -933,14 +933,9 @@ func planExecuteScopeContract(opts planExecuteOptions, prompt string) planexecut
 	allowed := append([]string(nil), scope.AllowedCandidatePaths...)
 	allowed = append(allowed, []string(opts.AllowedEditPaths)...)
 	allowed = append(allowed, planexecute.AllowedEditPathsFromPrompt(prompt)...)
-	promptObligations := planexecute.EditSetObligationsFromPrompt(prompt)
-	if scope.HasContent() || len(opts.EditSetObligations.Normalized()) > 0 {
-		promptObligations = nil
-	}
 	obligations := planexecute.MergeEditSetObligations(
 		scope.EditSetObligations.WithDefaultSource("scope_contract"),
 		opts.EditSetObligations.WithDefaultSource("options"),
-		promptObligations,
 	)
 	return planexecute.NewPlanScopeContract(required, allowed, obligations)
 }
@@ -1050,67 +1045,11 @@ func patchPlanArtifactPackID(path string, packID string) error {
 // Every rule earned its place from a real failure mode; if you add
 // another, compress an existing rule to make room.
 func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
-	return planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
+	return planexecute.PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, nil)
 }
 
 func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations planexecute.EditSetObligations) string {
-	lines := []string{
-		"# Plan-then-execute (planner phase)",
-		"",
-		"Your job is to produce an executable plan artifact, not a narrative implementation answer. The executor implements accepted plan edits after you stop.",
-		"Treat the brief body and any preloaded Context Pack below as the planner target packet.",
-		"",
-		"Visible response protocol — choose exactly one action per turn:",
-		"1. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
-		"2. Once every existing required_edit_path has satisfied its source-body obligation, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
-		"3. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path.",
-		"4. If the plan cannot be produced from available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.",
-		"",
-		"Plan artifact rules:",
-		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
-		"2. Each `submit_plan.edits[]` entry must be a JSON object with `path` + ONE edit shape: (`insert_after_line`+small inline non-empty `content` for insertion after an existing line | `start_line`+`end_line`+non-empty `content` for replacement | `old_text`+`new_text`; empty `new_text` deletes `old_text` | `replace_all:true`+`new_text`+empty `old_text` for new-file/whole-file write) + one-sentence `purpose`. `edits` is an array, never a quoted JSON string. Prefer the smallest executable edit body that satisfies the objective: use exact `old_text`/`new_text` for small unique replacements, and use numeric line-range edits only when the replacement spans more than a few lines, contains JSON-hostile syntax, or needs a large insertion anchored to unchanged source lines. Large bodies are spilled to artifact refs after submit_plan except insert_after_line content.",
-		"3. Each edit body must be executable final content. Do not submit placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, prose descriptions, or invented symbols in `old_text`, `new_text`, or `content`.",
-		"4. `insert_after_line` inserts small inline non-empty `content` after an existing 1-based line and does not replace current lines; do not use it for large generated blocks. Line-range `content` is the complete replacement for the inclusive range and may include unchanged anchor line(s) plus inserted content for large additions. `old_text` is exact current text copied from source-body evidence. Whole-file/new-file `new_text` is the complete file body.",
-		"5. One insertion site = one edit. Don't combine non-adjacent sites into one `old_text` (use \\n\\n only when sites are literally adjacent). Same `path` in two entries is fine.",
-		"6. Substring-anchor indentation must match the file byte-for-byte. Brief code blocks under markdown bullets carry 2+ extra leading spaces. Before using any multi-line substring anchor, one bounded source-read capability may verify that path and strip the rendering indent. Single-line / identifier anchors are exempt.",
-		"7. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence can identify the intended edit, but required existing paths still need source-body obligations satisfied before submit_plan unless the run short-circuits as source-satisfied or exact-plan-ready before planner execution.",
-		"8. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
-		"9. If the objective asks for new or updated tests, the plan must include the relevant test edit; if it asks to implement/fix/add feature behavior, the plan must include a non-test implementation edit. Stop with `<<QUESTION>>:` when the needed path/anchor is missing; partial test-only or production-only plans are incomplete.",
-		"10. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. Rejected `submit_plan` calls are invalid attempts, not successful plan artifacts. No post-plan verification reads.",
-		"",
-		"Canonical `submit_plan` shape (use real paths and source text, never placeholders):",
-		"```tool",
-		`{"tool":"submit_plan","rationale":"one sentence explaining why the edit set satisfies the request","edits":[{"path":"path/from/required_edit_paths","insert_after_line":20,"content":"complete inserted lines\n","purpose":"insert after the confirmed line"}]}`,
-		"```",
-	}
-	if checklist := planExecuteRequiredPathChecklist(requiredEditPaths); checklist != "" {
-		lines = append(lines, "", checklist)
-	} else if checklist := planExecuteAllowedPathChecklist(allowedEditPaths); checklist != "" {
-		lines = append(lines, "", checklist)
-	} else {
-		lines = append(lines, "", "No required edit paths were provided. Use the objective's candidate/target refs as the planning scope: you still must either call `submit_plan` with real edits grounded in the objective/target refs, answer `Decision: source-satisfied` with evidence, or answer `<<QUESTION>>:` with the exact blocker.")
-	}
-	if checklist := planExecuteEditSetObligationChecklist(obligations); checklist != "" {
-		lines = append(lines, "", checklist)
-	}
-	return strings.Join(lines, "\n")
-}
-
-func planExecuteEditSetObligationChecklist(obligations planexecute.EditSetObligations) string {
-	obligations = obligations.Normalized()
-	if len(obligations) == 0 {
-		return ""
-	}
-	var lines []string
-	lines = append(lines, fmt.Sprintf("Requested edit-set obligations for this run: %d obligation(s).", len(obligations)))
-	if obligations.Has(planexecute.EditSetObligationKindTestEdit) {
-		lines = append(lines, "- `test_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real test edit or test-path evidence.")
-	}
-	if obligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
-		lines = append(lines, "- `implementation_edit_required`: `submit_plan.edits`, source-satisfied evidence, or a corrective review plan must include at least one real non-test implementation edit or implementation-path evidence.")
-	}
-	lines = append(lines, "These obligations do not add or promote `required_edit_paths`; candidate and allowed paths remain scope only.")
-	return strings.Join(lines, "\n")
+	return planexecute.PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, obligations)
 }
 
 func planExecutePlannerMaxTokens(root string, prompt string, requiredEditPaths []string, allowedEditPaths []string) int {
@@ -1128,9 +1067,6 @@ func planExecutePlannerNeedsLargeBodyBudget(root string, prompt string, required
 		lowerPath := strings.ToLower(filepath.ToSlash(path))
 		base := filepath.Base(lowerPath)
 		if strings.Contains(lowerPath, "/new/") || strings.HasPrefix(base, "new_") {
-			return true
-		}
-		if planExecutePromptRequiresTestEdit(lower) && planExecutePathLooksLikeTest(path) && root != "" && planExecutePathMissing(root, path) {
 			return true
 		}
 		if planExecutePromptImpliesNewFilePath(lower, lowerPath) {
@@ -1162,39 +1098,7 @@ func planExecutePromptImpliesNewFilePath(lowerPrompt string, lowerPath string) b
 }
 
 func planExecutePathLooksLikeTest(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-	if lower == "" {
-		return false
-	}
-	base := filepath.Base(lower)
-	switch {
-	case strings.HasSuffix(base, "_test.go"),
-		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py"),
-		strings.HasSuffix(base, "_test.py"),
-		strings.HasSuffix(base, ".test.py"),
-		strings.HasSuffix(base, "_test.gd"),
-		strings.HasSuffix(base, ".test.gd"),
-		strings.HasSuffix(base, ".test.ts"),
-		strings.HasSuffix(base, ".test.tsx"),
-		strings.HasSuffix(base, ".test.js"),
-		strings.HasSuffix(base, ".test.jsx"),
-		strings.HasSuffix(base, ".spec.ts"),
-		strings.HasSuffix(base, ".spec.tsx"),
-		strings.HasSuffix(base, ".spec.js"),
-		strings.HasSuffix(base, ".spec.jsx"):
-		return true
-	case strings.HasPrefix(lower, "test/"),
-		strings.HasPrefix(lower, "tests/"),
-		strings.HasPrefix(lower, "testdata/"),
-		strings.HasPrefix(lower, "fixtures/"),
-		strings.Contains(lower, "/test/"),
-		strings.Contains(lower, "/tests/"),
-		strings.Contains(lower, "/testdata/"),
-		strings.Contains(lower, "/fixtures/"):
-		return true
-	default:
-		return false
-	}
+	return planexecute.PlanExecutePathLooksLikeTest(path)
 }
 
 func planExecutePromptMentionsPathCreation(lowerPrompt string, lowerPath string) bool {
@@ -1777,20 +1681,7 @@ func planExecuteExactEditBlockKind(label string) string {
 }
 
 func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
-	var out []string
-	seen := make(map[string]struct{}, len(requiredEditPaths))
-	for _, path := range requiredEditPaths {
-		path = normalizePlanExecutePath(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		out = append(out, path)
-	}
-	return out
+	return planexecute.PlanExecuteUniqueRequiredPaths(requiredEditPaths)
 }
 
 func planExecuteMissingEditPaths(required []string, edits []workspace.PlanEdit) []string {
@@ -2512,95 +2403,20 @@ func phaseEvidencePassRejectionReason(bundle phaseEvidenceBundle) string {
 }
 
 func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArtifact, changedPaths []string, allowedRepairPaths []string, evidence reviewRepairEvidence) string {
-	var b strings.Builder
-	b.WriteString("# Plan-then-execute review-repair phase\n\n")
-	b.WriteString("You are the REVIEW-REPAIR planner for a plan-execute run that already applied executor edits. Review the actual diff and behavioral contract, then either submit a narrow corrective plan or explicitly pass.\n\n")
-	b.WriteString("## Required Review Contract\n\n")
-	b.WriteString("Use the Phase Evidence Bundle, Diff Evidence, submitted_plan_state, source_sanity, verification entries, and inherited context packet as the primary evidence ledger. Do not restart discovery as if this were a fresh review.\n\n")
-	if reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence); reason != "" {
-		fmt.Fprintf(&b, "Phase Evidence already has failed verification or source_sanity obligations (`%s`). Treat that failure as sufficient post-edit evidence: do not perform additional reads, searches, or context refreshes before choosing the terminal outcome. Submit a corrective plan if the failure can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` naming the exact failed check.\n\n", reason)
-	} else {
-		b.WriteString("If exact post-edit evidence is missing, make one targeted probe: refresh/check context state with `context_status` (`refresh=true`) or use `context_query`, `context_zoom`, `code_navigate`, or one bounded `read_file` range for one named checklist fact. Do not sweep large files with unbounded or multi-hundred-line raw reads; broad raw reads waste the review budget and duplicate the sidecar evidence.\n\n")
-	}
-	b.WriteString("Create a `Verification Checklist` before deciding. This checklist must verify behavior, not just literal code correctness. Cover:\n\n")
-	b.WriteString("- Required behavior from the original task/spec.\n")
-	b.WriteString("- Default/non-regression behavior that should remain equivalent.\n")
-	b.WriteString("- Data, lifecycle, state, persistence, concurrency/threading, and performance invariants when relevant.\n")
-	b.WriteString("- Edge cases and error/empty/default paths implied by the change.\n")
-	b.WriteString("- Scope safety: changed paths, out-of-scope writes, duplicate/bespoke logic, and stale-artifact risk.\n")
-	b.WriteString("- Test or command evidence available now, plus any planner-owned verification that still must run outside this lane.\n\n")
-	b.WriteString("Outcomes:\n\n")
-	b.WriteString("- If any checklist item fails and the repair is inside Allowed Repair Paths, call `submit_plan` once with corrective edits only. The `submit_plan.rationale` must start with `Verification Checklist:` and include the checklist plus the failing item each edit addresses.\n")
-	b.WriteString("- Corrective `submit_plan.edits[]` entries must be executable final content, not review prose: no placeholders, ellipses, `TODO` markers, `existing code` comments, omitted bodies, pseudo-code, or invented symbols. Use `insert_after_line`+`content` only for small inline insertions after an existing line. Use line-range `content` for non-trivial source/test replacements and large additions; it is the complete replacement for the inclusive range and may include unchanged anchor line(s) plus inserted content. Use `old_text` only for tiny exact snippets copied from diff/source evidence. Whole-file/new-file `new_text` is the complete file body. The top-level `edits` value is a JSON array, not a quoted JSON string.\n")
-	b.WriteString("- The submitted plan is pre-executor intent. If `submitted_plan_state` says those edits are already applied, do not re-submit them; submit only new corrective edits for defects found by the checklist.\n")
-	b.WriteString("- If the diff satisfies the checklist, do not call `submit_plan`; answer with `Decision: pass` and include the `Verification Checklist`. Empty corrective plans are invalid.\n")
-	b.WriteString("- If the issue is ambiguous or outside Allowed Repair Paths, stop with `<<QUESTION>>:` and name the blocker. Do not improvise out-of-scope writes.\n\n")
-	b.WriteString(plancontract.ReviewRepairTerminalTemplates())
-	b.WriteString("\n")
-	b.WriteString("If Phase Evidence lists `requested_test_edit_missing`, `Decision: pass` is invalid: the original task explicitly requested test edits, but this run changed no test path. Submit a corrective test edit only if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing test-edit scope.\n\n")
-	b.WriteString("If Phase Evidence lists `requested_implementation_edit_missing`, `Decision: pass` is invalid: the original task requested implementation behavior, but this run changed only test paths. Submit a corrective implementation edit if it is inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the missing source-edit scope.\n\n")
-	b.WriteString("If Phase Evidence lists `verification_failed:` or any verification/source_sanity check with status `failed`, `Decision: pass` is invalid. Submit a corrective plan if the failing checklist item can be repaired inside Allowed Repair Paths; otherwise stop with `<<QUESTION>>:` and name the exact failed check.\n\n")
-	b.WriteString("Planner-owned build/test/scenario acceptance commands are pending outside this lane unless Phase Evidence names the exact command as successful. Do not mark them checked/pass or say they ran.\n\n")
-	b.WriteString("Patch hygiene and source_sanity may be marked checked only when Phase Evidence shows those results. Unsupported or absent source_sanity is not a failure for non-source files.\n\n")
-	b.WriteString("Do not call `ask` or external question tools in this phase. If blocked, return `<<QUESTION>>:` with the blocker.\n\n")
-	b.WriteString("A repair that replaces missing behavioral evidence with a tautology (`assert true`, `CHECK(true)`, `_assert_true(true)`) or with comments admitting behavior is not inspected is not a valid repair. Submit a concrete state assertion or stop with `<<QUESTION>>:`.\n\n")
-	b.WriteString("## Allowed Repair Paths\n\n")
-	for _, path := range allowedRepairPaths {
-		fmt.Fprintf(&b, "- `%s`\n", path)
-	}
-	b.WriteString("\n## Changed Paths\n\n")
-	for _, path := range changedPaths {
-		fmt.Fprintf(&b, "- `%s`\n", path)
-	}
-	b.WriteString("\n## Submitted Plan\n\n")
-	if strings.TrimSpace(plan.Rationale) != "" {
-		b.WriteString("Rationale:\n")
-		b.WriteString(truncatePlanExecuteText(plan.Rationale, 4000))
-		b.WriteString("\n\n")
-	}
-	for i, edit := range plan.Edits {
-		fmt.Fprintf(&b, "%d. `%s`: %s\n", i+1, edit.Path, firstNonEmptyString(edit.Purpose, "planned edit"))
-	}
-	b.WriteString("\n## Phase Evidence Bundle\n\n")
-	b.WriteString("Use this bundle as the current evidence ledger for the review decision. Treat open obligations as items that must be resolved by the checklist, a narrow repair, or a blocker.\n\n")
-	b.WriteString("```text\n")
-	b.WriteString(renderPlanExecutePhaseEvidence(evidence.PhaseEvidence))
-	b.WriteString("```\n")
-	b.WriteString("\n## Diff Evidence\n\n")
-	if strings.TrimSpace(evidence.Diff) == "" {
-		b.WriteString("(No git diff available or changed paths are not tracked by git.)\n")
-	} else {
-		b.WriteString("```diff\n")
-		b.WriteString(truncatePlanExecuteText(evidence.Diff, 60000))
-		b.WriteString("\n```\n")
-	}
-	b.WriteString("\n## Patch Hygiene Evidence\n\n")
-	fmt.Fprintf(&b, "current-run whitespace check exit: %d\n\n", evidence.DiffCheckExit)
-	if strings.TrimSpace(evidence.DiffCheck) != "" {
-		b.WriteString("```text\n")
-		b.WriteString(truncatePlanExecuteText(evidence.DiffCheck, 12000))
-		b.WriteString("\n```\n")
-	}
-	b.WriteString("\n## Original Task / Spec\n\n")
-	b.WriteString("Reference only. The original spec is quoted so its file allowlist does not become this review pass's active write contract.\n\n")
-	b.WriteString(quotePlanExecuteReference(truncatePlanExecuteText(originalPrompt, 40000)))
-	return b.String()
+	return planexecute.PlanExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, toSharedReviewRepairEvidence(evidence))
 }
 
-func quotePlanExecuteReference(text string) string {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return "> (empty)\n"
+func toSharedReviewRepairEvidence(evidence reviewRepairEvidence) planexecute.ReviewRepairEvidence {
+	shared := planexecute.ReviewRepairEvidence{
+		Diff:          evidence.Diff,
+		DiffCheck:     evidence.DiffCheck,
+		DiffCheckExit: evidence.DiffCheckExit,
 	}
-	lines := strings.Split(text, "\n")
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			lines[i] = ">"
-			continue
-		}
-		lines[i] = "> " + line
+	data, err := json.Marshal(evidence.PhaseEvidence)
+	if err == nil {
+		_ = json.Unmarshal(data, &shared.PhaseEvidence)
 	}
-	return strings.Join(lines, "\n") + "\n"
+	return shared
 }
 
 func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
@@ -2966,11 +2782,7 @@ func runGitEvidenceExit(root string, args ...string) int {
 }
 
 func planChangedPaths(plan workspace.PlanArtifact) []string {
-	paths := make([]string, 0, len(plan.Edits))
-	for _, edit := range plan.Edits {
-		paths = append(paths, edit.Path)
-	}
-	return mergePlanExecutePaths(paths)
+	return planexecute.PlanChangedPaths(plan)
 }
 
 func mergePlanExecutePaths(groups ...[]string) []string {
@@ -3022,244 +2834,12 @@ func planExecuteBlockerSummary(answer string) string {
 	return "planner stopped with a blocker"
 }
 
-func reviewAnswerPassContractRejectionReason(originalPrompt string, changedPaths []string, answer string) string {
-	if reason := reviewAnswerPassContradictionReason(answer); reason != "" {
-		return reason
-	}
-	if reason := planExecuteRequestedEditCoverageRejectionReason(originalPrompt, changedPaths); reason != "" {
-		return reason
-	}
-	return ""
-}
-
-func planExecuteRequestedEditCoverageRejectionReason(prompt string, changedPaths []string) string {
-	return planexecute.EditSetObligationsFromPrompt(prompt).RejectionReason(changedPaths)
-}
-
-func planExecuteRequestedEditCoverageFailureMessage(reason string) string {
-	return planexecute.EditSetObligationFailureMessage(reason)
-}
-
-func planExecuteRequestedTestEditRejectionReason(prompt string, changedPaths []string) string {
-	obligations := planexecute.EditSetObligationsFromPrompt(prompt)
-	if obligations.Has(planexecute.EditSetObligationKindTestEdit) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		return planexecute.EditSetFailureMissingRequestedTestEdit
-	}
-	return ""
-}
-
 func reviewAnswerPassContradictionReason(answer string) string {
-	for _, rawLine := range strings.Split(answer, "\n") {
-		line := normalizeReviewAnswerLine(rawLine)
-		if line == "" || strings.Contains(line, "decision: pass") {
-			continue
-		}
-		if reviewLineHasPassNegation(line) {
-			continue
-		}
-		switch {
-		case strings.Contains(line, "❌"), strings.Contains(line, "[ ]"):
-			if reviewLineIsPlannerOwnedPending(line) {
-				continue
-			}
-			return "failed_checklist_item"
-		case reviewLineContainsAny(line,
-			"appears to be missing",
-			"is missing",
-			"are missing",
-			"missing from",
-			"missing the",
-			"not present",
-			"not implemented",
-			"does not implement",
-			"doesn't implement",
-			"does not satisfy",
-			"doesn't satisfy",
-			"fails the checklist",
-			"checklist item fails",
-			"required behavior fails",
-			"not visible",
-			"not shown",
-			"not available in the diff",
-			"not visible in the diff",
-			"cannot verify",
-			"can't verify",
-			"could not verify",
-			"unable to verify",
-			"not enough evidence",
-			"insufficient evidence",
-			"no evidence",
-		):
-			return "unresolved_failure_claim"
-		case reviewLineContainsProjectedVerificationClaim(line):
-			return "unsupported_verification_projection"
-		case reviewLineContainsMissingCommandEvidenceClaim(line):
-			if reviewLineIsPlannerOwnedPending(line) {
-				continue
-			}
-			return "missing_command_evidence_claim"
-		}
-	}
-	return ""
-}
-
-func reviewLineContainsMissingCommandEvidenceClaim(line string) bool {
-	return reviewLineContainsAny(line,
-		"didn't run ",
-		"did not run ",
-		"haven't run ",
-		"hasn't run ",
-		"wasn't run",
-		"weren't run",
-		"was not run",
-		"were not run",
-		"not run ",
-		"no test command was run",
-		"no verification command was run",
-	)
-}
-
-func planExecutePromptRequiresTestEdit(prompt string) bool {
-	lower := strings.ToLower(prompt)
-	phrases := []string{
-		"add a regression test",
-		"add regression test",
-		"add regression tests",
-		"add a test",
-		"add test",
-		"add tests",
-		"add a unit test",
-		"add unit test",
-		"add unit tests",
-		"write a regression test",
-		"write regression test",
-		"write regression tests",
-		"write a test",
-		"write test",
-		"write tests",
-		"write a unit test",
-		"write unit test",
-		"write unit tests",
-		"regression tests proving",
-		"regression test proving",
-		"tests proving",
-		"test proving",
-		"test coverage",
-		"test coverage for",
-	}
-	for _, phrase := range phrases {
-		if strings.Contains(lower, phrase) {
-			return !planExecutePromptForbidsTestEditAround(lower, phrase)
-		}
-	}
-	return false
-}
-
-func planExecutePromptForbidsTestEditAround(lower string, phrase string) bool {
-	idx := strings.Index(lower, phrase)
-	if idx < 0 {
-		return false
-	}
-	start := idx - 32
-	if start < 0 {
-		start = 0
-	}
-	end := idx + len(phrase) + 32
-	if end > len(lower) {
-		end = len(lower)
-	}
-	window := lower[start:end]
-	return strings.Contains(window, "do not "+phrase) ||
-		strings.Contains(window, "don't "+phrase) ||
-		strings.Contains(window, "dont "+phrase) ||
-		strings.Contains(window, "no "+phrase) ||
-		strings.Contains(window, "without "+phrase)
-}
-
-func planExecuteChangedPathsIncludeTest(paths []string) bool {
-	for _, path := range paths {
-		if planExecutePathLooksLikeTest(path) {
-			return true
-		}
-	}
-	return false
-}
-
-func reviewLineIsPlannerOwnedPending(line string) bool {
-	return reviewLineContainsAny(line,
-		"planner-owned",
-		"planner owned",
-		"pending outside this lane",
-		"pending outside lane",
-		"must run outside this lane",
-		"not run by this lane",
-	)
-}
-
-func normalizeReviewAnswerLine(line string) string {
-	line = strings.ToLower(strings.TrimSpace(line))
-	line = strings.TrimLeft(line, "-*0123456789. )\t")
-	return strings.Join(strings.Fields(line), " ")
-}
-
-func reviewLineHasPassNegation(line string) bool {
-	return reviewLineContainsAny(line,
-		"no missing",
-		"not missing",
-		"nothing missing",
-		"without missing",
-		"no issues",
-		"no issue",
-		"no failures",
-		"no failure",
-		"not failed",
-		"not a failure",
-		"no failed",
-		"no unresolved",
-		"no blocker",
-		"no blockers",
-	)
-}
-
-func reviewLineContainsProjectedVerificationClaim(line string) bool {
-	if !reviewLineContainsAny(line, "should pass", "should still pass", "should pass with", "would pass") {
-		return false
-	}
-	return reviewLineContainsAny(line,
-		"test",
-		"tests",
-		"scenario",
-		"scenarios",
-		"command",
-		"verification",
-		"acceptance",
-		"git diff",
-		"diff --check",
-		"go test",
-		"pytest",
-		"run_scenarios",
-	)
-}
-
-func reviewLineContainsAny(line string, needles ...string) bool {
-	for _, needle := range needles {
-		if strings.Contains(line, needle) {
-			return true
-		}
-	}
-	return false
+	return planexecute.ReviewAnswerPassContradictionReason(answer)
 }
 
 func truncatePlanExecuteText(text string, maxBytes int) string {
-	if maxBytes <= 0 || len(text) <= maxBytes {
-		return text
-	}
-	for i := range text {
-		if i >= maxBytes {
-			return text[:i] + fmt.Sprintf("\n\n[truncated %d bytes]\n", len(text)-i)
-		}
-	}
-	return text
+	return planexecute.TruncatePlanExecuteText(text, maxBytes)
 }
 
 // runExecutorPhase iterates the plan and dispatches each edit
@@ -3831,99 +3411,11 @@ func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact
 func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *planEditPreflightMismatch {
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
-		if path == "" || !workspace.SourceSanityCoversPath(path) {
-			continue
-		}
-		added := planEditAddedText(edit)
-		if strings.TrimSpace(added) == "" {
-			continue
-		}
-		if reason := unsupportedProofClaimReason(added); reason != "" {
+		if reason := workspace.PlanEditUnsupportedProofClaimReason(edit); reason != "" {
 			return &planEditPreflightMismatch{Index: i, Path: path, Reason: reason}
 		}
 	}
 	return nil
-}
-
-func planEditAddedText(edit workspace.PlanEdit) string {
-	if strings.TrimSpace(edit.Content) != "" {
-		return edit.Content
-	}
-	if strings.TrimSpace(edit.NewText) != "" {
-		return edit.NewText
-	}
-	return ""
-}
-
-func unsupportedProofClaimReason(text string) string {
-	for lineNo, raw := range strings.Split(text, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		if noOpAssertionLine(line) {
-			return fmt.Sprintf("unsupported proof claim: no-op assertion on line %d; submit a concrete state assertion or report a blocker", lineNo+1)
-		}
-		if phrase := selfDisqualifyingProofPhrase(line); phrase != "" {
-			return fmt.Sprintf("unsupported proof claim: self-disqualifying verification text %q on line %d; submit concrete evidence or report a blocker", phrase, lineNo+1)
-		}
-	}
-	return ""
-}
-
-func noOpAssertionLine(line string) bool {
-	compact := strings.Join(strings.Fields(line), "")
-	normalized := strings.ToLower(compact)
-	return strings.Contains(compact, "CHECK(true") ||
-		strings.Contains(compact, "REQUIRE(true") ||
-		strings.Contains(compact, "ASSERT_TRUE(true") ||
-		strings.Contains(compact, "EXPECT_TRUE(true") ||
-		strings.Contains(normalized, "_assert_true(true") ||
-		strings.Contains(normalized, "assert_true(true") ||
-		strings.Contains(normalized, "asserttrue(true") ||
-		strings.Contains(normalized, "assert(true") ||
-		strings.Contains(normalized, "assert.true(true") ||
-		strings.Contains(normalized, "assert.true(t,true") ||
-		strings.Contains(normalized, "require.true(t,true")
-}
-
-func selfDisqualifyingProofPhrase(line string) string {
-	lower := strings.ToLower(line)
-	phrases := []string{
-		"can't easily test",
-		"cannot easily test",
-		"can't easily access",
-		"cannot easily access",
-		"can't easily inspect",
-		"cannot easily inspect",
-		"not easily test",
-		"simplified check",
-		"for now, we just verify",
-		"for now we just verify",
-		"verify that it exists",
-		"exists and can be called",
-		"exists and can be accessed",
-	}
-	for _, phrase := range phrases {
-		if strings.Contains(lower, phrase) && verificationClaimContext(line, phrase) {
-			return phrase
-		}
-	}
-	return ""
-}
-
-func verificationClaimContext(line string, phrase string) bool {
-	lower := strings.ToLower(strings.TrimSpace(line))
-	if strings.Contains(phrase, "test") || strings.Contains(phrase, "verify") || strings.Contains(phrase, "check") {
-		return true
-	}
-	if strings.HasPrefix(lower, "#") || strings.HasPrefix(lower, "//") || strings.HasPrefix(lower, "/*") || strings.HasPrefix(lower, "*") {
-		return true
-	}
-	return strings.Contains(lower, "assert") ||
-		strings.Contains(lower, "check") ||
-		strings.Contains(lower, "verify") ||
-		strings.Contains(lower, "test")
 }
 
 func normalizePlanExecutePath(path string) string {
@@ -4137,13 +3629,6 @@ func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType strin
 	fmt.Fprintln(stdout, string(body))
 }
 
-// firstNonEmptyString — small helper duplicated here to avoid
-// pulling in the agent package's variant.
 func firstNonEmptyString(values ...string) string {
-	for _, v := range values {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
+	return planexecute.FirstNonEmptyString(values...)
 }

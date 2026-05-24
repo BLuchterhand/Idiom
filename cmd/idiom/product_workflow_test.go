@@ -5484,6 +5484,88 @@ func TestProductTDDCoverageGateIgnoresOtherTaskHistoricalTDDObligations(t *testi
 	}
 }
 
+func TestProductTDDCoverageGatePreflightsADRSupersessionLinks(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR 1","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]},{"adr_id":"ADR-002","title":"Test ADR 2","status":"accepted","path":"ADR-002-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]}]}`)
+	writeTestFile(t, dir, "adrs/ADR-001-test.md", strings.Replace(validTestADRMarkdown(), "coverage_tier: unit", "coverage_tier: unit\nsupersedes:\n  - ADR-002", 1))
+	writeTestFile(t, dir, "adrs/ADR-002-test.md", strings.Replace(validTestADRMarkdown(), "adr_id: ADR-001", "adr_id: ADR-002", 1))
+	writeTestFile(t, dir, "evidence/traceability_matrix.json", `{
+		"schema_version":"idiom.traceability_matrix.v1.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"created_at":"2026-05-17T16:00:00Z",
+		"matrix":[
+			{"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-001","tdd_obligation":"TDD-001","brief":"briefs/test.md","report":"reports/test.json"},
+			{"evidence_card":"EV-001","prd_requirement":"REQ-TEST-001","adr":"ADR-002","tdd_obligation":"TDD-001","brief":"briefs/test.md","report":"reports/test.json"}
+		]
+	}`)
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	if out.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", out.Status)
+	}
+	found := false
+	for _, blocker := range out.Evaluation.Blockers {
+		if blocker.Criterion == "authority_preflight" && blocker.Kind == "adr_supersession_non_reciprocal" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected authority_preflight supersession blocker, got %#v", out.Evaluation.Blockers)
+	}
+}
+
+func TestProductTDDCoverageGatePreflightsAuthorityWhenInputsFail(t *testing.T) {
+	dir := writeValidTestEffort(t)
+	writeTestFile(t, dir, "prd.md", strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1))
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, nil)
+	if code != 1 {
+		t.Fatalf("expected code 1, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	var out struct {
+		Status     string                                 `json:"status"`
+		Evaluation productworkflow.CoverageGateEvaluation `json:"evaluation"`
+	}
+	if err := json.Unmarshal(stdout.Bytes(), &out); err != nil {
+		t.Fatalf("output should be valid JSON: %v\n%s", err, stdout.String())
+	}
+	found := false
+	for _, blocker := range out.Evaluation.Blockers {
+		if blocker.Criterion == "authority_preflight" && blocker.Kind == "parse_error" && blocker.File == "prd.md" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected PRD parse error to be carried as authority_preflight blocker, got %#v", out.Evaluation.Blockers)
+	}
+}
+
 func TestProductBriefRenderFailsClosedOnMissingInputs(t *testing.T) {
 	dir := t.TempDir()
 	var stdout, stderr bytes.Buffer

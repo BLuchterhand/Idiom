@@ -1,0 +1,11 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"shell\",\"command\":\"go test ./...\",\"why_not_answering\":\"need requested verification result before reporting\"}"
+    },
+    {
+      "content": "I cannot run shell verification in this current read-only TUI lane because the shell tool is not exposed. No files were edited."
+    }
+  ]
+}

@@ -478,6 +478,7 @@ func TestToolActionClassNormalizesRepeatedDeadEndKeys(t *testing.T) {
 		{req: workspace.ToolRequest{Tool: "shell", Command: "rg route internal/app"}, want: "shell_narrow:rg route internal/app"},
 		{req: workspace.ToolRequest{Tool: "shell", Command: "git diff --check -- README.md"}, want: "shell_verification:git diff --check -- readme.md"},
 		{req: workspace.ToolRequest{Tool: "read_file", ID: "f12"}, want: "read_file:f12"},
+		{req: workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go", StartLine: 10, EndLine: 40}, want: "read_file:internal/app/app.go:10-40"},
 		{req: workspace.ToolRequest{Tool: "discovery_query", Purpose: "impact_analysis", Path: "internal/workspace/manager.go", Pattern: "Execute", Language: "go"}, want: "discovery_query:impact_analysis:internal/workspace/manager.go:execute:go"},
 		{req: workspace.ToolRequest{Tool: "structural_search", Path: "internal", Pattern: "if $COND { $BODY }", Language: "go"}, want: "structural_search:internal:if $cond { $body }:go"},
 		{req: workspace.ToolRequest{Tool: "dependency_graph", Path: ".", Language: "go"}, want: "dependency_graph:.:go"},
@@ -810,12 +811,11 @@ func TestTextualToolProtocolEntriesPrioritizeWriteAliasExamples(t *testing.T) {
 				continue
 			}
 			found = true
-			var request map[string]any
-			if err := json.Unmarshal([]byte(entry.Request), &request); err != nil {
-				t.Fatalf("%s request is not valid JSON: %v\n%s", want, err, entry.Request)
+			if strings.Contains(entry.Request, "relative/file") || strings.Contains(entry.Request, "replacement text") {
+				t.Fatalf("%s textual protocol request should not expose placeholder JSON: %s", want, entry.Request)
 			}
-			if got, _ := request["description"].(string); strings.TrimSpace(got) == "" {
-				t.Fatalf("%s textual protocol example must include description: %s", want, entry.Request)
+			if !strings.Contains(strings.ToLower(entry.Purpose), "description") {
+				t.Fatalf("%s textual protocol guidance must include description: %s", want, entry.Purpose)
 			}
 		}
 		if !found {
@@ -4963,7 +4963,13 @@ func TestPlanExecutePlannerRejectsRepeatedReadBeyondKnownEOF(t *testing.T) {
 		`{"tool":"submit_plan","rationale":"Use the already gathered target.txt evidence instead of probing beyond EOF.","edits":[{"path":"target.txt","old_text":"one\n","new_text":"uno\n","purpose":"update first line"}]}`,
 	}
 	requests := 0
+	var requestBodies []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		requestBodies = append(requestBodies, string(body))
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
 		}
@@ -4976,7 +4982,6 @@ func TestPlanExecutePlannerRejectsRepeatedReadBeyondKnownEOF(t *testing.T) {
 	defer server.Close()
 
 	var clampedReadSeen bool
-	var eofRejectionSeen bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -5005,9 +5010,6 @@ func TestPlanExecutePlannerRejectsRepeatedReadBeyondKnownEOF(t *testing.T) {
 			if strings.Contains(event.Result.Summary, "was clamped to file bounds") && strings.TrimSpace(event.Result.Error) == "" {
 				clampedReadSeen = true
 			}
-			if strings.Contains(event.Result.Error, "already established that target.txt has 3 lines total") {
-				eofRejectionSeen = true
-			}
 		},
 	)
 	if err != nil {
@@ -5016,14 +5018,19 @@ func TestPlanExecutePlannerRejectsRepeatedReadBeyondKnownEOF(t *testing.T) {
 	if !clampedReadSeen {
 		t.Fatalf("expected first out-of-range read to clamp once, answer=%q", answer)
 	}
-	if !eofRejectionSeen {
-		t.Fatalf("expected second out-of-range read to be rejected before workspace dispatch, answer=%q", answer)
-	}
 	if !strings.Contains(answer, "Plan submitted") {
 		t.Fatalf("expected planner to recover by submitting the plan, got %q", answer)
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected read, rejected retry, then submit_plan, got %d request(s)", requests)
+	}
+	if len(requestBodies) < 3 ||
+		(!strings.Contains(requestBodies[2], "# Terminal Plan-Execute Textual Tool Surface") &&
+			!strings.Contains(requestBodies[2], "# Terminal Plan-Execute Native Tool Surface")) {
+		t.Fatalf("out-of-range read rejection should switch the next planner request to terminal submit-plan surface; request=%s", requestBodies[min(len(requestBodies)-1, 2)])
+	}
+	if strings.Contains(requestBodies[2], `"name":"read_file"`) || !strings.Contains(requestBodies[2], `"name":"submit_plan"`) {
+		t.Fatalf("out-of-range read terminal request should expose only submit_plan as a callable tool; request=%s", requestBodies[2])
 	}
 }
 
@@ -5614,7 +5621,7 @@ func TestImplementationRequiredPathRecoveryPromptShowsTextualEditShapeWhenAnchor
 		}},
 		false,
 	)
-	for _, want := range []string{`"tool":"edit_file"`, `"path":"a.go"`, "do not copy placeholders"} {
+	for _, want := range []string{"`edit_file`", "real required path", "Do not copy placeholders"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("anchor-ready textual recovery prompt missing %q:\n%s", want, prompt)
 		}
@@ -5798,6 +5805,67 @@ func TestVisibleSubmitPlanProseSalvageAllowedAtTerminalReadiness(t *testing.T) {
 	}
 	if hiddenReq, _, hidden := runner.salvageToolRequestFromReasoning(llama.ChatMessage{ReasoningContent: reply}, results); hidden {
 		t.Fatalf("hidden reasoning must not salvage submit_plan, got %#v", hiddenReq)
+	}
+}
+
+func TestVisibleSubmitPlanMissingToolSalvageAllowedForOpenCandidateSource(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-20 (total lines: 200)",
+		Output:  "1:package productworkflow\n2:\n3:func EvaluateCoverageGate() {}\n",
+	}}
+	reply := `{"rationale":"Reuse canonical product authority validation in the coverage gate.","edits":[{"path":"internal/productworkflow/coverage_gate.go","old_text":"func EvaluateCoverageGate() {}","new_text":"func EvaluateCoverageGate() { validateProductAuthority() }","purpose":"call the canonical authority validation before returning coverage results"}]}`
+
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results)
+	if !ok {
+		t.Fatal("expected missing-tool submit_plan JSON to be salvaged after open candidate source evidence")
+	}
+	if req.Tool != "submit_plan" || len(req.Edits) != 1 || req.Edits[0].Path != "internal/productworkflow/coverage_gate.go" {
+		t.Fatalf("unexpected salvaged submit_plan: req=%#v raw=%s", req, raw)
+	}
+	if !strings.Contains(raw, `"tool":"submit_plan"`) {
+		t.Fatalf("salvaged raw request must include inferred submit_plan tool, got %s", raw)
+	}
+}
+
+func TestVisibleSubmitPlanProseSalvageRejectsSchemaExamplePlaceholders(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-20 (total lines: 200)",
+		Output:  "1:package productworkflow\n2:\n3:func EvaluateCoverageGate() {}\n",
+	}}
+	reply := `{"tool":"submit_plan","purpose":"submit a structured executable edit plan (plan-then-execute mode only).","request":"{\"tool\":\"submit_plan\",\"rationale\":\"one paragraph on the overall plan\",\"edits\":[{\"path\":\"relative/file\",\"old_text\":\"exact current substring\",\"new_text\":\"complete replacement text\",\"purpose\":\"why this edit\"}]}"}`
+
+	if req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results); ok {
+		t.Fatalf("schema/example submit_plan must not be salvaged, req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestVisibleSubmitPlanMissingToolSalvageRequiresSourceEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	reply := `{"rationale":"Update target.","edits":[{"path":"target.go","old_text":"old","new_text":"new","purpose":"update target"}]}`
+	if req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, nil); ok {
+		t.Fatalf("missing-tool submit_plan salvage must require source evidence, req=%#v raw=%s", req, raw)
 	}
 }
 
@@ -7450,6 +7518,58 @@ func TestRunnerRejectsUnexecutedToolJSONAsFinalAnswer(t *testing.T) {
 	}
 }
 
+func TestRunnerExecutesBareJSONMissingToolAliasBeforeCompletionGate(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		reply := "Done. I read the target file."
+		if requests == 1 {
+			reply = `{"path":"internal/example/target.go","start_line":1,"end_line":1}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	root := t.TempDir()
+	target := filepath.Join(root, "internal", "example", "target.go")
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		t.Fatalf("mkdir target: %v", err)
+	}
+	if err := os.WriteFile(target, []byte("package example\n"), 0o644); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "direct_answer",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "inspect validate.go"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected one tool execution followed by answer, got %d request(s)", requests)
+	}
+	if !strings.Contains(answer, "read the target file") {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+}
+
 func TestRunnerSalvagesVisibleCodeNavigateJSONMissingTool(t *testing.T) {
 	runner := &Runner{}
 	req, raw, ok := runner.salvageVisibleToolRequestFromProse(
@@ -7464,6 +7584,174 @@ func TestRunnerSalvagesVisibleCodeNavigateJSONMissingTool(t *testing.T) {
 	}
 	if !strings.Contains(raw, `"tool":"code_navigate"`) {
 		t.Fatalf("salvaged raw request must include inferred tool, got %s", raw)
+	}
+}
+
+func TestRunnerSalvagesExplicitVisibleToolJSONAfterCompletionGateRecovery(t *testing.T) {
+	runner := &Runner{}
+	reply := strings.Join([]string{
+		"I'll start by exploring the relevant source and tests to understand the current implementation and then plan the changes.",
+		"",
+		"tool: code_navigate",
+		"capability: read_symbol",
+		"path: cmd/idiom/product_evidence.go",
+		"symbol: p912EvaluateCoverageGate",
+		"",
+		`{"tool":"code_navigate","capability":"read_symbol","path":"cmd/idiom/product_evidence.go","symbol":"p912EvaluateCoverageGate"}`,
+	}, "\n")
+	results := []workspace.ToolResult{{
+		Tool:    "completion_gate",
+		Summary: "Plan-execute completion gate rejected final answer",
+		Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+	}}
+
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results)
+	if !ok {
+		t.Fatal("expected explicit JSON tool request to be salvaged after completion-gate recovery")
+	}
+	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/product_evidence.go" || req.Pattern != "p912EvaluateCoverageGate" {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"code_navigate"`) {
+		t.Fatalf("expected canonical raw tool JSON, got %s", raw)
+	}
+}
+
+func TestRunnerSalvagesVisibleLineToolRequest(t *testing.T) {
+	runner := &Runner{}
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(strings.Join([]string{
+		"tool: read_file",
+		"path: internal/productworkflow/coverage_gate.go",
+		"start_line: 1",
+		"end_line: 130",
+	}, "\n"), nil)
+	if !ok {
+		t.Fatal("expected visible key-value tool request to be salvaged")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/productworkflow/coverage_gate.go" || req.StartLine != 1 || req.EndLine != 130 {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"read_file"`) || !strings.Contains(raw, `"start_line":1`) {
+		t.Fatalf("salvaged raw request must be canonical JSON, got %s", raw)
+	}
+}
+
+func TestPlanExecuteSalvagesVisibleMissingTargetReadForTypedRecovery(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/productworkflow/coverage_gate.go lines 1-120",
+		Output:  "1:package productworkflow\n",
+	}}
+	reply := "Let me start by understanding the current state.\n\n" + `{"tool":"read_file"}`
+
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results)
+	if !ok {
+		t.Fatal("expected plan-execute targetless read_file to be salvaged for typed recovery")
+	}
+	if req.Tool != "read_file" || strings.TrimSpace(req.Path) != "" {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"read_file"`) {
+		t.Fatalf("salvaged raw request must preserve read_file request, got %s", raw)
+	}
+	reason, _, lowValue := planThenExecuteCandidateLowValueAction(req, runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if !lowValue || reason != "candidate_read_missing_target" {
+		t.Fatalf("expected typed missing-target recovery, got lowValue=%v reason=%q", lowValue, reason)
+	}
+}
+
+func TestRunnerDoesNotSalvageNarrativeLineText(t *testing.T) {
+	runner := &Runner{}
+	_, _, ok := runner.salvageVisibleToolRequestFromProse(strings.Join([]string{
+		"status: blocked",
+		"reason: more information is needed",
+	}, "\n"), nil)
+	if ok {
+		t.Fatal("ordinary key-value answer text without a tool must not be salvaged")
+	}
+}
+
+func TestPlanThenExecuteCandidateRangeLessReadRedirectBoundsUnreadCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:       PlanThenExecutePlannerTaskFamily,
+			AllowedEditPaths: []string{"internal/productworkflow/coverage_gate.go", "internal/productworkflow/coverage_gate_test.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	req, raw, ok := runner.planThenExecuteCandidateRangeLessReadRedirect(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/productworkflow/coverage_gate_test.go",
+	}, results)
+	if !ok {
+		t.Fatal("expected unread candidate range-less read to be rewritten to a bounded source window")
+	}
+	if req.StartLine != 1 || req.EndLine != 180 || req.Path != "internal/productworkflow/coverage_gate_test.go" {
+		t.Fatalf("unexpected redirected request: %#v", req)
+	}
+	if !strings.Contains(raw, `"start_line":1`) || !strings.Contains(raw, `"end_line":180`) {
+		t.Fatalf("redirect raw should be canonical bounded JSON, got %s", raw)
+	}
+}
+
+func TestPlanThenExecuteCandidateRangeLessReadRedirectUsesContextPackScope(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:   "context_pack",
+			Output: `{"candidate_files":[{"path":"internal/productworkflow/scope.go"}],"tests":[{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+
+	req, _, ok := runner.planThenExecuteCandidateRangeLessReadRedirect(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/productworkflow/scope.go",
+	}, results)
+	if !ok {
+		t.Fatal("expected context-pack candidate path to be eligible for bounded range-less read rewrite")
+	}
+	if req.StartLine != 1 || req.EndLine != 180 {
+		t.Fatalf("unexpected redirect range: %#v", req)
+	}
+}
+
+func TestPlanThenExecuteCandidateRangeLessReadRedirectSkipsAlreadyReadCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:       PlanThenExecutePlannerTaskFamily,
+			AllowedEditPaths: []string{"internal/productworkflow/coverage_gate.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	if req, raw, ok := runner.planThenExecuteCandidateRangeLessReadRedirect(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/productworkflow/coverage_gate.go",
+	}, results); ok {
+		t.Fatalf("already read candidate should not be rewritten, req=%#v raw=%s", req, raw)
 	}
 }
 
@@ -7545,7 +7833,7 @@ func TestTargetSourceTextualProtocolHidesVerificationTools(t *testing.T) {
 
 	prompt := runner.textualToolProtocolPrompt(brief)
 
-	for _, want := range []string{`"tool":"read_file"`, `"tool":"edit_file"`} {
+	for _, want := range []string{"- read_file", "- edit_file"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("target-source textual protocol missing %s:\n%s", want, prompt)
 		}
@@ -13093,7 +13381,7 @@ func TestRejectionRetryBlocked(t *testing.T) {
 	}
 }
 
-func TestMutationRepeatedRejectedReadRecoversToWriteInsteadOfForcedAnswer(t *testing.T) {
+func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string { return \"Save changes\" }\n"); err != nil {
 		t.Fatalf("write seed: %v", err)
@@ -13120,6 +13408,7 @@ func TestMutationRepeatedRejectedReadRecoversToWriteInsteadOfForcedAnswer(t *tes
 	defer server.Close()
 
 	events := []RunEvent(nil)
+	results := []workspace.ToolResult(nil)
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -13144,7 +13433,9 @@ func TestMutationRepeatedRejectedReadRecoversToWriteInsteadOfForcedAnswer(t *tes
 		llama.ChatOptions{MaxTokens: 8192},
 		nil,
 		nil,
-		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
 	)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -13152,8 +13443,11 @@ func TestMutationRepeatedRejectedReadRecoversToWriteInsteadOfForcedAnswer(t *tes
 	if requests != len(replies) {
 		t.Fatalf("expected recovery to close immediately after source-aware verification, got %d requests", requests)
 	}
-	if got := countEventsByRole(events, "mutation_rejected_retry_write_recovery"); got != 1 {
-		t.Fatalf("expected one mutation write recovery event, got %d; events=%v", got, eventRolesFor(events))
+	if got := countEventsByRole(events, "mutation_no_write_loop_recovery"); got != 1 {
+		t.Fatalf("expected one mutation no-write loop recovery event, got %d; events=%v", got, eventRolesFor(events))
+	}
+	if got := countEventsByRole(events, "mutation_rejected_retry_write_recovery"); got != 0 {
+		t.Fatalf("repeated full reads should not use rejected-retry recovery, got %d events; events=%v", got, eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
 		t.Fatalf("mutation no-write retry must not force-answer through rejection_retry_blocked, got %d; events=%v", got, eventRolesFor(events))
@@ -13163,7 +13457,7 @@ func TestMutationRepeatedRejectedReadRecoversToWriteInsteadOfForcedAnswer(t *tes
 		t.Fatalf("read edited file: %v", err)
 	}
 	if !strings.Contains(string(data), `return "Save"`) || strings.Contains(string(data), `Save changes`) {
-		t.Fatalf("expected edit to be applied, got:\n%s", string(data))
+		t.Fatalf("expected edit to be applied, got:\n%s\nresults=%#v", string(data), results)
 	}
 	if !strings.Contains(answer, "internal/labels/labels.go") {
 		t.Fatalf("expected final answer to report changed path, got:\n%s", answer)

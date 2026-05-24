@@ -28,8 +28,8 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"Line-range `content` is the complete replacement for the inclusive range",
 		"Canonical `submit_plan` shape",
 		`"tool":"submit_plan"`,
-		`"insert_after_line":20`,
-		`"content":"complete inserted lines\n"`,
+		"`insert_after_line` with inline content",
+		"real required or selected path",
 		"never placeholders",
 		"Required `submit_plan` coverage for this run: 2 required path(s)",
 		"After every existing required path has satisfied its source-body obligation, your first successful `submit_plan.edits` array must include at least one real edit for every path above",
@@ -42,6 +42,7 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 	for _, stale := range []string{
 		"Prefer numeric line-range edits for existing source/test changes",
 		"line-range shape) for non-trivial existing-path edits",
+		"path/from/required_edit_paths",
 	} {
 		if strings.Contains(got, stale) {
 			t.Fatalf("planner addendum retained stale wording %q:\n%s", stale, got)
@@ -93,5 +94,17 @@ func TestPlanExecuteReviewRepairPromptCarriesSubmitPlanQualityBar(t *testing.T) 
 		if strings.Contains(got, stale) {
 			t.Fatalf("review-repair prompt retained stale wording %q:\n%s", stale, got)
 		}
+	}
+}
+
+func TestReviewAnswerPassContradictionRejectsPlaceholderChecklist(t *testing.T) {
+	answer := strings.Join([]string{
+		"Decision: pass",
+		"",
+		"Verification Checklist:",
+		"- Required behavior: cite a checked fact from Phase/Diff Evidence.",
+	}, "\n")
+	if reason := ReviewAnswerPassContradictionReason(answer); reason != "placeholder_checklist_item" {
+		t.Fatalf("placeholder checklist should be contradictory, got %q", reason)
 	}
 }

@@ -48,6 +48,12 @@ failure patterns that have cost time in real Idiom/Colony runs.
   model/role, thinking settings, token budget, prompt lead-in, visible tool
   surface, lane contract, and completion gate before adding reminders. A route
   or prompt mismatch can make a strong model look unintelligent.
+- **Unlogged runtime-state drift**: temperature, sampling, thinking policy,
+  token budget, parser contract, response format, tool transport, and exposed
+  tools are part of the lane contract. When behavior changes at a route, lane,
+  phase, recovery, or fallback transition, verify the effective before/after
+  runtime state from telemetry or phase-contract events before blaming the
+  model or prompt.
 
 ## Plan-Execute And Implementation Traps
 
@@ -148,6 +154,13 @@ failure patterns that have cost time in real Idiom/Colony runs.
   conversation JSONL, telemetry JSONL, and `harness_audit`. If the cause cannot
   be seen without hand-reconstructing prose, improve structured logs/audit as
   part of the fix.
+- **Skipping model-state checks**: for hallucinated paths, malformed tool JSON,
+  missing visible tool calls, repeated `submit_plan` rejection loops, or
+  suddenly weak local-model behavior, explicitly check the logged model alias,
+  backend, tool transport, parser contract, `temperature`, `top_p`, `top_k`,
+  `min_p`, penalties, thinking policy, max tokens, response format, tool
+  choice, and visible tool surface at the failure turn and the preceding state
+  transition.
 - **Raw TUI PTY polling**: live TUI testing should exercise the real alternate
   screen, but repeated PTY reads can dump spinner redraw frames into the agent
   context. Run the TUI in a detached PTY such as `tmux`, send input through the

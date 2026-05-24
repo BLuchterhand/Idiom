@@ -1107,6 +1107,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.RequiredNext = uniqueNonEmpty(brief.RequiredNext)
 	brief.InvalidActions = uniqueNonEmpty(brief.InvalidActions)
 	brief.Readiness = NormalizeReadinessState(brief.Readiness)
+	brief.ToolManifest = workspace.SanitizeToolManifestRequests(brief.ToolManifest)
 	if strings.EqualFold(brief.PermissionProfile, "conversation_only") {
 		brief.AllowedTools = nil
 		brief.RequiredTools = nil
@@ -1422,7 +1423,7 @@ func uniqueNonEmpty(values []string) []string {
 }
 
 func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
-	return workspace.BuildToolManifest(allowedTools)
+	return workspace.SanitizeToolManifestRequests(workspace.BuildToolManifest(allowedTools))
 }
 
 func firstNonEmpty(values ...string) string {

@@ -93,12 +93,13 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		return fmt.Errorf("encode turns for %s: %w", task.ID, err)
 	}
 	command := renderRunnerCommand(r.commandTemplate, map[string]string{
-		"prompt":     prompt,
-		"turns_json": string(turnsJSON),
-		"turn_count": fmt.Sprintf("%d", len(turns)),
-		"task_id":    strings.TrimSpace(task.ID),
-		"log_path":   logPath,
-		"fixture":    fixture,
+		"prompt":      prompt,
+		"turns_json":  string(turnsJSON),
+		"turn_count":  fmt.Sprintf("%d", len(turns)),
+		"task_id":     strings.TrimSpace(task.ID),
+		"runner_mode": strings.TrimSpace(task.RunnerMode),
+		"log_path":    logPath,
+		"fixture":     fixture,
 	})
 	taskTimeout := liveTaskTimeoutSeconds(task)
 	start := time.Now()
@@ -107,14 +108,18 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 	defer cancel()
 	cmd := exec.CommandContext(cmdCtx, "/bin/sh", "-lc", command)
 	cmd.Dir = firstNonEmpty(fixture, filepath.Dir(r.suitePath))
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(os.Environ(), taskEnvEntries(task.Env)...)
+	cmd.Env = append(cmd.Env,
 		"IDIOM_SWE_PROMPT="+prompt,
 		"IDIOM_SWE_TURNS_JSON="+string(turnsJSON),
 		"IDIOM_SWE_TURN_COUNT="+fmt.Sprintf("%d", len(turns)),
 		"IDIOM_SWE_TASK_ID="+strings.TrimSpace(task.ID),
 		"IDIOM_SWE_FAMILY="+strings.TrimSpace(task.Family),
+		"IDIOM_SWE_RUNNER_MODE="+strings.TrimSpace(task.RunnerMode),
 		"IDIOM_SWE_LOG="+logPath,
 		"IDIOM_SWE_FIXTURE="+fixture,
+		"IDIOM_SWE_FIXTURE_GIT_REF="+strings.TrimSpace(task.FixtureGitRef),
+		"IDIOM_SWE_FIXTURE_GIT_REPO="+r.suiteGitRoot(),
 		"IDIOM_SWE_TASK_TIMEOUT="+strconv.Itoa(taskTimeout),
 	)
 	output, err := cmd.CombinedOutput()
@@ -131,6 +136,15 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 	}
 	fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
 	return nil
+}
+
+func (r liveSuiteRunner) suiteGitRoot() string {
+	dir := filepath.Dir(r.suitePath)
+	out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return dir
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func (r liveSuiteRunner) ensureRunnerErrorLog(task eval.SWETask, logPath string, runErr error) error {
@@ -168,9 +182,6 @@ func liveTaskTimeoutSeconds(task eval.SWETask) int {
 		if secs < 60 {
 			secs = 60
 		}
-		if secs > 240 {
-			secs = 240
-		}
 		return secs
 	}
 	return 180
@@ -178,7 +189,7 @@ func liveTaskTimeoutSeconds(task eval.SWETask) int {
 
 func renderRunnerCommand(template string, values map[string]string) string {
 	pairs := make([]string, 0, 8)
-	for _, key := range []string{"prompt", "turns_json", "turn_count", "task_id", "log_path", "fixture"} {
+	for _, key := range []string{"prompt", "turns_json", "turn_count", "task_id", "runner_mode", "log_path", "fixture"} {
 		if value, ok := values[key]; ok {
 			pairs = append(pairs, "{"+key+"}", shellQuote(value))
 		}
@@ -219,6 +230,18 @@ func taskTurns(task eval.SWETask) []string {
 		return []string{prompt}
 	}
 	return nil
+}
+
+func taskEnvEntries(env map[string]string) []string {
+	entries := make([]string, 0, len(env))
+	for key, value := range env {
+		key = strings.TrimSpace(key)
+		if key == "" || eval.ReservedSWETaskEnvKey(key) {
+			continue
+		}
+		entries = append(entries, key+"="+value)
+	}
+	return entries
 }
 
 func taskFixturePath(suitePath string, task eval.SWETask) string {

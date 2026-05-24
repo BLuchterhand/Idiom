@@ -16,10 +16,9 @@ func TestToolParseErrorFeedbackExplainsSubmitPlanEditsArrayShape(t *testing.T) {
 	for _, want := range []string{
 		"submit_plan.edits was emitted as a quoted string",
 		"JSON array value, not a string",
-		`"edits":[`,
-		`"insert_after_line":42`,
-		"Use insert_after_line/content only for small inline insertions/appends",
-		"including large additions by replacing unchanged anchor line(s)",
+		"real path",
+		"insert_after_line/content for small inline insertions",
+		"start_line/end_line/content for an inclusive current-source range",
 		"complete executable source text",
 		"not placeholders or prose",
 	} {

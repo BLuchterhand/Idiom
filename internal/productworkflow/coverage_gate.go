@@ -108,19 +108,7 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 	}
 	record("mutation", mutationRequired, mutationPass, fmt.Sprintf("expected mutation_score >= mutation_min_score or unavailable-tool blocker (min=%d)", ledger.Coverage.MutationMinScore), "tdd.json", "coverage_mutation_incomplete")
 
-	sort.Slice(out.Criteria, func(i, j int) bool { return out.Criteria[i].Key < out.Criteria[j].Key })
-	sort.Slice(out.Findings, func(i, j int) bool {
-		if out.Findings[i].Criterion == out.Findings[j].Criterion {
-			return out.Findings[i].Kind < out.Findings[j].Kind
-		}
-		return out.Findings[i].Criterion < out.Findings[j].Criterion
-	})
-	sort.Slice(out.Blockers, func(i, j int) bool {
-		if out.Blockers[i].Criterion == out.Blockers[j].Criterion {
-			return out.Blockers[i].Kind < out.Blockers[j].Kind
-		}
-		return out.Blockers[i].Criterion < out.Blockers[j].Criterion
-	})
+	sortCoverageGateEvaluation(&out)
 	return out
 }
 
@@ -163,6 +151,112 @@ func BuildSatisfiedTDDObligationIDs(ledger TDDLedger, records []ImplementationLe
 
 func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
 	return strings.EqualFold(strings.TrimSpace(eval.Status), "blocked") || len(eval.Blockers) > 0
+}
+
+func ApplyCoverageGateAuthorityPreflight(eval CoverageGateEvaluation, lintFindings []LintSummaryFinding) CoverageGateEvaluation {
+	authorityFindings := coverageGateAuthorityFindings(lintFindings)
+	status := "pass"
+	if len(authorityFindings) > 0 {
+		status = "blocked"
+		eval.Status = "blocked"
+	}
+	eval.Criteria = append(eval.Criteria, CoverageGateCriterion{
+		Key:      "authority_preflight",
+		Required: true,
+		Status:   status,
+		Details:  "canonical product lint/audit traceability, acceptance, and supersession validations must pass before coverage evaluation",
+	})
+	for _, finding := range authorityFindings {
+		if coverageGateAlreadyHasAuthorityFinding(eval, finding) {
+			continue
+		}
+		message := strings.TrimSpace(finding.Message)
+		if message == "" {
+			message = strings.TrimSpace(finding.Code)
+		}
+		eval.Findings = append(eval.Findings, CoverageGateFinding{
+			Kind:      strings.TrimSpace(finding.Code),
+			Criterion: "authority_preflight",
+			Message:   message,
+			File:      strings.TrimSpace(finding.Path),
+			Severity:  "error",
+		})
+		eval.Blockers = append(eval.Blockers, CoverageGateBlocker{
+			Kind:      strings.TrimSpace(finding.Code),
+			Criterion: "authority_preflight",
+			Message:   message,
+			File:      strings.TrimSpace(finding.Path),
+		})
+	}
+	sortCoverageGateEvaluation(&eval)
+	return eval
+}
+
+func coverageGateAuthorityFindings(findings []LintSummaryFinding) []LintSummaryFinding {
+	out := make([]LintSummaryFinding, 0, len(findings))
+	for _, finding := range findings {
+		if coverageGateAuthorityFinding(finding) {
+			out = append(out, finding)
+		}
+	}
+	return out
+}
+
+func coverageGateAuthorityFinding(finding LintSummaryFinding) bool {
+	code := strings.TrimSpace(finding.Code)
+	relPath := strings.ReplaceAll(strings.TrimSpace(finding.Path), "\\", "/")
+	if strings.HasPrefix(code, "adr_supersession_") {
+		return true
+	}
+	if code == "adr_index_frontmatter_mismatch" {
+		return true
+	}
+	switch {
+	case relPath == "prd.md":
+		return code == "parse_error" || code == "broken_link"
+	case relPath == "adrs/index.json" || strings.HasPrefix(relPath, "adrs/"):
+		return code == "parse_error" || code == "broken_link"
+	case relPath == "evidence/traceability_matrix.json":
+		return code == "parse_error" || code == "broken_link" || code == "missing_file"
+	case relPath == "tdd.json":
+		return code == "parse_error" || code == "broken_link"
+	default:
+		return false
+	}
+}
+
+func coverageGateAlreadyHasAuthorityFinding(eval CoverageGateEvaluation, finding LintSummaryFinding) bool {
+	code := strings.TrimSpace(finding.Code)
+	relPath := strings.TrimSpace(finding.Path)
+	message := strings.TrimSpace(finding.Message)
+	for _, existing := range eval.Findings {
+		if strings.TrimSpace(existing.Kind) == code &&
+			strings.TrimSpace(existing.Criterion) == "authority_preflight" &&
+			strings.TrimSpace(existing.File) == relPath &&
+			strings.TrimSpace(existing.Message) == message {
+			return true
+		}
+	}
+	return false
+}
+
+func sortCoverageGateEvaluation(eval *CoverageGateEvaluation) {
+	if eval == nil {
+		return
+	}
+	sort.Slice(eval.Criteria, func(i, j int) bool { return eval.Criteria[i].Key < eval.Criteria[j].Key })
+	sort.Slice(eval.Findings, func(i, j int) bool {
+		if eval.Findings[i].Criterion == eval.Findings[j].Criterion {
+			return eval.Findings[i].Kind < eval.Findings[j].Kind
+		}
+		return eval.Findings[i].Criterion < eval.Findings[j].Criterion
+	})
+	sort.Slice(eval.Blockers, func(i, j int) bool {
+		if eval.Blockers[i].Criterion == eval.Blockers[j].Criterion {
+			return eval.Blockers[i].Kind < eval.Blockers[j].Kind
+		}
+		return eval.Blockers[i].Criterion < eval.Blockers[j].Criterion
+	})
 }
 
 func appendPRDTDDObligationLinkBlockers(out *CoverageGateEvaluation, errs []PRDTDDObligationLinkError) {

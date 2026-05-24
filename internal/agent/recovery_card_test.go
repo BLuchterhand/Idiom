@@ -48,7 +48,7 @@ func TestRecoveryCardRendersZeroHit(t *testing.T) {
 		"currently callable tools: context_pack, read_file, code_navigate, search_content",
 		"currently callable action classes: read, search, blocker",
 		"deterministic safe next action: Use a bounded source read only when a candidate path is known.",
-		"exact blocker shape: <<QUESTION>>: Cannot verify <claim> because the search returned zero candidate paths and no source anchor is available.",
+		"exact blocker shape: <<QUESTION>>: State the exact blocker and cite the concrete evidence source, path, command, or capability that is unavailable or failed.",
 	)
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 	if strings.Count(got, "tool_result:search_content:step_3") != 1 {
@@ -86,7 +86,7 @@ func TestRecoveryCardRendersRepeatedReadDeadEnd(t *testing.T) {
 		"currently callable tools: read_file, code_navigate",
 		"currently callable action classes: read, blocker",
 		"deterministic safe next action: Name one exact missing claim and inspect only the source range that can resolve it.",
-		"exact blocker shape: <<QUESTION>>: Cannot resolve <claim> because <specific source range or capability> is unavailable after the repeated read.",
+		"exact blocker shape: <<QUESTION>>: State the exact blocker and cite the concrete evidence source, path, command, or capability that is unavailable or failed.",
 	)
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
@@ -119,7 +119,7 @@ func TestRecoveryCardRendersCompletionGateStyleCard(t *testing.T) {
 		"currently callable tools: none",
 		"currently callable action classes: verify, blocker",
 		"deterministic safe next action: none available",
-		"exact blocker shape: <<QUESTION>>: Verification blocked because <exact command or capability> cannot run: <specific reason>.",
+		"exact blocker shape: <<QUESTION>>: State the exact blocker and cite the concrete evidence source, path, command, or capability that is unavailable or failed.",
 	)
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }

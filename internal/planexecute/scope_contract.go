@@ -71,14 +71,9 @@ func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
 	allowed := append([]string(nil), scope.AllowedCandidatePaths...)
 	allowed = append(allowed, []string(opts.AllowedEditPaths)...)
 	allowed = append(allowed, AllowedEditPathsFromPrompt(prompt)...)
-	promptObligations := EditSetObligationsFromPrompt(prompt)
-	if scope.HasContent() || len(opts.EditSetObligations.Normalized()) > 0 {
-		promptObligations = nil
-	}
 	obligations := MergeEditSetObligations(
 		scope.EditSetObligations.normalizedWithDefaultSource("scope_contract"),
 		opts.EditSetObligations.normalizedWithDefaultSource("options"),
-		promptObligations,
 	)
 	return NewPlanScopeContract(required, allowed, obligations)
 }

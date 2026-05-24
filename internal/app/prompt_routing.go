@@ -181,6 +181,7 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 			Family: family,
 			Reason: "explicit_task_family",
 		}, mode)
+		route = validateRouteFamilyAgainstExplicitEditScope(route, prompt, mode)
 		brief := m.runtimeBriefForRoute(route, prompt)
 		return promptExecutionPlan{
 			mode:         mode,
@@ -189,6 +190,7 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 		}
 	}
 	route := m.classifyTurnRoute(ctx, prompt, mode)
+	route = validateRouteFamilyAgainstExplicitEditScope(route, prompt, mode)
 	brief := m.runtimeBriefForRoute(route, prompt)
 	return promptExecutionPlan{
 		mode:         mode,
@@ -197,11 +199,37 @@ func (m *Model) buildPromptExecutionPlan(ctx context.Context, prompt string) pro
 	}
 }
 
+func validateRouteFamilyAgainstExplicitEditScope(route turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
+	route = normalizeTurnRoutePlan(route, mode)
+	if route.Family != "gdscript_edit" {
+		return route
+	}
+	paths := appendUniqueBriefStrings(nil, requiredEditPathsFromPrompt(prompt)...)
+	paths = appendUniqueBriefStrings(paths, allowedEditPathsFromPrompt(prompt)...)
+	paths = appendUniqueBriefStrings(paths, pathparse.MentionedWorkspacePaths(prompt)...)
+	if len(paths) == 0 {
+		return route
+	}
+	for _, path := range paths {
+		if !routePathLooksLikeGDScript(path) {
+			route.Family = "implementation"
+			route.Reason = "gdscript_scope_mismatch"
+			return normalizeTurnRoutePlan(route, mode)
+		}
+	}
+	return route
+}
+
+func routePathLooksLikeGDScript(path string) bool {
+	return strings.EqualFold(filepath.Ext(strings.TrimSpace(filepath.ToSlash(path))), ".gd")
+}
+
 func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
 	mode := agent.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
-		Family: agent.PlanThenExecutePlannerTaskFamily,
-		Reason: "typed_plan_execute_command",
+		Family:      agent.PlanThenExecutePlannerTaskFamily,
+		Reason:      "typed_plan_execute_command",
+		RouteSource: routeSourceTypedCommand,
 	}, mode)
 	return promptExecutionPlan{
 		mode:         mode,
@@ -213,8 +241,9 @@ func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutio
 func (m *Model) implementCommandExecutionPlan(objective string) promptExecutionPlan {
 	mode := agent.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
-		Family: "implementation",
-		Reason: "typed_implement_command",
+		Family:      "implementation",
+		Reason:      "typed_implement_command",
+		RouteSource: routeSourceTypedCommand,
 	}, mode)
 	return promptExecutionPlan{
 		mode:         mode,
@@ -1624,8 +1653,7 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	contract := strings.TrimSpace(plan.runtimeBrief.Contract)
 	taskFamily := strings.TrimSpace(plan.runtimeBrief.TaskFamily)
 	if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
-		opts.Temperature = 0
-		opts.TopP = 1
+		opts = tuneChatOptionsForDeterministicState(opts, 0)
 		if !opts.ModelThinkingFloor {
 			thinkingOff := false
 			opts.EnableThinking = &thinkingOff
@@ -1639,6 +1667,9 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 		opts.EnableThinking = &thinkingOff
 		opts.PreserveThinking = false
 		opts.ChatTemplateKwargs = true
+	}
+	if readOnly {
+		opts = tuneChatOptionsForDeterministicState(opts, 0.2)
 	}
 	// MLX 0.31.3+ accepts per-request chat_template_kwargs, so this
 	// now disables Qwen thinking for read-only routes without requiring
@@ -1656,6 +1687,17 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	case "review_findings", "architecture_assessment":
 		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 2048)
 	}
+	return opts
+}
+
+func tuneChatOptionsForDeterministicState(opts llama.ChatOptions, maxTemperature float64) llama.ChatOptions {
+	if maxTemperature < 0 {
+		maxTemperature = 0
+	}
+	if opts.Temperature > maxTemperature {
+		opts.Temperature = maxTemperature
+	}
+	opts.TopP = 1
 	return opts
 }
 

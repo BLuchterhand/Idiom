@@ -130,7 +130,7 @@ func NormalizeRecoveryCard(card RecoveryCard) RecoveryCard {
 	card.CallableTools = uniqueRecoveryCardStrings(card.CallableTools)
 	card.CallableActionClasses = uniqueRecoveryCardStrings(card.CallableActionClasses)
 	card.DeterministicSafeNextAction = strings.TrimSpace(card.DeterministicSafeNextAction)
-	card.ExactBlockerShape = strings.TrimSpace(card.ExactBlockerShape)
+	card.ExactBlockerShape = sanitizeRecoveryCardBlockerShape(card.ExactBlockerShape)
 	return card
 }
 
@@ -148,8 +148,19 @@ func (card RecoveryCard) Render() string {
 	writeRecoveryCardLine(&b, "currently callable tools", recoveryCardListLabel(card.CallableTools, "none"))
 	writeRecoveryCardLine(&b, "currently callable action classes", recoveryCardListLabel(card.CallableActionClasses, "none"))
 	writeRecoveryCardLine(&b, "deterministic safe next action", recoveryCardOptionalLabel(card.DeterministicSafeNextAction, "none available"))
-	writeRecoveryCardLine(&b, "exact blocker shape", recoveryCardOptionalLabel(card.ExactBlockerShape, "<<QUESTION>>: <exact unsupported claim> because <specific evidence source is unavailable or failed>"))
+	writeRecoveryCardLine(&b, "exact blocker shape", recoveryCardOptionalLabel(card.ExactBlockerShape, "<<QUESTION>>: State the exact unsupported claim and the concrete evidence source that is unavailable or failed."))
 	return strings.TrimRight(b.String(), "\n")
+}
+
+func sanitizeRecoveryCardBlockerShape(shape string) string {
+	shape = strings.TrimSpace(shape)
+	if shape == "" {
+		return ""
+	}
+	if strings.Contains(shape, "<") && strings.Contains(shape, ">") {
+		return "<<QUESTION>>: State the exact blocker and cite the concrete evidence source, path, command, or capability that is unavailable or failed."
+	}
+	return shape
 }
 
 func normalizeRecoveryRejectedAction(action RecoveryRejectedAction) RecoveryRejectedAction {
@@ -414,14 +425,14 @@ func recoveryCardBlockerShape(contract TurnPhaseContract) string {
 	for _, class := range classes {
 		switch class {
 		case actionVerify:
-			return "<<QUESTION>>: Verification blocked because <exact command or capability> cannot run: <specific reason>."
+			return "<<QUESTION>>: Verification blocked because the named command or capability cannot run; include the concrete reason."
 		case actionSubmitPlan:
-			return "<<QUESTION>>: Cannot submit_plan because <exact required path or edit body evidence> is unavailable: <specific reason>."
+			return "<<QUESTION>>: Cannot submit_plan because the named required path or edit body evidence is unavailable; include the concrete reason."
 		case actionRead, actionSearch:
-			return "<<QUESTION>>: Cannot resolve <claim> because <specific source range, candidate path, or capability> is unavailable."
+			return "<<QUESTION>>: Cannot resolve the named claim because the needed source range, candidate path, or capability is unavailable."
 		}
 	}
-	return "<<QUESTION>>: <exact unsupported claim> because <specific evidence source is unavailable or failed>"
+	return "<<QUESTION>>: State the exact unsupported claim and the concrete evidence source that is unavailable or failed."
 }
 
 func recoveryCardEvidenceRefsFromContract(contract TurnPhaseContract) []string {

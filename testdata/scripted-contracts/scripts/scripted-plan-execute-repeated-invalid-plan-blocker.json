@@ -1,0 +1,17 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm exact ShortLabel source before submit_plan\",\"why_not_answering\":\"required_edit_paths need source-body evidence before submit_plan\"}"
+    },
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Wrong path attempt to exercise rejection repair.\",\"edits\":[{\"path\":\"README.md\",\"old_text\":\"# Frozen Scripted Contract Repo\",\"new_text\":\"# Frozen Scripted Contract Repo\",\"purpose\":\"wrong path that must be rejected\"}]}"
+    },
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Second wrong path attempt to exercise bounded rejection handling.\",\"edits\":[{\"path\":\"README.md\",\"old_text\":\"# Frozen Scripted Contract Repo\",\"new_text\":\"# Frozen Scripted Contract Repo\",\"purpose\":\"wrong path still does not satisfy required_edit_paths\"}]}"
+    },
+    {
+      "content": "<<QUESTION>>: submit_plan was rejected before a valid plan artifact because the proposed edits did not cover required_edit_paths: internal/labels/labels.go. I cannot safely continue without a corrected parser-readable edit for that required path."
+    }
+  ]
+}

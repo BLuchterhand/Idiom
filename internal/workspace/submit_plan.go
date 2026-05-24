@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const SubmitPlanEmptyEditsCode = "submit_plan.empty_edits"
+
 // PlanEdit is one edit spec inside a plan-then-execute artifact. The
 // planner emits these via the submit_plan tool; the executor phase
 // iterates and dispatches each one against the workspace.
@@ -144,7 +146,7 @@ const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: sour
 // default.
 func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if req.PlanArtifact == nil && len(req.Edits) == 0 {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
+		return ToolResult{Tool: "submit_plan", Code: SubmitPlanEmptyEditsCode, Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
 	}
 	stamp := time.Now().UTC().Format("20060102-150405.000")
 	stamp = strings.ReplaceAll(stamp, ".", "")
@@ -162,7 +164,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		}
 	}
 	if len(artifact.Edits) == 0 {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
+		return ToolResult{Tool: "submit_plan", Code: SubmitPlanEmptyEditsCode, Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
 	}
 	m.repairPlanArtifactOldTextAnchors(&artifact)
 	validationArtifact := artifact
@@ -184,6 +186,9 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		if err := m.validatePlanEditAgainstWorkspace(edit); err != nil {
 			return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: fmt.Sprintf("edits[%d]: %s", i, err.Error())}
 		}
+	}
+	if err := m.validatePlanEditSequenceAgainstWorkspace(validationArtifact.Edits); err != nil {
+		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
 	}
 	artifact.Edits, err = AttachPlanEditAnchorProvenance(m.cfg.Root, artifact.Edits)
 	if err != nil {
@@ -280,7 +285,112 @@ func validatePlanEdit(edit PlanEdit) error {
 	if field, marker := planEditPlaceholderField(edit); field != "" {
 		return fmt.Errorf("%s contains placeholder edit body marker %q; submit complete executable source text, or answer <<QUESTION>> with the missing body/anchor blocker", field, marker)
 	}
+	if reason := PlanEditUnsupportedProofClaimReason(edit); reason != "" {
+		return fmt.Errorf("%s", reason)
+	}
 	return nil
+}
+
+// PlanEditUnsupportedProofClaimReason reports source-edit proof text that would
+// make the submitted artifact incapable of proving the requested behavior. Keep
+// this at submit_plan intake so planners can repair the edit before executor
+// handoff rather than failing after the artifact is accepted.
+func PlanEditUnsupportedProofClaimReason(edit PlanEdit) string {
+	path := strings.TrimSpace(edit.Path)
+	if path == "" || !SourceSanityCoversPath(path) {
+		return ""
+	}
+	added := PlanEditAddedText(edit)
+	if strings.TrimSpace(added) == "" {
+		return ""
+	}
+	return UnsupportedProofClaimReason(added)
+}
+
+// PlanEditAddedText returns the final content a plan edit contributes.
+func PlanEditAddedText(edit PlanEdit) string {
+	if strings.TrimSpace(edit.Content) != "" {
+		return edit.Content
+	}
+	if strings.TrimSpace(edit.NewText) != "" {
+		return edit.NewText
+	}
+	return ""
+}
+
+// UnsupportedProofClaimReason detects test/proof bodies that admit they are not
+// meaningful verification, such as no-op assertions or "simplified check"
+// comments. It intentionally operates on text only; callers decide whether the
+// edited path is source-like.
+func UnsupportedProofClaimReason(text string) string {
+	for lineNo, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if noOpAssertionLine(line) {
+			return fmt.Sprintf("unsupported proof claim: no-op assertion on line %d; submit a concrete state assertion or report a blocker", lineNo+1)
+		}
+		if phrase := selfDisqualifyingProofPhrase(line); phrase != "" {
+			return fmt.Sprintf("unsupported proof claim: self-disqualifying verification text %q on line %d; submit concrete evidence or report a blocker", phrase, lineNo+1)
+		}
+	}
+	return ""
+}
+
+func noOpAssertionLine(line string) bool {
+	compact := strings.Join(strings.Fields(line), "")
+	normalized := strings.ToLower(compact)
+	return strings.Contains(compact, "CHECK(true") ||
+		strings.Contains(compact, "REQUIRE(true") ||
+		strings.Contains(compact, "ASSERT_TRUE(true") ||
+		strings.Contains(compact, "EXPECT_TRUE(true") ||
+		strings.Contains(normalized, "_assert_true(true") ||
+		strings.Contains(normalized, "assert_true(true") ||
+		strings.Contains(normalized, "asserttrue(true") ||
+		strings.Contains(normalized, "assert(true") ||
+		strings.Contains(normalized, "assert.true(true") ||
+		strings.Contains(normalized, "assert.true(t,true") ||
+		strings.Contains(normalized, "require.true(t,true")
+}
+
+func selfDisqualifyingProofPhrase(line string) string {
+	lower := strings.ToLower(line)
+	phrases := []string{
+		"can't easily test",
+		"cannot easily test",
+		"can't easily access",
+		"cannot easily access",
+		"can't easily inspect",
+		"cannot easily inspect",
+		"not easily test",
+		"simplified check",
+		"for now, we just verify",
+		"for now we just verify",
+		"verify that it exists",
+		"exists and can be called",
+		"exists and can be accessed",
+	}
+	for _, phrase := range phrases {
+		if strings.Contains(lower, phrase) && verificationClaimContext(line, phrase) {
+			return phrase
+		}
+	}
+	return ""
+}
+
+func verificationClaimContext(line string, phrase string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if strings.Contains(phrase, "test") || strings.Contains(phrase, "verify") || strings.Contains(phrase, "check") {
+		return true
+	}
+	if strings.HasPrefix(lower, "#") || strings.HasPrefix(lower, "//") || strings.HasPrefix(lower, "/*") || strings.HasPrefix(lower, "*") {
+		return true
+	}
+	return strings.Contains(lower, "assert") ||
+		strings.Contains(lower, "check") ||
+		strings.Contains(lower, "verify") ||
+		strings.Contains(lower, "test")
 }
 
 func planEditPlaceholderField(edit PlanEdit) (string, string) {
@@ -702,6 +812,50 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 		}
 	} else {
 		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
+	}
+	return nil
+}
+
+func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) error {
+	projected := make(map[string][]byte)
+	for i, edit := range edits {
+		path, err := m.resolvePath(edit.Path, "")
+		if err != nil {
+			return fmt.Errorf("edits[%d]: plan edit preflight could not resolve path %q: %w", i, edit.Path, err)
+		}
+		body, ok := projected[path]
+		if !ok {
+			body, err = os.ReadFile(path)
+			if err != nil {
+				if os.IsNotExist(err) && planEditIsWholeFileWrite(edit) {
+					body = nil
+				} else {
+					return fmt.Errorf("edits[%d]: plan edit preflight could not read %s: %w", i, edit.Path, err)
+				}
+			}
+			projected[path] = body
+		}
+		if planEditIsWholeFileWrite(edit) && IsCompletedPlanningArtifact(path, body) {
+			return fmt.Errorf("edits[%d]: whole-file edit would overwrite completed planning artifact %s; use a bounded anchored edit or ask the user to reopen/replace the completed artifact explicitly", i, edit.Path)
+		}
+		updated, changed, previewErr := PreviewPlanEditContent(string(body), edit)
+		if previewErr != nil {
+			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, previewErr.Error())
+		}
+		if !changed {
+			return fmt.Errorf("edits[%d]: edit would not change %s after applying prior plan edits; %s", i, edit.Path, submitPlanNoOpEditGuidance)
+		}
+		if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
+			return fmt.Errorf("edits[%d]: edit would introduce adjacent duplicate code line %d in %s after applying prior plan edits: %q", i, lineNo, edit.Path, line)
+		}
+		if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
+			errorText := strings.TrimSpace(rejected.Error)
+			if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
+				errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
+			}
+			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, errorText)
+		}
+		projected[path] = []byte(updated)
 	}
 	return nil
 }

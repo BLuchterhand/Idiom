@@ -46,6 +46,39 @@ func TestPlanThenExecuteWriteGuardRejectsEditFile(t *testing.T) {
 	}
 }
 
+func TestPlanThenExecuteLoopBudgetRecoveryRequiresTerminalOutcome(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-10 (total lines: 20)",
+		Output:  "1:package productworkflow\n2:\n3:func EvaluateCoverageGate() {}\n",
+	}}
+	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Path:       "internal/productworkflow/coverage_gate.go",
+		Capability: "definition",
+		Pattern:    "EvaluateCoverageGate",
+	}, results, "code_navigate repeated after warning", false)
+	if !ok {
+		t.Fatal("expected loop-budget recovery once source evidence makes terminal planning available")
+	}
+	if !recovery.TerminalOnly {
+		t.Fatalf("single-candidate loop-budget recovery should force terminal outcome:\n%s", recovery.Prompt)
+	}
+	for _, want := range []string{"loop budget", "submit_plan", "Decision: source-satisfied", "<<QUESTION>>"} {
+		if !strings.Contains(recovery.Prompt, want) {
+			t.Fatalf("recovery prompt missing %q:\n%s", want, recovery.Prompt)
+		}
+	}
+	if strings.Contains(recovery.Prompt, "perform one bounded read") {
+		t.Fatalf("loop-budget terminal recovery must not ask for another read:\n%s", recovery.Prompt)
+	}
+}
+
 func TestPlanThenExecuteWriteGuardRejectsAllPerEditWrites(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -94,11 +127,11 @@ func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
 	got := runner.textualToolProtocolPrompt(brief)
 	for _, want := range []string{
 		"# Textual Tool Call Protocol",
-		"```tool",
-		`"tool":"submit_plan"`,
-		"Update target.txt using the confirmed source anchor",
+		"exactly one JSON object",
+		"top-level `tool`, `rationale`, and `edits`",
 		"`edits` must be an array",
-		"never placeholders",
+		"never copy placeholders",
+		"schema examples",
 		"ellipses",
 		"`existing code` comments",
 		"no prose",
@@ -110,6 +143,11 @@ func TestMLXPlanThenExecuteAdvertisesTextualSubmitPlanProtocol(t *testing.T) {
 	}
 	if !strings.Contains(got, "submit_plan") || !strings.Contains(got, "read_file") {
 		t.Fatalf("prompt should include required tool first and bounded allowed examples:\n%s", got)
+	}
+	for _, forbidden := range []string{"relative/file", "exact current substring", "replacement text", "one paragraph on the overall plan"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("textual protocol prompt must not include copyable placeholder %q:\n%s", forbidden, got)
+		}
 	}
 }
 
@@ -208,7 +246,7 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardEnforcesAllowedScopeWithoutCovera
 	}
 }
 
-func TestPlanThenExecuteUngroundedSubmitPlanRejectsUnscopedExistingFileEdit(t *testing.T) {
+func TestPlanThenExecuteUngroundedSubmitPlanRejectsUnscopedExistingFileEditWithoutAnchor(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
 		t.Fatalf("write target: %v", err)
@@ -224,10 +262,10 @@ func TestPlanThenExecuteUngroundedSubmitPlanRejectsUnscopedExistingFileEdit(t *t
 	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
 		Tool: "submit_plan",
 		Edits: []workspace.PlanEdit{{
-			Path:    "target.txt",
-			OldText: "old\n",
-			NewText: "new\n",
-			Purpose: "update target",
+			Path:       "target.txt",
+			ReplaceAll: true,
+			NewText:    "new\n",
+			Purpose:    "replace target",
 		}},
 	}, nil)
 	if !got.Intercepted {
@@ -269,6 +307,90 @@ func TestPlanThenExecuteUngroundedSubmitPlanAllowsSourceReadEdit(t *testing.T) {
 	}
 }
 
+func TestPlanThenExecuteScopedSubmitPlanRequiresGroundingBeyondPathScope(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"target.txt"},
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:       "target.txt",
+			ReplaceAll: true,
+			NewText:    "new\n",
+			Purpose:    "replace target",
+		}},
+	}, nil)
+	if !got.Intercepted {
+		t.Fatal("required path scope alone must not ground an existing-file submit_plan edit")
+	}
+	if !strings.Contains(got.Result.Error, "target.txt") {
+		t.Fatalf("grounding rejection should name target.txt, got %q", got.Result.Error)
+	}
+}
+
+func TestPlanThenExecuteScopedSubmitPlanExactAnchorGroundsEdit(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"target.txt"},
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "target.txt",
+			OldText: "old\n",
+			NewText: "new\n",
+			Purpose: "update target",
+		}},
+	}, nil)
+	if got.Intercepted {
+		t.Fatalf("exact current-source old_text anchor should ground scoped submit_plan edit, got %#v", got)
+	}
+}
+
+func TestPlanThenExecuteSubmitPlanCompleteNewFileBodyGroundsEdit(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"new_target.txt"},
+		},
+	}
+	got := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:       "new_target.txt",
+			ReplaceAll: true,
+			NewText:    "created\n",
+			Purpose:    "create target",
+		}},
+	}, nil)
+	if got.Intercepted {
+		t.Fatalf("complete new-file body should ground submit_plan edit, got %#v", got)
+	}
+}
+
 func TestPlanThenExecuteUnscopedSubmitPlanCoverageGuardRejectsInvalidAnchor(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "target.txt", "old\n"); err != nil {
@@ -299,7 +421,7 @@ func TestPlanThenExecuteUnscopedSubmitPlanCoverageGuardRejectsInvalidAnchor(t *t
 	}
 }
 
-func TestDeterministicPlanExecuteGroundingRecoverySearchesAfterContextPack(t *testing.T) {
+func TestDeterministicPlanExecuteGroundingRecoveryReadsRejectedMissingSourcePath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:   PlanThenExecutePlannerTaskFamily,
@@ -322,15 +444,12 @@ func TestDeterministicPlanExecuteGroundingRecoverySearchesAfterContextPack(t *te
 	if !ok {
 		t.Fatal("expected deterministic grounding recovery after ungrounded submit_plan and context_pack")
 	}
-	if req.Tool != "search_content" || req.Path != "." || req.Pattern == "" {
-		t.Fatalf("expected targeted search_content request, got %#v", req)
-	}
-	if !strings.Contains(req.Pattern, "product_efforts") || !strings.Contains(req.Pattern, "product_status") {
-		t.Fatalf("expected search pattern to prefer matching allowed tool names, got %q", req.Pattern)
+	if req.Tool != "read_file" || req.Path != "cmd/idiom/main.go" || req.StartLine != 1 || req.EndLine != 180 {
+		t.Fatalf("expected bounded source read for rejected missing-source path, got %#v", req)
 	}
 }
 
-func TestDeterministicPlanExecuteGroundingRecoveryReadsSearchHitBeforePacketCandidate(t *testing.T) {
+func TestDeterministicPlanExecuteGroundingRecoveryPrioritizesRejectedMissingSourcePathOverSearchHit(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily: PlanThenExecutePlannerTaskFamily,
@@ -355,10 +474,43 @@ func TestDeterministicPlanExecuteGroundingRecoveryReadsSearchHitBeforePacketCand
 		},
 	})
 	if !ok {
-		t.Fatal("expected deterministic grounding recovery to read a search hit")
+		t.Fatal("expected deterministic grounding recovery to read the rejected missing-source path")
 	}
-	if req.Tool != "read_file" || req.Path != "internal/workspace/product_tools.go" {
-		t.Fatalf("expected highest-confidence search hit read, got %#v", req)
+	if req.Tool != "read_file" || req.Path != "cmd/idiom/main.go" {
+		t.Fatalf("expected rejected missing-source path read before broad fallback, got %#v", req)
+	}
+}
+
+func TestDeterministicPlanExecuteChainedSearchRecoveryReadsContextPackCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+			Contract:   "implementation_result",
+			Objective:  "implement coverage gate authority reuse",
+		},
+	}
+	state := &runnerExecutionState{pendingSearchInspection: true}
+	req, _, ok := runner.deterministicPlanExecuteChainedSearchRecovery(
+		workspace.ToolRequest{Tool: "search_content", Pattern: "coverage_gate"},
+		[]workspace.ToolResult{
+			{
+				Tool:    "context_pack",
+				Summary: "Context pack wrote view",
+				Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go","role":"editable"},{"path":"cmd/idiom/product_workflow.go","role":"editable"}]}`,
+			},
+			{
+				Tool:    "search_content",
+				Summary: "Found 400 matching line(s) (showing first 50).",
+				Output:  "AGENTS.md:119:plan-execute prompt scaffolding",
+			},
+		},
+		state,
+	)
+	if !ok {
+		t.Fatal("expected chained-search recovery to read the top context-pack candidate")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/productworkflow/coverage_gate.go" {
+		t.Fatalf("unexpected recovery request: %#v", req)
 	}
 }
 
@@ -1072,6 +1224,50 @@ func TestPlanThenExecuteRejectedPlanSourceRefreshAllowedForPreflightSyntaxValida
 	}
 }
 
+func TestPlanThenExecuteCandidateRejectedPlanRefreshRedirectsToSyntaxLine(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote candidates",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[1]: preflight syntax validation failed for internal/productworkflow/coverage_gate.go at line 125: ./internal/productworkflow/coverage_gate.go:125:6: expected '(', found appendAuditBlockers",
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/productworkflow/coverage_gate.go",
+		StartLine: 1,
+		EndLine:   50,
+	}
+
+	redirected, _, ok := runner.planThenExecuteRejectedPlanRefreshReadRedirect(req, results)
+	if !ok {
+		t.Fatal("expected rejected-plan refresh read to redirect to syntax failure region")
+	}
+	if redirected.Path != "internal/productworkflow/coverage_gate.go" || redirected.StartLine > 125 || redirected.EndLine < 125 {
+		t.Fatalf("redirected read should cover syntax failure line 125, got %#v", redirected)
+	}
+	if !runner.planThenExecuteCandidateSourceRefreshAllowed(redirected, results, 0) {
+		t.Fatalf("redirected candidate refresh should be allowed after rejected submit_plan")
+	}
+}
+
 func TestPlanThenExecuteRequiredPathDiscoveryRejectsUnboundedInvalidAnchorRefresh(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -1493,6 +1689,7 @@ func TestReviewRepairCompletionGateRejectsNonDecisionFinalAnswer(t *testing.T) {
 			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
 			Contract:          "review_findings",
 			PermissionProfile: "plan_submission_review",
+			AllowedTools:      []string{"submit_plan"},
 		},
 	}
 	got, rejected := runner.completionGateRejection("Let me trace the actual implementation to verify the tests against real code.", nil, 1, nil, false)
@@ -1510,6 +1707,7 @@ func TestReviewRepairCompletionGateAcceptsPassChecklistOrSubmittedPlan(t *testin
 			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
 			Contract:          "review_findings",
 			PermissionProfile: "plan_submission_review",
+			AllowedTools:      []string{"submit_plan"},
 		},
 	}
 	passAnswer := "Decision: pass\n\nVerification Checklist:\n- Required behavior is satisfied.\n- Scope safety checked."
@@ -1684,7 +1882,6 @@ func TestReviewRepairCompletionGateRecoveryUsesEvidenceLedgerNotBroadReads(t *te
 		"Verification Checklist",
 		"corrective `submit_plan`",
 		"<<QUESTION>>",
-		"Terminal templates",
 		"Do not add prose before or after",
 		"Phase Evidence Bundle",
 		"hidden reasoning",
@@ -1847,6 +2044,72 @@ func TestReviewRepairTerminalRecoveryRejectsReadsWithoutGenericWriteOnlyBlocker(
 	}
 	if !strings.Contains(answer, "Decision: pass") {
 		t.Fatalf("expected terminal pass answer, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairTerminalProbeUsesPhaseEvidencePassWithoutRejection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "internal_labels.go"), []byte("package labels\n\nfunc ShortLabel() string { return \"Save\" }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	var requests int
+	var sawTerminalRequired bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests > 0 {
+			t.Fatalf("unexpected extra chat request")
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": `{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":20}`},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+			ChangedPaths:      []string{"internal/labels/labels.go"},
+			AllowedEditPaths:  []string{"internal/labels/labels.go"},
+			Objective: strings.Join([]string{
+				"schema: idiom.phase_evidence.v1",
+				"phase: review_repair",
+				"submitted_plan_state:",
+				"- `internal/labels/labels.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+				"source_sanity:",
+				"- `internal/labels/labels.go` status=ok summary=Source sanity passed for 1 file(s) error=",
+				"verification:",
+				"- `go test ./...` status=ok summary=ok example.com/frozen-label-repo/internal/labels error=",
+				"patch_hygiene: status=passed",
+			}, "\n"),
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "plan_then_execute_review_repair_terminal_required" {
+				sawTerminalRequired = true
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "review the applied plan"}}, llama.ChatOptions{MaxTokens: 2048}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("expected deterministic pass after the first hidden probe, got %d requests", requests)
+	}
+	if sawTerminalRequired {
+		t.Fatal("positive phase evidence should close without a terminal-required rejection")
+	}
+	if !strings.Contains(answer, "Decision: pass") || !strings.Contains(answer, "Verification Checklist") {
+		t.Fatalf("expected phase-evidence pass answer, got:\n%s", answer)
 	}
 }
 
@@ -2015,7 +2278,7 @@ func TestReviewRepairNoopSubmitPlanGuardSuppressesMalformedPassPlan(t *testing.T
 
 func TestReviewRepairNoopSubmitPlanForcesTerminalCloseout(t *testing.T) {
 	replies := []string{
-		`{"tool":"submit_plan","rationale":"Verification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: pending outside this lane.","edits":[]}`,
+		`{"tool":"submit_plan","rationale":"No corrective edits are needed.","edits":[]}`,
 		"Decision: pass\n\nVerification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: pending outside this lane.",
 	}
 	var requests int
@@ -2034,8 +2297,9 @@ func TestReviewRepairNoopSubmitPlanForcesTerminalCloseout(t *testing.T) {
 	defer server.Close()
 
 	runner := &Runner{
-		Client: llama.NewClient(server.URL, time.Second),
-		Policy: RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: t.TempDir(), CWD: "."}),
+		Policy:    RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
 			Contract:          "review_findings",
@@ -2056,6 +2320,337 @@ func TestReviewRepairNoopSubmitPlanForcesTerminalCloseout(t *testing.T) {
 	}
 	if !strings.Contains(answer, "Decision: pass") || !strings.Contains(answer, "Verification Checklist") {
 		t.Fatalf("expected terminal review-repair pass, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutFromChecklistRationale(t *testing.T) {
+	answer, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		ChangedPaths:      []string{"internal/example/target.go"},
+		AllowedEditPaths:  []string{"internal/example/target.go"},
+		Objective: strings.Join([]string{
+			"phase: review_repair",
+			"submitted_plan_state:",
+			"- `internal/example/target.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+			"source_sanity:",
+			"- `internal/example/target.go` status=ok summary=Source sanity passed error=",
+			"verification:",
+			"- `go test ./...` status=ok summary=ok error=",
+			"patch_hygiene: status=passed",
+		}, "\n"),
+	}, workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Verification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: passed.",
+		Edits:     []workspace.PlanEdit{},
+	})
+	if !ok {
+		return
+	}
+	t.Fatalf("empty submit_plan checklist must remain an invalid wrapper, got:\n%s", answer)
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutAcceptsExplicitPassChecklist(t *testing.T) {
+	answer, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		ChangedPaths:      []string{"internal/labels/labels.go"},
+		AllowedEditPaths:  []string{"internal/labels/labels.go"},
+		Objective: strings.Join([]string{
+			"schema: idiom.phase_evidence.v1",
+			"phase: review_repair",
+			"submitted_plan_state:",
+			"- `internal/labels/labels.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+			"source_sanity:",
+			"- `internal/labels/labels.go` status=ok summary=Source sanity passed for 1 file(s) error=",
+			"verification:",
+			"- `go test ./...` status=ok summary=ok example.com/frozen-label-repo/internal/labels error=",
+			"patch_hygiene: status=passed",
+		}, "\n"),
+	}, workspace.ToolRequest{
+		Tool: "submit_plan",
+		Rationale: strings.Join([]string{
+			"Verification Checklist:",
+			"- Required behavior: diff evidence shows ShortLabel returns \"Save\".",
+			"- Scope safety: changed paths are allowed.",
+			"- Test or command evidence: go test ./... passed.",
+			"Decision: pass",
+		}, "\n"),
+		Edits: []workspace.PlanEdit{},
+	})
+	if !ok {
+		t.Fatal("expected explicit pass checklist in no-op submit_plan to close from phase evidence")
+	}
+	if !strings.HasPrefix(answer, "Decision: pass\n\nVerification Checklist:") {
+		t.Fatalf("pass closeout should normalize Decision: pass to the front, got:\n%s", answer)
+	}
+	if strings.Count(answer, "Decision: pass") != 1 {
+		t.Fatalf("pass closeout should not duplicate Decision: pass, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutRejectsChecklistWithoutPhaseEvidence(t *testing.T) {
+	_, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+	}, workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Verification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: passed.",
+		Edits:     []workspace.PlanEdit{},
+	})
+	if ok {
+		t.Fatal("no-op submit_plan checklist must not synthesize pass without explicit phase evidence")
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutFromPhaseEvidence(t *testing.T) {
+	answer, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		ChangedPaths:      []string{"internal/labels/labels.go"},
+		AllowedEditPaths:  []string{"internal/labels/labels.go"},
+		Objective: strings.Join([]string{
+			"schema: idiom.phase_evidence.v1",
+			"phase: review_repair",
+			"submitted_plan_state:",
+			"- `internal/labels/labels.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+			"source_sanity:",
+			"- `internal/labels/labels.go` status=ok summary=Source sanity passed for 1 file(s) error=",
+			"verification:",
+			"- `go test ./...` status=ok summary=ok example.com/frozen-label-repo/internal/labels error=",
+			"patch_hygiene: status=passed",
+		}, "\n"),
+	}, workspace.ToolRequest{
+		Tool:  "submit_plan",
+		Edits: []workspace.PlanEdit{},
+	})
+	if !ok {
+		return
+	}
+	t.Fatalf("empty submit_plan phase-evidence wrapper must not synthesize pass directly, got:\n%s", answer)
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutRejectsFailingChecklistItem(t *testing.T) {
+	_, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+	}, workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Verification Checklist:\n- Required behavior: checked.\n- Failing item: scope safety still needs a corrective edit.",
+		Edits:     []workspace.PlanEdit{},
+	})
+	if ok {
+		t.Fatal("failing checklist item should not synthesize a pass")
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutRejectsPlanArtifactEdits(t *testing.T) {
+	_, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+	}, workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Verification Checklist:\n- Required behavior: checked.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: passed.",
+		PlanArtifact: &workspace.PlanArtifact{
+			Edits: []workspace.PlanEdit{{Path: "internal/example/target.go", OldText: "old", NewText: "new", Purpose: "fix target"}},
+		},
+	})
+	if ok {
+		t.Fatal("structured plan_artifact edits should remain a corrective plan, not synthesize pass")
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutRejectsMixedPlanArtifactEdits(t *testing.T) {
+	_, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+	}, workspace.ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "Verification Checklist:\n- Required behavior: checked.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: passed.",
+		Edits:     []workspace.PlanEdit{{Purpose: "placeholder without path"}},
+		PlanArtifact: &workspace.PlanArtifact{
+			Edits: []workspace.PlanEdit{{Path: "internal/example/target.go", OldText: "old", NewText: "new", Purpose: "fix target"}},
+		},
+	})
+	if ok {
+		t.Fatal("concrete plan_artifact edits must not be hidden by no-path top-level edits")
+	}
+}
+
+func TestPlanExecuteTextualAllowedToolsFallsBackToPhaseContract(t *testing.T) {
+	allowed := runnerPlanExecuteTextualAllowedTools(nil, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"context_pack", "read_file", "search_content", "code_navigate", "submit_plan"},
+	}, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/example/target.go lines 1-125 (total lines: 391)",
+		Output:  "package example\n",
+	}})
+	if !slices.Contains(allowed, "read_file") {
+		t.Fatalf("textual plan-execute surface should preserve phase read tools, got %#v", allowed)
+	}
+	if slices.Contains(allowed, "submit_plan") {
+		t.Fatalf("candidate-source phase must not label invalid submit_plan as allowed, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteTextualAllowedToolsExposeSubmitForTypedGroundingCorrection(t *testing.T) {
+	allowed := runnerPlanExecuteTextualAllowedTools(nil, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"context_pack", "read_file", "search_content", "code_navigate", "submit_plan"},
+	}, nil)
+	if !slices.Contains(allowed, "read_file") {
+		t.Fatalf("textual plan-execute surface should preserve candidate read tools, got %#v", allowed)
+	}
+	if slices.Contains(allowed, "submit_plan") {
+		t.Fatalf("candidate-source phase must not expose submit_plan until a selected path makes it callable, got %#v", allowed)
+	}
+}
+
+func TestReviewRepairTextualAllowedToolsKeepsInitialProbeSurface(t *testing.T) {
+	allowed := runnerPlanExecuteTextualAllowedTools(nil, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		AllowedTools:      []string{"read_file", "search_content", "submit_plan"},
+	}, nil)
+	assertContains(t, allowed, "read_file")
+	assertContains(t, allowed, "submit_plan")
+	assertNotContains(t, allowed, "search_content")
+}
+
+func TestReviewRepairNoopSubmitPlanWithChecklistSynthesizesPass(t *testing.T) {
+	replies := []string{
+		`{"tool":"submit_plan","rationale":"Verification Checklist:\n- Required behavior: checked from phase evidence.\n- Scope safety: changed paths are allowed.\n- Test or command evidence: passed.","edits":[]}`,
+		"Decision: pass\n\nVerification Checklist:\n- fallback",
+	}
+	parsed, _, ok, err := workspace.ParseToolRequest(replies[0])
+	if err != nil || !ok || parsed.Tool != "submit_plan" || parsed.Rationale == "" {
+		t.Fatalf("test fixture should parse as submit_plan, ok=%t err=%v req=%#v", ok, err, parsed)
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: t.TempDir(), CWD: "."}),
+		Policy:    RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+			AllowedTools:      []string{"submit_plan"},
+			ChangedPaths:      []string{"internal/example/target.go"},
+			AllowedEditPaths:  []string{"internal/example/target.go"},
+			Objective: strings.Join([]string{
+				"Review the applied plan.",
+				"",
+				"## Phase Evidence Bundle",
+				"",
+				"```text",
+				"phase: review_repair",
+				"submitted_plan_state:",
+				"- `internal/example/target.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+				"source_sanity:",
+				"- `internal/example/target.go` status=ok summary=Source sanity passed error=",
+				"verification:",
+				"- `go test ./...` status=ok summary=ok error=",
+				"patch_hygiene: status=passed",
+				"```",
+			}, "\n"),
+		},
+	}
+	var toolRequests []ToolRequestEvent
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "review the applied plan"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, func(event ToolRequestEvent) {
+		toolRequests = append(toolRequests, event)
+	}, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected explicit pass closeout on the second model request, got %d request(s), tool requests: %#v", requests, toolRequests)
+	}
+	if !strings.Contains(answer, "Decision: pass") || !strings.Contains(answer, "Verification Checklist") {
+		t.Fatalf("expected synthesized review-repair pass, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutRejectsVerificationWithoutOKStatus(t *testing.T) {
+	_, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		Objective: strings.Join([]string{
+			"phase: review_repair",
+			"submitted_plan_state:",
+			"- `internal/example/target.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+			"source_sanity:",
+			"- `internal/example/target.go` status=ok summary=Source sanity passed error=",
+			"verification:",
+			"- `go test ./...` status=pending summary=not yet run error=",
+			"patch_hygiene: status=passed",
+		}, "\n"),
+	}, workspace.ToolRequest{
+		Tool:  "submit_plan",
+		Edits: []workspace.PlanEdit{},
+	})
+	if ok {
+		t.Fatal("no-op review-repair pass must require verification section status=ok, not any phase status=ok")
+	}
+}
+
+func TestReviewRepairNoopSubmitPlanPassCloseoutRejectsOpenPhaseObligations(t *testing.T) {
+	_, ok := reviewRepairNoopSubmitPlanPassCloseout(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		Contract:          "review_findings",
+		PermissionProfile: "plan_submission_review",
+		Objective: strings.Join([]string{
+			"phase: review_repair",
+			"submitted_plan_state:",
+			"- `internal/example/target.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+			"source_sanity:",
+			"- `internal/example/target.go` status=ok summary=Source sanity passed error=",
+			"verification:",
+			"- `go test ./...` status=ok summary=ok error=",
+			"patch_hygiene: status=passed",
+			"open_obligations:",
+			"- source_sanity_missing:internal/example/other.go",
+		}, "\n"),
+	}, workspace.ToolRequest{
+		Tool:  "submit_plan",
+		Edits: []workspace.PlanEdit{},
+	})
+	if ok {
+		t.Fatal("no-op review-repair pass must not synthesize while Phase Evidence has open obligations")
 	}
 }
 
@@ -2609,7 +3204,7 @@ func TestPlanExecuteRequiredSourceFollowupRedirectsRepeatedGenericRead(t *testin
 	}
 }
 
-func TestRepeatedRangeLessReadFileRejectsFullBodyReplay(t *testing.T) {
+func TestRepeatedRangeLessReadFileAllowsFullBodyReplay(t *testing.T) {
 	runner := &Runner{}
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
@@ -2620,19 +3215,8 @@ func TestRepeatedRangeLessReadFileRejectsFullBodyReplay(t *testing.T) {
 		Tool: "read_file",
 		Path: "a.go",
 	}, results)
-	if !reject {
-		t.Fatal("expected repeated range-less read_file after a full read to be rejected")
-	}
-	if summary != "Repeated range-less read_file rejected" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"already fully read", `"start_line":1`, `"end_line":180`, "use the source evidence already gathered"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("repeated read rejection missing %q:\n%s", want, errorText)
-		}
-	}
-	if strings.Contains(errorText, "func A()") {
-		t.Fatalf("repeated read rejection must not replay the full body:\n%s", errorText)
+	if reject {
+		t.Fatalf("repeated range-less read_file after a full read should remain model-owned before broader loop guards, got %q: %s", summary, errorText)
 	}
 	_, _, reject = runner.repeatedRangeLessReadFileRejection(workspace.ToolRequest{
 		Tool:      "read_file",
@@ -3427,6 +4011,49 @@ func TestCompletionGateRecoveryPromptKeepsUnreadCandidateReadVisible(t *testing.
 	}
 }
 
+func TestCompletionGateRecoveryPromptForCandidateScopeFinalAnswerHidesReads(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedEditPaths:  []string{"pkg/feature.go", "pkg/feature_test.go"},
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
+			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+		},
+	})
+	if !ok {
+		t.Fatalf("expected completion gate recovery prompt for candidate scope")
+	}
+	if hideReads {
+		t.Fatalf("candidate recovery should keep bounded read/search available after an unsupported final answer:\n%s", prompt)
+	}
+	for _, want := range []string{
+		"Allowed/candidate paths are not coverage obligations",
+		"one concrete edit-safety fact is still missing",
+		"any bounded read/search/navigation action is one visible JSON object",
+		"top-level `tool`, `rationale`, and `edits` keys",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("candidate final-answer recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	if !strings.Contains(prompt, "pkg/feature_test.go") {
+		t.Fatalf("terminal recovery should surface unread candidate paths as optional bounded reads after a rejected final answer:\n%s", prompt)
+	}
+}
+
 func TestDeterministicNoWriteRecoveryReadsRuntimeTargetRef(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -3559,8 +4186,8 @@ func TestPlanExecuteCandidateScopeRecoveryDropsPriorThinkingAfterRead(t *testing
 	if !opts.ChatTemplateKwargs {
 		t.Fatalf("post-read plan-execute recovery should force request-level thinking kwargs")
 	}
-	if opts.ToolChoice != "required" {
-		t.Fatalf("post-read plan-execute recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
+	if opts.ToolChoice == "required" {
+		t.Fatalf("post-read plan-execute recovery should not force submit_plan until terminal readiness is reached, got %q", opts.ToolChoice)
 	}
 }
 
@@ -3705,8 +4332,69 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejection(t *testing.T) {
 			t.Fatalf("expected submit-plan-only rejection to contain %q, got error=%q prompt=%q", want, errorText, prompt)
 		}
 	}
+	if strings.Contains(errorText+"\n"+prompt, "path/from/required_edit_paths") {
+		t.Fatalf("submit-plan-only recovery must not include copyable placeholder paths:\n%s", prompt)
+	}
 	if strings.Contains(prompt, "exactly one terminal outcome") {
 		t.Fatalf("submit-plan-only recovery should not flatten submit_plan with exception paths:\n%s", prompt)
+	}
+}
+
+func TestPlanExecuteCandidateReadyTerminalPromptIncludesSubmitSkeleton(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedEditPaths:  []string{"internal/productworkflow/coverage_gate.go"},
+	}}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	prompt := runner.planThenExecuteSubmitReadyTerminalPrompt("Candidate source already ready", results, false)
+	for _, want := range []string{
+		"Do not read, search, inspect, or verify again",
+		"# Current Submit Plan Skeleton",
+		"top-level `tool:\"submit_plan\"`",
+		"internal/productworkflow/coverage_gate.go",
+		"Do not copy placeholders",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("terminal candidate prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteTextualAllowedToolsTerminalAfterCandidateReadyRejection(t *testing.T) {
+	allowed := runnerPlanExecuteTextualAllowedTools([]string{"read_file", "submit_plan"}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "submit_plan"},
+	}, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Code:    planThenExecuteResultCandidateSourceReady,
+		Summary: "arbitrary candidate terminal nudge",
+		Error:   "candidate/allowed scope already has anchor-ready source evidence. Submit one parser-readable submit_plan.",
+	}})
+	if !slices.Equal(allowed, []string{"submit_plan"}) {
+		t.Fatalf("candidate-ready terminal state should narrow textual surface to submit_plan, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteCandidateReadyResultUsesTypedCodeBeforeSummary(t *testing.T) {
+	result := workspace.ToolResult{
+		Code:    planThenExecuteResultCandidateSourceReady,
+		Summary: "not the legacy summary",
+		Error:   "candidate scope is ready",
+	}
+	if !planThenExecuteCandidateSourceReadyResult(result) {
+		t.Fatal("typed candidate-source-ready code should be authoritative even with arbitrary summary text")
+	}
+	if !planThenExecuteCandidateSourceReadyRejectionSeen([]workspace.ToolResult{result}) {
+		t.Fatal("typed candidate-source-ready code should drive candidate-ready rejection detection")
 	}
 }
 
@@ -3726,6 +4414,320 @@ func TestPlanExecuteCandidateTerminalSubmitPlanWaitsForUnreadAllowedCandidate(t 
 	}) {
 		t.Fatal("candidate scope should become terminal once every allowed candidate has source evidence")
 	}
+}
+
+func TestPlanExecuteOpenCandidateTerminalDoesNotCollapseAfterOneRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/example/target.go lines 1-80"},
+	}
+	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatal("unscoped candidate source without allowed paths should not collapse to submit_plan-only after one read")
+	}
+	if !planThenExecuteOpenCandidateSourceCanSubmit(brief, results) {
+		t.Fatal("unscoped candidate source with source evidence should allow submit_plan while keeping read/search available")
+	}
+}
+
+func TestPlanExecuteOpenCandidateTerminalWaitsForUnreadContextCandidate(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "context pack",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
+			Output:  "1:package pkg\n",
+		},
+	}
+	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatal("unscoped candidate scope with unread context candidates should not collapse to submit-plan-only")
+	}
+	if !planThenExecuteOpenCandidateSourceCanSubmit(brief, results) {
+		t.Fatal("unscoped candidate source with source evidence should still allow submit_plan while reads remain visible")
+	}
+}
+
+func TestPlanExecuteCompletionRecoveryKeepsReadsForUnreadContextCandidate(t *testing.T) {
+	thinkingOn := true
+	opts := completionGateRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        16384,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "search_content"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}, []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "context pack",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
+			Output:  "1:package pkg\n",
+		},
+	})
+
+	if opts.ToolChoice == "required" {
+		t.Fatalf("completion recovery with unread context candidates must not force terminal submit_plan mode")
+	}
+	if !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "search_content") || !chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("completion recovery should keep read/search and submit_plan available, got %#v", opts.Tools)
+	}
+}
+
+func TestPlanExecuteUnreadCandidateRecoveryDropsMissingFileEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "context pack",
+			Output:  `{"candidate_files":[{"path":"cmd/idiom/analysis_agents.go"},{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/productworkflow/coverage_gate.go lines 1-80 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read cmd/idiom/analysis_agents.go failed",
+			Error:   "file not found: cmd/idiom/analysis_agents.go",
+		},
+	}
+
+	unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8)
+	if slices.Contains(unread, "cmd/idiom/analysis_agents.go") {
+		t.Fatalf("missing candidate path should not stay in unread recovery list: %#v", unread)
+	}
+}
+
+func TestPlanExecuteUnscopedEmptySubmitPlanRejectionReopensCandidateSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
+			Output:  "1:package pkg\n2:\n3:func Label() string { return \"long label\" }\n",
+		},
+		{
+			Tool:    "read_file",
+			Code:    planThenExecuteResultCandidateSourceReady,
+			Summary: "Candidate source already ready",
+			Error:   "candidate source evidence is ready for a terminal planner outcome",
+		},
+		{
+			Tool:    "submit_plan",
+			Code:    workspace.SubmitPlanEmptyEditsCode,
+			Summary: "submit_plan rejected",
+			Error:   "submit_plan requires at least one edit in the edits array",
+		},
+	}
+	if !planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
+		t.Fatal("empty submit_plan rejection should be detected from the typed result code")
+	}
+	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
+		t.Fatal("unscoped empty submit_plan rejection must not keep the planner in submit-plan-only mode")
+	}
+	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatal("unscoped empty submit_plan rejection must reopen candidate source/search surface")
+	}
+	if planThenExecuteRejectedPlanCorrectionOnly(brief, results) {
+		t.Fatal("unscoped empty submit_plan rejection is salvage, not submit-plan-only correction")
+	}
+	allowed := runnerPlanExecuteTextualAllowedTools([]string{"context_pack", "read_file", "code_navigate", "submit_plan"}, brief, results)
+	if slices.Equal(allowed, []string{"submit_plan"}) {
+		t.Fatalf("textual allowed tools collapsed to submit_plan after empty rejection: %#v", allowed)
+	}
+	if !slices.Contains(allowed, "read_file") || !slices.Contains(allowed, "submit_plan") {
+		t.Fatalf("candidate recovery should keep both source evidence and non-empty submit_plan available, got %#v", allowed)
+	}
+}
+
+func TestPlanExecuteUnscopedEmptySubmitPlanRejectionRequiresTypedCode(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "submit_plan requires at least one edit in the edits array",
+	}}
+	if planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
+		t.Fatal("empty submit_plan salvage must be driven by typed result code, not diagnostic prose")
+	}
+}
+
+func TestPlanExecuteRunnerReopensCandidateSurfaceAfterEmptySubmitPlan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Label() string { return \"Long descriptive label\" }\n"), 0o644); err != nil {
+		t.Fatalf("write source fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a_test.go"), []byte("package a\n\nfunc TestLabel(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("write test fixture: %v", err)
+	}
+	replies := []string{
+		`{"tool":"context_pack","task":"shorten the label returned by a.go and keep tests aligned","mode":"plan","limit":4}`,
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":20}`,
+		`{"tool":"submit_plan","rationale":"drafting from current candidate evidence","edits":[]}`,
+		`{"tool":"read_file","path":"a_test.go","start_line":1,"end_line":20,"named_gap":"check adjacent test expectation before finalizing the edit"}`,
+		`{"tool":"submit_plan","rationale":"Shorten the label using current source evidence.","edits":[{"path":"a.go","old_text":"return \"Long descriptive label\"","new_text":"return \"Short label\"","purpose":"shorten the user-visible label"}]}`,
+	}
+	var requests int
+	var chatRequests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode chat request: %v", err)
+		}
+		chatRequests = append(chatRequests, payload)
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawEmptyRecovery bool
+	var sawEmptyRejection bool
+	var sawPostEmptyRead bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "plan_then_execute_empty_submit_plan_recovery" {
+				sawEmptyRecovery = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "shorten the label and keep tests aligned"}},
+		llama.ChatOptions{MaxTokens: 2048},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "submit_plan" && event.Result.Code == workspace.SubmitPlanEmptyEditsCode {
+				sawEmptyRejection = true
+			}
+			if sawEmptyRejection && event.Request.Tool == "read_file" && event.Request.Path == "a_test.go" && strings.TrimSpace(event.Result.Error) == "" {
+				sawPostEmptyRead = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected full empty-plan recovery sequence, got %d request(s)", requests)
+	}
+	if !sawEmptyRecovery {
+		t.Fatal("runner did not emit empty submit_plan recovery event")
+	}
+	if !sawPostEmptyRead {
+		t.Fatal("runner did not execute a bounded candidate read after empty submit_plan rejection")
+	}
+	if len(chatRequests) < 4 {
+		t.Fatalf("expected at least four model calls, got %d", len(chatRequests))
+	}
+	afterEmptyRecovery := chatRequests[3]
+	if choice, ok := afterEmptyRecovery["tool_choice"].(string); ok && choice == "required" {
+		t.Fatalf("empty-plan recovery must not preserve terminal required tool_choice: %#v", afterEmptyRecovery["tool_choice"])
+	}
+	if responseFormat, ok := afterEmptyRecovery["response_format"].(map[string]any); ok && responseFormat["type"] == "json_object" {
+		t.Fatalf("empty-plan recovery must not preserve terminal JSON response_format: %#v", responseFormat)
+	}
+	if !chatRequestToolListContains(afterEmptyRecovery, "read_file") || !chatRequestToolListContains(afterEmptyRecovery, "submit_plan") {
+		t.Fatalf("empty-plan recovery request should expose candidate tools plus submit_plan, got tools=%#v", afterEmptyRecovery["tools"])
+	}
+	if chatRequestMessagesContain(afterEmptyRecovery, "# Terminal Plan-Execute Native Tool Surface") ||
+		chatRequestMessagesContain(afterEmptyRecovery, "# Terminal Plan-Execute Textual Tool Surface") {
+		t.Fatalf("empty-plan recovery request retained stale terminal surface scaffolding")
+	}
+	if !strings.Contains(answer, "Plan submitted") {
+		t.Fatalf("expected final non-empty submit_plan to be accepted, got:\n%s", answer)
+	}
+}
+
+func chatRequestToolListContains(payload map[string]any, name string) bool {
+	tools, ok := payload["tools"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawTool := range tools {
+		tool, ok := rawTool.(map[string]any)
+		if !ok {
+			continue
+		}
+		function, ok := tool["function"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if function["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func chatRequestMessagesContain(payload map[string]any, needle string) bool {
+	messages, ok := payload["messages"].([]any)
+	if !ok {
+		return false
+	}
+	for _, rawMessage := range messages {
+		message, ok := rawMessage.(map[string]any)
+		if !ok {
+			continue
+		}
+		if strings.Contains(fmt.Sprint(message["content"]), needle) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *testing.T) {
@@ -4090,6 +5092,32 @@ func TestPlanExecuteRejectedPlanCorrectionUsesLargeBudgetForFourExistingFiles(t 
 	}
 }
 
+func TestPlanExecuteUnscopedRejectedPlanCorrectionUsesLargeBudget(t *testing.T) {
+	thinkingOff := false
+	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
+		EnableThinking:   &thinkingOff,
+		PreserveThinking: false,
+		MaxTokens:        4096,
+		Tools:            []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}}},
+		ToolChoice:       "required",
+	}, workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391", Output: "package productworkflow\n"},
+		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow.go lines 1-180", Output: "package main\n"},
+		{Tool: "submit_plan", Summary: "submit_plan rejected", Error: "edits[0]: edit would not change internal/productworkflow/coverage_gate.go; submit real edits, or answer `Decision: source-satisfied` with current-state evidence when no changes are needed"},
+	})
+
+	if opts.MaxTokens != 16384 {
+		t.Fatalf("unscoped candidate correction should allow full textual submit_plan budget, got %d", opts.MaxTokens)
+	}
+	if opts.ToolChoice != "required" || len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("unscoped correction should expose only submit_plan, got tool_choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
+	}
+}
+
 func TestPlanExecuteRejectedPlanCorrectionKeepsLargeBudgetForWholeFile(t *testing.T) {
 	thinkingOff := false
 	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
@@ -4286,6 +5314,53 @@ func TestPlanExecuteCandidateReadyKeepsUnreadCandidateReadTools(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteContextPackCandidateReadyFiltersSubmitPlanOnly(t *testing.T) {
+	thinkingOn := true
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
+			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
+		},
+	}
+
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
+		EnableThinking:     &thinkingOn,
+		PreserveThinking:   true,
+		ChatTemplateKwargs: false,
+		MaxTokens:          8192,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "context_pack"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, false)
+
+	if chatOptionsExposeTool(opts, "context_pack") || chatOptionsExposeTool(opts, "read_file") {
+		t.Fatalf("selected context-pack candidate readiness should remove discovery tools, got %#v", opts.Tools)
+	}
+	if allowed := runnerPlanExecuteTextualAllowedTools(nil, brief, results); !slices.Equal(allowed, []string{"submit_plan"}) {
+		t.Fatalf("selected context-pack candidate textual allowed tools = %#v, want submit_plan", allowed)
+	}
+	if opts.EnableThinking == nil || *opts.EnableThinking {
+		t.Fatalf("selected context-pack candidate readiness should force visible terminal output, got %#v", opts.EnableThinking)
+	}
+	if opts.MaxTokens != 4096 {
+		t.Fatalf("selected context-pack candidate readiness should cap terminal budget, got %d", opts.MaxTokens)
+	}
+}
+
 func TestPlanExecuteCandidateWriteOnlyRecoveryForcesVisibleSubmitPlanAfterRead(t *testing.T) {
 	thinkingOn := true
 	opts := planThenExecuteCandidateWriteOnlyRecoveryChatOptions(llama.ChatOptions{
@@ -4431,6 +5506,37 @@ func TestPlanExecuteRejectedOldTextRequiresAnchorReadyRefresh(t *testing.T) {
 	results = append(results, workspace.ToolResult{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5360\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"})
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("symbol/body source refresh should close stale-anchor refresh requirement")
+	}
+}
+
+func TestPlanExecuteRejectedMissingSourceGroundingRequiresRefreshForRejectedEditPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: edit paths lack source grounding",
+		Error:   "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `internal/productworkflow/tdd.go`. Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 cmd/idiom/product_workflow.go lines 1-120 (total lines: 2894)"},
+		rejected,
+	}
+	if !planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+		t.Fatal("missing source-body grounding rejection should enable a bounded refresh for the rejected edit path")
+	}
+	paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, 1)
+	if len(paths) != 1 || paths[0] != "internal/productworkflow/tdd.go" {
+		t.Fatalf("refresh paths = %#v, want rejected edit path", paths)
+	}
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f2 internal/productworkflow/tdd.go lines 1-50 (total lines: 120)",
+	})
+	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+		t.Fatal("successful source read after the rejected plan should close missing-grounding refresh")
 	}
 }
 
@@ -4798,6 +5904,11 @@ func TestCompletionGateRecoveryPromptKeepsUnreadDiscoveredCandidateReadVisible(t
 
 	results := []workspace.ToolResult{
 		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/migration.go"},{"path":"internal/productworkflow/migration_apply.go"}]}`,
+		},
+		{
 			Tool:    "search_content",
 			Summary: "Found matching lines.",
 			Output: strings.Join([]string{
@@ -4842,6 +5953,11 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadBetterCandidate(
 	}
 	results := []workspace.ToolResult{
 		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/migration.go"},{"path":"internal/productworkflow/migration_apply.go"}]}`,
+		},
+		{
 			Tool:    "search_content",
 			Summary: "Found matching lines.",
 			Output: strings.Join([]string{
@@ -4858,15 +5974,8 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadBetterCandidate(
 		},
 	}
 	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
-		if !strings.Contains(got, "PLANNER READINESS REACHED") {
-			t.Fatalf("candidate evidence should close discovery even when another ranked candidate exists:\n%s", got)
-		}
-		if !strings.Contains(got, "Allowed/candidate paths are not coverage obligations") {
-			t.Fatalf("candidate readiness must explain allowed paths are not coverage obligations:\n%s", got)
-		}
-		return
+		t.Fatalf("unscoped candidate evidence should not create terminal readiness pressure while another ranked candidate remains unread:\n%s", got)
 	}
-	t.Fatal("expected candidate-scope readiness after one source read")
 }
 
 func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadAllowedPath(t *testing.T) {
@@ -6016,11 +7125,16 @@ func TestUnscopedContextPackCandidateReadRecoveryRejectsUngroundedRead(t *testin
 	for _, want := range []string{
 		"Context packet candidate read rejected",
 		"context_pack has not established an exact edit target",
-		`"tool":"search_content"`,
-		"banner",
+		"bounded fallback discovery action",
+		"literal words, symbols, or behavior",
 	} {
 		if !strings.Contains(summary+"\n"+errText+"\n"+prompt, want) {
 			t.Fatalf("expected recovery text to contain %q, got summary=%q err=%q prompt=%q", want, summary, errText, prompt)
+		}
+	}
+	for _, forbidden := range []string{"```tool", `"tool":"search_content"`, "requested behavior|target symbol|current source"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("recovery text must not include copyable placeholder/template %q: %s", forbidden, prompt)
 		}
 	}
 }
@@ -6140,6 +7254,97 @@ func TestCompletionGateRetryLimitCutsOverPlanExecuteSubmitPlanRecovery(t *testin
 
 	if got := runner.completionGateRetryLimit(results); got != 1 {
 		t.Fatalf("plan-execute submit_plan recovery retry limit = %d, want 1", got)
+	}
+}
+
+func TestPlanExecuteLoopBudgetRecoveryKeepsUnreadCandidateReadsAvailable(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote candidates",
+			Output:  `{"candidate_files":[{"path":"a.go"},{"path":"b.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 a.go lines 1-20 (total lines: 20)",
+			Output:  "1:package demo\n",
+		},
+	}
+
+	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "a.go", Pattern: "type Foo", Resolution: "definition"},
+		results,
+		"the model repeated code_navigate with the same arguments 3 turns in a row",
+		false,
+	)
+	if !ok {
+		t.Fatal("expected plan-execute loop-budget recovery")
+	}
+	if recovery.TerminalOnly {
+		t.Fatalf("unread candidate recovery should not force submit-only terminal surface:\n%s", recovery.Prompt)
+	}
+	for _, want := range []string{
+		"Do not repeat that request",
+		"Unread candidate path(s): b.go",
+		"one bounded source read/search for a different unread candidate path",
+	} {
+		if !strings.Contains(recovery.Prompt, want) {
+			t.Fatalf("expected recovery prompt to contain %q:\n%s", want, recovery.Prompt)
+		}
+	}
+	if strings.Contains(recovery.Prompt, "do not call more read") {
+		t.Fatalf("unread candidate recovery must not forbid all reads:\n%s", recovery.Prompt)
+	}
+}
+
+func TestPlanExecuteIgnoredLoopBudgetRecoveryForcesTerminalPlannerOutcome(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote candidates",
+			Output:  `{"candidate_files":[{"path":"a.go"},{"path":"b.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 a.go lines 1-20 (total lines: 20)",
+			Output:  "1:package demo\n",
+		},
+	}
+
+	recovery, ok := runner.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "a.go", Pattern: "type Foo", Resolution: "definition"},
+		results,
+		"the model repeated code_navigate with the same arguments after a loop-budget recovery",
+		false,
+	)
+	if !ok {
+		t.Fatal("expected ignored loop-budget recovery")
+	}
+	if !recovery.TerminalOnly {
+		t.Fatalf("ignored loop recovery should force terminal-only surface:\n%s", recovery.Prompt)
+	}
+	for _, want := range []string{
+		"repeated code_navigate after a loop-budget recovery",
+		"Read/search/navigation tools are disabled",
+		"submit_plan",
+	} {
+		if !strings.Contains(recovery.Prompt, want) {
+			t.Fatalf("expected recovery prompt to contain %q:\n%s", want, recovery.Prompt)
+		}
 	}
 }
 
@@ -6521,7 +7726,7 @@ func TestPlanExecuteMLXReadinessRecoveryUsesTextHistoryAndStrictNoThinking(t *te
 		if msg.Role == "system" && strings.Contains(msg.Content, "# Terminal Plan-Execute Textual Tool Surface") {
 			sawTextualTerminalSurface = true
 			if !strings.Contains(msg.Content, "Textual-tool backends must emit exactly one visible JSON object") &&
-				!strings.Contains(msg.Content, "Parser-readable JSON skeleton") {
+				!strings.Contains(msg.Content, "Parser-readable submit_plan contract") {
 				t.Fatalf("terminal textual surface should advertise submit_plan JSON:\n%s", msg.Content)
 			}
 			for _, stale := range []string{
@@ -6761,7 +7966,7 @@ func TestPlanExecuteTextualSkeletonDefaultsExistingFilesToLineRange(t *testing.T
 		EndLine:   12,
 	}})
 
-	for _, want := range []string{`"path":"a.go"`, `"start_line":10`, `"end_line":12`, "complete final replacement"} {
+	for _, want := range []string{"required edit path: a.go", "start_line 10", "end_line 12", "complete final replacement"} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("textual skeleton missing %q:\n%s", want, prompt)
 		}
@@ -6797,15 +8002,15 @@ func TestPlanExecuteNativeTerminalSurfaceIncludesRequiredPathSkeleton(t *testing
 		"# Terminal Plan-Execute Textual Tool Surface",
 		"submit_plan_called",
 		"source_satisfied_or_blocker_only_with_per_path_evidence",
-		"Parser-readable JSON skeleton",
-		`"path":"a.go"`,
-		`"path":"b.go"`,
-		"evidence for a.go: Read a.go lines 1-20",
+		"Parser-readable submit_plan contract",
+		"required edit path: a.go",
+		"required edit path: b.go",
+		"evidence: Read a.go lines 1-20",
 		"insert_after_line",
 		"old_text",
 		"start_line",
-		`"start_line":1`,
-		`"end_line":20`,
+		"start_line 1",
+		"end_line 20",
 		"`insert_after_line` targets an existing 1-based line in an existing file",
 		"The shown source ranges are evidence handles, not proposed edits",
 		"Line-range `content` replaces every current source line",
@@ -6823,6 +8028,72 @@ func TestPlanExecuteNativeTerminalSurfaceIncludesRequiredPathSkeleton(t *testing
 		if strings.Contains(joined, forbidden) {
 			t.Fatalf("textual terminal surface should not present source-satisfied as a coequal final critic %q:\n%s", forbidden, joined)
 		}
+	}
+}
+
+func TestPlanExecuteTerminalSurfaceRefreshAllowsSelectedContextPackCandidate(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
+			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
+		},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan feature edit"}}
+
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "context_pack_candidate")
+	joined := planExecuteJoinedMessages(messages)
+
+	if !strings.Contains(joined, "# Terminal Plan-Execute Textual Tool Surface") &&
+		!strings.Contains(joined, "# Terminal Plan-Execute Native Tool Surface") {
+		t.Fatalf("selected context-pack candidate should render terminal tool surface:\n%s", joined)
+	}
+	if !strings.Contains(joined, "required edit path: pkg/feature.go") && !strings.Contains(joined, `path: "pkg/feature.go"`) {
+		t.Fatalf("selected context-pack candidate should appear in submit skeleton:\n%s", joined)
+	}
+	if strings.Contains(joined, "No concrete selected edit path") {
+		t.Fatalf("selected context-pack candidate should not render no-path blocker skeleton:\n%s", joined)
+	}
+}
+
+func TestPlanExecuteTerminalSurfaceRefreshSkipsUnreadContextCandidate(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-4 (total lines: 4)",
+			Output:  "1:package pkg\n2:\n3:func Hardened() bool { return true }\n",
+		},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	messages := []llama.ChatMessage{{Role: "user", Content: "plan feature edit"}}
+
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "context_pack_candidate")
+	joined := planExecuteJoinedMessages(messages)
+
+	if strings.Contains(joined, "# Terminal Plan-Execute Textual Tool Surface") ||
+		strings.Contains(joined, "# Terminal Plan-Execute Native Tool Surface") {
+		t.Fatalf("unread context-pack candidate should not render terminal tool surface:\n%s", joined)
 	}
 }
 
@@ -6883,15 +8154,14 @@ func TestPlanExecuteTextualFallbackSurfaceIncludesConcreteSubmitPlanJSONSkeleton
 	}
 	for _, want := range []string{
 		"# Terminal Plan-Execute Textual Tool Surface",
-		"Parser-readable JSON skeleton",
-		`"tool":"submit_plan"`,
-		`"edits":[`,
-		`"path":"a.go"`,
-		`"path":"b.go"`,
-		"evidence for a.go: Read a.go lines 1-20",
-		`"start_line":1`,
-		`"end_line":20`,
-		`"content":"<complete final replacement for that inclusive source range>"`,
+		"Parser-readable submit_plan contract",
+		"top-level `tool:\"submit_plan\"`",
+		"required edit path: a.go",
+		"required edit path: b.go",
+		"evidence: Read a.go lines 1-20",
+		"start_line 1",
+		"end_line 20",
+		"complete final replacement",
 		"Edit shape choices",
 		"use `insert_after_line` + small inline `content` only for small insertions/appends after an existing line",
 		"large additions anchored to existing lines",
@@ -6933,21 +8203,22 @@ func TestPlanExecuteTextualFallbackSurfaceUsesNewFileShapeForMissingPath(t *test
 	joined := planExecuteJoinedMessages(messages)
 
 	for _, want := range []string{
-		`"path":"new_file.go"`,
-		`"replace_all":true`,
-		`"old_text":""`,
-		`"new_text":"<complete final file body>"`,
+		"required edit path: new_file.go",
+		"replace_all true",
+		"empty old_text",
+		"complete final new_text file body",
 		"For missing/new files, use only `replace_all:true`",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("missing-file skeleton missing %q:\n%s", want, joined)
 		}
 	}
-	if strings.Contains(joined, `"start_line":1`) || strings.Contains(joined, `"content":"<complete final replacement`) {
-		newFileStart := strings.Index(joined, `"path":"new_file.go"`)
-		if newFileStart < 0 || strings.Contains(joined[newFileStart:], `"content":"<complete final replacement`) {
-			t.Fatalf("missing-file skeleton should not use line-range shape:\n%s", joined)
-		}
+	newFileStart := strings.Index(joined, "required edit path: new_file.go")
+	if newFileStart < 0 {
+		t.Fatalf("missing-file contract should name new file path:\n%s", joined)
+	}
+	if strings.Contains(joined[newFileStart:], "default source range evidence") {
+		t.Fatalf("missing-file contract should not use line-range shape:\n%s", joined)
 	}
 }
 
@@ -7047,6 +8318,7 @@ func TestPlanExecutePostRejectionSurfaceKeepsOneSkeletonAndRejectedDraftEvidence
 		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
 		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
 		result,
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in b.go lines 1-20\n1:package b"},
 	}
 	messages := []llama.ChatMessage{
 		{Role: "system", Content: "# Terminal Plan-Execute Native Tool Surface\n" + planThenExecuteNativeSubmitPlanSkeleton([]planThenExecuteSubmitPlanSkeletonEntry{{Path: "stale.go"}})},
@@ -7063,10 +8335,13 @@ func TestPlanExecutePostRejectionSurfaceKeepsOneSkeletonAndRejectedDraftEvidence
 	if strings.Count(joined, planThenExecuteRejectedSubmitPlanDraftEvidencePrefix) != 1 {
 		t.Fatalf("post-rejection surface should preserve exactly one rejected draft evidence block:\n%s", joined)
 	}
-	for _, want := range []string{`"path":"a.go"`, `"path":"b.go"`, "path=a.go lines=1-3", "return 2", "old_text not found"} {
+	for _, want := range []string{"required edit path: b.go", "path=a.go lines=1-3", "return 2", "old_text not found"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("post-rejection surface missing %q:\n%s", want, joined)
 		}
+	}
+	if !strings.Contains(joined, "required edit path: a.go") {
+		t.Fatalf("post-rejection correction skeleton must preserve required-path coverage:\n%s", joined)
 	}
 	if strings.Contains(joined, "stale.go") || strings.Contains(joined, "stale draft") {
 		t.Fatalf("post-rejection surface retained stale skeleton/evidence:\n%s", joined)
@@ -7440,52 +8715,6 @@ func TestPlanThenExecuteUnreadRequiredSourceChatOptionsCapsNextCall(t *testing.T
 	}
 }
 
-func TestPlanThenExecuteExplicitSourceSatisfiedAnswerAfterRequiredReads(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        PlanThenExecutePlannerTaskFamily,
-		Contract:          "implementation_result",
-		PermissionProfile: "guarded_workspace_write",
-		Objective:         "Smoke test without changing files and answer source-satisfied with evidence.",
-		RequiredEditPaths: []string{"internal/app/app.go", "internal/agent/runner.go"},
-	}
-	results := []workspace.ToolResult{
-		{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56 (total lines: 56)"},
-		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read Runner.Run in internal/agent/runner.go lines 88-210"},
-	}
-
-	answer, ok := planThenExecuteExplicitSourceSatisfiedAnswer(brief, results)
-	if !ok {
-		t.Fatalf("expected explicit source-satisfied no-write answer")
-	}
-	for _, want := range []string{
-		"Decision: source-satisfied",
-		"internal/app/app.go",
-		"Read f1 internal/app/app.go lines 1-56",
-		"internal/agent/runner.go",
-		"Code navigation routed read_symbol via go_read_symbol",
-		"Changed paths: none",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer missing %q:\n%s", want, answer)
-		}
-	}
-}
-
-func TestPlanThenExecuteExplicitSourceSatisfiedAnswerRequiresNoWriteObjective(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        PlanThenExecutePlannerTaskFamily,
-		Contract:          "implementation_result",
-		PermissionProfile: "guarded_workspace_write",
-		Objective:         "Implement the feature.",
-		RequiredEditPaths: []string{"internal/app/app.go"},
-	}
-	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-56"}}
-
-	if answer, ok := planThenExecuteExplicitSourceSatisfiedAnswer(brief, results); ok {
-		t.Fatalf("unexpected source-satisfied short-circuit for mutation objective:\n%s", answer)
-	}
-}
-
 func TestPlanThenExecuteReadyToSubmitNudgeWaitsForFullCoverage(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -7506,6 +8735,11 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
 	}
 	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
 		{Tool: "read_file", Summary: "Read f1 internal/app/rendering.go lines 1-120"},
 	}
 
@@ -7514,7 +8748,7 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.
 		t.Fatalf("expected candidate-scope readiness nudge after a read")
 	}
 	for _, want := range []string{
-		"at least one candidate edit path has been read",
+		"at least one selected candidate edit path has source evidence",
 		"internal/app/rendering.go",
 		"submit_plan",
 		"Decision: source-satisfied",
@@ -7529,6 +8763,41 @@ func TestPlanThenExecuteReadyToSubmitNudgeFiresForCandidateScopeRead(t *testing.
 	}
 	if strings.Contains(got, "Only read/search again") {
 		t.Fatalf("candidate-scope nudge must not retain stale optional-read language: %q", got)
+	}
+}
+
+func TestPlanThenExecuteReadyToSubmitNudgeWaitsForUnreadUnscopedCandidates(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read EvaluateCoverage in internal/productworkflow/coverage_gate.go lines 20-80\n\n20:func EvaluateCoverage() {}\n",
+		},
+	}
+
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
+		t.Fatalf("unscoped context candidates should not receive terminal readiness pressure while another candidate remains unread; got:\n%s", got)
+	}
+}
+
+func TestPlanThenExecuteReadyToSubmitNudgeIgnoresUnselectedEvidenceOnlyRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/app/rendering.go lines 1-120"},
+	}
+
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
+		t.Fatalf("evidence-only unscoped reads must not receive submit-ready nudge without selected candidate path, got %q", got)
 	}
 }
 
@@ -7556,7 +8825,774 @@ func TestPlanThenExecuteReadyToSubmitNudgeDoesNotRequireAllAllowedCandidates(t *
 	}
 }
 
-func TestPlanThenExecuteCandidatePostReadinessRejectsSamePathRead(t *testing.T) {
+func TestPlanExecutePlanningStateKeepsCandidatesOutOfRequiredCoverage(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"pkg/feature.go", "pkg/feature_test.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 pkg/feature.go lines 1-40 (total lines: 40)",
+		Output:  "1:package pkg\n",
+	}}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
+		t.Fatalf("mode = %q, want allowed_candidate", state.Mode)
+	}
+	if len(state.RequiredCoveragePaths) != 0 {
+		t.Fatalf("allowed candidates must not become required coverage: %#v", state.RequiredCoveragePaths)
+	}
+	if !slices.Equal(state.SelectedEditPaths, []string{"pkg/feature.go"}) {
+		t.Fatalf("selected edit paths should come from source evidence, got %#v", state.SelectedEditPaths)
+	}
+	if !slices.Contains(state.TerminalOptions, "submit_plan") {
+		t.Fatalf("terminal options should include submit_plan once selected source evidence exists: %#v", state.TerminalOptions)
+	}
+}
+
+func TestPlanExecutePlanningStateDoesNotPromoteEvidenceOnlyPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/types.go lines 1-40 (total lines: 40)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if len(state.RequiredCoveragePaths) != 0 {
+		t.Fatalf("unexpected required coverage paths: %#v", state.RequiredCoveragePaths)
+	}
+	if len(state.SelectedEditPaths) != 0 {
+		t.Fatalf("evidence-only paths must not become selected edit paths: %#v", state.SelectedEditPaths)
+	}
+	if slices.Contains(state.TerminalOptions, "submit_plan") {
+		t.Fatalf("submit_plan must not be advertised without concrete selected edit paths: %#v", state.TerminalOptions)
+	}
+}
+
+func TestPlanExecutePlanningStateDoesNotPromoteEvidenceOnlyPathViaContextPack(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "context pack",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/other.go lines 1-40 (total lines: 40)",
+			Output:  "1:package pkg\n",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if len(state.SelectedEditPaths) != 0 {
+		t.Fatalf("context-pack candidates must not make unrelated evidence-only paths selected: %#v", state.SelectedEditPaths)
+	}
+	if slices.Contains(state.TerminalOptions, "submit_plan") {
+		t.Fatalf("submit_plan must not be advertised without a selected edit path: %#v", state.TerminalOptions)
+	}
+	skeleton := planThenExecuteTerminalSubmitPlanSkeleton(brief, results, false)
+	if strings.Contains(skeleton, "pkg/feature.go") || strings.Contains(skeleton, "pkg/other.go") {
+		t.Fatalf("skeleton must not promote context-pack or evidence-only paths:\n%s", skeleton)
+	}
+	if !strings.Contains(skeleton, "No concrete selected edit path") {
+		t.Fatalf("skeleton should report no safe selected path:\n%s", skeleton)
+	}
+}
+
+func TestPlanExecutePlanningStateSelectsContextPackCandidateWithSourceEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "context pack",
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-40 (total lines: 40)",
+			Output:  "1:package pkg\n",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if !slices.Equal(state.SelectedEditPaths, []string{"pkg/feature.go"}) {
+		t.Fatalf("selected edit paths should be context-pack candidates with source evidence, got %#v", state.SelectedEditPaths)
+	}
+	if !slices.Contains(state.TerminalOptions, "submit_plan") {
+		t.Fatalf("submit_plan should be available once a typed candidate has source evidence: %#v", state.TerminalOptions)
+	}
+	if !planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatal("typed context-pack candidate with source evidence should allow terminal submit_plan surface")
+	}
+}
+
+func TestPlanExecutePlanningStateCorrectionSelectsInvalidArtifactPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-20 (total lines: 20)", Output: "1:package a"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-20 (total lines: 20)", Output: "1:package b"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `b.go: old_text not found in current source`.",
+		},
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in b.go lines 1-20\n1:package b"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction", state.Mode)
+	}
+	if !slices.Equal(state.RequiredCoveragePaths, []string{"a.go", "b.go"}) {
+		t.Fatalf("required coverage paths changed unexpectedly: %#v", state.RequiredCoveragePaths)
+	}
+	if !slices.Equal(state.LastInvalidPaths, []string{"b.go"}) {
+		t.Fatalf("last invalid paths = %#v, want b.go", state.LastInvalidPaths)
+	}
+	if !slices.Equal(state.SelectedEditPaths, []string{"a.go", "b.go"}) {
+		t.Fatalf("correction selected edit paths must preserve required coverage, got %#v", state.SelectedEditPaths)
+	}
+	if !slices.Equal(planThenExecuteSubmitPlanSkeletonPaths(state), []string{"a.go", "b.go"}) {
+		t.Fatalf("correction skeleton paths must preserve required coverage, got %#v", planThenExecuteSubmitPlanSkeletonPaths(state))
+	}
+	skeleton := planThenExecuteTerminalSubmitPlanSkeleton(brief, results, false)
+	if !strings.Contains(skeleton, "required edit path: b.go") {
+		t.Fatalf("correction skeleton should include invalid path b.go:\n%s", skeleton)
+	}
+	if !strings.Contains(skeleton, "required edit path: a.go") {
+		t.Fatalf("correction skeleton should preserve all required paths:\n%s", skeleton)
+	}
+}
+
+func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.T) {
+	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+	}, []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}, PlanExecutePlanningTransport{
+		TextualToolParser:  true,
+		TerminalOnly:       true,
+		ResponseFormatJSON: true,
+		EffectiveMaxTokens: 4096,
+		TimeoutMillis:      300000,
+	})
+
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("mode = %q, want submit_ready", state.Mode)
+	}
+	if state.TransportMode != PlanExecuteTransportModeTextualJSON {
+		t.Fatalf("transport mode = %q, want textual_json_terminal", state.TransportMode)
+	}
+	if !state.RuntimePolicy.ResponseFormatJSON || state.RuntimePolicy.EffectiveMaxTokens != 4096 || state.RuntimePolicy.TimeoutMillis != 300000 {
+		t.Fatalf("runtime policy not preserved: %#v", state.RuntimePolicy)
+	}
+}
+
+func TestPlanExecuteSubmitPlanExactAnchorGroundsUnscopedPath(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.go",
+			OldText: "return 1",
+			NewText: "return 2",
+			Purpose: "change value",
+		}},
+		Rationale: "Change value.",
+	}
+	guard := runner.preflightPlanThenExecuteSubmitPlanGroundingGuard(req, nil)
+	if guard.Intercepted {
+		t.Fatalf("exact current-source anchor should ground unscoped submit_plan edit, got %#v", guard)
+	}
+}
+
+func TestPlanThenExecuteRepeatedSymbolReadRemainsModelOwnedBeforeBudget(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/types.go lines 1-120 (total lines: 200)",
+			Output:  "1:package productworkflow\n",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read CoverageGateResult in internal/productworkflow/types.go lines 20-40\n20:type CoverageGateResult struct {}\n",
+		},
+	}
+
+	req := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "read_symbol",
+		Path:       "internal/productworkflow/types.go",
+		Pattern:    "CoverageGateFinding",
+		NamedGap:   "need more context",
+	}
+	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
+	if len(state.LowValueActions) != 0 {
+		t.Fatalf("repeated symbol read should remain model-owned before the candidate-read budget is exhausted, got %#v", state.LowValueActions)
+	}
+}
+
+func TestPlanThenExecuteCandidateSourceBudgetForcesTerminalReadiness(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-120 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+	for i := 0; i < 11; i++ {
+		results = append(results, workspace.ToolResult{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read Symbol in internal/productworkflow/coverage_gate.go lines 20-40\n20:func Symbol() {}\n",
+		})
+	}
+	if !planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
+		t.Fatal("expected candidate source-read budget to be exhausted")
+	}
+	if !planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatal("candidate source-read budget exhaustion should permit terminal submit_plan despite unread candidates")
+	}
+	req := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "read_symbol",
+		Path:       "internal/productworkflow/coverage_gate.go",
+		Pattern:    "AnotherSymbol",
+		NamedGap:   "inspect another helper",
+	}
+	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
+	if !slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
+		t.Fatalf("expected budget-exhausted read to be low-value, got %#v", state.LowValueActions)
+	}
+	plan := planThenExecuteLowValueActionRecoveryPlan(state)
+	prompt := RenderPlanExecuteRecoveryPlan(plan)
+	if !strings.Contains(prompt, "Do not read/search again") || !slices.Equal(plan.AllowedTools, []string{"submit_plan"}) {
+		t.Fatalf("budget-exhausted recovery should be terminal-only, tools=%#v prompt=\n%s", plan.AllowedTools, prompt)
+	}
+	if !planThenExecuteLowValueActionShouldReject(state.LowValueActions[0]) {
+		t.Fatal("budget-exhausted candidate reads should become counted typed rejections before tool execution")
+	}
+	if got := planThenExecuteLowValueActionRejectSummary(state.LowValueActions[0]); got != "Plan-execute candidate source budget exhausted" {
+		t.Fatalf("unexpected rejection summary %q", got)
+	}
+}
+
+func TestPlanThenExecuteCandidateSourceBudgetCountsLocationNavigationAfterSourceRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+	for i := 0; i < 11; i++ {
+		results = append(results, workspace.ToolResult{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed definition via go_definition",
+			Output:  "capability: definition\nlanguage: go\nrouted_tool: go_definition\nroute_summary: Resolved Go definition\n\ninternal/productworkflow/coverage_gate.go:20 type CoverageGateResult",
+		})
+	}
+	if !planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
+		t.Fatal("definition/reference navigation after source evidence should consume candidate-source budget")
+	}
+	req := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "definition",
+		Path:       "internal/productworkflow/coverage_gate.go",
+		Pattern:    "CoverageGateFinding",
+		NamedGap:   "inspect another helper",
+	}
+	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
+	if !slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
+		t.Fatalf("expected low-value budget exhaustion, got %#v", state.LowValueActions)
+	}
+}
+
+func TestPlanThenExecuteCandidateSourceBudgetCountsCompactSemanticSymbolReads(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-120 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+	for i := 0; i < 11; i++ {
+		results = append(results, workspace.ToolResult{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read Helper in internal/productworkflow/coverage_gate.go lines 20-40",
+		})
+	}
+	if !planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
+		t.Fatal("compact semantic symbol reads should consume the candidate source budget")
+	}
+	req := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "read_symbol",
+		Path:       "internal/productworkflow/coverage_gate.go",
+		Pattern:    "AnotherHelper",
+	}
+	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
+	if !slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
+		t.Fatalf("expected compact semantic read loop to force terminal recovery, got %#v", state.LowValueActions)
+	}
+}
+
+func TestPlanThenExecuteCandidateSourceBudgetIgnoresFailedCompactSymbolReads(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "No generic code navigation matches for read_symbol",
+		Output:  "No generic code navigation matches for read_symbol",
+	}
+	if planThenExecuteCandidateSourceBudgetResult(result) {
+		t.Fatal("failed compact symbol lookup must not consume source budget")
+	}
+}
+
+func TestPlanExecuteRunnerRepeatedCandidateReadDoesNotRecordRunnerRejection(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":4}`,
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":4,"named_gap":"need more context"}`,
+		"<<QUESTION>>: no concrete selected edit path is required for this low-value-read regression fixture.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawLowValue bool
+	var eventRoles []string
+	var modelCallEvents []map[string]any
+	var turnSummary struct {
+		RejectedActions          int `json:"rejected_actions"`
+		CompletionGateRejections int `json:"completion_gate_rejections"`
+	}
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+		OnEvent: func(event RunEvent) {
+			eventRoles = append(eventRoles, event.Role)
+			switch event.Role {
+			case "plan_then_execute_low_value_action":
+				sawLowValue = true
+			case "model_call":
+				var payload map[string]any
+				if err := json.Unmarshal([]byte(event.Content), &payload); err != nil {
+					t.Fatalf("decode model_call: %v", err)
+				}
+				modelCallEvents = append(modelCallEvents, payload)
+			case "turn_summary":
+				if err := json.Unmarshal([]byte(event.Content), &turnSummary); err != nil {
+					t.Fatalf("decode turn_summary: %v", err)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan a no-op"}}, llama.ChatOptions{MaxTokens: 2048}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "<<QUESTION>>") {
+		t.Fatalf("expected typed blocker answer, got %q", answer)
+	}
+	if sawLowValue {
+		t.Fatalf("repeated candidate read should remain model-owned before budget exhaustion; saw events %#v", eventRoles)
+	}
+	if len(modelCallEvents) == 0 {
+		t.Fatal("expected model_call telemetry")
+	}
+	for _, key := range []string{"backend_kind", "transport_mode", "parser_contract", "response_format", "max_tokens", "thinking_policy", "supports_native_tools"} {
+		if _, ok := modelCallEvents[0][key]; !ok {
+			t.Fatalf("model_call telemetry missing %q: %#v", key, modelCallEvents[0])
+		}
+	}
+	if turnSummary.RejectedActions != 0 || turnSummary.CompletionGateRejections != 0 {
+		t.Fatalf("low-value read must not count as runner rejection, got %#v", turnSummary)
+	}
+}
+
+func TestPlanExecuteRunnerPostGateMissingReadTargetUsesRecovery(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.go"), []byte("package a\n\nfunc Other() int { return 2 }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":4}`,
+		"Done.",
+		`{"tool":"read_file"}`,
+		"<<QUESTION>>: Cannot draft a safe plan because the exact missing edit-safety fact was not specified for an unread path.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawLowValue bool
+	var sawReadTargetFailure bool
+	var sawDoomLoop bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedEditPaths:  []string{"a.go", "b.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "plan_then_execute_low_value_action":
+				sawLowValue = true
+				if !strings.Contains(event.Content, "candidate_read_missing_target") {
+					t.Fatalf("low-value event should name missing target reason: %s", event.Content)
+				}
+			case "tool_result":
+				if strings.Contains(event.Content, "read_file requires id or path") {
+					sawReadTargetFailure = true
+				}
+			case "doom_loop_guard":
+				sawDoomLoop = true
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan a safe change"}}, llama.ChatOptions{MaxTokens: 2048}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "<<QUESTION>>") {
+		t.Fatalf("expected typed blocker answer, got %q", answer)
+	}
+	if !sawLowValue {
+		t.Fatal("expected missing-target read after completion gate to use low-value recovery")
+	}
+	if sawReadTargetFailure {
+		t.Fatal("missing-target read should be recovered before workspace manager execution")
+	}
+	if sawDoomLoop {
+		t.Fatal("missing-target recovery should not reach doom-loop guard")
+	}
+}
+
+func TestPlanExecuteRunnerPreSourceMissingCodeNavigateTargetStaysModelOwned(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package a\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	replies := []string{
+		`{"tool":"code_navigate"}`,
+		"<<QUESTION>>: Cannot choose a safe plan because the requested navigation omitted a concrete path, capability, or symbol target.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := replies[len(replies)-1]
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawCandidateRead bool
+	var sawWorkspaceCodeNavigateFailure bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedEditPaths:  []string{"a.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "tool_result":
+				if strings.Contains(event.Content, "capability is required") || strings.Contains(event.Content, "path is required") {
+					sawWorkspaceCodeNavigateFailure = true
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan a safe change"}}, llama.ChatOptions{MaxTokens: 2048}, nil, nil, func(event ToolResultEvent) {
+		if event.Request.Tool == "read_file" && event.Request.Path == "a.go" && event.Result.Error == "" {
+			sawCandidateRead = true
+		}
+		if event.Request.Tool == "code_navigate" && (strings.Contains(event.Result.Error, "capability is required") || strings.Contains(event.Result.Error, "path is required")) {
+			sawWorkspaceCodeNavigateFailure = true
+		}
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "<<QUESTION>>") {
+		t.Fatalf("expected typed blocker answer, got %q", answer)
+	}
+	if sawCandidateRead {
+		t.Fatal("targetless code_navigate must not be rewritten into a host-selected candidate read")
+	}
+	if sawWorkspaceCodeNavigateFailure {
+		t.Fatal("targetless code_navigate should be recovered before workspace manager execution")
+	}
+}
+
+func TestPlanThenExecuteCandidateReadFileIDIsConcreteTarget(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"a.go", "b.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-4 (total lines: 4)",
+		Output:  "1:package a\n",
+	}}
+
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		ID:        "f3",
+		StartLine: 1,
+		EndLine:   80,
+		NamedGap:  "inspect discovered file handle before selecting the plan edit",
+	}
+	reason, prompt, lowValue := planThenExecuteCandidateLowValueAction(req, brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if lowValue && reason == "candidate_read_missing_target" {
+		t.Fatalf("read_file id target must not be classified as missing target:\n%s", prompt)
+	}
+}
+
+func TestPlanThenExecuteCandidateCodeNavigateWorkspaceSymbolTargetIsConcrete(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"a.go", "b.go"},
+	}
+	req := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "workspace_symbol",
+		Pattern:    "Value",
+		NamedGap:   "locate candidate symbol before selecting edit path",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-4 (total lines: 4)",
+		Output:  "1:package a\n",
+	}}
+	if planThenExecuteReadRequestMissingConcreteTarget(req) {
+		t.Fatal("workspace_symbol code_navigate with pattern should be treated as a concrete symbol target")
+	}
+	reason, prompt, lowValue := planThenExecuteCandidateLowValueAction(req, brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if lowValue && reason == "candidate_read_missing_target" {
+		t.Fatalf("workspace_symbol code_navigate with pattern must not be classified as missing target:\n%s", prompt)
+	}
+}
+
+func TestPlanExecuteMissingTargetReadRedirectDoesNotSelectCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily: PlanThenExecutePlannerTaskFamily,
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+		Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"cmd/idiom/audit.go"}]}`,
+	}}
+
+	if req, raw, ok := runner.planThenExecuteMissingTargetReadRedirect(workspace.ToolRequest{Tool: "read_file"}, results); ok {
+		t.Fatalf("targetless read_file must stay model-owned instead of redirecting to packet candidate, req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestPlanExecuteMissingTargetReadRedirectSkipsRequiredSourceScope(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"required.go"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 1 candidate file(s)",
+		Output:  `{"candidate_files":[{"path":"other.go"}]}`,
+	}}
+
+	if req, _, ok := runner.planThenExecuteMissingTargetReadRedirect(workspace.ToolRequest{Tool: "read_file"}, results); ok {
+		t.Fatalf("required source scope must not redirect targetless read_file to packet candidate: %#v", req)
+	}
+}
+
+func TestPlanExecuteNonToolCandidateRecoveryDoesNotReadContextPackCandidate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+		Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"cmd/idiom/audit.go"}]}`,
+	}}
+
+	if req, raw, ok := runner.deterministicPlanExecuteNonToolCandidateRecovery("I need to inspect the relevant source before planning.", results); ok {
+		t.Fatalf("non-terminal planner prose must not trigger a host-selected candidate read, req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestPlanExecuteNonToolCandidateRecoveryLeavesNextCandidateModelOwned(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_workflow.go"},{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+		},
+	}
+	if read := readPathsFromResults(results); len(read) == 0 {
+		t.Fatalf("fixture should expose code_navigate source-body evidence, got %#v", read)
+	}
+	if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(runner.RuntimeBrief, results, 4); len(unread) == 0 {
+		t.Fatalf("fixture should expose an unread context-pack candidate, got none")
+	}
+	if req, raw, ok := runner.deterministicNoWriteRecoveryUnreadCandidateRead(results); ok {
+		t.Fatalf("plan-execute unread candidate recovery must not host-select the next path, req=%#v raw=%s", req, raw)
+	}
+
+	if req, raw, ok := runner.deterministicPlanExecuteNonToolCandidateRecovery("I need to inspect one more source surface before planning.", results); ok {
+		t.Fatalf("non-terminal planner prose must not trigger the next host-selected candidate read, req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestPlanExecuteNonToolCandidateRecoverySkipsTerminalReply(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:   "context_pack",
+		Output: `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+	}}
+
+	if req, raw, ok := runner.deterministicPlanExecuteNonToolCandidateRecovery("<<QUESTION>>: missing exact source evidence", results); ok {
+		t.Fatalf("terminal blocker reply must not be converted into a read, req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessSamePathReadRemainsModelOwned(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:       PlanThenExecutePlannerTaskFamily,
 		AllowedEditPaths: []string{"cmd/idiom/product_workflow_test.go", "internal/productworkflow/coverage_gate.go"},
@@ -7567,23 +9603,166 @@ func TestPlanThenExecuteCandidatePostReadinessRejectsSamePathRead(t *testing.T) 
 		Output:  "route_summary: Read validTestImplementationLedgerJSONL in cmd/idiom/product_workflow_test.go lines 3636-3678\n\n3636:func validTestImplementationLedgerJSONL() string {}\n",
 	}}
 
-	summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+	req := workspace.ToolRequest{
 		Tool:      "read_file",
 		Path:      "cmd/idiom/product_workflow_test.go",
 		StartLine: 3636,
-		EndLine:   3840,
+		EndLine:   3678,
 		NamedGap:  "inspect the helper body again",
+	}
+	if summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, brief, results); reject {
+		t.Fatalf("same candidate path reread should not be a hard rejection, got %q: %s", summary, errorText)
+	}
+	reason, prompt, lowValue := planThenExecuteCandidateLowValueAction(req, brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if lowValue {
+		t.Fatalf("same candidate path reread should remain model-owned before budget exhaustion, reason=%q prompt=\n%s", reason, prompt)
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessDifferentPathDoesNotRequireNamedGap(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/productworkflow/coverage_gate.go", "cmd/idiom/product_workflow.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
+		Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"cmd/idiom/product_workflow.go"}]}`,
+	}, {
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 1500,
+		EndLine:   1650,
+	}
+	reason, prompt, lowValue := planThenExecuteCandidateLowValueAction(req, brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if lowValue {
+		t.Fatalf("different candidate read should not require a harness-inferred named gap before budget exhaustion, reason=%q prompt=\n%s", reason, prompt)
+	}
+
+	req.NamedGap = "exact coverage-gate call site before wiring authority preflight"
+	req.WhyNotAnswering = "need the current command path before drafting the edit"
+	if _, _, lowValue := planThenExecuteCandidateLowValueAction(req, brief, results, PlanExecutePlanningTransport{TextualToolParser: true}); lowValue {
+		t.Fatal("different candidate read with a named edit-safety gap should remain available")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessAllowsSamePathContinuationRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/productworkflow/coverage_gate.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/productworkflow/coverage_gate.go",
+		StartLine: 126,
+		EndLine:   250,
 	}, brief, results)
-	if !reject {
-		t.Fatal("expected same candidate path reread to be rejected after anchor-ready evidence")
+	if reject {
+		t.Fatal("bounded unread same-path continuation should remain available for larger candidate files")
 	}
-	if summary != "Candidate source already ready" {
-		t.Fatalf("unexpected summary %q", summary)
+}
+
+func TestPlanThenExecuteCandidatePostReadinessAllowsSmallFullReadAfterPartialRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
+		Output:  "1:package productworkflow\n",
+	}}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/productworkflow/coverage_gate.go",
+	}, brief, results)
+	if reject {
+		t.Fatal("full-file read of a small partially read candidate should be treated as continuation, not duplicate evidence")
 	}
-	for _, want := range []string{"anchor-ready source evidence", "Allowed paths are not required coverage", "submit_plan", "Decision: source-satisfied", "<<QUESTION>>"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("candidate readiness rejection missing %q:\n%s", want, errorText)
-		}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessAllowsUnboundedSmallPartialSamePathRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"internal/productworkflow/validate.go"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/productworkflow/validate.go lines 300-350 (total lines: 391)",
+		Output:  "300:func ValidateProductWorkflow() {}\n",
+	}}
+
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/productworkflow/validate.go",
+	}
+	if summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(req, brief, results); reject {
+		t.Fatalf("unbounded reread of a small partially read candidate should not hard reject, got %q: %s", summary, errorText)
+	}
+	if _, _, lowValue := planThenExecuteCandidateLowValueAction(req, brief, results, PlanExecutePlanningTransport{TextualToolParser: true}); lowValue {
+		t.Fatal("unbounded reread of a partially read candidate should remain available as same-path continuation")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessAllowsPriorReadContinuationOutsideCurrentCandidateSet(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-125 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/productworkflow/validate.go lines 1-300 (total lines: 1449)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/productworkflow/coverage_gate.go",
+		StartLine: 125,
+		EndLine:   250,
+	}, brief, results)
+	if reject {
+		t.Fatal("bounded continuation of a previously read path should not depend on current candidate ranking")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostReadinessAllowsSymbolReadOnPreviouslyReadPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/productworkflow/validate.go lines 1-300 (total lines: 1449)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "read_symbol",
+		Path:       "internal/productworkflow/validate.go",
+		Pattern:    "ValidateADRCrossLinks",
+	}, brief, results)
+	if reject {
+		t.Fatal("symbol-body read on a previously read candidate path should remain available")
 	}
 }
 
@@ -7629,6 +9808,107 @@ func TestPlanThenExecuteCandidatePostReadinessAllowsDifferentBoundedCandidateRea
 	}, brief, results)
 	if reject {
 		t.Fatal("a different unread allowed candidate with a bounded range should remain available for source-satisfied evidence")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostGateRejectsOutOfScopeRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view",
+			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_workflow.go"},{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 900-1080\n900:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+		},
+	}
+	summary, errorText, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/rendering.go",
+		StartLine: 1,
+		EndLine:   180,
+	}, brief, results)
+	if !reject {
+		t.Fatal("post-gate hallucinated read outside explicit allowed candidates should be rejected")
+	}
+	if summary != "Plan-execute post-gate read outside candidate scope" {
+		t.Fatalf("unexpected summary %q", summary)
+	}
+	for _, want := range []string{"completion gate", "not an explicit allowed candidate path", "cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go", "submit_plan"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("rejection missing %q:\n%s", want, errorText)
+		}
+	}
+}
+
+func TestPlanThenExecuteCandidatePostGateDoesNotTreatContextPackAsScopeBoundary(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view",
+			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_evidence.go"},{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read p912EvaluatePriorGateEvidence in cmd/idiom/product_evidence.go lines 1-120\n1:func p912EvaluatePriorGateEvidence() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+		},
+	}
+
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "file_outline",
+		Path:       "cmd/idiom/product_workflow.go",
+	}, brief, results)
+	if reject {
+		t.Fatal("context-pack candidates are evidence hints, not an open-candidate scope boundary")
+	}
+}
+
+func TestPlanThenExecuteCandidatePostGateAllowsTypedCandidateRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{TaskFamily: PlanThenExecutePlannerTaskFamily}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view",
+			Output:  `{"candidate_files":[{"path":"cmd/idiom/product_workflow.go"},{"path":"internal/productworkflow/coverage_gate.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 900-1080\n900:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+		},
+	}
+	_, _, reject := planThenExecuteCandidatePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/productworkflow/coverage_gate.go",
+		StartLine: 1,
+		EndLine:   180,
+	}, brief, results)
+	if reject {
+		t.Fatal("post-gate bounded read of a typed candidate should remain available")
 	}
 }
 
@@ -7690,10 +9970,13 @@ func TestPlanThenExecuteCandidatePostReadinessNamesMissingAnchorCapability(t *te
 	if summary != "Anchor refresh capability required" {
 		t.Fatalf("unexpected summary %q", summary)
 	}
-	for _, want := range []string{`"capability":"read_symbol"`, `"pattern":"runProductTDD"`, "invalid edit anchor"} {
+	for _, want := range []string{"source-body capability", "read_symbol", "concrete symbol/pattern", "invalid edit anchor"} {
 		if !strings.Contains(errorText, want) {
 			t.Fatalf("targeted rejection missing %q:\n%s", want, errorText)
 		}
+	}
+	if strings.Contains(errorText, `{"tool":"code_navigate"`) {
+		t.Fatalf("targeted rejection must not include copyable JSON request:\n%s", errorText)
 	}
 	if strings.Contains(errorText, "Allowed paths are not required coverage") {
 		t.Fatalf("missing capability should not use the generic candidate-ready rejection:\n%s", errorText)
@@ -7888,20 +10171,8 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedSynthesizesAnswerWithRequi
 		},
 	}
 
-	answer, ok := planThenExecuteEmptySubmitPlanSourceSatisfiedAnswer(brief, req, result, results)
-	if !ok {
-		t.Fatal("empty source-satisfied submit_plan should synthesize source-satisfied closeout when required source evidence is anchor-ready")
-	}
-	for _, want := range []string{
-		"Decision: source-satisfied",
-		"empty `submit_plan` request",
-		"internal/writerroute/decision_test.go",
-		"Read f1 internal/writerroute/decision_test.go lines 1-80",
-		"no changes needed",
-	} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("answer missing %q:\n%s", want, answer)
-		}
+	if answer, ok := planThenExecuteEmptySubmitPlanSourceSatisfiedAnswer(brief, req, result, results); ok {
+		t.Fatalf("empty submit_plan must remain invalid even with source-satisfied rationale:\n%s", answer)
 	}
 }
 
@@ -7929,12 +10200,8 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedAcceptsExistingFileRationa
 		},
 	}
 
-	answer, ok := planThenExecuteEmptySubmitPlanSourceSatisfiedAnswer(brief, req, result, results)
-	if !ok {
-		t.Fatal("existing-file satisfaction rationale should synthesize source-satisfied closeout when required source evidence is anchor-ready")
-	}
-	if !strings.Contains(answer, "Decision: source-satisfied") || !strings.Contains(answer, "internal/writerroute/decision_test.go") {
-		t.Fatalf("unexpected source-satisfied answer:\n%s", answer)
+	if answer, ok := planThenExecuteEmptySubmitPlanSourceSatisfiedAnswer(brief, req, result, results); ok {
+		t.Fatalf("existing-file rationale inside empty submit_plan must remain invalid:\n%s", answer)
 	}
 }
 
@@ -7946,6 +10213,7 @@ func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing
 	replies := []string{
 		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
 		`{"tool":"submit_plan","rationale":"The current source already contains the requested final state and is source-satisfied; no changes are needed.","edits":[]}`,
+		`{"tool":"submit_plan","rationale":"Corrected plan after invalid empty submit_plan.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace fixture text"}]}`,
 	}
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -7981,9 +10249,6 @@ func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing
 			if event.Role == "plan_then_execute_source_satisfied_short_circuit" {
 				sawShortCircuit = true
 			}
-			if event.Role == "plan_then_execute_submit_plan_required" {
-				t.Fatalf("source-satisfied empty submit_plan should short-circuit before correction recovery: %s", event.Content)
-			}
 		},
 	}
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
@@ -7998,12 +10263,12 @@ func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing
 		t.Fatalf("Run: %v", err)
 	}
 	if requests != len(replies) {
-		t.Fatalf("short-circuit should finish after empty submit_plan, got %d request(s)", requests)
+		t.Fatalf("runner should require an explicit corrected terminal action after empty submit_plan, got %d request(s)", requests)
 	}
-	if !sawShortCircuit {
-		t.Fatal("expected source-satisfied short-circuit event")
+	if sawShortCircuit {
+		t.Fatal("empty submit_plan must not short-circuit as source-satisfied")
 	}
-	for _, want := range []string{"Decision: source-satisfied", "a.txt", "no changes needed"} {
+	for _, want := range []string{"Plan submitted"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer missing %q:\n%s", want, answer)
 		}
@@ -8266,6 +10531,27 @@ func TestReviewRepairDoesNotAppendExternalTools(t *testing.T) {
 	}) {
 		t.Fatalf("verification-only lanes must not widen their shell/check surface with project externals")
 	}
+}
+
+func TestReviewRepairInitialTextualSurfaceAllowsTargetedProbeTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+		PermissionProfile: "plan_submission_review",
+		AllowedTools:      []string{"read_file", "code_navigate", "context_status", "context_query", "context_zoom", "context_pack", "submit_plan"},
+	}
+	got := runnerPlanExecuteTextualAllowedTools([]string{"submit_plan"}, brief, nil)
+	assertContains(t, got, "read_file")
+	assertContains(t, got, "code_navigate")
+	assertContains(t, got, "context_status")
+	assertContains(t, got, "submit_plan")
+	assertNotContains(t, got, "context_pack")
+
+	terminal := runnerPlanExecuteTextualAllowedTools([]string{"submit_plan"}, brief, []workspace.ToolResult{{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error:   "review-repair must close",
+	}})
+	assertEqualSet(t, terminal, []string{"submit_plan"})
 }
 
 func TestImplementationScopedEditAllowsSubmitPlan(t *testing.T) {

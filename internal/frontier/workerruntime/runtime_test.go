@@ -1173,6 +1173,50 @@ func TestNormalizeRuntimeBriefConversationOnlyClearsToolSurface(t *testing.T) {
 	}
 }
 
+func TestNormalizeRuntimeBriefSuppressesPlaceholderManifestRequests(t *testing.T) {
+	brief := NormalizeRuntimeBrief(WorkerRuntimeBrief{
+		AllowedTools: []string{"submit_plan", "pwd"},
+		ToolManifest: []ToolManifestEntry{
+			{
+				Tool:    "submit_plan",
+				Request: `{"tool":"submit_plan","rationale":"one paragraph on the overall plan","edits":[{"path":"relative/file","old_text":"exact current substring","new_text":"complete replacement text","purpose":"why this edit"}]}`,
+				Purpose: "submit a structured executable edit plan",
+			},
+			{
+				Tool:    "pwd",
+				Request: `{"tool":"pwd"}`,
+				Purpose: "show current workspace directory",
+			},
+		},
+	})
+
+	byTool := map[string]ToolManifestEntry{}
+	for _, entry := range brief.ToolManifest {
+		byTool[entry.Tool] = entry
+	}
+	if got := byTool["submit_plan"].Request; got != "" {
+		t.Fatalf("placeholder submit_plan request should be suppressed, got %q", got)
+	}
+	if got := byTool["pwd"].Request; got == "" {
+		t.Fatal("concrete request should be preserved")
+	}
+}
+
+func TestBuildToolManifestSuppressesWorkspacePlaceholderRequests(t *testing.T) {
+	manifest := BuildToolManifest([]string{"submit_plan", "pwd"})
+
+	byTool := map[string]ToolManifestEntry{}
+	for _, entry := range manifest {
+		byTool[entry.Tool] = entry
+	}
+	if got := byTool["submit_plan"].Request; got != "" {
+		t.Fatalf("workspace placeholder request should be suppressed at runtime boundary, got %q", got)
+	}
+	if got := byTool["pwd"].Request; got == "" {
+		t.Fatal("concrete request should remain available")
+	}
+}
+
 func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 	spec := RoleSpecFor("workbranch_write")
 	if spec.Name != "child_write" || spec.PermissionProfile != "isolated_workbranch_write" {

@@ -130,6 +130,9 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 	event, err := NewToolPolicyDecisionEvent(contract, ContractPolicyEvent{
 		ToolCallID:        "tool-001",
 		ToolName:          "context_pack",
+		ActionClass:       ActionClassSearch,
+		ActionKey:         "search:context_pack:semantic_discovery",
+		Transport:         ToolTransportSidecarCall,
 		Capability:        CapabilitySemanticDiscovery,
 		SideEffect:        SideEffectReadOnly,
 		Confidence:        "direct",
@@ -154,12 +157,15 @@ func TestToolPolicyDecisionEventValidatesReadOnlySidecarCorrelation(t *testing.T
 	if event.Policy == nil || event.Policy.Decision != PolicyObserve || event.Policy.SideEffect != SideEffectReadOnly {
 		t.Fatalf("policy payload mismatch: %#v", event.Policy)
 	}
+	if event.Policy.ActionClass != ActionClassSearch || event.Policy.Transport != ToolTransportSidecarCall {
+		t.Fatalf("policy payload should preserve normalized action metadata: %#v", event.Policy)
+	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		t.Fatalf("marshal policy event: %v", err)
 	}
 	jsonText := string(encoded)
-	for _, want := range []string{`"type":"tool_policy_decision"`, `"effect":"observe_only"`, `"sidecar_request_id":"req-001"`, `"capability":"semantic_discovery"`} {
+	for _, want := range []string{`"type":"tool_policy_decision"`, `"effect":"observe_only"`, `"sidecar_request_id":"req-001"`, `"action_class":"search"`, `"transport":"sidecar_call"`, `"capability":"semantic_discovery"`} {
 		if !strings.Contains(jsonText, want) {
 			t.Fatalf("policy event JSON missing %s: %s", want, jsonText)
 		}

@@ -526,6 +526,10 @@ type Metrics struct {
 	RejectedActions           int                             `json:"rejected_actions,omitempty"`
 	CompletionGateRejections  int                             `json:"completion_gate_rejections,omitempty"`
 	TurnSummarySeen           bool                            `json:"turn_summary_seen,omitempty"`
+	TypedBlockers             int                             `json:"typed_blockers,omitempty"`
+	SourceSatisfiedOutcomes   int                             `json:"source_satisfied_outcomes,omitempty"`
+	LowValueActions           int                             `json:"low_value_actions,omitempty"`
+	LiveContractTimeouts      int                             `json:"live_contract_timeouts,omitempty"`
 	SummaryRejections         int                             `json:"summary_rejections"`
 	SummaryRejectionLanes     []string                        `json:"summary_rejection_lanes,omitempty"`
 	Tools                     map[string]int                  `json:"tools"`
@@ -558,6 +562,7 @@ type Metrics struct {
 	ApprovalRequired          bool                            `json:"approval_required"`
 	PlanExecutionHandoffs     []PlanExecutionHandoffSnapshot  `json:"plan_execution_handoffs,omitempty"`
 	PlanExecutionDrift        []PlanExecutionDriftSnapshot    `json:"plan_execution_drift,omitempty"`
+	ExecutorCompletes         int                             `json:"executor_completes,omitempty"`
 	ChangedFiles              []string                        `json:"changed_files,omitempty"`
 	EvidencePaths             []string                        `json:"evidence_paths,omitempty"`
 	LiveContractRollbacks     []LiveContractRollbackSnapshot  `json:"live_contract_rollbacks,omitempty"`

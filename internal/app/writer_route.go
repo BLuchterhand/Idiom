@@ -32,11 +32,6 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 		if strings.TrimSpace(plan.route.Reason) == "typed_implement_command" {
 			reasonCodes = []string{"route.typed_implement_command"}
 		}
-		if strings.TrimSpace(plan.route.Reason) != "typed_implement_command" &&
-			strings.TrimSpace(m.cfg.Chat.ImplementationDispatch) == "plan_execute" &&
-			implementationDispatchHasSemanticSourceAndTestScope(prompt, plan, m.cfg) {
-			reasonCodes = []string{"route.semantic_source_test_executor"}
-		}
 		if m.plannerOwnedVerification {
 			verificationOwner = "planner_owned"
 		} else {

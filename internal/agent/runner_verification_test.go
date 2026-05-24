@@ -64,6 +64,56 @@ func TestSourceEditsAreSemanticallyVerifiedAfterSourceSanity(t *testing.T) {
 	}
 }
 
+func TestRewriteVerificationShellReadToSourceSanityForChangedSource(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	req, ok := rewriteVerificationShellReadToSourceSanity(
+		workspace.ToolRequest{Tool: "shell", Command: "cat internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected shell cat of changed source to rewrite to source_sanity")
+	}
+	if req.Tool != "source_sanity" || req.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected rewritten request: %#v", req)
+	}
+}
+
+func TestRewriteVerificationShellReadToSourceSanityRequiresAllowedToolAndChangedPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	if _, ok := rewriteVerificationShellReadToSourceSanity(
+		workspace.ToolRequest{Tool: "shell", Command: "cat internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"shell"},
+	); ok {
+		t.Fatal("must not rewrite when source_sanity is not currently allowed")
+	}
+	if _, ok := rewriteVerificationShellReadToSourceSanity(
+		workspace.ToolRequest{Tool: "shell", Command: "cat internal/other.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	); ok {
+		t.Fatal("must not rewrite shell reads for unchanged source paths")
+	}
+}
+
 func TestSourceVerificationDoesNotTreatIncidentalPathMentionAsVerificationException(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",

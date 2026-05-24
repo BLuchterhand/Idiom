@@ -55,6 +55,35 @@ func TestSourceSanityFallsBackWhenLanguageDiagnosticsUnavailable(t *testing.T) {
 	}
 }
 
+func TestGoDefinitionNoMatchIsEmptyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nomatch\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "pkg", "feature.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("package pkg\n\nfunc Present() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, CommandTimeoutSeconds: 30})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "definition",
+		Path:       "pkg/feature.go",
+		Pattern:    "Missing",
+	})
+
+	if result.Error != "" {
+		t.Fatalf("symbol no-match should be empty discovery evidence, got error %q", result.Error)
+	}
+	if !strings.Contains(result.Output, "Go location query found no matching symbol") || !strings.Contains(result.Output, `no Go symbols matched "Missing"`) {
+		t.Fatalf("unexpected no-match result: %#v", result)
+	}
+}
+
 func TestSourceSanityRoutesKnownLanguagesThroughDiagnosticsTool(t *testing.T) {
 	if got := sourceSanityDiagnosticToolForPath("native/tests/test_energy.cpp"); got != "cpp_diagnostics" {
 		t.Fatalf("cpp source_sanity tool = %q, want cpp_diagnostics", got)
@@ -655,7 +684,7 @@ func TestEditFileContentWithoutAnchorRecoveryPrefersBoundedSourceEdits(t *testin
 	if result.Error == "" {
 		t.Fatalf("expected malformed edit_file to be rejected")
 	}
-	for _, want := range []string{"bounded edit_file shape", `"description"`, "old_text", "start_line"} {
+	for _, want := range []string{"bounded edit_file shape", "concrete description", "old_text", "start_line"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("expected source recovery to mention %q, got:\n%s", want, result.Error)
 		}
@@ -689,10 +718,50 @@ func TestEditFileContentWithoutAnchorRecoveryKeepsWholeFileOptionForDocs(t *test
 	if result.Error == "" {
 		t.Fatalf("expected malformed edit_file to be rejected")
 	}
-	for _, want := range []string{"write_file", `"description"`, "new, small, or non-source deliverable"} {
+	for _, want := range []string{"write_file", "concrete description", "new, small, or non-source deliverable"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("expected doc recovery to mention %q, got:\n%s", want, result.Error)
 		}
+	}
+}
+
+func TestFormatToolResultForModelCompactsContextPackOutput(t *testing.T) {
+	largeBody := strings.Repeat(`{"path":"pkg/extra.go","reason":"extra candidate"},`, 200)
+	result := ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote .idiom/comprehension/views/abc.json",
+		Output: `{
+			"pack_id":"abc",
+			"artifact_path":".idiom/comprehension/views/abc.json",
+			"candidate_files":[
+				{"path":"internal/productworkflow/coverage_gate.go","role":"editable","reason":"coverage gate implementation"},
+				{"path":"cmd/idiom/product_workflow.go","role":"editable","reason":"product tdd command wiring"},
+				` + largeBody + `
+				{"path":"pkg/final.go","reason":"tail"}
+			],
+			"candidate_symbols":[{"qualified_name":"EvaluateCoverage","path":"internal/productworkflow/coverage_gate.go","start_line":42,"end_line":90}],
+			"tests":[{"command":"go test ./internal/productworkflow","path":"internal/productworkflow/coverage_gate_test.go","reason":"coverage gate regression tests"}]
+		}`,
+	}
+
+	rendered := FormatToolResultForModel(result)
+	for _, want := range []string{
+		"context_pack_summary:",
+		"pack_id: abc",
+		"internal/productworkflow/coverage_gate.go",
+		"cmd/idiom/product_workflow.go",
+		"candidate_symbols:",
+		"EvaluateCoverage",
+		"go test ./internal/productworkflow",
+		"tests:",
+		"evidence_note: context_pack is localization evidence, not source-body evidence.",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("compacted context_pack result missing %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, largeBody) || len(rendered) > 3000 {
+		t.Fatalf("context_pack output was not compacted enough, len=%d", len(rendered))
 	}
 }
 

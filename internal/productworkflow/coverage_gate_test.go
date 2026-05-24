@@ -521,6 +521,72 @@ func TestBuildKnownTDDObligationIDsScopesHistoricalRecords(t *testing.T) {
 	}
 }
 
+func TestCoverageGateAuthorityPreflightCarriesLintFindings(t *testing.T) {
+	eval := CoverageGateEvaluation{Status: "pass"}
+	eval = ApplyCoverageGateAuthorityPreflight(eval, []LintSummaryFinding{
+		{Code: "adr_supersession_non_reciprocal", Path: "adrs/ADR-001-test.md", Message: "ADR-001 supersedes ADR-002 without reciprocal metadata"},
+		{Code: "adr_index_frontmatter_mismatch", Path: "adrs/index.json", Message: "ADR index entry ADR-001 field prd_refs diverges from ADR markdown"},
+		{Code: "obsidian_stale_status", Path: ObsidianProductWorkflowPath, Message: "not coverage-gate authority"},
+	})
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked status, got %q", eval.Status)
+	}
+	foundAuthorityCriterion := false
+	for _, criterion := range eval.Criteria {
+		if criterion.Key == "authority_preflight" && criterion.Status == "blocked" {
+			foundAuthorityCriterion = true
+			break
+		}
+	}
+	if !foundAuthorityCriterion {
+		t.Fatalf("expected blocked authority_preflight criterion, got %#v", eval.Criteria)
+	}
+	if len(eval.Blockers) != 2 {
+		t.Fatalf("expected only ADR authority blockers, got %#v", eval.Blockers)
+	}
+	kinds := map[string]bool{}
+	for _, blocker := range eval.Blockers {
+		kinds[blocker.Kind] = true
+	}
+	for _, want := range []string{"adr_supersession_non_reciprocal", "adr_index_frontmatter_mismatch"} {
+		if !kinds[want] {
+			t.Fatalf("expected authority blocker %q, got %#v", want, eval.Blockers)
+		}
+	}
+}
+
+func TestCoverageGateAuthorityFindingCoversCanonicalLintMatrix(t *testing.T) {
+	authority := []LintSummaryFinding{
+		{Code: "parse_error", Path: "prd.md"},
+		{Code: "broken_link", Path: "prd.md"},
+		{Code: "parse_error", Path: "adrs/ADR-001-test.md"},
+		{Code: "broken_link", Path: "adrs/ADR-001-test.md"},
+		{Code: "missing_file", Path: "evidence/traceability_matrix.json"},
+		{Code: "parse_error", Path: "evidence/traceability_matrix.json"},
+		{Code: "broken_link", Path: "evidence/traceability_matrix.json"},
+		{Code: "parse_error", Path: "tdd.json"},
+		{Code: "broken_link", Path: "tdd.json"},
+		{Code: "adr_supersession_non_reciprocal", Path: "adrs/ADR-001-test.md"},
+		{Code: "adr_index_frontmatter_mismatch", Path: "adrs/index.json"},
+	}
+	for _, finding := range authority {
+		if !coverageGateAuthorityFinding(finding) {
+			t.Fatalf("expected authority finding for %#v", finding)
+		}
+	}
+
+	nonAuthority := []LintSummaryFinding{
+		{Code: "obsidian_stale_status", Path: ObsidianProductWorkflowPath},
+		{Code: "missing_file", Path: "prd.md"},
+		{Code: "read_error", Path: "implementation_ledger.jsonl"},
+	}
+	for _, finding := range nonAuthority {
+		if coverageGateAuthorityFinding(finding) {
+			t.Fatalf("did not expect authority finding for %#v", finding)
+		}
+	}
+}
+
 func TestCoverageGateBlocksContractTiersWhenPBTInvariantTotalIsZero(t *testing.T) {
 	for _, tier := range []string{"contract_high", "formal_optional"} {
 		t.Run(tier, func(t *testing.T) {

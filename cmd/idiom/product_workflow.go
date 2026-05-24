@@ -1551,6 +1551,7 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				implementationRecords = parsed
 			}
 		}
+		lintResult := productworkflow.LintEffortFolder(absRoot)
 
 		eval := productworkflow.CoverageGateEvaluation{
 			EffortID:     ledger.EffortID,
@@ -1585,6 +1586,15 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 				})
 			}
 		}
+		authorityPreflightFindings := append([]productworkflow.LintSummaryFinding(nil), lintResult.Findings...)
+		for _, f := range findings {
+			authorityPreflightFindings = append(authorityPreflightFindings, productworkflow.LintSummaryFinding{
+				Code:    f.Kind,
+				Path:    f.File,
+				Message: f.Message,
+			})
+		}
+		eval = productworkflow.ApplyCoverageGateAuthorityPreflight(eval, authorityPreflightFindings)
 		logCLIPhase(rec, "product_tdd_coverage_gate_evaluated", map[string]any{
 			"status":         eval.Status,
 			"finding_count":  len(eval.Findings),

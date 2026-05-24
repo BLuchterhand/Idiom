@@ -2,7 +2,7 @@
   "name": "live-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 3,
+    "min_tasks": 4,
     "required_families": [
       "direct_question",
       "implementation",
@@ -10,7 +10,9 @@
     ],
     "required_tags": [
       "frozen-repo",
+      "git-ref-fixture",
       "live",
+      "product-workflow",
       "rollback",
       "plan-execute"
     ],
@@ -26,7 +28,9 @@
       "no_approval",
       "clean_rollback",
       "max_errors",
-      "no_runner_rejections"
+      "no_runner_rejections",
+      "no_timeout",
+      "executor_handoff"
     ]
   },
   "tasks": [
@@ -82,6 +86,7 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
+        "require_no_timeout": true,
         "max_errors": 0,
         "max_duration_millis": 120000
       }
@@ -89,7 +94,7 @@
     {
       "id": "explicit-implement-short-label",
       "family": "implementation",
-      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If you read internal/labels/labels.go once, do not read it again before editing. Verify the changed source with a source-aware check.",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nCurrent exact source:\n```go\npackage labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n```\n\nMake the edit from the supplied exact source first, then verify the changed source with a source-aware check.",
       "tags": [
         "frozen-repo",
         "go",
@@ -124,6 +129,7 @@
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
+        "require_no_timeout": true,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
@@ -182,11 +188,77 @@
         "require_no_approval": true,
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
         "max_errors": 0,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
         "max_duration_millis": 300000
+      }
+    },
+    {
+      "id": "product-workflow-coverage-gate-authority-reuse",
+      "family": "plan_then_execute_planner",
+      "prompt": "Can you implement the next product-workflow TDD feature? The coverage gate for `idiom product tdd --evaluate-coverage` should reuse or preflight the canonical product lint/audit authority checks, including traceability, PRD/ADR acceptance, ADR cross-links, ADR supersession, and index-vs-markdown divergence. Those validation failures should be carried into the coverage-gate result as typed findings/blockers, while the existing durable fixture pass path should keep passing when the authority checks pass.\n\nPlease explore the relevant source and tests, make the needed implementation and test changes, and run focused verification. Avoid model execution, lane dispatch changes, heuristic routing changes, or broad TUI behavior changes.",
+      "tags": [
+        "git-ref-fixture",
+        "go",
+        "plan-execute",
+        "live",
+        "product-workflow",
+        "rollback"
+      ],
+      "fixture_git_ref": "e960f25fcfd1653db109f03ea194dc721d92e4bd",
+      "scenario": {
+        "name": "product-workflow-coverage-gate-authority-reuse",
+        "prompt_contains": [
+          "coverage gate",
+          "idiom product tdd --evaluate-coverage",
+          "typed findings/blockers"
+        ],
+        "require_changed_files": [
+          "cmd/idiom/product_workflow.go",
+          "cmd/idiom/product_workflow_test.go",
+          "internal/productworkflow/coverage_gate.go",
+          "internal/productworkflow/coverage_gate_test.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.writer_route_decision",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_packet_states": [
+            "missing"
+          ],
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "cmd/idiom/product_workflow.go",
+          "cmd/idiom/product_workflow_test.go",
+          "internal/productworkflow/coverage_gate.go",
+          "internal/productworkflow/coverage_gate_test.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 900000
       }
     }
   ]

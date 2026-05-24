@@ -418,7 +418,58 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 			out = append(out, entry)
 		}
 	}
+	return SanitizeToolManifestRequests(out)
+}
+
+// SanitizeToolManifestRequests preserves manifest tools/purposes while removing
+// copyable request examples that contain schema placeholders. The tool manifest
+// is a model-facing boundary, so every caller should share this predicate.
+func SanitizeToolManifestRequests(manifest []ToolManifestEntry) []ToolManifestEntry {
+	if len(manifest) == 0 {
+		return nil
+	}
+	out := append([]ToolManifestEntry(nil), manifest...)
+	for i := range out {
+		if toolManifestRequestLooksPlaceholder(out[i].Request) {
+			out[i].Request = ""
+		}
+	}
 	return out
+}
+
+func toolManifestRequestLooksPlaceholder(request string) bool {
+	lower := strings.ToLower(strings.TrimSpace(request))
+	return util.ContainsAny(lower,
+		"relative/file",
+		"candidate/path.go",
+		"symbol|text",
+		`"pattern":"name"`,
+		`"pattern":"funcname"`,
+		`"pattern":"functionname"`,
+		`"pattern":"typename"`,
+		`"pattern":"constname"`,
+		`"pattern":"interfacename"`,
+		`"pattern":"classname`,
+		`"pattern":"methodname"`,
+		`"path":"file.go"`,
+		`"path":"source.go"`,
+		`"destination":"target.go"`,
+		`"path":"src/file`,
+		`"path":"src/pkg/file.py"`,
+		`"path":"src/main/java/com/example/file.java"`,
+		`"path":"include/file.h"`,
+		`"path":"relative/dir"`,
+		`"path":"optional/path"`,
+		"session-001",
+		"session.jsonl",
+		"exact current",
+		"exact substring",
+		"replacement text",
+		"complete replacement",
+		"one paragraph",
+		"why this edit",
+		"<",
+	)
 }
 
 func RenderToolManifestInstructions(allowedTools []string) string {
@@ -428,7 +479,10 @@ func RenderToolManifestInstructions(allowedTools []string) string {
 	}
 	lines := make([]string, 0, len(manifest))
 	for _, entry := range manifest {
-		line := "- " + entry.Tool + " " + entry.Request
+		line := "- " + entry.Tool
+		if strings.TrimSpace(entry.Request) != "" {
+			line += " " + entry.Request
+		}
 		if entry.Purpose != "" {
 			line += " (" + entry.Purpose + ")"
 		}

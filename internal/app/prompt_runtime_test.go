@@ -283,6 +283,8 @@ func TestRoleSpecExecutorIgnoresExplicitPlannerAlias(t *testing.T) {
 func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.T) {
 	thinkingOn := true
 	opts := llama.ChatOptions{
+		Temperature:      0.95,
+		TopP:             0.95,
 		EnableThinking:   &thinkingOn,
 		PreserveThinking: true,
 		MaxTokens:        8192,
@@ -304,8 +306,39 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	if !tuned.ChatTemplateKwargs {
 		t.Fatalf("expected read-only lane to send explicit chat template kwargs")
 	}
+	if tuned.Temperature != 0.2 || tuned.TopP != 1 {
+		t.Fatalf("read-only sampling = temp %.2f top_p %.2f, want deterministic cap", tuned.Temperature, tuned.TopP)
+	}
 	if tuned.MaxTokens != 1536 {
 		t.Fatalf("expected grounded explanation token cap, got %d", tuned.MaxTokens)
+	}
+}
+
+func TestTuneChatOptionsForReadOnlyPlanPreservesLowerConfiguredTemperature(t *testing.T) {
+	thinkingOn := true
+	plan := promptExecutionPlan{
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			PermissionProfile: "conversation_only",
+			Contract:          "direct_answer",
+		},
+	}
+
+	opts := llama.ChatOptions{
+		Temperature:      0.1,
+		TopP:             0.8,
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        8192,
+	}
+	tuned := tuneChatOptionsForPlan(opts, plan)
+	if tuned.Temperature != 0.1 || tuned.TopP != 1 {
+		t.Fatalf("read-only low sampling = temp %.2f top_p %.2f, want low temp preserved with deterministic top_p", tuned.Temperature, tuned.TopP)
+	}
+
+	opts.Temperature = 0
+	tuned = tuneChatOptionsForPlan(opts, plan)
+	if tuned.Temperature != 0 || tuned.TopP != 1 {
+		t.Fatalf("read-only zero sampling = temp %.2f top_p %.2f, want explicit zero temp preserved", tuned.Temperature, tuned.TopP)
 	}
 }
 

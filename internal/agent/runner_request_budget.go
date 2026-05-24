@@ -138,6 +138,9 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 	if currentFingerprint == "" {
 		return runnerRequestBudgetDecision{}
 	}
+	if decision := s.terminalArtifactRejectedRetryDecision(req, currentFingerprint); decision.Handled {
+		return decision
+	}
 	if policy.FingerprintNudgeAt > 0 {
 		count := s.fingerprint.counts[currentFingerprint]
 		nudgeFired := s.fingerprint.nudgeFired[currentFingerprint]
@@ -177,6 +180,9 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
 		return runnerRequestBudgetDecision{}
 	}
+	if decision := s.terminalArtifactRejectedRetryDecision(req, currentFingerprint); decision.Handled {
+		return decision
+	}
 	if priorSummary, seen := s.fingerprint.rejected[currentFingerprint]; seen {
 		if isRecoverablePostReadinessGapRejection(priorSummary) && postReadinessGap(req) != "" {
 			delete(s.fingerprint.rejected, currentFingerprint)
@@ -191,6 +197,41 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 		}
 	}
 	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) terminalArtifactRejectedRetryDecision(req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
+	if s == nil || strings.TrimSpace(currentFingerprint) == "" {
+		return runnerRequestBudgetDecision{}
+	}
+	priorSummary, seen := s.fingerprint.rejected[currentFingerprint]
+	if !seen || !terminalArtifactRequiredRejectionSummary(priorSummary) {
+		return runnerRequestBudgetDecision{}
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "the requested tool"
+	}
+	return runnerRequestBudgetDecision{
+		Handled:      true,
+		EventRole:    "terminal_artifact_retry_recovery",
+		EventContent: fmt.Sprintf("model retried %s after terminal artifact recovery rejected it", tool),
+		Nudge: fmt.Sprintf(
+			"The repeated %s request was already rejected because the current planner phase requires a terminal plan artifact. Do not report that rejected request as a blocker. Emit the currently allowed terminal artifact (`submit_plan`) now, or use `Decision: source-satisfied` / `<<QUESTION>>:` only for a true terminal exception grounded in the evidence already gathered.",
+			tool,
+		),
+	}
+}
+
+func terminalArtifactRequiredRejectionSummary(summary string) bool {
+	summary = strings.TrimSpace(strings.TrimSuffix(summary, " (replayed same blocker)"))
+	switch summary {
+	case "Plan-execute submit_plan required",
+		"Corrected submit_plan required",
+		"Plan submission required":
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *runnerRequestBudgetState) earlyRejectedFingerprintDecision(req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {

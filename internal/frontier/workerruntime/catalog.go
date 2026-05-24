@@ -196,15 +196,16 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 		family = strings.TrimSpace(family)
 		// Verification contract differs by family: code-producing
 		// families (implementation, test_authoring, config_edit,
-		// script_edit, failure_injection) need tests/builds run after
-		// the mutation. Families whose edited file is the practical
-		// deliverable for this atom (docs_edit, prompt_edit_security,
-		// gdscript_edit) opt out of the generic post-mutation gate. The
-		// runner reads VerificationContract to decide whether the gate
-		// fires; the prefix "not_required_for_*" short-circuits it.
+		// script_edit, gdscript_edit, failure_injection) need
+		// tests/builds run after the mutation. Families whose edited
+		// file is the practical deliverable for this atom (docs_edit,
+		// prompt_edit_security) opt out of the generic post-mutation
+		// gate. The runner reads VerificationContract to decide whether
+		// the gate fires; the prefix "not_required_for_*" short-circuits
+		// it.
 		verificationContract := "tests_passed_or_failed_or_skipped_with_blocker"
 		switch family {
-		case "docs_edit", "prompt_edit_security", "gdscript_edit":
+		case "docs_edit", "prompt_edit_security":
 			verificationContract = "not_required_for_text_mutations"
 		}
 		return RuntimeContractSpec{

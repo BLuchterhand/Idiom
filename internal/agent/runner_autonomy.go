@@ -49,6 +49,9 @@ type runnerAutonomyPolicyEventInput struct {
 	Decision         autonomy.ToolPolicyDecision
 	InvariantID      string
 	ReasonCode       string
+	Transport        autonomy.ToolTransport
+	ParserFailure    autonomy.ParserFailureClass
+	RepairSource     autonomy.RepairSource
 	ApprovalRequired bool
 	Result           string
 	ErrorClass       string
@@ -930,10 +933,17 @@ func (a *runnerAutonomyRecorder) emitPolicyEvent(req workspace.ToolRequest, inpu
 }
 
 func (a *runnerAutonomyRecorder) policyEventForRequest(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) autonomy.ContractPolicyEvent {
+	intent := runnerAutonomyIntentForRequest(req, input)
+	action := autonomy.ActionFromIntent(intent)
 	policy := autonomy.ContractPolicyEvent{
 		ToolName:         strings.TrimSpace(req.Tool),
-		Capability:       runnerAutonomyPrimaryCapability(req.Tool),
-		SideEffect:       runnerAutonomySideEffectForRequest(req),
+		ActionClass:      action.ActionClass,
+		ActionKey:        action.ActionKey,
+		Transport:        intent.Transport,
+		ParserFailure:    intent.ParserFailure,
+		RepairSource:     intent.RepairSource,
+		Capability:       intent.Capability,
+		SideEffect:       intent.SideEffect,
 		ArgumentsDigest:  runnerAutonomyArgumentsDigest(req),
 		Decision:         input.Decision,
 		InvariantID:      strings.TrimSpace(input.InvariantID),
@@ -978,6 +988,71 @@ func (a *runnerAutonomyRecorder) policyEventForRequest(req workspace.ToolRequest
 	policy.RequiredEditMatches = compactRunnerAutonomyPaths(policy.RequiredEditMatches)
 	policy.OutsideWorkspace = compactRunnerAutonomyPaths(policy.OutsideWorkspace)
 	return policy
+}
+
+func runnerAutonomyIntentForRequest(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) autonomy.ToolIntent {
+	transport := input.Transport
+	if transport == "" {
+		transport = autonomy.ToolTransportTextualCall
+	}
+	intent := autonomy.ToolIntent{
+		ToolName:        strings.TrimSpace(req.Tool),
+		Capability:      runnerAutonomyPrimaryCapability(req.Tool),
+		SideEffect:      runnerAutonomySideEffectForRequest(req),
+		ActionClass:     runnerAutonomyActionClassForRequest(req),
+		Transport:       transport,
+		ParserFailure:   input.ParserFailure,
+		RepairSource:    input.RepairSource,
+		TargetRefs:      runnerAutonomyPolicyPaths(req),
+		ArgumentsDigest: runnerAutonomyArgumentsDigest(req),
+		Source:          input.Source,
+	}
+	return autonomy.CanonicalizeToolIntent(intent)
+}
+
+func runnerAutonomyActionClassForRequest(req workspace.ToolRequest) autonomy.ActionClass {
+	tool := strings.TrimSpace(req.Tool)
+	switch {
+	case tool == "submit_plan":
+		return autonomy.ActionClassSubmitPlan
+	case tool == "task":
+		return autonomy.ActionClassDelegate
+	case workspace.IsWorkspaceWriteTool(tool):
+		if tool == "write_file" && strings.TrimSpace(req.Path) != "" && !runnerAutonomyLooksLikeSourcePath(req.Path) {
+			return autonomy.ActionClassDeliverableWrite
+		}
+		return autonomy.ActionClassPerEditWrite
+	case runnerAutonomyVerificationTool(req):
+		return autonomy.ActionClassVerify
+	case util.IsReadTool(tool):
+		if strings.Contains(toolActionClass(req), "broad_inspection") ||
+			tool == "search_files" || tool == "search_content" || tool == "rg" || tool == "grep" {
+			return autonomy.ActionClassSearch
+		}
+		return autonomy.ActionClassRead
+	default:
+		return autonomy.ActionClassGenericProbe
+	}
+}
+
+func runnerAutonomyVerificationTool(req workspace.ToolRequest) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case "source_sanity", "go_diagnostics", "cpp_diagnostics":
+		return true
+	case "shell":
+		return runnerAutonomySideEffectForRequest(req) == autonomy.SideEffectReadOnly
+	default:
+		return false
+	}
+}
+
+func runnerAutonomyLooksLikeSourcePath(path string) bool {
+	switch strings.ToLower(filepath.Ext(strings.TrimSpace(path))) {
+	case ".c", ".cc", ".cpp", ".cs", ".go", ".h", ".hpp", ".java", ".js", ".jsx", ".kt", ".kts", ".php", ".py", ".rb", ".rs", ".swift", ".ts", ".tsx":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeRequiredEditScopePolicyEvent(policy *autonomy.ContractPolicyEvent, req workspace.ToolRequest, resolution autonomy.PathRoleResolutionSet) {

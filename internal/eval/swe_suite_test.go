@@ -371,11 +371,39 @@ func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 					}},
 				},
 			},
+			{
+				ID:     "reserved-env",
+				Family: "direct_question",
+				Prompt: "Explain.",
+				Env: map[string]string{
+					"IDIOM_SWE_LOG": "override.jsonl",
+				},
+				Scenario: Scenario{
+					Name:           "reserved-env",
+					PromptContains: []string{"Explain"},
+				},
+				Oracle: SWEOracle{
+					RequireNoChangedFiles: true,
+				},
+			},
+			{
+				ID:         "bad-runner-mode",
+				Family:     "implementation",
+				Prompt:     "Edit.",
+				RunnerMode: "surprise",
+				Scenario: Scenario{
+					Name:           "bad-runner-mode",
+					PromptContains: []string{"Edit"},
+				},
+				Oracle: SWEOracle{
+					RequireChangedFiles: []string{"target.txt"},
+				},
+			},
 		},
 	}
 	findings := LintSWESuite(suite)
 	joined := strings.Join(findings, "\n")
-	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text"} {
+	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text", "env key \"IDIOM_SWE_LOG\" is reserved by the live runner", "runner_mode \"surprise\" is invalid"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected lint finding %q, got %q", want, joined)
 		}
@@ -419,6 +447,34 @@ func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T)
 	suite.Tasks[0].Fixture = `..\outside`
 	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
 		t.Fatal("expected backslash traversal fixture validation failure")
+	}
+}
+
+func TestValidateSWESuiteFixturesChecksFixtureGitRefs(t *testing.T) {
+	suitePath := filepath.Join(t.TempDir(), "suite.json")
+	suite := SWESuite{
+		Name: "git-ref-fixtures",
+		Tasks: []SWETask{{
+			ID:            "git-ref-task",
+			Family:        "implementation",
+			Prompt:        "Edit.",
+			FixtureGitRef: "definitely-not-a-real-ref",
+			Scenario: Scenario{
+				Name:           "git-ref-task",
+				PromptContains: []string{"Edit"},
+			},
+			Oracle: SWEOracle{
+				RequireChangedFiles: []string{"target.txt"},
+			},
+		}},
+	}
+	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
+		t.Fatal("expected unreachable fixture_git_ref validation failure")
+	}
+
+	suite.Tasks[0].FixtureGitRef = "-bad"
+	if err := ValidateSWESuiteFixtures(suite, suitePath); err == nil {
+		t.Fatal("expected unsafe fixture_git_ref validation failure")
 	}
 }
 
@@ -538,6 +594,116 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected finding %q, got %q", want, joined)
 		}
+	}
+}
+
+func TestEvaluateSWETaskProductWorkflowBlockerDoesNotSatisfyImplementationAcceptance(t *testing.T) {
+	task := SWETask{
+		ID:     "product-workflow-coverage-gate-authority-reuse",
+		Family: "plan_then_execute_planner",
+		Scenario: Scenario{
+			Name:                "product-workflow-coverage-gate-authority-reuse",
+			RequireChangedFiles: []string{"cmd/idiom/product_workflow.go"},
+			RequirePlanExecution: &PlanExecutionExpectation{
+				RequireHandoffID: true,
+			},
+			RequireVerification: "passed",
+		},
+		Oracle: SWEOracle{
+			RequireChangedFiles:       []string{"cmd/idiom/product_workflow.go"},
+			RequireNoRunnerRejections: true,
+			RequireExecutorHandoff:    true,
+			RequireNoTimeout:          true,
+		},
+	}
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you implement the product workflow coverage gate feature?"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "<<QUESTION>>: exact source blocker"}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 0, "completion_gate_rejections": 0}},
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{"status": "clean", "changed_before_reset": []string{}, "changed_after_reset": []string{}}},
+	}
+
+	report := EvaluateSWETask("product-workflow.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("typed blocker without executor handoff, changed files, or verification must not satisfy implementation acceptance")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	for _, want := range []string{"changed files do not include", "plan execution handoff id was required", "executor handoff was required", "verification did not pass", "blocker-only without allow_no_write"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected finding %q, got %q", want, joined)
+		}
+	}
+	if strings.Contains(joined, "runner rejections were forbidden") {
+		t.Fatalf("typed blocker fixture should fail implementation acceptance, not runner-rejection oracle: %q", joined)
+	}
+}
+
+func TestEvaluateSWETaskSourceSatisfiedNeedsExplicitAllowanceForImplementationRequiredTask(t *testing.T) {
+	task := SWETask{
+		ID:     "source-satisfied-implementation",
+		Family: "plan_then_execute_planner",
+		Scenario: Scenario{
+			Name:                "source-satisfied-implementation",
+			RequireChangedFiles: []string{"internal/labels/labels.go"},
+		},
+		Oracle: SWEOracle{
+			RequireChangedFiles: []string{"internal/labels/labels.go"},
+		},
+	}
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Decision: source-satisfied\ninternal/labels/labels.go already returns Save."}},
+		{Type: "idiom.plan_execute.source_satisfied", Data: map[string]any{"source_satisfied_evidence_paths": []any{"internal/labels/labels.go"}}},
+	}
+
+	report := EvaluateSWETask("source-satisfied.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("source-satisfied-only must not satisfy implementation-required task without explicit allowance")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	for _, want := range []string{"source-satisfied-only without allow_source_satisfied", "changed files do not include"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected finding %q, got %q", want, joined)
+		}
+	}
+	if report.Metrics.SourceSatisfiedOutcomes == 0 {
+		t.Fatalf("expected source-satisfied outcome metric, got %#v", report.Metrics)
+	}
+}
+
+func TestEvaluateSWETaskAllowsExplicitSourceSatisfiedNoWriteFixture(t *testing.T) {
+	task := SWETask{
+		ID:     "source-satisfied-no-write",
+		Family: "plan_then_execute_planner",
+		Scenario: Scenario{
+			Name: "source-satisfied-no-write",
+			RequirePlanExecution: &PlanExecutionExpectation{
+				RequireNoDrift: true,
+			},
+		},
+		Oracle: SWEOracle{
+			RequireNoChangedFiles:     true,
+			AllowSourceSatisfied:      true,
+			RequireNoTimeout:          true,
+			RequireCleanRollback:      true,
+			RequireNoRunnerRejections: true,
+		},
+	}
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Decision: source-satisfied\nNo edits needed."}},
+		{Type: "idiom.plan_execute.source_satisfied", Data: map[string]any{"source_satisfied_evidence_paths": []any{"internal/labels/labels.go"}}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 0, "completion_gate_rejections": 0}},
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{
+			"status":               "clean",
+			"baseline_tree":        "abc",
+			"post_reset_tree":      "abc",
+			"changed_before_reset": []any{},
+			"changed_after_reset":  []any{},
+		}},
+	}
+
+	report := EvaluateSWETask("source-satisfied-no-write.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("explicit source-satisfied no-write fixture should pass, findings: %v", report.Findings)
 	}
 }
 
@@ -774,6 +940,69 @@ func TestEvaluateSWETaskRequiresNoRunnerRejectionsFromGateEvents(t *testing.T) {
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "completion_gate_rejections=1") {
 		t.Fatalf("expected completion gate rejection finding, got %q", joined)
+	}
+}
+
+func TestEvaluateSWETaskDistinguishesLowValueActionsFromRunnerRejections(t *testing.T) {
+	maxLowValue := 0
+	task := SWETask{
+		ID:       "low-value",
+		Family:   "plan_then_execute_planner",
+		Scenario: Scenario{Name: "low-value"},
+		Oracle: SWEOracle{
+			RequireNoRunnerRejections: true,
+			MaxLowValueActions:        &maxLowValue,
+		},
+	}
+	records := []Record{
+		{
+			Type: "run_event",
+			Data: map[string]any{
+				"role":    "plan_then_execute_low_value_action",
+				"content": `{"tool":"read_file","path":"internal/labels/labels.go","reason":"duplicate read"}`,
+			},
+		},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 0, "completion_gate_rejections": 0}},
+	}
+
+	report := EvaluateSWETask("low-value.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected low-value action limit to fail")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "low-value actions exceeded") {
+		t.Fatalf("expected low-value finding, got %q", joined)
+	}
+	if strings.Contains(joined, "runner rejections were forbidden") {
+		t.Fatalf("low-value action must not be treated as hard runner rejection: %q", joined)
+	}
+	if report.Metrics.LowValueActions != 1 || report.Metrics.RejectedActions != 0 || report.Metrics.CompletionGateRejections != 0 {
+		t.Fatalf("unexpected metrics: %#v", report.Metrics)
+	}
+}
+
+func TestEvaluateSWETaskRequiresNoTimeout(t *testing.T) {
+	task := SWETask{
+		ID:       "timeout",
+		Family:   "implementation",
+		Scenario: Scenario{Name: "timeout"},
+		Oracle:   SWEOracle{RequireNoTimeout: true},
+	}
+	records := []Record{
+		{Type: "idiom.live_contract.timeout", Data: map[string]any{"timeout_seconds": 1, "exit_code": 143}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 0, "completion_gate_rejections": 0}},
+	}
+
+	report := EvaluateSWETask("timeout.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected timeout oracle to fail")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "timeouts were forbidden") {
+		t.Fatalf("expected timeout finding, got %q", joined)
+	}
+	if strings.Contains(joined, "runner rejections were forbidden") {
+		t.Fatalf("timeout must not be treated as runner rejection: %q", joined)
 	}
 }
 

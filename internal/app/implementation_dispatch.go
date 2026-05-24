@@ -93,101 +93,6 @@ func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecu
 		len(blockers) > 0
 }
 
-func implementationDispatchHasSemanticSourceAndTestScope(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
-	requiredPaths, _, _, _ := implementationDispatchEditScopePlanDocumentsAndResolution(prompt, plan, cfg)
-	if len(requiredPaths) < 2 || !implementationDispatchScopeHasSourceAndTestPath(requiredPaths) {
-		return false
-	}
-	obligations := planexecute.EditSetObligationsFromPrompt(prompt)
-	if obligations.Has(planexecute.EditSetObligationKindTestEdit) && obligations.Has(planexecute.EditSetObligationKindImplementationEdit) {
-		return true
-	}
-	return obligations.Has(planexecute.EditSetObligationKindImplementationEdit) && implementationDispatchPromptLooksLikeTDDProductWorkflow(prompt)
-}
-
-func implementationDispatchScopeHasSourceAndTestPath(paths []string) bool {
-	hasSource := false
-	hasTest := false
-	for _, path := range uniqueImplementationDispatchPaths(paths) {
-		if implementationDispatchPathLooksLikeTest(path) {
-			hasTest = true
-			continue
-		}
-		if implementationDispatchPathLooksLikeProductSource(path) {
-			hasSource = true
-		}
-	}
-	return hasSource && hasTest
-}
-
-func implementationDispatchEditSetObligationsForScope(prompt string, requiredPaths []string) planexecute.EditSetObligations {
-	obligations := planexecute.EditSetObligationsFromPrompt(prompt).Normalized()
-	requiredPaths = uniqueImplementationDispatchPaths(requiredPaths)
-	if len(requiredPaths) == 0 {
-		return obligations
-	}
-	requiredHasTest := false
-	requiredHasSource := false
-	for _, path := range requiredPaths {
-		if implementationDispatchPathLooksLikeTest(path) {
-			requiredHasTest = true
-			continue
-		}
-		if implementationDispatchPathLooksLikeProductSource(path) {
-			requiredHasSource = true
-		}
-	}
-	var scoped planexecute.EditSetObligations
-	for _, obligation := range obligations {
-		switch obligation.Kind {
-		case planexecute.EditSetObligationKindTestEdit:
-			if requiredHasTest {
-				scoped = append(scoped, obligation)
-			}
-		case planexecute.EditSetObligationKindImplementationEdit:
-			if requiredHasSource {
-				scoped = append(scoped, obligation)
-			}
-		default:
-			scoped = append(scoped, obligation)
-		}
-	}
-	return scoped.Normalized()
-}
-
-func implementationDispatchPathLooksLikeProductSource(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-	if lower == "" || implementationDispatchPathLooksLikeTest(lower) {
-		return false
-	}
-	if strings.HasPrefix(lower, "docs/") || strings.Contains(lower, "/docs/") ||
-		strings.HasPrefix(lower, "examples/") || strings.Contains(lower, "/examples/") {
-		return false
-	}
-	switch filepath.Ext(filepath.Base(lower)) {
-	case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".swift",
-		".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash",
-		".zsh", ".sql", ".proto", ".graphql", ".gd", ".mjs", ".cjs", ".kts",
-		".css", ".scss", ".sass", ".html", ".vue", ".svelte":
-		return true
-	case ".md":
-		return strings.HasPrefix(lower, "prompts/") ||
-			strings.Contains(lower, "/prompts/") ||
-			strings.Contains(lower, "/lanes/") ||
-			strings.Contains(lower, "/profiles/") ||
-			strings.Contains(lower, "/rules/")
-	default:
-		return false
-	}
-}
-
-func implementationDispatchPromptLooksLikeTDDProductWorkflow(prompt string) bool {
-	lower := strings.ToLower(prompt)
-	return strings.Contains(lower, "tdd") ||
-		strings.Contains(lower, "test-driven") ||
-		strings.Contains(lower, "product workflow")
-}
-
 func implementationDispatchPromptHasExecutablePlanEdits(prompt string, paths []string) bool {
 	if len(paths) == 0 {
 		return false
@@ -3642,7 +3547,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 			brief = composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
 		} else {
 			allowedPaths = m.resolveUnscopedImplementationAllowedPaths(ctx, prompt)
-			allowedPaths = m.augmentImplementationAllowedPathsWithSiblingTests(allowedPaths, prompt)
+			allowedPaths = uniqueImplementationDispatchPaths(allowedPaths)
 			if len(allowedPaths) > 0 {
 				m.logMessage("dispatch_scope", fmt.Sprintf("derived %d candidate edit path(s) from fallback discovery after context_pack scope was not relevant", len(allowedPaths)))
 				brief = composeImplementationBriefWithEditScopeAndPlanDocuments(prompt, plan, m.cfg, requiredPaths, allowedPaths, planDocuments)
@@ -3658,7 +3563,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		m.logMessage("dispatch_scope", fmt.Sprintf("derived %d candidate edit path(s) from referenced plan document", len(allowedPaths)))
 	}
 
-	editSetObligations := implementationDispatchEditSetObligationsForScope(prompt, requiredPaths)
+	var editSetObligations planexecute.EditSetObligations
 	scopeContract := planexecute.NewPlanScopeContract(requiredPaths, allowedPaths, editSetObligations)
 	opts := planexecute.Options{
 		Prompt:             brief,
@@ -3735,9 +3640,6 @@ func implementationDispatchPlanExecuteNeedsLargeBodyBudget(root string, prompt s
 				if strings.Contains(base, "new") {
 					return true
 				}
-				if implementationDispatchPromptRequiresTestEdit(docText) && implementationDispatchPathLooksLikeTest(path) && root != "" && implementationDispatchPathMissing(root, path) {
-					return true
-				}
 			}
 		}
 	}
@@ -3750,9 +3652,6 @@ func implementationDispatchPlanExecuteNeedsLargeBodyBudget(root string, prompt s
 	for _, path := range append(append([]string(nil), requiredPaths...), allowedPaths...) {
 		lowerPath := strings.ToLower(filepath.ToSlash(path))
 		if strings.Contains(lowerPath, "/new/") || strings.Contains(filepath.Base(lowerPath), "new_") {
-			return true
-		}
-		if implementationDispatchPromptRequiresTestEdit(lower) && implementationDispatchPathLooksLikeTest(path) && root != "" && implementationDispatchPathMissing(root, path) {
 			return true
 		}
 		if implementationDispatchPromptImpliesNewFilePath(lower, lowerPath) {
@@ -3835,9 +3734,34 @@ func implementationDispatchPathMissing(root string, path string) bool {
 	return os.IsNotExist(err)
 }
 
+type implementationDispatchPlanExecuteFailureKind string
+
+const (
+	implementationDispatchFailurePlannerBlocked                 implementationDispatchPlanExecuteFailureKind = implementationDispatchPlanExecuteFailureKind(planexecute.RunFailurePlannerBlocked)
+	implementationDispatchFailurePlanArtifactMissing            implementationDispatchPlanExecuteFailureKind = "plan_artifact_missing"
+	implementationDispatchFailureMissingRequestedTestEdit       implementationDispatchPlanExecuteFailureKind = implementationDispatchPlanExecuteFailureKind(planexecute.EditSetFailureMissingRequestedTestEdit)
+	implementationDispatchFailureMissingRequestedImplementation implementationDispatchPlanExecuteFailureKind = implementationDispatchPlanExecuteFailureKind(planexecute.EditSetFailureMissingRequestedImplementationEdit)
+	implementationDispatchFailureExecutorFailed                 implementationDispatchPlanExecuteFailureKind = "executor_failed"
+)
+
+func implementationDispatchPlanExecuteFailureKindFromString(kind string) implementationDispatchPlanExecuteFailureKind {
+	return implementationDispatchPlanExecuteFailureKind(strings.TrimSpace(kind))
+}
+
+func implementationDispatchPlanExecuteRunFailureKind(result planexecute.RunResult) implementationDispatchPlanExecuteFailureKind {
+	return implementationDispatchPlanExecuteFailureKindFromString(result.FailureKind)
+}
+
+func implementationDispatchPlanExecuteRunFailureIs(result planexecute.RunResult, kind implementationDispatchPlanExecuteFailureKind) bool {
+	return implementationDispatchPlanExecuteRunFailureKind(result) == kind
+}
+
 func implementationDispatchPlanExecuteFailureCanUseRecovery(result planexecute.RunResult) bool {
-	switch strings.TrimSpace(result.FailureKind) {
-	case planexecute.RunFailurePlannerBlocked, "plan_artifact_missing", "missing_requested_test_edit", "missing_requested_implementation_edit":
+	switch implementationDispatchPlanExecuteRunFailureKind(result) {
+	case implementationDispatchFailurePlannerBlocked,
+		implementationDispatchFailurePlanArtifactMissing,
+		implementationDispatchFailureMissingRequestedTestEdit,
+		implementationDispatchFailureMissingRequestedImplementation:
 		return true
 	default:
 		return false
@@ -3857,10 +3781,10 @@ type implementationDispatchPlanExecuteFailure struct {
 }
 
 func implementationDispatchFailureKindToEditSetObligation(kind string) (planexecute.EditSetObligationKind, bool) {
-	switch strings.TrimSpace(kind) {
-	case "missing_requested_test_edit":
+	switch implementationDispatchPlanExecuteFailureKindFromString(kind) {
+	case implementationDispatchFailureMissingRequestedTestEdit:
 		return planexecute.EditSetObligationKindTestEdit, true
-	case "missing_requested_implementation_edit":
+	case implementationDispatchFailureMissingRequestedImplementation:
 		return planexecute.EditSetObligationKindImplementationEdit, true
 	default:
 		return "", false
@@ -3893,7 +3817,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		m.logMessage("dispatch_recovery", "surfacing source-satisfied coverage mismatch without retry")
 		return answer, true, nil
 	}
-	if strings.TrimSpace(failure.Result.FailureKind) == "missing_requested_test_edit" {
+	if implementationDispatchPlanExecuteRunFailureIs(failure.Result, implementationDispatchFailureMissingRequestedTestEdit) {
 		if implementationDispatchOptionsAlreadyCarriedEditSetObligation(failure.Options, planexecute.EditSetObligationKindTestEdit) {
 			m.logMessage("dispatch_recovery", "surfacing missing test-edit rejection after typed test obligation was already carried")
 			return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
@@ -3906,7 +3830,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			m.logMessage("dispatch_recovery", "surfacing missing test-edit rejection without retry because no concrete test scope was available")
 			return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
 				Decision: "surface",
-				Reason:   "original request required test edits, but no concrete test path was available for retry",
+				Reason:   "typed test-edit obligation is unsatisfied, but no concrete test path was available for retry",
 			}), true, nil
 		}
 		retryOptions := failure.Options
@@ -3932,7 +3856,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			m.logMessage("dispatch_recovery", fmt.Sprintf("missing-test retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
-		if strings.TrimSpace(retryResult.FailureKind) == "executor_failed" {
+		if implementationDispatchPlanExecuteRunFailureIs(retryResult, implementationDispatchFailureExecutorFailed) {
 			return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
 				Decision: "surface",
 				Reason:   "automatic missing-test retry submitted a plan, but the executor rejected an edit",
@@ -3943,7 +3867,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			Reason:   "automatic missing-test retry did not produce a valid test edit plan",
 		}), true, nil
 	}
-	if strings.TrimSpace(failure.Result.FailureKind) == "missing_requested_implementation_edit" {
+	if implementationDispatchPlanExecuteRunFailureIs(failure.Result, implementationDispatchFailureMissingRequestedImplementation) {
 		if implementationDispatchOptionsAlreadyCarriedEditSetObligation(failure.Options, planexecute.EditSetObligationKindImplementationEdit) {
 			m.logMessage("dispatch_recovery", "surfacing missing implementation-edit rejection after typed implementation obligation was already carried")
 			return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
@@ -3956,7 +3880,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			m.logMessage("dispatch_recovery", "surfacing missing implementation-edit rejection without retry because no concrete source scope was available")
 			return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
 				Decision: "surface",
-				Reason:   "original request required implementation edits, but no concrete source path was available for retry",
+				Reason:   "typed implementation-edit obligation is unsatisfied, but no concrete source path was available for retry",
 			}), true, nil
 		}
 		retryOptions := failure.Options
@@ -3982,7 +3906,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 			m.logMessage("dispatch_recovery", fmt.Sprintf("missing-implementation retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
-		if strings.TrimSpace(retryResult.FailureKind) == "executor_failed" {
+		if implementationDispatchPlanExecuteRunFailureIs(retryResult, implementationDispatchFailureExecutorFailed) {
 			return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
 				Decision: "surface",
 				Reason:   "automatic missing-implementation retry submitted a plan, but the executor rejected an edit",
@@ -3996,7 +3920,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 	if !m.planExecuteFailureHasPlanExecuteHandoff(failure) {
 		allowedPaths := implementationDispatchAllowedPathsFromContextPack(failure.Options.Prompt, 8)
 		if len(allowedPaths) > 0 {
-			allowedPaths = m.augmentImplementationAllowedPathsWithSiblingTests(allowedPaths, failure.Prompt+"\n"+failure.Options.Prompt)
+			allowedPaths = uniqueImplementationDispatchPaths(allowedPaths)
 			m.logMessage("dispatch_recovery", fmt.Sprintf("using context-pack candidate scope for planner-blocked retry: %s", strings.Join(allowedPaths, ", ")))
 		} else {
 			allowedPaths = m.resolveUnscopedImplementationAllowedPaths(ctx, failure.Prompt)
@@ -4146,8 +4070,8 @@ func planExecutePlannerBlockedCanRetryOnActiveModel(failure implementationDispat
 	if len(failure.RequiredPaths) == 0 {
 		return false
 	}
-	switch strings.TrimSpace(failure.Result.FailureKind) {
-	case planexecute.RunFailurePlannerBlocked, "plan_artifact_missing":
+	switch implementationDispatchPlanExecuteRunFailureKind(failure.Result) {
+	case implementationDispatchFailurePlannerBlocked, implementationDispatchFailurePlanArtifactMissing:
 	default:
 		return false
 	}
@@ -4226,7 +4150,7 @@ func appendMissingRequestedTestEditRecoveryAddendum(prompt string, allowedPaths 
 	allowedPaths = uniqueImplementationDispatchPaths(allowedPaths)
 	var b strings.Builder
 	b.WriteString("## Missing Requested Test Edit Recovery\n\n")
-	b.WriteString("The previous planner attempt submitted a production-only plan, but the original objective explicitly requested test changes. This retry is allowed exactly once. The first successful `submit_plan.edits` array must include at least one real edit to a test path and may include source edits still needed for the objective. The paths below are candidate scope, not mandatory coverage for every path; the typed obligation is at least one real test edit. If current source and test files already contain the requested final state, answer exactly `Decision: source-satisfied` and name both source and test evidence paths instead of submitting stale edits. Do not submit another production-only plan.\n")
+	b.WriteString("The previous planner attempt submitted a production-only plan while a typed test-edit obligation remained unsatisfied. This retry is allowed exactly once. The first successful `submit_plan.edits` array must include at least one real edit to a test path and may include source edits still needed for the objective. The paths below are candidate scope, not mandatory coverage for every path; the typed obligation is at least one real test edit. If current source and test files already contain the requested final state, answer exactly `Decision: source-satisfied` and name both source and test evidence paths instead of submitting stale edits. Do not submit another production-only plan.\n")
 	if len(allowedPaths) > 0 {
 		b.WriteString("\nallowed_edit_paths:\n")
 		for _, path := range allowedPaths {
@@ -4246,7 +4170,7 @@ func appendMissingRequestedImplementationEditRecoveryAddendum(prompt string, all
 	allowedPaths = uniqueImplementationDispatchPaths(allowedPaths)
 	var b strings.Builder
 	b.WriteString("## Missing Requested Implementation Edit Recovery\n\n")
-	b.WriteString("The previous planner attempt submitted a test-only plan, but the original objective explicitly requested implementation behavior. This retry is allowed exactly once. The first successful `submit_plan.edits` array must include at least one real non-test implementation edit and may include test edits still needed for the objective. The paths below are candidate scope, not mandatory coverage for every path; the typed obligation is at least one real non-test implementation edit. If current source and test files already contain the requested final state, answer exactly `Decision: source-satisfied` and name both implementation and test evidence paths instead of submitting stale edits. Do not submit another test-only plan.\n")
+	b.WriteString("The previous planner attempt submitted a test-only plan while a typed implementation-edit obligation remained unsatisfied. This retry is allowed exactly once. The first successful `submit_plan.edits` array must include at least one real non-test implementation edit and may include test edits still needed for the objective. The paths below are candidate scope, not mandatory coverage for every path; the typed obligation is at least one real non-test implementation edit. If current source and test files already contain the requested final state, answer exactly `Decision: source-satisfied` and name both implementation and test evidence paths instead of submitting stale edits. Do not submit another test-only plan.\n")
 	if len(allowedPaths) > 0 {
 		b.WriteString("\nallowed_edit_paths:\n")
 		for _, path := range allowedPaths {
@@ -4580,70 +4504,6 @@ func implementationDispatchContextPackCandidateLine(line string) (string, string
 	return path, role, true
 }
 
-func (m *Model) augmentImplementationAllowedPathsWithSiblingTests(paths []string, prompt string) []string {
-	paths = uniqueImplementationDispatchPaths(paths)
-	if m == nil || !implementationDispatchPromptRequiresTestEdit(prompt) {
-		return paths
-	}
-	root := strings.TrimSpace(m.projectRoot())
-	if root == "" {
-		return paths
-	}
-	augmented := append([]string(nil), paths...)
-	for _, path := range paths {
-		lower := strings.ToLower(filepath.ToSlash(path))
-		if !strings.HasSuffix(lower, ".go") || strings.HasSuffix(lower, "_test.go") {
-			continue
-		}
-		testPath := strings.TrimSuffix(path, ".go") + "_test.go"
-		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(testPath)))
-		if err != nil || info.IsDir() {
-			continue
-		}
-		augmented = append(augmented, testPath)
-	}
-	return uniqueImplementationDispatchPaths(augmented)
-}
-
-func implementationDispatchPromptRequiresTestEdit(prompt string) bool {
-	lower := strings.ToLower(prompt)
-	for _, phrase := range []string{
-		"add a regression test", "add regression test", "add regression tests",
-		"add a test", "add test", "add tests",
-		"add a unit test", "add unit test", "add unit tests",
-		"write a regression test", "write regression test", "write regression tests",
-		"write a test", "write test", "write tests",
-		"write a unit test", "write unit test", "write unit tests",
-		"test coverage", "test coverage for", "tests proving", "test proving", "regression test proving", "regression tests proving",
-	} {
-		if strings.Contains(lower, phrase) {
-			return !implementationDispatchPromptForbidsTestEditAround(lower, phrase)
-		}
-	}
-	return false
-}
-
-func implementationDispatchPromptForbidsTestEditAround(lower string, phrase string) bool {
-	idx := strings.Index(lower, phrase)
-	if idx < 0 {
-		return false
-	}
-	start := idx - 32
-	if start < 0 {
-		start = 0
-	}
-	end := idx + len(phrase) + 32
-	if end > len(lower) {
-		end = len(lower)
-	}
-	window := lower[start:end]
-	return strings.Contains(window, "do not "+phrase) ||
-		strings.Contains(window, "don't "+phrase) ||
-		strings.Contains(window, "dont "+phrase) ||
-		strings.Contains(window, "no "+phrase) ||
-		strings.Contains(window, "without "+phrase)
-}
-
 func (m *Model) implementationDispatchAllowedPathsFromPreloadedContextPack(prompt string, contextPackSection string) []string {
 	if strings.TrimSpace(contextPackSection) == "" {
 		return nil
@@ -4651,7 +4511,6 @@ func (m *Model) implementationDispatchAllowedPathsFromPreloadedContextPack(promp
 	paths := implementationDispatchAllowedPathsFromContextPack(contextPackSection, 8)
 	paths = append(paths, implementationDispatchTestPathsFromContextPack(contextPackSection, 8)...)
 	paths = implementationDispatchFilterContextPackPathsForPrompt(prompt, paths)
-	paths = m.augmentImplementationAllowedPathsWithSiblingTests(paths, prompt+"\n"+contextPackSection)
 	return uniqueImplementationDispatchPaths(paths)
 }
 
@@ -5153,7 +5012,6 @@ func (m *Model) implementationDispatchAllowedPathsForMissingRequestedTestEdit(fa
 	paths = append(paths, failure.Options.AllowedEditPaths...)
 	paths = append(paths, implementationDispatchAllowedPathsFromContextPack(failure.Options.Prompt, 8)...)
 	paths = append(paths, implementationDispatchTestPathsFromContextPack(failure.Options.Prompt, 8)...)
-	paths = m.augmentImplementationAllowedPathsWithSiblingTests(paths, failure.Prompt+"\n"+failure.Options.Prompt)
 	return uniqueImplementationDispatchPaths(paths)
 }
 

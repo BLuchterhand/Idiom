@@ -12,6 +12,8 @@ LIVE_SUBSET_SUITE ?= testdata/swe/live-subset.json
 LIVE_LOGS ?= testdata/swe/generated-logs
 LIVE_CONTRACT_SUITE ?= testdata/live-contracts/suite.json
 LIVE_CONTRACT_LOGS ?= testdata/live-contracts/generated-logs
+SCRIPTED_CONTRACT_SUITE ?= testdata/scripted-contracts/suite.json
+SCRIPTED_CONTRACT_LOGS ?= testdata/scripted-contracts/generated-logs
 CLASSIFIER_BINARY ?= llama-server
 CLASSIFIER_MODEL ?= models/qwen3.6-35b-a3b/Qwen3.6-35B-A3B-Q4_K_M.gguf
 CLASSIFIER_HOST ?= 127.0.0.1
@@ -22,7 +24,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts
+.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -149,3 +151,9 @@ live-contract-suite:
 
 live-contracts: build
 	IDIOM_BIN="$(CANONICAL_APP)" go run ./cmd/idiom-swe-eval -suite $(LIVE_CONTRACT_SUITE) -run-live -generated-logs $(LIVE_CONTRACT_LOGS) -runner-command "$(CURDIR)/scripts/live-contract-runner.sh"
+
+scripted-contract-suite:
+	go run ./cmd/idiom-swe-eval -suite $(SCRIPTED_CONTRACT_SUITE) -suite-only
+
+scripted-contracts: build
+	IDIOM_BIN="$(CANONICAL_APP)" go run ./cmd/idiom-swe-eval -suite $(SCRIPTED_CONTRACT_SUITE) -run-live -run-live-continue-on-error -generated-logs $(SCRIPTED_CONTRACT_LOGS) -runner-command "$(CURDIR)/scripts/scripted-contract-runner.sh"

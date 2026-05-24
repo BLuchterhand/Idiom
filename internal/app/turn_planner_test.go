@@ -770,7 +770,7 @@ func TestWriterRouteDecisionForPromptReportsGuardedImplementForExactEditPacket(t
 	}
 }
 
-func TestWriterRouteDecisionForPromptKeepsSemanticTDDScopeOnGuardedLane(t *testing.T) {
+func TestWriterRouteDecisionForPromptDoesNotCreateSemanticTDDScopeFromProse(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	cfg.Chat.ImplementationDispatch = "plan_execute"
@@ -791,8 +791,34 @@ func TestWriterRouteDecisionForPromptKeepsSemanticTDDScopeOnGuardedLane(t *testi
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
-	if !slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
-		t.Fatalf("guarded implementation reason missing: %#v", decision.ReasonCodes)
+	if slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
+		t.Fatalf("prompt prose must not create semantic source/test executor reason: %#v", decision.ReasonCodes)
+	}
+}
+
+func TestWriterRouteDecisionForPromptDoesNotUseTDDProductKeywordForSemanticScope(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = "plan_execute"
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation"},
+		runtimeBrief: workerruntime.WorkerRuntimeBrief{
+			RequiredEditPaths: []string{"internal/productworkflow/coverage_gate.go", "internal/productworkflow/coverage_gate_test.go"},
+		},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("Implement a TDD product workflow coverage-gate fix. Required edit paths: internal/productworkflow/coverage_gate.go, internal/productworkflow/coverage_gate_test.go.", plan)
+
+	if decision.WriterMode != string(writerroute.ModeAgenticGuarded) || decision.Lane != "implement" {
+		t.Fatalf("implementation prompt should stay on guarded implement lane, got %#v", decision)
+	}
+	if slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
+		t.Fatalf("TDD/product wording alone must not create semantic source/test executor reason: %#v", decision.ReasonCodes)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.local_model_default") {
+		t.Fatalf("direct implementation reason missing: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -817,8 +843,8 @@ func TestWriterRouteDecisionForPromptDoesNotUsePlanExecutePhraseForSemanticTDDSc
 	if decision.TaskFamily != "implementation" {
 		t.Fatalf("task family = %q, want implementation", decision.TaskFamily)
 	}
-	if !slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
-		t.Fatalf("semantic source/test reason missing: %#v", decision.ReasonCodes)
+	if slices.Contains(decision.ReasonCodes, "route.semantic_source_test_executor") {
+		t.Fatalf("plan-execute prose mention must not create semantic source/test executor reason: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -1255,35 +1281,6 @@ func TestImplementationDispatchContextPackScopeUsesCandidateFiles(t *testing.T) 
 	}
 }
 
-func TestImplementationDispatchContextPackScopeAddsSiblingTestForTestObjective(t *testing.T) {
-	root := t.TempDir()
-	testPath := filepath.Join(root, "internal", "productworkflow", "migration_apply_test.go")
-	if err := os.MkdirAll(filepath.Dir(testPath), 0o755); err != nil {
-		t.Fatalf("mkdir test dir: %v", err)
-	}
-	if err := os.WriteFile(testPath, []byte("package productworkflow\n"), 0o644); err != nil {
-		t.Fatalf("write sibling test: %v", err)
-	}
-	cfg := config.Default()
-	cfg.Workspace.Root = root
-	cfg.Workspace.CWD = root
-	model := New(cfg)
-	defer model.Close()
-
-	paths := model.augmentImplementationAllowedPathsWithSiblingTests(
-		[]string{"internal/productworkflow/migration_apply.go"},
-		"reject symlinks and add regression tests proving no partial mutation",
-	)
-
-	want := []string{
-		"internal/productworkflow/migration_apply.go",
-		"internal/productworkflow/migration_apply_test.go",
-	}
-	if !slices.Equal(paths, want) {
-		t.Fatalf("augmented scope = %#v, want %#v", paths, want)
-	}
-}
-
 func TestImplementationDispatchContextPackTestPathsUsesCandidateTests(t *testing.T) {
 	prompt := strings.Join([]string{
 		"## Context Pack",
@@ -1441,7 +1438,7 @@ func TestImplementationDispatchMissingTestRetryPreservesCandidateScope(t *testin
 		},
 		Result: planexecute.RunResult{
 			SessionID:   "missing-test-retry",
-			FailureKind: "missing_requested_test_edit",
+			FailureKind: string(implementationDispatchFailureMissingRequestedTestEdit),
 		},
 	})
 
@@ -1500,7 +1497,7 @@ func TestImplementationDispatchMissingImplementationRetryPreservesCandidateScope
 		},
 		Result: planexecute.RunResult{
 			SessionID:   "missing-implementation-retry",
-			FailureKind: "missing_requested_implementation_edit",
+			FailureKind: string(implementationDispatchFailureMissingRequestedImplementation),
 		},
 	})
 
@@ -1564,7 +1561,7 @@ func TestImplementationDispatchMissingImplementationRetryKeepsSubmittedSiblingAn
 		},
 		Result: planexecute.RunResult{
 			SessionID:   "product-workflow-missing-implementation",
-			FailureKind: "missing_requested_implementation_edit",
+			FailureKind: string(implementationDispatchFailureMissingRequestedImplementation),
 		},
 	}
 	allowedPaths := model.implementationDispatchAllowedPathsForMissingRequestedImplementationEdit(failure)
@@ -1704,7 +1701,7 @@ func TestImplementationDispatchPlanExecuteMaxTokensDoesNotDowngradeLargeNewFileP
 	}
 }
 
-func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForMissingRequestedTestPath(t *testing.T) {
+func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePromptTestHeuristic(t *testing.T) {
 	root := t.TempDir()
 	got := implementationDispatchPlanExecuteMaxTokens(
 		root,
@@ -1713,8 +1710,8 @@ func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForMissingRequ
 		nil,
 		nil,
 	)
-	if got != 16384 {
-		t.Fatalf("missing requested test plan max tokens = %d, want 16384", got)
+	if got != 8192 {
+		t.Fatalf("prompt prose must not inflate missing-test budget, got %d want 8192", got)
 	}
 }
 
@@ -1734,7 +1731,7 @@ func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocNewF
 	}
 }
 
-func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocMissingTest(t *testing.T) {
+func TestImplementationDispatchPlanExecuteMaxTokensDoesNotUsePlanDocTestHeuristic(t *testing.T) {
 	root := t.TempDir()
 	got := implementationDispatchPlanExecuteMaxTokens(
 		root,
@@ -1746,8 +1743,8 @@ func TestImplementationDispatchPlanExecuteMaxTokensUsesLargeBudgetForPlanDocMiss
 			EditPaths: []string{"tests/parser_test.py"},
 		}},
 	)
-	if got != 16384 {
-		t.Fatalf("plan-doc missing-test budget = %d, want 16384", got)
+	if got != 8192 {
+		t.Fatalf("plan-doc prose must not inflate missing-test budget, got %d want 8192", got)
 	}
 }
 
@@ -2472,7 +2469,7 @@ func TestPlanExecutePlannerBlockedMessageNamesExecutorRejectedSubmittedPlan(t *t
 	answer := humanPlanExecutePlannerBlockedMessage(implementationDispatchPlanExecuteFailure{
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   "executor_failed",
+			FailureKind:   string(implementationDispatchFailureExecutorFailed),
 			FailureReason: "executor phase aborted on edit 0 (pkg/feature_test.go): preflight syntax validation failed",
 		},
 	}, implementationDispatchRecoveryDecision{
@@ -2559,46 +2556,6 @@ func TestPlanExecutePlannerBlockedCanRetryOnActiveModel(t *testing.T) {
 	failure.RequiredPaths = nil
 	if planExecutePlannerBlockedCanRetryOnActiveModel(failure) {
 		t.Fatalf("unscoped planner blocker should not use active-model fallback")
-	}
-}
-
-func TestImplementationDispatchEditSetObligationsFollowRequiredPathKinds(t *testing.T) {
-	testOnly := implementationDispatchEditSetObligationsForScope(
-		"Implement only this atom's bounded slice: add unit tests for normalization and stable IDs.",
-		[]string{"internal/writerroute/decision_test.go"},
-	)
-	if testOnly.Has(planexecute.EditSetObligationKindImplementationEdit) {
-		t.Fatalf("test-only required scope must not carry implementation obligation: %#v", testOnly)
-	}
-	if !testOnly.Has(planexecute.EditSetObligationKindTestEdit) {
-		t.Fatalf("test-only required scope should preserve test obligation: %#v", testOnly)
-	}
-
-	sourceOnly := implementationDispatchEditSetObligationsForScope(
-		"Implement the feature and add tests.",
-		[]string{"internal/writerroute/decision.go"},
-	)
-	if !sourceOnly.Has(planexecute.EditSetObligationKindImplementationEdit) {
-		t.Fatalf("source required scope should preserve implementation obligation: %#v", sourceOnly)
-	}
-	if sourceOnly.Has(planexecute.EditSetObligationKindTestEdit) {
-		t.Fatalf("source-only required scope must not carry test obligation: %#v", sourceOnly)
-	}
-
-	sourceAndTest := implementationDispatchEditSetObligationsForScope(
-		"Implement the feature and add tests.",
-		[]string{"internal/writerroute/decision.go", "internal/writerroute/decision_test.go"},
-	)
-	if !sourceAndTest.Has(planexecute.EditSetObligationKindImplementationEdit) || !sourceAndTest.Has(planexecute.EditSetObligationKindTestEdit) {
-		t.Fatalf("mixed required scope should preserve both obligations: %#v", sourceAndTest)
-	}
-
-	laneMarkdown := implementationDispatchEditSetObligationsForScope(
-		"Implement the lane behavior update.",
-		[]string{"cmd/idiom/lanes/plan-execute/preamble.md"},
-	)
-	if !laneMarkdown.Has(planexecute.EditSetObligationKindImplementationEdit) {
-		t.Fatalf("lane/profile/prompt markdown required scope should preserve implementation obligation: %#v", laneMarkdown)
 	}
 }
 
@@ -2737,6 +2694,68 @@ func TestPlanExecutePlannerRecoveryInstructionKeepsAllowedCandidatesNonMandatory
 	}
 }
 
+func TestPlanExecuteMissingEditRecoveryUsesTypedFailureKindOnly(t *testing.T) {
+	tests := []struct {
+		name           string
+		result         planexecute.RunResult
+		wantChain      bool
+		wantObligation planexecute.EditSetObligationKind
+	}{
+		{
+			name: "typed missing test edit chains without prompt wording",
+			result: planexecute.RunResult{
+				FailureKind:   string(implementationDispatchFailureMissingRequestedTestEdit),
+				FailureReason: "edit-set contract rejected the submitted artifact",
+			},
+			wantChain:      true,
+			wantObligation: planexecute.EditSetObligationKindTestEdit,
+		},
+		{
+			name: "typed missing implementation edit chains without prompt wording",
+			result: planexecute.RunResult{
+				FailureKind:   "  " + string(implementationDispatchFailureMissingRequestedImplementation) + "  ",
+				FailureReason: "edit-set contract rejected the submitted artifact",
+			},
+			wantChain:      true,
+			wantObligation: planexecute.EditSetObligationKindImplementationEdit,
+		},
+		{
+			name: "prompt-like wording does not chain without typed failure kind",
+			result: planexecute.RunResult{
+				FailureKind:   planexecute.RunFailurePlannerBlocked,
+				FailureReason: "the original prompt said to add regression tests and implement the product workflow",
+				PlannerAnswer: "missing_requested_test_edit",
+			},
+			wantChain: false,
+		},
+		{
+			name: "executor failure does not chain from wording",
+			result: planexecute.RunResult{
+				FailureKind:   string(implementationDispatchFailureExecutorFailed),
+				FailureReason: "executor failed after a request to add tests and implementation edits",
+			},
+			wantChain: false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := implementationDispatchShouldChainMissingEditRecovery(tt.result); got != tt.wantChain {
+				t.Fatalf("chain missing-edit recovery = %t, want %t", got, tt.wantChain)
+			}
+			gotObligation, ok := implementationDispatchFailureKindToEditSetObligation(tt.result.FailureKind)
+			if tt.wantObligation == "" {
+				if ok {
+					t.Fatalf("unexpected obligation %q from failure kind %q", gotObligation, tt.result.FailureKind)
+				}
+				return
+			}
+			if !ok || gotObligation != tt.wantObligation {
+				t.Fatalf("obligation = %q, %t; want %q, true", gotObligation, ok, tt.wantObligation)
+			}
+		})
+	}
+}
+
 func TestImplementationDispatchRecoveryMessageIsInternalWithQuotedSubmitPlanToolCall(t *testing.T) {
 	msg := "Respond with a valid `submit_plan` tool call only; do not narrate completion."
 	if !implementationDispatchRecoveryMessageIsInternal(msg) {
@@ -2762,7 +2781,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 				RequiredPaths: []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   "plan_artifact_missing",
+					FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
 					FailureReason: "source-satisfied evidence named no test path",
 					PlannerAnswer: "Decision: source-satisfied\n- internal/productworkflow/migration_apply.go: no changes needed.",
 				},
@@ -2795,7 +2814,7 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			failure: implementationDispatchPlanExecuteFailure{
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   "executor_failed",
+					FailureKind:   string(implementationDispatchFailureExecutorFailed),
 					FailureReason: "edit failed",
 				},
 			},
@@ -2807,8 +2826,8 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			failure: implementationDispatchPlanExecuteFailure{
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   "missing_requested_test_edit",
-					FailureReason: "original prompt requested test edits, but plan named no test path",
+					FailureKind:   string(implementationDispatchFailureMissingRequestedTestEdit),
+					FailureReason: "typed test-edit obligation is unsatisfied because plan named no test path",
 				},
 			},
 			recovery:       true,
@@ -2819,8 +2838,8 @@ func TestPlanExecuteTerminalOutcomeMatrixForTUIWrapper(t *testing.T) {
 			failure: implementationDispatchPlanExecuteFailure{
 				Result: planexecute.RunResult{
 					ExitCode:      1,
-					FailureKind:   "missing_requested_implementation_edit",
-					FailureReason: "original prompt requested implementation behavior, but plan named only test paths",
+					FailureKind:   string(implementationDispatchFailureMissingRequestedImplementation),
+					FailureReason: "typed implementation-edit obligation is unsatisfied because plan named only test paths",
 				},
 			},
 			recovery:       true,
@@ -2855,7 +2874,7 @@ func TestPlanExecuteSourceSatisfiedCoverageIgnoresAllowedCandidatePaths(t *testi
 		AllowedPaths: []string{"internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"},
 		Result: planexecute.RunResult{
 			ExitCode:      1,
-			FailureKind:   "plan_artifact_missing",
+			FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
 			FailureReason: "source-satisfied evidence named one candidate path",
 			PlannerAnswer: "Decision: source-satisfied\n- internal/productworkflow/migration_apply.go: no changes needed.",
 		},
@@ -2951,12 +2970,12 @@ func TestRouteClassifierChatClientFallsBackToPlannerWhenClassifierUnreachable(t 
 	}
 }
 
-func TestCorrectTurnRoutePlanRoutesNonForensicDebugLogFeatureQuestionToConversation(t *testing.T) {
+func TestCorrectTurnRoutePlanDoesNotOverrideDebugLogClassifierRoute(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", agent.BuildMode())
-	if plan.Family != "conversation" {
-		t.Fatalf("family = %q, want conversation", plan.Family)
+	if plan.Family != "debug_logs" {
+		t.Fatalf("family = %q, want debug_logs", plan.Family)
 	}
-	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+	if plan.InitialLane != "explore" || plan.Contract != "grounded_explanation" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -2971,12 +2990,12 @@ func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testi
 	}
 }
 
-func TestCorrectTurnRoutePlanUsesFallbackInsteadOfHardcodedConversation(t *testing.T) {
+func TestCorrectTurnRoutePlanDoesNotUsePromptFallbackHeuristics(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", agent.BuildMode())
-	if plan.Family != "conversation" {
-		t.Fatalf("family = %q, want conversation", plan.Family)
+	if plan.Family != "debug_logs" {
+		t.Fatalf("family = %q, want debug_logs", plan.Family)
 	}
-	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+	if plan.InitialLane != "explore" || plan.Contract != "grounded_explanation" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -3089,12 +3108,12 @@ func TestFallbackTurnRouteDoesNotRecognizeStartWorkingOnNamedDocAsDocsEdit(t *te
 	}
 }
 
-func TestCorrectTurnRoutePlanDowngradesImplementationLikeExplanationQuestion(t *testing.T) {
+func TestCorrectTurnRoutePlanDoesNotDowngradeClassifierImplementationRoute(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Explain how this harness uses sub-agents.", agent.BuildMode())
-	if plan.Family != "conversation" {
-		t.Fatalf("family = %q, want conversation", plan.Family)
+	if plan.Family != "explore_then_implement" {
+		t.Fatalf("family = %q, want explore_then_implement", plan.Family)
 	}
-	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+	if plan.InitialLane != "explore" || plan.FollowupLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -4984,7 +5003,7 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	}
 }
 
-func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t *testing.T) {
+func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
@@ -5082,8 +5101,8 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t 
 	if err != nil {
 		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
 	}
-	if !sawMissingTestRetry.Load() {
-		t.Fatalf("expected automatic missing-test retry; answer=%s", answer)
+	if sawMissingTestRetry.Load() {
+		t.Fatalf("prompt prose must not trigger automatic missing-test retry; answer=%s", answer)
 	}
 	if plannerRequests.Load() == 0 {
 		t.Fatalf("expected initial production-only planner request")
@@ -5099,15 +5118,15 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetriesWithTestScope(t 
 	if err != nil {
 		t.Fatalf("read test: %v", err)
 	}
-	if !strings.Contains(string(gotTest), "RegressionCovered = true") {
-		t.Fatalf("test was not updated:\n%s", string(gotTest))
+	if strings.Contains(string(gotTest), "RegressionCovered = true") {
+		t.Fatalf("test should not be updated by a prompt-inferred retry:\n%s", string(gotTest))
 	}
 	if !strings.Contains(answer, "plan-then-execute summary") {
 		t.Fatalf("expected successful retry summary, got %q", answer)
 	}
 }
 
-func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSatisfied(t *testing.T) {
+func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfiedRetry(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	allowImplementationDispatchPlanDocumentPreflight(t)
@@ -5217,21 +5236,18 @@ func TestRunPromptOncePlanExecuteMissingRequestedTestEditRetryCanCloseSourceSati
 	defer model.Close()
 
 	answer, err := model.runPlanExecuteCommandOnce(context.Background(), "Implement docs/plan.md: harden the feature behavior and add regression tests proving the edge case is rejected.")
-	if err != nil {
-		t.Fatalf("RunPromptOnce: %v\nanswer: %s", err, answer)
+	if err == nil {
+		t.Fatalf("expected stale production-only plan to fail without prompt-inferred missing-test retry; answer=%s", answer)
 	}
-	if !sawMissingTestRetry.Load() {
-		t.Fatalf("expected automatic missing-test retry; answer=%s", answer)
-	}
-	if !strings.Contains(answer, "source-satisfied") {
-		t.Fatalf("expected source-satisfied retry closeout, got %q", answer)
+	if sawMissingTestRetry.Load() {
+		t.Fatalf("prompt prose must not trigger missing-test retry; answer=%s", answer)
 	}
 	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if string(gotSource) != sourceBody {
-		t.Fatalf("source changed during source-satisfied retry:\n%s", string(gotSource))
+	if !strings.Contains(string(gotSource), "return false") {
+		t.Fatalf("stale production-only plan should be the only applied change without inferred retry:\n%s", string(gotSource))
 	}
 	gotTest, err := os.ReadFile(filepath.Join(root, "pkg", "feature_test.go"))
 	if err != nil {
@@ -5742,13 +5758,32 @@ git diff --check
 	}
 }
 
-func TestCorrectTurnRoutePlanKeepsAnalysisContinuationReadOnly(t *testing.T) {
+func TestCorrectTurnRoutePlanDoesNotRewriteAnalysisContinuationRoute(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "explore_then_implement"}, "Continue your investigation until you have a confident response.", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
+	if plan.Family != "explore_then_implement" {
+		t.Fatalf("family = %q, want explore_then_implement", plan.Family)
 	}
-	if plan.InitialLane != "architecture" || plan.FollowupLane != "" || plan.Contract != "architecture_assessment" {
+	if plan.InitialLane != "explore" || plan.FollowupLane != "implement" || plan.Contract != "implementation_result" {
 		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestGDScriptRouteFallsBackForNonGDScriptExplicitScope(t *testing.T) {
+	prompt := "Implement the change.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n"
+	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, agent.BuildMode())
+	if route.Family != "implementation" {
+		t.Fatalf("family = %q, want implementation for non-GDScript explicit scope", route.Family)
+	}
+	if route.Reason != "gdscript_scope_mismatch" {
+		t.Fatalf("reason = %q, want gdscript_scope_mismatch", route.Reason)
+	}
+}
+
+func TestGDScriptRouteKeepsAllGDScriptExplicitScope(t *testing.T) {
+	prompt := "Implement the change.\n\nrequired_edit_paths:\n- scenes/player.gd\nallowed_edit_paths:\n- tests/player_test.gd\n"
+	route := validateRouteFamilyAgainstExplicitEditScope(turnRoutePlan{Family: "gdscript_edit", Reason: "classifier"}, prompt, agent.BuildMode())
+	if route.Family != "gdscript_edit" {
+		t.Fatalf("family = %q, want gdscript_edit for GDScript-only explicit scope", route.Family)
 	}
 }
 
@@ -5815,6 +5850,88 @@ func TestClassifyTurnRouteUsesClassifierBeforeImplementationFallback(t *testing.
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("implementation-like prose should go through classifier first, got %d calls", calls.Load())
+	}
+}
+
+func TestRouteClassifierPromptOmitsFencedCodeBodies(t *testing.T) {
+	prompt := "Implement the change.\n```go\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n```\nUse the exact source."
+	got := routeClassifierPromptForModel(prompt)
+	if strings.Contains(got, "ShortLabel") || strings.Contains(got, "Save changes") {
+		t.Fatalf("classifier prompt leaked code body:\n%s", got)
+	}
+	if !strings.Contains(got, "[code block omitted for route classification]") {
+		t.Fatalf("classifier prompt missing omission marker:\n%s", got)
+	}
+	if !strings.Contains(got, "Implement the change.") || !strings.Contains(got, "Use the exact source.") {
+		t.Fatalf("classifier prompt lost surrounding prose:\n%s", got)
+	}
+}
+
+func TestClassifyTurnRouteRepairsInvalidJSONOnce(t *testing.T) {
+	var calls atomic.Int64
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := calls.Add(1)
+		content := `{`
+		if call == 2 {
+			content = `{"family":"implementation","initial_lane":"implement","reason":"classifier_repaired","contract":"implementation_result"}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": content},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client: llama.NewClient(server.URL, time.Second),
+	}
+	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", agent.BuildMode())
+	if plan.Family != "implementation" || plan.InitialLane != "implement" {
+		t.Fatalf("repaired classifier route = %#v, want implementation", plan)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("classifier calls = %d, want initial + repair", calls.Load())
+	}
+}
+
+func TestClassifyTurnRouteRepairsInvalidJSONFromFallbackClient(t *testing.T) {
+	classifierServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "classifier unavailable", http.StatusServiceUnavailable)
+	}))
+	defer classifierServer.Close()
+
+	var fallbackCalls atomic.Int64
+	fallbackServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := fallbackCalls.Add(1)
+		content := `{`
+		if call == 2 {
+			content = `{"family":"implementation","initial_lane":"implement","reason":"fallback_repaired","contract":"implementation_result"}`
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": content},
+			}},
+		})
+	}))
+	defer fallbackServer.Close()
+
+	m := &Model{
+		cfg: config.Config{
+			RouteClassifier: config.RouteClassifier{Enabled: true},
+		},
+		client:        llama.NewClient(fallbackServer.URL, time.Second),
+		summaryClient: llama.NewClient(classifierServer.URL, time.Second),
+	}
+	plan := m.classifyTurnRoute(context.Background(), "Implement the label change.", agent.BuildMode())
+	if plan.Family != "implementation" || plan.InitialLane != "implement" {
+		t.Fatalf("repaired classifier route = %#v, want implementation", plan)
+	}
+	if fallbackCalls.Load() != 2 {
+		t.Fatalf("fallback client calls = %d, want invalid response + repair", fallbackCalls.Load())
 	}
 }
 

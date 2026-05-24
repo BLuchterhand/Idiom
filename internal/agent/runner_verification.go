@@ -52,6 +52,26 @@ func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerrunt
 		true
 }
 
+func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if strings.TrimSpace(req.Tool) != "shell" || !containsRunnerTool(allowedTools, "source_sanity") {
+		return workspace.ToolRequest{}, false
+	}
+	if !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+	path := strings.TrimSpace(matchShellCatWholeFile(req.Command))
+	if path == "" || !workspace.SourceSanityCoversPath(path) {
+		return workspace.ToolRequest{}, false
+	}
+	normalizedPath := normalizeRunnerPath(path)
+	for _, changed := range changedSourcePaths(results) {
+		if normalizeRunnerPath(changed) == normalizedPath {
+			return workspace.ToolRequest{Tool: "source_sanity", Path: path}, true
+		}
+	}
+	return workspace.ToolRequest{}, false
+}
+
 func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
 	if !sourceEditsAreSemanticallyVerified(brief, results) {
 		return "", false

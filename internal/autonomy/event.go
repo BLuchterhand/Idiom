@@ -147,6 +147,12 @@ type RuntimeCallContractEvent struct {
 	ToolTransportMode        string   `json:"tool_transport_mode,omitempty"`
 	ParserContract           string   `json:"parser_contract,omitempty"`
 	ResponseFormat           string   `json:"response_format,omitempty"`
+	Temperature              float64  `json:"temperature,omitempty"`
+	TopP                     float64  `json:"top_p,omitempty"`
+	TopK                     int      `json:"top_k,omitempty"`
+	MinP                     float64  `json:"min_p,omitempty"`
+	PresencePenalty          float64  `json:"presence_penalty,omitempty"`
+	RepetitionPenalty        float64  `json:"repetition_penalty,omitempty"`
 	ToolChoice               string   `json:"tool_choice,omitempty"`
 	ThinkingPolicy           string   `json:"thinking_policy,omitempty"`
 	MaxTokens                int      `json:"max_tokens,omitempty"`
@@ -168,6 +174,11 @@ type PhaseEvidenceStateEvent struct {
 type ContractPolicyEvent struct {
 	ToolCallID          string             `json:"tool_call_id,omitempty"`
 	ToolName            string             `json:"tool_name,omitempty"`
+	ActionClass         ActionClass        `json:"action_class,omitempty"`
+	ActionKey           string             `json:"action_key,omitempty"`
+	Transport           ToolTransport      `json:"transport,omitempty"`
+	ParserFailure       ParserFailureClass `json:"parser_failure,omitempty"`
+	RepairSource        RepairSource       `json:"repair_source,omitempty"`
 	Capability          Capability         `json:"capability,omitempty"`
 	SideEffect          SideEffectClass    `json:"side_effect,omitempty"`
 	Confidence          string             `json:"confidence,omitempty"`

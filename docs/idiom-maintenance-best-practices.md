@@ -76,6 +76,14 @@ instead of using its normal editing capability.
   settings, max-token override, active fallback state, prompt family, and
   exposed tools. If the model actor or prompt contract changed, fix that
   alignment before adding more recovery nudges.
+- For lane or phase state-transition bugs, treat model runtime state as a
+  first-class contract field. Check and log the before/after model alias,
+  backend, tool transport, parser contract, `temperature`, `top_p`, `top_k`,
+  `min_p`, penalties, thinking policy, max tokens, response format, tool
+  choice, and exposed tools for the exact turn where behavior changed. Do not
+  debug hallucinated paths, malformed tool calls, missing visible actions, or
+  repeated recovery loops without first confirming these fields match the
+  intended lane state.
 
 ## Avoid Low-Value Loops
 
@@ -152,6 +160,11 @@ instead of using its normal editing capability.
   validation over another "remember to write the file" prompt.
 - For an observability bug, update the event/ledger/audit schema and tests
   before adding another prose diagnostic.
+- For runtime-state bugs, make the state transition observable before changing
+  prompts. Telemetry and phase-contract events should show the effective model
+  alias, sampling settings, thinking policy, token budget, parser contract,
+  response format, tool choice, and exposed tools after every lane/phase
+  transition that changes them.
 - For an atom/spec-quality bug, fix intake, brief lint, or refine output
   validation before changing implementation-lane behavior.
 - Keep project-specific examples out of generic idiom logic. A project atom may

@@ -15,12 +15,13 @@ import (
 )
 
 type turnRoutePlan struct {
-	InitialLane  string `json:"initial_lane,omitempty"`
-	FollowupLane string `json:"followup_lane,omitempty"`
-	Reason       string `json:"reason,omitempty"`
-	Contract     string `json:"contract,omitempty"`
-	Family       string `json:"family,omitempty"`
-	Thoroughness string `json:"thoroughness,omitempty"`
+	InitialLane  string      `json:"initial_lane,omitempty"`
+	FollowupLane string      `json:"followup_lane,omitempty"`
+	Reason       string      `json:"reason,omitempty"`
+	Contract     string      `json:"contract,omitempty"`
+	Family       string      `json:"family,omitempty"`
+	Thoroughness string      `json:"thoroughness,omitempty"`
+	RouteSource  routeSource `json:"-"`
 }
 
 func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent.Mode) turnRoutePlan {
@@ -48,6 +49,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		return turnRoutePlan{}, false
 	}
 	history := renderRecentConversationForRouting(m.messages, 6)
+	classifierPrompt := routeClassifierPromptForModel(prompt)
 	messages := []llama.ChatMessage{
 		{
 			Role: "system",
@@ -77,7 +79,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		},
 		{
 			Role:    "user",
-			Content: fmt.Sprintf("Mode: %s\nRecent conversation:\n%s\nCurrent user prompt:\n%s\n\nReturn JSON now.", mode.Name, history, prompt),
+			Content: fmt.Sprintf("Mode: %s\nRecent conversation:\n%s\nCurrent user prompt:\n%s\n\nReturn JSON now.", mode.Name, history, classifierPrompt),
 		},
 	}
 	timeout := 10 * time.Second
@@ -99,9 +101,11 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "no_client"})
 		return turnRoutePlan{}, false
 	}
+	effectiveClient := client
 	text, err := client.CompleteChat(classifyCtx, messages, opts)
 	if err != nil && client != m.client && m.client != nil {
-		text, err = m.client.CompleteChat(classifyCtx, messages, opts)
+		effectiveClient = m.client
+		text, err = effectiveClient.CompleteChat(classifyCtx, messages, opts)
 	}
 	if err != nil {
 		m.logRouteClassifierDecision(map[string]any{"status": "unavailable", "reason": "completion_error", "error": truncateImplementationDispatchText(err.Error(), 240)})
@@ -109,9 +113,18 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	}
 	plan, err := parseTurnRoutePlan(text)
 	if err != nil {
-		m.logRouteClassifierDecision(map[string]any{"status": "parse_error", "error": truncateImplementationDispatchText(err.Error(), 240)})
-		return turnRoutePlan{}, false
+		repaired, repairErr := m.repairTurnRouteClassification(ctx, effectiveClient, mode, classifierPrompt, text, err)
+		if repairErr != nil {
+			m.logRouteClassifierDecision(map[string]any{
+				"status":       "parse_error",
+				"error":        truncateImplementationDispatchText(err.Error(), 240),
+				"repair_error": truncateImplementationDispatchText(repairErr.Error(), 240),
+			})
+			return turnRoutePlan{}, false
+		}
+		plan = repaired
 	}
+	plan.RouteSource = routeSourceClassifier
 	plan = normalizeTurnRoutePlan(plan, mode)
 	m.logRouteClassifierDecision(map[string]any{
 		"status":       "accepted",
@@ -121,6 +134,45 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		"contract":     plan.Contract,
 	})
 	return plan, plan.Family != ""
+}
+
+func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.LLMClient, mode agent.Mode, classifierPrompt string, invalid string, parseErr error) (turnRoutePlan, error) {
+	if client == nil {
+		return turnRoutePlan{}, fmt.Errorf("no classifier client")
+	}
+	timeout := 10 * time.Second
+	if m != nil && m.cfg.RouteClassifier.TimeoutSeconds > 0 {
+		timeout = time.Duration(m.cfg.RouteClassifier.TimeoutSeconds) * time.Second
+	}
+	repairCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	thinkingOff := false
+	text, err := client.CompleteChat(repairCtx, []llama.ChatMessage{
+		{
+			Role: "system",
+			Content: strings.Join([]string{
+				"You repair a coding-agent route classifier response.",
+				"Return strict JSON only. Do not solve the user's task.",
+				"Choose family from: conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
+				"Use contracts from: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
+				"Use lanes from: main, explore, verification, locate, review, architecture, implement.",
+			}, "\n"),
+		},
+		{
+			Role:    "user",
+			Content: fmt.Sprintf("Mode: %s\nCurrent user prompt:\n%s\n\nPrevious invalid classifier response:\n%s\n\nParse error: %s\n\nReturn one corrected JSON object now.", mode.Name, classifierPrompt, truncateImplementationDispatchText(invalid, 1200), parseErr),
+		},
+	}, llama.ChatOptions{
+		MaxTokens:          192,
+		Temperature:        0,
+		TopP:               1,
+		EnableThinking:     &thinkingOff,
+		ChatTemplateKwargs: true,
+	})
+	if err != nil {
+		return turnRoutePlan{}, err
+	}
+	return parseTurnRoutePlan(text)
 }
 
 func (m *Model) logRouteClassifierDecision(fields map[string]any) {
@@ -151,6 +203,38 @@ func (m *Model) routeClassifierChatClient() llama.LLMClient {
 	}
 	m.logError("route_classifier", "unreachable; falling back to active planner model: "+err.Error())
 	return m.client
+}
+
+func routeClassifierPromptForModel(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if prompt == "" {
+		return ""
+	}
+	var out []string
+	inFence := false
+	omittedFence := false
+	for _, line := range strings.Split(prompt, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") {
+			if !inFence {
+				inFence = true
+				if !omittedFence {
+					out = append(out, "```")
+					out = append(out, "[code block omitted for route classification]")
+					out = append(out, "```")
+					omittedFence = true
+				}
+				continue
+			}
+			inFence = false
+			continue
+		}
+		if inFence {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.TrimSpace(strings.Join(out, "\n"))
 }
 
 func parseTurnRoutePlan(text string) (turnRoutePlan, error) {
@@ -205,12 +289,17 @@ func renderRecentConversationForRouting(messages []llama.ChatMessage, max int) s
 }
 
 func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
+	source := plan.RouteSource
+	if source != "" {
+		source = normalizeRouteSource(source)
+	}
 	plan.InitialLane = normalizeRouteValue(plan.InitialLane)
 	plan.FollowupLane = normalizeRouteValue(plan.FollowupLane)
 	plan.Reason = normalizeRouteValue(plan.Reason)
 	plan.Contract = normalizeRouteValue(plan.Contract)
 	plan.Family = normalizeRouteValue(plan.Family)
 	plan.Thoroughness = normalizeRouteValue(plan.Thoroughness)
+	plan.RouteSource = source
 	switch plan.Family {
 	case "plan_execute", "plan_execute_planner", "plan_then_execute":
 		plan.Family = agent.PlanThenExecutePlannerTaskFamily
@@ -318,46 +407,11 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 }
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
-	words := plannerWordText(prompt)
-	if plan.Family == "debug_logs" && !util.ContainsAny(words, " latest ", " recent ", " most recent ", " failed ", " failure ", " why this failed ", " why it failed ", " why ") {
-		return fallbackTurnRoute(prompt, mode)
-	}
-	if isImplementationLikeFamily(plan.Family) && isAnalysisContinuationPrompt(words) {
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
-	}
-	if isImplementationLikeFamily(plan.Family) && isExplanationOnlyCodeQuestion(words) {
-		return fallbackTurnRoute(prompt, mode)
-	}
+	// Human-facing lane changes are owned by explicit commands or by the
+	// classifier's typed route. This hook intentionally performs only enum
+	// normalization; it must not inspect prompt wording to override a classifier
+	// decision.
 	return normalizeTurnRoutePlan(plan, mode)
-}
-
-func isAnalysisContinuationPrompt(words string) bool {
-	if hasEditIntent(words) {
-		return false
-	}
-	if !util.ContainsAny(words,
-		" continue ",
-		" continue your investigation ",
-		" continue investigating ",
-		" keep investigating ",
-		" investigate further ",
-		" go deeper ",
-		" dig deeper ",
-		" more confident ",
-		" confident response ",
-		" keep looking ",
-	) {
-		return false
-	}
-	return util.ContainsAny(words,
-		" investigate ",
-		" investigation ",
-		" deeper ",
-		" confidence ",
-		" confident ",
-		" response ",
-		" explore ",
-	)
 }
 
 func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, prompt string) bool {
@@ -375,9 +429,9 @@ func fallbackTurnRoute(prompt string, mode agent.Mode) turnRoutePlan {
 	// natural language remains conversation, while typed slash commands enter
 	// their lanes through explicit command handlers outside this fallback.
 	if strings.EqualFold(mode.Name, "plan") {
-		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture"}, mode)
+		return normalizeTurnRoutePlan(turnRoutePlan{Family: "architecture", RouteSource: routeSourceConservativeFallback}, mode)
 	}
-	return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation"}, mode)
+	return normalizeTurnRoutePlan(turnRoutePlan{Family: "conversation", RouteSource: routeSourceConservativeFallback}, mode)
 }
 
 func isImplementationLikeFamily(family string) bool {
@@ -400,139 +454,6 @@ func isImplementationLikeFamily(family string) bool {
 	default:
 		return false
 	}
-}
-
-func isExplanationOnlyCodeQuestion(words string) bool {
-	if util.ContainsAny(words,
-		" review ",
-		" performance ",
-		" perf ",
-		" security ",
-		" latest logs ",
-		" recent logs ",
-		" run tests ",
-		" verify ",
-		" where is ",
-		" locate ",
-	) {
-		return false
-	}
-	if !util.ContainsAny(words,
-		" how does ",
-		" how do ",
-		" how is ",
-		" how are ",
-		" explain ",
-		" explain how ",
-		" explain what ",
-		" what does ",
-		" what is ",
-		" what are ",
-		" difference between ",
-		" how this ",
-	) {
-		return false
-	}
-	return util.ContainsAny(words,
-		" harness ",
-		" codebase ",
-		" repo ",
-		" repository ",
-		" runner ",
-		" tool ",
-		" tools ",
-		" agent ",
-		" agents ",
-		" subagent ",
-		" subagents ",
-		" sub agent ",
-		" workflow ",
-		" component ",
-		" system ",
-		" this ",
-		" mode ",
-		" feature ",
-		" behavior ",
-		" debug log ",
-		" redacted ",
-	)
-}
-
-func hasEditIntent(words string) bool {
-	return util.ContainsAny(words,
-		" fix ",
-		" fixing ",
-		" change ",
-		" changing ",
-		" update ",
-		" updating ",
-		" edit ",
-		" editing ",
-		" modify ",
-		" modifying ",
-		" add ",
-		" adding ",
-		" remove ",
-		" removing ",
-		" delete ",
-		" deleting ",
-		" implement ",
-		" implementing ",
-		" refactor ",
-		" refactoring ",
-		" rename ",
-		" renaming ",
-		" replace ",
-		" replacing ",
-		" create ",
-		" creating ",
-		" patch ",
-		" patching ",
-	)
-}
-
-func hasEffectiveEditIntent(words string) bool {
-	if explicitlyForbidsEdits(words) || isQuestionShapedRequest(words) {
-		return false
-	}
-	return hasEditIntent(words)
-}
-
-func isQuestionShapedRequest(words string) bool {
-	return util.ContainsAny(words,
-		" can we ",
-		" can you ",
-		" could we ",
-		" could you ",
-		" would we ",
-		" would you ",
-		" should we ",
-		" should you ",
-		" how can ",
-		" how could ",
-		" how should ",
-		" what would ",
-		" what should ",
-		" why ",
-		" whether ",
-		" explain ",
-	)
-}
-
-func explicitlyForbidsEdits(words string) bool {
-	return util.ContainsAny(words,
-		" do not edit ",
-		" dont edit ",
-		" don t edit ",
-		" no edits ",
-		" without edits ",
-		" without editing ",
-		" without changing ",
-		" do not change files ",
-		" do not modify ",
-		" without modifying ",
-		" no file changes ",
-	)
 }
 
 func plannerWordText(prompt string) string {

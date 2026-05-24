@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -1120,6 +1122,77 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 		checkList("superseded_by", entry.SupersededBy)
 	}
 	return errs
+}
+
+type ADRIndexFrontMatterConsistencyError struct {
+	Code    string
+	Path    string
+	ADRID   string
+	Field   string
+	Message string
+}
+
+func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []ADRIndexFrontMatterConsistencyError {
+	var errs []ADRIndexFrontMatterConsistencyError
+	byPath := make(map[string]ParsedADR, len(adrs))
+	for _, adr := range adrs {
+		relPath := filepath.ToSlash(strings.TrimSpace(adr.RelPath))
+		if relPath != "" {
+			byPath[relPath] = adr
+		}
+	}
+	for _, entry := range idx.ADRs {
+		entryPath := filepath.ToSlash(filepath.Join("adrs", strings.TrimSpace(entry.Path)))
+		adr, ok := byPath[entryPath]
+		if !ok {
+			continue
+		}
+		appendMismatch := func(field, indexValue, markdownValue string) {
+			errs = append(errs, ADRIndexFrontMatterConsistencyError{
+				Code:    "adr_index_frontmatter_mismatch",
+				Path:    "adrs/index.json",
+				ADRID:   entry.ADRID,
+				Field:   field,
+				Message: fmt.Sprintf("ADR index entry %s field %s=%q diverges from %s front matter value %q", entry.ADRID, field, indexValue, entryPath, markdownValue),
+			})
+		}
+		compareString := func(field, indexValue, markdownValue string) {
+			indexValue = strings.TrimSpace(indexValue)
+			markdownValue = strings.TrimSpace(markdownValue)
+			if indexValue != markdownValue {
+				appendMismatch(field, indexValue, markdownValue)
+			}
+		}
+		compareList := func(field string, indexValues, markdownValues []string) {
+			indexCanonical := canonicalStringSet(indexValues)
+			markdownCanonical := canonicalStringSet(markdownValues)
+			if strings.Join(indexCanonical, "\x00") != strings.Join(markdownCanonical, "\x00") {
+				appendMismatch(field, strings.Join(indexCanonical, ","), strings.Join(markdownCanonical, ","))
+			}
+		}
+		compareString("adr_id", entry.ADRID, adr.Doc.FrontMatter.ADRID)
+		compareString("status", entry.Status, adr.Doc.FrontMatter.Status)
+		compareString("coverage_tier", entry.CoverageTier, adr.Doc.FrontMatter.CoverageTier)
+		compareList("prd_refs", entry.PRDRefs, adr.Doc.FrontMatter.PRDRefs)
+		compareList("supersedes", entry.Supersedes, adr.Doc.FrontMatter.Supersedes)
+		compareList("superseded_by", entry.SupersededBy, adr.Doc.FrontMatter.SupersededBy)
+	}
+	return errs
+}
+
+func canonicalStringSet(values []string) []string {
+	seen := make(map[string]bool, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+		out = append(out, trimmed)
+	}
+	sort.Strings(out)
+	return out
 }
 
 type TraceabilityLinkError struct {

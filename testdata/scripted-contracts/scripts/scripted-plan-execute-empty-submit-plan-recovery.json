@@ -1,0 +1,23 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"context_pack\",\"task\":\"shorten the save label returned by ShortLabel in the frozen fixture\",\"mode\":\"plan\",\"limit\":4}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"current ShortLabel source before submit_plan\",\"why_not_answering\":\"need source-body evidence for the selected candidate path\"}"
+    },
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Empty draft plan to exercise recovery for unscoped candidate planning.\",\"edits\":[]}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels_test.go\",\"start_line\":1,\"end_line\":120,\"named_gap\":\"adjacent test expectation before submitting the non-empty label edit\",\"why_not_answering\":\"empty submit_plan recovery permits one bounded candidate read when an edit-safety fact is missing\"}"
+    },
+    {
+      "content": "{\"tool\":\"submit_plan\",\"rationale\":\"Shorten ShortLabel using current source evidence gathered from the selected candidate path.\",\"edits\":[{\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"purpose\":\"Update ShortLabel to return the shorter save label\"}]}"
+    },
+    {
+      "content": "Decision: pass\n\nVerification Checklist:\n- Required behavior: ShortLabel returns \"Save\" after the submitted edit.\n- Scope safety: Only internal/labels/labels.go changed, which is inside Allowed Repair Paths.\n- Test or command evidence: Phase Evidence reports the required verification and source_sanity checks."
+    }
+  ]
+}

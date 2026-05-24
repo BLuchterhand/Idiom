@@ -71,6 +71,14 @@ The executable implementation plan is
   and required-test evidence refs without raw prompt/transcript/file-body
   content. Write-capable TUI continuation actions and additional
   non-plan-execute failure sources remain follow-up work.
+- [Malformed output distillation](design-malformed-output-distillation.md)
+  defines the boundary for recurring malformed tool JSON, invalid
+  `submit_plan` artifacts, and local-model serialization failures. The policy
+  is permissive intake with strict acceptance: raw model output may be
+  normalized or distilled into typed intent, but only schema/source/preflight
+  validated artifacts can reach execution. This design deliberately separates
+  the route classifier, artifact distiller, patch compiler, and executor so
+  repair does not silently become mutation authority.
 
 ## System Shape
 

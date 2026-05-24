@@ -61,6 +61,35 @@ func planThenExecuteReviewRepairFailedPhaseObligations(brief workerruntime.Worke
 	return out
 }
 
+func reviewRepairPhaseEvidencePacket(objective string) []string {
+	const heading = "## Phase Evidence Bundle"
+	idx := strings.Index(objective, heading)
+	if idx < 0 {
+		return nil
+	}
+	afterHeading := objective[idx+len(heading):]
+	fenceStart := strings.Index(afterHeading, "```")
+	if fenceStart < 0 {
+		return nil
+	}
+	afterFence := afterHeading[fenceStart+len("```"):]
+	if lineEnd := strings.Index(afterFence, "\n"); lineEnd >= 0 {
+		afterFence = afterFence[lineEnd+1:]
+	}
+	fenceEnd := strings.Index(afterFence, "```")
+	if fenceEnd < 0 {
+		return nil
+	}
+	evidence := strings.TrimSpace(afterFence[:fenceEnd])
+	if evidence == "" {
+		return nil
+	}
+	if len(evidence) > 12000 {
+		evidence = evidence[:12000]
+	}
+	return []string{"phase_evidence_bundle:\n" + evidence}
+}
+
 func planThenExecuteReviewRepairAnswerDeclaresBlocker(answer string) bool {
 	return planThenExecuteAnswerDeclaresTypedBlocker(answer)
 }

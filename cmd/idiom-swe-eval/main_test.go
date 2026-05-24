@@ -99,6 +99,49 @@ func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	}
 }
 
+func TestRunLivePassesRunnerModeMetadata(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "generated")
+	suite := eval.SWESuite{
+		Name: "cli-runner-mode-suite",
+		Tasks: []eval.SWETask{{
+			ID:         "scripted",
+			Family:     "implementation",
+			RunnerMode: "implement",
+			Prompt:     "Implement routing.",
+			Tags:       []string{"implement"},
+			Scenario: eval.Scenario{
+				Name:                "scripted",
+				PromptContains:      []string{"Implement routing"},
+				RequireChangedFiles: []string{"README.md"},
+				RequireVerification: "none",
+			},
+			Oracle: eval.SWEOracle{
+				RequireChangedFiles: []string{"README.md"},
+			},
+		}},
+	}
+	if err := writeSWESuite(suitePath, suite); err != nil {
+		t.Fatalf("write suite: %v", err)
+	}
+
+	command := strings.Join([]string{
+		`test "$IDIOM_SWE_RUNNER_MODE" = "implement"`,
+		`&& printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"Implement routing."}'`,
+		`'{"type":"tool_request","tool":"edit_file"}'`,
+		`'{"type":"tool_result","tool":"edit_file","summary":"Edited README.md"}'`,
+		`'{"type":"message","role":"assistant","content":"Changed files:\n- README.md"}'`,
+		`> {log_path}`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+}
+
 func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
@@ -246,6 +289,120 @@ PY
 	}
 }
 
+func TestLiveContractRunnerArchivesGitRefFixture(t *testing.T) {
+	if _, err := exec.LookPath("bash"); err != nil {
+		t.Skipf("bash not available: %v", err)
+	}
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skipf("git not available: %v", err)
+	}
+	dir := t.TempDir()
+	sourceRepo := filepath.Join(dir, "source")
+	if err := os.MkdirAll(filepath.Join(sourceRepo, "internal", "labels"), 0o755); err != nil {
+		t.Fatalf("mkdir source repo: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRepo, "internal", "labels", "labels.go"), []byte("package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"), 0o644); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	runGit := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", sourceRepo}, args...)...)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v failed: %v\n%s", args, err, output)
+		}
+	}
+	runGit("init", "-q")
+	runGit("config", "user.email", "live-contracts@example.invalid")
+	runGit("config", "user.name", "Idiom Live Contracts")
+	runGit("add", "-A")
+	runGit("commit", "-q", "-m", "frozen source")
+	commit := strings.TrimSpace(string(mustCommandOutput(t, "git", "-C", sourceRepo, "rev-parse", "HEAD")))
+	if err := os.WriteFile(filepath.Join(sourceRepo, "dirty-untracked.txt"), []byte("must not enter archived fixture\n"), 0o644); err != nil {
+		t.Fatalf("write untracked source file: %v", err)
+	}
+
+	configPath := filepath.Join(dir, "config.json")
+	logPath := filepath.Join(dir, "contract.jsonl")
+	fakeBin := filepath.Join(dir, "fake-idiom")
+	if err := os.WriteFile(configPath, []byte(`{"chat":{"system_prompt_files":[]},"workspace":{},"llama_server":{},"implementer":{},"route_classifier":{}}`), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	fake := `#!/usr/bin/env bash
+set -euo pipefail
+config=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -config) config="$2"; shift 2 ;;
+    *) shift ;;
+  esac
+done
+python3 - "$config" <<'PY'
+import json
+import pathlib
+import sys
+cfg = json.load(open(sys.argv[1], encoding="utf-8"))
+root = pathlib.Path(cfg["workspace"]["root"])
+debug = pathlib.Path(cfg["chat"]["debug_log_dir"])
+debug.mkdir(parents=True, exist_ok=True)
+if (root / "dirty-untracked.txt").exists():
+    raise SystemExit("untracked source file leaked into archived fixture")
+(root / "internal/labels/labels.go").write_text('package labels\n\nfunc ShortLabel() string {\n\treturn "Save"\n}\n', encoding="utf-8")
+with (debug / "fake-session.jsonl").open("w", encoding="utf-8") as f:
+    f.write(json.dumps({"type":"session_start","workspace_root":str(root)}) + "\n")
+    f.write(json.dumps({"type":"message","role":"user","content":"Implement this feature"}) + "\n")
+    f.write(json.dumps({"type":"phase","lane":"implement","phase":"verify","state":"done"}) + "\n")
+    f.write(json.dumps({"type":"message","role":"assistant","content":"Done."}) + "\n")
+PY
+`
+	if err := os.WriteFile(fakeBin, []byte(fake), 0o755); err != nil {
+		t.Fatalf("write fake binary: %v", err)
+	}
+
+	scriptPath, err := filepath.Abs(filepath.Join("..", "..", "scripts", "live-contract-runner.sh"))
+	if err != nil {
+		t.Fatalf("script path: %v", err)
+	}
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = sourceRepo
+	cmd.Env = append(os.Environ(),
+		"IDIOM_BIN="+fakeBin,
+		"IDIOM_CONFIG="+configPath,
+		"IDIOM_SWE_FIXTURE_GIT_REPO="+sourceRepo,
+		"IDIOM_SWE_FIXTURE_GIT_REF="+commit,
+		"IDIOM_SWE_LOG="+logPath,
+		"IDIOM_SWE_PROMPT=Implement this feature",
+		"IDIOM_SWE_TASK_TIMEOUT=15",
+	)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("live contract git-ref runner failed: %v\n%s", err, output)
+	}
+	data, err := os.ReadFile(logPath)
+	if err != nil {
+		t.Fatalf("read log: %v", err)
+	}
+	for _, want := range []string{
+		`"fixture_source_kind": "git_ref"`,
+		`"fixture_git_ref": "` + commit + `"`,
+		`"source_commit": "` + commit + `"`,
+		`"changed_before_reset": ["internal/labels/labels.go"]`,
+		`"status": "clean"`,
+	} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected log to contain %q, got:\n%s", want, data)
+		}
+	}
+}
+
+func mustCommandOutput(t *testing.T, name string, args ...string) []byte {
+	t.Helper()
+	output, err := exec.Command(name, args...).CombinedOutput()
+	if err != nil {
+		t.Fatalf("%s %v failed: %v\n%s", name, args, err, output)
+	}
+	return output
+}
+
 func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
@@ -299,6 +456,34 @@ func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "[1/1] finished direct in ") {
 		t.Fatalf("expected task finish progress in stderr, got %s", stderr.String())
+	}
+}
+
+func TestTaskEnvEntriesFilterRunnerOwnedEnv(t *testing.T) {
+	entries := taskEnvEntries(map[string]string{
+		"IDIOM_SWE_LOG":    "/tmp/should-not-win.jsonl",
+		"IDIOM_BIN":        "/tmp/idiom",
+		"CUSTOM_ENV":       "visible",
+		" IDIOM_SWE_TASK ": "ignored",
+	})
+	joined := strings.Join(entries, "\n")
+	if strings.Contains(joined, "IDIOM_SWE_LOG=") || strings.Contains(joined, "IDIOM_BIN=") || strings.Contains(joined, "IDIOM_SWE_TASK=") {
+		t.Fatalf("runner-owned env keys must be filtered, got %#v", entries)
+	}
+	if !strings.Contains(joined, "CUSTOM_ENV=visible") {
+		t.Fatalf("custom env should remain, got %#v", entries)
+	}
+}
+
+func TestLiveTaskTimeoutAllowsLongPlanExecuteAtoms(t *testing.T) {
+	maxDurationMillis := int64(900000)
+	got := liveTaskTimeoutSeconds(eval.SWETask{
+		ID:     "medium-plan-execute",
+		Family: "plan_then_execute_planner",
+		Oracle: eval.SWEOracle{MaxDurationMillis: &maxDurationMillis},
+	})
+	if got != 930 {
+		t.Fatalf("timeout = %d, want 930", got)
 	}
 }
 
@@ -579,6 +764,22 @@ func TestLiveContractSuiteLintsClean(t *testing.T) {
 	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
 	if code != 0 {
 		t.Fatalf("live contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "Lint: PASS") {
+		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
+	}
+}
+
+func TestScriptedContractSuiteLintsClean(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "scripted-contracts", "suite.json")
+	if _, err := os.Stat(suitePath); err != nil {
+		t.Fatalf("scripted contract suite missing: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-suite-only"}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("scripted contract suite failed -suite-only lint (exit %d).\nstdout:\n%s\nstderr:\n%s", code, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())

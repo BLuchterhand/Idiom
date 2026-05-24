@@ -124,6 +124,59 @@ func TestSubmitPlanToolSchemaRequiresConcreteEditSource(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanEmptyEditsReturnsTypedCode(t *testing.T) {
+	mgr, _ := newSubmitPlanTestManager(t)
+	result := mgr.submitPlan(ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "empty plan should be rejected",
+	})
+	if result.Code != SubmitPlanEmptyEditsCode {
+		t.Fatalf("empty submit_plan Code = %q, want %q; result=%#v", result.Code, SubmitPlanEmptyEditsCode, result)
+	}
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("empty submit_plan should return an actionable error: %#v", result)
+	}
+}
+
+func TestSubmitPlanRejectsUnsupportedProofClaimsAtIntake(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "tests/panel_contract.gd", "func test_contract():\n\tpass\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add a real behavior test",
+		Edits: []PlanEdit{{
+			Path:    "tests/panel_contract.gd",
+			OldText: "func test_contract():\n\tpass\n",
+			NewText: "func test_contract():\n\t# simplified check: for now we just verify that it exists and can be called\n\tpass\n",
+			Purpose: "add coverage",
+		}},
+	})
+	if !strings.Contains(result.Error, "unsupported proof claim") || !strings.Contains(result.Error, "self-disqualifying") {
+		t.Fatalf("submit_plan should reject unsupported proof claims before executor handoff, got %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected submit_plan should not persist last.plan.json; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanUnsupportedProofClaimsIgnoreProseFiles(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "docs/review.md", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "document review limitation",
+		Edits: []PlanEdit{{
+			Path:    "docs/review.md",
+			OldText: "before",
+			NewText: "This retrospective says we cannot easily test the old behavior.\n",
+			Purpose: "update review doc",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan should not apply source proof heuristics to prose files: %s", result.Error)
+	}
+}
+
 func submitPlanTestAnyOfRequires(anyOf []map[string][]string, fields ...string) bool {
 	for _, clause := range anyOf {
 		required := clause["required"]
@@ -453,6 +506,48 @@ func TestSubmitPlanRejectsLineRangeEditThatBreaksGoSyntax(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
 		t.Fatalf("syntax-rejected submit_plan should not write last.plan.json, stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsSequentialLineRangeEditsThatBreakGoSyntax(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "pkg/feature.go", strings.Join([]string{
+		"package pkg",
+		"",
+		"func existing() {",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add helper functions",
+		Edits: []PlanEdit{
+			{
+				Path:            "pkg/feature.go",
+				InsertAfterLine: 2,
+				Content:         "func inserted() {}\n",
+				Purpose:         "add inserted helper",
+			},
+			{
+				Path:      "pkg/feature.go",
+				StartLine: 4,
+				EndLine:   4,
+				Content:   "}\n\nfunc added() {}\n",
+				Purpose:   "add second helper",
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("expected submit_plan to reject sequential edits whose projected final file is invalid")
+	}
+	for _, want := range []string{"edits[1]", "after applying prior plan edits", "preflight syntax validation failed", "pkg/feature.go"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("submit_plan error missing %q:\n%s", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("sequence-rejected submit_plan should not write last.plan.json, stat err=%v", err)
 	}
 }
 

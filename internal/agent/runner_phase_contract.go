@@ -27,6 +27,12 @@ func (r *Runner) deriveCurrentTurnPhaseContract(input runnerTurnPhaseContractInp
 		ToolTransportMode:        runnerTurnPhaseTransportMode(input.Options, input.SupportsNativeTools),
 		ParserContract:           runnerTurnPhaseParserContract(input.Options, brief, input.Results, input.SupportsNativeTools),
 		ResponseFormat:           runnerTurnPhaseResponseFormat(input.Options),
+		Temperature:              input.Options.Temperature,
+		TopP:                     input.Options.TopP,
+		TopK:                     input.Options.TopK,
+		MinP:                     input.Options.MinP,
+		PresencePenalty:          input.Options.PresencePenalty,
+		RepetitionPenalty:        input.Options.RepetitionPenalty,
 		ToolChoice:               input.Options.ToolChoice,
 		ThinkingPolicy:           runnerTurnPhaseThinkingPolicy(input.Options),
 		MaxTokens:                input.Options.MaxTokens,
@@ -103,13 +109,7 @@ func runnerTurnPhaseBackendKind(r *Runner) string {
 }
 
 func runnerTurnPhaseTransportMode(opts llama.ChatOptions, supportsNativeTools bool) string {
-	if len(opts.Tools) > 0 && (supportsNativeTools || opts.ForceNativeTools) {
-		return "native"
-	}
-	if opts.ResponseFormatJSON || len(opts.Tools) == 0 || !supportsNativeTools {
-		return "textual"
-	}
-	return ""
+	return PlanExecuteRuntimeCallPolicyFromChatOptions(opts, supportsNativeTools, false).PhaseTransportMode()
 }
 
 func runnerTurnPhaseParserContract(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) string {
@@ -141,7 +141,7 @@ func runnerTurnPhaseThinkingPolicy(opts llama.ChatOptions) string {
 }
 
 func runnerTurnPhaseTextualParser(opts llama.ChatOptions, supportsNativeTools bool) bool {
-	return opts.ResponseFormatJSON || len(opts.Tools) == 0 || !supportsNativeTools
+	return PlanExecuteRuntimeCallPolicyFromChatOptions(opts, supportsNativeTools, false).TextualToolParser
 }
 
 func runnerVerificationEvidenceRefs(results []workspace.ToolResult) []string {

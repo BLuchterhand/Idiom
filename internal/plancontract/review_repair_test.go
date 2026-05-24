@@ -58,11 +58,30 @@ func TestReviewRepairTerminalTemplatesStayParserReadable(t *testing.T) {
 	for _, required := range []string{
 		"Decision: pass",
 		"Verification Checklist:",
-		"{\"tool\":\"submit_plan\"",
+		"parser-readable submit_plan object",
 		"<<QUESTION>>:",
 	} {
 		if !strings.Contains(templates, required) {
 			t.Fatalf("terminal templates missing %q:\n%s", required, templates)
 		}
+	}
+	if strings.Contains(templates, "cite a checked fact") {
+		t.Fatalf("terminal templates must not expose copyable checklist placeholders:\n%s", templates)
+	}
+}
+
+func TestReviewRepairLineIsPlaceholderChecklist(t *testing.T) {
+	cases := []string{
+		"- Required behavior: cite a checked fact from Phase/Diff Evidence.",
+		"- Scope safety: cite a checked fact from changed paths and allowed repair paths.",
+		"- Test or command evidence: cite a checked fact, or say it is pending outside this lane.",
+	}
+	for _, tc := range cases {
+		if !ReviewRepairLineIsPlaceholderChecklist(tc) {
+			t.Fatalf("expected placeholder checklist line to be detected: %q", tc)
+		}
+	}
+	if ReviewRepairLineIsPlaceholderChecklist("- Required behavior: src/app.go now returns the requested label in line 12.") {
+		t.Fatalf("concrete checklist fact must not be treated as placeholder text")
 	}
 }

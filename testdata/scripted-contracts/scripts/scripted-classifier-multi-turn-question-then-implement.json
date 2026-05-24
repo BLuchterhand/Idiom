@@ -1,0 +1,26 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"family\":\"direct_question\",\"initial_lane\":\"main\",\"reason\":\"read_only_question\",\"contract\":\"direct_answer\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm current ShortLabel value\",\"why_not_answering\":\"need source evidence for the question\"}"
+    },
+    {
+      "content": "Yes. internal/labels/labels.go currently returns \"Save changes\" from ShortLabel, so shortening it would be a label-only change. I did not edit files."
+    },
+    {
+      "content": "{\"family\":\"implementation\",\"initial_lane\":\"implement\",\"reason\":\"classifier_directive\",\"contract\":\"implementation_result\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"confirm source before applying the explicit follow-up directive\",\"why_not_answering\":\"need source-body evidence before editing\"}"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label after explicit follow-up\"}"
+    },
+    {
+      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
+    }
+  ]
+}
