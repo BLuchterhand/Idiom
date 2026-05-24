@@ -1601,6 +1601,16 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			"blocker_count":  len(eval.Blockers),
 			"criteria_count": len(eval.Criteria),
 		})
+		coverageGateEvent := productworkflow.BuildCoverageGateEvaluatedEvent(eval, ledger)
+		logCLIPhase(rec, coverageGateEvent.Event, map[string]any{
+			"event":           coverageGateEvent.Event,
+			"effort_id":       coverageGateEvent.EffortID,
+			"task_id":         coverageGateEvent.TaskID,
+			"coverage":        coverageGateEvent.Coverage,
+			"gate_result":     coverageGateEvent.GateResult,
+			"blocked_reasons": coverageGateEvent.BlockedReasons,
+			"waivers":         coverageGateEvent.Waivers,
+		})
 		type coverageOutput struct {
 			Status     string                                 `json:"status"`
 			EffortRoot string                                 `json:"effort_root"`

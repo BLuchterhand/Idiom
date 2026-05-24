@@ -153,6 +153,68 @@ func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
 	return strings.EqualFold(strings.TrimSpace(eval.Status), "blocked") || len(eval.Blockers) > 0
 }
 
+func BuildCoverageGateEvaluatedEvent(eval CoverageGateEvaluation, ledger TDDLedger) CoverageGateEvaluatedEvent {
+	effortID := strings.TrimSpace(eval.EffortID)
+	if effortID == "" {
+		effortID = strings.TrimSpace(ledger.EffortID)
+	}
+	taskID := strings.TrimSpace(eval.TaskID)
+	if taskID == "" {
+		taskID = strings.TrimSpace(ledger.TaskID)
+	}
+	gateResult := strings.TrimSpace(eval.Status)
+	if gateResult == "" {
+		gateResult = "blocked"
+	}
+	return CoverageGateEvaluatedEvent{
+		Event:    "coverage_gate_evaluated",
+		EffortID: effortID,
+		TaskID:   taskID,
+		Coverage: CoverageGateEventCoverage{
+			EARSCoveragePct:   coveragePercent(ledger.Coverage.EARSMapped, ledger.Coverage.EARSTotal),
+			BDDCoveragePct:    coveragePercent(ledger.Coverage.BDDWithConcreteData, ledger.Coverage.BDDTotal),
+			FMEAMitigationPct: coveragePercent(ledger.Coverage.FMEAModesMitigated, ledger.Coverage.FMEAModesTotal),
+			HAZOPTestedPct:    coveragePercent(ledger.Coverage.HAZOPDeviationsTested, ledger.Coverage.HAZOPDeviationsTotal),
+			InvariantPBTPct:   coveragePercent(ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal),
+			DecisionTablePct:  coveragePercent(ledger.Coverage.DecisionTablesEnumerated, ledger.Coverage.DecisionTablesTotal),
+			MutationScore:     ledger.Coverage.MutationScore,
+		},
+		GateResult:     gateResult,
+		BlockedReasons: coverageGateBlockedReasons(eval.Blockers),
+		Waivers:        []string{},
+	}
+}
+
+func coveragePercent(numerator int, denominator int) *float64 {
+	if denominator <= 0 {
+		return nil
+	}
+	pct := (float64(numerator) / float64(denominator)) * 100
+	return &pct
+}
+
+func coverageGateBlockedReasons(blockers []CoverageGateBlocker) []string {
+	reasons := make([]string, 0, len(blockers))
+	seen := map[string]bool{}
+	for _, blocker := range blockers {
+		reason := strings.TrimSpace(blocker.Criterion)
+		kind := strings.TrimSpace(blocker.Kind)
+		switch {
+		case reason != "" && kind != "":
+			reason += ":" + kind
+		case reason == "":
+			reason = kind
+		}
+		if reason == "" || seen[reason] {
+			continue
+		}
+		seen[reason] = true
+		reasons = append(reasons, reason)
+	}
+	sort.Strings(reasons)
+	return reasons
+}
+
 func ApplyCoverageGateAuthorityPreflight(eval CoverageGateEvaluation, lintFindings []LintSummaryFinding) CoverageGateEvaluation {
 	authorityFindings := coverageGateAuthorityFindings(lintFindings)
 	status := "pass"

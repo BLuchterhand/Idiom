@@ -510,6 +510,26 @@ type CoverageGateEvaluation struct {
 	Blockers     []CoverageGateBlocker   `json:"blockers"`
 }
 
+type CoverageGateEvaluatedEvent struct {
+	Event          string                    `json:"event"`
+	EffortID       string                    `json:"effort_id"`
+	TaskID         string                    `json:"task_id"`
+	Coverage       CoverageGateEventCoverage `json:"coverage"`
+	GateResult     string                    `json:"gate_result"`
+	BlockedReasons []string                  `json:"blocked_reasons"`
+	Waivers        []string                  `json:"waivers"`
+}
+
+type CoverageGateEventCoverage struct {
+	EARSCoveragePct   *float64 `json:"ears_coverage_pct"`
+	BDDCoveragePct    *float64 `json:"bdd_coverage_pct"`
+	FMEAMitigationPct *float64 `json:"fmea_mitigation_pct"`
+	HAZOPTestedPct    *float64 `json:"hazop_tested_pct"`
+	InvariantPBTPct   *float64 `json:"invariant_pbt_pct"`
+	DecisionTablePct  *float64 `json:"decision_table_pct"`
+	MutationScore     *float64 `json:"mutation_score"`
+}
+
 type CoverageGateCriterion struct {
 	Key      string `json:"key"`
 	Required bool   `json:"required"`

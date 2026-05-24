@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/productworkflow"
 	"idiom/internal/recovery"
+	"idiom/internal/telemetry"
 )
 
 func TestProductLintPassesOnCurrentDurableEffortFixture(t *testing.T) {
@@ -5386,6 +5387,69 @@ func TestProductTDDCoverageGatePassesDeterministicFixture(t *testing.T) {
 	}
 	if !bytes.Equal(beforeTDD, afterTDD) || !bytes.Equal(beforePRD, afterPRD) || !bytes.Equal(beforeADR, afterADR) || !bytes.Equal(beforeTraceability, afterTraceability) {
 		t.Fatal("product tdd evaluate-coverage must not mutate TDD, PRD, ADR, or traceability artifacts")
+	}
+}
+
+func TestProductTDDCoverageGateEmitsCoverageGateEvaluatedTelemetry(t *testing.T) {
+	t.Setenv("IDIOM_TELEMETRY", "1")
+	dir := writeValidTestEffort(t)
+	acceptedPRD := strings.Replace(validTestPRDMarkdown(), "status: draft", "status: accepted", 1)
+	acceptedPRD = strings.Replace(acceptedPRD, "created_at: 2026-05-17T00:00:00Z", "created_at: 2026-05-17T00:00:00Z\naccepted_at: 2026-05-18T00:00:00Z\naccepted_by: reviewer\nacceptance_profile: human-review", 1)
+	writeTestFile(t, dir, "prd.md", acceptedPRD)
+	writeTestFile(t, dir, "tdd.json", `{
+		"schema_version":"idiom.tdd_obligations.v2.fixture",
+		"effort_id":"test-effort",
+		"task_id":"impl-test",
+		"coverage_tier":"behavior_standard",
+		"coverage":{
+			"ears_total":1,
+			"ears_mapped":1,
+			"bdd_total":1,
+			"bdd_with_concrete_data":1,
+			"mutation_min_score":80,
+			"mutation_score":90,
+			"gates_passed":["contract"]
+		},
+		"obligations":[{
+			"id":"TDD-001","type":"acceptance","behavior":"test","owner":"test","command":"go test","required_before":"close","status":"pending"
+		}]
+	}`)
+	rec, err := telemetry.Open(telemetry.Options{
+		Dir:           t.TempDir(),
+		Command:       "product_tdd",
+		Args:          []string{"product", "tdd", "--evaluate-coverage"},
+		WorkspaceRoot: dir,
+	})
+	if err != nil {
+		t.Fatalf("telemetry.Open: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runProductTDD([]string{
+		"--effort-root", dir,
+		"--evaluate-coverage",
+		"--json",
+	}, &stdout, &stderr, rec)
+	if err := rec.Close(code); err != nil {
+		t.Fatalf("rec.Close: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("expected code 0, got %d: stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	records := readMainTelemetryRecords(t, rec.Path())
+	record := findTelemetryRecord(records, "coverage_gate_evaluated")
+	if record == nil {
+		t.Fatalf("missing coverage_gate_evaluated telemetry: %#v", records)
+	}
+	if record["event"] != "coverage_gate_evaluated" || record["task_id"] != "impl-test" || record["gate_result"] != "pass" {
+		t.Fatalf("unexpected coverage gate event identity: %#v", record)
+	}
+	coverage, ok := record["coverage"].(map[string]any)
+	if !ok {
+		t.Fatalf("coverage should be an object, got %#v", record["coverage"])
+	}
+	if coverage["ears_coverage_pct"] != float64(100) || coverage["bdd_coverage_pct"] != float64(100) || coverage["mutation_score"] != float64(90) {
+		t.Fatalf("unexpected coverage summary: %#v", coverage)
 	}
 }
 

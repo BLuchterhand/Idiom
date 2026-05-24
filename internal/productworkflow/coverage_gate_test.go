@@ -50,6 +50,88 @@ func TestCoverageGatePassesBehaviorStandardWithCompleteCoverage(t *testing.T) {
 	}
 }
 
+func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T) {
+	mutation := 85.0
+	event := BuildCoverageGateEvaluatedEvent(
+		CoverageGateEvaluation{
+			EffortID: "effort-1",
+			TaskID:   "task-1",
+			Status:   "pass",
+		},
+		TDDLedger{
+			Coverage: TDDCoverage{
+				EARSTotal:                4,
+				EARSMapped:               2,
+				BDDTotal:                 2,
+				BDDWithConcreteData:      1,
+				FMEAModesTotal:           4,
+				FMEAModesMitigated:       3,
+				HAZOPDeviationsTotal:     4,
+				HAZOPDeviationsTested:    2,
+				InvariantsTotal:          2,
+				InvariantsWithPBT:        1,
+				DecisionTablesTotal:      4,
+				DecisionTablesEnumerated: 1,
+				MutationScore:            &mutation,
+			},
+		},
+	)
+
+	if event.Event != "coverage_gate_evaluated" || event.EffortID != "effort-1" || event.TaskID != "task-1" || event.GateResult != "pass" {
+		t.Fatalf("unexpected event identity: %#v", event)
+	}
+	assertCoveragePct(t, "ears", event.Coverage.EARSCoveragePct, 50)
+	assertCoveragePct(t, "bdd", event.Coverage.BDDCoveragePct, 50)
+	assertCoveragePct(t, "fmea", event.Coverage.FMEAMitigationPct, 75)
+	assertCoveragePct(t, "hazop", event.Coverage.HAZOPTestedPct, 50)
+	assertCoveragePct(t, "pbt", event.Coverage.InvariantPBTPct, 50)
+	assertCoveragePct(t, "decision_table", event.Coverage.DecisionTablePct, 25)
+	assertCoveragePct(t, "mutation", event.Coverage.MutationScore, 85)
+	if len(event.BlockedReasons) != 0 {
+		t.Fatalf("passing event should have no blocked reasons, got %#v", event.BlockedReasons)
+	}
+	if event.Waivers == nil {
+		t.Fatal("waivers should be an empty list, not nil")
+	}
+}
+
+func TestBuildCoverageGateEvaluatedEventReportsBlockedReasons(t *testing.T) {
+	event := BuildCoverageGateEvaluatedEvent(
+		CoverageGateEvaluation{
+			Status: "blocked",
+			Blockers: []CoverageGateBlocker{
+				{Criterion: "mutation", Kind: "coverage_mutation_incomplete"},
+				{Criterion: "authority_preflight", Kind: "parse_error"},
+				{Criterion: "mutation", Kind: "coverage_mutation_incomplete"},
+			},
+		},
+		TDDLedger{EffortID: "ledger-effort", TaskID: "ledger-task"},
+	)
+
+	if event.EffortID != "ledger-effort" || event.TaskID != "ledger-task" {
+		t.Fatalf("expected ledger identity fallback, got %#v", event)
+	}
+	want := []string{"authority_preflight:parse_error", "mutation:coverage_mutation_incomplete"}
+	if len(event.BlockedReasons) != len(want) {
+		t.Fatalf("expected blocked reasons %#v, got %#v", want, event.BlockedReasons)
+	}
+	for i := range want {
+		if event.BlockedReasons[i] != want[i] {
+			t.Fatalf("expected blocked reasons %#v, got %#v", want, event.BlockedReasons)
+		}
+	}
+}
+
+func assertCoveragePct(t *testing.T, name string, got *float64, want float64) {
+	t.Helper()
+	if got == nil {
+		t.Fatalf("%s coverage should be reported", name)
+	}
+	if *got != want {
+		t.Fatalf("%s coverage = %v, want %v", name, *got, want)
+	}
+}
+
 func TestCoverageGateBlocksContractHighWhenMutationBelowMin(t *testing.T) {
 	mutation := 50.0
 	eval := EvaluateCoverageGate(

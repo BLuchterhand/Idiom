@@ -7,13 +7,12 @@ memory, freshness, contracts, audit, and evals.**
 Status: cross-pillar target design with implementation status overlay, drafted
 2026-05-15; reviewed 2026-05-18
 
-Implementation state as of 2026-05-18: the full behavioral coverage pipeline is
+Implementation state as of 2026-05-24: the full behavioral coverage pipeline is
 still a target design. The PRD/ADR/brief workflow effort has shipped a
-deterministic tiered coverage evaluator and brief-render dependency, but that
-gate is not yet the complete nine-stage coverage pipeline described here and it
-still needs to reuse product lint/audit authority or run those validations as
-blocking preconditions before it can be treated as the canonical dispatch
-coverage gate.
+deterministic tiered coverage evaluator, brief-render dependency, product
+lint/audit authority preflight, and passive `coverage_gate_evaluated` telemetry
+event. That gate is still not the complete nine-stage coverage pipeline
+described here.
 
 This document defines how Idiom achieves exhaustive behavioral coverage between
 a human-approved ADR and a dispatch-ready implementation brief. It is the
@@ -728,8 +727,10 @@ This design composes with existing Idiom surfaces, not replaces them:
 ### Phase 0: Schema And Gate Definitions
 
 - Add TDD obligation schema v2 with coverage metadata.
-- Add coverage gate event schema.
-- Add seven new obligation types to the obligation type enum.
+- Add coverage gate event schema. Implemented as passive
+  `coverage_gate_evaluated` telemetry in `idiom product tdd --evaluate-coverage`.
+- Add seven new obligation types to the obligation type enum. Implemented for
+  ledger validation.
 - Add coverage gate as a mandatory step between TDD audit (stage 8) and brief
   generation (stage 9) in the PRD-to-brief lifecycle.
 - No behavior change; schemas are passive.
