@@ -204,8 +204,22 @@ proven stable.
 
 ## Implementation Efforts
 
+For broad design-doc implementation in an existing Idiom repository, use
+[Design Doc Implementation Workflow](../design-doc-implementation-workflow.md)
+before dispatching the efforts below. The workflow requires full design review
+when architecture or harness contracts change, durable reviewer evidence,
+implementation atoms with explicit scope and verification fields, safe
+parallelization only across disjoint write scopes, docs freshness checks, and a
+final full-bench review before commit and push.
+
 Build each effort with an explicit use case, boundary contract, tests, and
 operator command before moving on.
+
+The contract-capability overhaul has begun with a phase 1 foundation:
+`internal/contractcompile` is a pure, report-only compiler for the plan-execute
+planner contract. It does not replace runner gates yet; it establishes stable
+contract, runtime-envelope, protocol-projection, path-role, obligation, and
+import-boundary tests that later migration atoms can consume.
 
 | ID | Effort | Outcome | Primary tests |
 | --- | --- | --- | --- |

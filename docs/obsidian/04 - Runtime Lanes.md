@@ -83,6 +83,14 @@ The planner phase is intentionally read-only. It can use discovery and read
 tools, then emits a structured `submit_plan` artifact. It should not call shell,
 git, task ledger, source sanity, or write tools.
 
+The contract-capability overhaul now has a report-only compiler foundation for
+this planner phase in `internal/contractcompile`. The compiler records required
+edit paths as submit-plan coverage, keeps source-body obligations distinct,
+binds a runtime envelope, and projects the model-visible protocol without
+granting planner write authority. Runner enforcement still remains with the
+existing gates until a later migration atom wires policy decisions into covered
+lane behavior.
+
 Like `implement`, `plan-execute` preloads a compact `context_pack` by default
 unless `--no-context-pack` is supplied. Refine scratchpad meta-prompts are the
 notable exclusion because refine already preloads phase-specific source and
@@ -151,6 +159,12 @@ that design doc into plan-execute work:
 This keeps design-doc execution aligned with the lane contract: the model
 chooses strategy inside bounded phases, while the harness owns artifact shape,
 scope classification, terminal-state detection, and readiness gates.
+
+For broad architecture or harness designs, implementation orchestration follows
+[Design Doc Implementation Workflow](../design-doc-implementation-workflow.md):
+full pre-implementation reviewer bench, durable reviewer evidence,
+dispatchable atoms, disjoint write scopes for parallel work, per-atom review,
+docs freshness, and final full-bench review before commit and push.
 
 ## Deterministic Lane Guarantees
 

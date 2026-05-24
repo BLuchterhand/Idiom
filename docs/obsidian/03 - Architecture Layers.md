@@ -90,7 +90,7 @@ Examples:
 | --- | --- | --- |
 | Surface | `cmd/idiom`, `internal/app`, inbound MCP in `cmd/idiom/mcp.go` | User commands, TUI lifecycle, external protocol surfaces |
 | Orchestration | `cmd/idiom/lane.go`, `cmd/idiom/plan_execute.go`, `internal/promptstack`, `internal/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
-| Contract | `internal/agent`, `internal/autonomy`, `internal/frontier/workerruntime` | Runtime contracts, role profiles, tool profile rules |
+| Contract | `internal/autonomy`, `internal/contractcompile`, `internal/agent`, `internal/frontier/workerruntime` | Contract schema, report-only contract compilation, runtime contracts, role profiles, tool profile rules |
 | Execution | `internal/agent`, `internal/workspace`, `internal/runner` | Model loop, tool dispatch, process execution |
 | Evidence | `internal/comprehension`, `internal/discovery`, `internal/telemetry`, `internal/eval`, `internal/transcript` | Context graph, discovery, logs, audit, evaluation |
 | Adapters | `internal/backends`, `internal/autodetect`, `internal/llama`, `internal/semantic`, outbound MCP in `internal/mcp`, shell/git adapters in workspace | Local inference, host discovery, external clients, and environment-specific tool execution |
@@ -125,6 +125,21 @@ authority from another subsystem:
 
 The architecture therefore keeps explicit ownership for evidence, strategy,
 contracts, and verification.
+
+Current contract consolidation starts with a pure `internal/contractcompile`
+package. It compiles plan-execute planner inputs into a passive
+`AutonomyContract`, runtime envelope, and model-facing protocol projection
+without importing runner, app, workspace, backend, or CLI packages. That keeps
+phase 1 observable before enforcement moves out of the existing runner gates.
+
+## Design Implementation Workflow
+
+Broad architecture work must not move from design prose directly into source
+edits. Use
+[Design Doc Implementation Workflow](../design-doc-implementation-workflow.md)
+to run the full reviewer bench, record reviewer evidence, atomize phases into
+dispatchable units, parallelize only disjoint write scopes, refresh docs, and
+send the complete deliverable through final review before commit and push.
 
 ## System Interfaces
 

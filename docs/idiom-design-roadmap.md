@@ -42,6 +42,12 @@ The executable implementation plan is
   but the design still has open blockers for status-migration hardening, TUI
   continuation/handoff, coverage-gate authority reuse, durable supersession
   fixtures, sidecar exposure, and operator UX/API parity.
+- [Design doc implementation workflow](design-doc-implementation-workflow.md)
+  defines the operating rule for turning broad design docs into reviewed,
+  atomized, parallelizable, and resumable implementation work. It requires
+  durable reviewer evidence, dispatchable atom fields, disjoint write scopes for
+  parallel work, docs freshness checks, final full-bench review, and commit/push
+  only after the assembled deliverable passes review.
 - [Behavioral TDD coverage](design-tdd-coverage.md)
   defines the staged pipeline from human-approved ADR through EARS requirements,
   example mapping, BDD scenarios, Design by Contract, failure mode analysis
@@ -88,6 +94,13 @@ The executable implementation plan is
   reporting is explicit, and `harness_audit` now summarizes parse/distill/
   compile/validate/recovery-exhaustion stage events without raw transcript
   exposure.
+- [Contract and capability architecture overhaul](design-contract-capability-architecture-overhaul.md)
+  defines the staged consolidation needed to make `AutonomyContract`,
+  capability routing, model-facing protocol, runtime envelopes, path roles,
+  runner gates, and audit replay one maintainable contract lifecycle. It is a
+  cross-pillar refactor plan for stability, readability, and maintenance, with
+  reviewer evidence recorded in
+  [contract-capability-architecture-overhaul-review.md](evidence/contract-capability-architecture-overhaul-review.md).
 
 ## System Shape
 

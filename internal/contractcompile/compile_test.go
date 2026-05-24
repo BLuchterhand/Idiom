@@ -1,0 +1,558 @@
+package contractcompile
+
+import (
+	"go/parser"
+	"go/token"
+	"path/filepath"
+	"slices"
+	"strings"
+	"testing"
+
+	"idiom/internal/autonomy"
+)
+
+func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T) {
+	result := compilePlannerFixture(t)
+
+	if result.SchemaVersion != CompilerSchemaVersion {
+		t.Fatalf("SchemaVersion = %q, want %q", result.SchemaVersion, CompilerSchemaVersion)
+	}
+	if result.Contract.Scope.InvocationKind != autonomy.InvocationPhase {
+		t.Fatalf("InvocationKind = %q, want %q", result.Contract.Scope.InvocationKind, autonomy.InvocationPhase)
+	}
+	if result.Contract.Scope.Lane != DefaultPlanExecuteLane || result.Contract.Scope.Phase != DefaultPlannerPhase {
+		t.Fatalf("scope lane/phase = %q/%q", result.Contract.Scope.Lane, result.Contract.Scope.Phase)
+	}
+	if result.Contract.Scope.RuntimeContract != result.Runtime.RuntimeContractID {
+		t.Fatalf("scope runtime contract = %q, runtime id = %q", result.Contract.Scope.RuntimeContract, result.Runtime.RuntimeContractID)
+	}
+	if result.Runtime.ActiveInvariantID != InvariantActiveAuthority {
+		t.Fatalf("runtime active invariant = %q", result.Runtime.ActiveInvariantID)
+	}
+	if result.Runtime.BackendKind != "mlx" ||
+		result.Runtime.ModelAlias != "qwen3-coder-30b-a3b-instruct" ||
+		result.Runtime.ParserTransportMode != "textual_json_terminal" ||
+		result.Runtime.ToolTransportMode != "textual" ||
+		result.Runtime.ParserContract != "submit_plan_json" ||
+		result.Runtime.NativeToolPolicy != "textual_unless_forced" ||
+		result.Runtime.ToolChoice != "none" ||
+		result.Runtime.ResponseFormat != "json" ||
+		result.Runtime.ThinkingPolicy != "disabled_visible_action" ||
+		result.Runtime.ThinkingBudget != 128 ||
+		result.Runtime.EffectiveMaxTokens != 4096 {
+		t.Fatalf("runtime envelope not preserved: %#v", result.Runtime)
+	}
+	if result.Protocol.ContractID != result.Contract.ContractID {
+		t.Fatalf("protocol contract id = %q, want %q", result.Protocol.ContractID, result.Contract.ContractID)
+	}
+	if result.Protocol.ActiveInvariantID != InvariantActiveAuthority {
+		t.Fatalf("protocol active invariant = %q", result.Protocol.ActiveInvariantID)
+	}
+	if result.Protocol.ParserMode != "submit_plan_json" {
+		t.Fatalf("protocol parser mode = %q", result.Protocol.ParserMode)
+	}
+	if !slices.Contains(result.Protocol.RequiredEditCoverage, "internal/agent/runner.go") {
+		t.Fatalf("required edit coverage missing required path: %#v", result.Protocol.RequiredEditCoverage)
+	}
+	if !slices.Contains(result.Protocol.PathRoleSummary, "required_edit:internal/agent/runner.go") {
+		t.Fatalf("path role summary missing required path: %#v", result.Protocol.PathRoleSummary)
+	}
+	if !slices.Contains(result.Protocol.VerificationObligations, "command:go test ./internal/contractcompile") {
+		t.Fatalf("verification obligations missing command: %#v", result.Protocol.VerificationObligations)
+	}
+	if !slices.Contains(result.Protocol.CallableActionClasses, string(autonomy.ActionClassSubmitPlan)) {
+		t.Fatalf("callable action classes missing submit_plan: %#v", result.Protocol.CallableActionClasses)
+	}
+	if !slices.Contains(result.Protocol.InvalidActionClasses, string(autonomy.ActionClassPerEditWrite)) {
+		t.Fatalf("invalid action classes missing per_edit_write: %#v", result.Protocol.InvalidActionClasses)
+	}
+	if !slices.Contains(result.Protocol.TerminalResponseShapes, "Decision: source-satisfied") {
+		t.Fatalf("terminal shapes missing source-satisfied: %#v", result.Protocol.TerminalResponseShapes)
+	}
+	if !slices.Contains(result.Protocol.SourceBodyObligations, "internal/agent/runner.go") {
+		t.Fatalf("source-body obligations missing required path: %#v", result.Protocol.SourceBodyObligations)
+	}
+
+	decision := findActiveAuthorityDecision(t, result)
+	if decision.Decision != autonomy.PolicyObserve {
+		t.Fatalf("active authority decision = %q", decision.Decision)
+	}
+	if len(decision.ObligationRefs) == 0 {
+		t.Fatalf("active authority decision did not cite obligations")
+	}
+	if countObligationKind(result.Contract.Obligations, autonomy.ObligationWrite) != 0 {
+		t.Fatalf("planner compiler emitted write obligations: %#v", result.Contract.Obligations)
+	}
+	if slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
+		t.Fatalf("planner compiler allowed additive side effects: %#v", result.Contract.Capabilities.AllowedEffects)
+	}
+	if !hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/agent/runner.go", "submit_plan_required_edit_coverage") {
+		t.Fatalf("planner required edit path was not represented as submit-plan coverage: %#v", result.Contract.Obligations)
+	}
+}
+
+func TestCompilePlanExecutePlannerIDsAreStableForEquivalentInput(t *testing.T) {
+	first := compilePlannerFixture(t)
+	second, err := CompilePlanExecutePlanner(PlanExecutePlannerInput{
+		Lane:                 " plan-execute ",
+		Phase:                " planner ",
+		TaskFamily:           "plan_execute_planner",
+		RuntimeContract:      "legacy.contract.v1",
+		PermissionProfile:    "workspace_write",
+		RequiredEditPaths:    []string{"./internal/agent/runner.go", "internal/autonomy/contract.go", "internal/agent/runner.go"},
+		AllowedEditPaths:     []string{"internal/agent/runner.go", "internal/contractcompile/types.go"},
+		EvidencePaths:        []string{"internal/agent/phase_contract.go", "internal/agent/runner_autonomy.go"},
+		ChangedPaths:         []string{"internal/autonomy/contract.go"},
+		UserBoundaries:       []string{"do not wire runner yet", "no behavior changes"},
+		AllowedTools:         []string{"submit_plan", "read_file", "context_pack", "search_content"},
+		ForbiddenTools:       []string{"apply_patch", "shell"},
+		RequiredEvidence:     []string{"source body for required edits"},
+		VerificationContract: "go test ./internal/contractcompile",
+		VerificationPlan:     []string{"go test ./internal/contractcompile"},
+		StopConditions:       []string{"submit_plan accepted", "source_satisfied"},
+		FinalCritic:          []string{"protocol hash cited by prompt and gate"},
+		TargetPacket:         []string{"pack:e7818bd1b0006176"},
+		Constraints:          []string{"phase1_passive", "no_runner_wiring"},
+		Readiness: ReadinessInput{
+			ReadyToAnswer:       false,
+			ReadyToWrite:        false,
+			ReadyToVerify:       false,
+			OpenObligations:     []string{"source_body"},
+			FurtherReadsRequire: "one exact missing source-body claim",
+		},
+		Budget: BudgetInput{
+			MaxToolSteps:       12,
+			MaxModelCalls:      3,
+			MaxContextMessages: 40,
+			MaxContextChars:    120000,
+		},
+		Runtime: RuntimeEnvelopeInput{
+			BackendKind:         "mlx",
+			ModelAlias:          "qwen3-coder-30b-a3b-instruct",
+			ModelRole:           "planner",
+			ParserTransportMode: "textual_json_terminal",
+			ToolTransportMode:   "textual",
+			ParserContract:      "submit_plan_json",
+			NativeToolPolicy:    "textual_unless_forced",
+			ToolChoice:          "none",
+			ResponseFormat:      "json",
+			ThinkingPolicy:      "disabled_visible_action",
+			ThinkingBudget:      128,
+			EffectiveMaxTokens:  4096,
+			ContextBudget:       ContextBudget{MaxContextMessages: 40, MaxContextChars: 120000},
+			QueueState:          QueueState{Pool: "planner", State: "allowed_degraded", Reason: "queue daemon unavailable"},
+			ReadinessProfile:    "report_only",
+			EnforcementMode:     "report_only",
+			DegradedInvariants:  []string{"runtime.queue_unavailable"},
+			AuthorizedFallback:  []string{"direct_model_call"},
+		},
+		Protocol: ProtocolInput{
+			PhaseID:                "plan_execute.required_source",
+			ExpectedVisibleOutput:  "visible_text_tool_request",
+			VisibleTools:           []string{"context_pack", "read_file", "search_content", "submit_plan"},
+			CallableActionClasses:  []string{"read", "search", "submit_plan", "source_satisfied", "blocker"},
+			InvalidActionClasses:   []string{"per_edit_write", "verify", "prose_final"},
+			TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+			StructuredSchemaNames:  []string{"submit_plan"},
+			MalformedOutputPolicy:  "retry_same_protocol_hash",
+			StaleAnchorPolicy:      "bounded_source_refresh_before_submit_plan",
+			SourceBodyObligations:  []string{"internal/agent/runner.go", "internal/autonomy/contract.go"},
+			RecoveryBudget:         2,
+		},
+		MetadataTags: []string{"unit1"},
+	})
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner equivalent input failed: %v", err)
+	}
+
+	if second.Contract.ContractID != first.Contract.ContractID {
+		t.Fatalf("contract id changed for equivalent input: %q != %q", second.Contract.ContractID, first.Contract.ContractID)
+	}
+	if second.Runtime.RuntimeContractID != first.Runtime.RuntimeContractID {
+		t.Fatalf("runtime id changed for equivalent input: %q != %q", second.Runtime.RuntimeContractID, first.Runtime.RuntimeContractID)
+	}
+	if second.Protocol.ProtocolHash != first.Protocol.ProtocolHash {
+		t.Fatalf("protocol hash changed for equivalent input: %q != %q", second.Protocol.ProtocolHash, first.Protocol.ProtocolHash)
+	}
+}
+
+func TestCompilePlanExecutePlannerDefaultsKeepRequiredEditsDistinctFromSourceBody(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Protocol.SourceBodyObligations = nil
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	if len(result.Protocol.SourceBodyObligations) != 0 {
+		t.Fatalf("source-body obligations defaulted from required edit paths: %#v", result.Protocol.SourceBodyObligations)
+	}
+	if !slices.Contains(result.Protocol.RequiredEditCoverage, "internal/agent/runner.go") {
+		t.Fatalf("required edit coverage missing required path: %#v", result.Protocol.RequiredEditCoverage)
+	}
+	if hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/agent/runner.go", "source_body_obligations") {
+		t.Fatalf("required edit path was conflated with source-body evidence obligations: %#v", result.Contract.Obligations)
+	}
+	if !slices.Contains(result.Protocol.CallableActionClasses, string(autonomy.ActionClassSearch)) {
+		t.Fatalf("default callable classes missing search: %#v", result.Protocol.CallableActionClasses)
+	}
+}
+
+func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		mutate func(*PlanExecutePlannerInput)
+	}{
+		{
+			name: "unmapped allowed tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.AllowedTools = append(input.AllowedTools, "magic_tool")
+			},
+		},
+		{
+			name: "invalid action class",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.CallableActionClasses = append(input.Protocol.CallableActionClasses, "invented_action")
+			},
+		},
+		{
+			name: "overlap action class",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.InvalidActionClasses = append(input.Protocol.InvalidActionClasses, "submit_plan")
+			},
+		},
+		{
+			name: "read-only mutating allowed tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.PermissionProfile = "read_only"
+				input.AllowedTools = append(input.AllowedTools, "apply_patch")
+			},
+		},
+		{
+			name: "read-only mutating visible tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.PermissionProfile = "read_only"
+				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "apply_patch")
+			},
+		},
+		{
+			name: "read-only mutating required tool",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.PermissionProfile = "read_only"
+				input.RequiredTools = append(input.RequiredTools, "apply_patch")
+			},
+		},
+		{
+			name: "non-passive enforcement mode",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Runtime.EnforcementMode = "enforce"
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			input := plannerFixtureInput()
+			tc.mutate(&input)
+			if _, err := CompilePlanExecutePlanner(input); err == nil {
+				t.Fatalf("CompilePlanExecutePlanner succeeded, want validation error")
+			}
+		})
+	}
+}
+
+func TestCompilePlanExecutePlannerClampsNegativeRuntimeBudgetsAndDefaultsReportOnly(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Runtime.EnforcementMode = ""
+	input.Runtime.ThinkingBudget = -1
+	input.Runtime.EffectiveMaxTokens = -100
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	if result.Runtime.EnforcementMode != "report_only" {
+		t.Fatalf("EnforcementMode = %q, want report_only", result.Runtime.EnforcementMode)
+	}
+	if result.Runtime.ThinkingBudget != 0 || result.Runtime.EffectiveMaxTokens != 0 {
+		t.Fatalf("negative runtime budgets were not clamped: %#v", result.Runtime)
+	}
+	for _, rule := range result.Contract.ToolPolicy {
+		if !strings.Contains(rule.Source, "report_only") || !strings.Contains(rule.ReasonCode, "report_only") {
+			t.Fatalf("tool policy rule missing report-only provenance: %#v", rule)
+		}
+	}
+}
+
+func TestCompilePlanExecutePlannerKeepsExplicitDegradationFallbackAssociations(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Runtime.DegradedInvariants = []string{"runtime.queue_unavailable", "runtime.native_tools_unavailable"}
+	input.Runtime.AuthorizedFallback = []string{"legacy_global_fallback"}
+	input.Runtime.DegradationDecisions = []DegradationDecision{
+		{
+			InvariantID:         " runtime.native_tools_unavailable ",
+			ReasonCode:          "native_tools_disabled",
+			Decision:            "authorized_fallback",
+			AuthorizedFallbacks: []string{" textual_tool_contract ", "textual_tool_contract"},
+		},
+		{
+			InvariantID:         "runtime.queue_unavailable",
+			ReasonCode:          "queue_daemon_unavailable",
+			Decision:            "authorized_fallback",
+			AuthorizedFallbacks: []string{"direct_model_call"},
+		},
+		{
+			InvariantID:         "runtime.queue_unavailable",
+			ReasonCode:          "queue_daemon_unavailable",
+			Decision:            "authorized_fallback",
+			AuthorizedFallbacks: []string{"direct_model_call"},
+		},
+	}
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	if len(result.Runtime.DegradationDecisions) != 2 {
+		t.Fatalf("degradation decisions = %#v, want one per explicit invariant decision", result.Runtime.DegradationDecisions)
+	}
+	decisions := degradationDecisionsByInvariant(result.Runtime.DegradationDecisions)
+	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"direct_model_call"}) {
+		t.Fatalf("queue fallback association = %#v, want direct_model_call only", got)
+	}
+	if got := decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"textual_tool_contract"}) {
+		t.Fatalf("native-tools fallback association = %#v, want textual_tool_contract only", got)
+	}
+	if slices.Contains(decisions["runtime.queue_unavailable"].AuthorizedFallbacks, "legacy_global_fallback") ||
+		slices.Contains(decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks, "legacy_global_fallback") {
+		t.Fatalf("explicit degradation decisions were polluted by legacy fallback fields: %#v", result.Runtime.DegradationDecisions)
+	}
+}
+
+func TestCompilePlanExecutePlannerPairsLegacyDegradedInvariantsByPosition(t *testing.T) {
+	input := plannerFixtureInput()
+	input.Runtime.DegradedInvariants = []string{"runtime.queue_unavailable", "runtime.native_tools_unavailable"}
+	input.Runtime.AuthorizedFallback = []string{"direct_model_call", "textual_tool_contract"}
+	input.Runtime.DegradationDecisions = nil
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	decisions := degradationDecisionsByInvariant(result.Runtime.DegradationDecisions)
+	if got := decisions["runtime.queue_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"direct_model_call"}) {
+		t.Fatalf("legacy queue fallback association = %#v, want direct_model_call", got)
+	}
+	if got := decisions["runtime.native_tools_unavailable"].AuthorizedFallbacks; !slices.Equal(got, []string{"textual_tool_contract"}) {
+		t.Fatalf("legacy native-tools fallback association = %#v, want textual_tool_contract", got)
+	}
+}
+
+func TestCompilePlanExecutePlannerPathRolesRemainDistinct(t *testing.T) {
+	result := compilePlannerFixture(t)
+	roleByPath := make(map[string][]autonomy.PathRoleKind)
+	for _, role := range result.Contract.PathRoles {
+		roleByPath[role.PathPattern] = append(roleByPath[role.PathPattern], role.Role)
+	}
+
+	assertRole(t, roleByPath, "internal/agent/runner.go", autonomy.PathRoleRequiredEdit)
+	assertRole(t, roleByPath, "internal/agent/runner.go", autonomy.PathRoleAllowedEdit)
+	assertRole(t, roleByPath, "internal/autonomy/contract.go", autonomy.PathRoleRequiredEdit)
+	assertRole(t, roleByPath, "internal/autonomy/contract.go", autonomy.PathRoleGeneratedArtifact)
+	assertRole(t, roleByPath, "internal/agent/phase_contract.go", autonomy.PathRoleEvidenceReadonly)
+	assertRole(t, roleByPath, ".git/**", autonomy.PathRoleProtected)
+}
+
+func TestPackageImportBoundaries(t *testing.T) {
+	for _, tc := range []struct {
+		dir       string
+		forbidden []string
+	}{
+		{
+			dir: "internal/contractcompile",
+			forbidden: []string{
+				"idiom/cmd/idiom",
+				"idiom/internal/agent",
+				"idiom/internal/app",
+				"idiom/internal/backends",
+				"idiom/internal/frontier/workerruntime",
+				"idiom/internal/mcp",
+				"idiom/internal/semantic",
+				"idiom/internal/workspace",
+			},
+		},
+		{
+			dir: "internal/autonomy",
+			forbidden: []string{
+				"idiom/cmd/idiom",
+				"idiom/internal/agent",
+				"idiom/internal/app",
+				"idiom/internal/backends",
+				"idiom/internal/frontier/workerruntime",
+				"idiom/internal/mcp",
+				"idiom/internal/semantic",
+				"idiom/internal/workspace",
+			},
+		},
+	} {
+		t.Run(tc.dir, func(t *testing.T) {
+			assertNoForbiddenImports(t, tc.dir, tc.forbidden)
+		})
+	}
+}
+
+func compilePlannerFixture(t *testing.T) CompileResult {
+	t.Helper()
+	result, err := CompilePlanExecutePlanner(plannerFixtureInput())
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
+	}
+	return result
+}
+
+func plannerFixtureInput() PlanExecutePlannerInput {
+	return PlanExecutePlannerInput{
+		Lane:                 DefaultPlanExecuteLane,
+		Phase:                DefaultPlannerPhase,
+		TaskFamily:           InvocationPlanExecutePlanner,
+		RuntimeContract:      "legacy.contract.v1",
+		PermissionProfile:    "workspace_write",
+		RequiredEditPaths:    []string{"internal/agent/runner.go", "internal/autonomy/contract.go"},
+		AllowedEditPaths:     []string{"internal/contractcompile/types.go", "internal/agent/runner.go"},
+		EvidencePaths:        []string{"internal/agent/runner_autonomy.go", "internal/agent/phase_contract.go"},
+		ChangedPaths:         []string{"internal/autonomy/contract.go"},
+		UserBoundaries:       []string{"do not wire runner yet", "no behavior changes"},
+		AllowedTools:         []string{"context_pack", "read_file", "search_content", "submit_plan"},
+		ForbiddenTools:       []string{"apply_patch", "shell"},
+		RequiredEvidence:     []string{"source body for required edits"},
+		VerificationContract: "go test ./internal/contractcompile",
+		VerificationPlan:     []string{"go test ./internal/contractcompile"},
+		StopConditions:       []string{"submit_plan accepted", "source_satisfied"},
+		FinalCritic:          []string{"protocol hash cited by prompt and gate"},
+		TargetPacket:         []string{"pack:e7818bd1b0006176"},
+		Constraints:          []string{"phase1_passive", "no_runner_wiring"},
+		Readiness: ReadinessInput{
+			OpenObligations:     []string{"source_body"},
+			FurtherReadsRequire: "one exact missing source-body claim",
+		},
+		Budget: BudgetInput{
+			MaxToolSteps:       12,
+			MaxModelCalls:      3,
+			MaxContextMessages: 40,
+			MaxContextChars:    120000,
+		},
+		Runtime: RuntimeEnvelopeInput{
+			BackendKind:         "mlx",
+			ModelAlias:          "qwen3-coder-30b-a3b-instruct",
+			ModelRole:           "planner",
+			ParserTransportMode: "textual_json_terminal",
+			ToolTransportMode:   "textual",
+			ParserContract:      "submit_plan_json",
+			NativeToolPolicy:    "textual_unless_forced",
+			ToolChoice:          "none",
+			ResponseFormat:      "json",
+			ThinkingPolicy:      "disabled_visible_action",
+			ThinkingBudget:      128,
+			EffectiveMaxTokens:  4096,
+			ContextBudget:       ContextBudget{MaxContextMessages: 40, MaxContextChars: 120000},
+			QueueState:          QueueState{Pool: "planner", State: "allowed_degraded", Reason: "queue daemon unavailable"},
+			ReadinessProfile:    "report_only",
+			EnforcementMode:     "report_only",
+			DegradedInvariants:  []string{"runtime.queue_unavailable"},
+			AuthorizedFallback:  []string{"direct_model_call"},
+		},
+		Protocol: ProtocolInput{
+			PhaseID:                "plan_execute.required_source",
+			ExpectedVisibleOutput:  "visible_text_tool_request",
+			VisibleTools:           []string{"context_pack", "read_file", "search_content", "submit_plan"},
+			CallableActionClasses:  []string{"read", "search", "submit_plan", "source_satisfied", "blocker"},
+			InvalidActionClasses:   []string{"per_edit_write", "verify", "prose_final"},
+			TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+			StructuredSchemaNames:  []string{"submit_plan"},
+			MalformedOutputPolicy:  "retry_same_protocol_hash",
+			StaleAnchorPolicy:      "bounded_source_refresh_before_submit_plan",
+			SourceBodyObligations:  []string{"internal/agent/runner.go", "internal/autonomy/contract.go"},
+			RecoveryBudget:         2,
+		},
+		MetadataTags: []string{"unit1"},
+	}
+}
+
+func findActiveAuthorityDecision(t *testing.T, result CompileResult) autonomy.PolicyDecision {
+	t.Helper()
+	for _, decision := range result.Contract.PolicyDecisions {
+		if decision.InvariantID == InvariantActiveAuthority {
+			return decision
+		}
+	}
+	t.Fatalf("missing %s policy decision in %#v", InvariantActiveAuthority, result.Contract.PolicyDecisions)
+	return autonomy.PolicyDecision{}
+}
+
+func assertRole(t *testing.T, roleByPath map[string][]autonomy.PathRoleKind, path string, role autonomy.PathRoleKind) {
+	t.Helper()
+	if !slices.Contains(roleByPath[path], role) {
+		t.Fatalf("path %q roles = %#v, want %q", path, roleByPath[path], role)
+	}
+}
+
+func assertNoForbiddenImports(t *testing.T, dir string, forbidden []string) {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join("..", "..", dir, "*.go"))
+	if err != nil {
+		t.Fatalf("glob %s: %v", dir, err)
+	}
+	fset := token.NewFileSet()
+	for _, file := range files {
+		if strings.HasSuffix(file, "_test.go") {
+			continue
+		}
+		parsed, err := parser.ParseFile(fset, file, nil, parser.ImportsOnly)
+		if err != nil {
+			t.Fatalf("parse imports for %s: %v", file, err)
+		}
+		for _, imported := range parsed.Imports {
+			path := strings.Trim(imported.Path.Value, `"`)
+			if isForbiddenImport(path, forbidden) {
+				t.Fatalf("%s imports forbidden package %q", file, path)
+			}
+		}
+	}
+}
+
+func countObligationKind(obligations []autonomy.Obligation, kind autonomy.ObligationKind) int {
+	var count int
+	for _, obligation := range obligations {
+		if obligation.Kind == kind {
+			count++
+		}
+	}
+	return count
+}
+
+func hasObligation(obligations []autonomy.Obligation, kind autonomy.ObligationKind, owner autonomy.ObligationOwner, targetRef string, requiredBy string) bool {
+	for _, obligation := range obligations {
+		if obligation.Kind == kind &&
+			obligation.Owner == owner &&
+			obligation.TargetRef == targetRef &&
+			obligation.RequiredBy == requiredBy {
+			return true
+		}
+	}
+	return false
+}
+
+func degradationDecisionsByInvariant(decisions []DegradationDecision) map[string]DegradationDecision {
+	out := make(map[string]DegradationDecision, len(decisions))
+	for _, decision := range decisions {
+		out[decision.InvariantID] = decision
+	}
+	return out
+}
+
+func isForbiddenImport(path string, forbidden []string) bool {
+	for _, prefix := range forbidden {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
+}
