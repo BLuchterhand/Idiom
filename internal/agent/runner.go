@@ -592,7 +592,9 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "submit_plan_stringified_edits_repaired", Content: "repaired submit_plan.edits from a quoted JSON string into a typed edits array before validation"})
 		}
 		if !ok && parseErr == nil {
-			if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
+			if intentReq, intentRaw, compiled := r.compilePlanIntentToolRequest(reply); compiled {
+				req, raw, ok = intentReq, intentRaw, true
+			} else if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
 				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "visible_prose_salvage", req, nil, "")
 				r.emitEvent(RunEvent{Role: "visible_tool_salvage", Content: fmt.Sprintf("model wrapped parser-readable %s request in prose; executing the request", req.Tool)})
@@ -4565,7 +4567,15 @@ func (r *Runner) emitModelCallTraceWithOptions(step int, label string, prompt []
 	payload["role_chars"] = roleChars
 	payload["chosen_tool"] = chosen
 	payload["duration_ms"] = durationMs
-	payload["backend_kind"] = runnerTurnPhaseBackendKind(r)
+	backendKind := runnerTurnPhaseBackendKind(r)
+	payload["backend_kind"] = backendKind
+	backendCaps := llama.BackendStructuredOutputCapabilities(backendKind)
+	payload["backend_capability_native_tools"] = backendCaps.NativeTools
+	payload["backend_capability_json_object"] = backendCaps.JSONObject
+	payload["backend_capability_strict_json_schema"] = backendCaps.StrictJSONSchema
+	payload["backend_capability_grammar"] = backendCaps.Grammar
+	payload["backend_capability_thinking_controls"] = backendCaps.ThinkingControls
+	payload["backend_capability_request_timeout_telemetry"] = backendCaps.RequestTimeoutTelemetry
 	payload["model_alias"] = safeModelAliasForTelemetry(opts.Model)
 	payload["parser_contract"] = parserContract
 	if finish := strings.TrimSpace(reply.FinishReason); finish != "" {

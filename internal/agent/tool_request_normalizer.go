@@ -98,6 +98,13 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		normalizeParsedToolRequestSyntax(&result)
 		result.EventOutcome = toolRequestNormalizerOutcomeNormalized
 		if toolRequestPayloadMissingExplicitTool(raw) && strings.TrimSpace(req.Tool) != "" {
+			if missingToolInferenceNeedsTypedAuthority(req.Tool) {
+				result.Request = workspace.ToolRequest{}
+				result.OK = false
+				result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
+				result.EventTransport = toolRequestNormalizerTransportTextual
+				return result
+			}
 			result.EventOutcome = toolRequestNormalizerOutcomeMissingToolInferred
 		}
 		result.EventTransport = toolRequestNormalizerTransportTextual
@@ -880,4 +887,23 @@ func toolRequestPayloadMissingExplicitTool(raw string) bool {
 	}
 	_, hasTool := fields["tool"]
 	return !hasTool
+}
+
+func missingToolInferenceNeedsTypedAuthority(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "append_file",
+		"apply_patch",
+		"delegate_edit",
+		"edit_file",
+		"go_move_declarations",
+		"mkdir",
+		"shell",
+		"submit_plan",
+		"task",
+		"task_ledger",
+		"write_file":
+		return true
+	default:
+		return false
+	}
 }

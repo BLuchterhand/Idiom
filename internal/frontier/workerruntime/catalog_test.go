@@ -19,6 +19,26 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		}
 	})
 
+	t.Run("artifact distiller", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(ArtifactDistillerTaskFamily)
+		if spec.TaskFamily != ArtifactDistillerTaskFamily || spec.Contract != "edit_intent_distillation" {
+			t.Fatalf("unexpected artifact distiller contract: %#v", spec)
+		}
+		if spec.PermissionProfile != "conversation_only" || spec.ToolProfile != CapabilityArtifactDistiller {
+			t.Fatalf("artifact distiller must be tool-free/no-write, got %#v", spec)
+		}
+		for _, want := range []string{"raw_output_parser_failure", "active_mutation_contract", "required_edit_scope"} {
+			if !slices.Contains(spec.RequiredEvidence, want) {
+				t.Fatalf("artifact distiller missing evidence %q in %#v", want, spec.RequiredEvidence)
+			}
+		}
+		for _, want := range []string{"outputs_only_edit_intent_or_typed_blocker", "no_tool_calls", "no_write_authority", "no_submit_plan"} {
+			if !slices.Contains(spec.FinalCritic, want) {
+				t.Fatalf("artifact distiller missing critic %q in %#v", want, spec.FinalCritic)
+			}
+		}
+	})
+
 	t.Run("conversation", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("conversation")
 		if spec.TaskFamily != "conversation" || spec.ToolProfile != CapabilityConversationReadOnly {
@@ -110,6 +130,19 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 		t.Fatalf("artifact final-answer brief must be tool-free, got tools=%#v manifest=%#v required=%#v", artifact.AllowedTools, artifact.ToolManifest, artifact.RequiredTools)
 	}
 
+	distiller := RuntimeBriefForTaskFamily(ArtifactDistillerTaskFamily, "main", available)
+	if distiller.Contract != "edit_intent_distillation" || distiller.PermissionProfile != "conversation_only" {
+		t.Fatalf("unexpected artifact distiller brief: %#v", distiller)
+	}
+	if len(distiller.AllowedTools) != 0 || len(distiller.ToolManifest) != 0 || len(distiller.RequiredTools) != 0 {
+		t.Fatalf("artifact distiller brief must not advertise tools, got tools=%#v manifest=%#v required=%#v", distiller.AllowedTools, distiller.ToolManifest, distiller.RequiredTools)
+	}
+	for _, forbidden := range []string{"submit_plan", "edit_file", "write_file", "shell", "task"} {
+		if slices.Contains(distiller.AllowedTools, forbidden) {
+			t.Fatalf("artifact distiller allowed forbidden tool %q in %#v", forbidden, distiller.AllowedTools)
+		}
+	}
+
 	brief := RuntimeBriefForTaskFamily("conversation", "main", available)
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
@@ -183,6 +216,11 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 }
 
 func TestManifestToolsForCapabilityProfileExposeExpectedSurfaces(t *testing.T) {
+	distiller := ManifestToolsForCapabilityProfile(CapabilityArtifactDistiller)
+	if len(distiller) != 0 {
+		t.Fatalf("artifact distiller manifest must be empty, got %#v", distiller)
+	}
+
 	readOnly := ManifestToolsForCapabilityProfile(CapabilityConversationReadOnly)
 	if !slices.Contains(readOnly, "task") {
 		t.Fatalf("conversation read-only manifest should include task, got %#v", readOnly)

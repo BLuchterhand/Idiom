@@ -442,6 +442,36 @@ func TestBackendSupportsNativeTools(t *testing.T) {
 	}
 }
 
+func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
+	for _, tc := range []struct {
+		backend         string
+		nativeTools     bool
+		jsonObject      bool
+		thinkingControl bool
+	}{
+		{config.BackendLlama, true, true, true},
+		{config.BackendMLX, false, true, true},
+		{config.BackendCodex, true, true, false},
+		{config.BackendZAI, true, true, true},
+	} {
+		t.Run(tc.backend, func(t *testing.T) {
+			caps := BackendStructuredOutputCapabilities(tc.backend)
+			if caps.NativeTools != tc.nativeTools {
+				t.Fatalf("NativeTools = %v, want %v", caps.NativeTools, tc.nativeTools)
+			}
+			if caps.JSONObject != tc.jsonObject {
+				t.Fatalf("JSONObject = %v, want %v", caps.JSONObject, tc.jsonObject)
+			}
+			if caps.ThinkingControls != tc.thinkingControl {
+				t.Fatalf("ThinkingControls = %v, want %v", caps.ThinkingControls, tc.thinkingControl)
+			}
+			if caps.StrictJSONSchema || caps.Grammar || caps.RequestTimeoutTelemetry {
+				t.Fatalf("capabilities should not claim unenforced strict schema/grammar/timeout telemetry: %#v", caps)
+			}
+		})
+	}
+}
+
 func TestWithBackendNormalizesValue(t *testing.T) {
 	c := NewClient("http://example.invalid", time.Second)
 	if c.Backend() != config.BackendLlama {

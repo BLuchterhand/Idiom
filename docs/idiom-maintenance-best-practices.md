@@ -156,6 +156,12 @@ instead of using its normal editing capability.
   Align prose and tool availability: the next model-visible surface should be a
   corrected native `submit_plan`, source-satisfied evidence, or a typed blocker,
   not another broad discovery menu.
+- When malformed planner output contains useful edit intent, route only exact
+  JSON or exact fenced `idiom.edit_intent.v1` through the deterministic
+  compiler. The compiler emits candidate `workspace.PlanEdit` values, not
+  executable authority; the normal `submit_plan` validation/preflight path
+  remains the execution boundary. The `artifact_distiller` role is no-tool,
+  no-write, and must never emit `submit_plan` directly.
 - For generated scratchpad bugs, prefer host-owned artifact materialization plus
   validation over another "remember to write the file" prompt.
 - For an observability bug, update the event/ledger/audit schema and tests

@@ -78,7 +78,16 @@ The executable implementation plan is
   normalized or distilled into typed intent, but only schema/source/preflight
   validated artifacts can reach execution. This design deliberately separates
   the route classifier, artifact distiller, patch compiler, and executor so
-  repair does not silently become mutation authority.
+  repair does not silently become mutation authority. The first deterministic
+  lifecycle is implemented through `internal/planintent`: exact
+  `idiom.edit_intent.v1` artifacts validate against the active runtime brief,
+  compile to candidate `workspace.PlanEdit` values, and still pass through
+  normal `submit_plan` validation before executor handoff. The
+  `artifact_distiller` runtime family is present as a no-tool/no-write role for
+  future model-based distillation, backend structured-output capability
+  reporting is explicit, and `harness_audit` now summarizes parse/distill/
+  compile/validate/recovery-exhaustion stage events without raw transcript
+  exposure.
 
 ## System Shape
 

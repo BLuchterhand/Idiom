@@ -391,6 +391,133 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONEdit(t *testing.T) 
 	}
 }
 
+func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONShell(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"command":"go test ./..."}`,
+	})
+
+	if result.OK {
+		t.Fatalf("unsafe missing-tool shell shape must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONTask(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"agent":"worker","prompt":"edit README.md"}`,
+	})
+
+	if result.OK {
+		t.Fatalf("unsafe missing-tool task shape must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxMalformedOutputFixtureMatrix(t *testing.T) {
+	stringifiedEdits, err := json.Marshal(map[string]any{
+		"tool":      "submit_plan",
+		"rationale": "plan",
+		"edits":     `[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update a"}]`,
+	})
+	if err != nil {
+		t.Fatalf("marshal stringified edits fixture: %v", err)
+	}
+	cases := []struct {
+		name      string
+		content   string
+		wantOK    bool
+		wantTool  string
+		outcome   string
+		transport string
+		repaired  bool
+	}{
+		{
+			name:      "stringified submit_plan edits repair",
+			content:   string(stringifiedEdits),
+			wantOK:    true,
+			wantTool:  "submit_plan",
+			outcome:   toolRequestNormalizerOutcomeNormalized,
+			transport: toolRequestNormalizerTransportStringifiedSubmitRepair,
+			repaired:  true,
+		},
+		{
+			name:      "exact fenced read-only JSON",
+			content:   "```json\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+			wantOK:    true,
+			wantTool:  "read_file",
+			outcome:   toolRequestNormalizerOutcomeNormalized,
+			transport: toolRequestNormalizerTransportFencedJSON,
+		},
+		{
+			name:      "narrative fenced JSON rejected",
+			content:   "Use this:\n```json\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",
+			wantOK:    false,
+			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			transport: toolRequestNormalizerTransportFencedJSON,
+		},
+		{
+			name:      "safe bare read-only shape inferred",
+			content:   `{"path":"README.md","start_line":1,"end_line":20}`,
+			wantOK:    true,
+			wantTool:  "read_file",
+			outcome:   toolRequestNormalizerOutcomeMissingToolInferred,
+			transport: toolRequestNormalizerTransportTextual,
+		},
+		{
+			name:      "unsafe bare edit shape rejected",
+			content:   `{"path":"README.md","old_text":"old","new_text":"new"}`,
+			wantOK:    false,
+			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			transport: toolRequestNormalizerTransportTextual,
+		},
+		{
+			name:      "unsafe function-call edit shape rejected",
+			content:   `tool: edit_file(path="README.md", old_text="old", new_text="new")`,
+			wantOK:    false,
+			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			transport: toolRequestNormalizerTransportFunctionCall,
+		},
+		{
+			name:      "nested read-only arguments repair",
+			content:   `{"arguments":{"tool":"read_file","path":"cmd/idiom/audit.go","start_line":1,"end_line":100}}`,
+			wantOK:    true,
+			wantTool:  "read_file",
+			outcome:   toolRequestNormalizerOutcomeNormalized,
+			transport: toolRequestNormalizerTransportNestedArguments,
+			repaired:  true,
+		},
+		{
+			name:      "unsafe missing-tool shell rejected",
+			content:   `{"command":"go test ./..."}`,
+			wantOK:    false,
+			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			transport: toolRequestNormalizerTransportTextual,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := normalizeToolRequestSyntax(llama.ChatMessage{Content: tc.content})
+			if result.OK != tc.wantOK {
+				t.Fatalf("OK = %v, want %v; request=%#v parseErr=%v", result.OK, tc.wantOK, result.Request, result.ParseErr)
+			}
+			if tc.wantTool != "" && result.Request.Tool != tc.wantTool {
+				t.Fatalf("Tool = %q, want %q; request=%#v", result.Request.Tool, tc.wantTool, result.Request)
+			}
+			if result.EventOutcome != tc.outcome || result.EventTransport != tc.transport {
+				t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+			}
+			if result.Repaired != tc.repaired {
+				t.Fatalf("Repaired = %v, want %v", result.Repaired, tc.repaired)
+			}
+		})
+	}
+}
+
 func TestNormalizeToolRequestSyntaxDoesNotInferNarrativeFencedJSON(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "Please run this:\n```json\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n```",

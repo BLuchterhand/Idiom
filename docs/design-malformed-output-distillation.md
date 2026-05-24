@@ -1,11 +1,38 @@
 # Malformed Output Distillation
 
-Status: design draft, 2026-05-24
+Status: implemented deterministic lifecycle, 2026-05-24
 
 This is a cross-pillar design for
 [idiom-design-roadmap.md](idiom-design-roadmap.md). It connects
 contract-first autonomy, auditable planning and handoff, local-model
 operations, and the eval/audit learning loop.
+
+Implemented status:
+
+- The deterministic handoff slice is implemented in `internal/planintent`.
+  It defines `idiom.edit_intent.v1`, validation, typed error codes, and a
+  deterministic compiler MVP for `replace_exact_text`,
+  `insert_after_line_anchor`, and `add_new_file`.
+- Deterministic malformed-output regression fixtures cover safe stringified
+  `submit_plan.edits`, exact fenced JSON, nested read-only arguments,
+  unsafe missing-tool write/shell/task shapes, wrapper prose, malformed
+  evidence refs, missing source evidence, stale/missing anchors, and
+  blocker-only artifacts.
+- The plan-execute runner accepts exact JSON or exact fenced JSON
+  `idiom.edit_intent.v1` artifacts only as non-executable handoff input. It
+  validates scope against the active runtime brief, compiles candidate
+  `workspace.PlanEdit` values, emits bounded stage events, then routes the
+  candidate through the existing `submit_plan` validation/preflight path.
+- The `artifact_distiller` runtime family exists as a separate
+  conversation-only, no-tool, no-`submit_plan`, no-write-authority contract.
+  It is a role/config boundary for future model-based distillation, not an
+  executor.
+- Backend structured-output capability reporting is explicit and conservative:
+  current backends may advertise native tools, JSON-object mode, and verified
+  thinking controls, but strict JSON Schema, grammar, and request-timeout
+  telemetry remain false until a backend adapter actually enforces them.
+- `harness_audit` summarizes malformed-output stage counts from behavior logs
+  without exposing raw transcripts, prompts, or file bodies.
 
 The controlling rule is unchanged:
 
@@ -141,12 +168,12 @@ The target architecture has five stages.
 ```mermaid
 flowchart LR
     Raw["Raw model output"] --> Intake["Intake parser and normalizer"]
-    Intake --> Intent["Typed intent artifact"]
-    Intent --> Compiler["Patch or action compiler"]
-    Compiler --> Artifact["Candidate artifact"]
-    Artifact --> Gate["Strict validation and preflight"]
-    Gate --> Execute["Execution or typed blocker"]
-    Gate -. typed failure .-> Repair["Bounded repair routing"]
+    Intake --> Intent["Typed intent artifact: idiom.edit_intent.v1"]
+    Intent --> Compiler["Deterministic compiler"]
+    Compiler --> Artifact["Candidate workspace.PlanEdit list"]
+    Artifact --> Gate["Existing submit_plan validation and preflight"]
+    Gate --> Execute["Executor handoff or typed blocker"]
+    Gate -. typed failure .-> Repair["Bounded recovery routing"]
     Repair -. syntax or anchor .-> Compiler
     Repair -. missing evidence .-> Raw
 ```
@@ -257,7 +284,9 @@ projection of the active typed contract:
 ### 3. Optional Artifact Distiller
 
 When deterministic parsing fails but the output contains useful intent, Idiom
-may run a separate artifact distiller.
+may run a separate artifact distiller. The runtime role and no-tool contract
+are implemented; automatic model-based distiller invocation remains disabled
+until a caller explicitly wires the role into a recovery controller.
 
 The distiller is not the lane classifier. It is a low-temperature, narrow-context
 transducer with no write authority.
@@ -278,9 +307,9 @@ Outputs:
 - a typed `needs_source_evidence` classification
 - a typed `ambiguous_intent` classification
 
-The distiller must not output `submit_plan` directly in the first slice. It
-should output intent, because intent is easier to validate and less likely to
-smuggle executable authority.
+The distiller must not output `submit_plan` directly. It should output intent,
+because intent is easier to validate and less likely to smuggle executable
+authority.
 
 If the existing route-classifier model is reused as the physical model, it must
 run under a separate role name such as `artifact_distiller`. The logical role
@@ -387,10 +416,9 @@ Preferred order:
 JSON mode should not be described as "strict." It improves syntax reliability
 but does not prove schema adherence or source correctness.
 
-Current Idiom support should be treated conservatively. The existing local
-client exposes JSON-object response format, not a general strict JSON Schema,
-GBNF, or grammar-constrained request surface. Strict schema and grammar support
-therefore require an explicit backend capability model before implementation:
+Current Idiom support is conservative and explicit. The local client exposes
+JSON-object response format, not a general strict JSON Schema, GBNF, or
+grammar-constrained request surface. `model_call` telemetry reports:
 
 - `native_tools`
 - `json_object`
@@ -399,8 +427,9 @@ therefore require an explicit backend capability model before implementation:
 - `thinking_controls`
 - `request_timeout_telemetry`
 
-Capabilities must be detected, configured, and logged. They must not be assumed
-from provider name or model family.
+Strict schema, grammar, and timeout telemetry are logged as unavailable until a
+backend adapter actually enforces them. Capabilities must be detected,
+configured, and logged. They must not be assumed from model family alone.
 
 ## Telemetry And Audit
 
@@ -409,7 +438,7 @@ Malformed-output handling should be auditable without reading raw transcripts.
 Add or preserve bounded events for:
 
 - `malformed_output_detected`
-- `tool_request_normalized`
+- `tool_request_normalizer`
 - `artifact_distillation_started`
 - `artifact_distillation_result`
 - `edit_intent_validated`
@@ -417,6 +446,29 @@ Add or preserve bounded events for:
 - `patch_compile_result`
 - `executable_artifact_validated`
 - `malformed_output_recovery_exhausted`
+
+Current deterministic implementation emits and audits:
+
+- `tool_request_normalizer` for syntax normalization, parser failure class, and
+  transport/outcome.
+- `edit_intent_validated` for accepted or rejected `idiom.edit_intent.v1`
+  handoff artifacts.
+- `patch_compile_started` before deterministic compilation from validated
+  intent.
+- `patch_compile_result` for accepted candidate edit lists or typed compiler
+  blockers.
+- `model_call` fields for backend structured-output capabilities:
+  `backend_capability_native_tools`, `backend_capability_json_object`,
+  `backend_capability_strict_json_schema`, `backend_capability_grammar`,
+  `backend_capability_thinking_controls`, and
+  `backend_capability_request_timeout_telemetry`.
+- `harness_audit` `log_behavior.malformed_output` count summaries for tracked
+  parse, distill, compile, validate, and recovery-exhaustion stage roles.
+
+`artifact_distillation_*`, `malformed_output_detected`,
+`executable_artifact_validated`, and `malformed_output_recovery_exhausted`
+remain target events for later slices that add a model distiller, explicit
+malformed-output recovery controller, and plan-artifact validation telemetry.
 
 Events should include:
 
@@ -443,15 +495,18 @@ Events should not include:
 
 ## Eval And Regression Strategy
 
-The first test layer should be deterministic and frozen:
+The first test layer is deterministic and frozen:
 
 - malformed textual tool-call fixtures
 - stringified `submit_plan.edits`
 - wrapper prose around otherwise valid JSON
 - unsafe missing-tool edit payloads that must stay rejected
-- semantic intent that compiles to a valid plan
-- semantic intent that must block because source evidence is missing
-- stale anchor fixtures that must route to compiler refresh or blocker
+- semantic intent that compiles to a valid plan and still routes through
+  `submit_plan`
+- semantic intent that blocks because source evidence is missing
+- stale, missing, and duplicate anchor fixtures that must route to typed
+  compiler blockers
+- typed blocker-only artifacts that must not become empty plans
 
 The second layer should replay real failure logs after redaction:
 
@@ -473,74 +528,77 @@ fixtures pass. Live tests should assert:
 
 ### Slice 1: Distillation Design And Fixtures
 
-- Add frozen malformed-output fixture types and expected classifications.
-- Extend tests around the existing normalizer and `submit_plan` parser.
-- Add audit fields if current events cannot distinguish parse, distill, compile,
-  and validate stages.
-- Audit current missing-tool inference and ensure mutation-capable inference is
-  unavailable to malformed-output recovery unless the active typed contract
-  explicitly authorizes missing-tool inference for the exact tool and phase.
+- Done. Frozen malformed-output fixtures cover safe normalization and unsafe
+  boundary cases.
+- Done. Existing normalizer tests cover `submit_plan` parser repair boundaries.
+- Done. `harness_audit` aggregates parse, distill, compile, validate, and
+  recovery-exhaustion stage roles when logs contain those events.
+- Done. Mutation-capable missing-tool inference fails closed unless a future
+  typed phase explicitly authorizes it for the exact tool.
 
 ### Slice 2: `edit_intent.v1`
 
-- Define the schema and Go types in a pure handoff package, not in
+- Done. The schema and Go types live in a pure handoff package, not in
   `internal/agent` and not as the primary domain model of `internal/workspace`.
-  A package such as `internal/planintent` should be usable by agent
+  `internal/planintent` is usable by agent
   orchestration, CLI fixtures, compiler code, and tests without importing model
   runtime concerns.
-- Add deterministic validation for scope, operation enum, evidence refs, and
+- Done. Deterministic validation covers scope, operation enum, evidence refs, and
   blockers.
-- Add docs and examples for planner terminal output.
-- Validate that required paths are copied from the active contract and
+- Done. Required paths are validated as a copy of the active contract and
   candidate paths have accepted provenance.
 
 ### Slice 3: Deterministic Compiler MVP
 
-- Compile `replace_exact_text`, `insert_after_line_anchor`, and `add_new_file`
-  into `PlanEdit`.
-- Validate with current `submit_plan` preflight.
-- Return typed failures instead of prose.
-- Keep code-body synthesis out of the compiler MVP. If later needed, add a
+- Done. `replace_exact_text`, `insert_after_line_anchor`, and `add_new_file`
+  compile into `PlanEdit`.
+- Done. Candidate edits are validated with current `submit_plan` preflight.
+- Done. Compiler failures are typed.
+- Done. Code-body synthesis stays out of the compiler MVP. If later needed, add a
   separate actor and contract for candidate body synthesis.
 
 ### Slice 4: Artifact Distiller Role
 
-- Add a distinct role/config path for artifact distillation.
-- Run it only after deterministic normalizer failure or rejected executable
-  artifact with recoverable semantic intent.
-- Validate all outputs against `edit_intent.v1`.
+- Done. A distinct `artifact_distiller` runtime family and capability profile
+  define the no-tool/no-write contract.
+- Not auto-invoked. The role is available for a future recovery controller, but
+  this implementation keeps the first lifecycle deterministic.
+- Done at the bridge boundary: every `edit_intent.v1` artifact is validated
+  before compilation.
 
 ### Slice 5: Constrained Decoding
 
-- Add backend capability detection for strict schema or grammar-constrained
-  generation.
-- Prefer schema-constrained output for terminal planner/distiller/compiler
-  calls where available.
-- Keep JSON mode as fallback with validation and typed retry.
+- Done. Backend structured-output capability reporting is explicit and logged.
+- No current backend claims strict schema or grammar enforcement, so no caller
+  prefers those modes yet.
+- Done. JSON-object mode remains a transport aid followed by local validation.
 
 ### Slice 6: Plan-Execute Integration
 
-- Let plan-execute terminal readiness accept either a valid `submit_plan`,
+- Done. Plan-execute terminal readiness accepts either a valid `submit_plan`,
   source-satisfied closeout, blocker, or valid `edit_intent.v1` as
   non-executable input routed to the compiler.
-- Ensure the executor still receives only a valid `PlanArtifact`.
-- Update live contracts for the repeated `submit_plan` failure classes.
+- Done. The executor still receives only a valid `PlanArtifact`; compiled
+  intent first becomes candidate `PlanEdit` values and then goes through the
+  existing `submit_plan` path.
+- Done for deterministic tests and telemetry naming. Live recovery-controller
+  routing remains a future use of the new stage events.
 
 ### Slice 7: Documentation And Architecture Diagrams
 
-- Update roadmap and pillar docs that describe plan-execute, auditable handoff,
+- Done. Roadmap and operator docs describe plan-execute, auditable handoff,
   local-model operations, recovery, evals, and tool-call transport so they
   reflect the final implemented lifecycle.
-- Update architecture diagrams that show planner-to-executor handoff,
+- Done. Architecture diagrams show planner-to-executor handoff,
   `submit_plan` flow, recovery routing, runtime roles, or malformed-output
   handling.
-- Add or update operator-facing docs for the new failure states, artifact
-  names, telemetry events, and recovery behavior.
-- Keep examples schema-accurate with the implemented `edit_intent.v1`,
+- Done. Operator-facing docs cover the artifact name, failure states,
+  telemetry events, and recovery behavior.
+- Done. Examples are schema-accurate with the implemented `edit_intent.v1`,
   compiler candidate, and validated `PlanArtifact` shapes.
-- Treat documentation drift as an implementation blocker: the feature is not
-  complete until docs, diagrams, tests, telemetry names, and code terminology
-  agree.
+- Done. Documentation drift is treated as an implementation blocker: the
+  feature is not complete until docs, diagrams, tests, telemetry names, and
+  code terminology agree.
 
 ## North-Star Fit
 
@@ -560,13 +618,16 @@ artifact. The guardrail is to keep the first implementation deterministic:
 normalizer, schema, intent validation, compiler, and fixtures before adding a
 model-based distiller.
 
-## Open Questions
+## Remaining Boundaries
 
-- Which local backend path can enforce JSON Schema or GBNF today without
-  destabilizing MLX textual tool mode?
-- Which operation vocabulary is sufficient for the first useful slice without
-  becoming another patch language?
-- If a later code-body synthesis actor is added, what contract, telemetry, and
-  validation boundary would keep it from becoming a hidden executor?
-- How should recovery packets represent a distilled but uncompiled intent so a
-  human can inspect it without raw transcript leakage?
+- No current backend adapter claims strict JSON Schema or grammar-constrained
+  enforcement. Adding one requires a capability-backed transport change and
+  tests that prove schema adherence.
+- The v1 operation vocabulary is intentionally larger than the deterministic
+  compiler MVP. Unsupported operations validate as vocabulary but compile to a
+  typed `unsupported_operation` blocker until the compiler owns them.
+- Any future model-based code-body synthesis actor must be separate from the
+  deterministic compiler and still produce candidate artifacts only.
+- Recovery packets should continue to represent distilled intent through
+  bounded schema fields, path counts, evidence refs, and artifact IDs, not raw
+  transcript or file-body content.

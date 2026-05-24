@@ -16,6 +16,7 @@ const (
 	CapabilityLocateOnly            ToolCapabilityProfile = "locate_only"
 	CapabilityPlanSubmissionPlanner ToolCapabilityProfile = "plan_submission_planner"
 	CapabilityPlanSubmissionReview  ToolCapabilityProfile = "plan_submission_review"
+	CapabilityArtifactDistiller     ToolCapabilityProfile = "artifact_distiller"
 	CapabilityGuardedWrite          ToolCapabilityProfile = "guarded_write"
 	CapabilityIsolatedWrite         ToolCapabilityProfile = "isolated_write"
 )
@@ -35,7 +36,10 @@ type RuntimeContractSpec struct {
 	FinalCritic          []string
 }
 
-const ArtifactFinalAnswerTaskFamily = "artifact_final_answer"
+const (
+	ArtifactFinalAnswerTaskFamily = "artifact_final_answer"
+	ArtifactDistillerTaskFamily   = "artifact_distiller"
+)
 
 func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 	switch strings.TrimSpace(family) {
@@ -50,6 +54,18 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			VerificationContract: "not_required_for_artifact_final_answer",
 			StopConditions:       []string{"artifact_body_returned", "blocked_by_missing_information"},
 			FinalCritic:          []string{"artifact_body_only_or_typed_blocker", "no_tool_calls"},
+		}
+	case ArtifactDistillerTaskFamily:
+		return RuntimeContractSpec{
+			TaskFamily:           ArtifactDistillerTaskFamily,
+			Contract:             "edit_intent_distillation",
+			PermissionProfile:    "conversation_only",
+			ToolProfile:          CapabilityArtifactDistiller,
+			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), "task", "task_ledger", "shell", "submit_plan"), readOnlyDiscoveryToolNames()...),
+			RequiredEvidence:     []string{"raw_output_parser_failure", "active_mutation_contract", "required_edit_scope"},
+			VerificationContract: "not_required_for_non_executable_artifact",
+			StopConditions:       []string{"edit_intent_v1_or_typed_blocker"},
+			FinalCritic:          []string{"outputs_only_edit_intent_or_typed_blocker", "no_tool_calls", "no_write_authority", "no_submit_plan"},
 		}
 	case "conversation", "direct_question":
 		return RuntimeContractSpec{
@@ -270,6 +286,11 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 		brief.AllowedTools = nil
 		brief.ToolManifest = nil
 	}
+	if spec.ToolProfile == CapabilityArtifactDistiller {
+		brief.AllowedTools = nil
+		brief.RequiredTools = nil
+		brief.ToolManifest = nil
+	}
 	if spec.PermissionProfile == "read_only_workspace" {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})
 	}
@@ -295,6 +316,8 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 		return nil
 	}
 	switch profile {
+	case CapabilityArtifactDistiller:
+		return nil
 	case CapabilityDebugLogInvestigator:
 		return filterAllowedTools(available, profile, "search_files", "search_content", "read_file")
 	case CapabilityVerificationOnly:
@@ -337,7 +360,7 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 		opts.IncludePlanThenExecute = true
 	case CapabilityReadOnlyDiscovery, CapabilityConversationReadOnly:
 		opts.IncludeTask = true
-	case CapabilityVerificationOnly, CapabilityLocateOnly, CapabilityDebugLogInvestigator:
+	case CapabilityVerificationOnly, CapabilityLocateOnly, CapabilityDebugLogInvestigator, CapabilityArtifactDistiller:
 		// no extra options
 	}
 	return opts
@@ -499,7 +522,7 @@ func filterAllowedTools(available []string, profile ToolCapabilityProfile, names
 
 func capabilityProfileAllowsExternalTools(profile ToolCapabilityProfile) bool {
 	switch profile {
-	case CapabilityDebugLogInvestigator, CapabilityVerificationOnly, CapabilityPlanSubmissionReview:
+	case CapabilityDebugLogInvestigator, CapabilityVerificationOnly, CapabilityPlanSubmissionReview, CapabilityArtifactDistiller:
 		return false
 	default:
 		return true

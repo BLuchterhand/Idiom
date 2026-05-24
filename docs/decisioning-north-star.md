@@ -200,6 +200,13 @@ recovery retry adds a new obligation, store it in the typed contract and progres
 state before the next model call; do not rely on the retry addendum to be
 rediscovered later.
 
+Malformed structured output follows the same rule. `idiom.edit_intent.v1` is a
+non-executable handoff artifact: it may preserve model strategy after JSON or
+`submit_plan` serialization failure, but it cannot widen scope, claim source
+evidence, or authorize mutation. The harness must validate the artifact,
+compile only candidate edits, and then route those candidates through the
+existing `submit_plan` validation/preflight boundary before execution.
+
 ## Git History As Decision Evidence
 
 Repository history is part of Idiom's memory substrate. Before changing,

@@ -741,6 +741,15 @@ served from the cache instead of being recomputed; the planner's `pack_id`
 travels through `submit_plan` so the executor phase can rehydrate the same
 view via `comprehension.LoadViewByID(root, pack_id)`.
 
+Malformed planner output is handled as non-executable handoff, not as a weaker
+write gate. Exact JSON or exact fenced `idiom.edit_intent.v1` artifacts may be
+validated against the active runtime brief and deterministically compiled into
+candidate `workspace.PlanEdit` values, but those candidates still pass through
+the normal `submit_plan` validation/preflight boundary before the executor can
+receive a plan. The `artifact_distiller` runtime role is tool-free and
+no-write; it exists to produce typed intent or blockers, never direct
+`submit_plan` authority.
+
 Invalidation is path-aware. Scoped `context build --refresh` marks stale
 only the rows whose referenced files changed; full rebuilds blanket-stale
 the table. `idiom tool harness_audit --input '{"purpose":"behavior"}'`

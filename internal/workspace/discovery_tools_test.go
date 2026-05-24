@@ -1728,6 +1728,48 @@ func TestHarnessAuditBehaviorScansLogs(t *testing.T) {
 	}
 }
 
+func TestHarnessAuditBehaviorSummarizesMalformedOutputStages(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "malformed.jsonl")
+	writeWorkspaceFile(t, logPath, strings.Join([]string{
+		`{"type":"run_event","role":"tool_request_normalizer","content":"{\"outcome\":\"unsafe_to_infer\",\"parser_failure_class\":\"missing_tool\"}"}`,
+		`{"type":"run_event","role":"edit_intent_validated","content":"{\"schema_version\":\"idiom.edit_intent.v1\",\"validation_result\":\"accepted\"}"}`,
+		`{"type":"run_event","role":"patch_compile_result","content":"{\"compile_outcome\":\"rejected\",\"failure_class\":\"non_unique_anchor\"}"}`,
+		`{"type":"message","role":"malformed_output_recovery_exhausted","content":"{\"recovery_outcome\":\"exhausted\",\"failure_class\":\"parser_failure_budget\"}"}`,
+		"",
+	}, "\n"))
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "harness_audit", Purpose: "behavior", Path: "logs/telemetry", Limit: 5})
+	if result.Error != "" {
+		t.Fatalf("harness_audit returned error: %v\n%s", result.Error, result.Output)
+	}
+	var report harnessAuditReport
+	if err := json.Unmarshal([]byte(result.Output), &report); err != nil {
+		t.Fatalf("decode audit report: %v\n%s", err, result.Output)
+	}
+	stages := report.LogBehavior.MalformedOutput
+	if stages == nil {
+		t.Fatalf("expected malformed output stage summary, got %#v", report.LogBehavior)
+	}
+	if stages.LogsHit != 1 ||
+		stages.EventCounts["tool_request_normalizer"] != 1 ||
+		stages.EventCounts["edit_intent_validated"] != 1 ||
+		stages.EventCounts["patch_compile_result"] != 1 ||
+		stages.EventCounts["malformed_output_recovery_exhausted"] != 1 ||
+		stages.ValidationResultCounts["accepted"] != 1 ||
+		stages.FailureClassCounts["non_unique_anchor"] != 1 ||
+		stages.CompileOutcomeCounts["rejected"] != 1 ||
+		stages.CompileOutcomeCounts["unsafe_to_infer"] != 0 ||
+		stages.RecoveryOutcomeCounts["exhausted"] != 1 ||
+		stages.SchemaVersionCounts["idiom.edit_intent.v1"] != 1 {
+		t.Fatalf("unexpected malformed output stage summary: %#v", stages)
+	}
+	if strings.Contains(result.Output, "old_text") || strings.Contains(result.Output, "raw transcript") {
+		t.Fatalf("malformed output audit should expose counts, not raw payload bodies: %s", result.Output)
+	}
+}
+
 func TestHarnessAuditBehaviorRedactsWorstOffenderPrompts(t *testing.T) {
 	root := t.TempDir()
 	logPath := filepath.Join(root, "logs", "conversations", "session.jsonl")

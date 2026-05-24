@@ -233,6 +233,18 @@ func TestPlanExecuteRuntimeModelCallTelemetryIsBounded(t *testing.T) {
 	if got, ok := payload["chat_template_kwargs"].(bool); !ok || !got {
 		t.Fatalf("chat_template_kwargs = %#v, want true", payload["chat_template_kwargs"])
 	}
+	for _, key := range []string{
+		"backend_capability_native_tools",
+		"backend_capability_json_object",
+		"backend_capability_strict_json_schema",
+		"backend_capability_grammar",
+		"backend_capability_thinking_controls",
+		"backend_capability_request_timeout_telemetry",
+	} {
+		if _, ok := payload[key].(bool); !ok {
+			t.Fatalf("model_call telemetry missing boolean backend capability %q in %#v", key, payload)
+		}
+	}
 	if strings.Contains(event.Content, "/private/models") {
 		t.Fatalf("model_call telemetry leaked raw model path: %s", event.Content)
 	}

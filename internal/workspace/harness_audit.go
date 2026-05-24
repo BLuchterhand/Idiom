@@ -211,9 +211,20 @@ type harnessAuditLogBehavior struct {
 	TopPatterns        []eval.PerfPatternHit           `json:"top_patterns,omitempty"`
 	TopTools           []eval.PerfToolMix              `json:"top_tools,omitempty"`
 	WorstOffenders     []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
+	MalformedOutput    *harnessAuditMalformedOutput    `json:"malformed_output,omitempty"`
 	LaneHistory        *harnessAuditLaneHistory        `json:"lane_history,omitempty"`
 	InProgressSessions []harnessAuditInProgressSession `json:"in_progress_sessions,omitempty"`
 	IncompleteSessions []harnessAuditIncompleteSession `json:"incomplete_sessions,omitempty"`
+}
+
+type harnessAuditMalformedOutput struct {
+	LogsHit                int            `json:"logs_hit,omitempty"`
+	EventCounts            map[string]int `json:"event_counts,omitempty"`
+	ValidationResultCounts map[string]int `json:"validation_result_counts,omitempty"`
+	FailureClassCounts     map[string]int `json:"failure_class_counts,omitempty"`
+	CompileOutcomeCounts   map[string]int `json:"compile_outcome_counts,omitempty"`
+	RecoveryOutcomeCounts  map[string]int `json:"recovery_outcome_counts,omitempty"`
+	SchemaVersionCounts    map[string]int `json:"schema_version_counts,omitempty"`
 }
 
 type harnessAuditLaneHistory struct {
@@ -773,6 +784,10 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	warnings = append(warnings, lifecycleWarnings...)
 	contractCoverage, contractWarnings := m.auditContractEventCoverage(paths)
 	warnings = append(warnings, contractWarnings...)
+	malformedOutput, malformedWarnings := auditMalformedOutputStages(paths)
+	for _, warning := range malformedWarnings {
+		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
+	}
 	aggregate := eval.Aggregate(reports)
 	behavior := &harnessAuditLogBehavior{
 		LogLimit:           limit,
@@ -784,6 +799,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		TopPatterns:        firstAuditPatterns(aggregate.PatternHitRate, 8),
 		TopTools:           firstAuditTools(aggregate.ToolMix, 10),
 		WorstOffenders:     aggregate.WorstOffenders,
+		MalformedOutput:    malformedOutput,
 		LaneHistory:        buildHarnessAuditLaneHistory(m.cfg.Root, 8),
 		InProgressSessions: inProgressSessions,
 		IncompleteSessions: incompleteSessions,
@@ -791,6 +807,145 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 	findings := logBehaviorFindings(aggregate, incompleteSessions)
 	findings = append(findings, contractCoverageWarningFindings(contractWarnings)...)
 	return behavior, contractCoverage, findings, logBehaviorQuestions(aggregate), nil
+}
+
+var malformedOutputAuditRoles = map[string]struct{}{
+	"tool_request_normalizer":             {},
+	"malformed_output_detected":           {},
+	"artifact_distillation_started":       {},
+	"artifact_distillation_result":        {},
+	"edit_intent_validated":               {},
+	"patch_compile_started":               {},
+	"patch_compile_result":                {},
+	"executable_artifact_validated":       {},
+	"malformed_output_recovery_exhausted": {},
+}
+
+func auditMalformedOutputStages(paths []string) (*harnessAuditMalformedOutput, []string) {
+	out := &harnessAuditMalformedOutput{
+		EventCounts:            map[string]int{},
+		ValidationResultCounts: map[string]int{},
+		FailureClassCounts:     map[string]int{},
+		CompileOutcomeCounts:   map[string]int{},
+		RecoveryOutcomeCounts:  map[string]int{},
+		SchemaVersionCounts:    map[string]int{},
+	}
+	var warnings []string
+	logsHit := map[string]struct{}{}
+	for _, path := range paths {
+		body, err := os.ReadFile(path)
+		if err != nil {
+			warnings = append(warnings, fmt.Sprintf("%s: %v", filepath.Base(path), err))
+			continue
+		}
+		for _, line := range strings.Split(string(body), "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			role, content, ok := auditRunEventRoleAndContent([]byte(line))
+			if !ok {
+				continue
+			}
+			if _, tracked := malformedOutputAuditRoles[role]; !tracked {
+				continue
+			}
+			out.EventCounts[role]++
+			logsHit[path] = struct{}{}
+			auditMalformedOutputContent(out, role, content)
+		}
+	}
+	out.LogsHit = len(logsHit)
+	if out.LogsHit == 0 {
+		return nil, warnings
+	}
+	pruneEmptyAuditCounts(out)
+	return out, warnings
+}
+
+func auditRunEventRoleAndContent(line []byte) (string, string, bool) {
+	var row map[string]any
+	if err := json.Unmarshal(line, &row); err != nil {
+		return "", "", false
+	}
+	role := auditString(row["role"])
+	content := auditString(row["content"])
+	if role == "" {
+		if data, ok := row["data"].(map[string]any); ok {
+			role = auditString(data["role"])
+			content = auditString(data["content"])
+		}
+	}
+	if role == "" {
+		return "", "", false
+	}
+	return role, content, true
+}
+
+func auditMalformedOutputContent(out *harnessAuditMalformedOutput, role string, content string) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(content), &payload); err != nil {
+		return
+	}
+	validationKeys := []string{"validation_result"}
+	if role == "edit_intent_validated" {
+		validationKeys = append(validationKeys, "result")
+	}
+	for _, key := range validationKeys {
+		if value := auditString(payload[key]); value != "" {
+			out.ValidationResultCounts[value]++
+			break
+		}
+	}
+	for _, key := range []string{"failure_class", "parser_failure_class", "error_code"} {
+		if value := auditString(payload[key]); value != "" {
+			out.FailureClassCounts[value]++
+			break
+		}
+	}
+	if role == "patch_compile_started" || role == "patch_compile_result" {
+		if value := auditString(payload["compile_outcome"]); value != "" {
+			out.CompileOutcomeCounts[value]++
+		}
+	}
+	if role == "malformed_output_recovery_exhausted" {
+		if value := auditString(payload["recovery_outcome"]); value != "" {
+			out.RecoveryOutcomeCounts[value]++
+		}
+	}
+	if value := auditString(payload["schema_version"]); value != "" {
+		out.SchemaVersionCounts[value]++
+	}
+}
+
+func auditString(value any) string {
+	s, _ := value.(string)
+	return strings.TrimSpace(s)
+}
+
+func pruneEmptyAuditCounts(out *harnessAuditMalformedOutput) {
+	if len(out.EventCounts) == 0 {
+		out.EventCounts = nil
+	}
+	if len(out.ValidationResultCounts) == 0 {
+		out.ValidationResultCounts = nil
+	}
+	if len(out.FailureClassCounts) == 0 {
+		out.FailureClassCounts = nil
+	}
+	if len(out.CompileOutcomeCounts) == 0 {
+		out.CompileOutcomeCounts = nil
+	}
+	if len(out.RecoveryOutcomeCounts) == 0 {
+		out.RecoveryOutcomeCounts = nil
+	}
+	if len(out.SchemaVersionCounts) == 0 {
+		out.SchemaVersionCounts = nil
+	}
 }
 
 func buildHarnessAuditLaneHistory(root string, recentLimit int) *harnessAuditLaneHistory {

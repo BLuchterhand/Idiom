@@ -259,6 +259,36 @@ func BackendSupportsNativeTools(backend string) bool {
 	}
 }
 
+// StructuredOutputCapabilities is an explicit capability report for the
+// backend features Idiom can rely on for contract-shaped outputs. It is
+// intentionally conservative: unsupported strict schema or grammar fields stay
+// false until a backend adapter enforces them.
+type StructuredOutputCapabilities struct {
+	NativeTools             bool `json:"native_tools"`
+	JSONObject              bool `json:"json_object"`
+	StrictJSONSchema        bool `json:"strict_json_schema"`
+	Grammar                 bool `json:"grammar"`
+	ThinkingControls        bool `json:"thinking_controls"`
+	RequestTimeoutTelemetry bool `json:"request_timeout_telemetry"`
+}
+
+func BackendStructuredOutputCapabilities(backend string) StructuredOutputCapabilities {
+	kind := strings.ToLower(strings.TrimSpace(backend))
+	caps := StructuredOutputCapabilities{
+		NativeTools: BackendSupportsNativeTools(kind),
+		JSONObject:  true,
+	}
+	switch kind {
+	case "", config.BackendLlama:
+		caps.ThinkingControls = true
+	case config.BackendMLX:
+		caps.ThinkingControls = true
+	case config.BackendZAI:
+		caps.ThinkingControls = true
+	}
+	return caps
+}
+
 func isOpenAIResponsesBackend(backend string) bool {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
 	case config.BackendOpenAIResponses, config.BackendCodex:
