@@ -217,7 +217,8 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	body, _ := json.MarshalIndent(atom.FeatureAtomPlan, "", "  ")
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement one feature atom from feature plan %q.\n", plan.Summary)
-	b.WriteString("You may answer with JSON {\"tool\":\"question_for_planner\",...} when blocked, or with Decision: source-satisfied when no edit is required, or with a concise completion report.\n")
+	b.WriteString("You may answer with JSON {\"tool\":\"question_for_planner\",...} when blocked, or with Decision: source-satisfied when no edit is required.\n")
+	b.WriteString("Do not claim files were edited or tests were run unless those effects were produced by tool-backed execution visible to the harness; unsupported edit/test claims are rejected as recovery-open.\n")
 	b.WriteString("TDD baseline commands that must exist before execution:\n")
 	for _, command := range atom.TestFirst.Commands {
 		fmt.Fprintf(&b, "- %s\n", command)
@@ -312,6 +313,9 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			}},
 		}}
 	}
+	if claimsUnverifiedEditOrTestEvidence(trimmed) {
+		return rejectUnverifiedCompletion(state, atom, "implementor claimed edit/test evidence that was not observed by the feature-planner harness")
+	}
 	atomFrom := atom.State
 	atom.State = AtomStateComplete
 	atom.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -338,6 +342,68 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			AfterState:    AtomStateComplete,
 		}},
 	}}
+}
+
+func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, reason string) []Event {
+	atomFrom := atom.State
+	featureFrom := state.Status
+	atom.State = AtomStateRecoveryOpen
+	atom.Blockers = appendUnique(atom.Blockers, reason)
+	state.Status = FeatureStateRecoveryOpen
+	state.Blockers = appendUnique(state.Blockers, reason)
+	state.Continuation.BlockedAtoms = appendUnique(state.Continuation.BlockedAtoms, atom.ID)
+	state.Continuation.ResumeAtomID = atom.ID
+	state.Continuation.ResumeAction = "repair_unverified_completion"
+	state.Continuation.ResumeReason = reason
+	foldActiveRun(state, atom.ID, atom.LastRunID)
+	return []Event{{
+		Type:        "idiom.feature_planner.unverified_completion_rejected",
+		SessionID:   state.SessionID,
+		FeatureFrom: featureFrom,
+		FeatureTo:   FeatureStateRecoveryOpen,
+		AtomID:      atom.ID,
+		AtomFrom:    atomFrom,
+		AtomTo:      AtomStateRecoveryOpen,
+		AtomDeltas:  []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateRecoveryOpen}},
+		ActiveRunDeltas: []ActiveRunDelta{{
+			Op:            "fold_terminal",
+			AtomID:        atom.ID,
+			LaneSessionID: atom.LastRunID,
+			BeforeState:   "running",
+			AfterState:    AtomStateRecoveryOpen,
+		}},
+		Message: reason,
+	}}
+}
+
+func claimsUnverifiedEditOrTestEvidence(raw string) bool {
+	lower := strings.ToLower(raw)
+	for _, marker := range []string{
+		"paths edited",
+		"path edited",
+		"files edited",
+		"file edited",
+		"changed paths",
+		"modified files",
+		"code artifacts",
+		"tests authored",
+		"test artifacts",
+		"test-first execution",
+		"verification",
+		"passes locally",
+		"passed locally",
+		"go test ",
+		"go test ./",
+		"cargo test",
+		"npm test",
+		"pnpm test",
+		"yarn test",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func MissingPreDispatchTDD(state FeatureState, atom FeatureAtomState) []string {

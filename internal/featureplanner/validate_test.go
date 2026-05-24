@@ -35,6 +35,22 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 	}
 }
 
+func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
+	plan := validPlan()
+	prompt := BuildImplementorPrompt(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan)
+
+	for _, want := range []string{
+		`question_for_planner`,
+		`Decision: source-satisfied`,
+		`Do not claim files were edited or tests were run`,
+		`unsupported edit/test claims are rejected as recovery-open`,
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("implementor prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestApplyPlannerOutputAcceptsPlanAndQueuesAtoms(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	parsed := ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}
@@ -209,7 +225,7 @@ func TestRunKeepsImplementorQuestionAsPlannerRepairState(t *testing.T) {
 	}
 }
 
-func TestImplementorAtomJSONDoesNotOpenPlannerQuestion(t *testing.T) {
+func TestImplementorAtomJSONDoesNotOpenPlannerQuestionOrComplete(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 	atom := &state.Atoms[0]
@@ -228,11 +244,60 @@ func TestImplementorAtomJSONDoesNotOpenPlannerQuestion(t *testing.T) {
 
 	events := ApplyImplementorOutput(&state, atom, string(raw))
 
-	if atom.State != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete; events=%+v", atom.State, events)
+	if atom.State != AtomStateRecoveryOpen {
+		t.Fatalf("atom state = %q, want recovery-open; events=%+v", atom.State, events)
 	}
 	if len(state.OpenQuestions) != 0 {
 		t.Fatalf("atom JSON should not open planner question: %+v", state.OpenQuestions)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.unverified_completion_rejected" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
+		t.Fatalf("atom JSON echo must not complete the atom: %+v", state.Continuation)
+	}
+}
+
+func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	state.Status = FeatureStateDispatching
+	state.ActiveRuns = []ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        atom.ID,
+		LaneSessionID: "atom-1-run-1",
+		State:         "running",
+	}}
+
+	events := ApplyImplementorOutput(&state, atom, `Implemented & TDD-verified.
+
+**Paths Edited**
+- internal/labels/labels.go
+- internal/labels/labels_test.go
+
+**Verification**
+- go test ./internal/labels/... passed locally`)
+
+	if atom.State != AtomStateRecoveryOpen {
+		t.Fatalf("atom state = %q, want recovery-open; events=%+v", atom.State, events)
+	}
+	if state.Status != FeatureStateRecoveryOpen {
+		t.Fatalf("feature status = %q, want recovery-open", state.Status)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.unverified_completion_rejected" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if len(state.ActiveRuns) != 0 {
+		t.Fatalf("active run should be folded after rejected completion: %+v", state.ActiveRuns)
+	}
+	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
+		t.Fatalf("rejected atom must not be recorded complete: %+v", state.Continuation)
+	}
+	if !containsString(state.Continuation.BlockedAtoms, atom.ID) {
+		t.Fatalf("rejected atom should be resumable as blocked: %+v", state.Continuation)
 	}
 }
 

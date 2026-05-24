@@ -421,9 +421,18 @@ def debug_log_completed():
     if not logs:
         return False
     try:
-        return "idiom.feature_planner.complete" in logs[-1].read_text(encoding="utf-8", errors="replace")
+        text = logs[-1].read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
+    terminal_roles = (
+        "idiom.feature_planner.complete",
+        "idiom.feature_planner.recovery_open",
+        "idiom.feature_planner.question_open",
+        "idiom.feature_planner.planning_stuck",
+        "idiom.feature_planner.failed",
+        "idiom.feature_planner.terminal",
+    )
+    return any(role in text for role in terminal_roles)
 
 try:
     while time.time() < deadline:

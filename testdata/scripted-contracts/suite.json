@@ -2021,6 +2021,70 @@
       }
     },
     {
+      "id": "scripted-feature-planner-tui-rejects-unverified-completion",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan a TUI feature-planner rejection smoke for unverified edit and test claims. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-rejects-unverified-completion",
+        "prompt_contains": [
+          "/feature-planner",
+          "unverified edit and test claims"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: recovery-open",
+          "atom-tui-unverified-completion",
+          "TDD-TUIUnverifiedCompletion",
+          "SDD-TUIUnverifiedCompletion",
+          "blockers:",
+          "not observed by the feature-planner harness"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "idiom.feature_planner.unverified_completion_rejected",
+          "idiom.feature_planner.recovery_open",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
       "id": "scripted-feature-planner-tui-state",
       "family": "feature_planner",
       "runner_mode": "tui",

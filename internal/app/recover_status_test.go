@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 
 	"idiom/internal/config"
+	"idiom/internal/featureplanner"
 	"idiom/internal/recoverstatus"
 	"idiom/internal/recovery"
 	"idiom/internal/workspace"
@@ -160,6 +161,22 @@ func TestFeaturePlannerSlashCommandRequiresObjective(t *testing.T) {
 	}
 	if model.status != "Usage: /feature-planner <objective>" {
 		t.Fatalf("status = %q", model.status)
+	}
+}
+
+func TestFeaturePlannerTUITerminalRoleReflectsStatus(t *testing.T) {
+	cases := map[string]string{
+		featureplanner.FeatureStateComplete:         "idiom.feature_planner.complete",
+		featureplanner.FeatureStateRecoveryOpen:     "idiom.feature_planner.recovery_open",
+		featureplanner.FeatureStatePlanningQuestion: "idiom.feature_planner.question_open",
+		featureplanner.FeatureStatePlanningStuck:    "idiom.feature_planner.planning_stuck",
+		featureplanner.FeatureStateFailed:           "idiom.feature_planner.failed",
+		featureplanner.FeatureStateDispatching:      "idiom.feature_planner.terminal",
+	}
+	for status, want := range cases {
+		if got := featurePlannerTUITerminalRole(status); got != want {
+			t.Fatalf("featurePlannerTUITerminalRole(%q) = %q, want %q", status, got, want)
+		}
 	}
 }
 

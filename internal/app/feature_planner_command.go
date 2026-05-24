@@ -56,7 +56,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		return "", err
 	}
 	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
-	m.logMessage("idiom.feature_planner.complete", answer)
+	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
 	return m.finishPromptOnceReply(answer), nil
 }
 
@@ -95,6 +95,23 @@ func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
 		return
 	}
 	m.logMessage(event.Type, string(body))
+}
+
+func featurePlannerTUITerminalRole(status string) string {
+	switch status {
+	case featureplanner.FeatureStateComplete:
+		return "idiom.feature_planner.complete"
+	case featureplanner.FeatureStateRecoveryOpen:
+		return "idiom.feature_planner.recovery_open"
+	case featureplanner.FeatureStatePlanningQuestion:
+		return "idiom.feature_planner.question_open"
+	case featureplanner.FeatureStatePlanningStuck:
+		return "idiom.feature_planner.planning_stuck"
+	case featureplanner.FeatureStateFailed:
+		return "idiom.feature_planner.failed"
+	default:
+		return "idiom.feature_planner.terminal"
+	}
 }
 
 func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath string) string {
