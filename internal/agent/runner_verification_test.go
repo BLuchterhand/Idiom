@@ -114,6 +114,56 @@ func TestRewriteVerificationShellReadToSourceSanityRequiresAllowedToolAndChanged
 	}
 }
 
+func TestPostWriteSourceSanityRedirectsInvalidVerificationPhaseTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	for _, req := range []workspace.ToolRequest{
+		{Tool: "read_file", Path: "internal/labels/labels.go"},
+		{Tool: "edit_file", Path: "internal/labels/labels.go", OldText: "Save changes", NewText: "Save"},
+	} {
+		redirected, ok := postWriteSourceSanityRedirect(req, brief, results, []string{"source_sanity", "shell"})
+		if !ok {
+			t.Fatalf("expected %s to redirect to source_sanity", req.Tool)
+		}
+		if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+			t.Fatalf("unexpected redirect for %s: %#v", req.Tool, redirected)
+		}
+	}
+}
+
+func TestPostWriteSourceSanityRedirectRequiresPendingSourceVerification(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	verified := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{Tool: "source_sanity", Summary: "source sanity passed"},
+	}
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		brief,
+		verified,
+		[]string{"source_sanity"},
+	); ok {
+		t.Fatal("must not redirect after source_sanity has already satisfied source verification")
+	}
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		brief,
+		[]workspace.ToolResult{{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"}},
+		[]string{"shell"},
+	); ok {
+		t.Fatal("must not redirect when source_sanity is not currently allowed")
+	}
+}
+
 func TestSourceVerificationDoesNotTreatIncidentalPathMentionAsVerificationException(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",

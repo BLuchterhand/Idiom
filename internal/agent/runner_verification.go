@@ -72,6 +72,25 @@ func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief
 	return workspace.ToolRequest{}, false
 }
 
+func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if !containsRunnerTool(allowedTools, "source_sanity") || !sourceEditsNeedSemanticVerification(brief, results) {
+		return workspace.ToolRequest{}, false
+	}
+	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == "source_sanity" {
+		return workspace.ToolRequest{}, false
+	}
+	switch strings.TrimSpace(req.Tool) {
+	case "read_file", "search_content", "search_files", "edit_file", "write_file", "append_file", "apply_patch":
+	default:
+		return workspace.ToolRequest{}, false
+	}
+	paths := changedSourcePaths(results)
+	if len(paths) == 0 {
+		return workspace.ToolRequest{}, false
+	}
+	return workspace.ToolRequest{Tool: "source_sanity", Path: paths[0]}, true
+}
+
 func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
 	if !sourceEditsAreSemanticallyVerified(brief, results) {
 		return "", false

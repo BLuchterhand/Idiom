@@ -630,6 +630,9 @@ func (r *Runner) Run(
 				} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRequiredPathRead(collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
 					r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing bounded read before another implementation attempt", req.Path)})
+				} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationEvidencePathRead(collectedResults); recovered {
+					req, raw, ok = recoveredReq, recoveredRaw, true
+					r.emitEvent(RunEvent{Role: "completion_recovery_auto_evidence_read", Content: fmt.Sprintf("completion recovery found single implementation evidence path %s; issuing bounded read before another implementation attempt", req.Path)})
 				} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryTargetRead(collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
 					r.emitEvent(RunEvent{Role: "completion_recovery_auto_target_read", Content: fmt.Sprintf("completion recovery found candidate target %s in the runtime brief; issuing bounded read before another plan attempt", req.Path)})
@@ -908,6 +911,10 @@ func (r *Runner) Run(
 			raw = redirectedRaw
 		}
 		currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		if workspace.IsWorkspaceWriteTool(req.Tool) && implementationTargetSourceWriteTargetsHaveEvidence(req, collectedResults) {
+			clearRejectedFingerprintSummary(requestBudget.fingerprint.rejected, currentFingerprint, "Write rejected before source-body evidence")
+			delete(rejectedActions, toolActionClass(req))
+		}
 		if !exactAnchorWriteOnlyActive {
 			decision := requestBudget.earlyRejectedFingerprintDecision(req, currentFingerprint)
 			if result, prompt, ok := r.mutationRejectedRetryWriteRecovery(decision, req, collectedResults); ok {
@@ -1274,7 +1281,25 @@ func (r *Runner) Run(
 		surfaceAllowedTools := runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools, r.RuntimeBrief, collectedResults, req)
 		if summary, errorText, reject := currentToolSurfaceRejection(req, surfaceAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
 			redirected := false
-			if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
+			if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
+				redirectedRaw := marshalToolRequestRaw(redirectedReq)
+				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+					"agent":          r.agentName(),
+					"original_tool":  strings.TrimSpace(req.Tool),
+					"rewritten_tool": strings.TrimSpace(redirectedReq.Tool),
+					"original_raw":   strings.TrimSpace(raw),
+					"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+					"reason":         "post_write_verification_requires_source_sanity",
+				}))
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: rewriteVisibilityNote(req.Tool, redirectedReq.Tool),
+				})
+				req = redirectedReq
+				raw = redirectedRaw
+				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+				redirected = true
+			} else if newFileSummary, newFileError, ok := unavailableRequiredNewFileProbeNudge(req, r.RuntimeBrief, r.Workspace); ok {
 				summary = newFileSummary
 				errorText = newFileError
 			} else if action, ok := r.planThenExecuteRequiredSourceSurfaceAction(req, collectedResults, surfaceAllowedTools); ok {
@@ -9025,6 +9050,37 @@ func (r *Runner) deterministicImplementationRequiredPathRead(results []workspace
 	return workspace.ToolRequest{}, "", false
 }
 
+func (r *Runner) deterministicImplementationEvidencePathRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if r == nil || r.planThenExecutePlannerPhase() || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	seen := map[string]struct{}{}
+	var paths []string
+	for _, path := range r.RuntimeBrief.EvidencePaths {
+		normalized := normalizeRunnerPath(path)
+		if normalized == "" || !recoverySearchPathLooksEditableSource(normalized) || alreadyReadPath(results, normalized) {
+			continue
+		}
+		if _, ok := seen[normalized]; ok {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		paths = append(paths, normalized)
+	}
+	if len(paths) != 1 {
+		return workspace.ToolRequest{}, "", false
+	}
+	req := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            paths[0],
+		StartLine:       1,
+		EndLine:         180,
+		NamedGap:        "exact current source needed before editing the implementation evidence path",
+		WhyNotAnswering: "need current source before the write",
+	}
+	return req, marshalToolRequestRaw(req), true
+}
+
 func (r *Runner) deterministicPlanExecuteOutlineFollowup(path string, results []workspace.ToolResult) (workspace.ToolRequest, bool) {
 	if !planThenExecutePathHasOutlineOnlyEvidence(path, results) {
 		return workspace.ToolRequest{}, false
@@ -14941,6 +14997,17 @@ func clearEvidenceFirstTargetReadActionClasses(rejectedActions map[string]int, b
 			continue
 		}
 		delete(rejectedActions, actionClass)
+	}
+}
+
+func clearRejectedFingerprintSummary(rejected map[string]string, fingerprint string, summary string) {
+	fingerprint = strings.TrimSpace(fingerprint)
+	summary = strings.TrimSpace(summary)
+	if fingerprint == "" || summary == "" || len(rejected) == 0 {
+		return
+	}
+	if strings.TrimSpace(rejected[fingerprint]) == summary {
+		delete(rejected, fingerprint)
 	}
 }
 

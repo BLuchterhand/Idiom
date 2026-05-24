@@ -20,6 +20,8 @@
       "typed-blocker",
       "recovery",
       "json-normalization",
+      "edit-intent",
+      "malformed-output",
       "classifier-routing",
       "ambiguous-question",
       "slash-command",
@@ -850,6 +852,76 @@
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "max_errors": 0,
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-edit-intent-v1",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\".\n\nrequired_edit_paths: internal/labels/labels.go\n\nWhen the planner is ready to submit, provide a non-executable idiom.edit_intent.v1 artifact instead of a submit_plan tool call. After the executor applies the compiled plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "edit-intent",
+        "malformed-output",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-edit-intent-v1",
+        "prompt_contains": [
+          "idiom.edit_intent.v1",
+          "required_edit_paths: internal/labels/labels.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.required_edit_paths_resolved",
+          "edit_intent_validated",
+          "patch_compile_started",
+          "patch_compile_result",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
         "max_duration_millis": 180000
       }
     },

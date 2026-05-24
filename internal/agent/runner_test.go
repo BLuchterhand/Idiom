@@ -8050,6 +8050,203 @@ func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
 	}
 }
 
+func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	edit := `{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`
+	replies := []string{
+		edit,
+		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":20,"named_gap":"confirm exact ShortLabel source before editing"}`,
+		edit,
+		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+		"Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := "Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed."
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var results []workspace.ToolResult
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "source_sanity"},
+			EvidencePaths:     []string{"internal/labels/labels.go"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update internal/labels/labels.go"}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
+		t.Fatalf("source-backed write retry must not be blocked as stale rejection, got %d events=%v", got, eventRolesFor(events))
+	}
+	seenInitialRejection := false
+	seenSourceSanity := false
+	for _, result := range results {
+		if result.Summary == "Write rejected before source-body evidence" {
+			seenInitialRejection = true
+		}
+		if result.Tool == "source_sanity" && strings.TrimSpace(result.Error) == "" {
+			seenSourceSanity = true
+		}
+	}
+	if !seenInitialRejection {
+		t.Fatal("expected first write to be rejected before source-body evidence")
+	}
+	if !seenSourceSanity {
+		t.Fatalf("expected source_sanity to run after accepted edit, results=%#v", results)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "internal/labels/labels.go"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(got), `return "Save"`) || strings.Contains(string(got), "Save changes") {
+		t.Fatalf("expected second write to execute after source-body evidence:\n%s", got)
+	}
+}
+
+func TestRunnerEmptyImplementationReplyAutoReadsSingleEvidencePath(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	replies := []string{
+		"",
+		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`,
+		`{"tool":"source_sanity","path":"internal/labels/labels.go"}`,
+		"Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reply := "Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed."
+		if requests < len(replies) {
+			reply = replies[requests]
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var results []workspace.ToolResult
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "source_sanity"},
+			EvidencePaths:     []string{"internal/labels/labels.go"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update internal/labels/labels.go"}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "completion_recovery_auto_evidence_read"); got != 1 {
+		t.Fatalf("expected one deterministic evidence read event, got %d events=%v", got, eventRolesFor(events))
+	}
+	for _, result := range results {
+		if result.Tool == "completion_gate" {
+			t.Fatalf("empty implementation reply should recover through a bounded read before completion-gate rejection, results=%#v", results)
+		}
+	}
+	if len(results) == 0 || results[0].Tool != "read_file" || results[0].Error != "" {
+		t.Fatalf("expected first tool result to be read_file evidence, got %#v", results)
+	}
+	got, err := os.ReadFile(filepath.Join(root, "internal/labels/labels.go"))
+	if err != nil {
+		t.Fatalf("read target: %v", err)
+	}
+	if !strings.Contains(string(got), `return "Save"`) || strings.Contains(string(got), "Save changes") {
+		t.Fatalf("expected source edit to complete after evidence recovery:\n%s", got)
+	}
+}
+
+func TestDeterministicImplementationEvidencePathReadRequiresSingleEvidencePath(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			EvidencePaths:     []string{"internal/labels/labels.go"},
+		},
+	}
+	req, _, ok := runner.deterministicImplementationEvidencePathRead(nil)
+	if !ok {
+		t.Fatal("expected single evidence path to produce a bounded read")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/labels/labels.go" || req.StartLine != 1 || req.EndLine != 180 {
+		t.Fatalf("unexpected read request: %#v", req)
+	}
+
+	runner.RuntimeBrief.EvidencePaths = []string{"internal/labels/labels.go", "internal/labels/labels_test.go"}
+	if _, _, ok := runner.deterministicImplementationEvidencePathRead(nil); ok {
+		t.Fatal("must not choose between multiple evidence paths")
+	}
+
+	runner.RuntimeBrief.TaskFamily = PlanThenExecutePlannerTaskFamily
+	runner.RuntimeBrief.EvidencePaths = []string{"internal/labels/labels.go"}
+	if _, _, ok := runner.deterministicImplementationEvidencePathRead(nil); ok {
+		t.Fatal("plan-execute planner target choice should stay with planner/capability contracts")
+	}
+}
+
 func TestRunnerSalvagesPathOnlyFileOutlineJSONMissingTool(t *testing.T) {
 	runner := &Runner{}
 	req, raw, ok := runner.salvageVisibleToolRequestFromProse(
