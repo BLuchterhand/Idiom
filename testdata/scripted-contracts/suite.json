@@ -2,12 +2,13 @@
   "name": "scripted-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 19,
+    "min_tasks": 24,
     "required_families": [
       "direct_question",
       "implementation",
       "verification_only",
-      "plan_then_execute_planner"
+      "plan_then_execute_planner",
+      "feature_planner"
     ],
     "required_tags": [
       "deterministic",
@@ -29,7 +30,12 @@
       "parse-recovery",
       "repeated-rejection",
       "empty-submit-plan",
-      "open-candidate"
+      "open-candidate",
+      "feature-planner",
+      "tui",
+      "tdd",
+      "sdd",
+      "baseline-blocker"
     ],
     "required_scenario_assertions": [
       "prompt_contains",
@@ -224,6 +230,61 @@
         "require_clean_rollback": true,
         "require_no_runner_rejections": true,
         "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-new-target-read-after-write-ready",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The first source file inspected may be a nearby test, but the final edit must be grounded in labels.go before it is applied.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-new-target-read-after-write-ready",
+        "prompt_contains": [
+          "first source file inspected may be a nearby test",
+          "grounded in labels.go"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "implementation_target_write_ready_source_refresh_allowed",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 1,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
@@ -863,6 +924,69 @@
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-classifier-tui-input-layout-tool-recovery",
+      "family": "implementation",
+      "runner_mode": "auto",
+      "prompt": "The user chat input shifts upwards on a new line, but it hides the top lines, only showing the most recent, bottom-most text in the prompt input. Fix the TUI input layout so wrapped prompts grow upward without clipping the earlier lines.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "go",
+        "implement",
+        "natural-language",
+        "classifier-routing",
+        "parse-recovery",
+        "rollback",
+        "tool-call-recovery"
+      ],
+      "env": {
+        "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
+      },
+      "fixture": "fixtures/tui-input-layout-repo",
+      "scenario": {
+        "name": "scripted-classifier-tui-input-layout-tool-recovery",
+        "prompt_contains": [
+          "chat input shifts upwards",
+          "wrapped prompts grow upward"
+        ],
+        "require_route_plan": {
+          "initial_lane": "implement",
+          "reason": "classifier_directive",
+          "contract": "implementation_result"
+        },
+        "require_changed_files": [
+          "internal/app/model_state.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "route_classifier_decision",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "code_navigate",
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/app/model_state.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -1719,6 +1843,241 @@
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tdd-sdd-atom-plan",
+      "family": "feature_planner",
+      "runner_mode": "feature-planner",
+      "prompt": "Plan a headless feature slice for the frozen label fixture. Produce a feature-planner atom plan that includes TDD and SDD atoms before implementation. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tdd",
+        "sdd",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tdd-sdd-atom-plan",
+        "prompt_contains": [
+          "feature-planner atom plan",
+          "TDD and SDD atoms"
+        ],
+        "final_assistant_contains": [
+          "TDD-ShortLabel",
+          "SDD-ShortLabel",
+          "atom-tdd-baseline",
+          "atom-sdd-contract",
+          "atom-short-label"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-question-loop-answer",
+      "family": "feature_planner",
+      "runner_mode": "feature-planner",
+      "turns": [
+        "Plan a feature for the frozen label fixture, but ask one question if the TDD baseline is ambiguous.",
+        "Use the current ShortLabel behavior as the TDD baseline and continue the plan."
+      ],
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tdd",
+        "multi-turn",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-question-loop-answer",
+        "prompt_contains": [
+          "continue the plan"
+        ],
+        "final_assistant_contains": [
+          "question:",
+          "atom-short-label"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.planner_question_opened",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_assistant_for_each_user": true,
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "min_user_turns": 2,
+        "min_assistant_turns": 2,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-missing-tdd-baseline-blocks-implementation",
+      "family": "feature_planner",
+      "runner_mode": "feature-planner",
+      "prompt": "Plan a feature slice for the frozen label fixture. The request asks for implementation first, but no TDD baseline exists. Block implementation until the TDD baseline is supplied.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tdd",
+        "baseline-blocker",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-missing-tdd-baseline-blocks-implementation",
+        "prompt_contains": [
+          "no TDD baseline exists",
+          "Block implementation"
+        ],
+        "final_assistant_contains": [
+          "blockers:",
+          "TDD"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_blocked",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-state",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan a TUI feature-planner smoke for the frozen label fixture. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-state",
+        "prompt_contains": [
+          "/feature-planner",
+          "TUI feature-planner smoke"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tui-feature-planner",
+          "TDD-TUIFeaturePlanner",
+          "SDD-TUIFeaturePlanner"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     }

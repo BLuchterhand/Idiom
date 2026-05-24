@@ -133,6 +133,16 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		}
 	}
 
+	if summary, errorText, prompt, force := r.conversationRepeatedBroadDiscoveryAfterGate(decision.Request, input.Results); force {
+		decision.RejectSummary = summary
+		decision.RejectError = errorText
+		decision.ForceAnswer = &runnerForcedAnswer{
+			Reason: "conversation_broad_discovery_sufficient",
+			Prompt: prompt,
+		}
+		return decision
+	}
+
 	if conversationEvidenceSatisfied(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
 		decision.RejectSummary = "Conversation contract rejected extra exploration after bounded evidence"
 		decision.RejectError = "the conversation lane already has enough bounded read/search evidence to answer. Return a concise, well formatted answer from the gathered evidence; name one exact uncertainty only if it materially affects the answer."
@@ -187,6 +197,76 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 	return decision
 }
 
+func (r *Runner) conversationRepeatedBroadDiscoveryAfterGate(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, force bool) {
+	if r == nil || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
+		!strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") ||
+		runnerBriefRequiresMutation(r.RuntimeBrief) ||
+		runnerVerificationRequired(r.RuntimeBrief) {
+		return "", "", "", false
+	}
+	if !conversationBroadLocalizationAfterCompletionGate(results) || !conversationBroadDiscoveryRequest(req) {
+		return "", "", "", false
+	}
+	summary = "Conversation contract rejected repeated broad discovery after bounded evidence"
+	errorText = "the conversation lane already spent its recovery probe on broad localization after a completion-gate miss. Answer from the gathered evidence now, or state one exact uncertainty; use a narrow source read only when a concrete missing claim requires it."
+	prompt = "The conversation lane already has bounded localization evidence after a completion-gate recovery. Tools are now disabled. Answer the user's actual follow-up directly from the gathered evidence and prior conversation context. Explain the mechanism in normal prose; do not return a path inventory, raw tool summary, budget note, or internal fallback text. If one exact claim remains unsupported, state that uncertainty at the end with the smallest useful next action."
+	return summary, errorText, prompt, true
+}
+
+func conversationBroadLocalizationAfterCompletionGate(results []workspace.ToolResult) bool {
+	afterGate := false
+	for _, result := range results {
+		tool := strings.TrimSpace(result.Tool)
+		if tool == "completion_gate" {
+			afterGate = true
+			continue
+		}
+		if !afterGate || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if conversationBroadDiscoveryToolResult(result) {
+			return true
+		}
+	}
+	return false
+}
+
+func conversationBroadDiscoveryToolResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
+		return false
+	}
+	switch strings.TrimSpace(result.Tool) {
+	case "context_pack", "context_query", "context_zoom", "context_impact", "discovery_query", "search_files", "search_content", "structural_search":
+		return true
+	default:
+		return false
+	}
+}
+
+func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case "context_pack", "context_query", "context_zoom", "context_impact", "discovery_query", "search_files", "structural_search":
+		return true
+	case "search_content":
+		path := strings.TrimSpace(req.Path)
+		return path == "" || path == "." || !pathparse.HasWorkspaceFileExtension(path)
+	default:
+		return false
+	}
+}
+
+func conversationBroadDiscoveryForceAnswerRecorded(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" {
+			continue
+		}
+		if strings.Contains(strings.ToLower(strings.TrimSpace(result.Summary)), "conversation contract rejected repeated broad discovery") {
+			return true
+		}
+	}
+	return false
+}
+
 func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") ||
 		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
@@ -218,7 +298,7 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 	if r == nil || strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
 		return workspace.ToolRequest{}, false
 	}
-	if len(results) > 0 || !prefersEarlyReadOnlyDelegation(r.RuntimeBrief) || strings.TrimSpace(req.Tool) == "task" || !isReadClassTool(req) {
+	if mainReadOnlyDelegationBootstrapEvidenceSeen(results) || !prefersEarlyReadOnlyDelegation(r.RuntimeBrief) || strings.TrimSpace(req.Tool) == "task" || !isReadClassTool(req) {
 		return workspace.ToolRequest{}, false
 	}
 	if !shouldDelegateMainReadOnlyBootstrapRequest(req) {
@@ -237,6 +317,22 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 		Mode:   "read_only",
 		Prompt: prompt,
 	}, true
+}
+
+func mainReadOnlyDelegationBootstrapEvidenceSeen(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		tool := strings.TrimSpace(result.Tool)
+		if tool == "" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if tool == "task" {
+			return true
+		}
+		if isReadClassTool(workspace.ToolRequest{Tool: tool}) && strings.TrimSpace(result.Output) != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func shouldDelegateMainReadOnlyBootstrapRequest(req workspace.ToolRequest) bool {

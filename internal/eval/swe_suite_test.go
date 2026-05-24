@@ -413,6 +413,15 @@ func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 	}
 }
 
+func TestValidSWERunnerModeAcceptsFeaturePlanner(t *testing.T) {
+	if !validSWERunnerMode("feature-planner") {
+		t.Fatal("feature-planner should be a valid SWE runner mode")
+	}
+	if !validSWERunnerMode("tui") {
+		t.Fatal("tui should be a valid SWE runner mode")
+	}
+}
+
 func TestValidateSWESuiteFixturesChecksRelativeExistingDirectories(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")

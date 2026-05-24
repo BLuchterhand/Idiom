@@ -456,6 +456,7 @@ func (r *Runner) Run(
 	// fingerprint in rejectedFingerprints — letting a later pre-execute
 	// guard short-circuit a byte-identical retry of a rejected call.
 	var currentFingerprint string
+	implementationTargetWriteReadySourceRefreshes := 0
 	controller := runnerTurnController{
 		runner:                     r,
 		ctx:                        ctx,
@@ -1005,6 +1006,7 @@ func (r *Runner) Run(
 			}
 			continue
 		}
+		recoveryReadAllowanceGrantedThisRequest := false
 		if summary, errorText, prompt, target, reject := r.scratchpadDeliverableCloseoutNonWriteRecovery(req, collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
@@ -1034,7 +1036,14 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "scratchpad_deliverable_source_discovery_recovery", Content: prompt})
 			continue
 		}
-		if summary, errorText, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
+		if r.implementationTargetWriteReadySourceReadAllowed(req, collectedResults, implementationTargetWriteReadySourceRefreshes) {
+			recoveryReadAllowanceGrantedThisRequest = true
+			implementationTargetWriteReadySourceRefreshes++
+			r.emitEvent(RunEvent{
+				Role:    "implementation_target_write_ready_source_refresh_allowed",
+				Content: fmt.Sprintf("allowed one bounded %s source expansion on target path %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(req.Path)),
+			})
+		} else if summary, errorText, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
 			result := workspace.ToolResult{
 				Tool:    req.Tool,
 				Summary: summary,
@@ -1117,7 +1126,6 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "context_pack_read_recovery", Content: prompt})
 			continue
 		}
-		recoveryReadAllowanceGrantedThisRequest := false
 		if deterministicPlanExecuteEvidenceRead {
 			recoveryReadAllowanceGrantedThisRequest = true
 			r.emitEvent(RunEvent{
@@ -2021,8 +2029,7 @@ func (r *Runner) Run(
 			if strings.TrimSpace(result.Error) == "" &&
 				strings.TrimSpace(r.RuntimeBrief.Contract) == "architecture_assessment" &&
 				questionPresentationBlock(r.RuntimeBrief.Objective) != "" &&
-				!runnerBriefRequiresMutation(r.RuntimeBrief) &&
-				postChildPacketActive {
+				!runnerBriefRequiresMutation(r.RuntimeBrief) {
 				if answer, ok := synthesizeDelegatedReadOnlyAnswer(r.RuntimeBrief.Objective, collectedResults); ok {
 					return finish(answer, nil, "child_packet_synthesized_answer", false)
 				}
@@ -8792,7 +8799,7 @@ func visibleCodeNavigateCapability(value string) bool {
 		"workspace_symbol", "workspace_symbols", "find_symbol_workspace",
 		"read_symbol", "inspect_symbol", "symbol_body",
 		"definition", "declaration", "goto_definition", "go_to_definition",
-		"references", "usages",
+		"references", "reference", "usages", "find_references", "find_reference",
 		"calls_from", "callees",
 		"calls_into", "callers",
 		"implementations", "implementation", "impls",
@@ -10188,7 +10195,7 @@ func (r *Runner) planThenExecuteLoopBudgetRecoveryPrompt(req workspace.ToolReque
 	if reason == "" {
 		reason = fmt.Sprintf("%s repeated without advancing the planner contract", tool)
 	}
-	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) == 0 && !planThenExecuteCandidateSourceBudgetExhausted(r.RuntimeBrief, results) {
+	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) == 0 {
 		if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(r.RuntimeBrief, results, 8); len(unread) > 0 {
 			read := sortedRunnerPathKeys(readPathsFromResults(results))
 			lead := fmt.Sprintf("The repeated %s request hit the loop budget: %s. Do not repeat that request.", tool, reason)
@@ -10537,11 +10544,11 @@ func concreteSourceEvidenceAlreadyRead(results []workspace.ToolResult) bool {
 	return false
 }
 
-func concreteSourceBodyReadPaths(results []workspace.ToolResult) []string {
+func concreteSourceEvidencePaths(results []workspace.ToolResult) []string {
 	seen := make(map[string]struct{})
 	var paths []string
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Tool) != "read_file" || !readFileResultHasConcreteSourceBody(result) {
+		if !concreteSourceEvidenceResult(result) {
 			continue
 		}
 		for _, path := range readPathsFromToolResult(result) {
@@ -11196,9 +11203,6 @@ func planThenExecuteTerminalSubmitPlanAllowed(brief workerruntime.WorkerRuntimeB
 		allowed := normalizedRequiredEditPaths(brief.AllowedEditPaths)
 		return len(allowed) == 1 && len(state.SelectedEditPaths) > 0
 	}
-	if planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-		return len(state.SelectedEditPaths) > 0
-	}
 	if len(unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8)) > 0 {
 		return false
 	}
@@ -11691,8 +11695,17 @@ func implementationScopedEditSurfaceActive(brief workerruntime.WorkerRuntimeBrie
 }
 
 func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {
-	if r == nil || !completionGateResultSeen(results) || !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
+	if r == nil || !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) || workspace.IsWorkspaceWriteTool(req.Tool) {
 		return "", "", "", false
+	}
+	if strings.TrimSpace(req.Tool) == "read_file" {
+		path := normalizeRunnerPath(req.Path)
+		if req.StartLine <= 0 && req.EndLine <= 0 &&
+			implementationTargetWriteReadySourcePath(path) &&
+			concreteSourceEvidenceReadForPath(path, results) &&
+			fullSourceReadFileSeen(path, results) {
+			return "", "", "", false
+		}
 	}
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" {
@@ -11702,6 +11715,46 @@ func (r *Runner) implementationTargetWriteReadyNonWriteRecovery(req workspace.To
 	errorText = fmt.Sprintf("%s is outside the unscoped implementation target-write-ready surface. Source-body evidence is already available; the next valid action is a parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence.", tool)
 	prompt = "The implementation lane is target-write-ready. Do not inspect, search, or navigate more source before the first write. Use a parser-readable write tool for the sourced target path, or answer <<QUESTION>> with the exact blocker/no-op evidence."
 	return summary, errorText, prompt, true
+}
+
+func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
+	if r == nil || refreshes > 0 || workspace.IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+	if !implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results) {
+		return false
+	}
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if !implementationTargetWriteReadySourcePath(path) {
+		return false
+	}
+	if concreteSourceEvidenceReadForPath(path, results) {
+		return !fullSourceReadFileSeen(path, results)
+	}
+	return implementationTargetWriteReadyNewTargetRead(req)
+}
+
+func (r *Runner) implementationTargetWriteReadySourceRefreshAllowed(req workspace.ToolRequest, results []workspace.ToolResult, refreshes int) bool {
+	if !r.implementationTargetWriteReadySourceReadAllowed(req, results, refreshes) {
+		return false
+	}
+	return concreteSourceEvidenceReadForPath(req.Path, results)
+}
+
+func implementationTargetWriteReadyNewTargetRead(req workspace.ToolRequest) bool {
+	return req.StartLine > 0 || req.EndLine > 0
+}
+
+func implementationTargetWriteReadySourcePath(path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	lower := strings.ToLower(path)
+	return !strings.HasSuffix(lower, ".md") && !strings.HasSuffix(lower, ".mdx")
 }
 
 func (r *Runner) implementationPreWriteNonWriteRecovery(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, reject bool) {

@@ -319,7 +319,7 @@ func LintSWESuite(suite SWESuite) []string {
 			addFinding(task, "fixture and fixture_git_ref are mutually exclusive")
 		}
 		if !validSWERunnerMode(task.RunnerMode) {
-			addFinding(task, "runner_mode %q is invalid; use auto, implement, or plan-execute", task.RunnerMode)
+			addFinding(task, "runner_mode %q is invalid; use auto, implement, plan-execute, feature-planner, or tui", task.RunnerMode)
 		}
 		for key, value := range task.Env {
 			if key == "" || strings.ContainsAny(key, "\x00=\r\n") {
@@ -399,7 +399,7 @@ func LintSWESuite(suite SWESuite) []string {
 
 func validSWERunnerMode(mode string) bool {
 	switch strings.TrimSpace(mode) {
-	case "", "auto", "implement", "plan-execute":
+	case "", "auto", "implement", "plan-execute", "feature-planner", "tui":
 		return true
 	default:
 		return false

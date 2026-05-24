@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	tea "github.com/charmbracelet/bubbletea"
+
 	"idiom/internal/llama"
 )
 
@@ -26,6 +28,18 @@ const recentMessagesToKeepVerbatim = 12
 
 const compactionSystemPromptPreamble = "You are producing a compact session digest. Preserve only the facts that the next turn needs to act correctly: the user's original goals, any hard constraints or boundaries, files and paths that have been read or edited, outcomes of tool calls, open questions, and the last known blocker. Write plain prose in 12 lines or fewer. Do not invent facts. Do not request tools."
 
+type historyCompactionResult struct {
+	Messages  []llama.ChatMessage
+	Folded    int
+	Kept      int
+	Compacted bool
+	Reason    string
+}
+
+type compactHistoryDoneMsg struct {
+	result historyCompactionResult
+}
+
 // MaybeCompactHistory applies Fix 5 when the history length exceeds the
 // configured threshold. It returns a new history whose leading entries have
 // been replaced by a single `session_digest` system message. The most recent
@@ -35,27 +49,90 @@ const compactionSystemPromptPreamble = "You are producing a compact session dige
 // deterministic fallback digest (regex-shape extraction) is used so the
 // compaction never silently loses the user's original intent.
 func (m *Model) MaybeCompactHistory(ctx context.Context, history []llama.ChatMessage) []llama.ChatMessage {
-	threshold := m.compactionThreshold()
-	if len(history) <= threshold {
+	result := m.compactHistory(ctx, history, false)
+	if !result.Compacted {
 		return history
 	}
+	m.logMessage("session_digest", fmt.Sprintf("compacted %d messages into digest (%d chars); kept %d verbatim", result.Folded, len(result.Messages[0].Content), result.Kept))
+	return result.Messages
+}
+
+func (m *Model) compactHistoryAsync() {
+	history := append([]llama.ChatMessage(nil), m.messages...)
+	m.status = "Compacting conversation."
+	if m.events == nil {
+		result := m.compactHistory(context.Background(), modelPayloadHistory(history), true)
+		_, _ = m.handleCompactHistoryDone(compactHistoryDoneMsg{result: result})
+		return
+	}
+	go func() {
+		result := m.compactHistory(context.Background(), modelPayloadHistory(history), true)
+		m.events <- compactHistoryDoneMsg{result: result}
+	}()
+}
+
+func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage, force bool) historyCompactionResult {
+	result := historyCompactionResult{
+		Messages: append([]llama.ChatMessage(nil), history...),
+		Kept:     len(history),
+	}
+	if len(history) == 0 {
+		result.Reason = "empty_history"
+		return result
+	}
+	if !force && len(history) <= m.compactionThreshold() {
+		result.Reason = "below_threshold"
+		return result
+	}
 	keepFrom := len(history) - recentMessagesToKeepVerbatim
-	if keepFrom < 0 {
-		keepFrom = 0
+	if keepFrom <= 0 {
+		if !force || len(history) < 2 {
+			result.Reason = "too_short"
+			return result
+		}
+		keepFrom = len(history) - 1
 	}
 	oldest := history[:keepFrom]
 	if len(oldest) == 0 {
-		return history
+		result.Reason = "too_short"
+		return result
 	}
 	digest := m.buildSessionDigest(ctx, oldest)
 	if strings.TrimSpace(digest) == "" {
-		return history
+		result.Reason = "empty_digest"
+		return result
 	}
 	compacted := make([]llama.ChatMessage, 0, 1+len(history)-keepFrom)
 	compacted = append(compacted, llama.ChatMessage{Role: "system", Content: digest})
 	compacted = append(compacted, history[keepFrom:]...)
-	m.logMessage("session_digest", fmt.Sprintf("compacted %d messages into digest (%d chars); kept %d verbatim", len(oldest), len(digest), len(history)-keepFrom))
-	return compacted
+	result.Messages = compacted
+	result.Folded = len(oldest)
+	result.Kept = len(history) - keepFrom
+	result.Compacted = true
+	result.Reason = "compacted"
+	return result
+}
+
+func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bool) {
+	result := msg.result
+	if !result.Compacted {
+		switch result.Reason {
+		case "empty_history":
+			m.status = "Nothing to compact."
+		case "too_short":
+			m.status = "Conversation is too short to compact."
+		case "empty_digest":
+			m.status = "Compaction skipped: no digest could be produced."
+		default:
+			m.status = "Conversation does not need compaction."
+		}
+		return nil, false
+	}
+	m.messages = result.Messages
+	m.logMessage("session_digest", fmt.Sprintf("manual compact folded %d messages; kept %d verbatim", result.Folded, result.Kept))
+	m.status = fmt.Sprintf("Compacted conversation: folded %d message(s), kept %d.", result.Folded, result.Kept)
+	m.renderMessages(true)
+	return nil, false
 }
 
 func (m *Model) compactionThreshold() int {

@@ -1,9 +1,13 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/config"
 )
 
 func TestParseToolRequestExtractsFirstJSONObjectFromToolFence(t *testing.T) {
@@ -179,6 +183,38 @@ func TestParseToolRequestUnwrapsNestedInputObjectPayload(t *testing.T) {
 	}
 	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "internal/frontier/discovery.go" || req.Symbol != "DiscoveryQuery" {
 		t.Fatalf("unexpected nested input object request repair: %#v", req)
+	}
+}
+
+func TestCodeNavigateAcceptsFindReferencesAlias(t *testing.T) {
+	spec, err := codeNavigationSpecFor("find_references")
+	if err != nil {
+		t.Fatalf("codeNavigationSpecFor(find_references): %v", err)
+	}
+	if spec.Name != "references" || spec.Capability != CapReferences {
+		t.Fatalf("unexpected references alias spec: %#v", spec)
+	}
+}
+
+func TestCodeNavigateFileOutlineDirectoryReturnsCandidates(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "internal/app/lifecycle.go"), "package app\n")
+	writeTestFile(t, filepath.Join(dir, "internal/app/rendering.go"), "package app\n")
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "file_outline",
+		Path:       "internal/app",
+	})
+
+	if result.Error != "" {
+		t.Fatalf("directory outline should return candidate evidence, got error: %s", result.Error)
+	}
+	if !strings.Contains(result.Output, "routed_tool: directory_candidates") ||
+		!strings.Contains(result.Output, "candidate_file: internal/app/lifecycle.go") ||
+		!strings.Contains(result.Output, "candidate_file: internal/app/rendering.go") {
+		t.Fatalf("directory outline missing candidate files:\n%s", result.Output)
 	}
 }
 

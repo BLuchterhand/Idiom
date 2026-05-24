@@ -753,7 +753,7 @@ func (m *Model) syncInputHeight() int {
 
 func (m *Model) desiredInputHeight() int {
 	const maxInputHeight = 8
-	width := max(1, m.input.Width())
+	width := max(1, m.input.Width()-lipgloss.Width(m.input.Prompt))
 	value := m.input.Value()
 	rows := 1
 	if value != "" {

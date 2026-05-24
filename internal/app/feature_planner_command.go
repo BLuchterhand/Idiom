@@ -1,0 +1,131 @@
+package app
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"idiom/internal/featureplanner"
+	"idiom/internal/llama"
+)
+
+func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return "", fmt.Errorf("feature-planner objective is required")
+	}
+	m.emitJSONStart(objective)
+	if err := m.ensureServerReady(ctx); err != nil {
+		m.emitJSONError("server_not_ready", err.Error())
+		return "", err
+	}
+	sessionID := m.featurePlannerSessionID()
+	state := featureplanner.NewState(sessionID, objective, "", 3, time.Now().UTC())
+	operatorCommand := "/feature-planner " + objective
+	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: operatorCommand})
+	m.logMessage("user", operatorCommand)
+	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
+	m.logMessage("idiom.feature_planner.start", objective)
+
+	result, err := featureplanner.Run(state, featureplanner.RunOptions{
+		Prompt:                objective,
+		MaxPlanningIterations: 3,
+		Now:                   time.Now().UTC(),
+	}, func(prompt string, taskFamily string) (string, error) {
+		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
+	})
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	for _, event := range result.Events {
+		m.logFeaturePlannerEvent(event)
+	}
+	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), result.State.SessionID, result.Events)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	result.State.EventsPath = eventsPath
+	statePath, err := featureplanner.SaveState(m.projectRoot(), &result.State)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
+	m.logMessage("idiom.feature_planner.complete", answer)
+	return m.finishPromptOnceReply(answer), nil
+}
+
+func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
+	m.logMessage("feature_planner_prompt", prompt)
+	opts := m.chatOptions()
+	thinking := false
+	opts.EnableThinking = &thinking
+	opts.ResponseFormatJSON = taskFamily == "feature_planner_planner"
+	opts.MaxTokens = 16384
+	answer, err := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
+	if err != nil {
+		return "", err
+	}
+	m.logMessage("feature_planner_model", answer)
+	return answer, nil
+}
+
+func (m *Model) featurePlannerSessionID() string {
+	stamp := time.Now().UTC().Format("20060102-150405.000000")
+	if m.debugLogPath != "" {
+		base := filepath.Base(m.debugLogPath)
+		ext := filepath.Ext(base)
+		sessionID := strings.TrimSuffix(base, ext)
+		if sessionID != "" {
+			return sessionID + "-feature-planner-" + stamp
+		}
+	}
+	return "tui-feature-planner-" + stamp
+}
+
+func (m *Model) logFeaturePlannerEvent(event featureplanner.Event) {
+	body, err := json.Marshal(event)
+	if err != nil {
+		m.logMessage(event.Type, event.Message)
+		return
+	}
+	m.logMessage(event.Type, string(body))
+}
+
+func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "feature-planner: %s\n", state.Status)
+	if statePath != "" {
+		fmt.Fprintf(&b, "state: %s\n", statePath)
+	}
+	if len(state.Atoms) > 0 {
+		fmt.Fprintf(&b, "atoms: %d\n", len(state.Atoms))
+		var atomIDs []string
+		for _, atom := range state.Atoms {
+			atomIDs = append(atomIDs, atom.ID)
+		}
+		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
+	}
+	if len(state.Plan.SDDContract.Refs) > 0 {
+		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(state.Plan.SDDContract.Refs, ", "))
+	}
+	if len(state.Plan.TDDContract.Obligations) > 0 {
+		var tddIDs []string
+		for _, obligation := range state.Plan.TDDContract.Obligations {
+			tddIDs = append(tddIDs, obligation.ID)
+		}
+		fmt.Fprintf(&b, "tdd_obligations: %s\n", strings.Join(tddIDs, ", "))
+	}
+	if len(state.Blockers) > 0 {
+		fmt.Fprintf(&b, "blockers: %s\n", strings.Join(state.Blockers, "; "))
+	}
+	if len(state.DerivedNextValidActions) > 0 {
+		fmt.Fprintf(&b, "next: %s\n", strings.Join(state.DerivedNextValidActions, ", "))
+	}
+	return strings.TrimSpace(b.String())
+}

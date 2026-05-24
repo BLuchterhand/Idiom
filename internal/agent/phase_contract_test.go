@@ -693,6 +693,38 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterSymb
 	assertContains(t, contract.AllowedTools, "code_navigate")
 }
 
+func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"language: go",
+				"routed_tool: go_read_symbol",
+				"route_summary: Read EvaluateCoverageGate in internal/productworkflow/coverage_gate.go lines 1-8",
+				"1:func EvaluateCoverageGate() bool {",
+				"2:\treturn true",
+				"3:}",
+			}, "\n"),
+		}},
+	})
+
+	if contract.Phase != "target_write_ready" {
+		t.Fatalf("Phase = %q, want target_write_ready after symbol body; contract=%#v", contract.Phase, contract)
+	}
+	assertContains(t, contract.AllowedTools, "edit_file")
+	assertContains(t, contract.AllowedTools, "apply_patch")
+	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertNotContains(t, contract.AllowedTools, "code_navigate")
+}
+
 func TestDeriveTurnPhaseContractReadOnlyWorkspaceRequiresEvidenceBeforeAnswer(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

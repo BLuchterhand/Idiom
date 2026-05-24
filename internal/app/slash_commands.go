@@ -20,6 +20,7 @@ var slashCommands = map[string]slashCommandFunc{
 	"/exit":             (*Model).slashQuit,
 	"/help":             (*Model).slashHelp,
 	"/clear":            (*Model).slashClear,
+	"/compact":          (*Model).slashCompact,
 	"/save":             (*Model).slashSave,
 	"/context":          (*Model).slashContext,
 	"/workspace":        (*Model).slashWorkspace,
@@ -49,13 +50,26 @@ func (m *Model) slashQuit(_ string, _ []string) bool {
 }
 
 func (m *Model) slashHelp(_ string, _ []string) bool {
-	m.status = "Commands: /save /clear /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /implement <objective> /plan-execute <objective> /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
+	m.status = "Commands: /save /clear /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
 	return false
 }
 
 func (m *Model) slashClear(_ string, _ []string) bool {
 	m.messages = nil
 	m.status = "Cleared chat."
+	return false
+}
+
+func (m *Model) slashCompact(_ string, fields []string) bool {
+	if len(fields) != 1 {
+		m.status = "Usage: /compact"
+		return false
+	}
+	if m.streaming {
+		m.status = "A response is already in progress."
+		return false
+	}
+	m.compactHistoryAsync()
 	return false
 }
 

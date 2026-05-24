@@ -467,6 +467,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case compactHistoryDoneMsg:
+		cmd, done := m.handleCompactHistoryDone(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case infoMsg:
 		cmd, done := m.handleInfoMessage(msg)
 		if done {
@@ -652,6 +660,19 @@ func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		_, err := m.runPlanExecuteCommandOnce(ctx, objective)
+		m.events <- streamDoneMsg{err: err}
+	}()
+}
+
+func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
+	m.streaming = true
+	m.workingFrame = 0
+	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
+	m.beginAgentHistoryTurn()
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, err := m.runFeaturePlannerCommandOnce(ctx, objective)
 		m.events <- streamDoneMsg{err: err}
 	}()
 }

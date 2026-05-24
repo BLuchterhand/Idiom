@@ -358,9 +358,6 @@ func planThenExecuteLowValueActionReason(req workspace.ToolRequest, brief worker
 	if target == "" && planThenExecuteReadRequestMissingConcreteTarget(req) {
 		return "candidate_read_missing_target", true
 	}
-	if planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-		return "candidate_source_budget_exhausted", true
-	}
 	return "", false
 }
 
@@ -390,7 +387,7 @@ func planThenExecuteReadRequestMissingConcreteTarget(req workspace.ToolRequest) 
 
 func planThenExecuteLowValueActionShouldReject(reason string) bool {
 	switch strings.TrimSpace(reason) {
-	case "candidate_read_missing_target", "candidate_source_budget_exhausted":
+	case "candidate_read_missing_target":
 		return true
 	default:
 		return false
@@ -399,8 +396,6 @@ func planThenExecuteLowValueActionShouldReject(reason string) bool {
 
 func planThenExecuteLowValueActionRejectSummary(reason string) string {
 	switch strings.TrimSpace(reason) {
-	case "candidate_source_budget_exhausted":
-		return "Plan-execute candidate source budget exhausted"
 	case "candidate_read_missing_target":
 		return "Plan-execute source read missing target"
 	default:
@@ -410,8 +405,6 @@ func planThenExecuteLowValueActionRejectSummary(reason string) string {
 
 func planThenExecuteLowValueActionStopReason(reason string) string {
 	switch strings.TrimSpace(reason) {
-	case "candidate_source_budget_exhausted":
-		return "plan_execute_candidate_source_budget_exhausted"
 	case "candidate_read_missing_target":
 		return "plan_execute_source_read_missing_target"
 	default:

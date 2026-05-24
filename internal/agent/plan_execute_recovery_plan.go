@@ -69,9 +69,6 @@ func planThenExecuteLowValueActionRecoveryPlan(state PlanExecutePlanningState) P
 	if slices.Contains(state.LowValueActions, "candidate_read_missing_target") {
 		instruction = "This source-read request is missing a concrete `path`/handle. Use the selected evidence to produce a terminal planner outcome, or make one bounded read on an explicit unread candidate path only if a named edit-safety fact is still missing."
 	}
-	if slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
-		instruction = "This read/search is low-value because the candidate source-read budget is exhausted and selected edit paths already have source evidence: " + selected + ". Do not read/search again before a terminal planner outcome."
-	}
 	return PlanExecuteRecoveryPlan{
 		Kind:            PlanExecuteRecoveryKindLowValueCandidateAction,
 		AllowedTools:    allowedTools,

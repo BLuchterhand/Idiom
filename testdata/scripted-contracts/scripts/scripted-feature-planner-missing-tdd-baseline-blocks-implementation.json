@@ -1,0 +1,8 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"submit_feature_plan\",\"summary\":\"Plan ShortLabel feature with implementation blocked until TDD baseline commands exist\",\"top_level_scope\":{\"objective\":\"ShortLabel returns Save\",\"success_criteria\":[\"implementation is blocked if TDD is missing\"]},\"sdd_contract\":{\"refs\":[\"SDD-ShortLabel\"]},\"tdd_contract\":{\"coverage_tier\":\"contract_high\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-ShortLabel\",\"behavior\":\"ShortLabel returns Save\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}]},\"atoms\":[{\"id\":\"atom-short-label\",\"title\":\"ShortLabel implementation\",\"summary\":\"Update ShortLabel\",\"required_edit_paths\":[\"internal/labels/labels.go\"],\"sdd_refs\":[\"SDD-ShortLabel\"],\"test_first\":{\"obligation_refs\":[\"TDD-ShortLabel\"],\"baseline_required\":true}}]}"
+    }
+  ]
+}

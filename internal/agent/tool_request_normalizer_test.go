@@ -234,6 +234,28 @@ func TestNormalizeToolRequestSyntaxResolutionAlias(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxCodeNavigateFindReferencesAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"code_navigate","capability":"find_references","path":"internal/app","symbol":"input"}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected missing-tool code_navigate request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "find_references" ||
+		result.Request.Path != "internal/app" ||
+		result.Request.Pattern != "input" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized {
+		t.Fatalf("unexpected event outcome: %q", result.EventOutcome)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxKeyValueArgsJSON(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: strings.Join([]string{

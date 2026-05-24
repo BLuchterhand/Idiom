@@ -147,6 +147,20 @@ func TestSlashHelpDocumentsRecoverStatusBarePacketPath(t *testing.T) {
 	if !strings.Contains(model.status, "/plan-execute <objective>") {
 		t.Fatalf("help must document typed plan-execute command, got %q", model.status)
 	}
+	if !strings.Contains(model.status, "/feature-planner <objective>") {
+		t.Fatalf("help must document typed feature-planner command, got %q", model.status)
+	}
+}
+
+func TestFeaturePlannerSlashCommandRequiresObjective(t *testing.T) {
+	model := &Model{}
+
+	if !model.handleFeaturePlannerCommand("/feature-planner") {
+		t.Fatal("expected feature-planner command to be handled")
+	}
+	if model.status != "Usage: /feature-planner <objective>" {
+		t.Fatalf("status = %q", model.status)
+	}
 }
 
 func TestSlashRecoverStatusLoadErrorUsesSharedPresenter(t *testing.T) {

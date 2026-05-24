@@ -7262,6 +7262,136 @@ func TestUnscopedImplementationWriteReadyRejectsNonWriteTools(t *testing.T) {
 	}
 }
 
+func TestUnscopedImplementationWriteReadyRejectsNonWriteAfterSymbolBody(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"language: go",
+				"routed_tool: go_read_symbol",
+				"route_summary: Read EvaluateCoverageGate in internal/productworkflow/coverage_gate.go lines 1-8",
+				"1:func EvaluateCoverageGate() bool {",
+				"2:\treturn true",
+				"3:}",
+			}, "\n"),
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("symbol-body evidence should put unscoped implementation into write-ready state")
+	}
+	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "read_file", Path: "docs/obsidian-export/docs/design-prd-adr-brief-research-workflow.md"},
+		results,
+	)
+	if !reject {
+		t.Fatal("expected broad write-ready read to be rejected after symbol-body source evidence")
+	}
+	joined := summary + " " + errorText + " " + prompt
+	for _, want := range []string{"target-write-ready", "parser-readable write", "<<QUESTION>>"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected recovery text to contain %q, got %q", want, joined)
+		}
+	}
+}
+
+func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymbolBody(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"language: go",
+				"routed_tool: go_read_symbol",
+				"route_summary: Read EvaluateCoverageGate in internal/productworkflow/coverage_gate.go lines 1-8",
+				"1:func EvaluateCoverageGate() bool {",
+				"2:\treturn true",
+				"3:}",
+			}, "\n"),
+		},
+	}
+
+	if !runner.implementationTargetWriteReadySourceRefreshAllowed(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go"},
+		results,
+		0,
+	) {
+		t.Fatal("expected one same-path source refresh to be allowed after symbol-body evidence")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/productworkflow/coverage_gate_test.go",
+			StartLine: 1,
+			EndLine:   80,
+			NamedGap:  "source-body evidence for newly selected implementation target",
+		},
+		results,
+		0,
+	) {
+		t.Fatal("expected one bounded new-target source read to be allowed after a different path made the turn write-ready")
+	}
+	for name, req := range map[string]workspace.ToolRequest{
+		"design doc path":      {Tool: "read_file", Path: "docs/obsidian-export/docs/design-prd-adr-brief-research-workflow.md"},
+		"unbounded new source": {Tool: "read_file", Path: "internal/productworkflow/coverage_gate_test.go"},
+		"named gap only":       {Tool: "read_file", Path: "internal/productworkflow/coverage_gate_test.go", NamedGap: "need this new source before writing"},
+		"search":               {Tool: "search_content", Pattern: "coverage"},
+		"write":                {Tool: "edit_file", Path: "internal/productworkflow/coverage_gate.go"},
+	} {
+		if runner.implementationTargetWriteReadySourceReadAllowed(req, results, 0) {
+			t.Fatalf("%s should not receive the source-read allowance", name)
+		}
+	}
+	if runner.implementationTargetWriteReadySourceRefreshAllowed(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go"},
+		results,
+		1,
+	) {
+		t.Fatal("source-refresh allowance must be capped at one use")
+	}
+	withFullRead := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read internal/productworkflow/coverage_gate.go lines 1-8 (total lines: 8)",
+		Output:  "1:func EvaluateCoverageGate() bool {\n2:\treturn true\n3:}\n",
+	})
+	if runner.implementationTargetWriteReadySourceRefreshAllowed(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go"},
+		withFullRead,
+		0,
+	) {
+		t.Fatal("same-path source refresh should not be allowed after a full read_file result")
+	}
+	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go"},
+		withFullRead,
+	); reject {
+		t.Fatal("range-less full reread should stay available to the existing no-write loop recovery")
+	}
+	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go", StartLine: 4, EndLine: 8},
+		withFullRead,
+	); !reject {
+		t.Fatal("new ranged reads after a full source read should be rejected in write-ready state")
+	}
+}
+
 func TestCompletionGateRetryLimitAllowsTwoTextualRequiredPathRecoveries(t *testing.T) {
 	runner := &Runner{
 		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
@@ -9134,7 +9264,7 @@ func TestPlanThenExecuteRepeatedSymbolReadRemainsModelOwnedBeforeBudget(t *testi
 	}
 }
 
-func TestPlanThenExecuteCandidateSourceBudgetForcesTerminalReadiness(t *testing.T) {
+func TestPlanThenExecuteManyCandidateReadsRemainModelOwned(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
 	}
@@ -9147,6 +9277,11 @@ func TestPlanThenExecuteCandidateSourceBudgetForcesTerminalReadiness(t *testing.
 		{
 			Tool:    "read_file",
 			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-120 (total lines: 391)",
+			Output:  "1:package productworkflow\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/productworkflow/coverage_gate_test.go lines 1-80 (total lines: 80)",
 			Output:  "1:package productworkflow\n",
 		},
 	}
@@ -9157,11 +9292,8 @@ func TestPlanThenExecuteCandidateSourceBudgetForcesTerminalReadiness(t *testing.
 			Output:  "route_summary: Read Symbol in internal/productworkflow/coverage_gate.go lines 20-40\n20:func Symbol() {}\n",
 		})
 	}
-	if !planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-		t.Fatal("expected candidate source-read budget to be exhausted")
-	}
 	if !planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
-		t.Fatal("candidate source-read budget exhaustion should permit terminal submit_plan despite unread candidates")
+		t.Fatal("unscoped candidate source evidence should permit submit_plan once all surfaced candidates are read")
 	}
 	req := workspace.ToolRequest{
 		Tool:       "code_navigate",
@@ -9171,23 +9303,12 @@ func TestPlanThenExecuteCandidateSourceBudgetForcesTerminalReadiness(t *testing.
 		NamedGap:   "inspect another helper",
 	}
 	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
-	if !slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
-		t.Fatalf("expected budget-exhausted read to be low-value, got %#v", state.LowValueActions)
-	}
-	plan := planThenExecuteLowValueActionRecoveryPlan(state)
-	prompt := RenderPlanExecuteRecoveryPlan(plan)
-	if !strings.Contains(prompt, "Do not read/search again") || !slices.Equal(plan.AllowedTools, []string{"submit_plan"}) {
-		t.Fatalf("budget-exhausted recovery should be terminal-only, tools=%#v prompt=\n%s", plan.AllowedTools, prompt)
-	}
-	if !planThenExecuteLowValueActionShouldReject(state.LowValueActions[0]) {
-		t.Fatal("budget-exhausted candidate reads should become counted typed rejections before tool execution")
-	}
-	if got := planThenExecuteLowValueActionRejectSummary(state.LowValueActions[0]); got != "Plan-execute candidate source budget exhausted" {
-		t.Fatalf("unexpected rejection summary %q", got)
+	if len(state.LowValueActions) != 0 {
+		t.Fatalf("many successful source reads must not create a fixed-budget low-value action, got %#v", state.LowValueActions)
 	}
 }
 
-func TestPlanThenExecuteCandidateSourceBudgetCountsLocationNavigationAfterSourceRead(t *testing.T) {
+func TestPlanExecuteManyCandidateReadsDoNotBypassUnreadCandidateSurface(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: PlanThenExecutePlannerTaskFamily,
 	}
@@ -9195,83 +9316,27 @@ func TestPlanThenExecuteCandidateSourceBudgetCountsLocationNavigationAfterSource
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
+			Output:  `{"candidate_files":[{"path":"pkg/feature.go"},{"path":"pkg/feature_test.go"}]}`,
 		},
 		{
 			Tool:    "read_file",
-			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-391 (total lines: 391)",
-			Output:  "1:package productworkflow\n",
-		},
-	}
-	for i := 0; i < 11; i++ {
-		results = append(results, workspace.ToolResult{
-			Tool:    "code_navigate",
-			Summary: "Code navigation routed definition via go_definition",
-			Output:  "capability: definition\nlanguage: go\nrouted_tool: go_definition\nroute_summary: Resolved Go definition\n\ninternal/productworkflow/coverage_gate.go:20 type CoverageGateResult",
-		})
-	}
-	if !planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-		t.Fatal("definition/reference navigation after source evidence should consume candidate-source budget")
-	}
-	req := workspace.ToolRequest{
-		Tool:       "code_navigate",
-		Capability: "definition",
-		Path:       "internal/productworkflow/coverage_gate.go",
-		Pattern:    "CoverageGateFinding",
-		NamedGap:   "inspect another helper",
-	}
-	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
-	if !slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
-		t.Fatalf("expected low-value budget exhaustion, got %#v", state.LowValueActions)
-	}
-}
-
-func TestPlanThenExecuteCandidateSourceBudgetCountsCompactSemanticSymbolReads(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily: PlanThenExecutePlannerTaskFamily,
-	}
-	results := []workspace.ToolResult{
-		{
-			Tool:    "context_pack",
-			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"internal/productworkflow/coverage_gate_test.go"}]}`,
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Read f1 internal/productworkflow/coverage_gate.go lines 1-120 (total lines: 391)",
-			Output:  "1:package productworkflow\n",
+			Summary: "Read f1 pkg/feature.go lines 1-80 (total lines: 80)",
+			Output:  "1:package pkg\n",
 		},
 	}
 	for i := 0; i < 11; i++ {
 		results = append(results, workspace.ToolResult{
 			Tool:    "code_navigate",
 			Summary: "Code navigation routed read_symbol via go_read_symbol",
-			Output:  "route_summary: Read Helper in internal/productworkflow/coverage_gate.go lines 20-40",
+			Output:  "route_summary: Read Helper in pkg/feature.go lines 20-40\n20:func Helper() {}\n",
 		})
 	}
-	if !planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-		t.Fatal("compact semantic symbol reads should consume the candidate source budget")
-	}
-	req := workspace.ToolRequest{
-		Tool:       "code_navigate",
-		Capability: "read_symbol",
-		Path:       "internal/productworkflow/coverage_gate.go",
-		Pattern:    "AnotherHelper",
-	}
-	state := DerivePlanExecutePlanningActionState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true}, req)
-	if !slices.Contains(state.LowValueActions, "candidate_source_budget_exhausted") {
-		t.Fatalf("expected compact semantic read loop to force terminal recovery, got %#v", state.LowValueActions)
-	}
-}
 
-func TestPlanThenExecuteCandidateSourceBudgetIgnoresFailedCompactSymbolReads(t *testing.T) {
-	result := workspace.ToolResult{
-		Tool:    "code_navigate",
-		Summary: "No generic code navigation matches for read_symbol",
-		Output:  "No generic code navigation matches for read_symbol",
+	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatal("many source reads must not collapse unscoped candidate scope to submit_plan-only while a surfaced candidate remains unread")
 	}
-	if planThenExecuteCandidateSourceBudgetResult(result) {
-		t.Fatal("failed compact symbol lookup must not consume source budget")
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
+		t.Fatalf("many source reads must not emit fixed-budget terminal readiness while a surfaced candidate remains unread:\n%s", got)
 	}
 }
 

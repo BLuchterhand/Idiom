@@ -4408,6 +4408,128 @@ func TestConversationEvidenceSatisfiedForceAnswerReadyUsesGatheredSource(t *test
 	}
 }
 
+func TestConversationPreflightForcesAnswerAfterRepeatedBroadDiscoveryRecovery(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"context_pack", "context_query", "read_file"},
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "completion_gate",
+			Summary: "Completion gate rejected unresolved process narration",
+			Error:   "the reply describes an intended future search/read/inspection instead of completing the answer",
+		},
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/example.json with 4 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go"}]}`,
+		},
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "context_query", Query: "bounded read scoping", Resolution: "symbol"},
+		Results: results,
+	})
+	if decision.ForceAnswer == nil {
+		t.Fatalf("expected repeated broad discovery to force final synthesis, got %#v", decision)
+	}
+	if decision.ForceAnswer.Reason != "conversation_broad_discovery_sufficient" {
+		t.Fatalf("unexpected force-answer reason: %#v", decision.ForceAnswer)
+	}
+	if !strings.Contains(decision.RejectError, "recovery probe") {
+		t.Fatalf("expected recovery-probe explanation, got %q", decision.RejectError)
+	}
+
+	decision = runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go", StartLine: 1, EndLine: 80},
+		Results: results,
+	})
+	if decision.ForceAnswer != nil || decision.RejectSummary != "" {
+		t.Fatalf("narrow source reads should remain available after localization, got %#v", decision)
+	}
+}
+
+func TestConversationFollowupDoesNotCollapseAfterRecoveryBroadSearch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "notes.md"), []byte("bounded scope approval works by approving a candidate read set and requiring explicit approval when a later read falls outside that set.\n"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	replies := []string{
+		"I should search the repo before answering this.",
+		`{"tool":"search_content","pattern":"bounded scope","path":"."}`,
+		`{"tool":"context_query","query":"bounded read scoping implementation surface","resolution":"symbol"}`,
+		"Bounded read scoping works by approving an initial candidate read set, then treating any later file outside that set as a new approval decision. It cannot predict every relevant file with perfect accuracy, so the contract is enforced at read time: allow scoped reads, require explicit approval for out-of-scope reads, and keep an audit trail of what was actually exposed.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected model request %d", requests+1)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var results []ToolResultEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxModelCalls: 6, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "the bounded read scoping, how would that be possible?",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "context_query", "read_file"},
+			Budget: workerruntime.BudgetBrief{
+				MaxToolSteps:  4,
+				MaxModelCalls: 6,
+			},
+			Readiness: &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "the bounded read scoping, how would that be possible?"}},
+		llama.ChatOptions{MaxTokens: 1024},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 4 {
+		t.Fatalf("expected forced synthesis on the fourth model request, got %d request(s)", requests)
+	}
+	if !strings.Contains(answer, "approving an initial candidate read set") || !strings.Contains(answer, "out-of-scope reads") {
+		t.Fatalf("answer did not explain bounded read scoping:\n%s", answer)
+	}
+	for _, forbidden := range []string{"retained source context", "not enough exact body-level detail", "Context pack wrote"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("answer should not collapse to fallback phrase %q:\n%s", forbidden, answer)
+		}
+	}
+	for _, result := range results {
+		if result.Result.Tool == "context_query" && strings.TrimSpace(result.Result.Error) == "" {
+			t.Fatalf("context_query should have been intercepted before execution, got result %#v", result.Result)
+		}
+	}
+}
+
 func TestVisibleBriefForToolSurfaceNarrowsTargetWriteReadyManifest(t *testing.T) {
 	runner := &Runner{
 		Workspace: workspace.NewManager(config.Workspace{
@@ -8243,6 +8365,98 @@ func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
 	}
 }
 
+func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.go", "package main\n\nconst a = \"read\"\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+	if err := writeTestFile(root, "b.go", "package main\n\nconst b = \"before\"\n"); err != nil {
+		t.Fatalf("write b: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":3}`,
+		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
+		`{"tool":"read_file","path":"b.go","start_line":1,"end_line":3,"named_gap":"current b.go source before retrying the rejected edit"}`,
+		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
+		`{"tool":"source_sanity","path":"b.go"}`,
+		"Changed paths: b.go\n\nVerification: source_sanity passed.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejectedDifferentPathWrite bool
+	var rejectedNewTargetRead bool
+	var sawSourceReadAllowance bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "source_sanity"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 7, MaxNoProgressTurns: 7},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_target_write_ready_source_refresh_allowed" {
+				sawSourceReadAllowance = true
+			}
+		},
+	}
+	onToolResult := func(event ToolResultEvent) {
+		if event.Result.Summary == "Write rejected before source-body evidence" {
+			rejectedDifferentPathWrite = true
+		}
+		if event.Result.Tool == "read_file" &&
+			event.Request.Path == "b.go" &&
+			event.Result.Summary == "Implementation target write-ready tool rejected" {
+			rejectedNewTargetRead = true
+		}
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update b.go after checking a.go"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !rejectedDifferentPathWrite {
+		t.Fatal("expected first b.go write to be rejected before b.go source-body evidence")
+	}
+	if !sawSourceReadAllowance {
+		t.Fatal("expected a bounded new-target source read allowance after the different-path write rejection")
+	}
+	if rejectedNewTargetRead {
+		t.Fatal("new-target source read was rejected, recreating the write-ready/source-evidence dead end")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "b.go"))
+	if err != nil {
+		t.Fatalf("read b: %v", err)
+	}
+	if !strings.Contains(string(got), "after") || strings.Contains(string(got), "before") {
+		t.Fatalf("expected second write to execute after b.go source-body evidence:\n%s", got)
+	}
+}
+
 func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
@@ -10077,6 +10291,36 @@ func TestMainArchitectureBootstrapDelegatesContextPack(t *testing.T) {
 	}
 }
 
+func TestMainArchitectureBootstrapIgnoresCompletionGateRejection(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"task", "context_pack", "discovery_query", "search_content", "read_file"},
+			SearchPolicy:      []string{"delegate_broad_discovery_when_needed", "prefer_discovery_query_for_architecture_boundary"},
+		},
+	}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "context_pack", Task: "assess discovery tool gaps and propose new capabilities"},
+		Results: []workspace.ToolResult{{
+			Tool:    "completion_gate",
+			Summary: "Read-only completion gate rejected final answer",
+			Output:  "answer missing inspected paths and confidence",
+		}},
+	})
+	if decision.Request.Tool != "task" || decision.Request.Mode != "read_only" || decision.Request.Agent != "explorer" {
+		t.Fatalf("expected completion-gate rejection not to suppress architecture task bootstrap, got %#v", decision.Request)
+	}
+}
+
 func TestMainArchitectureBootstrapDoesNotOverrideExactStructuredProbe(t *testing.T) {
 	root := t.TempDir()
 	runner := &Runner{
@@ -10389,6 +10633,40 @@ func TestDelegatedDiscoveryAnswerStaysGenericForDebugLogRedactedMode(t *testing.
 	for _, forbidden := range []string{"## What Stays Useful", "## What Gets Redacted", "Found 400 matching", `"evidence"`, "Discovery packet:", "Relevant source hits:", "Evidence used:", "Confidence:"} {
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("generic synthesis should not use a topic template or dump metadata %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestDelegatedTaskAnswerSynthesizesDebugLogRedactedMode(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Verified context:",
+			"- Found debug log redaction defaults in internal/transcript/debuglog.go and internal/config/config.go.",
+			"- Key findings: redacted mode keeps logs useful without exposing raw prompt or file body content.",
+		}, "\n"),
+	}}
+
+	answer, ok := synthesizeDelegatedReadOnlyAnswer("What does the debug log redacted mode do?", results)
+	if !ok {
+		t.Fatal("expected synthesized answer from delegated debug-log packet")
+	}
+	for _, want := range []string{
+		"What Gets Redacted:",
+		"redacted",
+		"debug log",
+		"safe default",
+		"`internal/transcript/debuglog.go`",
+		"`internal/config/config.go`",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"Discovery packet:", "Relevant source hits:", "Evidence used:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("synthesized answer should not expose telemetry section %q:\n%s", forbidden, answer)
 		}
 	}
 }

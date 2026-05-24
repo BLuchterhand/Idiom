@@ -73,7 +73,7 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 		return codeNavigationSpec{Name: "read_symbol", Capability: CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, nil
 	case "definition", "declaration", "goto_definition", "go_to_definition":
 		return codeNavigationSpec{Name: "definition", Capability: CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	case "references", "usages":
+	case "references", "reference", "usages", "find_references", "find_reference":
 		return codeNavigationSpec{Name: "references", Capability: CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
 	case "calls_from", "callees":
 		return codeNavigationSpec{Name: "calls_from", Capability: CapCallsFrom, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
@@ -229,7 +229,7 @@ func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec codeNavigat
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}
 	}
 	if info.IsDir() {
-		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: "file_outline requires a file path"}
+		return m.genericCodeNavigationDirectoryOutline(abs, spec, reason)
 	}
 	start, end := req.StartLine, req.EndLine
 	if start <= 0 {
@@ -249,6 +249,49 @@ func (m *Manager) genericCodeNavigationOutline(req ToolRequest, spec codeNavigat
 		PrecisionTier: PrecisionTierRGFallback,
 	}
 	return codeNavigationWrapResult(spec, "generic", "generic_source_text", result, reason)
+}
+
+func (m *Manager) genericCodeNavigationDirectoryOutline(abs string, spec codeNavigationSpec, reason string) ToolResult {
+	entries, err := os.ReadDir(abs)
+	if err != nil {
+		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}
+	}
+	limit := codeNavigationFileLimit
+	lines := []string{
+		fmt.Sprintf("capability: %s", spec.Name),
+		"routed_tool: directory_candidates",
+		"fallback_reason: file_outline target is a directory",
+	}
+	if strings.TrimSpace(reason) != "" {
+		lines = append(lines, fmt.Sprintf("language_reason: %s", reason))
+	}
+	lines = append(lines, "")
+	count := 0
+	for _, entry := range entries {
+		if count >= limit {
+			lines = append(lines, "truncated: true")
+			break
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, ".") {
+			continue
+		}
+		display := m.displayPath(filepath.Join(abs, name))
+		if entry.IsDir() {
+			display += "/"
+		}
+		lines = append(lines, "candidate_file: "+display)
+		count++
+	}
+	if count == 0 {
+		lines = append(lines, "candidate_file_count: 0")
+	}
+	return ToolResult{
+		Tool:          "code_navigate",
+		Summary:       fmt.Sprintf("Code navigation listed %d candidate file(s) for directory outline", count),
+		Output:        strings.TrimSpace(strings.Join(lines, "\n")),
+		PrecisionTier: PrecisionTierRGFallback,
+	}
 }
 
 func (m *Manager) genericCodeNavigationMatches(req ToolRequest) ([]string, bool, error) {

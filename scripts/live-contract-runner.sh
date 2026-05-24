@@ -379,7 +379,154 @@ PY
 task_timeout="${IDIOM_SWE_TASK_TIMEOUT:-240}"
 (
   cd "$run_dir"
-  if [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
+  if [[ "$runner_mode" == "tui" ]]; then
+    IDIOM_TELEMETRY_DIR="$telemetry_dir" python3 - "$idiom_bin" "$config_path" "$prompt_file" "$task_timeout" <<'PY'
+import os
+import pty
+import select
+import subprocess
+import sys
+import time
+import json
+import pathlib
+
+idiom_bin, config_path, prompt_file, timeout_s = sys.argv[1:]
+timeout = max(10, int(timeout_s))
+prompt = open(prompt_file, encoding="utf-8").read().rstrip("\n")
+if not prompt.lstrip().startswith("/feature-planner"):
+    prompt = "/feature-planner " + prompt
+cfg = json.load(open(config_path, encoding="utf-8"))
+debug_log_dir = pathlib.Path(cfg.get("chat", {}).get("debug_log_dir") or "")
+env = os.environ.copy()
+env.setdefault("TERM", "xterm-256color")
+master, slave = pty.openpty()
+proc = subprocess.Popen(
+    [idiom_bin, "-config", config_path],
+    stdin=slave,
+    stdout=slave,
+    stderr=slave,
+    env=env,
+    close_fds=True,
+)
+os.close(slave)
+out = bytearray()
+marker = b"feature-planner:"
+sent = False
+deadline = time.time() + timeout
+completed = False
+def debug_log_completed():
+    if not debug_log_dir:
+        return False
+    logs = sorted(debug_log_dir.glob("*.jsonl"), key=lambda p: p.stat().st_mtime if p.exists() else 0)
+    if not logs:
+        return False
+    try:
+        return "idiom.feature_planner.complete" in logs[-1].read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+try:
+    while time.time() < deadline:
+        readable, _, _ = select.select([master], [], [], 0.1)
+        if readable:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError:
+                break
+            if not chunk:
+                break
+            out.extend(chunk)
+            if marker in out:
+                completed = True
+                break
+        if debug_log_completed():
+            completed = True
+            break
+        if not sent and time.time() + 1 < deadline:
+            time.sleep(0.7)
+            os.write(master, prompt.encode("utf-8") + b"\r")
+            sent = True
+    sys.stdout.buffer.write(bytes(out))
+    sys.stdout.flush()
+finally:
+    if proc.poll() is None:
+        try:
+            os.write(master, b"\x03")
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+    os.close(master)
+if not completed:
+    print("tui runner did not observe feature-planner completion marker", file=sys.stderr)
+    sys.exit(1)
+PY
+  elif [[ "$runner_mode" == "feature-planner" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && [[ "${IDIOM_SWE_FAMILY:-}" == feature_planner* ]]; }; then
+    turn_count="$(python3 - "$turns_json" <<'PY'
+import json
+import sys
+
+print(len(json.loads(sys.argv[1])))
+PY
+)"
+    if [[ "$turn_count" -gt 1 ]]; then
+      turn_prompt_dir="$run_dir/feature-planner-turns"
+      mkdir -p "$turn_prompt_dir"
+      python3 - "$turns_json" "$turn_prompt_dir" <<'PY'
+import json
+import pathlib
+import sys
+
+turns = json.loads(sys.argv[1])
+out = pathlib.Path(sys.argv[2])
+for i, turn in enumerate(turns):
+    (out / f"{i:03d}.txt").write_text(str(turn).rstrip("\n") + "\n", encoding="utf-8")
+PY
+      feature_resume=""
+      for turn_prompt in "$turn_prompt_dir"/*.txt; do
+        feature_stdout="$run_dir/feature-planner-$(basename "$turn_prompt" .txt).jsonl"
+        if [[ -n "$feature_resume" ]]; then
+          IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$turn_prompt" --resume "$feature_resume" ${IDIOM_EXTRA_ARGS:-} >"$feature_stdout"
+        else
+          IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$turn_prompt" ${IDIOM_EXTRA_ARGS:-} >"$feature_stdout"
+        fi
+        cat "$feature_stdout"
+next_resume="$(python3 - "$feature_stdout" <<'PY'
+import json
+import pathlib
+import sys
+
+fallback = ""
+for line in pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").splitlines():
+    if not line.strip().startswith("{"):
+        continue
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    session_id = str(record.get("session_id") or "").strip()
+    if not session_id:
+        continue
+    if record.get("type") == "idiom.feature_planner.complete":
+        print(session_id)
+        sys.exit(0)
+    if not fallback:
+        fallback = session_id
+if fallback:
+    print(fallback)
+PY
+)"
+        if [[ -n "$next_resume" ]]; then
+          feature_resume="$next_resume"
+        fi
+      done
+    else
+      IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    fi
+  elif [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
     IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
   elif [[ "$runner_mode" == "implement" ]]; then
     IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}

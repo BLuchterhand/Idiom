@@ -656,6 +656,9 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 }
 
 func genericReadOnlyAnswerEvidenceReady(results []workspace.ToolResult) bool {
+	if conversationBroadDiscoveryForceAnswerRecorded(results) {
+		return true
+	}
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" && childPacketContainsGroundedAnswerEvidence("", result.Output) {
 			return true
@@ -746,7 +749,7 @@ func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief
 }
 
 func implementationTargetSourceEvidenceReady(results []workspace.ToolResult) bool {
-	for _, path := range concreteSourceBodyReadPaths(results) {
+	for _, path := range concreteSourceEvidencePaths(results) {
 		lower := strings.ToLower(path)
 		if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".mdx") {
 			continue

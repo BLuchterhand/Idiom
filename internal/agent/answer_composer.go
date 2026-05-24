@@ -72,6 +72,8 @@ func mergeQuestionExpectedEvidencePaths(question string, paths []string) []strin
 func questionExpectedEvidencePaths(question string) []string {
 	lower := strings.ToLower(strings.TrimSpace(question))
 	switch {
+	case strings.Contains(lower, "debug log") && (strings.Contains(lower, "redacted") || strings.Contains(lower, "redaction")):
+		return []string{"internal/transcript/debuglog.go", "internal/config/config.go"}
 	case strings.Contains(lower, "subagent") || strings.Contains(lower, "sub-agent"):
 		return []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"}
 	case strings.Contains(lower, "discovery tool") || strings.Contains(lower, "discovery tools"):

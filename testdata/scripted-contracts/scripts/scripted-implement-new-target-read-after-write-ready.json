@@ -1,0 +1,20 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels_test.go\",\"start_line\":1,\"end_line\":80,\"named_gap\":\"inspect nearby label test before selecting the edit target\",\"why_not_answering\":\"need source-body evidence before changing an existing source file\"}"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"current labels.go source before retrying the rejected edit\",\"why_not_answering\":\"the previous write was rejected because labels.go had not been read\"}"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}"
+    },
+    {
+      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
+    }
+  ]
+}

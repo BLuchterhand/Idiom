@@ -109,6 +109,32 @@ func TestInputHeightGrowsForWrappedPrompt(t *testing.T) {
 	}
 }
 
+func TestInputHeightUsesTextareaWrappedLineCount(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	m := New(cfg)
+	defer m.Close()
+	m.width = 28
+	m.height = 18
+	m.input.SetValue("first visible words should remain above the final wrapped line")
+
+	m.resize()
+
+	wrappedRows := 0
+	for _, line := range strings.Split(m.input.Value(), "\n") {
+		wrappedRows += max(1, len(wrapLines(line, m.input.Width()-len(m.input.Prompt))))
+	}
+	if got, want := m.input.Height(), min(wrappedRows, m.height/3); got != want {
+		t.Fatalf("input height = %d, want prompt-aware wrapped row cap %d", got, want)
+	}
+	view := m.View()
+	if !strings.Contains(view, "first visible") {
+		t.Fatalf("input view should retain the top wrapped line, got:\n%s", view)
+	}
+}
+
 // OpenCode-aligned: requestMessages no longer injects a static workspace
 // overview. The model discovers the workspace on demand through tool
 // calls (list_files, search_*, glob). We assert the absence so a future

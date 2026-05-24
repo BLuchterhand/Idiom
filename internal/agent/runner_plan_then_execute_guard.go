@@ -2652,11 +2652,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		unreadCandidateLine := "Allowed/candidate paths are not coverage obligations: do not read every allowed path by default."
 		readActionLine := "  2. One bounded source-read/search for a different candidate path, but only when it names one concrete edit-safety fact still needed before the plan."
 		finalLine := "Do not reread a candidate path that already has source-body evidence before the first valid `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` blocker."
-		if planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-			unreadCandidateLine = "Candidate source-read budget is exhausted. The harness will not use more read/search actions as progress for this planner turn; choose the terminal outcome supported by the evidence already gathered."
-			readActionLine = "  2. No further read/search action is valid unless a prior `submit_plan` is rejected with a typed stale-anchor/source-refresh blocker."
-			finalLine = "Do not read/search again before the first valid `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` blocker."
-		} else if len(normalizedRequiredEditPaths(brief.AllowedEditPaths)) == 0 {
+		if len(normalizedRequiredEditPaths(brief.AllowedEditPaths)) == 0 {
 			if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8); len(unread) > 0 {
 				return ""
 			}
@@ -2717,12 +2713,6 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 		return false
 	}
 	if len(required) == 0 {
-		if planThenExecuteCandidateSourceBudgetExhausted(brief, results) {
-			state := PlanExecutePlanningState{
-				EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results)),
-			}
-			return len(planThenExecuteSelectedEditPaths(brief, results, state)) > 0
-		}
 		if len(unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8)) > 0 {
 			return false
 		}
@@ -2746,49 +2736,6 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 		}
 	}
 	return true
-}
-
-func planThenExecuteCandidateSourceBudgetExhausted(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily ||
-		successfulSubmitPlanResultCount(results) > 0 ||
-		len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 {
-		return false
-	}
-	if len(readPathsFromResults(results)) == 0 {
-		return false
-	}
-	sourceResults := 0
-	for _, result := range results {
-		if planThenExecuteCandidateSourceBudgetResult(result) {
-			sourceResults++
-		}
-	}
-	return sourceResults >= 12
-}
-
-func planThenExecuteCandidateSourceBudgetResult(result workspace.ToolResult) bool {
-	if strings.TrimSpace(result.Error) != "" {
-		return false
-	}
-	tool := strings.TrimSpace(result.Tool)
-	switch {
-	case tool == "read_file":
-		return readFileResultHasConcreteSourceBody(result)
-	case tool == "code_navigate" || tool == "read_only_capability":
-		if routedSourceReadOutputHasBody(result.Output) && len(readPathsFromToolResult(result)) > 0 {
-			return true
-		}
-		if planThenExecuteSemanticSourceNavigationResult(result) {
-			return true
-		}
-		return planThenExecuteLocationNavigationResult(result)
-	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
-		return true
-	case strings.HasSuffix(tool, "_definition"), strings.HasSuffix(tool, "_references"), strings.HasSuffix(tool, "_implementations"):
-		return planThenExecuteLocationNavigationResult(result)
-	default:
-		return false
-	}
 }
 
 func planThenExecuteSemanticSourceNavigationResult(result workspace.ToolResult) bool {

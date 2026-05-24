@@ -48,6 +48,11 @@ The executable implementation plan is
   durable reviewer evidence, dispatchable atom fields, disjoint write scopes for
   parallel work, docs freshness checks, final full-bench review, and commit/push
   only after the assembled deliverable passes review.
+- [Feature planner orchestration](design-feature-planner-orchestration.md)
+  defines the headless, durable state machine for complex multi-atom
+  deliverables: loopable planning, planner-question repair, active-run
+  continuation, SDD/TDD dispatch gates, runtime envelopes, recovery
+  reconciliation, leases, and release readiness.
 - [Behavioral TDD coverage](design-tdd-coverage.md)
   defines the staged pipeline from human-approved ADR through EARS requirements,
   example mapping, BDD scenarios, Design by Contract, failure mode analysis
