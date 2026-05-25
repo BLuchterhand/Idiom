@@ -232,6 +232,26 @@ func TestTaskScenarioAssertionsIncludePlanExecution(t *testing.T) {
 	}
 }
 
+func TestTaskScenarioAssertionsIncludeContractReplay(t *testing.T) {
+	task := SWETask{
+		ID:     "contract-replay",
+		Family: "plan_execute",
+		Prompt: "Run contract replay fixture.",
+		Scenario: Scenario{
+			Name: "contract-replay",
+			RequireContractReplay: &ContractReplayExpectation{
+				RequirePacks:            []string{"completion/readiness"},
+				RequireEnforcementModes: []string{"observe_only"},
+				RequireAtoms:            []string{"gate_decision"},
+			},
+		},
+	}
+	assertions := taskScenarioAssertions(task)
+	if !containsStringFold(assertions, "contract_replay") {
+		t.Fatalf("expected contract_replay assertion, got %#v", assertions)
+	}
+}
+
 func TestComprehensionMemorySuiteCoversContextTooling(t *testing.T) {
 	suite := ComprehensionMemorySuite()
 	report := EvaluateSWESuiteDefinition(suite)
@@ -949,6 +969,202 @@ func TestEvaluateSWETaskRequiresNoRunnerRejectionsFromGateEvents(t *testing.T) {
 	joined := strings.Join(report.Findings, "\n")
 	if !strings.Contains(joined, "completion_gate_rejections=1") {
 		t.Fatalf("expected completion gate rejection finding, got %q", joined)
+	}
+}
+
+func TestEvaluateSWETaskContractReplayUsesAutonomyEvents(t *testing.T) {
+	maxViolations := 0
+	task := SWETask{
+		ID:     "contract-replay-clean",
+		Family: "plan_then_execute_planner",
+		Scenario: Scenario{
+			Name: "contract-replay-clean",
+			RequireContractReplay: &ContractReplayExpectation{
+				RequirePacks:            []string{"completion/readiness"},
+				RequireEnforcementModes: []string{"observe_only"},
+				RequireAtoms:            []string{"pack_seen", "gate_decision", "observed_fact"},
+				MaxViolations:           &maxViolations,
+			},
+		},
+	}
+	records := []Record{
+		{
+			Type: "message",
+			Data: map[string]any{
+				"role": "autonomy_event",
+				"content": `{
+					"schema_version":"idiom.autonomy.event.v1",
+					"event_id":"evt-compiled",
+					"type":"contract_compiled",
+					"effect":"observe_only",
+					"occurred_at":"2026-05-24T12:00:00Z",
+					"sequence":1,
+					"contract_id":"contract-1",
+					"lifecycle":{},
+					"metadata":{"tags":["atom:contract_compiled"]}
+				}`,
+			},
+		},
+		{
+			Type: "run_event",
+			Data: map[string]any{
+				"role": "autonomy_event",
+				"content": `{
+					"schema_version":"idiom.autonomy.event.v1",
+					"event_id":"evt-gate",
+					"type":"gate_decision",
+					"effect":"observe_only",
+					"occurred_at":"2026-05-24T12:00:01Z",
+					"sequence":2,
+					"contract_id":"contract-1",
+					"gate":{
+						"gate":"completion_gate",
+						"decision":"allow",
+						"pack_id":"completion/readiness",
+						"enforcement_mode":"observe_only",
+						"observed_facts":["status:decision=allow"]
+					},
+					"metadata":{"tags":["atom:gate_decision"]}
+				}`,
+			},
+		},
+	}
+
+	report := EvaluateSWETask("contract-replay.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected contract replay task to pass, got %#v", report.Findings)
+	}
+	if report.Metrics.ContractReplay == nil {
+		t.Fatal("expected contract replay metrics")
+	}
+	if report.Metrics.ContractReplay.TotalEvents != 2 || !report.Metrics.ContractReplay.AllClear {
+		t.Fatalf("unexpected contract replay report: %#v", report.Metrics.ContractReplay)
+	}
+	if report.Metrics.ContractReplay.Packs["completion/readiness"] != 1 {
+		t.Fatalf("expected replay pack count, got %#v", report.Metrics.ContractReplay.Packs)
+	}
+}
+
+func TestEvaluateSWETaskContractReplayFailsExpectations(t *testing.T) {
+	maxViolations := 0
+	task := SWETask{
+		ID:     "contract-replay-violations",
+		Family: "plan_then_execute_planner",
+		Scenario: Scenario{
+			Name: "contract-replay-violations",
+			RequireContractReplay: &ContractReplayExpectation{
+				RequirePacks:       []string{"completion/readiness"},
+				RequireAtoms:       []string{"gate_decision"},
+				MaxViolations:      &maxViolations,
+				ForbidViolationIDs: []string{"contract_event_unmatched_contract_reference"},
+			},
+		},
+	}
+	records := []Record{{
+		Type: "run_event",
+		Data: map[string]any{
+			"role": "autonomy_event",
+			"content": `{
+				"schema_version":"idiom.autonomy.event.v1",
+				"event_id":"evt-unmatched-gate",
+				"type":"gate_decision",
+				"effect":"observe_only",
+				"occurred_at":"2026-05-24T12:00:01Z",
+				"sequence":2,
+				"contract_id":"missing-contract",
+				"gate":{
+					"gate":"completion_gate",
+					"decision":"allow",
+					"pack_id":"completion/readiness",
+					"enforcement_mode":"observe_only"
+				}
+			}`,
+		},
+	}}
+
+	report := EvaluateSWETask("contract-replay-violation.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected contract replay violation to fail")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	for _, want := range []string{"contract replay violations exceeded limit", "contract replay violation \"contract_event_unmatched_contract_reference\" was forbidden"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected finding %q, got %q", want, joined)
+		}
+	}
+}
+
+func TestEvaluateSWETaskContractReplayMaxViolationsIgnoresAuditDiagnostics(t *testing.T) {
+	maxViolations := 0
+	task := SWETask{
+		ID:     "contract-replay-audit-diagnostic",
+		Family: "plan_then_execute_planner",
+		Scenario: Scenario{
+			Name: "contract-replay-audit-diagnostic",
+			RequireContractReplay: &ContractReplayExpectation{
+				RequirePacks:  []string{"completion/readiness"},
+				RequireAtoms:  []string{"gate_decision", "observed_fact"},
+				MaxViolations: &maxViolations,
+			},
+		},
+	}
+	records := []Record{{
+		Type: "run_event",
+		Data: map[string]any{
+			"role": "autonomy_event",
+			"content": `{
+				"schema_version":"idiom.autonomy.event.v1",
+				"event_id":"evt-unmatched-gate",
+				"type":"gate_decision",
+				"effect":"observe_only",
+				"occurred_at":"2026-05-24T12:00:01Z",
+				"sequence":2,
+				"contract_id":"missing-contract",
+				"gate":{
+					"gate":"completion_gate",
+					"decision":"allow",
+					"pack_id":"completion/readiness",
+					"enforcement_mode":"observe_only",
+					"observed_facts":["status:decision=allow"]
+				}
+			}`,
+		},
+	}}
+
+	report := EvaluateSWETask("contract-replay-audit-diagnostic.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected audit-only diagnostics not to count against replay max violations, got %#v", report.Findings)
+	}
+	if report.Metrics.ContractReplay == nil || len(report.Metrics.ContractReplay.Violations) == 0 {
+		t.Fatalf("expected audit diagnostic to remain visible, got %#v", report.Metrics.ContractReplay)
+	}
+	if got := len(report.Metrics.ContractReplay.Replay.Violations); got != 0 {
+		t.Fatalf("expected no deterministic replay violations, got %d", got)
+	}
+}
+
+func TestEvaluateSWETaskWithoutAutonomyEventsKeepsReplayOptional(t *testing.T) {
+	task := SWETask{
+		ID:       "no-contract-replay",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "no-contract-replay"},
+	}
+
+	report := EvaluateSWETask("no-contract-replay.jsonl", []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Explain."}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done."}},
+	}, task)
+	if !report.Passed {
+		t.Fatalf("expected task without contract replay expectation to pass, got %#v", report.Findings)
+	}
+	if report.Metrics.ContractReplay != nil {
+		t.Fatalf("expected no contract replay metrics without autonomy events, got %#v", report.Metrics.ContractReplay)
+	}
+
+	task.Scenario.RequireContractReplay = &ContractReplayExpectation{}
+	report = EvaluateSWETask("no-contract-replay.jsonl", nil, task)
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), "required contract replay was not observed") {
+		t.Fatalf("expected missing contract replay finding, got passed=%t findings=%#v", report.Passed, report.Findings)
 	}
 }
 

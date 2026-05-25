@@ -70,8 +70,18 @@ func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T)
 				HAZOPDeviationsTested:    2,
 				InvariantsTotal:          2,
 				InvariantsWithPBT:        1,
+				StateMachinesTotal:       4,
+				StateMachinesCovered:     3,
 				DecisionTablesTotal:      4,
 				DecisionTablesEnumerated: 1,
+				BoundaryValuesTotal:      5,
+				BoundaryValuesTested:     4,
+				FaultTreeLeavesTotal:     5,
+				FaultTreeLeavesTested:    3,
+				PostMortemIncidentsTotal: 5,
+				PostMortemCatchingTests:  2,
+				FormalModelsTotal:        2,
+				FormalModelsVerified:     1,
 				MutationScore:            &mutation,
 			},
 		},
@@ -85,7 +95,12 @@ func TestBuildCoverageGateEvaluatedEventReportsCoveragePercentages(t *testing.T)
 	assertCoveragePct(t, "fmea", event.Coverage.FMEAMitigationPct, 75)
 	assertCoveragePct(t, "hazop", event.Coverage.HAZOPTestedPct, 50)
 	assertCoveragePct(t, "pbt", event.Coverage.InvariantPBTPct, 50)
+	assertCoveragePct(t, "state_machine", event.Coverage.StateMachinePct, 75)
 	assertCoveragePct(t, "decision_table", event.Coverage.DecisionTablePct, 25)
+	assertCoveragePct(t, "boundary_value", event.Coverage.BoundaryValuePct, 80)
+	assertCoveragePct(t, "fault_tree", event.Coverage.FaultTreeCoveragePct, 60)
+	assertCoveragePct(t, "post_mortem", event.Coverage.PostMortemCoveragePct, 40)
+	assertCoveragePct(t, "formal_verification", event.Coverage.FormalVerificationPct, 50)
 	assertCoveragePct(t, "mutation", event.Coverage.MutationScore, 85)
 	if len(event.BlockedReasons) != 0 {
 		t.Fatalf("passing event should have no blocked reasons, got %#v", event.BlockedReasons)
@@ -711,7 +726,335 @@ func TestCoverageGateDoesNotBlockLowerTiersWhenPBTInvariantTotalIsZero(t *testin
 	}
 }
 
+func TestCoverageGateBlocksContractTiersWhenStateMachineInventoryMissing(t *testing.T) {
+	for _, tier := range []string{"contract_high", "formal_optional"} {
+		t.Run(tier, func(t *testing.T) {
+			eval := coverageGateEvalWithStateMachineCoverage(tier, 0, 0)
+			if eval.Status != "blocked" {
+				t.Fatalf("expected blocked, got %q", eval.Status)
+			}
+			assertCoverageGateBlocker(t, eval, "state_machine", "coverage_state_machine_incomplete", "state_machines_total is zero")
+		})
+	}
+}
+
+func TestCoverageGateBlocksContractTiersWhenStateMachineCoveragePartial(t *testing.T) {
+	eval := coverageGateEvalWithStateMachineCoverage("contract_high", 3, 2)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "state_machine", "coverage_state_machine_incomplete", "state_machines_covered == state_machines_total (2/3)")
+}
+
+func TestCoverageGateDoesNotRequireStateMachineCoverageBelowContractTiers(t *testing.T) {
+	for _, tier := range []string{"documentation", "local_low", "unit", "behavior_standard"} {
+		t.Run(tier, func(t *testing.T) {
+			eval := coverageGateEvalWithStateMachineCoverage(tier, 0, 0)
+			if eval.Status != "pass" {
+				t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
+			}
+			for _, blocker := range eval.Blockers {
+				if blocker.Criterion == "state_machine" {
+					t.Fatalf("expected no state_machine blocker in %s tier, got %#v", tier, eval.Blockers)
+				}
+			}
+		})
+	}
+}
+
+func TestCoverageGateBlocksContractTiersWhenBoundaryValueCoveragePartial(t *testing.T) {
+	eval := coverageGateEvalWithBoundaryCoverage("contract_high", 4, 3, nil)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "boundary_value", "coverage_boundary_value_incomplete", "boundary_values_tested == boundary_values_total (3/4)")
+}
+
+func TestCoverageGateBlocksContractTiersWhenBoundaryValueGateConfiguredWithoutCounters(t *testing.T) {
+	eval := coverageGateEvalWithBoundaryCoverage("contract_high", 0, 0, []string{"boundary_value"})
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "boundary_value", "coverage_boundary_value_incomplete", "boundary_values_total is zero")
+}
+
+func TestCoverageGateDoesNotRequireBoundaryValueCoverageWhenNoNumericBoundsDeclared(t *testing.T) {
+	eval := coverageGateEvalWithBoundaryCoverage("contract_high", 0, 0, nil)
+	if eval.Status != "pass" {
+		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
+	}
+	for _, blocker := range eval.Blockers {
+		if blocker.Criterion == "boundary_value" {
+			t.Fatalf("expected no boundary_value blocker, got %#v", eval.Blockers)
+		}
+	}
+}
+
+func TestCoverageGateBlocksContractTiersWhenFaultTreeCoveragePartial(t *testing.T) {
+	eval := coverageGateEvalWithFaultTreeCoverage("contract_high", 4, 3, nil)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "fault_tree", "coverage_fault_tree_incomplete", "fault_tree_leaves_tested == fault_tree_leaves_total (3/4)")
+}
+
+func TestCoverageGateBlocksContractTiersWhenFaultTreeGateConfiguredWithoutCounters(t *testing.T) {
+	eval := coverageGateEvalWithFaultTreeCoverage("contract_high", 0, 0, []string{"fault_tree"})
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "fault_tree", "coverage_fault_tree_incomplete", "fault_tree_leaves_total is zero")
+}
+
+func TestCoverageGateDoesNotRequireFaultTreeCoverageWhenNoFaultTreeDeclared(t *testing.T) {
+	eval := coverageGateEvalWithFaultTreeCoverage("contract_high", 0, 0, nil)
+	if eval.Status != "pass" {
+		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
+	}
+	for _, blocker := range eval.Blockers {
+		if blocker.Criterion == "fault_tree" {
+			t.Fatalf("expected no fault_tree blocker, got %#v", eval.Blockers)
+		}
+	}
+}
+
+func TestCoverageGateBlocksContractTiersWhenPostMortemCoveragePartial(t *testing.T) {
+	eval := coverageGateEvalWithPostMortemCoverage("contract_high", 4, 3, nil)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "post_mortem", "coverage_post_mortem_incomplete", "post_mortem_catching_tests == post_mortem_incidents_total (3/4)")
+}
+
+func TestCoverageGateBlocksContractTiersWhenPostMortemGateConfiguredWithoutCounters(t *testing.T) {
+	eval := coverageGateEvalWithPostMortemCoverage("contract_high", 0, 0, []string{"post_mortem"})
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "post_mortem", "coverage_post_mortem_incomplete", "post_mortem_incidents_total is zero")
+}
+
+func TestCoverageGateDoesNotRequirePostMortemCoverageWhenNoIncidentsDeclared(t *testing.T) {
+	eval := coverageGateEvalWithPostMortemCoverage("contract_high", 0, 0, nil)
+	if eval.Status != "pass" {
+		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
+	}
+	for _, blocker := range eval.Blockers {
+		if blocker.Criterion == "post_mortem" {
+			t.Fatalf("expected no post_mortem blocker, got %#v", eval.Blockers)
+		}
+	}
+}
+
+func TestCoverageGateBlocksFormalOptionalWhenFormalCoveragePartial(t *testing.T) {
+	eval := coverageGateEvalWithFormalCoverage("formal_optional", 3, 2, nil)
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "formal_verification", "coverage_formal_verification_incomplete", "formal_models_verified == formal_models_total (2/3)")
+}
+
+func TestCoverageGateBlocksFormalOptionalWhenFormalGateConfiguredWithoutCounters(t *testing.T) {
+	eval := coverageGateEvalWithFormalCoverage("formal_optional", 0, 0, []string{"formal_verification"})
+	if eval.Status != "blocked" {
+		t.Fatalf("expected blocked, got %q", eval.Status)
+	}
+	assertCoverageGateBlocker(t, eval, "formal_verification", "coverage_formal_verification_incomplete", "formal_models_total is zero")
+}
+
+func TestCoverageGateDoesNotRequireFormalCoverageForOrdinaryContractHigh(t *testing.T) {
+	eval := coverageGateEvalWithFormalCoverage("contract_high", 0, 0, nil)
+	if eval.Status != "pass" {
+		t.Fatalf("expected pass, got %q: %#v", eval.Status, eval.Blockers)
+	}
+	for _, blocker := range eval.Blockers {
+		if blocker.Criterion == "formal_verification" {
+			t.Fatalf("expected no formal_verification blocker, got %#v", eval.Blockers)
+		}
+	}
+}
+
 func coverageGateEvalWithZeroInvariants(tier string) CoverageGateEvaluation {
+	return coverageGateEvalWithCoverage(tier, TDDCoverage{
+		EARSTotal:                1,
+		EARSMapped:               1,
+		BDDTotal:                 1,
+		BDDWithConcreteData:      1,
+		FMEAModesTotal:           1,
+		FMEAModesMitigated:       1,
+		HAZOPDeviationsTotal:     1,
+		HAZOPDeviationsTested:    1,
+		InvariantsTotal:          0,
+		InvariantsWithPBT:        0,
+		StateMachinesTotal:       1,
+		StateMachinesCovered:     1,
+		DecisionTablesTotal:      1,
+		DecisionTablesEnumerated: 1,
+		BoundaryValuesTotal:      1,
+		BoundaryValuesTested:     1,
+		FaultTreeLeavesTotal:     1,
+		FaultTreeLeavesTested:    1,
+		PostMortemIncidentsTotal: 1,
+		PostMortemCatchingTests:  1,
+		FormalModelsTotal:        1,
+		FormalModelsVerified:     1,
+		GatesPassed:              []string{"contract"},
+	})
+}
+
+func coverageGateEvalWithStateMachineCoverage(tier string, total int, covered int) CoverageGateEvaluation {
+	return coverageGateEvalWithCoverage(tier, TDDCoverage{
+		EARSTotal:                1,
+		EARSMapped:               1,
+		BDDTotal:                 1,
+		BDDWithConcreteData:      1,
+		FMEAModesTotal:           1,
+		FMEAModesMitigated:       1,
+		HAZOPDeviationsTotal:     1,
+		HAZOPDeviationsTested:    1,
+		InvariantsTotal:          1,
+		InvariantsWithPBT:        1,
+		StateMachinesTotal:       total,
+		StateMachinesCovered:     covered,
+		DecisionTablesTotal:      1,
+		DecisionTablesEnumerated: 1,
+		BoundaryValuesTotal:      1,
+		BoundaryValuesTested:     1,
+		FaultTreeLeavesTotal:     1,
+		FaultTreeLeavesTested:    1,
+		PostMortemIncidentsTotal: 1,
+		PostMortemCatchingTests:  1,
+		FormalModelsTotal:        1,
+		FormalModelsVerified:     1,
+		GatesPassed:              []string{"contract"},
+	})
+}
+
+func coverageGateEvalWithBoundaryCoverage(tier string, total int, tested int, gatesPassed []string) CoverageGateEvaluation {
+	if len(gatesPassed) == 0 {
+		gatesPassed = []string{"contract"}
+	}
+	return coverageGateEvalWithCoverage(tier, TDDCoverage{
+		EARSTotal:                1,
+		EARSMapped:               1,
+		BDDTotal:                 1,
+		BDDWithConcreteData:      1,
+		FMEAModesTotal:           1,
+		FMEAModesMitigated:       1,
+		HAZOPDeviationsTotal:     1,
+		HAZOPDeviationsTested:    1,
+		InvariantsTotal:          1,
+		InvariantsWithPBT:        1,
+		StateMachinesTotal:       1,
+		StateMachinesCovered:     1,
+		DecisionTablesTotal:      1,
+		DecisionTablesEnumerated: 1,
+		BoundaryValuesTotal:      total,
+		BoundaryValuesTested:     tested,
+		FaultTreeLeavesTotal:     1,
+		FaultTreeLeavesTested:    1,
+		PostMortemIncidentsTotal: 1,
+		PostMortemCatchingTests:  1,
+		FormalModelsTotal:        1,
+		FormalModelsVerified:     1,
+		GatesPassed:              gatesPassed,
+	})
+}
+
+func coverageGateEvalWithFaultTreeCoverage(tier string, total int, tested int, gatesPassed []string) CoverageGateEvaluation {
+	if len(gatesPassed) == 0 {
+		gatesPassed = []string{"contract"}
+	}
+	return coverageGateEvalWithCoverage(tier, TDDCoverage{
+		EARSTotal:                1,
+		EARSMapped:               1,
+		BDDTotal:                 1,
+		BDDWithConcreteData:      1,
+		FMEAModesTotal:           1,
+		FMEAModesMitigated:       1,
+		HAZOPDeviationsTotal:     1,
+		HAZOPDeviationsTested:    1,
+		InvariantsTotal:          1,
+		InvariantsWithPBT:        1,
+		StateMachinesTotal:       1,
+		StateMachinesCovered:     1,
+		DecisionTablesTotal:      1,
+		DecisionTablesEnumerated: 1,
+		BoundaryValuesTotal:      1,
+		BoundaryValuesTested:     1,
+		FaultTreeLeavesTotal:     total,
+		FaultTreeLeavesTested:    tested,
+		PostMortemIncidentsTotal: 1,
+		PostMortemCatchingTests:  1,
+		FormalModelsTotal:        1,
+		FormalModelsVerified:     1,
+		GatesPassed:              gatesPassed,
+	})
+}
+
+func coverageGateEvalWithPostMortemCoverage(tier string, total int, catchingTests int, gatesPassed []string) CoverageGateEvaluation {
+	if len(gatesPassed) == 0 {
+		gatesPassed = []string{"contract"}
+	}
+	return coverageGateEvalWithCoverage(tier, TDDCoverage{
+		EARSTotal:                1,
+		EARSMapped:               1,
+		BDDTotal:                 1,
+		BDDWithConcreteData:      1,
+		FMEAModesTotal:           1,
+		FMEAModesMitigated:       1,
+		HAZOPDeviationsTotal:     1,
+		HAZOPDeviationsTested:    1,
+		InvariantsTotal:          1,
+		InvariantsWithPBT:        1,
+		StateMachinesTotal:       1,
+		StateMachinesCovered:     1,
+		DecisionTablesTotal:      1,
+		DecisionTablesEnumerated: 1,
+		BoundaryValuesTotal:      1,
+		BoundaryValuesTested:     1,
+		FaultTreeLeavesTotal:     1,
+		FaultTreeLeavesTested:    1,
+		PostMortemIncidentsTotal: total,
+		PostMortemCatchingTests:  catchingTests,
+		FormalModelsTotal:        1,
+		FormalModelsVerified:     1,
+		GatesPassed:              gatesPassed,
+	})
+}
+
+func coverageGateEvalWithFormalCoverage(tier string, total int, verified int, gatesPassed []string) CoverageGateEvaluation {
+	if len(gatesPassed) == 0 {
+		gatesPassed = []string{"contract"}
+	}
+	return coverageGateEvalWithCoverage(tier, TDDCoverage{
+		EARSTotal:                1,
+		EARSMapped:               1,
+		BDDTotal:                 1,
+		BDDWithConcreteData:      1,
+		FMEAModesTotal:           1,
+		FMEAModesMitigated:       1,
+		HAZOPDeviationsTotal:     1,
+		HAZOPDeviationsTested:    1,
+		InvariantsTotal:          1,
+		InvariantsWithPBT:        1,
+		StateMachinesTotal:       1,
+		StateMachinesCovered:     1,
+		DecisionTablesTotal:      1,
+		DecisionTablesEnumerated: 1,
+		BoundaryValuesTotal:      1,
+		BoundaryValuesTested:     1,
+		FaultTreeLeavesTotal:     1,
+		FaultTreeLeavesTested:    1,
+		PostMortemIncidentsTotal: 1,
+		PostMortemCatchingTests:  1,
+		FormalModelsTotal:        total,
+		FormalModelsVerified:     verified,
+		GatesPassed:              gatesPassed,
+	})
+}
+
+func coverageGateEvalWithCoverage(tier string, coverage TDDCoverage) CoverageGateEvaluation {
 	return EvaluateCoverageGate(
 		PRDDocument{
 			FrontMatter: PRDFrontMatter{Status: "accepted"},
@@ -731,26 +1074,26 @@ func coverageGateEvalWithZeroInvariants(tier string) CoverageGateEvaluation {
 		}},
 		TDDLedger{
 			CoverageTier: tier,
-			Coverage: TDDCoverage{
-				EARSTotal:                1,
-				EARSMapped:               1,
-				BDDTotal:                 1,
-				BDDWithConcreteData:      1,
-				FMEAModesTotal:           1,
-				FMEAModesMitigated:       1,
-				HAZOPDeviationsTotal:     1,
-				HAZOPDeviationsTested:    1,
-				InvariantsTotal:          0,
-				InvariantsWithPBT:        0,
-				DecisionTablesTotal:      1,
-				DecisionTablesEnumerated: 1,
-				GatesPassed:              []string{"contract"},
-			},
-			Obligations: []TDDObligation{{ID: "TDD-1"}},
+			Coverage:     coverage,
+			Obligations:  []TDDObligation{{ID: "TDD-1"}},
 		},
 		TraceabilityMatrix{
 			Matrix: []TraceabilityRow{{PRDRequirement: "REQ-1", ADR: "ADR-1", TDDObligation: "TDD-1"}},
 		},
 		map[string]bool{"TDD-1": true},
 	)
+}
+
+func assertCoverageGateBlocker(t *testing.T, eval CoverageGateEvaluation, criterion string, kind string, messageSubstring string) {
+	t.Helper()
+	for _, blocker := range eval.Blockers {
+		if blocker.Criterion != criterion || blocker.Kind != kind {
+			continue
+		}
+		if messageSubstring != "" && !strings.Contains(blocker.Message, messageSubstring) {
+			t.Fatalf("blocker message should contain %q, got: %s", messageSubstring, blocker.Message)
+		}
+		return
+	}
+	t.Fatalf("expected blocker criterion=%q kind=%q, got %#v", criterion, kind, eval.Blockers)
 }

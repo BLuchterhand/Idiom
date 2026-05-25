@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"flag"
@@ -29,6 +30,7 @@ type featurePlannerOptions struct {
 
 type featurePlannerRequest struct {
 	Config                config.Config
+	ConfigPath            string
 	Prompt                string
 	PromptFile            string
 	Resume                string
@@ -46,6 +48,8 @@ type featurePlannerResult struct {
 type featurePlannerRunner func(context.Context, featurePlannerRequest, io.Writer) (featurePlannerResult, error)
 
 var runHeadlessFeaturePlanner featurePlannerRunner = defaultHeadlessFeaturePlanner
+var runFeaturePlannerModelTurn = defaultFeaturePlannerModelTurn
+var runFeaturePlannerPlanExecute = defaultFeaturePlannerPlanExecute
 
 func runFeaturePlannerMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runFeaturePlannerMainWithTelemetry(args, stdout, stderr, nil)
@@ -90,6 +94,7 @@ func runFeaturePlannerMainWithTelemetry(args []string, stdout io.Writer, stderr 
 
 	result, err := runHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
 		Config:                cfg,
+		ConfigPath:            opts.ConfigPath,
 		Prompt:                prompt,
 		PromptFile:            opts.PromptFile,
 		Resume:                opts.Resume,
@@ -124,7 +129,7 @@ func runFeaturePlannerMainWithTelemetry(args []string, stdout io.Writer, stderr 
 	return 0
 }
 
-func defaultHeadlessFeaturePlanner(_ context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {
+func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {
 	state, err := loadOrCreateFeaturePlannerState(req)
 	if err != nil {
 		return featurePlannerResult{}, err
@@ -141,6 +146,9 @@ func defaultHeadlessFeaturePlanner(_ context.Context, req featurePlannerRequest,
 		ResumeAnswer:          resumeAnswer,
 		Now:                   time.Now().UTC(),
 	}, func(prompt string, taskFamily string) (string, error) {
+		if taskFamily == "feature_planner_implementor" {
+			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
+		}
 		return runFeaturePlannerModelTurn(req, prompt, taskFamily, stdout)
 	})
 	if err != nil {
@@ -177,7 +185,7 @@ func defaultHeadlessFeaturePlanner(_ context.Context, req featurePlannerRequest,
 	return featurePlannerResult{Answer: answer, Fields: fields}, nil
 }
 
-func runFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, taskFamily string, stdout io.Writer) (string, error) {
+func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, taskFamily string, stdout io.Writer) (string, error) {
 	emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_prompt", prompt, req.SessionID)
 	timeout := time.Duration(req.Config.Chat.RequestTimeoutSeconds) * time.Second
 	if timeout <= 0 {
@@ -202,6 +210,75 @@ func runFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, taskFa
 	}
 	emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_model", answer, req.SessionID)
 	return answer, nil
+}
+
+func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerRequest, prompt string, stdout io.Writer) (string, error) {
+	promptFile, err := os.CreateTemp("", "idiom-feature-planner-atom-*.md")
+	if err != nil {
+		return "", fmt.Errorf("create plan-execute prompt file: %w", err)
+	}
+	promptPath := promptFile.Name()
+	defer os.Remove(promptPath)
+	if _, err := promptFile.WriteString(prompt); err != nil {
+		_ = promptFile.Close()
+		return "", fmt.Errorf("write plan-execute prompt file: %w", err)
+	}
+	if err := promptFile.Close(); err != nil {
+		return "", fmt.Errorf("close plan-execute prompt file: %w", err)
+	}
+
+	configPath := strings.TrimSpace(req.ConfigPath)
+	if configPath == "" {
+		configPath = "config.json"
+	}
+	var planStdout bytes.Buffer
+	var planStderr bytes.Buffer
+	code := runPlanExecuteMain([]string{
+		"-config", configPath,
+		"-prompt-file", promptPath,
+		"-json",
+		"-skip-review-repair",
+	}, &planStdout, &planStderr, runPromptOnce)
+	if req.JSONEvents && stdout != nil {
+		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
+	}
+	if code != 0 {
+		return "", fmt.Errorf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))
+	}
+	payload := map[string]any{
+		"tool":        featureplanner.ToolPlanExecuteComplete,
+		"lane_family": "plan-execute",
+		"summary":     strings.TrimSpace(planStdout.String()),
+	}
+	if progressPath := featurePlannerPlanExecuteProgressPath(planStdout.String()); progressPath != "" {
+		payload["progress_path"] = progressPath
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
+}
+
+func featurePlannerPlanExecuteProgressPath(output string) string {
+	var progressPath string
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "{") {
+			continue
+		}
+		var record struct {
+			Type      string `json:"type"`
+			StatePath string `json:"state_path"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			continue
+		}
+		if strings.HasPrefix(record.Type, "idiom.plan_execute.") && strings.TrimSpace(record.StatePath) != "" {
+			progressPath = strings.TrimSpace(record.StatePath)
+		}
+	}
+	return progressPath
 }
 
 func emitFeaturePlannerMessage(stdout io.Writer, jsonEvents bool, role string, content string, sessionID string) {

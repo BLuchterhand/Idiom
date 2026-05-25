@@ -90,13 +90,69 @@ func EvaluateCoverageGate(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, 
 		record("pbt", requireContract, pbtPass, fmt.Sprintf("expected invariants_with_pbt == invariants_total (%d/%d)", ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal), "tdd.json", "coverage_pbt_incomplete")
 	}
 
+	stateMachinePass := ledger.Coverage.StateMachinesTotal == 0 || ledger.Coverage.StateMachinesCovered == ledger.Coverage.StateMachinesTotal
+	if requireContract && ledger.Coverage.StateMachinesTotal == 0 {
+		stateMachinePass = false
+		record("state_machine", requireContract, stateMachinePass, fmt.Sprintf("expected state_machines_covered == state_machines_total (%d/%d), but state_machines_total is zero (no state-machine obligations planned)", ledger.Coverage.StateMachinesCovered, ledger.Coverage.StateMachinesTotal), "tdd.json", "coverage_state_machine_incomplete")
+	} else {
+		record("state_machine", requireContract, stateMachinePass, fmt.Sprintf("expected state_machines_covered == state_machines_total (%d/%d)", ledger.Coverage.StateMachinesCovered, ledger.Coverage.StateMachinesTotal), "tdd.json", "coverage_state_machine_incomplete")
+	}
+
 	decisionRequired := requireContract && ledger.Coverage.DecisionTablesTotal > 0
 	decisionPass := ledger.Coverage.DecisionTablesTotal == 0 || ledger.Coverage.DecisionTablesEnumerated == ledger.Coverage.DecisionTablesTotal
 	record("decision_table", decisionRequired, decisionPass, fmt.Sprintf("expected decision_tables_enumerated == decision_tables_total (%d/%d)", ledger.Coverage.DecisionTablesEnumerated, ledger.Coverage.DecisionTablesTotal), "tdd.json", "coverage_decision_table_incomplete")
 
-	boundaryRequired := requireContract && (hasGateName("boundary_value", ledger.Coverage.GatesPassed) || hasGateName("boundary_value", ledger.Coverage.GatesBlocked))
-	boundaryPass := !hasGateName("boundary_value", ledger.Coverage.GatesBlocked)
-	record("boundary_value", boundaryRequired, boundaryPass, "boundary value gate must not be blocked when configured", "tdd.json", "coverage_boundary_value_incomplete")
+	boundaryConfigured := hasGateName("boundary_value", ledger.Coverage.GatesPassed) || hasGateName("boundary_value", ledger.Coverage.GatesBlocked)
+	boundaryRequired := requireContract && (ledger.Coverage.BoundaryValuesTotal > 0 || boundaryConfigured)
+	boundaryPass := ledger.Coverage.BoundaryValuesTotal == 0 || ledger.Coverage.BoundaryValuesTested == ledger.Coverage.BoundaryValuesTotal
+	if hasGateName("boundary_value", ledger.Coverage.GatesBlocked) {
+		boundaryPass = false
+	}
+	if requireContract && boundaryConfigured && ledger.Coverage.BoundaryValuesTotal == 0 {
+		boundaryPass = false
+		record("boundary_value", boundaryRequired, boundaryPass, fmt.Sprintf("expected boundary_values_tested == boundary_values_total (%d/%d), but boundary_values_total is zero (boundary-value gate configured without numeric-bound inventory)", ledger.Coverage.BoundaryValuesTested, ledger.Coverage.BoundaryValuesTotal), "tdd.json", "coverage_boundary_value_incomplete")
+	} else {
+		record("boundary_value", boundaryRequired, boundaryPass, fmt.Sprintf("expected boundary_values_tested == boundary_values_total (%d/%d)", ledger.Coverage.BoundaryValuesTested, ledger.Coverage.BoundaryValuesTotal), "tdd.json", "coverage_boundary_value_incomplete")
+	}
+
+	faultTreeConfigured := hasGateName("fault_tree", ledger.Coverage.GatesPassed) || hasGateName("fault_tree", ledger.Coverage.GatesBlocked)
+	faultTreeRequired := requireContract && (ledger.Coverage.FaultTreeLeavesTotal > 0 || faultTreeConfigured)
+	faultTreePass := ledger.Coverage.FaultTreeLeavesTotal == 0 || ledger.Coverage.FaultTreeLeavesTested == ledger.Coverage.FaultTreeLeavesTotal
+	if hasGateName("fault_tree", ledger.Coverage.GatesBlocked) {
+		faultTreePass = false
+	}
+	if requireContract && faultTreeConfigured && ledger.Coverage.FaultTreeLeavesTotal == 0 {
+		faultTreePass = false
+		record("fault_tree", faultTreeRequired, faultTreePass, fmt.Sprintf("expected fault_tree_leaves_tested == fault_tree_leaves_total (%d/%d), but fault_tree_leaves_total is zero (fault-tree gate configured without leaf inventory)", ledger.Coverage.FaultTreeLeavesTested, ledger.Coverage.FaultTreeLeavesTotal), "tdd.json", "coverage_fault_tree_incomplete")
+	} else {
+		record("fault_tree", faultTreeRequired, faultTreePass, fmt.Sprintf("expected fault_tree_leaves_tested == fault_tree_leaves_total (%d/%d)", ledger.Coverage.FaultTreeLeavesTested, ledger.Coverage.FaultTreeLeavesTotal), "tdd.json", "coverage_fault_tree_incomplete")
+	}
+
+	postMortemConfigured := hasGateName("post_mortem", ledger.Coverage.GatesPassed) || hasGateName("post_mortem", ledger.Coverage.GatesBlocked)
+	postMortemRequired := requireContract && (ledger.Coverage.PostMortemIncidentsTotal > 0 || postMortemConfigured)
+	postMortemPass := ledger.Coverage.PostMortemIncidentsTotal == 0 || ledger.Coverage.PostMortemCatchingTests == ledger.Coverage.PostMortemIncidentsTotal
+	if hasGateName("post_mortem", ledger.Coverage.GatesBlocked) {
+		postMortemPass = false
+	}
+	if requireContract && postMortemConfigured && ledger.Coverage.PostMortemIncidentsTotal == 0 {
+		postMortemPass = false
+		record("post_mortem", postMortemRequired, postMortemPass, fmt.Sprintf("expected post_mortem_catching_tests == post_mortem_incidents_total (%d/%d), but post_mortem_incidents_total is zero (post-mortem gate configured without incident inventory)", ledger.Coverage.PostMortemCatchingTests, ledger.Coverage.PostMortemIncidentsTotal), "tdd.json", "coverage_post_mortem_incomplete")
+	} else {
+		record("post_mortem", postMortemRequired, postMortemPass, fmt.Sprintf("expected post_mortem_catching_tests == post_mortem_incidents_total (%d/%d)", ledger.Coverage.PostMortemCatchingTests, ledger.Coverage.PostMortemIncidentsTotal), "tdd.json", "coverage_post_mortem_incomplete")
+	}
+
+	formalConfigured := hasGateName("formal_verification", ledger.Coverage.GatesPassed) || hasGateName("formal_verification", ledger.Coverage.GatesBlocked)
+	formalRequired := requireContract && (ledger.Coverage.FormalModelsTotal > 0 || formalConfigured)
+	formalPass := ledger.Coverage.FormalModelsTotal == 0 || ledger.Coverage.FormalModelsVerified == ledger.Coverage.FormalModelsTotal
+	if hasGateName("formal_verification", ledger.Coverage.GatesBlocked) {
+		formalPass = false
+	}
+	if requireContract && formalConfigured && ledger.Coverage.FormalModelsTotal == 0 {
+		formalPass = false
+		record("formal_verification", formalRequired, formalPass, fmt.Sprintf("expected formal_models_verified == formal_models_total (%d/%d), but formal_models_total is zero (formal verification gate configured without model inventory)", ledger.Coverage.FormalModelsVerified, ledger.Coverage.FormalModelsTotal), "tdd.json", "coverage_formal_verification_incomplete")
+	} else {
+		record("formal_verification", formalRequired, formalPass, fmt.Sprintf("expected formal_models_verified == formal_models_total (%d/%d)", ledger.Coverage.FormalModelsVerified, ledger.Coverage.FormalModelsTotal), "tdd.json", "coverage_formal_verification_incomplete")
+	}
 
 	mutationRequired := requireContract && ledger.Coverage.MutationMinScore > 0
 	mutationUnavailable := hasUnavailableMutationBlocker(ledger.Coverage.GatesBlocked)
@@ -176,13 +232,18 @@ func BuildCoverageGateEvaluatedEvent(eval CoverageGateEvaluation, ledger TDDLedg
 		EffortID: effortID,
 		TaskID:   taskID,
 		Coverage: CoverageGateEventCoverage{
-			EARSCoveragePct:   coveragePercent(ledger.Coverage.EARSMapped, ledger.Coverage.EARSTotal),
-			BDDCoveragePct:    coveragePercent(ledger.Coverage.BDDWithConcreteData, ledger.Coverage.BDDTotal),
-			FMEAMitigationPct: coveragePercent(ledger.Coverage.FMEAModesMitigated, ledger.Coverage.FMEAModesTotal),
-			HAZOPTestedPct:    coveragePercent(ledger.Coverage.HAZOPDeviationsTested, ledger.Coverage.HAZOPDeviationsTotal),
-			InvariantPBTPct:   coveragePercent(ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal),
-			DecisionTablePct:  coveragePercent(ledger.Coverage.DecisionTablesEnumerated, ledger.Coverage.DecisionTablesTotal),
-			MutationScore:     ledger.Coverage.MutationScore,
+			EARSCoveragePct:       coveragePercent(ledger.Coverage.EARSMapped, ledger.Coverage.EARSTotal),
+			BDDCoveragePct:        coveragePercent(ledger.Coverage.BDDWithConcreteData, ledger.Coverage.BDDTotal),
+			FMEAMitigationPct:     coveragePercent(ledger.Coverage.FMEAModesMitigated, ledger.Coverage.FMEAModesTotal),
+			HAZOPTestedPct:        coveragePercent(ledger.Coverage.HAZOPDeviationsTested, ledger.Coverage.HAZOPDeviationsTotal),
+			InvariantPBTPct:       coveragePercent(ledger.Coverage.InvariantsWithPBT, ledger.Coverage.InvariantsTotal),
+			StateMachinePct:       coveragePercent(ledger.Coverage.StateMachinesCovered, ledger.Coverage.StateMachinesTotal),
+			DecisionTablePct:      coveragePercent(ledger.Coverage.DecisionTablesEnumerated, ledger.Coverage.DecisionTablesTotal),
+			BoundaryValuePct:      coveragePercent(ledger.Coverage.BoundaryValuesTested, ledger.Coverage.BoundaryValuesTotal),
+			FaultTreeCoveragePct:  coveragePercent(ledger.Coverage.FaultTreeLeavesTested, ledger.Coverage.FaultTreeLeavesTotal),
+			PostMortemCoveragePct: coveragePercent(ledger.Coverage.PostMortemCatchingTests, ledger.Coverage.PostMortemIncidentsTotal),
+			FormalVerificationPct: coveragePercent(ledger.Coverage.FormalModelsVerified, ledger.Coverage.FormalModelsTotal),
+			MutationScore:         ledger.Coverage.MutationScore,
 		},
 		GateResult:     gateResult,
 		BlockedReasons: coverageGateBlockedReasons(eval.Blockers),

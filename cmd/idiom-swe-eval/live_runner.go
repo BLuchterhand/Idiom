@@ -130,6 +130,11 @@ func (r liveSuiteRunner) runTask(index int, total int, task eval.SWETask, logPat
 		}
 	}
 	if err != nil {
+		if _, loadErr := eval.LoadRecords(logPath); loadErr == nil && !fileMissingOrEmpty(logPath) {
+			fmt.Fprintf(r.progress, "[%d/%d] runner exited nonzero for %s but wrote a scoreable log: %v\n", index+1, total, strings.TrimSpace(task.ID), err)
+			fmt.Fprintf(r.progress, "[%d/%d] finished %s in %s -> %s\n", index+1, total, strings.TrimSpace(task.ID), time.Since(start).Round(time.Millisecond), logPath)
+			return nil
+		}
 		if cmdCtx.Err() == context.DeadlineExceeded {
 			return fmt.Errorf("run live task %s: evaluator deadline exceeded after %ds", task.ID, taskTimeout+45)
 		}

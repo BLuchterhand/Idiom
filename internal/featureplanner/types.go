@@ -73,9 +73,10 @@ const (
 )
 
 const (
-	ToolSubmitFeaturePlan  = "submit_feature_plan"
-	ToolAskPlannerQuestion = "ask_planner_question"
-	ToolQuestionForPlanner = "question_for_planner"
+	ToolSubmitFeaturePlan   = "submit_feature_plan"
+	ToolAskPlannerQuestion  = "ask_planner_question"
+	ToolQuestionForPlanner  = "question_for_planner"
+	ToolPlanExecuteComplete = "plan_execute_completed"
 )
 
 type FeatureState struct {

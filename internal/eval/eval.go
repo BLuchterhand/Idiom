@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/util"
 )
 
@@ -202,6 +203,14 @@ type ControlRailsExpectation struct {
 	FailureToEval         *bool    `json:"failure_to_eval,omitempty"`
 }
 
+type ContractReplayExpectation struct {
+	RequirePacks            []string `json:"require_packs,omitempty"`
+	RequireEnforcementModes []string `json:"require_enforcement_modes,omitempty"`
+	RequireAtoms            []string `json:"require_atoms,omitempty"`
+	MaxViolations           *int     `json:"max_violations,omitempty"`
+	ForbidViolationIDs      []string `json:"forbid_violation_ids,omitempty"`
+}
+
 type Scenario struct {
 	Name                         string                            `json:"name"`
 	PromptContains               []string                          `json:"prompt_contains,omitempty"`
@@ -234,6 +243,7 @@ type Scenario struct {
 	RequireVerificationFeedback  *VerificationFeedbackExpectation  `json:"require_verification_feedback,omitempty"`
 	RequireToolFailureConfidence *ToolFailureConfidenceExpectation `json:"require_tool_failure_confidence,omitempty"`
 	RequireControlRails          *ControlRailsExpectation          `json:"require_control_rails,omitempty"`
+	RequireContractReplay        *ContractReplayExpectation        `json:"require_contract_replay,omitempty"`
 	RequireAssistantForEachUser  bool                              `json:"require_assistant_for_each_user,omitempty"`
 	RequireChangedFiles          []string                          `json:"require_changed_files,omitempty"`
 	RequireEvidencePaths         []string                          `json:"require_evidence_paths,omitempty"`
@@ -513,6 +523,26 @@ type ControlRailsSnapshot struct {
 	Raw                  string   `json:"raw,omitempty"`
 }
 
+type ContractReplayReport struct {
+	SchemaVersion    string                    `json:"schema_version"`
+	TotalEvents      int                       `json:"total_events"`
+	AllClear         bool                      `json:"all_clear"`
+	Packs            map[string]int            `json:"packs,omitempty"`
+	EnforcementModes map[string]int            `json:"enforcement_modes,omitempty"`
+	Atoms            map[string]int            `json:"atoms,omitempty"`
+	Violations       []ContractReplayViolation `json:"violations,omitempty"`
+	Replay           autonomy.ReplayReport     `json:"replay"`
+	Audit            autonomy.EventAuditReport `json:"audit"`
+}
+
+type ContractReplayViolation struct {
+	ID          string   `json:"id"`
+	Severity    string   `json:"severity,omitempty"`
+	Evidence    string   `json:"evidence,omitempty"`
+	EventIDs    []string `json:"event_ids,omitempty"`
+	ContractIDs []string `json:"contract_ids,omitempty"`
+}
+
 type Metrics struct {
 	LastUser                  string                          `json:"last_user"`
 	FinalAssistant            string                          `json:"final_assistant"`
@@ -557,6 +587,7 @@ type Metrics struct {
 	VerificationFeedback      []VerificationFeedbackSnapshot  `json:"verification_feedback,omitempty"`
 	ToolFailureConfidence     []ToolFailureConfidenceSnapshot `json:"tool_failure_confidence,omitempty"`
 	ControlRails              []ControlRailsSnapshot          `json:"control_rails,omitempty"`
+	ContractReplay            *ContractReplayReport           `json:"contract_replay,omitempty"`
 	VerificationChecks        int                             `json:"verification_checks"`
 	VerificationPassed        bool                            `json:"verification_passed"`
 	VerificationFailed        bool                            `json:"verification_failed"`

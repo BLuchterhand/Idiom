@@ -590,10 +590,12 @@ TDD obligation types:
 | `property_based` | coverage | session invariant must hold for arbitrary sequences | contract invariants, state machine model |
 | `fmea_negative` | negative | failure mode with RPN >= 21 must be mitigated | FMEA analysis of contract boundary |
 | `hazop_deviation` | negative | deviation with severity >= 3 must be handled | guide-word analysis of workflow steps |
+| `fault_tree` | negative | critical top event leaf must be tested or mitigated | fault tree analysis of catastrophic outcomes |
 | `decision_table` | combinatorial | behavior depends on multiple boolean conditions | combinatorial enumeration of conditions |
 | `boundary_value` | combinatorial | numeric bound must be tested at edges | contract parameters with numeric ranges |
 | `mutation_score` | verification | test suite must detect injected faults | mutation testing of contract implementation |
 | `post_mortem` | feedback | incident must produce at least one catching test | execution audit, telemetry, post-mortem |
+| `formal_verification` | optional formal | protocol-critical contract needs bounded model proof | TLA+/Alloy model check or equivalent artifact |
 | `manual` | fallback | automation is unavailable | explicit command or inspection steps plus blocker reason |
 
 Rules:
@@ -644,6 +646,9 @@ criteria are blocking through the artifact's coverage tier:
 | Decision table coverage | 100% of required multi-condition decisions enumerated | `contract_high`, `formal_optional` when applicable |
 | Boundary value coverage | 100% of required numeric bounds tested at boundaries | `contract_high`, `formal_optional` when applicable |
 | PBT/state coverage | 100% of session invariants have PBT or equivalent state-model coverage | `contract_high`, `formal_optional` |
+| Fault-tree coverage | 100% of declared critical top-event leaves tested or mitigated | `contract_high`, `formal_optional` when applicable |
+| Post-mortem coverage | 100% of declared incident-derived obligations have catching tests | `contract_high`, `formal_optional` when incidents exist |
+| Formal verification coverage | 100% of declared formal models verified | `formal_optional` or configured formal gates |
 | Mutation score | >= 80% for contract-level tests, or explicit unavailable-tool blocker | `contract_high`, `formal_optional` when mutation is configured |
 
 The coverage gate emits `coverage_gate_evaluated` events. A blocked gate
@@ -1268,11 +1273,21 @@ Example v2 obligation with coverage metadata:
     "hazop_deviations_tested": 6,
     "invariants_total": 3,
     "invariants_with_pbt": 3,
+    "state_machines_total": 2,
+    "state_machines_covered": 2,
     "decision_tables_total": 2,
     "decision_tables_enumerated": 2,
+    "boundary_values_total": 4,
+    "boundary_values_tested": 4,
+    "fault_tree_leaves_total": 3,
+    "fault_tree_leaves_tested": 3,
+    "post_mortem_incidents_total": 2,
+    "post_mortem_catching_tests": 2,
+    "formal_models_total": 1,
+    "formal_models_verified": 1,
     "mutation_score": 85,
     "mutation_min_score": 80,
-    "gates_passed": ["ears", "bdd", "fmea", "hazop", "pbt", "decision_table", "mutation"],
+    "gates_passed": ["ears", "bdd", "fmea", "hazop", "pbt", "state_machine", "decision_table", "boundary_value", "fault_tree", "post_mortem", "formal_verification", "mutation"],
     "gates_blocked": []
   },
   "obligations": [
@@ -1632,7 +1647,7 @@ stateDiagram-v2
 | PRD audit | product workflow | unsupported requirement, hidden blocker, missing metric |
 | ADR audit | product workflow | missing decision, weak alternatives, no validation |
 | TDD audit | product workflow | high-priority requirement without test obligation |
-| coverage gate | product workflow | incomplete tier-required evidence, EARS, BDD, contract, FMEA, HAZOP, PBT, decision table, boundary, or mutation coverage |
+| coverage gate | product workflow | incomplete tier-required evidence, EARS, BDD, contract, FMEA, HAZOP, PBT, state-machine, decision table, boundary, fault-tree, post-mortem, opt-in formal, or mutation coverage |
 | context freshness | comprehension | stale or missing local evidence needed for edit |
 | plan audit | architect | unsupported paths, handles, validation, placeholders |
 | brief lint | brief preflight | malformed brief, vague anchors, prompt magic |
@@ -1976,9 +1991,9 @@ and fixture atoms. The investigation answers:
 - Add regression fixtures for generated brief failures.
 - Add TDD obligation schema v2 with coverage metadata.
 - Add coverage tier selection and deterministic tier justification checks.
-- Add seven new obligation types: `property_based`, `fmea_negative`,
-  `hazop_deviation`, `decision_table`, `boundary_value`, `mutation_score`,
-  `post_mortem`.
+- Add nine new obligation types: `property_based`, `fmea_negative`,
+  `hazop_deviation`, `fault_tree`, `decision_table`, `boundary_value`,
+  `mutation_score`, `post_mortem`, `formal_verification`.
 - Add coverage gate between TDD audit and brief generation.
 - Make the coverage gate reuse or preflight product lint/audit traceability,
   acceptance, and supersession validation, with typed findings carried through to

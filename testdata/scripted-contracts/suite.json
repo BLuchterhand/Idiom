@@ -2,7 +2,7 @@
   "name": "scripted-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 24,
+    "min_tasks": 28,
     "required_families": [
       "direct_question",
       "implementation",
@@ -35,7 +35,15 @@
       "tui",
       "tdd",
       "sdd",
-      "baseline-blocker"
+      "baseline-blocker",
+      "contract-replay",
+      "gate-decision",
+      "post-write-verification",
+      "state-machine",
+      "boundary-value",
+      "fault-tree",
+      "post-mortem",
+      "formal-verification"
     ],
     "required_scenario_assertions": [
       "prompt_contains",
@@ -43,6 +51,7 @@
       "tools",
       "forbid_tools",
       "final_assistant_contains",
+      "contract_replay",
       "route_plan",
       "assistant_for_each_user"
     ],
@@ -860,6 +869,181 @@
           "internal/labels/labels_test.go"
         ],
         "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-contract-replay-blocked-post-write-completion",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Exercise contract replay coverage for a blocked post-write completion gate in the frozen fixture.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- The saved scripted trajectory must include the completion/verification gate blocking a premature completion claim before source-aware verification recovers it.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "recovery",
+        "contract-replay",
+        "gate-decision",
+        "post-write-verification"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-contract-replay-blocked-post-write-completion",
+        "prompt_contains": [
+          "contract replay coverage",
+          "completion/verification gate",
+          "source-aware verification"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "final_assistant_contains": [
+          "Implemented the label change",
+          "Verification: Source sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "autonomy_event",
+          "post_write_verification_required",
+          "completion_gate_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false,
+        "require_contract_replay": {
+          "require_packs": [
+            "completion/readiness",
+            "verification/post_write"
+          ],
+          "require_enforcement_modes": [
+            "enforce"
+          ],
+          "require_atoms": [
+            "gate_decision",
+            "pack_seen",
+            "observed_fact",
+            "verification_status"
+          ],
+          "max_violations": 0
+        }
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-contract-replay-valid-post-write-verification",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Exercise contract replay coverage for a valid post-write verification trajectory in the frozen fixture.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification after the write and only then report completion.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "contract-replay",
+        "gate-decision",
+        "post-write-verification"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-contract-replay-valid-post-write-verification",
+        "prompt_contains": [
+          "valid post-write verification trajectory",
+          "Run source-aware verification",
+          "report completion"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "final_assistant_contains": [
+          "Implemented the label change",
+          "Verification: Source sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "autonomy_event",
+          "post_write_verification_required",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false,
+        "require_contract_replay": {
+          "require_packs": [
+            "completion/readiness",
+            "verification/post_write"
+          ],
+          "require_enforcement_modes": [
+            "enforce"
+          ],
+          "require_atoms": [
+            "gate_decision",
+            "pack_seen",
+            "observed_fact",
+            "verification_status"
+          ],
+          "max_violations": 0
+        }
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 0,
         "max_duration_millis": 120000
       }
     },
@@ -1887,10 +2071,10 @@
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback",
-          "idiom.scripted_model.requests"
+          "idiom.live_contract.rollback"
         ],
         "require_verification": "none",
         "require_approval": false
@@ -1945,6 +2129,7 @@
           "idiom.feature_planner.start",
           "idiom.feature_planner.planner_question_opened",
           "idiom.feature_planner.plan_accepted",
+          "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
           "idiom.live_contract.rollback",
@@ -2024,7 +2209,7 @@
       "id": "scripted-feature-planner-tui-rejects-unverified-completion",
       "family": "feature_planner",
       "runner_mode": "tui",
-      "prompt": "/feature-planner Plan a TUI feature-planner rejection smoke for unverified edit and test claims. Do not edit files.",
+      "prompt": "/feature-planner Plan a TUI feature-planner smoke that delegates atom execution to plan-execute. Do not edit files.",
       "tags": [
         "deterministic",
         "fake-model",
@@ -2034,7 +2219,6 @@
         "tdd",
         "sdd",
         "slash-command",
-        "recovery",
         "rollback"
       ],
       "fixture": "fixtures/frozen-label-repo",
@@ -2042,15 +2226,13 @@
         "name": "scripted-feature-planner-tui-rejects-unverified-completion",
         "prompt_contains": [
           "/feature-planner",
-          "unverified edit and test claims"
+          "delegates atom execution to plan-execute"
         ],
         "final_assistant_contains": [
-          "feature-planner: recovery-open",
+          "feature-planner: complete",
           "atom-tui-unverified-completion",
           "TDD-TUIUnverifiedCompletion",
-          "SDD-TUIUnverifiedCompletion",
-          "blockers:",
-          "not observed by the feature-planner harness"
+          "SDD-TUIUnverifiedCompletion"
         ],
         "forbid_tools": [
           "edit_file",
@@ -2065,8 +2247,9 @@
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
-          "idiom.feature_planner.unverified_completion_rejected",
-          "idiom.feature_planner.recovery_open",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
@@ -2082,6 +2265,131 @@
         "require_no_timeout": true,
         "max_errors": 0,
         "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-plan-execute-delivery",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan and deliver a tiny source package plus test through nested plan-execute.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "plan-execute",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-plan-execute-delivery",
+        "prompt_contains": [
+          "/feature-planner",
+          "nested plan-execute"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tui-plan-execute-delivery",
+          "TDD-TUIPlanExecuteDelivery",
+          "SDD-TUIPlanExecuteDelivery"
+        ],
+        "require_changed_files": [
+          "internal/fpdelivery/probe.go",
+          "internal/fpdelivery/probe_test.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/fpdelivery/probe.go",
+          "internal/fpdelivery/probe_test.go"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-redis-clone-mget",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Add MGET command support to the retained Redis clone testbed through nested plan-execute.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "redis-clone",
+        "go",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "plan-execute",
+        "large-testbed",
+        "rollback"
+      ],
+      "fixture": "fixtures/redis-clone-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-redis-clone-mget",
+        "prompt_contains": [
+          "/feature-planner",
+          "MGET command",
+          "Redis clone"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-redis-clone-mget",
+          "TDD-RedisCloneMGET",
+          "SDD-RedisCloneMGET"
+        ],
+        "require_changed_files": [
+          "internal/server/server.go",
+          "internal/server/server_test.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/server/server.go",
+          "internal/server/server_test.go"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 180000
       }
     },
     {
@@ -2126,10 +2434,320 @@
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
-          "idiom.live_contract.rollback",
-          "idiom.scripted_model.requests"
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-tdd-state-machine-atom",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan the remaining TDD expansion atom for state-machine coverage. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "state-machine",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-tdd-state-machine-atom",
+        "prompt_contains": [
+          "/feature-planner",
+          "state-machine coverage"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tdd-state-machine-coverage",
+          "TDD-StateMachineCoverage",
+          "SDD-TDD-StateMachineCoverage"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-tdd-boundary-value-atom",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan the remaining TDD expansion atom for boundary-value coverage. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "boundary-value",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-tdd-boundary-value-atom",
+        "prompt_contains": [
+          "/feature-planner",
+          "boundary-value coverage"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tdd-boundary-value-coverage",
+          "TDD-BoundaryValueCoverage",
+          "SDD-TDD-BoundaryValueCoverage"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-tdd-fault-tree-atom",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan the remaining TDD expansion atom for fault-tree coverage. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "fault-tree",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-tdd-fault-tree-atom",
+        "prompt_contains": [
+          "/feature-planner",
+          "fault-tree coverage"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tdd-fault-tree-coverage",
+          "TDD-FaultTreeCoverage",
+          "SDD-TDD-FaultTreeCoverage"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-tdd-post-mortem-atom",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan the remaining TDD expansion atom for post-mortem feedback coverage. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "post-mortem",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-tdd-post-mortem-atom",
+        "prompt_contains": [
+          "/feature-planner",
+          "post-mortem feedback coverage"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tdd-post-mortem-coverage",
+          "TDD-PostMortemCoverage",
+          "SDD-TDD-PostMortemCoverage"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "allow_no_write": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-tdd-formal-verification-atom",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Plan the remaining TDD expansion atom for optional formal verification coverage. Do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "formal-verification",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-tdd-formal-verification-atom",
+        "prompt_contains": [
+          "/feature-planner",
+          "optional formal verification coverage"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-tdd-formal-verification-coverage",
+          "TDD-FormalVerificationCoverage",
+          "SDD-TDD-FormalVerificationCoverage"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "shell"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
         ],
         "require_verification": "none",
         "require_approval": false

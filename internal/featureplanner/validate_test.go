@@ -2,6 +2,7 @@ package featureplanner
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +38,7 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 
 func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 	plan := validPlan()
+	plan.Atoms[0].Prompt = "Use exact old_text/new_text anchors from the atom brief."
 	prompt := BuildImplementorPrompt(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan)
 
 	for _, want := range []string{
@@ -44,6 +46,10 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 		`Decision: source-satisfied`,
 		`Do not claim files were edited or tests were run`,
 		`unsupported edit/test claims are rejected as recovery-open`,
+		`Requested verification commands for executor phase:`,
+		"Required verification command: run `go test ./...` after edits.",
+		`Atom implementation brief:`,
+		`Use exact old_text/new_text anchors from the atom brief.`,
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("implementor prompt missing %q:\n%s", want, prompt)
@@ -100,6 +106,33 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 	}
 	if len(result.State.ActiveRuns) != 0 {
 		t.Fatalf("active runs should be folded after terminal atom: %+v", result.State.ActiveRuns)
+	}
+}
+
+func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+
+	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != "feature_planner_implementor" {
+			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
+		}
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","summary":"go test ./internal/featureplanner passed"}`, nil
+	})
+
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want dispatch and complete", events)
+	}
+	dispatch := events[0]
+	if dispatch.Type != "idiom.feature_planner.atom_dispatched" || len(dispatch.ActiveRunDeltas) != 1 {
+		t.Fatalf("unexpected dispatch event: %+v", dispatch)
+	}
+	if dispatch.ActiveRunDeltas[0].LaneFamily != "plan-execute" {
+		t.Fatalf("lane family = %q, want plan-execute", dispatch.ActiveRunDeltas[0].LaneFamily)
+	}
+	complete := events[1]
+	if got := fmt.Sprint(complete.Fields["lane_family"]); got != "plan-execute" {
+		t.Fatalf("completion lane family = %q, want plan-execute; event=%+v", got, complete)
 	}
 }
 
@@ -298,6 +331,36 @@ func TestApplyImplementorOutputRejectsUnobservedEditAndTestClaims(t *testing.T) 
 	}
 	if !containsString(state.Continuation.BlockedAtoms, atom.ID) {
 		t.Fatalf("rejected atom should be resumable as blocked: %+v", state.Continuation)
+	}
+}
+
+func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	state.ActiveRuns = []ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        atom.ID,
+		LaneSessionID: "atom-1-run-1",
+		LaneFamily:    "plan-execute",
+		State:         "running",
+	}}
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":"Edited files and go test ./internal/featureplanner passed"}`)
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; blockers=%+v", atom.State, atom.Blockers)
+	}
+	if state.Status != FeatureStateComplete {
+		t.Fatalf("feature state = %q, want complete", state.Status)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/session/state.json" {
+		t.Fatalf("progress_path = %q, want delegated plan-execute path", got)
 	}
 }
 

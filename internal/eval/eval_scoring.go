@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/util"
 )
 
@@ -80,6 +81,7 @@ func Analyze(records []Record) Metrics {
 	laneSummaryTurns := 0
 	lastLaneSummary := ""
 	observedChangedFiles := []string(nil)
+	autonomyEvents := []autonomy.Event(nil)
 	var firstTS time.Time
 	var lastTS time.Time
 	for _, record := range records {
@@ -96,6 +98,9 @@ func Analyze(records []Record) Metrics {
 				metrics.RecordTypes = map[string]int{}
 			}
 			metrics.RecordTypes[rtype]++
+		}
+		if event, ok := autonomyEventFromRecord(record); ok {
+			autonomyEvents = append(autonomyEvents, event)
 		}
 		switch record.Type {
 		case "session_start":
@@ -442,7 +447,164 @@ func Analyze(records []Record) Metrics {
 	metrics.EvidencePaths = util.UniqueNonEmpty(metrics.EvidencePaths)
 	metrics.SummaryRejectionLanes = util.UniqueNonEmpty(metrics.SummaryRejectionLanes)
 	metrics.LanguageCapabilities = mergeLanguageCapabilities(nil, metrics.LanguageCapabilities)
+	if len(autonomyEvents) > 0 {
+		metrics.ContractReplay = replayAutonomyEvents(autonomyEvents)
+	}
 	return metrics
+}
+
+func autonomyEventFromRecord(record Record) (autonomy.Event, bool) {
+	switch record.Type {
+	case "message", "run_event":
+		if strings.TrimSpace(stringField(record.Data, "role")) != "autonomy_event" {
+			return autonomy.Event{}, false
+		}
+		return autonomyEventFromContent(stringField(record.Data, "content"))
+	case "autonomy_event":
+		if content := strings.TrimSpace(stringField(record.Data, "content")); content != "" {
+			return autonomyEventFromContent(content)
+		}
+		return autonomyEventFromData(record.Data)
+	default:
+		return autonomy.Event{}, false
+	}
+}
+
+func autonomyEventFromContent(content string) (autonomy.Event, bool) {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return autonomy.Event{}, false
+	}
+	var event autonomy.Event
+	if err := json.Unmarshal([]byte(content), &event); err != nil {
+		return autonomy.Event{}, false
+	}
+	return normalizedAutonomyEvent(event)
+}
+
+func autonomyEventFromData(data map[string]any) (autonomy.Event, bool) {
+	if data == nil {
+		return autonomy.Event{}, false
+	}
+	encoded, err := json.Marshal(data)
+	if err != nil {
+		return autonomy.Event{}, false
+	}
+	var event autonomy.Event
+	if err := json.Unmarshal(encoded, &event); err != nil {
+		return autonomy.Event{}, false
+	}
+	return normalizedAutonomyEvent(event)
+}
+
+func normalizedAutonomyEvent(event autonomy.Event) (autonomy.Event, bool) {
+	event.Normalize()
+	if strings.TrimSpace(string(event.Type)) == "" {
+		return autonomy.Event{}, false
+	}
+	return event, true
+}
+
+func replayAutonomyEvents(events []autonomy.Event) *ContractReplayReport {
+	replay := autonomy.ReplayEvents(events, autonomy.ReplayOptions{})
+	audit := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	report := &ContractReplayReport{
+		SchemaVersion:    "idiom.eval.contract_replay.v1",
+		TotalEvents:      replay.TotalEvents,
+		AllClear:         len(replay.Violations) == 0 && audit.AllClear,
+		Packs:            copyStringIntMap(replay.PackCounts),
+		EnforcementModes: copyStringIntMap(replay.EnforcementModeCounts),
+		Atoms:            copyStringIntMap(replay.AtomCounts),
+		Violations:       contractReplayViolations(replay, audit),
+		Replay:           replay,
+		Audit:            audit,
+	}
+	if len(audit.TurnPhaseCoverage.EnforcementModeCounts) > 0 {
+		report.EnforcementModes = mergeStringIntMaps(report.EnforcementModes, audit.TurnPhaseCoverage.EnforcementModeCounts)
+	}
+	if len(report.Packs) == 0 {
+		report.Packs = nil
+	}
+	if len(report.EnforcementModes) == 0 {
+		report.EnforcementModes = nil
+	}
+	if len(report.Atoms) == 0 {
+		report.Atoms = nil
+	}
+	if len(report.Violations) == 0 {
+		report.Violations = nil
+	}
+	return report
+}
+
+func contractReplayViolations(replay autonomy.ReplayReport, audit autonomy.EventAuditReport) []ContractReplayViolation {
+	violations := make([]ContractReplayViolation, 0, len(replay.Violations)+len(audit.Findings)+len(audit.ObligationCoverage.UnresolvedObligations))
+	for _, violation := range replay.Violations {
+		violations = append(violations, ContractReplayViolation{
+			ID:          violation.ID,
+			Severity:    "medium",
+			Evidence:    violation.Evidence,
+			EventIDs:    util.UniqueNonEmpty([]string{violation.EventID}),
+			ContractIDs: util.UniqueNonEmpty([]string{violation.ContractID}),
+		})
+	}
+	for _, finding := range audit.Findings {
+		violations = append(violations, ContractReplayViolation{
+			ID:          finding.ID,
+			Severity:    finding.Severity,
+			Evidence:    finding.Evidence,
+			EventIDs:    append([]string(nil), finding.EventIDs...),
+			ContractIDs: append([]string(nil), finding.ContractIDs...),
+		})
+	}
+	for _, obligation := range audit.ObligationCoverage.UnresolvedObligations {
+		violations = append(violations, ContractReplayViolation{
+			ID:          "contract_event_unresolved_obligation",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("obligation %q remained open", obligation.ObligationID),
+			EventIDs:    util.UniqueNonEmpty([]string{obligation.EventID}),
+			ContractIDs: util.UniqueNonEmpty([]string{obligation.ContractID}),
+		})
+	}
+	return violations
+}
+
+func copyStringIntMap(in map[string]int) map[string]int {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(in))
+	for key, value := range in {
+		if key = strings.TrimSpace(key); key != "" && value > 0 {
+			out[key] = value
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func mergeStringIntMaps(maps ...map[string]int) map[string]int {
+	out := make(map[string]int)
+	for _, in := range maps {
+		for key, value := range in {
+			if key = strings.TrimSpace(key); key != "" && value > 0 {
+				out[key] += value
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func incrementReplayCount(counts map[string]int, value string) {
+	value = strings.TrimSpace(value)
+	if value != "" {
+		counts[value]++
+	}
 }
 
 func recordTerminalOutcomeSignals(metrics *Metrics, content string) {
@@ -846,6 +1008,35 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			)
 		}
 	}
+	if scenario.RequireContractReplay != nil {
+		if metrics.ContractReplay == nil {
+			addFinding("required contract replay was not observed")
+		} else {
+			for _, pack := range scenario.RequireContractReplay.RequirePacks {
+				if mapCountFold(metrics.ContractReplay.Packs, pack) == 0 {
+					addFinding("contract replay pack %q was not observed", pack)
+				}
+			}
+			for _, mode := range scenario.RequireContractReplay.RequireEnforcementModes {
+				if mapCountFold(metrics.ContractReplay.EnforcementModes, mode) == 0 {
+					addFinding("contract replay enforcement mode %q was not observed", mode)
+				}
+			}
+			for _, atom := range scenario.RequireContractReplay.RequireAtoms {
+				if mapCountFold(metrics.ContractReplay.Atoms, atom) == 0 {
+					addFinding("contract replay atom %q was not observed", atom)
+				}
+			}
+			if scenario.RequireContractReplay.MaxViolations != nil && len(metrics.ContractReplay.Replay.Violations) > *scenario.RequireContractReplay.MaxViolations {
+				addFinding("contract replay violations exceeded limit: got %d want <= %d", len(metrics.ContractReplay.Replay.Violations), *scenario.RequireContractReplay.MaxViolations)
+			}
+			for _, id := range scenario.RequireContractReplay.ForbidViolationIDs {
+				if contractReplayHasViolation(metrics.ContractReplay.Violations, id) {
+					addFinding("contract replay violation %q was forbidden", id)
+				}
+			}
+		}
+	}
 	for _, required := range scenario.RequireChangedFiles {
 		if !containsStringFold(metrics.ChangedFiles, required) {
 			addFinding("changed files do not include %q", required)
@@ -870,6 +1061,32 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 		}
 	}
 	return report
+}
+
+func mapCountFold(values map[string]int, target string) int {
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return 0
+	}
+	for key, count := range values {
+		if strings.EqualFold(strings.TrimSpace(key), target) {
+			return count
+		}
+	}
+	return 0
+}
+
+func contractReplayHasViolation(violations []ContractReplayViolation, id string) bool {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return false
+	}
+	for _, violation := range violations {
+		if strings.EqualFold(strings.TrimSpace(violation.ID), id) {
+			return true
+		}
+	}
+	return false
 }
 
 func evaluatePlanExecutionExpectation(metrics Metrics, expected PlanExecutionExpectation) []string {

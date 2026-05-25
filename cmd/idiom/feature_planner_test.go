@@ -3,11 +3,14 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"idiom/internal/featureplanner"
 )
 
 func TestRunFeaturePlannerMainReadsPromptFileAndHonorsJSON(t *testing.T) {
@@ -112,4 +115,137 @@ func TestFeaturePlannerMainDispatchesFromTopLevel(t *testing.T) {
 	if code != 0 || !called || strings.TrimSpace(stdout.String()) != "ok" {
 		t.Fatalf("expected top-level dispatch success, code=%d called=%t stdout=%q stderr=%s", code, called, stdout.String(), stderr.String())
 	}
+}
+
+func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testing.T) {
+	root := t.TempDir()
+	configPath := writeMainConfigRoot(t, root)
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	originalPlanExecute := runFeaturePlannerPlanExecute
+	t.Cleanup(func() {
+		runFeaturePlannerModelTurn = originalModelTurn
+		runFeaturePlannerPlanExecute = originalPlanExecute
+	})
+
+	modelCalls := 0
+	planExecuteCalls := 0
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, taskFamily string, _ io.Writer) (string, error) {
+		modelCalls++
+		if taskFamily != "feature_planner_planner" {
+			t.Fatalf("feature-planner execution must not use direct model task family %q", taskFamily)
+		}
+		return featurePlannerPlanExecuteDispatchPlanJSON(), nil
+	}
+	runFeaturePlannerPlanExecute = func(_ context.Context, _ featurePlannerRequest, prompt string, _ io.Writer) (string, error) {
+		planExecuteCalls++
+		if !strings.Contains(prompt, "Implement one feature atom") || !strings.Contains(prompt, "docs/feature-planner-plan-execute.txt") {
+			t.Fatalf("plan-execute prompt missing atom contract: %s", prompt)
+		}
+		body, _ := json.Marshal(map[string]any{
+			"tool":        featureplanner.ToolPlanExecuteComplete,
+			"lane_family": "plan-execute",
+			"summary":     "plan-execute wrote docs/feature-planner-plan-execute.txt and ran go test ./internal/featureplanner",
+		})
+		return string(body), nil
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := runFeaturePlannerMain(
+		[]string{"-config", configPath, "-prompt", "send atom through plan-execute", "-json"},
+		&stdout,
+		&stderr,
+	)
+
+	if code != 0 {
+		t.Fatalf("runFeaturePlannerMain exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	if modelCalls != 1 {
+		t.Fatalf("model calls = %d, want planner-only call", modelCalls)
+	}
+	if planExecuteCalls != 1 {
+		t.Fatalf("plan-execute calls = %d, want one atom execution", planExecuteCalls)
+	}
+	if strings.Contains(stdout.String(), "feature-planner-implementor") {
+		t.Fatalf("stdout should not expose legacy direct implementor lane: %s", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), `"lane_family":"plan-execute"`) {
+		t.Fatalf("feature planner event should record plan-execute lane: %s", stdout.String())
+	}
+}
+
+func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/first/state.json"}`,
+		`not json`,
+		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/final/state.json"}`,
+		`{"type":"message","state_path":"ignored"}`,
+	}, "\n")
+
+	if got := featurePlannerPlanExecuteProgressPath(output); got != ".idiom/plan-execute/final/state.json" {
+		t.Fatalf("progress path = %q", got)
+	}
+}
+
+func featurePlannerPlanExecuteDispatchPlanJSON() string {
+	return `{
+  "tool": "submit_feature_plan",
+  "schema_version": "idiom.feature_plan.v1",
+  "feature_id": "feature-plan-execute-dispatch",
+  "source_task": {"kind": "test", "summary": "Route feature-planner atom execution through plan-execute"},
+  "summary": "Route atom execution through plan-execute",
+  "top_level_scope": {
+    "objective": "Exercise feature-planner atom dispatch",
+    "success_criteria": ["the atom execution callback is plan-execute"]
+  },
+  "sdd_contract": {
+    "refs": ["SDD-PlanExecuteDispatch"],
+    "acceptance": ["ready atoms execute through plan-execute"]
+  },
+  "tdd_contract": {
+    "coverage_tier": "contract_high",
+    "required_before_implementation": true,
+    "obligations": [
+      {
+        "id": "TDD-PlanExecuteDispatch",
+        "behavior": "feature-planner dispatch delegates code writing to plan-execute",
+        "command": "go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute",
+        "required_before": "implementation"
+      }
+    ]
+  },
+  "atoms": [
+    {
+      "schema_version": "idiom.feature_atom.v1",
+      "feature_id": "feature-plan-execute-dispatch",
+      "id": "atom-plan-execute-dispatch",
+      "title": "Dispatch through plan-execute",
+      "summary": "Prove feature-planner does not directly model-call implementation atoms",
+      "required_edit_paths": ["docs/feature-planner-plan-execute.txt"],
+      "allowed_edit_paths": ["docs/feature-planner-plan-execute.txt"],
+      "sdd_refs": ["SDD-PlanExecuteDispatch"],
+      "tdd_obligations": ["TDD-PlanExecuteDispatch"],
+      "required_tests": ["go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute"],
+      "test_first": {
+        "obligation_refs": ["TDD-PlanExecuteDispatch"],
+        "commands": ["go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute"],
+        "baseline_required": true,
+        "test_artifact_paths": ["cmd/idiom/feature_planner_test.go"],
+        "pre_execution_event_ids": ["evt-plan-execute-dispatch"],
+        "expected_pre_execution_result": "red-confirmed",
+        "coverage_gate_event_id": "evt-plan-execute-dispatch"
+      },
+      "planned_tdd_snapshot": {
+        "snapshot_id": "snap-plan-execute-dispatch",
+        "snapshot_digest": "sha256:plan-execute-dispatch",
+        "obligation_ids": ["TDD-PlanExecuteDispatch"],
+        "test_commands": ["go test ./cmd/idiom -run TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute"],
+        "test_artifact_paths": ["cmd/idiom/feature_planner_test.go"],
+        "expected_pre_execution_results": ["red-confirmed"],
+        "created_before_dispatch_event_id": "evt-plan-execute-dispatch"
+      },
+      "prompt": "Update docs/feature-planner-plan-execute.txt and keep the atom bounded."
+    }
+  ]
+}`
 }

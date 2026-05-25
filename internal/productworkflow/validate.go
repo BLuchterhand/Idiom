@@ -181,21 +181,23 @@ var allowedCoverageTiers = map[string]bool{
 }
 
 var allowedObligationTypes = map[string]bool{
-	"characterization": true,
-	"regression":       true,
-	"acceptance":       true,
-	"contract":         true,
-	"source_sanity":    true,
-	"eval":             true,
-	"audit":            true,
-	"property_based":   true,
-	"fmea_negative":    true,
-	"hazop_deviation":  true,
-	"decision_table":   true,
-	"boundary_value":   true,
-	"mutation_score":   true,
-	"post_mortem":      true,
-	"manual":           true,
+	"characterization":    true,
+	"regression":          true,
+	"acceptance":          true,
+	"contract":            true,
+	"source_sanity":       true,
+	"eval":                true,
+	"audit":               true,
+	"property_based":      true,
+	"fmea_negative":       true,
+	"hazop_deviation":     true,
+	"fault_tree":          true,
+	"decision_table":      true,
+	"boundary_value":      true,
+	"mutation_score":      true,
+	"post_mortem":         true,
+	"formal_verification": true,
+	"manual":              true,
 }
 
 func validateTDDLedger(ledger TDDLedger) error {
@@ -246,8 +248,18 @@ func validateTDDCoverage(coverage TDDCoverage) []error {
 		{"hazop_deviations_tested", coverage.HAZOPDeviationsTested},
 		{"invariants_total", coverage.InvariantsTotal},
 		{"invariants_with_pbt", coverage.InvariantsWithPBT},
+		{"state_machines_total", coverage.StateMachinesTotal},
+		{"state_machines_covered", coverage.StateMachinesCovered},
 		{"decision_tables_total", coverage.DecisionTablesTotal},
 		{"decision_tables_enumerated", coverage.DecisionTablesEnumerated},
+		{"boundary_values_total", coverage.BoundaryValuesTotal},
+		{"boundary_values_tested", coverage.BoundaryValuesTested},
+		{"fault_tree_leaves_total", coverage.FaultTreeLeavesTotal},
+		{"fault_tree_leaves_tested", coverage.FaultTreeLeavesTested},
+		{"post_mortem_incidents_total", coverage.PostMortemIncidentsTotal},
+		{"post_mortem_catching_tests", coverage.PostMortemCatchingTests},
+		{"formal_models_total", coverage.FormalModelsTotal},
+		{"formal_models_verified", coverage.FormalModelsVerified},
 	}
 	for _, c := range counters {
 		if c.value < 0 {
@@ -269,8 +281,23 @@ func validateTDDCoverage(coverage TDDCoverage) []error {
 	if coverage.InvariantsWithPBT > coverage.InvariantsTotal {
 		errs = append(errs, fmt.Errorf("tdd ledger coverage.invariants_with_pbt (%d) exceeds invariants_total (%d)", coverage.InvariantsWithPBT, coverage.InvariantsTotal))
 	}
+	if coverage.StateMachinesCovered > coverage.StateMachinesTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.state_machines_covered (%d) exceeds state_machines_total (%d)", coverage.StateMachinesCovered, coverage.StateMachinesTotal))
+	}
 	if coverage.DecisionTablesEnumerated > coverage.DecisionTablesTotal {
 		errs = append(errs, fmt.Errorf("tdd ledger coverage.decision_tables_enumerated (%d) exceeds decision_tables_total (%d)", coverage.DecisionTablesEnumerated, coverage.DecisionTablesTotal))
+	}
+	if coverage.BoundaryValuesTested > coverage.BoundaryValuesTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.boundary_values_tested (%d) exceeds boundary_values_total (%d)", coverage.BoundaryValuesTested, coverage.BoundaryValuesTotal))
+	}
+	if coverage.FaultTreeLeavesTested > coverage.FaultTreeLeavesTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.fault_tree_leaves_tested (%d) exceeds fault_tree_leaves_total (%d)", coverage.FaultTreeLeavesTested, coverage.FaultTreeLeavesTotal))
+	}
+	if coverage.PostMortemCatchingTests > coverage.PostMortemIncidentsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.post_mortem_catching_tests (%d) exceeds post_mortem_incidents_total (%d)", coverage.PostMortemCatchingTests, coverage.PostMortemIncidentsTotal))
+	}
+	if coverage.FormalModelsVerified > coverage.FormalModelsTotal {
+		errs = append(errs, fmt.Errorf("tdd ledger coverage.formal_models_verified (%d) exceeds formal_models_total (%d)", coverage.FormalModelsVerified, coverage.FormalModelsTotal))
 	}
 	if coverage.MutationScore != nil {
 		if *coverage.MutationScore < 0 || *coverage.MutationScore > 100 {

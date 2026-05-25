@@ -4,7 +4,8 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: reviewed and implemented, drafted 2026-05-24
+Status: reviewed and implemented; scripted e2e replay coverage added for
+blocked and valid post-write verification trajectories, drafted 2026-05-24
 
 ## Purpose
 
@@ -107,6 +108,18 @@ The first implementation leaves legacy events in place. Stability comes from
 making `EventGateDecision` complete enough to be the shared evidence shape, then
 teaching audit and tests to read it consistently.
 
+E2e coverage now pins that shape through
+`testdata/scripted-contracts/suite.json`:
+`scripted-contract-replay-blocked-post-write-completion` saves a trajectory
+where a premature completion is blocked until post-write verification runs, and
+`scripted-contract-replay-valid-post-write-verification` saves the valid
+write-then-verify-then-complete path. Both require `autonomy_event` gate
+decision evidence in addition to the legacy post-write verification events.
+The replay assertion keeps deterministic replay violations separate from broader
+audit diagnostics: audit findings remain visible in the report, while
+`max_violations` gates the replay engine's own missing-pack, missing-mode,
+unsafe-fact, repeated-decision, and post-write-verification findings.
+
 ## Explicit Non-Goals
 
 - No LTL/DFA runtime.
@@ -192,13 +205,16 @@ Initial mode: observe-only.
 ## Stability Phases
 
 1. Extend `ContractGateEvent` with pack, mode, observed-fact, and
-   safe-alternative fields.
+   safe-alternative fields. Implemented.
 2. Emit complete `EventGateDecision` payloads from runner gate decisions without
-   removing legacy events.
+   removing legacy events. Implemented for the immediate runner gate surface.
 3. Teach `AuditEvents` and `harness_audit` to summarize pack/mode coverage and
-   contradictions.
+   contradictions. Implemented for current typed gate events.
 4. Add focused regression tests for allow/reject/stop/observe outcomes.
+   Implemented, with scripted e2e coverage for blocked and valid post-write
+   verification trajectories.
 5. Add the built-in pack names as stable grouping labels in emitted decisions.
+   Implemented for the immediate built-in packs.
 
 This order deliberately improves diagnosis before enforcement. If a new rule is
 wrong, observe-only data should show that without breaking a lane.
@@ -282,3 +298,24 @@ Second reviewer pass completed on 2026-05-24:
   validated; require or audit `safe_alternatives` mainly for reject/deny/stop
   outcomes; keep historical logs readable; add `go test ./internal/workspace`
   when harness audit changes land.
+
+Implementation update on 2026-05-25:
+
+- `/feature-planner` atom dispatch now delegates execution to the plan-execute
+  lane instead of accepting a direct feature-planner implementor model closeout.
+- Feature-planner active-run and event data records the atom lane as
+  `plan-execute`; completion is accepted through a typed
+  `plan_execute_completed` envelope.
+- Scripted TUI regressions require the nested plan-execute completion event and
+  `idiom.feature_planner.atom_completed`, so a direct model-only implementor
+  path no longer satisfies the saved e2e contract.
+- A retained delivery run exposed and fixed the CLI adapter's nil
+  plan-execute prompt runner. Nested feature-planner plan-execute dispatch now
+  uses deterministic exact-plan execution with review repair skipped in this
+  adapter path, records the nested progress state path when JSON events expose
+  one, and phrases atom required tests as requested verification commands so
+  plan-execute runs them.
+- Added `scripted-feature-planner-tui-plan-execute-delivery`, a live TUI
+  regression that plans an atom, writes a source file plus test through nested
+  plan-execute, observes `go test ./internal/fpdelivery ... ok` in the atom
+  completion summary, and verifies rollback captured both changed files.

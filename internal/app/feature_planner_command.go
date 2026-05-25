@@ -35,6 +35,9 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		MaxPlanningIterations: 3,
 		Now:                   time.Now().UTC(),
 	}, func(prompt string, taskFamily string) (string, error) {
+		if taskFamily == "feature_planner_implementor" {
+			return m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+		}
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
 	if err != nil {
@@ -73,6 +76,36 @@ func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, tas
 	}
 	m.logMessage("feature_planner_model", answer)
 	return answer, nil
+}
+
+func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt string) (string, error) {
+	priorSuppressTranscript := m.suppressPromptTranscript
+	m.suppressPromptTranscript = true
+	defer func() { m.suppressPromptTranscript = priorSuppressTranscript }()
+
+	answer, err := m.runPlanExecuteCommandOnce(ctx, prompt)
+	if err != nil {
+		return "", err
+	}
+	if body, err := json.Marshal(map[string]any{
+		"tool":        featureplanner.ToolPlanExecuteComplete,
+		"lane_family": "plan-execute",
+	}); err == nil {
+		m.logMessage("idiom.plan_execute.completed", string(body))
+	}
+	return encodeFeaturePlannerPlanExecuteCompletion(answer)
+}
+
+func encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
+	body, err := json.Marshal(map[string]any{
+		"tool":        featureplanner.ToolPlanExecuteComplete,
+		"lane_family": "plan-execute",
+		"summary":     strings.TrimSpace(summary),
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(body), nil
 }
 
 func (m *Model) featurePlannerSessionID() string {

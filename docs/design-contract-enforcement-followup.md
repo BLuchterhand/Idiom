@@ -4,7 +4,9 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: reviewed follow-up design backlog, drafted 2026-05-24
+Status: reviewed follow-up design backlog; Phase 1 started and immediate
+runner-gate envelope implemented; Phase 2 started with scripted e2e replay
+coverage, drafted 2026-05-24
 
 ## Purpose
 
@@ -78,6 +80,12 @@ The immediate stability doc uses `observed_facts` as a bounded field on gate
 decisions. This follow-up should promote those facts into a replayable atom
 stream only after the immediate fields have enough production data to show which
 facts are stable and useful.
+
+Implementation start: saved scripted-contract e2e tasks now exercise the
+`autonomy_event` replay surface for both a blocked completion/verification gate
+and a valid post-write verification trajectory:
+`scripted-contract-replay-blocked-post-write-completion` and
+`scripted-contract-replay-valid-post-write-verification`.
 
 ### Temporal Contracts
 
@@ -188,7 +196,7 @@ expressed as generic invariants.
 
 ## Follow-Up Roadmap
 
-### Phase 1: Enforcement Kernel
+### Phase 1: Enforcement Kernel (Started / Immediate Envelope Implemented)
 
 Define a deterministic trace model over bounded runner/workspace events:
 
@@ -207,7 +215,12 @@ correlate runner gate decisions with legacy surfaces, including
 `completion_gate_decision` events and plan-execute JSON outcomes emitted from
 `cmd/idiom/plan_execute.go`.
 
-### Phase 2: Replay And Benchmarks
+Immediate status: the runner gate envelope exists for saved scripted e2e logs
+through `autonomy_event` / `gate_decision` records with pack, enforcement mode,
+observed facts, and safe-alternative coverage where the gate outcome requires
+it. Broader plan-execute JSON parity remains follow-up work.
+
+### Phase 2: Replay And Benchmarks (Started)
 
 Create a trajectory benchmark independent of task success:
 
@@ -221,6 +234,18 @@ Create a trajectory benchmark independent of task success:
 Score allow/block/observe decisions, false positives, and missing envelopes.
 Also score missing `pack_id`, missing `enforcement_mode`, unsafe
 `observed_facts`, and missing `safe_alternatives` on rejected or stopped gates.
+
+Started benchmark coverage: `testdata/scripted-contracts/suite.json` requires
+the `contract-replay`, `gate-decision`, and `post-write-verification` tags. The
+two replay tasks above require `autonomy_event` plus post-write verification
+events; the blocked trajectory requires `completion_gate_recovery`, while the
+valid trajectory requires `require_no_runner_rejections`.
+
+Scoring keeps two layers visible. Deterministic replay findings are the hard
+contract-replay assertion surface for `max_violations`; broader autonomy audit
+findings are still carried in `metrics.contract_replay.violations` so existing
+turn-phase contradictions remain diagnosable without breaking a replay-only
+regression.
 
 ### Phase 3: Packs As Product Surface
 
@@ -262,6 +287,14 @@ envelope, not the choice of evaluator.
   turning false positives into learned penalties?
 - How should `cmd/idiom/plan_execute.go` JSON events correlate with autonomy
   `EventGateDecision` records without duplicating authority?
+- Should nested TUI plan-execute completion events remain `internal_*` transcript
+  roles, or should the app expose a public nested-lane event stream that
+  preserves plan-execute identity without leaking internal prompts?
+- Should live TUI scoring promote nested plan-execute verification summaries
+  into first-class verification metrics? The delivery regression currently sees
+  `verification go test ./internal/fpdelivery ... ok` in the atom completion
+  summary, while the scorer reports zero top-level verification checks because
+  nested TUI output is intentionally summarized.
 
 ## Review Log
 

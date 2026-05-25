@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -179,6 +180,30 @@ func TestRunLiveContinueOnErrorRunsRemainingTasksAndWritesJSONLFailure(t *testin
 	}
 	if _, err := os.Stat(filepath.Join(logsDir, "second.jsonl")); err != nil {
 		t.Fatalf("expected second task log after first failure: %v", err)
+	}
+}
+
+func TestRunLiveScoresNonzeroRunnerWhenLogIsLoadable(t *testing.T) {
+	dir := t.TempDir()
+	suitePath := filepath.Join(dir, "suite.json")
+	logsDir := filepath.Join(dir, "generated")
+	writeSWESmokeSuite(t, suitePath, "")
+
+	command := strings.Join([]string{
+		`printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"Explain routing."}'`,
+		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
+		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
+		`> {log_path};`,
+		`exit 1`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-generated-logs", logsDir, "-runner-command", command}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected scoreable nonzero runner log to pass, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "runner exited nonzero") {
+		t.Fatalf("expected nonzero runner notice, got stderr=%s", stderr.String())
 	}
 }
 
@@ -783,5 +808,187 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "Lint: PASS") {
 		t.Fatalf("expected `Lint: PASS` in suite report, got:\n%s", stdout.String())
+	}
+}
+
+func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "scripted-contracts", "suite.json")
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := map[string]eval.SWETask{}
+	for _, task := range suite.Tasks {
+		taskByID[task.ID] = task
+	}
+
+	blocked, ok := taskByID["scripted-contract-replay-blocked-post-write-completion"]
+	if !ok {
+		t.Fatalf("blocked contract replay task missing")
+	}
+	assertTaskHasTags(t, blocked, "contract-replay", "gate-decision", "post-write-verification", "recovery")
+	assertTaskHasRunEvents(t, blocked, "autonomy_event", "post_write_verification_required", "completion_gate_recovery")
+	if blocked.Scenario.RequireVerification != "passed" || blocked.Oracle.MaxErrors == nil || *blocked.Oracle.MaxErrors != 1 {
+		t.Fatalf("blocked replay task must recover after one gate rejection, scenario=%#v oracle=%#v", blocked.Scenario, blocked.Oracle)
+	}
+
+	valid, ok := taskByID["scripted-contract-replay-valid-post-write-verification"]
+	if !ok {
+		t.Fatalf("valid contract replay task missing")
+	}
+	assertTaskHasTags(t, valid, "contract-replay", "gate-decision", "post-write-verification")
+	assertTaskHasRunEvents(t, valid, "autonomy_event", "post_write_verification_required")
+	if slices.Contains(valid.Scenario.RequireRunEvents, "completion_gate_recovery") {
+		t.Fatalf("valid replay task should not require a completion-gate recovery event")
+	}
+	if valid.Scenario.RequireVerification != "passed" || !valid.Oracle.RequireNoRunnerRejections {
+		t.Fatalf("valid replay task must require clean post-write verification, scenario=%#v oracle=%#v", valid.Scenario, valid.Oracle)
+	}
+}
+
+func TestScriptedContractTDDExpansionTasksExerciseSuiteBehavior(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "scripted-contracts", "suite.json")
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := map[string]eval.SWETask{}
+	for _, task := range suite.Tasks {
+		taskByID[task.ID] = task
+	}
+
+	for _, tc := range []struct {
+		id   string
+		tag  string
+		atom string
+		tdd  string
+		sdd  string
+	}{
+		{
+			id:   "scripted-feature-planner-tui-tdd-state-machine-atom",
+			tag:  "state-machine",
+			atom: "atom-tdd-state-machine-coverage",
+			tdd:  "TDD-StateMachineCoverage",
+			sdd:  "SDD-TDD-StateMachineCoverage",
+		},
+		{
+			id:   "scripted-feature-planner-tui-tdd-boundary-value-atom",
+			tag:  "boundary-value",
+			atom: "atom-tdd-boundary-value-coverage",
+			tdd:  "TDD-BoundaryValueCoverage",
+			sdd:  "SDD-TDD-BoundaryValueCoverage",
+		},
+		{
+			id:   "scripted-feature-planner-tui-tdd-fault-tree-atom",
+			tag:  "fault-tree",
+			atom: "atom-tdd-fault-tree-coverage",
+			tdd:  "TDD-FaultTreeCoverage",
+			sdd:  "SDD-TDD-FaultTreeCoverage",
+		},
+		{
+			id:   "scripted-feature-planner-tui-tdd-post-mortem-atom",
+			tag:  "post-mortem",
+			atom: "atom-tdd-post-mortem-coverage",
+			tdd:  "TDD-PostMortemCoverage",
+			sdd:  "SDD-TDD-PostMortemCoverage",
+		},
+		{
+			id:   "scripted-feature-planner-tui-tdd-formal-verification-atom",
+			tag:  "formal-verification",
+			atom: "atom-tdd-formal-verification-coverage",
+			tdd:  "TDD-FormalVerificationCoverage",
+			sdd:  "SDD-TDD-FormalVerificationCoverage",
+		},
+	} {
+		task, ok := taskByID[tc.id]
+		if !ok {
+			t.Fatalf("%s task missing", tc.id)
+		}
+		assertTaskHasTags(t, task, "feature-planner", "tui", "tdd", "sdd", "slash-command", tc.tag)
+		assertTaskHasRunEvents(t, task,
+			"idiom.feature_planner.start",
+			"idiom.feature_planner.tdd_pre_execution_checked",
+			"idiom.feature_planner.plan_accepted",
+			"idiom.feature_planner.atom_dispatched",
+			"internal_idiom.plan_execute.completed",
+			"idiom.feature_planner.atom_completed",
+			"idiom.feature_planner.complete",
+			"idiom.live_contract.rollback",
+		)
+		for _, want := range []string{"feature-planner: complete", tc.atom, tc.tdd, tc.sdd} {
+			if !slices.Contains(task.Scenario.FinalAssistantContains, want) {
+				t.Fatalf("%s final assistant assertions must include %q, got %#v", tc.id, want, task.Scenario.FinalAssistantContains)
+			}
+		}
+		if task.Scenario.RequireVerification != "none" || !task.Oracle.RequireCleanRollback || !task.Oracle.RequireNoChangedFiles {
+			t.Fatalf("%s must be a no-edit TUI regression with clean rollback oracle, scenario=%#v oracle=%#v", tc.id, task.Scenario, task.Oracle)
+		}
+	}
+}
+
+func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "scripted-contracts", "suite.json")
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	var task eval.SWETask
+	for _, candidate := range suite.Tasks {
+		if candidate.ID == "scripted-feature-planner-tui-redis-clone-mget" {
+			task = candidate
+			break
+		}
+	}
+	if task.ID == "" {
+		t.Fatal("redis clone feature-planner testbed task missing")
+	}
+
+	if task.Fixture != "fixtures/redis-clone-repo" {
+		t.Fatalf("redis clone task fixture = %q, want fixtures/redis-clone-repo", task.Fixture)
+	}
+	assertTaskHasTags(t, task, "feature-planner", "tui", "tdd", "sdd", "slash-command", "plan-execute", "redis-clone", "large-testbed")
+	assertTaskHasRunEvents(t, task,
+		"idiom.feature_planner.start",
+		"idiom.feature_planner.tdd_pre_execution_checked",
+		"idiom.feature_planner.plan_accepted",
+		"idiom.feature_planner.atom_dispatched",
+		"internal_idiom.plan_execute.completed",
+		"idiom.feature_planner.atom_completed",
+		"idiom.feature_planner.complete",
+		"idiom.live_contract.rollback",
+	)
+	for _, want := range []string{"feature-planner: complete", "atom-redis-clone-mget", "TDD-RedisCloneMGET", "SDD-RedisCloneMGET"} {
+		if !slices.Contains(task.Scenario.FinalAssistantContains, want) {
+			t.Fatalf("redis clone task final assistant assertions must include %q, got %#v", want, task.Scenario.FinalAssistantContains)
+		}
+	}
+	for _, want := range []string{"internal/server/server.go", "internal/server/server_test.go"} {
+		if !slices.Contains(task.Scenario.RequireChangedFiles, want) || !slices.Contains(task.Oracle.RequireChangedFiles, want) {
+			t.Fatalf("redis clone task must require changed file %q, scenario=%#v oracle=%#v", want, task.Scenario.RequireChangedFiles, task.Oracle.RequireChangedFiles)
+		}
+	}
+	if task.Scenario.RequireVerification != "none" || !task.Oracle.RequireCleanRollback || task.Oracle.RequireNoChangedFiles {
+		t.Fatalf("redis clone task must be a rollback-scored TUI mutation regression, scenario=%#v oracle=%#v", task.Scenario, task.Oracle)
+	}
+}
+
+func assertTaskHasTags(t *testing.T, task eval.SWETask, tags ...string) {
+	t.Helper()
+	for _, tag := range tags {
+		if !slices.Contains(task.Tags, tag) {
+			t.Fatalf("%s missing tag %q in %#v", task.ID, tag, task.Tags)
+		}
+	}
+}
+
+func assertTaskHasRunEvents(t *testing.T, task eval.SWETask, events ...string) {
+	t.Helper()
+	for _, event := range events {
+		if !slices.Contains(task.Scenario.RequireRunEvents, event) {
+			t.Fatalf("%s missing required run event %q in %#v", task.ID, event, task.Scenario.RequireRunEvents)
+		}
 	}
 }

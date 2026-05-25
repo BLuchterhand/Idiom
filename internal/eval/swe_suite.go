@@ -1465,6 +1465,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	if scenario.RequireControlRails != nil {
 		assertions = append(assertions, "control_rails")
 	}
+	if scenario.RequireContractReplay != nil {
+		assertions = append(assertions, "contract_replay")
+	}
 	if len(scenario.RequireChangedFiles) > 0 {
 		assertions = append(assertions, "changed_files")
 	}

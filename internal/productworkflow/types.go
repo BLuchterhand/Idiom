@@ -103,8 +103,18 @@ type TDDCoverage struct {
 	HAZOPDeviationsTested    int      `json:"hazop_deviations_tested"`
 	InvariantsTotal          int      `json:"invariants_total"`
 	InvariantsWithPBT        int      `json:"invariants_with_pbt"`
+	StateMachinesTotal       int      `json:"state_machines_total"`
+	StateMachinesCovered     int      `json:"state_machines_covered"`
 	DecisionTablesTotal      int      `json:"decision_tables_total"`
 	DecisionTablesEnumerated int      `json:"decision_tables_enumerated"`
+	BoundaryValuesTotal      int      `json:"boundary_values_total"`
+	BoundaryValuesTested     int      `json:"boundary_values_tested"`
+	FaultTreeLeavesTotal     int      `json:"fault_tree_leaves_total"`
+	FaultTreeLeavesTested    int      `json:"fault_tree_leaves_tested"`
+	PostMortemIncidentsTotal int      `json:"post_mortem_incidents_total"`
+	PostMortemCatchingTests  int      `json:"post_mortem_catching_tests"`
+	FormalModelsTotal        int      `json:"formal_models_total"`
+	FormalModelsVerified     int      `json:"formal_models_verified"`
 	MutationScore            *float64 `json:"mutation_score"`
 	MutationMinScore         int      `json:"mutation_min_score"`
 	GatesPassed              []string `json:"gates_passed"`
@@ -521,13 +531,18 @@ type CoverageGateEvaluatedEvent struct {
 }
 
 type CoverageGateEventCoverage struct {
-	EARSCoveragePct   *float64 `json:"ears_coverage_pct"`
-	BDDCoveragePct    *float64 `json:"bdd_coverage_pct"`
-	FMEAMitigationPct *float64 `json:"fmea_mitigation_pct"`
-	HAZOPTestedPct    *float64 `json:"hazop_tested_pct"`
-	InvariantPBTPct   *float64 `json:"invariant_pbt_pct"`
-	DecisionTablePct  *float64 `json:"decision_table_pct"`
-	MutationScore     *float64 `json:"mutation_score"`
+	EARSCoveragePct       *float64 `json:"ears_coverage_pct"`
+	BDDCoveragePct        *float64 `json:"bdd_coverage_pct"`
+	FMEAMitigationPct     *float64 `json:"fmea_mitigation_pct"`
+	HAZOPTestedPct        *float64 `json:"hazop_tested_pct"`
+	InvariantPBTPct       *float64 `json:"invariant_pbt_pct"`
+	StateMachinePct       *float64 `json:"state_machine_pct"`
+	DecisionTablePct      *float64 `json:"decision_table_pct"`
+	BoundaryValuePct      *float64 `json:"boundary_value_pct"`
+	FaultTreeCoveragePct  *float64 `json:"fault_tree_coverage_pct"`
+	PostMortemCoveragePct *float64 `json:"post_mortem_coverage_pct"`
+	FormalVerificationPct *float64 `json:"formal_verification_pct"`
+	MutationScore         *float64 `json:"mutation_score"`
 }
 
 type CoverageGateCriterion struct {

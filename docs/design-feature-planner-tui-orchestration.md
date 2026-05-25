@@ -4,7 +4,7 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: design draft, 2026-05-20
+Status: partially implemented, 2026-05-25
 
 This document specifies the UX and boundary contracts for a TUI feature planner
 that can accept a full feature request, plan all work, and then dispatch a
@@ -20,6 +20,35 @@ The TUI should feel like one feature-delivery workflow to the operator. Under
 the hood it must stay a durable orchestrator over bounded, auditable phases
 instead of turning one model turn or one `plan-execute` run into an unbounded
 loop.
+
+## Current Implementation Snapshot
+
+As of 2026-05-25, the first delivery slice is implemented for scripted and live
+TUI regression coverage:
+
+- `/feature-planner` in the TUI enters the shared feature-planner orchestration
+  path and records durable feature-plan events.
+- Accepted implementor atoms dispatch through nested `plan-execute` rather than
+  relying on unobserved completion claims.
+- The nested executor emits `internal_idiom.plan_execute.completed`; the
+  feature planner folds the result into atom completion with plan-execute
+  progress and verification evidence.
+- Required atom tests are carried into the executor prompt and are visible in
+  the plan-execute verification phase.
+- Scripted contract coverage includes a small delivery probe and a retained
+  Redis-clone fixture used as a larger TUI feature-planner testbed.
+
+The retained Redis-clone fixture lives at
+`testdata/scripted-contracts/fixtures/redis-clone-repo`. It was created through
+the live TUI with a `/feature-planner` request and nested `plan-execute` atom
+delivery. The reusable regression
+`scripted-feature-planner-tui-redis-clone-mget` copies that fixture, drives the
+TUI, and requires plan-execute to add `MGET` plus tests while the live runner
+scores changed files and rollback.
+
+Open work from the original design remains: dedicated feature-planner screens,
+operator approval UI, restart-oriented TUI rendering, parallel atom scheduling,
+and richer feature-ledger status panels.
 
 ## Problem
 

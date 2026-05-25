@@ -625,8 +625,18 @@ func TestValidContractHighTDDWithCoverageMetadataPasses(t *testing.T) {
 			HAZOPDeviationsTested:    2,
 			InvariantsTotal:          1,
 			InvariantsWithPBT:        1,
+			StateMachinesTotal:       1,
+			StateMachinesCovered:     1,
 			DecisionTablesTotal:      1,
 			DecisionTablesEnumerated: 1,
+			BoundaryValuesTotal:      1,
+			BoundaryValuesTested:     1,
+			FaultTreeLeavesTotal:     1,
+			FaultTreeLeavesTested:    1,
+			PostMortemIncidentsTotal: 1,
+			PostMortemCatchingTests:  1,
+			FormalModelsTotal:        1,
+			FormalModelsVerified:     1,
 			MutationScore:            &score,
 			MutationMinScore:         80,
 			GatesPassed:              []string{"ears", "bdd", "fmea", "hazop"},
@@ -696,6 +706,126 @@ func TestInvalidTDDMappedExceedsTotalFailsClosed(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "fmea_modes_mitigated (4) exceeds fmea_modes_total (2)") {
 		t.Fatalf("expected fmea_modes_mitigated exceeds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDStateMachineCountersFailClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			StateMachinesTotal:   2,
+			StateMachinesCovered: 3,
+			MutationMinScore:     80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected covered>total to fail")
+	}
+	if !strings.Contains(err.Error(), "state_machines_covered (3) exceeds state_machines_total (2)") {
+		t.Fatalf("expected state machine exceeds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDBoundaryValueCountersFailClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			BoundaryValuesTotal:  2,
+			BoundaryValuesTested: 3,
+			MutationMinScore:     80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected tested>total to fail")
+	}
+	if !strings.Contains(err.Error(), "boundary_values_tested (3) exceeds boundary_values_total (2)") {
+		t.Fatalf("expected boundary value exceeds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDFaultTreeCountersFailClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			FaultTreeLeavesTotal:  2,
+			FaultTreeLeavesTested: 3,
+			MutationMinScore:      80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "contract", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected tested>total to fail")
+	}
+	if !strings.Contains(err.Error(), "fault_tree_leaves_tested (3) exceeds fault_tree_leaves_total (2)") {
+		t.Fatalf("expected fault tree exceeds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDPostMortemCountersFailClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "contract_high",
+		Coverage: TDDCoverage{
+			PostMortemIncidentsTotal: 2,
+			PostMortemCatchingTests:  3,
+			MutationMinScore:         80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "post_mortem", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected catching_tests>total to fail")
+	}
+	if !strings.Contains(err.Error(), "post_mortem_catching_tests (3) exceeds post_mortem_incidents_total (2)") {
+		t.Fatalf("expected post-mortem exceeds error, got %v", err)
+	}
+}
+
+func TestInvalidTDDFormalVerificationCountersFailClosed(t *testing.T) {
+	ledger := TDDLedger{
+		SchemaVersion: "idiom.tdd_obligations.v2",
+		EffortID:      "test",
+		TaskID:        "test",
+		CoverageTier:  "formal_optional",
+		Coverage: TDDCoverage{
+			FormalModelsTotal:    2,
+			FormalModelsVerified: 3,
+			MutationMinScore:     80,
+		},
+		Obligations: []TDDObligation{
+			{ID: "TDD-1", Type: "formal_verification", Behavior: "b", Owner: "o", Command: "c", RequiredBefore: "close", Status: "pending"},
+		},
+	}
+	err := validateTDDLedger(ledger)
+	if err == nil {
+		t.Fatal("expected verified>total to fail")
+	}
+	if !strings.Contains(err.Error(), "formal_models_verified (3) exceeds formal_models_total (2)") {
+		t.Fatalf("expected formal verification exceeds error, got %v", err)
 	}
 }
 
@@ -934,7 +1064,7 @@ func TestADRIndexInvalidCoverageTierFailsClosed(t *testing.T) {
 }
 
 func TestValidAllObligationTypesAccepted(t *testing.T) {
-	types := []string{"characterization", "regression", "acceptance", "contract", "source_sanity", "eval", "audit", "property_based", "fmea_negative", "hazop_deviation", "decision_table", "boundary_value", "mutation_score", "post_mortem", "manual"}
+	types := []string{"characterization", "regression", "acceptance", "contract", "source_sanity", "eval", "audit", "property_based", "fmea_negative", "hazop_deviation", "fault_tree", "decision_table", "boundary_value", "mutation_score", "post_mortem", "formal_verification", "manual"}
 	for _, typ := range types {
 		ledger := TDDLedger{
 			SchemaVersion: "idiom.tdd_obligations.v2",

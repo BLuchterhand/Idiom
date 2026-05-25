@@ -159,7 +159,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			AtomID:        atom.ID,
 			Actor:         "implementor",
 			LaneSessionID: runID,
-			LaneFamily:    "feature-planner-implementor",
+			LaneFamily:    "plan-execute",
 			State:         "running",
 			StartedAt:     startedAt,
 			UpdatedAt:     startedAt,
@@ -177,7 +177,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 				Op:            "insert",
 				AtomID:        atom.ID,
 				LaneSessionID: runID,
-				LaneFamily:    "feature-planner-implementor",
+				LaneFamily:    "plan-execute",
 				AfterState:    "running",
 				StartedAt:     startedAt,
 			}},
@@ -223,6 +223,21 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	for _, command := range atom.TestFirst.Commands {
 		fmt.Fprintf(&b, "- %s\n", command)
 	}
+	requiredTests := append([]string(nil), atom.RequiredTests...)
+	if len(requiredTests) == 0 {
+		requiredTests = append(requiredTests, atom.TestFirst.Commands...)
+	}
+	if len(requiredTests) > 0 {
+		b.WriteString("Requested verification commands for executor phase:\n")
+		for _, command := range requiredTests {
+			fmt.Fprintf(&b, "- Required verification command: run `%s` after edits.\n", command)
+		}
+	}
+	if strings.TrimSpace(atom.Prompt) != "" {
+		b.WriteString("\nAtom implementation brief:\n")
+		b.WriteString(strings.TrimSpace(atom.Prompt))
+		b.WriteString("\n")
+	}
 	b.WriteString("\nAtom contract:\n")
 	b.Write(body)
 	b.WriteString("\n")
@@ -237,10 +252,16 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	if strings.HasPrefix(trimmed, "{") {
 		var envelope struct {
 			Tool            string `json:"tool"`
+			LaneFamily      string `json:"lane_family"`
+			Summary         string `json:"summary"`
+			ProgressPath    string `json:"progress_path"`
 			QuestionSummary string `json:"question_summary"`
 			BlockingClaim   string `json:"blocking_claim"`
 		}
 		_ = json.Unmarshal([]byte(trimmed), &envelope)
+		if strings.TrimSpace(envelope.Tool) == ToolPlanExecuteComplete {
+			return completeAtomFromPlanExecute(state, atom, envelope.Summary, envelope.LaneFamily, envelope.ProgressPath)
+		}
 		questionShaped := strings.TrimSpace(envelope.Tool) == ToolQuestionForPlanner ||
 			(strings.TrimSpace(envelope.Tool) == "" &&
 				strings.TrimSpace(envelope.QuestionSummary) != "" &&
@@ -341,6 +362,50 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			BeforeState:   "running",
 			AfterState:    AtomStateComplete,
 		}},
+	}}
+}
+
+func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, summary string, laneFamily string, progressPath string) []Event {
+	atomFrom := atom.State
+	atom.State = AtomStateComplete
+	atom.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	foldActiveRun(state, atom.ID, atom.LastRunID)
+	state.Continuation.CompletedAtoms = appendUnique(state.Continuation.CompletedAtoms, atom.ID)
+	featureTo := state.Status
+	if allAtomsTerminal(state.Atoms) && state.Status != FeatureStatePlanningQuestion {
+		state.Status = FeatureStateComplete
+		featureTo = FeatureStateComplete
+	}
+	fields := map[string]any{
+		"lane_family": strings.TrimSpace(laneFamily),
+	}
+	if strings.TrimSpace(progressPath) != "" {
+		fields["progress_path"] = strings.TrimSpace(progressPath)
+	}
+	if strings.TrimSpace(summary) != "" {
+		fields["summary"] = strings.TrimSpace(summary)
+	}
+	if fields["lane_family"] == "" {
+		fields["lane_family"] = "plan-execute"
+	}
+	return []Event{{
+		Type:       "idiom.feature_planner.atom_completed",
+		SessionID:  state.SessionID,
+		FeatureTo:  featureTo,
+		AtomID:     atom.ID,
+		AtomFrom:   atomFrom,
+		AtomTo:     AtomStateComplete,
+		AtomDeltas: []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateComplete}},
+		ActiveRunDeltas: []ActiveRunDelta{{
+			Op:            "fold_terminal",
+			AtomID:        atom.ID,
+			LaneSessionID: atom.LastRunID,
+			BeforeState:   "running",
+			AfterState:    AtomStateComplete,
+			ResultSource:  "plan-execute",
+			ProgressPath:  strings.TrimSpace(progressPath),
+		}},
+		Fields: fields,
 	}}
 }
 

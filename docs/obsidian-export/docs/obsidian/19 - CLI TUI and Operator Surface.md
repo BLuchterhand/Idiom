@@ -33,6 +33,18 @@ free-form implement the document. That dispatch path resolves the referenced
 markdown, preflights it, refines or atomizes when needed, and then executes
 dispatchable atoms through plan-execute.
 
+The TUI also exposes `/feature-planner` for larger feature requests. The
+implemented slice is still contract-first rather than a separate workflow
+engine: the planner submits a durable feature plan, implementor atoms dispatch
+through nested `plan-execute`, and atom completion is accepted only from
+observed plan-execute progress, source sanity, and requested verification
+evidence. Scripted live coverage includes a tiny plan-execute delivery probe
+and a retained Redis-clone fixture at
+`testdata/scripted-contracts/fixtures/redis-clone-repo`. The regression
+`scripted-feature-planner-tui-redis-clone-mget` copies that fixture, drives
+`/feature-planner` through the TUI, and proves a follow-up `MGET` feature can
+write code and tests through nested plan-execute with clean rollback scoring.
+
 This is pre-dispatch decomposition. The post-failure plan-execute loop described
 in [[21 - Recovery and Decomposition]] should write a durable failure record,
 classified failure shape, and decomposition packet automatically when a

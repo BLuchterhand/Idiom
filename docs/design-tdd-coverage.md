@@ -567,17 +567,19 @@ Redundant pairs (pick one):
 ## Obligation Type Extension
 
 The PRD-to-brief workflow defines eight obligation types. This document adds
-seven more to achieve exhaustive coverage:
+nine more to achieve exhaustive coverage:
 
 | New Type | When to use | Evidence source |
 | --- | --- | --- |
 | `property_based` | session invariant must hold for arbitrary sequences | contract invariants, state machine model |
 | `fmea_negative` | failure mode with RPN >= 21 must be mitigated | FMEA analysis of contract boundary |
 | `hazop_deviation` | deviation with severity >= 3 must be handled | guide-word analysis of workflow steps |
+| `fault_tree` | critical top event leaf must be tested or mitigated | fault tree analysis of catastrophic outcomes |
 | `decision_table` | behavior depends on multiple boolean conditions | combinatorial enumeration of conditions |
 | `boundary_value` | numeric bound must be tested at edges | contract parameters with numeric ranges |
 | `mutation_score` | test suite must detect injected faults | mutation testing of contract implementation |
 | `post_mortem` | incident must produce at least one catching test | execution audit, telemetry, post-mortem |
+| `formal_verification` | protocol-critical contract needs bounded model proof | TLA+/Alloy model check or equivalent artifact |
 
 Updated complete obligation type set:
 
@@ -593,10 +595,12 @@ Updated complete obligation type set:
 | `property_based` | coverage | session invariant must hold for arbitrary sequences |
 | `fmea_negative` | negative | failure mode with RPN >= 21 must be mitigated |
 | `hazop_deviation` | negative | deviation with severity >= 3 must be handled |
+| `fault_tree` | negative | critical top event leaf must be tested or mitigated |
 | `decision_table` | combinatorial | behavior depends on multiple boolean conditions |
 | `boundary_value` | combinatorial | numeric bound must be tested at edges |
 | `mutation_score` | verification | test suite must detect injected faults |
 | `post_mortem` | feedback | incident must produce at least one catching test |
+| `formal_verification` | optional formal | protocol-critical contract needs bounded model proof |
 | `manual` | fallback | automation is unavailable |
 
 ## TDD Obligation Ledger Schema Extension
@@ -617,8 +621,18 @@ The obligation ledger schema gains coverage metadata:
     "hazop_deviations_tested": 0,
     "invariants_total": 0,
     "invariants_with_pbt": 0,
+    "state_machines_total": 0,
+    "state_machines_covered": 0,
     "decision_tables_total": 0,
     "decision_tables_enumerated": 0,
+    "boundary_values_total": 0,
+    "boundary_values_tested": 0,
+    "fault_tree_leaves_total": 0,
+    "fault_tree_leaves_tested": 0,
+    "post_mortem_incidents_total": 0,
+    "post_mortem_catching_tests": 0,
+    "formal_models_total": 0,
+    "formal_models_verified": 0,
     "mutation_score": null,
     "mutation_min_score": 80,
     "gates_passed": [],
@@ -640,7 +654,12 @@ The obligation ledger schema gains coverage metadata:
     "fmea_mitigation_pct": 95,
     "hazop_tested_pct": 100,
     "invariant_pbt_pct": 100,
+    "state_machine_pct": 100,
     "decision_table_pct": 100,
+    "boundary_value_pct": 100,
+    "fault_tree_coverage_pct": 100,
+    "post_mortem_coverage_pct": 100,
+    "formal_verification_pct": 100,
     "mutation_score": 85
   },
   "gate_result": "pass",
@@ -729,7 +748,7 @@ This design composes with existing Idiom surfaces, not replaces them:
 - Add TDD obligation schema v2 with coverage metadata.
 - Add coverage gate event schema. Implemented as passive
   `coverage_gate_evaluated` telemetry in `idiom product tdd --evaluate-coverage`.
-- Add seven new obligation types to the obligation type enum. Implemented for
+- Add nine new obligation types to the obligation type enum. Implemented for
   ledger validation.
 - Add coverage gate as a mandatory step between TDD audit (stage 8) and brief
   generation (stage 9) in the PRD-to-brief lifecycle. Implemented in
