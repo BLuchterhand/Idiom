@@ -251,7 +251,7 @@ Required focused checks:
 ```sh
 go test ./internal/autonomy
 go test ./internal/agent
-go test ./cmd/idiom
+go test ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd
 ```
 
 If runner/audit behavior changes beyond envelope emission, run:

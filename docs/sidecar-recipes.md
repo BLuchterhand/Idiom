@@ -144,7 +144,7 @@ The executable proof lives in
 and is linked from
 [`testdata/sidecar/integration-proofs.json`](../testdata/sidecar/integration-proofs.json).
 It is replayed by
-`go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay -count=1`.
+`go test ./internal/mcpcmd -run TestP86MCPStdioIntegrationProofReplay -count=1`.
 
 ## Local Or Private-Code User
 
@@ -191,10 +191,10 @@ It covers:
 - `context_status --profile discovery --input '{"refresh":true}'` denial with a
   typed `sidecar.error.class == "profile_denied"` before execution.
 
-The fixture is replayed by `go test ./cmd/idiom -run TestSidecarSmokeTranscript`.
+The fixture is replayed by `go test ./internal/sidecarproof -run TestSidecarSmokeTranscript`.
 The v1 compatibility golden tests are replayed by
-`go test ./cmd/idiom -run TestSidecarV1CompatibilityGoldenCases`.
+`go test ./internal/sidecarproof -run TestSidecarV1CompatibilityGoldenCases`.
 The P7.8 integration proof records are validated by
-`go test ./cmd/idiom -run TestP78IntegrationProofRecords`.
+`go test ./internal/sidecarproof -run TestP78IntegrationProofRecords`.
 The P8.6 MCP stdio proof is replayed by
-`go test ./cmd/idiom -run TestP86MCPStdioIntegrationProofReplay`.
+`go test ./internal/mcpcmd -run TestP86MCPStdioIntegrationProofReplay`.

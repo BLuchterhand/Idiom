@@ -14,17 +14,23 @@ not as a substitute for `context_pack` or source inspection.
 
 | Package | Purpose |
 | --- | --- |
-| `cmd/idiom` | Main CLI, TUI launch, tool commands, lanes, atom intake, local ops, artifact commands |
-| `cmd/idiom-analyze` | Analysis command surface |
-| `cmd/idiom-e2e` | End-to-end test command surface |
-| `cmd/idiom-eval` | Evaluation command surface |
-| `cmd/idiom-perf-eval` | Performance/eval command surface |
-| `cmd/idiom-swe-eval` | SWE-style eval command surface |
+| `cmd/idiom` | Thin CLI entrypoint (`main.go`); all subcommand impls live in `internal/*cmd/` |
+| `cmd/idiom-analyze` | Thin entrypoint; analysis impl in `internal/analyzecmd/` |
+| `cmd/idiom-e2e` | Thin entrypoint; e2e impl in `internal/e2ecmd/` |
+| `cmd/idiom-eval` | Thin entrypoint; eval impl in `internal/evalcmd/` |
+| `cmd/idiom-perf-eval` | Thin entrypoint; perf-eval impl in `internal/perfevalcmd/` |
+| `cmd/idiom-swe-eval` | Thin entrypoint; swe-eval impl in `internal/sweevalcmd/` |
 
-Important `cmd/idiom` subcommands include lanes, tools, backend management,
-queue, atom intake, brief lint, lane postflight, product-evidence export,
-release evidence, audit watch, ranker commands, local-ops benchmark, and MCP
-serve.
+Important CLI subcommands live in `internal/*cmd/` packages:
+lanes (`internal/lanecmd`), tools (`internal/toolcmd`), backend management
+(`internal/backendcmd`), queue (`internal/queuecmd`), atom intake
+(`internal/atomcmd`), brief lint (`internal/briefcmd`), lane postflight
+(`internal/postflight`), product-evidence export (`internal/productevidence`),
+release evidence (`internal/productevidence`), audit watch (`internal/auditcmd`),
+ranker commands (`internal/rankercmd`), local-ops benchmark (`internal/localopscmd`),
+MCP serve (`internal/mcpcmd`), doctor (`internal/doctorcmd`), probe
+(`internal/probecmd`), architect (`internal/architectcmd`), refine
+(`internal/refinecmd`), and init (`internal/initcmd`).
 
 ## Core Runtime Packages
 
@@ -69,7 +75,7 @@ serve.
 | `internal/backends` | Backend profiles, role aliases, launcher, status, and proxy management |
 | `internal/llama` | llama.cpp/local model integration |
 | `internal/config` | Project and runtime configuration |
-| `internal/cmdutil` | Shared CLI utilities |
+| `internal/cmdconfig` | Shared CLI configuration |
 | `internal/util` | Shared utility helpers: string, exec, IO, JSON, and generic pointer functions |
 | `internal/autodetect` | Host, model, backend, and toolchain discovery helpers |
 
@@ -84,15 +90,15 @@ serve.
 
 ## Operational Evidence Commands
 
-| Command family | Purpose |
+| Command family (package) | Purpose |
 | --- | --- |
-| `idiom audit watch` | Poll telemetry/conversation logs, debounce high-signal events, and write review packets under `.idiom/audits/watch` |
-| `idiom brief lint` | Pre-dispatch lint for implementation briefs, exact anchors, prompt-magic risks, and plan-execute edit shape |
-| `idiom lane postflight` | QC pipeline for returned diffs |
-| `idiom local-ops benchmark` | Local readiness, activation, smoke, capacity, and privacy-safe benchmark evidence |
-| `idiom product-evidence export` | Metadata-only go/no-go evidence export for product decisions |
-| `idiom release evidence` | Release evidence bundle comparing baseline/current command artifacts |
-| `idiom ranker` | Manual ranker learning inspection, boost/penalize controls, and rollback |
+| `internal/auditcmd` (`idiom audit watch`) | Poll telemetry/conversation logs, debounce high-signal events, and write review packets under `.idiom/audits/watch` |
+| `internal/briefcmd` (`idiom brief lint`) | Pre-dispatch lint for implementation briefs, exact anchors, prompt-magic risks, and plan-execute edit shape |
+| `internal/postflight` (`idiom lane postflight`) | QC pipeline for returned diffs |
+| `internal/localopscmd` (`idiom local-ops benchmark`) | Local readiness, activation, smoke, capacity, and privacy-safe benchmark evidence |
+| `internal/productevidence` (`idiom product-evidence export`) | Metadata-only go/no-go evidence export for product decisions |
+| `internal/productevidence` (`idiom release evidence`) | Release evidence bundle comparing baseline/current command artifacts |
+| `internal/rankercmd` (`idiom ranker`) | Manual ranker learning inspection, boost/penalize controls, and rollback |
 
 ## Prompt And Docs Areas
 
@@ -107,14 +113,14 @@ serve.
 
 | Area | Files |
 | --- | --- |
-| Main CLI | `cmd/idiom/main.go`, `internal/rootcmd`, `internal/lanecmd`, `internal/planexecutecmd` |
+| Main CLI | `cmd/idiom/main.go`, `internal/rootcmd`, `internal/lanecmd`, `internal/planexecutecmd`, `internal/implementcmd`, `internal/toolcmd` |
 | MCP and sidecar | `internal/mcpcmd`, `internal/mcp/client.go`, `internal/mcp/registry.go`, `internal/workspace/tool_schema_export.go` |
 | Runner contracts | `internal/agent/runner.go`, `internal/agent/runner_autonomy.go`, `internal/agent/runner_task_ledger.go` |
 | Workspace tools | `internal/workspace/manager.go`, `internal/workspace/tool_schemas.go`, `internal/workspace/context_tools.go`, `internal/workspace/source_sanity.go` |
 | External project tools | `internal/workspace/external_tool.go`, `.idiom/external_tools/<name>.json` |
 | Context memory | `internal/comprehension/graph.go`, `internal/comprehension/pack.go`, `internal/comprehension/views.go`, `internal/comprehension/freshness.go` |
 | Prompt stack | `internal/promptstack`, `prompts/`, `prompts/profiles/` |
-| Local operations | `internal/doctorcmd`, `internal/backendcmd`, `internal/queuecmd`, `internal/backends`, `internal/autodetect` |
+| Local operations | `internal/doctorcmd`, `internal/backendcmd`, `internal/queuecmd`, `internal/localopscmd`, `internal/backends`, `internal/autodetect` |
 | Audit/eval | `internal/eval`, `internal/telemetry`, `internal/workspace/harness_audit.go` |
 
 ## Change Localization Examples

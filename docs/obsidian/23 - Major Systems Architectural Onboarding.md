@@ -40,7 +40,7 @@ flowchart LR
 | System | Owns | Does not own | First source anchors | Expected proof |
 | --- | --- | --- | --- | --- |
 | CLI and lanes | Repeatable command entry, lane routing, atom intake | Model-loop policy or tool semantics | `cmd/idiom/main.go`, `internal/rootcmd`, `internal/lanecmd`, `internal/planexecutecmd` | `go test ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd` |
-| TUI/session lifecycle | Interactive dispatch, session state, operator controls | Core runner contracts | `internal/app`, `cmd/idiom/tui.go` | `go test ./internal/app` |
+| TUI/session lifecycle | Interactive dispatch, session state, operator controls | Core runner contracts | `internal/app` | `go test ./internal/app` |
 | Runner and contracts | Model loop, tool-call protocol, readiness, recovery nudges | Tool implementation details | `internal/agent/runner.go`, `internal/agent/runner_autonomy.go` | `go test ./internal/agent` |
 | Workspace tools | Tool schemas, permission checks, source sanity, direct tool CLI | Lane policy or model strategy | `internal/workspace/manager.go`, `internal/workspace/tool_schemas.go` | `go test ./internal/workspace` |
 | Repository memory | Context graph, freshness, packs, trace packs, ranker inputs | Final-answer readiness | `internal/comprehension`, `internal/discovery` | `go test ./internal/comprehension ./internal/discovery` |
@@ -244,7 +244,7 @@ Onboarding checklist:
 - Inspect `internal/backends`, `internal/llama`, `internal/autodetect`, and the
   related `cmd/idiom` backend/doctor/queue commands.
 - Check configuration and host-detection behavior before changing defaults.
-- Verify with `go test ./internal/backends ./internal/llama ./cmd/idiom`.
+- Verify with `go test ./internal/backends ./internal/llama ./internal/backendcmd ./internal/doctorcmd ./internal/queuecmd`.
 
 Friction signals: a model route hardcoded for one workflow, backend failures
 reported as agent contract failures, or degraded mode hiding missing capability.
@@ -307,7 +307,7 @@ Onboarding checklist:
   blocked contract.
 - Ensure follow-up atoms are scoped, dispatchable, and tied back to the source
   failure.
-- Verify with `go test ./internal/recovery ./cmd/idiom`.
+- Verify with `go test ./internal/recovery ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd`.
 
 Friction signals: recovery packets that lose the original blocker, duplicate
 atoms for the same failure, or retry loops that do not create durable evidence.

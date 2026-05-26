@@ -490,7 +490,7 @@ schema version: `idiom.durable_plan.v1`.
     }
   ],
   "verification": {
-    "commands": ["go test ./internal/architect", "go test ./cmd/idiom"],
+    "commands": ["go test ./internal/architect", "go test ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd"],
     "source_sanity_paths": ["internal/architect/durable_plan.go"],
     "expected_failures": [],
     "blocked_if_unavailable": true,
@@ -508,7 +508,7 @@ schema version: `idiom.durable_plan.v1`.
     "forbidden_paths": [".git", ".idiom/comprehension/graph.sqlite"],
     "allowed_tool_classes": ["read", "semantic_read", "edit", "verification"],
     "command_policy": {
-      "allow": ["go test ./internal/architect", "go test ./cmd/idiom"],
+      "allow": ["go test ./internal/architect", "go test ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd"],
       "ask": [],
       "deny": ["git push", "git reset --hard"]
     },

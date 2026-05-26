@@ -867,7 +867,7 @@ Implemented:
 
 Verification after recent completion-gate bug fixes:
 
-- `go test ./cmd/idiom ./internal/architect ./internal/config ./internal/agent ./internal/app ./internal/frontier/workerruntime`
+- `go test ./internal/architect ./internal/config ./internal/agent ./internal/app ./internal/frontier/workerruntime ./internal/rootcmd ./internal/lanecmd ./internal/planexecutecmd`
   passed.
 - A CLI smoke test generated a `planning_packet.v2` packet with `brief` budget,
   linted it successfully, and audited a candidate plan successfully.

@@ -1218,7 +1218,7 @@ Add these when relevant:
 
 ```bash
 go test ./internal/agent ./internal/workspace ./internal/comprehension
-go test ./cmd/idiom
+go test ./internal/...
 go build ./cmd/idiom
 idiom tool context_status --input '{"refresh":true,"limit":50}'
 idiom tool harness_audit --input '{"purpose":"behavior"}'
