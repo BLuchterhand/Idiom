@@ -147,6 +147,19 @@ func TestParseToolRequestRepairsRawControlCharsInsideStringValues(t *testing.T) 
 	}
 }
 
+func TestParseToolRequestRepairsMalformedToolNameObjectPayload(t *testing.T) {
+	req, _, ok, err := ParseToolRequest(`{"tool":"code_navigate":{"capability":"read_symbol","path":"cmd/idiom/audit.go","symbol":"runAuditWatchMain"}}`)
+	if err != nil {
+		t.Fatalf("ParseToolRequest should repair malformed tool-name object: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected repaired tool request")
+	}
+	if req.Tool != "code_navigate" || req.Capability != "read_symbol" || req.Path != "cmd/idiom/audit.go" || req.Symbol != "runAuditWatchMain" {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+}
+
 func TestParseToolRequestUnwrapsNestedRequestPayload(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"request\":\"{\\\"tool\\\":\\\"code_navigate\\\",\\\"capability\\\":\\\"read_symbol\\\",\\\"path\\\":\\\"cmd/idiom/main.go\\\",\\\"pattern\\\":\\\"Run\\\"}\"}\n```")
 	if err != nil {

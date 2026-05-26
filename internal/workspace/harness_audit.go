@@ -3137,7 +3137,7 @@ var rankerLearningKnownTriggers = []harnessAuditRankerTrigger{
 	},
 	{
 		Name:        "cli",
-		Component:   "cmd/idiom/ranker.go",
+		Component:   "internal/rankercmd/ranker.go",
 		Description: "manual `idiom ranker boost|penalize|reset` invocations",
 	},
 	{
@@ -3152,12 +3152,12 @@ var rankerLearningKnownTriggers = []harnessAuditRankerTrigger{
 	},
 	{
 		Name:        "audit_watch",
-		Component:   "cmd/idiom/audit.go",
+		Component:   "internal/auditcmd/audit.go",
 		Description: "autonomous review packets folding learning updates; not yet wired",
 	},
 	{
 		Name:        comprehension.LearningSourceRecoveryReconciliation,
-		Component:   "cmd/idiom/recover_packet.go",
+		Component:   "internal/recovercmd/packet.go",
 		Description: "verified recovery reconciliation outcomes recorded as evidence-only learning events",
 	},
 }

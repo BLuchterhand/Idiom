@@ -37,6 +37,30 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 	}
 }
 
+func TestIsZeroHitSearchResultDetectsRoutedSymbolMiss(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output:  "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: No Go symbols matched \"CoverageGate\"",
+	}
+
+	if !IsZeroHitSearchResult(result) {
+		t.Fatalf("routed symbol miss should count as a zero-hit result")
+	}
+}
+
+func TestIsZeroHitSearchResultIgnoresBodyText(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read docs/search-notes.md lines 1-8",
+		Output:  "1:The UI should display the phrase \"no matches\" when search is empty.\n2:Found 0 should be documented as copy, not a tool result.",
+	}
+
+	if IsZeroHitSearchResult(result) {
+		t.Fatalf("source body text should not be classified as zero-hit metadata")
+	}
+}
+
 func TestBuildActionGuidanceForExactAnchorWriteFailure(t *testing.T) {
 	req := workspace.ToolRequest{Tool: "edit_file", Path: "tests/e2e/suite.gd"}
 	result := workspace.ToolResult{

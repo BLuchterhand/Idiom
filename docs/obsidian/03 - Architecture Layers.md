@@ -88,8 +88,8 @@ Examples:
 
 | Layer | Packages | Ownership |
 | --- | --- | --- |
-| Surface | `cmd/idiom`, `internal/app`, inbound MCP in `cmd/idiom/mcp.go` | User commands, TUI lifecycle, external protocol surfaces |
-| Orchestration | `cmd/idiom/lane.go`, `cmd/idiom/plan_execute.go`, `internal/promptstack`, `internal/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
+| Surface | `cmd/idiom`, `internal/rootcmd`, `internal/app`, inbound MCP in `internal/mcpcmd` | User commands, TUI lifecycle, external protocol surfaces |
+| Orchestration | `internal/lanecmd`, `internal/planexecutecmd`, `internal/promptstack`, `internal/projectartifacts` | Lane setup, plan-execute orchestration, prompt assembly, artifact workflow |
 | Contract | `internal/autonomy`, `internal/contractcompile`, `internal/agent`, `internal/frontier/workerruntime` | Contract schema, report-only contract compilation, runtime contracts, role profiles, tool profile rules |
 | Execution | `internal/agent`, `internal/workspace`, `internal/runner` | Model loop, tool dispatch, process execution |
 | Evidence | `internal/comprehension`, `internal/discovery`, `internal/telemetry`, `internal/eval`, `internal/transcript` | Context graph, discovery, logs, audit, evaluation |

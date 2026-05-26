@@ -29,12 +29,9 @@ type DiscoveryRedirect struct {
 	// redirect.
 	decisionTablesShown map[string]bool
 	// kindFireCount keys on "lang|capability" and counts how many times a
-	// given redirect class has fired this turn. Once a class has fired
-	// twice, the fingerprint-fallback no longer applies: every call in
-	// that class gets redirected, and the message escalates. This
-	// catches the "different .go file each time" pattern observed in
-	// logs, where each fresh fingerprint got its own redirect without
-	// the model internalizing the guidance.
+	// given redirect class has fired this turn. Repeated redirects make
+	// the guidance more explicit, but remain soft so the redirect layer
+	// does not become a read-budget stop.
 	kindFireCount map[string]int
 	// allowedTools is the active lane/runtime surface. When a
 	// language-specific direct tool is present in the workspace manager
@@ -56,12 +53,6 @@ type DiscoveryRedirect struct {
 // repos are under 400 lines — raising here cuts the outline detour
 // for the majority while still protecting the large-file case.
 const smallFileRedirectThreshold = 400
-
-// turnWideReadFileHardBlockAt is the number of read_file->outline redirects
-// for a single language in one turn after which we stop soft redirecting and
-// start hard-rejecting the wide raw-read shape. Other semantic redirects stay
-// soft: they are ranked guidance, not mandatory strategy.
-const turnWideReadFileHardBlockAt = 3
 
 // NewDiscoveryRedirect returns a per-turn redirect state.
 func NewDiscoveryRedirect() *DiscoveryRedirect {
@@ -97,11 +88,9 @@ type RedirectDecision struct {
 	Capability workspace.Capability
 	// HardReject signals that the caller should treat this as a
 	// rejection (populate its rejectedFingerprints, bump counters)
-	// rather than as a soft "redirected" result. Fires once the
-	// per-language redirect count for this class passes
-	// turnWideReadFileHardBlockAt — the soft guidance has been ignored
-	// enough that failing the call outright is the smaller evil than
-	// another step of churn.
+	// rather than as a soft "redirected" result. Generic code-read
+	// redirects intentionally leave this false: they are guidance, not
+	// permission invariants.
 	HardReject bool
 }
 
@@ -162,21 +151,7 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	// After turnWideReadFileHardBlockAt whole-file outline redirects of the
 	// same language, flip wide raw reads to a hard-reject path so the runner
 	// populates rejectedFingerprints and a retry terminates the churn. Gated
-	// by CapFileOutline because the other capabilities are semantic ranking
-	// hints; forcing them would choose the model's strategy instead of
-	// protecting an invariant.
-	//
-	// Using `>=` means the third fire (not the fourth) hard-rejects.
-	// Empirical: the suite run at the looser `>` threshold still saw
-	// redirect_storm in 26% of tasks with 41 total events — the
-	// kindFireCount was trending to 4+ before biting. Tightening to
-	// the third fire cuts the tail.
-	hardReject := cap == workspace.CapFileOutline && d.kindFireCount[kind] >= turnWideReadFileHardBlockAt
-
 	summary := redirectSummary(req, adapter.Tool)
-	if hardReject {
-		summary = fmt.Sprintf("Raw %s on %s code blocked — use %s instead", req.Tool, lang.Name, adapter.Tool)
-	}
 	msg := redirectMessage(req, lang, cap, replacement, adapter)
 	if priorKindFires >= 1 {
 		msg = escalateRedirectMessage(msg, lang, cap, adapter.Label(), priorKindFires+1)
@@ -186,17 +161,8 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 		Summary: summary,
 		Output:  msg,
 	}
-	if hardReject {
-		// When hard-rejecting, the model needs to see this as an error
-		// path so its next attempt isn't another raw read_file. Put the
-		// guidance in Error so failure_feedback escalates and the
-		// runner's existing rejected/failure tracking kicks in.
-		result.Error = msg
-		result.Output = ""
-	}
 	return RedirectDecision{
 		ShouldRedirect: true,
-		HardReject:     hardReject,
 		Result:         result,
 		DecisionGuide:  guide,
 		Language:       lang.Name,
@@ -259,8 +225,8 @@ func redirectSummary(req workspace.ToolRequest, replacement string) string {
 // sees the streak, not just an anonymous scolding.
 func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, fireNumber int) string {
 	preface := fmt.Sprintf(
-		"Redirect #%d for %s %s this turn. Further raw-inspection calls on %s code will be blocked instead of executed — even identical retries. Available capability route: %s or the related structured adapter listed below.\n\n",
-		fireNumber, lang.Name, cap, lang.Name, replacement,
+		"Redirect #%d for %s %s this turn. Prefer the capability route for this code-inspection question; raw range reads remain available when a declaration outline cannot answer the specific claim. Available capability route: %s or the related structured adapter listed below.\n\n",
+		fireNumber, lang.Name, cap, replacement,
 	)
 	return preface + base
 }

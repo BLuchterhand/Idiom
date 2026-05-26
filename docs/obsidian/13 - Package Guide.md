@@ -80,7 +80,7 @@ serve.
 | `internal/telemetry` | Structured runtime events and telemetry plumbing |
 | `internal/transcript` | Conversation transcript handling |
 | `internal/eval` | Eval scoring and behavior-pattern detection |
-| `internal/mcp` | Outbound MCP client and registry; inbound MCP server lives in `cmd/idiom/mcp.go` |
+| `internal/mcp` | Outbound MCP client and registry; inbound MCP server lives in `internal/mcpcmd` |
 
 ## Operational Evidence Commands
 
@@ -107,14 +107,14 @@ serve.
 
 | Area | Files |
 | --- | --- |
-| Main CLI | `cmd/idiom/main.go`, `cmd/idiom/lane.go`, `cmd/idiom/plan_execute.go` |
-| MCP and sidecar | `cmd/idiom/mcp.go`, `internal/mcp/client.go`, `internal/mcp/registry.go`, `internal/workspace/tool_schema_export.go` |
+| Main CLI | `cmd/idiom/main.go`, `internal/rootcmd`, `internal/lanecmd`, `internal/planexecutecmd` |
+| MCP and sidecar | `internal/mcpcmd`, `internal/mcp/client.go`, `internal/mcp/registry.go`, `internal/workspace/tool_schema_export.go` |
 | Runner contracts | `internal/agent/runner.go`, `internal/agent/runner_autonomy.go`, `internal/agent/runner_task_ledger.go` |
 | Workspace tools | `internal/workspace/manager.go`, `internal/workspace/tool_schemas.go`, `internal/workspace/context_tools.go`, `internal/workspace/source_sanity.go` |
 | External project tools | `internal/workspace/external_tool.go`, `.idiom/external_tools/<name>.json` |
 | Context memory | `internal/comprehension/graph.go`, `internal/comprehension/pack.go`, `internal/comprehension/views.go`, `internal/comprehension/freshness.go` |
 | Prompt stack | `internal/promptstack`, `prompts/`, `prompts/profiles/` |
-| Local operations | `cmd/idiom/doctor.go`, `cmd/idiom/backend.go`, `cmd/idiom/queue.go`, `internal/backends`, `internal/autodetect` |
+| Local operations | `internal/doctorcmd`, `internal/backendcmd`, `internal/queuecmd`, `internal/backends`, `internal/autodetect` |
 | Audit/eval | `internal/eval`, `internal/telemetry`, `internal/workspace/harness_audit.go` |
 
 ## Change Localization Examples
@@ -124,7 +124,7 @@ serve.
 | Completion readiness | `internal/agent`, runner tests, [[09 - Verification Readiness and Completion]] |
 | Tool schema or dispatch | `internal/workspace`, tool tests, [[06 - Workspace Tools and Capability Routing]] |
 | Context packet behavior | `internal/comprehension`, context tool tests, [[07 - Repository Memory and Context Graph]] |
-| Plan-execute workflow | `cmd/idiom/plan_execute.go`, lane tests, [[04 - Runtime Lanes]] |
+| Plan-execute workflow | `internal/planexecutecmd`, lane tests, [[04 - Runtime Lanes]] |
 | Prompt behavior | `prompts/`, `internal/promptstack`, runner behavior tests |
 | Audit classification | `internal/eval`, `harness_audit`, telemetry fixtures |
 | Local backend readiness | `internal/backends`, `internal/autodetect`, `internal/llama`, local ops docs |

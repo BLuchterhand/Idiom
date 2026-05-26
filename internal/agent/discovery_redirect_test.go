@@ -174,6 +174,38 @@ func TestSearchContentRedirectStaysSoftAfterRepeatedClass(t *testing.T) {
 	}
 }
 
+func TestReadFileOutlineRedirectStaysSoftAfterRepeatedClass(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"go.mod":   "module example.test\n",
+		"a.go":     "package main\nfunc A() {}\n" + strings.Repeat("\n", smallFileRedirectThreshold+10),
+		"b.go":     "package main\nfunc B() {}\n" + strings.Repeat("\n", smallFileRedirectThreshold+10),
+		"c.go":     "package main\nfunc C() {}\n" + strings.Repeat("\n", smallFileRedirectThreshold+10),
+		"extra.go": "package main\nfunc Extra() {}\n" + strings.Repeat("\n", smallFileRedirectThreshold+10),
+	})
+	d := NewDiscoveryRedirect()
+	requests := []workspace.ToolRequest{
+		{Tool: "read_file", Path: "a.go"},
+		{Tool: "read_file", Path: "b.go"},
+		{Tool: "read_file", Path: "c.go"},
+		{Tool: "read_file", Path: "extra.go"},
+	}
+	for i, req := range requests {
+		decision := d.Consider(req, ws)
+		if !decision.ShouldRedirect {
+			t.Fatalf("request %d: expected redirect", i+1)
+		}
+		if decision.HardReject {
+			t.Fatalf("request %d: read_file redirect should remain a soft nudge", i+1)
+		}
+		if strings.TrimSpace(decision.Result.Error) != "" {
+			t.Fatalf("request %d: soft redirect should not surface as an error: %#v", i+1, decision.Result)
+		}
+		if i >= 1 && !strings.Contains(decision.Result.Output, "Redirect #") {
+			t.Fatalf("request %d: repeated redirect should still carry explicit guidance:\n%s", i+1, decision.Result.Output)
+		}
+	}
+}
+
 // TestRedirectSkipsInactiveLanguage ensures a request that looks like
 // it matches a language (by extension) but targets a workspace where
 // that language is not active does not redirect. The deterministic

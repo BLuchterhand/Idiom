@@ -1473,7 +1473,11 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 		var err error
 		payload, ok, err = extractQwenXMLToolPayload(text)
 		if !ok {
-			return ToolRequest{}, "", false, nil
+			if candidate := strings.TrimSpace(text); strings.HasPrefix(candidate, "{") && strings.HasSuffix(candidate, "}") && strings.Contains(candidate, `"tool"`) {
+				payload, ok = candidate, true
+			} else {
+				return ToolRequest{}, "", false, nil
+			}
 		}
 		if err != nil {
 			return ToolRequest{}, payload, true, err
@@ -1750,6 +1754,7 @@ func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
 	for range 4 {
 		stepRepaired := false
 		for _, repair := range []func([]byte) ([]byte, bool){
+			repairMalformedToolNameObjectPayload,
 			repairRawJSONControlChars,
 			repairStringifiedJSONToolFields,
 			repairSingletonArrayToolFields,
@@ -1773,6 +1778,27 @@ func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	return current, true
+}
+
+func repairMalformedToolNameObjectPayload(payload []byte) ([]byte, bool) {
+	text := strings.TrimSpace(string(payload))
+	if text == "" {
+		return nil, false
+	}
+	matches := malformedToolNameObjectPattern.FindStringSubmatch(text)
+	if len(matches) != 3 {
+		return nil, false
+	}
+	tool := strings.TrimSpace(matches[1])
+	body := strings.TrimSpace(matches[2])
+	if tool == "" || body == "" {
+		return nil, false
+	}
+	repaired := fmt.Sprintf(`{"tool":%q,%s}`, tool, body)
+	if !json.Valid([]byte(repaired)) {
+		return nil, false
+	}
+	return []byte(repaired), true
 }
 
 func repairRawJSONControlChars(payload []byte) ([]byte, bool) {
@@ -2571,8 +2597,14 @@ func extractToolPayload(text string) (string, bool) {
 }
 
 func bareJSONObjectIsToolPayload(payload string) bool {
+	data := []byte(payload)
+	if !json.Valid(data) {
+		if repaired, ok := repairRawJSONControlChars(data); ok {
+			data = repaired
+		}
+	}
 	var fields map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+	if err := json.Unmarshal(data, &fields); err != nil {
 		return false
 	}
 	if _, ok := fields["tool"]; ok {
@@ -2582,7 +2614,7 @@ func bareJSONObjectIsToolPayload(payload string) bool {
 		return false
 	}
 	var req ToolRequest
-	if err := json.Unmarshal([]byte(payload), &req); err != nil {
+	if err := json.Unmarshal(data, &req); err != nil {
 		return false
 	}
 	return bareJSONMissingToolPayloadIsReadOnly(req)
@@ -2651,11 +2683,12 @@ func extractPlainToolPrefixPayload(text string) (string, bool) {
 }
 
 var (
-	qwenXMLFunctionPattern      = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
-	qwenXMLParameterPattern     = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
-	lineAnchoredToolJSONPattern = regexp.MustCompile(`(?m)(^|\n)\s*tool\s*:\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*(\{)`)
-	knownBareJSONToolNamesOnce  sync.Once
-	knownBareJSONToolNames      map[string]struct{}
+	qwenXMLFunctionPattern         = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
+	qwenXMLParameterPattern        = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
+	lineAnchoredToolJSONPattern    = regexp.MustCompile(`(?m)(^|\n)\s*tool\s*:\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*(\{)`)
+	malformedToolNameObjectPattern = regexp.MustCompile(`(?s)^\{\s*"tool"\s*:\s*"([A-Za-z_][A-Za-z0-9_.-]*)"\s*:\s*\{(.*)\}\s*\}$`)
+	knownBareJSONToolNamesOnce     sync.Once
+	knownBareJSONToolNames         map[string]struct{}
 )
 
 func extractLineAnchoredToolJSONObjectPayload(text string) (string, bool, error) {

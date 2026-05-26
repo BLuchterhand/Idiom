@@ -71,6 +71,8 @@ func legacyLanguageDiscoveryProfile(tool string) (class string, scope string, co
 func Analyze(records []Record) Metrics {
 	metrics := Metrics{
 		Tools:            make(map[string]int),
+		SuccessfulTools:  make(map[string]int),
+		RejectedTools:    make(map[string]int),
 		DiscoveryTools:   make(map[string]int),
 		DiscoveryClasses: make(map[string]int),
 		DiscoveryScopes:  make(map[string]int),
@@ -81,8 +83,11 @@ func Analyze(records []Record) Metrics {
 	verifyHasInsufficient := false
 	laneSummaryTurns := 0
 	lastLaneSummary := ""
-	observedChangedFiles := []string(nil)
+	writeChangedFiles := []string(nil)
+	rollbackChangedFiles := []string(nil)
+	rollbackEvidenceSeen := false
 	autonomyEvents := []autonomy.Event(nil)
+	requestedWritePaths := make(map[string]string)
 	requestedToolEventKeys := make(map[string]struct{})
 	countedToolEventKeys := make(map[string]struct{})
 	countedErrorEventKeys := make(map[string]struct{})
@@ -123,6 +128,7 @@ func Analyze(records []Record) Metrics {
 			switch role {
 			case "user":
 				metrics.LastUser = content
+				metrics.UserPrompts = append(metrics.UserPrompts, content)
 				metrics.UserTurns++
 			case "assistant":
 				metrics.FinalAssistant = content
@@ -285,6 +291,9 @@ func Analyze(records []Record) Metrics {
 		case "tool_request":
 			if key := toolAttemptEventKey(record.Data); key != "" {
 				requestedToolEventKeys[key] = struct{}{}
+				if path := writePathFromToolRequest(record.Data); path != "" {
+					requestedWritePaths[key] = path
+				}
 				if _, ok := countedToolEventKeys[key]; ok {
 					continue
 				}
@@ -296,12 +305,21 @@ func Analyze(records []Record) Metrics {
 			tool := strings.TrimSpace(stringField(record.Data, "tool"))
 			errText := strings.TrimSpace(stringField(record.Data, "error"))
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromText(stringField(record.Data, "summary"))...)
+			if tool != "" && errText == "" {
+				metrics.SuccessfulTools[tool]++
+			}
+			if path := changedPathFromSuccessfulWriteResult(record.Data, requestedWritePaths); path != "" {
+				writeChangedFiles = append(writeChangedFiles, path)
+			}
 			if tool == "completion_gate" && strings.TrimSpace(stringField(record.Data, "error")) != "" {
 				if metrics.CompletionGateRejections < 1 {
 					metrics.CompletionGateRejections = 1
 				}
 			}
 			if toolResultCountsAsRejectedAttempt(record.Data) {
+				if tool != "" {
+					metrics.RejectedTools[tool]++
+				}
 				if metrics.RejectedActions < 1 {
 					metrics.RejectedActions = 1
 				}
@@ -361,6 +379,10 @@ func Analyze(records []Record) Metrics {
 				PacketState:         stringField(record.Data, "packet_state"),
 				Reason:              stringField(record.Data, "reason"),
 			})
+		case "idiom.plan_execute.writer_route_decision":
+			if plan := routePlanFromWriterRouteDecision(record.Data); plan.Raw != "" {
+				metrics.RoutePlans = append(metrics.RoutePlans, plan)
+			}
 		case "idiom.plan_execute.planner_blocked":
 			metrics.TypedBlockers++
 		case "idiom.plan_execute.source_satisfied", "idiom.plan_execute.auto_exact_plan_source_satisfied":
@@ -407,7 +429,8 @@ func Analyze(records []Record) Metrics {
 				ChangedAfterReset:  stringSliceField(record.Data, "changed_after_reset"),
 			}
 			metrics.LiveContractRollbacks = append(metrics.LiveContractRollbacks, rollback)
-			observedChangedFiles = append(observedChangedFiles, rollback.ChangedBeforeReset...)
+			rollbackEvidenceSeen = true
+			rollbackChangedFiles = append(rollbackChangedFiles, rollback.ChangedBeforeReset...)
 		}
 
 		if strings.Contains(strings.ToLower(stringField(record.Data, "summary")), "write approval required") ||
@@ -431,7 +454,11 @@ func Analyze(records []Record) Metrics {
 		metrics.VerificationFailed = verifyHasFailure
 		metrics.VerificationPassed = !verifyHasFailure && !verifyHasInsufficient && metrics.VerificationChecks > 0
 	}
-	metrics.ChangedFiles = util.UniqueNonEmpty(append(observedChangedFiles, extractChangedFiles(metrics.FinalAssistant)...))
+	if rollbackEvidenceSeen {
+		metrics.ChangedFiles = util.UniqueNonEmpty(rollbackChangedFiles)
+	} else {
+		metrics.ChangedFiles = util.UniqueNonEmpty(writeChangedFiles)
+	}
 	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
 		metrics.DurationMillis = lastTS.Sub(firstTS).Milliseconds()
 	}
@@ -443,6 +470,89 @@ func Analyze(records []Record) Metrics {
 		metrics.ContractReplay = replayAutonomyEvents(autonomyEvents)
 	}
 	return metrics
+}
+
+func changedPathFromSuccessfulWriteResult(data map[string]any, requestedWritePaths map[string]string) string {
+	if strings.TrimSpace(stringField(data, "error")) != "" {
+		return ""
+	}
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	path := strings.TrimSpace(stringField(data, "path"))
+	if path == "" {
+		if key := toolAttemptEventKey(data); key != "" {
+			path = strings.TrimSpace(requestedWritePaths[key])
+		}
+	}
+	if tool == "" && path != "" {
+		tool = writeToolFromSummary(stringField(data, "summary"))
+	}
+	if path == "" || !writeToolCanChangeFile(tool) {
+		return ""
+	}
+	summary := strings.TrimSpace(stringField(data, "summary"))
+	lowerSummary := strings.ToLower(summary)
+	if strings.Contains(lowerSummary, "no-op") ||
+		strings.Contains(lowerSummary, "no changes") ||
+		strings.Contains(lowerSummary, "unchanged") ||
+		strings.Contains(lowerSummary, "rejected") {
+		return ""
+	}
+	return path
+}
+
+func writePathFromToolRequest(data map[string]any) string {
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	if !writeToolCanChangeFile(tool) {
+		return ""
+	}
+	if path := strings.TrimSpace(stringField(data, "path")); path != "" {
+		return path
+	}
+	if path := pathFromRawToolRequest(stringField(data, "raw")); path != "" {
+		return path
+	}
+	action := strings.TrimSpace(stringField(data, "action"))
+	if _, path, ok := strings.Cut(action, ":"); ok {
+		return strings.TrimSpace(path)
+	}
+	return ""
+}
+
+func pathFromRawToolRequest(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	var payload struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Path)
+}
+
+func writeToolCanChangeFile(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "edit_file", "write_file", "append_file", "apply_patch":
+		return true
+	default:
+		return false
+	}
+}
+
+func writeToolFromSummary(summary string) string {
+	summary = strings.TrimSpace(summary)
+	switch {
+	case strings.HasPrefix(summary, "Wrote "):
+		return "write_file"
+	case strings.HasPrefix(summary, "Edited "):
+		return "edit_file"
+	case strings.HasPrefix(summary, "Appended "):
+		return "append_file"
+	default:
+		return ""
+	}
 }
 
 func autonomyEventFromRecord(record Record) (autonomy.Event, bool) {
@@ -508,13 +618,16 @@ func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 }
 
 func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
-	if strings.TrimSpace(stringField(data, "error")) == "" {
+	errText := strings.ToLower(strings.TrimSpace(stringField(data, "error")))
+	if errText == "" {
 		return false
 	}
 	summary := strings.ToLower(stringField(data, "summary"))
 	return strings.Contains(summary, "rejected") ||
 		strings.Contains(summary, "retry blocked") ||
-		strings.Contains(summary, "preempted")
+		strings.Contains(summary, "preempted") ||
+		strings.Contains(summary, "not available in current runtime contract") ||
+		strings.Contains(errText, "not in the current allowed tool surface")
 }
 
 func toolResultAttemptWasRequested(data map[string]any, requestedKeys map[string]struct{}, tools map[string]int) bool {
@@ -833,6 +946,16 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 			addFinding("last user prompt does not contain %q", required)
 		}
 	}
+	promptHistoryCorpus := strings.Join(metrics.UserPrompts, "\n")
+	if strings.TrimSpace(promptHistoryCorpus) == "" {
+		promptHistoryCorpus = metrics.LastUser
+	}
+	promptHistoryLower := strings.ToLower(promptHistoryCorpus)
+	for _, required := range scenario.PromptHistoryContains {
+		if !strings.Contains(promptHistoryLower, strings.ToLower(strings.TrimSpace(required))) {
+			addFinding("user prompt history does not contain %q", required)
+		}
+	}
 	finalAssistantLower := strings.ToLower(metrics.FinalAssistant)
 	for _, required := range scenario.FinalAssistantContains {
 		if !strings.Contains(finalAssistantLower, strings.ToLower(strings.TrimSpace(required))) {
@@ -850,6 +973,11 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 	for _, tool := range scenario.RequireTools {
 		if metrics.Tools[strings.TrimSpace(tool)] == 0 {
 			addFinding("required tool %q was not used", tool)
+		}
+	}
+	for _, tool := range scenario.RequireRejectedTools {
+		if metrics.RejectedTools[strings.TrimSpace(tool)] == 0 {
+			addFinding("required rejected tool %q was not observed", tool)
 		}
 	}
 	for _, tool := range scenario.ForbidTools {
@@ -1353,6 +1481,37 @@ func parseRoutePlan(content string) RoutePlanSnapshot {
 		}
 	}
 	return plan
+}
+
+func routePlanFromWriterRouteDecision(data map[string]any) RoutePlanSnapshot {
+	taskFamily := strings.TrimSpace(stringField(data, "task_family"))
+	if taskFamily == "" {
+		return RoutePlanSnapshot{}
+	}
+	plan := RoutePlanSnapshot{
+		Raw:         "writer_route_decision:" + taskFamily,
+		InitialLane: taskFamily,
+	}
+	switch taskFamily {
+	case "plan_then_execute_planner":
+		plan.Reason = "plan_then_execute_request"
+		plan.Contract = "implementation_result"
+	case "plan_then_execute_executor":
+		plan.Reason = "plan_artifact_dispatch"
+		plan.Contract = "executor_dispatch_result"
+	default:
+		reasonCodes := stringSliceField(data, "reason_codes")
+		if len(reasonCodes) > 0 {
+			plan.Reason = routePlanReasonFromWriterRouteReason(reasonCodes[0])
+		}
+	}
+	return plan
+}
+
+func routePlanReasonFromWriterRouteReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	reason = strings.TrimPrefix(reason, "route.")
+	return strings.ReplaceAll(reason, "-", "_")
 }
 
 func routePlanMatches(actual RoutePlanSnapshot, expected RoutePlanExpectation) bool {

@@ -174,7 +174,7 @@ func TestRewriteVerificationShellReadDoesNotPickSourceSanityForNormalImplementat
 	}
 }
 
-func TestPostWriteSourceSanityRedirectsPlannerOwnedInvalidVerificationPhaseTools(t *testing.T) {
+func TestPostWriteSourceSanityRedirectsPlannerOwnedReadOfChangedSource(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
@@ -184,17 +184,29 @@ func TestPostWriteSourceSanityRedirectsPlannerOwnedInvalidVerificationPhaseTools
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
 	}
 
-	for _, req := range []workspace.ToolRequest{
-		{Tool: "read_file", Path: "internal/labels/labels.go"},
-		{Tool: "edit_file", Path: "internal/labels/labels.go", OldText: "Save changes", NewText: "Save"},
-	} {
-		redirected, ok := postWriteSourceSanityRedirect(req, brief, results, []string{"source_sanity", "shell"})
-		if !ok {
-			t.Fatalf("expected %s to redirect to source_sanity", req.Tool)
-		}
-		if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
-			t.Fatalf("unexpected redirect for %s: %#v", req.Tool, redirected)
-		}
+	redirected, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected read_file of changed source to redirect to source_sanity")
+	}
+	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+	redirected, ok = postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "edit_file", Path: "internal/labels/labels.go", OldText: "Save changes", NewText: "Save"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected verification-phase write retry on changed source to redirect to source_sanity")
+	}
+	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected write redirect: %#v", redirected)
 	}
 }
 
@@ -226,7 +238,7 @@ func TestPostWriteSourceSanityRedirectRequiresPlannerOwnedPendingSourceVerificat
 	}
 }
 
-func TestPostWriteSourceSanityRedirectDoesNotPickVerificationForNormalImplementation(t *testing.T) {
+func TestPostWriteSourceSanityRedirectsNormalImplementationReadOfChangedSource(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
@@ -235,13 +247,25 @@ func TestPostWriteSourceSanityRedirectDoesNotPickVerificationForNormalImplementa
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
 	}
 
-	if _, ok := postWriteSourceSanityRedirect(
+	redirected, ok := postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
 		brief,
 		results,
 		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected changed-source read in verification phase to redirect to source_sanity")
+	}
+	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/other.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
 	); ok {
-		t.Fatal("normal implementation verification should let the model choose the language-appropriate command/tool")
+		t.Fatal("must not redirect normal implementation reads for unchanged source paths")
 	}
 }
 
@@ -271,29 +295,37 @@ func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVe
 	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
 		t.Fatalf("unexpected redirect: %#v", redirected)
 	}
+
+	redirected, ok = postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "edit_file", Path: "internal/labels/labels.go", OldText: "Save changes", NewText: "Save"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected repeated invalid verification-phase write to recover through source_sanity")
+	}
+	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected write redirect: %#v", redirected)
+	}
 }
 
-func TestPostWriteSourceSanityRedirectIgnoresInvalidToolBeforeLatestSourceWrite(t *testing.T) {
+func TestPostWriteSourceSanityRedirectIgnoresWriteForUnchangedSource(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 	}
 	results := []workspace.ToolResult{
-		{
-			Tool:    "edit_file",
-			Summary: "Tool not available in current runtime contract",
-			Error:   "edit_file is not in the current allowed tool surface. Available tools: source_sanity, git_status, git_diff, shell.",
-		},
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
 	}
 
 	if _, ok := postWriteSourceSanityRedirect(
-		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		workspace.ToolRequest{Tool: "edit_file", Path: "internal/other.go", OldText: "old", NewText: "new"},
 		brief,
 		results,
 		[]string{"source_sanity", "shell"},
 	); ok {
-		t.Fatal("invalid tool rejections before the latest source write must not trigger post-write source_sanity redirect")
+		t.Fatal("verification-phase writes for unchanged source paths must not redirect to source_sanity")
 	}
 }
 

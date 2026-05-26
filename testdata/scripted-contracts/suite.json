@@ -558,7 +558,6 @@
         ],
         "require_tools": [
           "read_file",
-          "code_navigate",
           "edit_file",
           "source_sanity"
         ],
@@ -2376,7 +2375,9 @@
           "write_file",
           "append_file",
           "apply_patch",
-          "mkdir",
+          "mkdir"
+        ],
+        "require_rejected_tools": [
           "shell"
         ],
         "final_assistant_contains": [
@@ -2392,7 +2393,9 @@
       "oracle": {
         "require_no_changed_files": true,
         "require_no_approval": true,
-        "require_no_shell": true,
+        "forbid_successful_tools": [
+          "shell"
+        ],
         "require_clean_rollback": true,
         "require_no_timeout": true,
         "max_errors": 1,
@@ -3089,7 +3092,7 @@
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tdd-sdd-atom-plan",
-        "prompt_contains": [
+        "prompt_history_contains": [
           "feature-planner atom plan",
           "TDD and SDD atoms"
         ],
@@ -3152,7 +3155,7 @@
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-question-loop-answer",
-        "prompt_contains": [
+        "prompt_history_contains": [
           "continue the plan"
         ],
         "final_assistant_contains": [

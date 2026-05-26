@@ -56,6 +56,7 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 		hasAssertion := task.Scenario.RequireRoutePlan != nil ||
 			len(task.Scenario.RequirePhases) > 0 ||
 			len(task.Scenario.PromptContains) > 0 ||
+			len(task.Scenario.PromptHistoryContains) > 0 ||
 			len(task.Scenario.FinalAssistantContains) > 0 ||
 			len(task.Scenario.RequireTools) > 0
 		if !hasAssertion {
@@ -603,6 +604,7 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 		Oracle: SWEOracle{
 			RequireNoChangedFiles: true,
 			RequireNoShell:        true,
+			ForbidSuccessfulTools: []string{"read_file"},
 			MaxToolRequests:       &maxTools,
 			MaxDurationMillis:     &maxDurationMillis,
 		},
@@ -610,8 +612,12 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"ts": "2026-04-18T12:00:00Z", "role": "user", "content": "Audit this repo for prompt injection or command execution vulnerabilities without changing files."}},
 		{Type: "message", Data: map[string]any{"role": "route_plan", "content": "initial=review reason=review_request contract=review_findings"}},
+		{Type: "tool_request", Data: map[string]any{"step": 0, "tool": "read_file"}},
+		{Type: "tool_result", Data: map[string]any{"step": 0, "tool": "read_file", "summary": "Read README.md", "error": ""}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "shell"}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "ran command"}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "edit_file", "path": "prompts/base.md"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "edit_file", "path": "prompts/base.md", "summary": "Edited prompts/base.md", "error": ""}},
 		{Type: "message", Data: map[string]any{"ts": "2026-04-18T12:00:02Z", "role": "assistant", "content": "Changed files:\n- prompts/base.md"}},
 	}
 	report := EvaluateSWETask("security.jsonl", records, task)
@@ -619,10 +625,42 @@ func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 		t.Fatalf("expected SWE task to fail")
 	}
 	joined := strings.Join(report.Findings, "\n")
-	for _, want := range []string{"changed files were forbidden", "shell use was forbidden", "tool requests exceeded", "duration exceeded"} {
+	for _, want := range []string{"changed files were forbidden", "shell use was forbidden", "successful tool \"read_file\" was forbidden", "tool requests exceeded", "duration exceeded"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected finding %q, got %q", want, joined)
 		}
+	}
+}
+
+func TestEvaluateSWETaskForbidsSuccessfulToolWhileAllowingRejectedAttempt(t *testing.T) {
+	task := SWETask{
+		ID:     "shell-denial",
+		Family: "verification_only",
+		Prompt: "Run tests.",
+		Scenario: Scenario{
+			Name:                 "shell-denial",
+			PromptContains:       []string{"Run tests"},
+			RequireRejectedTools: []string{"shell"},
+		},
+		Oracle: SWEOracle{
+			ForbidSuccessfulTools: []string{"shell"},
+		},
+	}
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Run tests."}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "Tool not available in current runtime contract", "error": "shell is not in the current allowed tool surface"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Shell is unavailable."}},
+	}
+	report := EvaluateSWETask("shell-denial.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected rejected shell attempt to satisfy denial contract, got %#v", report.Findings)
+	}
+
+	records[1] = Record{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "ran go test ./...", "error": ""}}
+	report = EvaluateSWETask("shell-success.jsonl", records, task)
+	joined := strings.Join(report.Findings, "\n")
+	if report.Passed || !strings.Contains(joined, `required rejected tool "shell" was not observed`) || !strings.Contains(joined, `successful tool "shell" was forbidden`) {
+		t.Fatalf("expected successful shell to fail both denial and success-forbid checks, passed=%t findings=%#v", report.Passed, report.Findings)
 	}
 }
 

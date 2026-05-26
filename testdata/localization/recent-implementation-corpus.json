@@ -395,8 +395,12 @@
             "rationale": "Extracts context and capability telemetry fields for reports."
           },
           {
-            "path": "cmd/idiom/main.go",
-            "rationale": "Starts command telemetry and logs direct tool request/result records."
+            "path": "internal/rootcmd/root.go",
+            "rationale": "Starts command telemetry and routes direct tool commands from the binary boundary."
+          },
+          {
+            "path": "internal/toolcmd/toolcmd.go",
+            "rationale": "Logs direct tool request/result records with sidecar attribution."
           }
         ],
         "symbols": [
@@ -416,8 +420,8 @@
             "kind": "func"
           },
           {
-            "path": "cmd/idiom/main.go",
-            "name": "logDirectToolResult",
+            "path": "internal/toolcmd/toolcmd.go",
+            "name": "LogDirectToolResult",
             "kind": "func"
           }
         ],
@@ -435,7 +439,7 @@
             "name": "TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs"
           },
           {
-            "path": "cmd/idiom/main_test.go",
+            "path": "internal/rootcmd/root_test.go",
             "name": "TestRunMainWritesTelemetryForDirectTool"
           }
         ]
@@ -507,7 +511,7 @@
       "expected": {
         "files": [
           {
-            "path": "cmd/idiom/plan_execute.go",
+            "path": "internal/planexecutecmd/plan_execute.go",
             "rationale": "Coordinates planner, executor, pack inheritance, preflight, and review repair."
           },
           {
@@ -529,12 +533,12 @@
         ],
         "symbols": [
           {
-            "path": "cmd/idiom/plan_execute.go",
-            "name": "runPlanExecuteMainWithTelemetry",
+            "path": "internal/planexecutecmd/plan_execute.go",
+            "name": "RunMainWithTelemetry",
             "kind": "func"
           },
           {
-            "path": "cmd/idiom/plan_execute.go",
+            "path": "internal/planexecutecmd/plan_execute.go",
             "name": "findLatestPlanArtifact",
             "kind": "func"
           },
@@ -556,11 +560,11 @@
         ],
         "tests": [
           {
-            "path": "cmd/idiom/plan_execute_test.go",
-            "name": "TestRunPlanExecuteMainUsesDefaultPlannerTokenBudget"
+            "path": "internal/planexecutecmd/plan_execute_test.go",
+            "name": "TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget"
           },
           {
-            "path": "cmd/idiom/plan_execute_test.go",
+            "path": "internal/planexecutecmd/plan_execute_test.go",
             "name": "TestFindLatestPlanArtifactReturnsMostRecent"
           },
           {

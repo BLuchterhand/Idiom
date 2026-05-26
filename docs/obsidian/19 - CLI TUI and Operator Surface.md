@@ -260,10 +260,11 @@ default.
 
 | Source | Why it matters |
 | --- | --- |
-| `cmd/idiom/main.go` | Main CLI routing and telemetry naming |
-| `cmd/idiom/lane.go` | Lane command surface |
-| `cmd/idiom/plan_execute.go` | Direct plan-execute orchestration and resume-state handling |
-| `cmd/idiom/mcp.go` | Inbound MCP command |
+| `cmd/idiom/main.go` | Thin binary entrypoint |
+| `internal/rootcmd` | Main CLI routing and telemetry naming |
+| `internal/lanecmd` | Lane command surface |
+| `internal/planexecutecmd` | Direct plan-execute orchestration and resume-state handling |
+| `internal/mcpcmd` | Inbound MCP command |
 | `internal/app/model_state.go` | Slash command handling |
 | `internal/app/implementation_dispatch.go` | TUI/prompt design-doc dispatch, atomization, source-satisfied closeout |
 | `internal/app/lifecycle.go` | TUI lifecycle, transcripts, debug logs |

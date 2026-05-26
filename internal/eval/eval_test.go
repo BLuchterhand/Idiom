@@ -29,8 +29,8 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "verification_feedback", "content": `{"confidence":"medium","commands":["go test ./internal/app"],"failed_commands":[],"learned_recommendation":"keep current verification plan"}`}},
 		{Type: "message", Data: map[string]any{"role": "tool_failure_confidence", "content": `{"lane":"review","tool":"read_file","confidence_impact":"degrade_until_alternate_evidence_covers_gap"}`}},
 		{Type: "message", Data: map[string]any{"role": "control_rails", "content": `{"lane":"review","followup_lane":"implement","contract":"review_findings","agent_mode":"plan","workflow_kind":"optimization_refactor","workflow_phase":"awaiting_approval","task_family":"review","permission_profile":"analysis_read_only_then_guarded_writes","target_refs":["internal/app/app.go"],"required_evidence":["candidate_path","bounded_finding_evidence","confidence"],"required_tools":["workspace_inspection","implementation_handoff"],"allowed_tools":["task","search_content","read_file"],"forbidden_tools":["edit_file","write_file","append_file","mkdir","mutating_shell"],"readiness_gate":["answer_contract_satisfied","required_evidence_present","forbidden_tools_absent","target_packet_or_changed_files_present","verification_contract_resolved","low_confidence_triggers_deepening"],"search_policy":["rank_candidates","read_top_candidate","deepen_if_no_bounded_finding"],"verification_contract":"tests_passed_or_failed_or_skipped_with_blocker","stop_conditions":["required_evidence_satisfied","blocked_by_missing_permission_or_information","budget_exhausted_with_uncertainty_declared","implementation_verified_or_failure_reported"],"final_critic":["answers_actual_user_request","required_evidence_cited","no_overconfident_claims","findings_first"],"failure_to_eval":false}`}},
-		{Type: "tool_request", Data: map[string]any{"tool": "edit_file", "broad": false}},
-		{Type: "tool_result", Data: map[string]any{"agent": "implement_verify", "summary": "Edited internal/app/app.go", "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"tool": "edit_file", "path": "internal/app/app.go", "broad": false}},
+		{Type: "tool_result", Data: map[string]any{"agent": "implement_verify", "tool": "edit_file", "path": "internal/app/app.go", "summary": "Edited internal/app/app.go", "error": ""}},
 		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done", "detail": "Verification passed"}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done.\n\nChanged files:\n- internal/app/app.go\n\nVerification:\n- `go build ./...`: passed"}},
 	}
@@ -152,6 +152,78 @@ func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
 	}
 	if len(metrics.LiveContractRollbacks) != 1 || metrics.LiveContractRollbacks[0].Status != "clean" {
 		t.Fatalf("expected rollback snapshot, got %#v", metrics.LiveContractRollbacks)
+	}
+}
+
+func TestAnalyzeIncludesSuccessfulWriteResultChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "update the docs"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "edit_file", "raw": `{"path":"README.md"}`}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "edit_file", "path": "README.md", "summary": "Edited README.md lines 10-12", "error": ""}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Done."}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 1 || metrics.ChangedFiles[0] != "README.md" {
+		t.Fatalf("expected structured write result to count as changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeDoesNotTrustAssistantClaimedChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- README.md"}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 0 {
+		t.Fatalf("assistant-only changed-file claims must not count as mutation evidence, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeRollbackEvidenceOverridesWriteResultClaims(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "write_file", "raw": `{"path":"README.md"}`}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "write_file", "summary": "Wrote README.md", "error": ""}},
+		{Type: "idiom.live_contract.rollback", Data: map[string]any{
+			"status":               "clean",
+			"changed_before_reset": []any{},
+		}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 0 {
+		t.Fatalf("empty live rollback diff must override write-result claims, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeIgnoresNoopWriteResultChangedFiles(t *testing.T) {
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"tool": "edit_file", "path": "README.md", "summary": "No-op edit for README.md; file already matched", "error": ""}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "No changes were needed."}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.ChangedFiles) != 0 {
+		t.Fatalf("no-op write result must not count as changed-file evidence, got %#v", metrics.ChangedFiles)
+	}
+}
+
+func TestAnalyzeRoutePlanFromPlanExecuteWriterRouteDecision(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.writer_route_decision", Data: map[string]any{
+			"task_family":  "plan_then_execute_planner",
+			"writer_mode":  "plan_submission",
+			"reason_codes": []any{"route.multi_file_plan_execute"},
+		}},
+	}
+
+	metrics := Analyze(records)
+	if len(metrics.RoutePlans) != 1 {
+		t.Fatalf("expected route plan from writer route event, got %#v", metrics.RoutePlans)
+	}
+	plan := metrics.RoutePlans[0]
+	if plan.InitialLane != "plan_then_execute_planner" || plan.Reason != "plan_then_execute_request" || plan.Contract != "implementation_result" {
+		t.Fatalf("unexpected plan-execute route plan: %#v", plan)
 	}
 }
 
@@ -610,6 +682,38 @@ func TestAnalyzeDeduplicatesMirroredToolAndErrorRecordsByStep(t *testing.T) {
 	}
 }
 
+func TestEvaluateScenarioPromptContainsChecksLastUserOnly(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "earlier request mentions first plan"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Question."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "continue with second plan"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:           "latest-turn-prompt",
+		PromptContains: []string{"first plan"},
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `last user prompt does not contain "first plan"`) {
+		t.Fatalf("expected prompt_contains to check only the latest user turn, passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
+func TestEvaluateScenarioPromptHistoryContainsChecksAnyUserTurn(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "earlier request mentions first plan"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Question."}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "continue with second plan"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                  "history-prompt",
+		PromptHistoryContains: []string{"first plan"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected prompt_history_contains to check the full user prompt history, got %#v", report.Findings)
+	}
+}
+
 func TestEvaluateScenarioToolAssertionsIncludeRejectedAttempts(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
@@ -630,6 +734,29 @@ func TestEvaluateScenarioToolAssertionsIncludeRejectedAttempts(t *testing.T) {
 	})
 	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `forbidden tool "code_navigate" was used`) {
 		t.Fatalf("expected forbidden tool assertion to include rejected attempts, passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
+func TestEvaluateScenarioRequiresRejectedTools(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "run verification"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "shell", "summary": "Tool not available in current runtime contract", "error": "shell is not in the current allowed tool surface"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                 "shell-denial",
+		RequireRejectedTools: []string{"shell"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected rejected shell tool assertion to pass, got %#v", report.Findings)
+	}
+
+	report = Evaluate("log.jsonl", records, Scenario{
+		Name:                 "missing-denial",
+		RequireRejectedTools: []string{"edit_file"},
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `required rejected tool "edit_file" was not observed`) {
+		t.Fatalf("expected missing rejected tool assertion to fail, passed=%t findings=%#v", report.Passed, report.Findings)
 	}
 }
 
@@ -889,6 +1016,8 @@ func TestBuildSuggestedScenarioReflectsObservedMetrics(t *testing.T) {
 		{Type: "message", Data: map[string]any{"role": "explore_summary", "content": "explore summary rejected: failed grounded explanation contract"}},
 		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "search_content", "broad": false}},
 		{Type: "tool_result", Data: map[string]any{"step": 1, "summary": "Found 1 matching line at internal/app/app.go:42", "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"step": 2, "tool": "edit_file", "path": "internal/app/app.go", "broad": false}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "edit_file", "path": "internal/app/app.go", "summary": "Edited internal/app/app.go lines 42-43", "error": ""}},
 		{Type: "phase", Data: map[string]any{"lane": "locate", "phase": "complete", "state": "done"}},
 		{Type: "phase", Data: map[string]any{"lane": "implement", "phase": "verify", "state": "done"}},
 		{Type: "message", Data: map[string]any{"role": "assistant", "content": "Changed files:\n- internal/app/app.go"}},

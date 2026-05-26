@@ -382,6 +382,10 @@ func (s *runnerRequestBudgetState) noteVerification() {
 
 func (s *runnerRequestBudgetState) noteWriteProgress() {
 	s.readCallsSinceWrite = 0
+	// A successful write moves the lane from target/source acquisition
+	// into post-write verification. Rejections from the pre-write phase
+	// must not poison verification tools with stale retry fingerprints.
+	clear(s.fingerprint.rejected)
 }
 
 func (s *runnerRequestBudgetState) noteReadOnlyChildPacket(paths []string) {

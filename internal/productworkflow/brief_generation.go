@@ -33,7 +33,8 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		out.Blockers = append(out.Blockers, "coverage gate is blocked; run `idiom product tdd --effort-root <path> --evaluate-coverage --json` and resolve blockers")
 	}
 
-	out.FilesToModify = briefUniqueSortedStrings(collectPlannedScopeFiles(input.ImplementationRecords, taskID))
+	plannedFiles := collectPlannedScopeFiles(input.ImplementationRecords, taskID)
+	out.FilesToModify = briefUniqueSortedStrings(applyBriefPathAliases(plannedFiles, input.WorkflowState.Context.PathAliases))
 	if len(out.FilesToModify) == 0 {
 		out.Blockers = append(out.Blockers, "implementation ledger is missing atom_planned scope files for "+taskID)
 	}
@@ -434,6 +435,25 @@ func collectPlannedScopeFiles(records []ImplementationLedgerRecord, taskID strin
 		break
 	}
 	return files
+}
+
+func applyBriefPathAliases(paths []string, aliases map[string]string) []string {
+	if len(aliases) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths))
+	for _, p := range paths {
+		if alias := strings.TrimSpace(aliases[normalizeBriefPathAliasKey(p)]); alias != "" {
+			out = append(out, filepath.ToSlash(alias))
+			continue
+		}
+		out = append(out, p)
+	}
+	return out
+}
+
+func normalizeBriefPathAliasKey(path string) string {
+	return strings.TrimSpace(filepath.ToSlash(path))
 }
 
 func dispatchImplementationPaths(paths []string) []string {

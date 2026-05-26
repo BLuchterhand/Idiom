@@ -92,6 +92,40 @@ func TestBriefGenerationDeterministicAndPassesWhenInputsAccepted(t *testing.T) {
 	}
 }
 
+func TestBriefGenerationUsesPathAliasesForMovedImplementationFiles(t *testing.T) {
+	out := GenerateImplementationBrief(BriefGenerationInput{
+		WorkflowState: WorkflowState{
+			TaskID: "impl-1",
+			Context: WorkflowContext{PathAliases: map[string]string{
+				"cmd/idiom/product_workflow.go": "internal/productcmd/product_workflow.go",
+			}},
+		},
+		PRD: PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Statement: "Move product command behavior out of cmd"},
+			},
+		},
+		ADRs: []ParsedADR{
+			{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted"}}},
+		},
+		TDD: TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Command: "go test ./internal/productcmd"}}},
+		ImplementationRecords: []ImplementationLedgerRecord{
+			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"cmd/idiom/product_workflow.go"}}},
+		},
+		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
+		ExistingWorkspacePath: map[string]bool{
+			"internal/productcmd/product_workflow.go": true,
+		},
+	})
+	if out.Status != "pass" {
+		t.Fatalf("expected path alias to avoid new-file blocker, got %q blockers=%v", out.Status, out.Blockers)
+	}
+	if len(out.FilesToModify) != 1 || out.FilesToModify[0] != "internal/productcmd/product_workflow.go" {
+		t.Fatalf("expected aliased file to modify, got %#v", out.FilesToModify)
+	}
+}
+
 func TestBriefGenerationBlocksNewFileDispatchWithUnlabeledADRCodeBlock(t *testing.T) {
 	out := GenerateImplementationBrief(BriefGenerationInput{
 		WorkflowState: WorkflowState{TaskID: "impl-1"},

@@ -200,7 +200,7 @@ Verified Idiom facts on 2026-05-15:
   `internal/eval/localization_benchmark.go` define the current structure for
   measuring context localization quality, broad-read counts, zero-hit searches,
   candidate path waste, and competitive baselines.
-- `cmd/idiom/product_evidence.go` and `cmd/idiom/release_evidence.go` define the
+- `internal/productevidence/product_evidence.go` and `internal/productevidence/release_evidence.go` define the
   current privacy-safe evidence exports used for product and release gate review.
 - `README.md` currently states that Idiom is used primarily as a headless runner
   and that the Bubble Tea TUI still exists but is not the actively maintained
@@ -1247,8 +1247,8 @@ The full schema is specified in
       "id": "TDD-001",
       "type": "contract",
       "behavior": "Briefs with missing verified current state fail pre-dispatch lint.",
-      "owner": "cmd/idiom",
-      "command": "go test ./cmd/idiom",
+      "owner": "internal/briefcmd",
+      "command": "go test ./internal/briefcmd",
       "required_before": "brief_dispatch",
       "status": "pending"
     }
@@ -1295,8 +1295,8 @@ Example v2 obligation with coverage metadata:
       "id": "TDD-001",
       "type": "contract",
       "behavior": "Briefs with missing verified current state fail pre-dispatch lint.",
-      "owner": "cmd/idiom",
-      "command": "go test ./cmd/idiom",
+      "owner": "internal/briefcmd",
+      "command": "go test ./internal/briefcmd",
       "required_before": "brief_dispatch",
       "status": "pending"
     }

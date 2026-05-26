@@ -19,11 +19,18 @@ fi
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/idiom-swe-live.XXXXXX")"
 workspace_root="$run_dir/workspace"
 turns_file="$run_dir/turns.json"
+prompt_file="$run_dir/prompt.txt"
 config_path="$run_dir/config.json"
 debug_log_dir="$run_dir/logs/conversations"
+telemetry_dir="$run_dir/logs/telemetry"
 save_dir="$run_dir/transcripts"
 stdout_path="$run_dir/stdout.txt"
 stderr_path="$run_dir/stderr.txt"
+runner_mode="${IDIOM_SWE_RUNNER_MODE:-auto}"
+queue_socket="$run_dir/missing-queue.sock"
+if [[ "${IDIOM_SWE_USE_QUEUE:-false}" == "true" ]]; then
+  queue_socket="${IDIOM_QUEUE_SOCKET:-}"
+fi
 
 copy_latest_log() {
   local latest_log
@@ -35,8 +42,69 @@ copy_latest_log() {
   return 1
 }
 
-mkdir -p "$debug_log_dir" "$save_dir" "$(dirname "$log_path")" "$workspace_root"
+append_plan_execute_stdout_events() {
+  if [[ ! -s "$stdout_path" ]]; then
+    return 0
+  fi
+  python3 - "$stdout_path" "$log_path" <<'PY'
+import json
+import sys
+
+stdout_path, log_path = sys.argv[1:]
+with open(stdout_path, "r", encoding="utf-8", errors="replace") as src, open(log_path, "a", encoding="utf-8") as dst:
+    for line in src:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        event_type = str(event.get("type", ""))
+        if event_type.startswith("idiom.plan_execute."):
+            dst.write(json.dumps(event, separators=(",", ":")) + "\n")
+PY
+}
+
+mkdir -p "$debug_log_dir" "$telemetry_dir" "$save_dir" "$(dirname "$log_path")" "$workspace_root"
 printf '%s\n' "$turns_json" > "$turns_file"
+turn_count="$(python3 - "$turns_json" <<'PY'
+import json
+import sys
+
+print(len(json.loads(sys.argv[1])))
+PY
+)"
+python3 - "$turns_json" "$prompt_file" <<'PY'
+import json
+import pathlib
+import sys
+
+turns = json.loads(sys.argv[1])
+prompt = str(turns[-1] if turns else "").rstrip("\n") + "\n"
+pathlib.Path(sys.argv[2]).write_text(prompt, encoding="utf-8")
+PY
+
+require_single_turn_lane_entrypoint() {
+  local mode="$1"
+  if [[ "$turn_count" -gt 1 ]]; then
+    echo "swe-live runner cannot replay ${turn_count} turns through ${mode}; use the turns-file entrypoint or add explicit lane replay support" >&2
+    exit 2
+  fi
+}
+
+terminate_tree() {
+  local signal="$1"
+  local pid="$2"
+  local child
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  while IFS= read -r child; do
+    [[ -n "$child" ]] && terminate_tree "$signal" "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+  kill "-$signal" "$pid" 2>/dev/null || true
+}
 
 (cd "$workspace_source" && tar \
   --exclude .git \
@@ -97,10 +165,40 @@ PY
 # watchdog it.
 task_timeout="${IDIOM_SWE_TASK_TIMEOUT:-240}"
 if [[ -n "${IDIOM_BIN:-}" ]]; then
-  "$IDIOM_BIN" -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-} >"$stdout_path" 2>"$stderr_path" &
+  idiom_bin="$IDIOM_BIN"
 else
-  (cd "$repo_root" && go run ./cmd/idiom -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}) >"$stdout_path" 2>"$stderr_path" &
+  idiom_bin=""
 fi
+(
+  if [[ -n "$idiom_bin" ]]; then
+    if [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
+      require_single_turn_lane_entrypoint "plan-execute"
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    elif [[ "$runner_mode" == "implement" ]]; then
+      require_single_turn_lane_entrypoint "implement"
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
+    else
+      echo "unsupported IDIOM_SWE_RUNNER_MODE: $runner_mode" >&2
+      exit 2
+    fi
+  else
+    cd "$repo_root"
+    if [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
+      require_single_turn_lane_entrypoint "plan-execute"
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    elif [[ "$runner_mode" == "implement" ]]; then
+      require_single_turn_lane_entrypoint "implement"
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
+    else
+      echo "unsupported IDIOM_SWE_RUNNER_MODE: $runner_mode" >&2
+      exit 2
+    fi
+  fi
+) >"$stdout_path" 2>"$stderr_path" &
 worker_pid=$!
 (
   sleep "$task_timeout" &
@@ -112,13 +210,13 @@ worker_pid=$!
   wait "$sleep_pid" 2>/dev/null
   if kill -0 "$worker_pid" 2>/dev/null; then
     echo "swe-live watchdog: task exceeded ${task_timeout}s, sending SIGTERM" >&2
-    kill -TERM "$worker_pid" 2>/dev/null || true
+    terminate_tree TERM "$worker_pid"
     sleep 5
-    kill -KILL "$worker_pid" 2>/dev/null || true
+    terminate_tree KILL "$worker_pid"
   fi
 ) &
 watchdog_pid=$!
-trap 'copy_latest_log || true; kill -TERM "$worker_pid" "$watchdog_pid" 2>/dev/null || true; pkill -P "$watchdog_pid" 2>/dev/null || true; exit 143' TERM INT
+trap 'copy_latest_log || true; terminate_tree TERM "$worker_pid"; terminate_tree TERM "$watchdog_pid"; exit 143' TERM INT
 # With `set -e` at the top of the script, a non-zero `wait` exit would
 # abort before we can capture the code. Explicit || assignment keeps
 # the exit status available without aborting on a watchdog SIGTERM.
@@ -128,7 +226,7 @@ wait "$worker_pid" 2>/dev/null || worker_exit=$?
 # shell blocks on the sleep finishing naturally, making every fast task
 # take the full watchdog window.
 kill -TERM "$watchdog_pid" 2>/dev/null || true
-pkill -P "$watchdog_pid" 2>/dev/null || true
+terminate_tree TERM "$watchdog_pid"
 wait "$watchdog_pid" 2>/dev/null || true
 # Treat a watchdog-killed task the same as a normal finish; we still
 # copy whatever partial log the worker produced. idiom-swe-eval halts
@@ -148,3 +246,4 @@ if ! copy_latest_log; then
   cat "$stderr_path" >&2 || true
   exit 1
 fi
+append_plan_execute_stdout_events

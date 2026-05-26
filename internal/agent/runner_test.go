@@ -5026,6 +5026,18 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	if result, rejected := runner.mutationCompletionRejection("Already done.", nil); !rejected || result.Summary == "" {
 		t.Fatalf("expected vague already-done answer rejection, got rejected=%v result=%#v", rejected, result)
 	}
+	falseCompletion := strings.Join([]string{
+		"**Outcome:** `internal/labels/labels.go` has been edited so `ShortLabel()` returns `\"Save\"` instead of `\"Save changes\"`.",
+		"",
+		"**Verification:** Source read confirms the edit was applied correctly.",
+		"",
+		"**Remaining risk/blocker:** The verification plan calls for `go test ./...`, but `shell` is forbidden.",
+	}, "\n")
+	if result, rejected := runner.mutationCompletionRejection(falseCompletion, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5", Output: "func ShortLabel() string { return \"Save changes\" }"},
+	}); !rejected || !strings.Contains(result.Error, "no successful write tool result") {
+		t.Fatalf("expected claimed edit without write to be rejected, got rejected=%v result=%#v", rejected, result)
+	}
 	// Source-file write (post-#74 lane-aware gate): verification is
 	// required for source paths. Markdown writes are exempt — see
 	// TestCompletionGateExemptsNonSourceWritesFromVerification.
@@ -8415,14 +8427,15 @@ func TestRunnerTargetSourceRejectsWriteBeforeSourceBodyEvidence(t *testing.T) {
 	}
 	replies := []string{
 		`{"tool":"edit_file","path":"target.go","old_text":"before","new_text":"after","description":"replace value"}`,
-		"<<QUESTION>>: Cannot write before source-body evidence for target.go.",
+		`{"tool":"read_file","path":"target.go","start_line":1,"end_line":20,"named_gap":"confirm source before edit retry"}`,
+		"Done. Changed target.go; verification not required for this test.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected request %d", requests)
+		reply := "Done. Changed target.go; verification not required for this test."
+		if requests < len(replies) {
+			reply = replies[requests]
 		}
-		reply := replies[requests]
 		requests++
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -8432,7 +8445,7 @@ func TestRunnerTargetSourceRejectsWriteBeforeSourceBodyEvidence(t *testing.T) {
 	}))
 	defer server.Close()
 
-	var rejected bool
+	var redirectedRead bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -8441,16 +8454,17 @@ func TestRunnerTargetSourceRejectsWriteBeforeSourceBodyEvidence(t *testing.T) {
 			EnableWrites: true,
 		}),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "implementation",
-			Contract:          "implementation_result",
-			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"read_file", "search_content", "edit_file"},
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "search_content", "edit_file"},
+			VerificationContract: "not_required_for_text_mutations",
 		},
 		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
 	}
 	onToolResult := func(event ToolResultEvent) {
-		if event.Result.Summary == "Write rejected before source-body evidence" {
-			rejected = true
+		if event.Result.Tool == "read_file" && strings.Contains(event.Result.Summary, "target.go") {
+			redirectedRead = true
 		}
 	}
 	if _, err := runner.Run(
@@ -8463,15 +8477,15 @@ func TestRunnerTargetSourceRejectsWriteBeforeSourceBodyEvidence(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !rejected {
-		t.Fatal("expected target-source write rejection before source-body evidence")
+	if !redirectedRead {
+		t.Fatal("expected target-source write-before-evidence to redirect to a bounded read")
 	}
 	got, err := os.ReadFile(filepath.Join(root, "target.go"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
-	if strings.Contains(string(got), "after") {
-		t.Fatalf("write executed before source-body evidence:\n%s", got)
+	if !strings.Contains(string(got), "after") {
+		t.Fatalf("deferred write was not replayed after source-body evidence:\n%s", got)
 	}
 }
 
@@ -8482,14 +8496,15 @@ func TestRunnerTargetSourceRejectsExistingWriteFileBeforeSourceBodyEvidence(t *t
 	}
 	replies := []string{
 		`{"tool":"write_file","path":"target.go","content":"package main\n\nconst value = \"after\"\n","description":"replace file"}`,
-		"<<QUESTION>>: Cannot replace target.go before source-body evidence.",
+		`{"tool":"read_file","path":"target.go","start_line":1,"end_line":20,"named_gap":"confirm source before write retry"}`,
+		"Done. Changed target.go; verification not required for this test.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected request %d", requests)
+		reply := "Done. Changed target.go; verification not required for this test."
+		if requests < len(replies) {
+			reply = replies[requests]
 		}
-		reply := replies[requests]
 		requests++
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{
@@ -8499,7 +8514,7 @@ func TestRunnerTargetSourceRejectsExistingWriteFileBeforeSourceBodyEvidence(t *t
 	}))
 	defer server.Close()
 
-	var rejected bool
+	var redirectedRead bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -8508,16 +8523,17 @@ func TestRunnerTargetSourceRejectsExistingWriteFileBeforeSourceBodyEvidence(t *t
 			EnableWrites: true,
 		}),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        "implementation",
-			Contract:          "implementation_result",
-			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"read_file", "search_content", "write_file"},
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			AllowedTools:         []string{"read_file", "search_content", "write_file"},
+			VerificationContract: "not_required_for_text_mutations",
 		},
 		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
 	}
 	onToolResult := func(event ToolResultEvent) {
-		if event.Result.Summary == "Write rejected before source-body evidence" {
-			rejected = true
+		if event.Result.Tool == "read_file" && strings.Contains(event.Result.Summary, "target.go") {
+			redirectedRead = true
 		}
 	}
 	if _, err := runner.Run(
@@ -8530,15 +8546,104 @@ func TestRunnerTargetSourceRejectsExistingWriteFileBeforeSourceBodyEvidence(t *t
 	); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !rejected {
-		t.Fatal("expected target-source write_file rejection before source-body evidence")
+	if !redirectedRead {
+		t.Fatal("expected target-source write_file before evidence to redirect to a bounded read")
 	}
 	got, err := os.ReadFile(filepath.Join(root, "target.go"))
 	if err != nil {
 		t.Fatalf("read target: %v", err)
 	}
-	if strings.Contains(string(got), "after") {
-		t.Fatalf("write_file executed before source-body evidence:\n%s", got)
+	if !strings.Contains(string(got), "after") {
+		t.Fatalf("deferred write_file was not replayed after source-body evidence:\n%s", got)
+	}
+}
+
+func TestImplementationTargetSourceWriteBeforeEvidenceRedirectsToBoundedRead(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file"},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:    "edit_file",
+		Path:    "internal/labels/labels.go",
+		OldText: `return "Save changes"`,
+		NewText: `return "Save"`,
+	}
+
+	redirected, raw, ok := runner.implementationTargetSourceWriteBeforeEvidenceRedirect(req, nil, []string{"read_file", "edit_file"})
+	if !ok {
+		t.Fatal("expected write-before-evidence to redirect to a bounded read of the model-selected target")
+	}
+	if redirected.Tool != "read_file" || redirected.Path != "internal/labels/labels.go" || redirected.StartLine != 1 || redirected.EndLine != 180 {
+		t.Fatalf("redirected request = %#v", redirected)
+	}
+	if !strings.Contains(raw, `"named_gap":"source-body evidence before applying the requested write"`) {
+		t.Fatalf("redirect raw missing named gap: %s", raw)
+	}
+}
+
+func TestImplementationDeferredWriteReplayRequiresAnchorCoverage(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        "internal/labels/labels.go",
+		OldText:     `return "Save changes"`,
+		NewText:     `return "Save"`,
+		Description: "shorten label",
+	}
+	deferred := newImplementationDeferredSourceEvidenceWrite(req, "", "internal/labels/labels.go")
+	if deferred == nil {
+		t.Fatal("expected deferred write")
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-20 (total lines: 20)",
+		Output:  "1:package labels\n2:\n3:func Other() string { return \"Cancel\" }\n",
+	}}
+	repeatedRead := workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go", StartLine: 1, EndLine: 20}
+	if replayReq, raw, replay := deferred.replayAfterEvidence(repeatedRead, results, []string{"read_file", "edit_file"}); replay {
+		t.Fatalf("must not replay when source evidence does not cover old_text, got req=%#v raw=%q", replayReq, raw)
+	}
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f2 internal/labels/labels.go lines 1-20 (total lines: 20)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	})
+	if replayReq, _, replay := deferred.replayAfterEvidence(repeatedRead, results, []string{"read_file", "edit_file"}); !replay || replayReq.Tool != "edit_file" {
+		t.Fatalf("expected replay only after anchor-covered source evidence, replay=%v req=%#v", replay, replayReq)
+	}
+}
+
+func TestImplementationDeferredAppendReplayRequiresFullFileEvidence(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:        "append_file",
+		Path:        "notes.txt",
+		Content:     "\nafter\n",
+		Description: "append note",
+	}
+	deferred := newImplementationDeferredSourceEvidenceWrite(req, "", "notes.txt")
+	if deferred == nil {
+		t.Fatal("expected deferred append")
+	}
+	repeatedRead := workspace.ToolRequest{Tool: "read_file", Path: "notes.txt", StartLine: 1, EndLine: 180}
+	partial := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 notes.txt lines 1-180 (total lines: 300)",
+		Output:  "1:before\n",
+	}}
+	if replayReq, raw, replay := deferred.replayAfterEvidence(repeatedRead, partial, []string{"read_file", "append_file"}); replay {
+		t.Fatalf("must not replay append after partial source evidence, got req=%#v raw=%q", replayReq, raw)
+	}
+	full := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 notes.txt lines 1-3 (total lines: 3)",
+		Output:  "1:before\n2:middle\n3:end\n",
+	}}
+	if replayReq, _, replay := deferred.replayAfterEvidence(repeatedRead, full, []string{"read_file", "append_file"}); !replay || replayReq.Tool != "append_file" {
+		t.Fatalf("expected append replay only after full-file source evidence, replay=%v req=%#v", replay, replayReq)
 	}
 }
 
@@ -8570,7 +8675,7 @@ func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	var rejected bool
+	var redirectedRead bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -8587,8 +8692,8 @@ func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
 		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
 	}
 	onToolResult := func(event ToolResultEvent) {
-		if event.Result.Summary == "Write rejected before source-body evidence" {
-			rejected = true
+		if event.Result.Tool == "read_file" && strings.Contains(event.Result.Summary, "b.go") {
+			redirectedRead = true
 		}
 	}
 	if _, err := runner.Run(
@@ -8601,8 +8706,8 @@ func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
 	); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !rejected {
-		t.Fatal("expected target-source write rejection when only a different path was read")
+	if !redirectedRead {
+		t.Fatal("expected target-source write after reading a different path to redirect to a bounded read of the write target")
 	}
 	got, err := os.ReadFile(filepath.Join(root, "b.go"))
 	if err != nil {
@@ -8627,7 +8732,6 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 	replies := []string{
 		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":3}`,
 		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
-		`{"tool":"read_file","path":"b.go","start_line":1,"end_line":3,"named_gap":"current b.go source before retrying the rejected edit"}`,
 		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
 		`{"tool":"shell","command":"go test ./..."}`,
 		"Changed paths: b.go\n\nVerification: go test ./... passed.",
@@ -8647,9 +8751,7 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 	}))
 	defer server.Close()
 
-	var rejectedDifferentPathWrite bool
-	var rejectedNewTargetRead bool
-	var sawSourceReadAllowance bool
+	var sawRedirectedTargetRead bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -8666,20 +8768,10 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 			AllowedTools:      []string{"read_file", "search_content", "edit_file", "source_sanity", "shell"},
 		},
 		Policy: RunPolicy{MaxToolSteps: 7, MaxNoProgressTurns: 7},
-		OnEvent: func(event RunEvent) {
-			if event.Role == "implementation_target_write_ready_source_refresh_allowed" {
-				sawSourceReadAllowance = true
-			}
-		},
 	}
 	onToolResult := func(event ToolResultEvent) {
-		if event.Result.Summary == "Write rejected before source-body evidence" {
-			rejectedDifferentPathWrite = true
-		}
-		if event.Result.Tool == "read_file" &&
-			event.Request.Path == "b.go" &&
-			event.Result.Summary == "Implementation target write-ready tool rejected" {
-			rejectedNewTargetRead = true
+		if event.Result.Tool == "read_file" && event.Request.Path == "b.go" && strings.Contains(event.Result.Summary, "b.go") {
+			sawRedirectedTargetRead = true
 		}
 	}
 	if _, err := runner.Run(
@@ -8692,14 +8784,8 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 	); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !rejectedDifferentPathWrite {
-		t.Fatal("expected first b.go write to be rejected before b.go source-body evidence")
-	}
-	if !sawSourceReadAllowance {
-		t.Fatal("expected a bounded new-target source read allowance after the different-path write rejection")
-	}
-	if rejectedNewTargetRead {
-		t.Fatal("new-target source read was rejected, recreating the write-ready/source-evidence dead end")
+	if !sawRedirectedTargetRead {
+		t.Fatal("expected first b.go write-before-evidence to redirect to b.go source-body evidence")
 	}
 	got, err := os.ReadFile(filepath.Join(root, "b.go"))
 	if err != nil {
@@ -9006,6 +9092,7 @@ func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) 
 	replies := []string{
 		edit,
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":20,"named_gap":"confirm exact ShortLabel source before editing"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
 		edit,
 		`{"tool":"shell","command":"go test ./..."}`,
 		"Changed paths: internal/labels/labels.go\n\nVerification: go test ./... passed.",
@@ -9063,18 +9150,18 @@ func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) 
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
 		t.Fatalf("source-backed write retry must not be blocked as stale rejection, got %d events=%v", got, eventRolesFor(events))
 	}
-	seenInitialRejection := false
+	seenInitialReadRedirect := false
 	seenVerification := false
 	for _, result := range results {
-		if result.Summary == "Write rejected before source-body evidence" {
-			seenInitialRejection = true
+		if result.Tool == "read_file" && strings.Contains(result.Summary, "internal/labels/labels.go") {
+			seenInitialReadRedirect = true
 		}
 		if result.Tool == "shell" && strings.TrimSpace(result.Error) == "" {
 			seenVerification = true
 		}
 	}
-	if !seenInitialRejection {
-		t.Fatal("expected first write to be rejected before source-body evidence")
+	if !seenInitialReadRedirect {
+		t.Fatal("expected first write-before-evidence to redirect to source-body evidence")
 	}
 	if !seenVerification {
 		t.Fatalf("expected language verification command to run after accepted edit, results=%#v", results)

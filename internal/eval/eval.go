@@ -214,9 +214,11 @@ type ContractReplayExpectation struct {
 type Scenario struct {
 	Name                         string                            `json:"name"`
 	PromptContains               []string                          `json:"prompt_contains,omitempty"`
+	PromptHistoryContains        []string                          `json:"prompt_history_contains,omitempty"`
 	FinalAssistantContains       []string                          `json:"final_assistant_contains,omitempty"`
 	ForbidFinalAssistantContains []string                          `json:"forbid_final_assistant_contains,omitempty"`
 	RequireTools                 []string                          `json:"require_tools,omitempty"`
+	RequireRejectedTools         []string                          `json:"require_rejected_tools,omitempty"`
 	ForbidTools                  []string                          `json:"forbid_tools,omitempty"`
 	RequireDiscoveryTools        []string                          `json:"require_discovery_tools,omitempty"`
 	RequireDiscoveryClasses      []string                          `json:"require_discovery_classes,omitempty"`
@@ -545,6 +547,7 @@ type ContractReplayViolation struct {
 
 type Metrics struct {
 	LastUser                  string                          `json:"last_user"`
+	UserPrompts               []string                        `json:"user_prompts,omitempty"`
 	FinalAssistant            string                          `json:"final_assistant"`
 	WorkspaceRoot             string                          `json:"workspace_root,omitempty"`
 	UserTurns                 int                             `json:"user_turns"`
@@ -564,6 +567,8 @@ type Metrics struct {
 	SummaryRejections         int                             `json:"summary_rejections"`
 	SummaryRejectionLanes     []string                        `json:"summary_rejection_lanes,omitempty"`
 	Tools                     map[string]int                  `json:"tools"`
+	SuccessfulTools           map[string]int                  `json:"successful_tools,omitempty"`
+	RejectedTools             map[string]int                  `json:"rejected_tools,omitempty"`
 	DiscoveryTools            map[string]int                  `json:"discovery_tools,omitempty"`
 	DiscoveryClasses          map[string]int                  `json:"discovery_classes,omitempty"`
 	DiscoveryScopes           map[string]int                  `json:"discovery_scopes,omitempty"`

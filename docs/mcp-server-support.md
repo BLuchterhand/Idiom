@@ -29,7 +29,7 @@ The tool surface is concentrated in two places:
 - [`workspace.Manager.Execute`](../internal/workspace/manager.go) — single dispatch entrypoint for ~130 tools across workspace ops, language-semantic discovery (Go/C++/Python/TS/Rust/Java), structural and dependency analysis, history/blame, security scanners, harness audit/feedback, and write/shell. All gating (`EnableShell`, `EnableWrites`, `ToolRules`) is already applied here.
 - [`workspace.BuildToolManifest`](../internal/workspace/tool_manifest.go) — hand-written manifest of every tool with example request JSON and a one-line purpose. This is the source of truth for prompt rendering and `idiom tool list` output.
 
-The closest existing analogue to an MCP `tools/call` is `idiom tool <name> --input '<json>'` ([cmd/idiom/main.go:274](../cmd/idiom/main.go), `runToolMainWithTelemetry`). It loads workspace config, constructs a `ToolRequest`, runs `Manager.Execute`, serializes the `ToolResult` as JSON, and emits telemetry. The MCP server is essentially a long-running JSON-RPC frontend over the same path.
+The closest existing analogue to an MCP `tools/call` is `idiom tool <name> --input '<json>'` ([internal/toolcmd/toolcmd.go](../internal/toolcmd/toolcmd.go), `RunWithTelemetry`). It loads workspace config, constructs a `ToolRequest`, runs `Manager.Execute`, serializes the `ToolResult` as JSON, and emits telemetry. The MCP server is essentially a long-running JSON-RPC frontend over the same path.
 
 ### What's missing
 
@@ -240,7 +240,7 @@ idiom mcp serve --http :8765 --profile full --bind-public --i-know-what-im-doing
 
 ## Telemetry & Audit
 
-Every MCP request flows through the same `logDirectToolRequest`/`logDirectToolResult` shape used by the CLI ([cmd/idiom/main.go:716](../cmd/idiom/main.go), [:747](../cmd/idiom/main.go)) but with two added fields:
+Every MCP request flows through the same `LogDirectToolRequest`/`LogDirectToolResult` shape used by the CLI ([internal/toolcmd/toolcmd.go](../internal/toolcmd/toolcmd.go)) but with two added fields:
 
 - `mcp.client_name` — from the `clientInfo` block in `initialize`.
 - `mcp.transport` — `stdio` or `http`.

@@ -143,9 +143,9 @@ notice, depending on the contract.
 
 | Source | Why it matters |
 | --- | --- |
-| `cmd/idiom/doctor.go` | Host readiness and doctor command |
-| `cmd/idiom/backend.go` | Backend command surface |
-| `cmd/idiom/queue.go` | Queue command surface |
+| `internal/doctorcmd` | Host readiness and doctor command |
+| `internal/backendcmd` | Backend command surface |
+| `internal/queuecmd` | Queue command surface |
 | `internal/backends` | Backend profiles, aliases, launcher, proxy |
 | `internal/autodetect` | Host/model/backend discovery |
 | `internal/runner` | Queue lease acquisition helpers |

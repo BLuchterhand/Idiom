@@ -276,7 +276,7 @@ func looksLikeMarkdownHeading(line string) bool {
 }
 
 // briefBodyStartMarker / briefBodyEndMarker mirror the markers that
-// cmd/idiom/lane.go's composeLanePromptToFile wraps around the project
+// internal/lanecmd/lane.go's composeLanePromptToFile wraps around the project
 // brief inside the composed lane prompt. When MentionedWorkspacePaths
 // (and its callers) see these markers in the input, they scope their
 // scan to the marked region — that's how the harness avoids picking

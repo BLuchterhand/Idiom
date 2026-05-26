@@ -440,13 +440,13 @@ planner and does not reapply the executor edits.
 - `internal/workspace/submit_plan_test.go` — 5 tests.
 - `internal/planexecute/progress.go` — durable plan-execute progress
   state and review-repair resume contract.
-- `cmd/idiom/plan_execute.go` — CLI subcommand, planner-phase
+- `internal/planexecutecmd/plan_execute.go` — CLI subcommand, planner-phase
   system addendum, latest-artifact lookup, executor phase dispatch,
   post-write source sanity, and action-capable review-repair gate.
-- `cmd/idiom/plan_execute_evidence.go` — phase evidence bundle for
+- `internal/planexecutecmd/plan_execute_evidence.go` — phase evidence bundle for
   packet, diff, source-sanity, suggested-test, and open-obligation
   handoff into review-repair.
-- `cmd/idiom/plan_execute_test.go` — focused plan-execute contract
+- `internal/planexecutecmd/plan_execute_test.go` — focused plan-execute contract
   tests.
 - `internal/agent/runner_plan_then_execute_guard.go` — hard runtime
   enforcement of "no per-edit writes or planner-phase verification

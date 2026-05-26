@@ -55,8 +55,8 @@
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
-      "cmd/idiom/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go",
+      "internal/productcmd/product_workflow.go",
+      "internal/productcmd/product_workflow_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/status.go",
       "internal/productworkflow/status_test.go",
@@ -106,7 +106,11 @@
         "description": "Context pack 5636955570c7b36d reports stale runtime traces for internal/comprehension/trace.go; the gap is unrelated to status migration planning scope."
       }
     ],
-    "refresh_policy": "on_demand"
+    "refresh_policy": "on_demand",
+    "path_aliases": {
+      "cmd/idiom/product_workflow.go": "internal/productcmd/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go": "internal/productcmd/product_workflow_test.go"
+    }
   },
   "coverage": {
     "coverage_tier": "unit",

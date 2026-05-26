@@ -410,7 +410,7 @@ func TestScopedImplementationSynthesizedWriteStillRequiresSourceEvidence(t *test
 	}))
 	defer server.Close()
 
-	var sawSynthesized, sawSourceRejection bool
+	var sawSynthesized, sawSourceRead bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -438,15 +438,15 @@ func TestScopedImplementationSynthesizedWriteStillRequiresSourceEvidence(t *test
 		nil,
 		nil,
 		func(event ToolResultEvent) {
-			if event.Result.Summary == "Write rejected before source-body evidence" {
-				sawSourceRejection = true
+			if event.Result.Tool == "read_file" && strings.Contains(event.Result.Summary, "a.txt") {
+				sawSourceRead = true
 			}
 		},
 	); err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !sawSynthesized || !sawSourceRejection {
-		t.Fatalf("expected synthesized write then source-evidence rejection, synthesized=%v sourceRejected=%v", sawSynthesized, sawSourceRejection)
+	if !sawSynthesized || !sawSourceRead {
+		t.Fatalf("expected synthesized write then source-evidence read redirect, synthesized=%v sourceRead=%v", sawSynthesized, sawSourceRead)
 	}
 	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
 	if err != nil {

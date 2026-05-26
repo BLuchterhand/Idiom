@@ -172,10 +172,15 @@ type shellRedirect struct {
 	decisionGuide     string
 }
 
+// Shell redirects protect a permission boundary: shell grep/find/cat can
+// bypass the structured discovery contract. Unlike generic code-read
+// redirects, repeated shell redirects may become hard rejections.
+const turnWideShellRedirectHardBlockAt = 3
+
 func (d *DiscoveryRedirect) shellRedirectDecision(req workspace.ToolRequest, redirect shellRedirect) RedirectDecision {
 	d.firedRedirects[redirectFingerprint(req)] = true
 	d.kindFireCount[redirect.kind]++
-	hardReject := d.kindFireCount[redirect.kind] >= turnWideReadFileHardBlockAt
+	hardReject := d.kindFireCount[redirect.kind] >= turnWideShellRedirectHardBlockAt
 
 	result := workspace.ToolResult{Tool: req.Tool, Summary: redirect.summary, Output: redirect.message}
 	if hardReject {

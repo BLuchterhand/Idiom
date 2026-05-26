@@ -20,7 +20,7 @@ import (
 // uses it to forbid per-edit write tools (edit_file, write_file,
 // append_file, apply_patch, delegate_edit) — the planner's only
 // writes go through submit_plan. The executor phase, which runs in a
-// separate process via the orchestrator in cmd/idiom/plan_execute.go,
+// separate process via the orchestrator in internal/planexecutecmd/plan_execute.go,
 // uses the workspace dispatch directly.
 const PlanThenExecutePlannerTaskFamily = "plan_then_execute_planner"
 
@@ -2141,6 +2141,9 @@ func reviewRepairNoopSubmitPlanDeterministicCloseout(brief workerruntime.WorkerR
 	if failed := planThenExecuteReviewRepairFailedPhaseObligations(brief); len(failed) > 0 {
 		return "<<QUESTION>>: Review-repair phase evidence still has failed obligations: " + strings.Join(failed, ", ") + ". Submit a corrective plan inside the allowed repair paths or provide updated phase evidence before declaring pass."
 	}
+	if answer, ok := reviewRepairNoopSubmitPlanEvidencePassCloseout(brief); ok {
+		return answer
+	}
 	errText := strings.TrimSpace(rejection.Error)
 	if errText == "" {
 		errText = "review-repair closeout did not produce `Decision: pass` with a `Verification Checklist` or a typed blocker"
@@ -2657,11 +2660,6 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		unreadCandidateLine := "Allowed/candidate paths are not coverage obligations: do not read every allowed path by default."
 		readActionLine := "  2. One bounded source-read/search for a different candidate path, but only when it names one concrete edit-safety fact still needed before the plan."
 		finalLine := "Do not reread a candidate path that already has source-body evidence before the first valid `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` blocker."
-		if len(normalizedRequiredEditPaths(brief.AllowedEditPaths)) == 0 {
-			if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8); len(unread) > 0 {
-				return ""
-			}
-		}
 		return strings.Join([]string{
 			"PLANNER READINESS REACHED: at least one selected candidate edit path has source evidence in this turn. This makes `submit_plan` available, but it does not prove every candidate path is complete.",
 			"",
@@ -2830,6 +2828,11 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 		}
 		if _, alreadyReady := anchorReady[target]; !alreadyReady && planThenExecuteCandidateDifferentPathReadAllowed(req, brief, results, target) {
 			return "", "", false
+		}
+		if _, alreadyReady := anchorReady[target]; alreadyReady && strings.TrimSpace(req.Tool) != "read_file" && !planThenExecuteSourceBodyReadRequest(req) {
+			return "Plan-execute candidate source already ready",
+				target + " already has source-body evidence for this planner turn. Non-body navigation/search on the same candidate is not executable edit evidence. Use `submit_plan` with the gathered source evidence, use a bounded source-body continuation with a concrete named edit-safety gap, read a different candidate path only for one concrete missing edit-safety fact, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker.",
+				true
 		}
 	}
 	paths := make([]string, 0, len(anchorReady))

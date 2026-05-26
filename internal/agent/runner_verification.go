@@ -79,42 +79,45 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 	if !containsRunnerTool(allowedTools, "source_sanity") || !sourceEditsNeedSemanticVerification(brief, results) {
 		return workspace.ToolRequest{}, false
 	}
-	if !plannerOwnsVerification(brief) && !postWriteVerificationInvalidToolRejectionSeen(results) {
+	if !postWriteVerificationReadOfChangedSource(req, results) &&
+		!postWriteVerificationWriteOfChangedSource(req, results) {
 		return workspace.ToolRequest{}, false
 	}
 	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == "source_sanity" {
 		return workspace.ToolRequest{}, false
 	}
-	switch strings.TrimSpace(req.Tool) {
-	case "read_file", "search_content", "search_files", "edit_file", "write_file", "append_file", "apply_patch":
-	default:
-		return workspace.ToolRequest{}, false
-	}
-	paths := changedSourcePaths(results)
-	if len(paths) == 0 {
-		return workspace.ToolRequest{}, false
-	}
-	return workspace.ToolRequest{Tool: "source_sanity", Path: paths[0]}, true
+	return workspace.ToolRequest{Tool: "source_sanity", Path: normalizeRunnerPath(req.Path)}, true
 }
 
-func postWriteVerificationInvalidToolRejectionSeen(results []workspace.ToolResult) bool {
-	seenSourceWrite := false
-	for _, result := range results {
-		if toolResultChangedSourcePath(result) {
-			seenSourceWrite = true
-			continue
+func postWriteVerificationReadOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return false
+	}
+	requested := normalizeRunnerPath(req.Path)
+	if requested == "" {
+		return false
+	}
+	for _, changed := range changedSourcePaths(results) {
+		if normalizeRunnerPath(changed) == requested {
+			return true
 		}
-		if !seenSourceWrite {
-			continue
-		}
-		if strings.TrimSpace(result.Summary) != "Tool not available in current runtime contract" {
-			continue
-		}
-		if !strings.Contains(strings.ToLower(result.Error), "current allowed tool surface") {
-			continue
-		}
-		switch strings.TrimSpace(result.Tool) {
-		case "read_file", "search_content", "search_files", "edit_file", "write_file", "append_file", "apply_patch":
+	}
+	return false
+}
+
+func postWriteVerificationWriteOfChangedSource(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return false
+	}
+	requested := normalizeRunnerPath(req.Path)
+	if requested == "" {
+		return false
+	}
+	if !workspace.SourceSanityCoversPath(requested) {
+		return false
+	}
+	for _, changed := range changedSourcePaths(results) {
+		if normalizeRunnerPath(changed) == requested {
 			return true
 		}
 	}

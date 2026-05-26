@@ -1459,17 +1459,36 @@ func combinedLower(parts ...string) string {
 }
 
 // IsZeroHitSearchResult detects the "search found nothing" shape from a
-// tool result's summary. Used to swap the next-action nudge from
+// tool result's summary or stable routed-output preamble. Used to swap the next-action nudge from
 // "read the highest-confidence hit" (useless when the hit list is empty)
 // to "switch to a broader search or answer with what you have", and by
 // the runner to block retries of the exact same zero-hit fingerprint.
-// Summaries are produced by the workspace layer and are stable strings.
+// Summaries and routed output preambles are produced by the workspace layer
+// and are stable strings; arbitrary source body output is intentionally not scanned.
 func IsZeroHitSearchResult(result workspace.ToolResult) bool {
-	summary := strings.ToLower(strings.TrimSpace(result.Summary))
-	if summary == "" {
+	if zeroHitText(strings.ToLower(strings.TrimSpace(result.Summary))) {
+		return true
+	}
+	switch strings.TrimSpace(result.Tool) {
+	case "code_navigate", "read_only_capability":
+		for _, line := range strings.Split(result.Output, "\n") {
+			line = strings.ToLower(strings.TrimSpace(line))
+			if !strings.HasPrefix(line, "route_summary:") {
+				continue
+			}
+			if zeroHitText(strings.TrimSpace(strings.TrimPrefix(line, "route_summary:"))) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func zeroHitText(text string) bool {
+	if strings.TrimSpace(text) == "" {
 		return false
 	}
-	return containsAny(summary,
+	return containsAny(text,
 		"no file matches",
 		"no matches",
 		"no matching",

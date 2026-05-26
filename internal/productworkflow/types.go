@@ -48,11 +48,12 @@ type WorkflowState struct {
 }
 
 type WorkflowContext struct {
-	ContextPackID   string          `json:"context_pack_id"`
-	FreshnessState  string          `json:"freshness_state"`
-	ReferencedPaths []string        `json:"referenced_paths"`
-	UnresolvedGaps  []UnresolvedGap `json:"unresolved_gaps"`
-	RefreshPolicy   string          `json:"refresh_policy"`
+	ContextPackID   string            `json:"context_pack_id"`
+	FreshnessState  string            `json:"freshness_state"`
+	ReferencedPaths []string          `json:"referenced_paths"`
+	PathAliases     map[string]string `json:"path_aliases,omitempty"`
+	UnresolvedGaps  []UnresolvedGap   `json:"unresolved_gaps"`
+	RefreshPolicy   string            `json:"refresh_policy"`
 }
 
 type UnresolvedGap struct {

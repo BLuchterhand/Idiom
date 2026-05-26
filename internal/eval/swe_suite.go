@@ -56,6 +56,7 @@ type SWEOracle struct {
 	MinAssistantTurns           *int                        `json:"min_assistant_turns,omitempty"`
 	RequireNoApproval           bool                        `json:"require_no_approval,omitempty"`
 	RequireNoShell              bool                        `json:"require_no_shell,omitempty"`
+	ForbidSuccessfulTools       []string                    `json:"forbid_successful_tools,omitempty"`
 	RequireNoSummaryRejections  bool                        `json:"require_no_summary_rejections,omitempty"`
 	RequireNoRunnerRejections   bool                        `json:"require_no_runner_rejections,omitempty"`
 	RequireExecutorHandoff      bool                        `json:"require_executor_handoff,omitempty"`
@@ -288,7 +289,7 @@ func ValidateSWESuite(suite SWESuite) error {
 		if strings.TrimSpace(task.Scenario.Name) == "" {
 			return fmt.Errorf("SWE suite task %q missing scenario name", id)
 		}
-		if len(task.Scenario.PromptContains) == 0 && strings.TrimSpace(task.Prompt) != "" {
+		if len(task.Scenario.PromptContains) == 0 && len(task.Scenario.PromptHistoryContains) == 0 && strings.TrimSpace(task.Prompt) != "" {
 			return fmt.Errorf("SWE suite task %q scenario should assert prompt text", id)
 		}
 	}
@@ -903,6 +904,12 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 	if oracle.RequireNoShell && report.Metrics.Tools["shell"] > 0 {
 		addFinding("shell use was forbidden but observed %d shell request(s)", report.Metrics.Tools["shell"])
 	}
+	for _, tool := range oracle.ForbidSuccessfulTools {
+		tool = strings.TrimSpace(tool)
+		if tool != "" && report.Metrics.SuccessfulTools[tool] > 0 {
+			addFinding("successful tool %q was forbidden but observed %d successful result(s)", tool, report.Metrics.SuccessfulTools[tool])
+		}
+	}
 	if oracle.RequireNoSummaryRejections && report.Metrics.SummaryRejections > 0 {
 		addFinding("summary rejections were forbidden but observed %d", report.Metrics.SummaryRejections)
 	}
@@ -1375,6 +1382,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	if len(scenario.PromptContains) > 0 {
 		assertions = append(assertions, "prompt_contains")
 	}
+	if len(scenario.PromptHistoryContains) > 0 {
+		assertions = append(assertions, "prompt_history_contains")
+	}
 	if len(scenario.FinalAssistantContains) > 0 {
 		assertions = append(assertions, "final_assistant_contains")
 	}
@@ -1383,6 +1393,9 @@ func taskScenarioAssertions(task SWETask) []string {
 	}
 	if len(scenario.RequireTools) > 0 {
 		assertions = append(assertions, "tools")
+	}
+	if len(scenario.RequireRejectedTools) > 0 {
+		assertions = append(assertions, "rejected_tools")
 	}
 	if len(scenario.ForbidTools) > 0 {
 		assertions = append(assertions, "forbid_tools")
@@ -1667,6 +1680,9 @@ func taskOracleAssertions(task SWETask) []string {
 	}
 	if oracle.RequireNoShell {
 		assertions = append(assertions, "no_shell")
+	}
+	if len(oracle.ForbidSuccessfulTools) > 0 {
+		assertions = append(assertions, "forbid_successful_tools")
 	}
 	if oracle.RequireNoSummaryRejections {
 		assertions = append(assertions, "no_summary_rejections")

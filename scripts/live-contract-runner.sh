@@ -48,12 +48,26 @@ stdout_path="$run_dir/stdout.txt"
 stderr_path="$run_dir/stderr.txt"
 extra_records="$run_dir/extra-records.jsonl"
 stdout_copied_marker="$run_dir/stdout-copied"
+run_id="live-contract.$(date +%s).$$.${RANDOM:-0}"
+log_owner_path="$log_path.owner"
+queue_socket="$run_dir/missing-queue.sock"
+if [[ "${IDIOM_SWE_USE_QUEUE:-false}" == "true" ]]; then
+  queue_socket="${IDIOM_QUEUE_SOCKET:-}"
+fi
 baseline_tree=""
 worker_exit=0
 
 mkdir -p "$workspace_root" "$debug_log_dir" "$telemetry_dir" "$save_dir" "$(dirname "$log_path")"
 rm -f "$log_path"
+printf '%s\n' "$run_id" >"$log_owner_path"
 printf '%s\n' "$turns_json" > "$turns_file"
+turn_count="$(python3 - "$turns_json" <<'PY'
+import json
+import sys
+
+print(len(json.loads(sys.argv[1])))
+PY
+)"
 python3 - "$turns_json" "$prompt_file" <<'PY'
 import json
 import sys
@@ -65,6 +79,27 @@ with open(sys.argv[2], "w", encoding="utf-8") as f:
     f.write("\n")
 PY
 : >"$extra_records"
+
+require_single_turn_lane_entrypoint() {
+  local mode="$1"
+  if [[ "$turn_count" -gt 1 ]]; then
+    echo "live-contract runner cannot replay ${turn_count} turns through ${mode}; use the turns-file entrypoint or add explicit lane replay support" >&2
+    exit 2
+  fi
+}
+
+terminate_tree() {
+  local signal="$1"
+  local pid="$2"
+  local child
+  if [[ -z "$pid" ]] || ! kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  while IFS= read -r child; do
+    [[ -n "$child" ]] && terminate_tree "$signal" "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+  kill "-$signal" "$pid" 2>/dev/null || true
+}
 
 append_record() {
   local type="$1"
@@ -84,6 +119,9 @@ PY
 }
 
 copy_latest_log() {
+  if ! owns_log_path; then
+    return 0
+  fi
   if [[ ! -s "$log_path" ]]; then
     find "$debug_log_dir" -maxdepth 1 -type f -name '*.jsonl' -print 2>/dev/null | sort | while IFS= read -r debug_log; do
       cat "$debug_log"
@@ -135,10 +173,17 @@ record = {
     "stdout_chars": len(stdout),
     "stderr_chars": len(stderr),
 }
+
 with open(log_path, "w", encoding="utf-8") as f:
     json.dump(record, f, sort_keys=True)
     f.write("\n")
 PY
+}
+
+owns_log_path() {
+  local owner
+  owner="$(cat "$log_owner_path" 2>/dev/null || true)"
+  [[ "$owner" == "$run_id" ]]
 }
 
 workspace_status_json() {
@@ -195,6 +240,10 @@ finish() {
     fi
   fi
 
+  if ! owns_log_path; then
+    echo "live-contract runner lost ownership of $log_path; skipping stale log write" >&2
+    exit "$exit_code"
+  fi
   copy_latest_log || true
   append_record "idiom.live_contract.rollback" "$(python3 - "$rollback_status" "$baseline_tree" "$post_tree" "$changed_before" "$changed_after" <<'PY'
 import json
@@ -211,6 +260,7 @@ print(json.dumps({
 PY
 )"
   cat "$extra_records" >>"$log_path" 2>/dev/null || true
+  rm -f "$log_owner_path"
   exit "$exit_code"
 }
 trap finish EXIT
@@ -412,7 +462,7 @@ task_timeout="${IDIOM_SWE_TASK_TIMEOUT:-240}"
 (
   cd "$run_dir"
   if [[ "$runner_mode" == "tui" ]]; then
-    IDIOM_TELEMETRY_DIR="$telemetry_dir" python3 - "$idiom_bin" "$config_path" "$prompt_file" "$task_timeout" <<'PY'
+    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" python3 - "$idiom_bin" "$config_path" "$prompt_file" "$task_timeout" <<'PY'
 import os
 import pty
 import select
@@ -506,13 +556,6 @@ if not completed:
     sys.exit(1)
 PY
   elif [[ "$runner_mode" == "feature-planner" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && [[ "${IDIOM_SWE_FAMILY:-}" == feature_planner* ]]; }; then
-    turn_count="$(python3 - "$turns_json" <<'PY'
-import json
-import sys
-
-print(len(json.loads(sys.argv[1])))
-PY
-)"
     if [[ "$turn_count" -gt 1 ]]; then
       turn_prompt_dir="$run_dir/feature-planner-turns"
       mkdir -p "$turn_prompt_dir"
@@ -530,9 +573,9 @@ PY
       for turn_prompt in "$turn_prompt_dir"/*.txt; do
         feature_stdout="$run_dir/feature-planner-$(basename "$turn_prompt" .txt).jsonl"
         if [[ -n "$feature_resume" ]]; then
-          IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$turn_prompt" --resume "$feature_resume" ${IDIOM_EXTRA_ARGS:-} >"$feature_stdout"
+          IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$turn_prompt" --resume "$feature_resume" ${IDIOM_EXTRA_ARGS:-} >"$feature_stdout"
         else
-          IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$turn_prompt" ${IDIOM_EXTRA_ARGS:-} >"$feature_stdout"
+          IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$turn_prompt" ${IDIOM_EXTRA_ARGS:-} >"$feature_stdout"
         fi
         cat "$feature_stdout"
 next_resume="$(python3 - "$feature_stdout" <<'PY'
@@ -565,14 +608,16 @@ PY
         fi
       done
     else
-      IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+      IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" feature-planner -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
     fi
   elif [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
-    IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    require_single_turn_lane_entrypoint "plan-execute"
+    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
   elif [[ "$runner_mode" == "implement" ]]; then
-    IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    require_single_turn_lane_entrypoint "implement"
+    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
   elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
-    IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
+    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" -config "$config_path" -turns-file "$turns_file" ${IDIOM_EXTRA_ARGS:-}
   else
     echo "unsupported IDIOM_SWE_RUNNER_MODE: $runner_mode" >&2
     exit 2
@@ -586,15 +631,15 @@ worker_pid=$!
   wait "$sleep_pid" 2>/dev/null
   if kill -0 "$worker_pid" 2>/dev/null; then
     echo "live-contract watchdog: task exceeded ${task_timeout}s, sending SIGTERM" >&2
-    kill -TERM "$worker_pid" 2>/dev/null || true
+    terminate_tree TERM "$worker_pid"
     sleep 5
-    kill -KILL "$worker_pid" 2>/dev/null || true
+    terminate_tree KILL "$worker_pid"
   fi
 ) &
 watchdog_pid=$!
 wait "$worker_pid" 2>/dev/null || worker_exit=$?
 kill -TERM "$watchdog_pid" 2>/dev/null || true
-pkill -P "$watchdog_pid" 2>/dev/null || true
+terminate_tree TERM "$watchdog_pid"
 wait "$watchdog_pid" 2>/dev/null || true
 
 if [[ $worker_exit -eq 143 ]] || [[ $worker_exit -eq 137 ]]; then

@@ -62,6 +62,28 @@ func TestNormalizeToolRequestSyntaxTextualJSON(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxTextualJSONEditFile(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"	return \"Save changes\"","new_text":"	return \"Save\"","description":"Update ShortLabel"}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatalf("expected textual edit_file JSON tool request to normalize: %#v", result)
+	}
+	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.Request.OldText != "\treturn \"Save changes\"" || result.Request.NewText != "\treturn \"Save\"" {
+		t.Fatalf("unexpected replacement text: old=%q new=%q", result.Request.OldText, result.Request.NewText)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportTextual {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxBareToolJSONObject(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: strings.Join([]string{
