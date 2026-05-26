@@ -994,7 +994,7 @@ func TestRunLaneMainEmbedsCanonicalImplementPreamble(t *testing.T) {
 }
 
 func TestCanonicalImplementPreambleUsesCapabilityLookupLanguage(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("lanes", "implement", "preamble.md"))
+	body, err := os.ReadFile(cliAssetPath("lanes", "implement", "preamble.md"))
 	if err != nil {
 		t.Fatalf("read implement preamble: %v", err)
 	}
@@ -1062,7 +1062,7 @@ func TestRunLaneMainEmbedsCanonicalPostamble(t *testing.T) {
 }
 
 func TestCanonicalPlanExecutePostambleAllowsSourceSatisfiedCloseout(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("lanes", "plan-execute", "postamble.md"))
+	body, err := os.ReadFile(cliAssetPath("lanes", "plan-execute", "postamble.md"))
 	if err != nil {
 		t.Fatalf("read plan-execute postamble: %v", err)
 	}
@@ -1085,11 +1085,11 @@ func TestCanonicalPlanExecutePostambleAllowsSourceSatisfiedCloseout(t *testing.T
 }
 
 func TestCanonicalImplementPromptDoesNotMakeWriteTheLiteralFinalAction(t *testing.T) {
-	preambleBody, err := os.ReadFile(filepath.Join("lanes", "implement", "preamble.md"))
+	preambleBody, err := os.ReadFile(cliAssetPath("lanes", "implement", "preamble.md"))
 	if err != nil {
 		t.Fatalf("read implement preamble: %v", err)
 	}
-	postambleBody, err := os.ReadFile(filepath.Join("lanes", "implement", "postamble.md"))
+	postambleBody, err := os.ReadFile(cliAssetPath("lanes", "implement", "postamble.md"))
 	if err != nil {
 		t.Fatalf("read implement postamble: %v", err)
 	}
@@ -1137,7 +1137,7 @@ func TestPlanModePromptDoesNotRequestWriteThroughGraphRefresh(t *testing.T) {
 }
 
 func TestCanonicalPlanExecutePreambleDoesNotRepeatSourceBodyRule(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("lanes", "plan-execute", "preamble.md"))
+	body, err := os.ReadFile(cliAssetPath("lanes", "plan-execute", "preamble.md"))
 	if err != nil {
 		t.Fatalf("read plan-execute preamble: %v", err)
 	}
@@ -1161,9 +1161,9 @@ func TestCanonicalPlanExecutePreambleDoesNotRepeatSourceBodyRule(t *testing.T) {
 
 func TestCanonicalLanePromptsKeepCandidateScopeSeparateFromRequiredEditPaths(t *testing.T) {
 	paths := []string{
-		filepath.Join("lanes", "plan-execute", "preamble.md"),
-		filepath.Join("lanes", "implement", "preamble.md"),
-		filepath.Join("lanes", "rules", "brief-skeleton.md"),
+		cliAssetPath("lanes", "plan-execute", "preamble.md"),
+		cliAssetPath("lanes", "implement", "preamble.md"),
+		cliAssetPath("lanes", "rules", "brief-skeleton.md"),
 	}
 	for _, path := range paths {
 		body, err := os.ReadFile(path)
@@ -1192,7 +1192,7 @@ func TestCanonicalProfileSeedsStayInSync(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read canonical profile %s: %v", name, err)
 		}
-		seed, err := os.ReadFile(filepath.Join("profiles", name))
+		seed, err := os.ReadFile(cliAssetPath("profiles", name))
 		if err != nil {
 			t.Fatalf("read embedded seed profile %s: %v", name, err)
 		}
@@ -1242,8 +1242,8 @@ func TestCanonicalPromptFilesDoNotEncourageNoopWrites(t *testing.T) {
 		filepath.Join("..", "..", "prompts", "base.md"),
 		filepath.Join("..", "..", "prompts", "profiles", "coding.md"),
 		filepath.Join("..", "..", "prompts", "profiles", "claude-qwen-worker.md"),
-		filepath.Join("lanes", "implement", "preamble.md"),
-		filepath.Join("lanes", "plan-execute", "postamble.md"),
+		cliAssetPath("lanes", "implement", "preamble.md"),
+		cliAssetPath("lanes", "plan-execute", "postamble.md"),
 	}
 	for _, path := range paths {
 		body, err := os.ReadFile(path)
@@ -1257,7 +1257,7 @@ func TestCanonicalPromptFilesDoNotEncourageNoopWrites(t *testing.T) {
 }
 
 func TestCanonicalLaneRulesDoNotForceQuestionWhenScopedDiscoveryCanRefreshAnchor(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("lanes", "rules", "known-traps-generic.md"))
+	body, err := os.ReadFile(cliAssetPath("lanes", "rules", "known-traps-generic.md"))
 	if err != nil {
 		t.Fatalf("read known traps: %v", err)
 	}
@@ -1285,10 +1285,10 @@ func TestCanonicalRefinePromptsUseConditionalOutputLanguage(t *testing.T) {
 		path string
 		want string
 	}{
-		{filepath.Join("lanes", "refine", "draft.md"), "Artifact output path"},
-		{filepath.Join("lanes", "refine", "draft-markdown.md"), "Artifact output path"},
-		{filepath.Join("lanes", "refine", "review.md"), "Expected path"},
-		{filepath.Join("lanes", "refine", "patch.md"), "Expected path"},
+		{cliAssetPath("lanes", "refine", "draft.md"), "Artifact output path"},
+		{cliAssetPath("lanes", "refine", "draft-markdown.md"), "Artifact output path"},
+		{cliAssetPath("lanes", "refine", "review.md"), "Expected path"},
+		{cliAssetPath("lanes", "refine", "patch.md"), "Expected path"},
 	}
 	for _, tc := range paths {
 		body, err := os.ReadFile(tc.path)
@@ -1309,10 +1309,10 @@ func TestCanonicalRefinePromptsUseConditionalOutputLanguage(t *testing.T) {
 
 func TestCanonicalRefinePromptsDistinguishTextualCommandsFromExecution(t *testing.T) {
 	paths := []string{
-		filepath.Join("lanes", "refine", "draft.md"),
-		filepath.Join("lanes", "refine", "draft-markdown.md"),
-		filepath.Join("lanes", "refine", "review.md"),
-		filepath.Join("lanes", "refine", "patch.md"),
+		cliAssetPath("lanes", "refine", "draft.md"),
+		cliAssetPath("lanes", "refine", "draft-markdown.md"),
+		cliAssetPath("lanes", "refine", "review.md"),
+		cliAssetPath("lanes", "refine", "patch.md"),
 	}
 	for _, path := range paths {
 		body, err := os.ReadFile(path)

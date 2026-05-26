@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bufio"
 	"cmp"
 	"encoding/json"
 	"fmt"
@@ -35,6 +36,7 @@ type harnessAuditReport struct {
 	WorkspaceRoot           string                       `json:"workspace_root,omitempty"`
 	Purpose                 string                       `json:"purpose"`
 	Findings                []harnessAuditFinding        `json:"findings,omitempty"`
+	HistoricalFindings      []harnessAuditFinding        `json:"historical_findings,omitempty"`
 	ToolSurface             *harnessAuditToolSurface     `json:"tool_surface,omitempty"`
 	LanguageTooling         []harnessAuditLanguage       `json:"language_tooling,omitempty"`
 	BackendAvailability     []harnessAuditBackend        `json:"backend_availability,omitempty"`
@@ -67,6 +69,7 @@ type harnessAuditContextCache struct {
 	NewestCreated                         string         `json:"newest_created,omitempty"`
 	WorkspaceStateKeyedRows               int            `json:"workspace_state_keyed_rows"`
 	ContractRows                          int            `json:"contract_rows"`
+	CurrentContractRows                   int            `json:"current_contract_rows"`
 	UnresolvedGapRows                     int            `json:"unresolved_gap_rows"`
 	FreshUnresolvedGapRows                int            `json:"fresh_unresolved_gap_rows"`
 	StaleUnresolvedGapRows                int            `json:"stale_unresolved_gap_rows"`
@@ -87,28 +90,44 @@ type harnessAuditContextCache struct {
 }
 
 type harnessAuditFreshnessHealth struct {
-	ReadThroughAttempts        int64            `json:"read_through_attempts"`
-	Blockers                   int64            `json:"blockers"`
-	BlockersByReason           map[string]int64 `json:"blockers_by_reason,omitempty"`
-	StaleUseBlocked            int64            `json:"stale_use_blocked"`
-	StaleUseReported           int64            `json:"stale_use_reported"`
-	StaleUseAllowed            int64            `json:"stale_use_allowed"`
-	StaleUseFresh              int64            `json:"stale_use_fresh"`
-	StaleUseStateCounts        map[string]int64 `json:"stale_use_state_counts,omitempty"`
-	StaleCachedViewPreventions int64            `json:"stale_cached_view_preventions"`
-	StaleRowMisses             int64            `json:"stale_row_misses"`
-	RefreshFailures            int64            `json:"refresh_failures"`
-	RootRebuilds               int64            `json:"root_rebuilds"`
-	AllowStaleInvocations      int64            `json:"allow_stale_invocations"`
-	TelemetryReadThrough       int64            `json:"telemetry_read_through_results,omitempty"`
-	TelemetryBlockers          int64            `json:"telemetry_blockers,omitempty"`
-	TelemetryBudgetExceeded    int64            `json:"telemetry_budget_exceeded,omitempty"`
-	TelemetryRefreshAttempts   int64            `json:"telemetry_refresh_attempts,omitempty"`
-	TelemetryRefreshFailures   int64            `json:"telemetry_refresh_failures,omitempty"`
-	TelemetryRefreshFiles      int64            `json:"telemetry_refresh_files_indexed,omitempty"`
-	TelemetryAllowStale        int64            `json:"telemetry_allow_stale_invocations,omitempty"`
-	TelemetryPolicyCounts      map[string]int64 `json:"telemetry_policy_counts,omitempty"`
-	TelemetryReasonCounts      map[string]int64 `json:"telemetry_reason_counts,omitempty"`
+	ReadThroughAttempts              int64            `json:"read_through_attempts"`
+	Blockers                         int64            `json:"blockers"`
+	BlockersByReason                 map[string]int64 `json:"blockers_by_reason,omitempty"`
+	StaleUseBlocked                  int64            `json:"stale_use_blocked"`
+	ResolvedStaleUseBlocked          int64            `json:"resolved_stale_use_blocked,omitempty"`
+	StaleUseReported                 int64            `json:"stale_use_reported"`
+	StaleUseAllowed                  int64            `json:"stale_use_allowed"`
+	StaleUseFresh                    int64            `json:"stale_use_fresh"`
+	StaleUseStateCounts              map[string]int64 `json:"stale_use_state_counts,omitempty"`
+	StaleCachedViewPreventions       int64            `json:"stale_cached_view_preventions"`
+	StaleRowMisses                   int64            `json:"stale_row_misses"`
+	RefreshFailures                  int64            `json:"refresh_failures"`
+	RootRebuilds                     int64            `json:"root_rebuilds"`
+	AllowStaleInvocations            int64            `json:"allow_stale_invocations"`
+	TelemetryReadThrough             int64            `json:"telemetry_read_through_results,omitempty"`
+	TelemetryBlockers                int64            `json:"telemetry_blockers,omitempty"`
+	TelemetryBudgetExceeded          int64            `json:"telemetry_budget_exceeded,omitempty"`
+	TelemetryRefreshAttempts         int64            `json:"telemetry_refresh_attempts,omitempty"`
+	TelemetryRefreshFailures         int64            `json:"telemetry_refresh_failures,omitempty"`
+	TelemetryResolvedRefreshFailures int64            `json:"telemetry_resolved_refresh_failures,omitempty"`
+	TelemetryRefreshFiles            int64            `json:"telemetry_refresh_files_indexed,omitempty"`
+	TelemetryAllowStale              int64            `json:"telemetry_allow_stale_invocations,omitempty"`
+	TelemetryResolvedBlockers        int64            `json:"telemetry_resolved_blockers,omitempty"`
+	TelemetryLatestState             string           `json:"telemetry_latest_state,omitempty"`
+	TelemetryHistoricalOnly          bool             `json:"telemetry_historical_only,omitempty"`
+	TelemetryPolicyCounts            map[string]int64 `json:"telemetry_policy_counts,omitempty"`
+	TelemetryReasonCounts            map[string]int64 `json:"telemetry_reason_counts,omitempty"`
+}
+
+type harnessAuditFreshnessWindow struct {
+	LatestState               string `json:"latest_state,omitempty"`
+	UnresolvedBlockers        int    `json:"unresolved_blockers,omitempty"`
+	UnresolvedStaleUse        int    `json:"unresolved_stale_use,omitempty"`
+	UnresolvedRefreshFailures int    `json:"unresolved_refresh_failures,omitempty"`
+	ResolvedBlockers          int    `json:"resolved_blockers,omitempty"`
+	ResolvedStaleUse          int    `json:"resolved_stale_use,omitempty"`
+	ResolvedRefreshFailures   int    `json:"resolved_refresh_failures,omitempty"`
+	FreshResultsAfterBlocker  int    `json:"fresh_results_after_blocker,omitempty"`
 }
 
 // harnessAuditRankerLearning surfaces the state of the per-workspace
@@ -210,22 +229,24 @@ type harnessAuditBackend struct {
 }
 
 type harnessAuditLogBehavior struct {
-	LogLimit           int                             `json:"log_limit"`
-	LogsConsidered     int                             `json:"logs_considered"`
-	LogsScanned        int                             `json:"logs_scanned"`
-	Sources            []harnessAuditLogSource         `json:"sources,omitempty"`
-	Warnings           []string                        `json:"warnings,omitempty"`
-	Aggregate          eval.PerfAggregate              `json:"aggregate"`
-	TopPatterns        []eval.PerfPatternHit           `json:"top_patterns,omitempty"`
-	TopTools           []eval.PerfToolMix              `json:"top_tools,omitempty"`
-	CapabilityMix      []harnessAuditCapabilityMix     `json:"capability_mix,omitempty"`
-	TopCapabilities    []harnessAuditCapabilityMix     `json:"top_capabilities,omitempty"`
-	WorstOffenders     []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
-	MalformedOutput    *harnessAuditMalformedOutput    `json:"malformed_output,omitempty"`
-	GuardFriction      *autonomy.GuardFrictionCoverage `json:"guard_friction,omitempty"`
-	LaneHistory        *harnessAuditLaneHistory        `json:"lane_history,omitempty"`
-	InProgressSessions []harnessAuditInProgressSession `json:"in_progress_sessions,omitempty"`
-	IncompleteSessions []harnessAuditIncompleteSession `json:"incomplete_sessions,omitempty"`
+	LogLimit            int                             `json:"log_limit"`
+	LogsConsidered      int                             `json:"logs_considered"`
+	LogsScanned         int                             `json:"logs_scanned"`
+	Sources             []harnessAuditLogSource         `json:"sources,omitempty"`
+	Warnings            []string                        `json:"warnings,omitempty"`
+	Aggregate           eval.PerfAggregate              `json:"aggregate"`
+	CurrentAggregate    eval.PerfAggregate              `json:"-"`
+	FreshnessResolution *harnessAuditFreshnessWindow    `json:"freshness_resolution,omitempty"`
+	TopPatterns         []eval.PerfPatternHit           `json:"top_patterns,omitempty"`
+	TopTools            []eval.PerfToolMix              `json:"top_tools,omitempty"`
+	CapabilityMix       []harnessAuditCapabilityMix     `json:"capability_mix,omitempty"`
+	TopCapabilities     []harnessAuditCapabilityMix     `json:"top_capabilities,omitempty"`
+	WorstOffenders      []eval.PerfWorstOffender        `json:"worst_offenders,omitempty"`
+	MalformedOutput     *harnessAuditMalformedOutput    `json:"malformed_output,omitempty"`
+	GuardFriction       *autonomy.GuardFrictionCoverage `json:"guard_friction,omitempty"`
+	LaneHistory         *harnessAuditLaneHistory        `json:"lane_history,omitempty"`
+	InProgressSessions  []harnessAuditInProgressSession `json:"in_progress_sessions,omitempty"`
+	IncompleteSessions  []harnessAuditIncompleteSession `json:"incomplete_sessions,omitempty"`
 }
 
 type harnessAuditCapabilityMix struct {
@@ -383,11 +404,16 @@ func (m *Manager) harnessAudit(req ToolRequest) ToolResult {
 			report.ContextCache = cache
 			report.Findings = append(report.Findings, contextCacheFindings(cache)...)
 		}
-		freshness := buildFreshnessHealthAudit(logBehaviorContextStats(report.LogBehavior))
+		freshness := buildFreshnessHealthAudit(
+			logBehaviorContextStats(report.LogBehavior),
+			logBehaviorFreshnessResolution(report.LogBehavior),
+			logBehaviorContextStatsHistoricalOnly(report.LogBehavior),
+		)
 		report.FreshnessHealth = &freshness
 		report.Findings = append(report.Findings, freshnessHealthFindings(&freshness)...)
 	}
 
+	report.Findings, report.HistoricalFindings = splitHistoricalHarnessAuditFindings(report.Findings)
 	report.ImprovementQuestions = append(report.ImprovementQuestions, staticImprovementQuestions(report)...)
 
 	data, err := json.MarshalIndent(report, "", "  ")
@@ -841,25 +867,29 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
 	}
 	aggregate := eval.Aggregate(reports)
-	currentAggregate := eval.Aggregate(currentHarnessAuditPerfReports(m.cfg.Root, reports))
+	currentReports := currentHarnessAuditPerfReports(m.cfg.Root, reports)
+	currentAggregate := eval.Aggregate(currentReports)
+	freshnessResolution := auditCurrentFreshnessWindow(m.cfg.Root, currentReports)
 	capabilityMix := auditObservedCapabilityMix(paths, aggregate.LogCount, &warnings, m.displayPath)
 	behavior := &harnessAuditLogBehavior{
-		LogLimit:           limit,
-		LogsConsidered:     len(paths),
-		LogsScanned:        len(reports),
-		Sources:            sources,
-		Warnings:           warnings,
-		Aggregate:          aggregate,
-		TopPatterns:        firstAuditPatterns(aggregate.PatternHitRate, 8),
-		TopTools:           firstAuditTools(aggregate.ToolMix, 10),
-		CapabilityMix:      capabilityMix,
-		TopCapabilities:    firstAuditCapabilities(capabilityMix, 10),
-		WorstOffenders:     aggregate.WorstOffenders,
-		MalformedOutput:    malformedOutput,
-		GuardFriction:      harnessAuditGuardFrictionCoverage(contractCoverage),
-		LaneHistory:        buildHarnessAuditLaneHistory(m.cfg.Root, 8),
-		InProgressSessions: inProgressSessions,
-		IncompleteSessions: incompleteSessions,
+		LogLimit:            limit,
+		LogsConsidered:      len(paths),
+		LogsScanned:         len(reports),
+		Sources:             sources,
+		Warnings:            warnings,
+		Aggregate:           aggregate,
+		CurrentAggregate:    currentAggregate,
+		FreshnessResolution: freshnessResolution,
+		TopPatterns:         firstAuditPatterns(aggregate.PatternHitRate, 8),
+		TopTools:            firstAuditTools(aggregate.ToolMix, 10),
+		CapabilityMix:       capabilityMix,
+		TopCapabilities:     firstAuditCapabilities(capabilityMix, 10),
+		WorstOffenders:      aggregate.WorstOffenders,
+		MalformedOutput:     malformedOutput,
+		GuardFriction:       harnessAuditGuardFrictionCoverage(contractCoverage),
+		LaneHistory:         buildHarnessAuditLaneHistory(m.cfg.Root, 8),
+		InProgressSessions:  inProgressSessions,
+		IncompleteSessions:  incompleteSessions,
 	}
 	findings := logBehaviorFindings(currentAggregate, incompleteSessions)
 	findings = append(findings, historicalLogBehaviorFindings(aggregate, currentAggregate)...)
@@ -2233,7 +2263,85 @@ func currentHarnessAuditPerfReports(root string, reports []eval.PerfReport) []ev
 	return current
 }
 
+func auditCurrentFreshnessWindow(root string, reports []eval.PerfReport) *harnessAuditFreshnessWindow {
+	type timedReport struct {
+		report     eval.PerfReport
+		occurredAt time.Time
+		knownTime  bool
+	}
+	timed := make([]timedReport, 0, len(reports))
+	for _, report := range reports {
+		if report.Context == nil {
+			continue
+		}
+		occurredAt, ok := harnessAuditPerfReportTime(root, report)
+		timed = append(timed, timedReport{report: report, occurredAt: occurredAt, knownTime: ok})
+	}
+	if len(timed) == 0 {
+		return nil
+	}
+	sort.SliceStable(timed, func(i, j int) bool {
+		left, right := timed[i], timed[j]
+		if left.knownTime && right.knownTime {
+			return left.occurredAt.Before(right.occurredAt)
+		}
+		if left.knownTime != right.knownTime {
+			return !left.knownTime
+		}
+		return left.report.LogPath < right.report.LogPath
+	})
+
+	var window harnessAuditFreshnessWindow
+	for _, item := range timed {
+		ctx := item.report.Context
+		blockers := ctx.FreshnessBlockers
+		staleUse := ctx.StaleUseBlocked
+		refreshFailures := ctx.FreshnessRefreshFailures
+		if blockers > 0 || staleUse > 0 || refreshFailures > 0 {
+			window.UnresolvedBlockers += blockers
+			window.UnresolvedStaleUse += staleUse
+			window.UnresolvedRefreshFailures += refreshFailures
+			window.LatestState = "blocked"
+			continue
+		}
+		if !harnessAuditContextReportIsFresh(ctx) {
+			continue
+		}
+		if window.UnresolvedBlockers > 0 || window.UnresolvedStaleUse > 0 || window.UnresolvedRefreshFailures > 0 {
+			window.FreshResultsAfterBlocker++
+		}
+		window.ResolvedBlockers += window.UnresolvedBlockers
+		window.ResolvedStaleUse += window.UnresolvedStaleUse
+		window.ResolvedRefreshFailures += window.UnresolvedRefreshFailures
+		window.UnresolvedBlockers = 0
+		window.UnresolvedStaleUse = 0
+		window.UnresolvedRefreshFailures = 0
+		window.LatestState = "fresh"
+	}
+	if window.LatestState == "" && window.ResolvedBlockers == 0 && window.UnresolvedBlockers == 0 &&
+		window.ResolvedStaleUse == 0 && window.UnresolvedStaleUse == 0 &&
+		window.ResolvedRefreshFailures == 0 && window.UnresolvedRefreshFailures == 0 {
+		return nil
+	}
+	return &window
+}
+
+func harnessAuditContextReportIsFresh(ctx *eval.ContextStats) bool {
+	if ctx == nil {
+		return false
+	}
+	return ctx.FreshnessReadThroughResults > 0 &&
+		(ctx.FreshResults > 0 || ctx.StaleUseFresh > 0 || ctx.AutoRefreshFreshAfter > 0)
+}
+
 func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time, bool) {
+	path := report.LogPath
+	if path != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(root, filepath.FromSlash(path))
+	}
+	if parsed, ok := harnessAuditLogFirstTimestamp(path); ok {
+		return parsed, true
+	}
 	for _, value := range []string{
 		report.SessionID,
 		strings.TrimSuffix(filepath.Base(report.LogPath), filepath.Ext(report.LogPath)),
@@ -2242,12 +2350,54 @@ func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time,
 			return parsed, true
 		}
 	}
-	path := report.LogPath
-	if path != "" && !filepath.IsAbs(path) {
-		path = filepath.Join(root, filepath.FromSlash(path))
-	}
 	if info, err := os.Stat(path); err == nil {
 		return info.ModTime().UTC(), true
+	}
+	return time.Time{}, false
+}
+
+func harnessAuditLogFirstTimestamp(path string) (time.Time, bool) {
+	if strings.TrimSpace(path) == "" {
+		return time.Time{}, false
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return time.Time{}, false
+	}
+	defer file.Close()
+	scanner := bufio.NewScanner(file)
+	for lines := 0; scanner.Scan() && lines < 25; lines++ {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var record map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			continue
+		}
+		if parsed, ok := harnessAuditTimestampFromRaw(record["ts"]); ok {
+			return parsed, true
+		}
+		if parsed, ok := harnessAuditTimestampFromRaw(record["timestamp"]); ok {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func harnessAuditTimestampFromRaw(raw json.RawMessage) (time.Time, bool) {
+	var value string
+	if len(raw) == 0 || json.Unmarshal(raw, &value) != nil {
+		return time.Time{}, false
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}, false
+	}
+	for _, layout := range []string{time.RFC3339Nano, time.RFC3339} {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return parsed.UTC(), true
+		}
 	}
 	return time.Time{}, false
 }
@@ -2406,6 +2556,26 @@ func contractCoverageFindings(report *autonomy.EventAuditReport) []harnessAuditF
 		})
 	}
 	return findings
+}
+
+func splitHistoricalHarnessAuditFindings(findings []harnessAuditFinding) ([]harnessAuditFinding, []harnessAuditFinding) {
+	var current []harnessAuditFinding
+	var historical []harnessAuditFinding
+	for _, finding := range findings {
+		if harnessAuditFindingIsHistorical(finding) {
+			historical = append(historical, finding)
+			continue
+		}
+		current = append(current, finding)
+	}
+	return current, historical
+}
+
+func harnessAuditFindingIsHistorical(finding harnessAuditFinding) bool {
+	id := strings.TrimSpace(finding.ID)
+	return strings.HasPrefix(id, "historical_") ||
+		id == "context_cache_historical_stale_rows" ||
+		id == "context_cache_historical_unresolved_gaps"
 }
 
 func planningQualityFromFeedback(feedback *eval.FeedbackStats) *harnessAuditPlanningQuality {
@@ -2681,6 +2851,9 @@ func harnessAuditSummary(report harnessAuditReport) string {
 	}
 	if len(report.Findings) > 0 {
 		parts = append(parts, fmt.Sprintf("findings=%d", len(report.Findings)))
+	}
+	if len(report.HistoricalFindings) > 0 {
+		parts = append(parts, fmt.Sprintf("historical_findings=%d", len(report.HistoricalFindings)))
 	}
 	if len(report.ImprovementQuestions) > 0 {
 		parts = append(parts, fmt.Sprintf("questions=%d", len(report.ImprovementQuestions)))
@@ -3102,14 +3275,6 @@ func rankerLearningFindings(learning *harnessAuditRankerLearning) []harnessAudit
 			Recommendation: "raise oracle MinScore so high-quality runs cross the 0.75 boost threshold, or supply richer Groundedness ContextFiles",
 		})
 	}
-	if len(learning.DormantSources) > 0 {
-		findings = append(findings, harnessAuditFinding{
-			ID:             "ranker_learning_dormant_sources",
-			Severity:       "info",
-			Evidence:       fmt.Sprintf("trigger sites with no observed activity: %v", learning.DormantSources),
-			Recommendation: "see RankerLearning.trigger_recommendations for per-source suggestions",
-		})
-	}
 	return findings
 }
 
@@ -3176,6 +3341,7 @@ func buildContextCacheAudit(root string) *harnessAuditContextCache {
 		NewestCreated:                         stats.NewestCreated,
 		WorkspaceStateKeyedRows:               stats.WorkspaceStateKeyedRows,
 		ContractRows:                          stats.ContractRows,
+		CurrentContractRows:                   stats.CurrentContractRows,
 		UnresolvedGapRows:                     stats.UnresolvedGapRows,
 		FreshUnresolvedGapRows:                stats.FreshUnresolvedGapRows,
 		StaleUnresolvedGapRows:                stats.StaleUnresolvedGapRows,
@@ -3203,7 +3369,7 @@ func buildContextCacheAudit(root string) *harnessAuditContextCache {
 	return cache
 }
 
-func buildFreshnessHealthAudit(logContext *eval.ContextStats) harnessAuditFreshnessHealth {
+func buildFreshnessHealthAudit(logContext *eval.ContextStats, resolution *harnessAuditFreshnessWindow, telemetryHistoricalOnly bool) harnessAuditFreshnessHealth {
 	stats := comprehension.FreshnessHealthStats()
 	_, stalePreventions, staleRowMisses := comprehension.ViewFreshnessCounters()
 	health := harnessAuditFreshnessHealth{
@@ -3217,6 +3383,7 @@ func buildFreshnessHealthAudit(logContext *eval.ContextStats) harnessAuditFreshn
 		AllowStaleInvocations:      stats.AllowStaleInvocations,
 	}
 	if logContext != nil {
+		health.TelemetryHistoricalOnly = telemetryHistoricalOnly
 		health.TelemetryReadThrough = int64(logContext.FreshnessReadThroughResults)
 		health.TelemetryBlockers = int64(logContext.FreshnessBlockers)
 		health.TelemetryBudgetExceeded = int64(logContext.FreshnessBudgetExceeded)
@@ -3232,6 +3399,15 @@ func buildFreshnessHealthAudit(logContext *eval.ContextStats) harnessAuditFreshn
 		health.StaleUseFresh = int64(logContext.StaleUseFresh)
 		health.StaleUseStateCounts = auditIntCountsToInt64(logContext.StaleUseStateCounts)
 	}
+	if resolution != nil {
+		health.TelemetryBlockers = int64(resolution.UnresolvedBlockers)
+		health.TelemetryResolvedBlockers = int64(resolution.ResolvedBlockers)
+		health.TelemetryRefreshFailures = int64(resolution.UnresolvedRefreshFailures)
+		health.TelemetryResolvedRefreshFailures = int64(resolution.ResolvedRefreshFailures)
+		health.StaleUseBlocked = int64(resolution.UnresolvedStaleUse)
+		health.ResolvedStaleUseBlocked = int64(resolution.ResolvedStaleUse)
+		health.TelemetryLatestState = resolution.LatestState
+	}
 	return health
 }
 
@@ -3239,7 +3415,21 @@ func logBehaviorContextStats(logBehavior *harnessAuditLogBehavior) *eval.Context
 	if logBehavior == nil {
 		return nil
 	}
+	if logBehavior.CurrentAggregate.LogCount > 0 {
+		return logBehavior.CurrentAggregate.Context
+	}
 	return logBehavior.Aggregate.Context
+}
+
+func logBehaviorContextStatsHistoricalOnly(logBehavior *harnessAuditLogBehavior) bool {
+	return logBehavior != nil && logBehavior.CurrentAggregate.LogCount == 0 && logBehavior.Aggregate.LogCount > 0
+}
+
+func logBehaviorFreshnessResolution(logBehavior *harnessAuditLogBehavior) *harnessAuditFreshnessWindow {
+	if logBehavior == nil {
+		return nil
+	}
+	return logBehavior.FreshnessResolution
 }
 
 func auditIntCountsToInt64(source map[string]int) map[string]int64 {
@@ -3258,36 +3448,42 @@ func freshnessHealthFindings(health *harnessAuditFreshnessHealth) []harnessAudit
 		return nil
 	}
 	var findings []harnessAuditFinding
-	if health.AllowStaleInvocations+health.TelemetryAllowStale > 0 {
+	telemetryAllowStale := health.TelemetryAllowStale
+	telemetryRefreshFailures := health.TelemetryRefreshFailures
+	if health.TelemetryHistoricalOnly {
+		telemetryAllowStale = 0
+		telemetryRefreshFailures = 0
+	}
+	if health.AllowStaleInvocations+telemetryAllowStale > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "freshness_allow_stale_invoked",
 			Severity:       "medium",
-			Evidence:       fmt.Sprintf("%d in-process and %d log-derived allow_stale freshness invocation(s) observed", health.AllowStaleInvocations, health.TelemetryAllowStale),
+			Evidence:       fmt.Sprintf("%d in-process and %d current log-derived allow_stale freshness invocation(s) observed", health.AllowStaleInvocations, telemetryAllowStale),
 			Recommendation: "reason=allow_stale_invoked model_facing_policies=read_through,require_fresh",
 		})
 	}
-	if health.RefreshFailures+health.TelemetryRefreshFailures > 0 {
+	if health.RefreshFailures+telemetryRefreshFailures > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "freshness_refresh_failures",
 			Severity:       "medium",
-			Evidence:       fmt.Sprintf("%d in-process and %d log-derived freshness refresh failure(s) observed", health.RefreshFailures, health.TelemetryRefreshFailures),
+			Evidence:       fmt.Sprintf("%d in-process and %d current log-derived freshness refresh failure(s) observed", health.RefreshFailures, telemetryRefreshFailures),
 			Recommendation: "reason=refresh_failed source=freshness_health",
 		})
 	}
-	if health.TelemetryBlockers > 0 {
+	if !health.TelemetryHistoricalOnly && health.TelemetryBlockers > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "freshness_log_blockers",
 			Severity:       "low",
-			Evidence:       fmt.Sprintf("%d log-derived freshness blocker(s) observed", health.TelemetryBlockers),
-			Recommendation: "reason=freshness_blockers_observed source=log_behavior.aggregate.context",
+			Evidence:       fmt.Sprintf("%d current log-derived freshness blocker(s) observed", health.TelemetryBlockers),
+			Recommendation: "reason=freshness_blockers_observed source=log_behavior.current_aggregate.context",
 		})
 	}
-	if health.StaleUseBlocked > 0 {
+	if !health.TelemetryHistoricalOnly && health.StaleUseBlocked > 0 {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "stale_use_blockers_observed",
 			Severity:       "low",
-			Evidence:       fmt.Sprintf("%d log-derived stale-use blocker(s) observed", health.StaleUseBlocked),
-			Recommendation: "reason=stale_use_blocked source=log_behavior.aggregate.context",
+			Evidence:       fmt.Sprintf("%d current log-derived stale-use blocker(s) observed", health.StaleUseBlocked),
+			Recommendation: "reason=stale_use_blocked source=log_behavior.current_aggregate.context",
 		})
 	}
 	return findings
@@ -3325,12 +3521,12 @@ func contextCacheFindings(cache *harnessAuditContextCache) []harnessAuditFinding
 			Recommendation: fmt.Sprintf("reason=context_cache_historical_stale_rows stale_ratio=%.2f active_cache_state=current_fresh=%d,current_stale=%d", cache.StaleRatio, cache.CurrentFresh, cache.CurrentStale),
 		})
 	}
-	if cache.Rows > 0 && cache.ContractRows < cache.Rows {
+	if cache.CurrentRows > 0 && cache.CurrentContractRows < cache.CurrentRows {
 		findings = append(findings, harnessAuditFinding{
 			ID:             "context_cache_contract_gap",
 			Severity:       "info",
-			Evidence:       fmt.Sprintf("%d of %d graph_views rows expose the graph-view result contract", cache.ContractRows, cache.Rows),
-			Recommendation: fmt.Sprintf("reason=context_cache_contract_gap contract_rows=%d rows=%d", cache.ContractRows, cache.Rows),
+			Evidence:       fmt.Sprintf("%d of %d current graph_views row(s) expose the graph-view result contract", cache.CurrentContractRows, cache.CurrentRows),
+			Recommendation: fmt.Sprintf("reason=context_cache_contract_gap current_contract_rows=%d current_rows=%d", cache.CurrentContractRows, cache.CurrentRows),
 		})
 	}
 	if cache.CurrentFreshUnresolvedGapRows > 0 {

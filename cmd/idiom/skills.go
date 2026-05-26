@@ -1,26 +1,15 @@
 package main
 
 import (
-	"embed"
 	"flag"
 	"fmt"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
-)
 
-// canonicalSkillsFS holds the SKILL.md templates idiom ships
-// alongside `idiom skills install <name>`. Each subdirectory under
-// skills/ is one skill; a SKILL.md inside is the canonical body.
-// Project-side install copies this body into
-// `<project>/.claude/skills/<name>/SKILL.md` (or .codex/skills, by
-// the --target flag) where the orchestrator can read it.
-//
-//go:embed skills/*/SKILL.md
-var canonicalSkillsFS embed.FS
+	"idiom/internal/cliassets"
+)
 
 // runSkillsMain dispatches `idiom skills <subcommand>`. Phase 7.3
 // ships `install` and `list`; the surface is structured for future
@@ -97,7 +86,7 @@ func runSkillsInstall(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
-	body, err := canonicalSkillsFS.ReadFile("skills/" + name + "/SKILL.md")
+	body, err := cliassets.Skill(name)
 	if err != nil {
 		fmt.Fprintf(stderr, "skills install: unknown skill %q (run `idiom skills list` to see available)\n", name)
 		return 1
@@ -135,25 +124,7 @@ func runSkillsInstall(args []string, stdout io.Writer, stderr io.Writer) int {
 // ships templates for. Each name corresponds to a subdirectory under
 // the embedded skills/ root containing a SKILL.md.
 func canonicalSkillNames() ([]string, error) {
-	entries, err := canonicalSkillsFS.ReadDir("skills")
-	if err != nil {
-		return nil, fmt.Errorf("read embedded skills/: %w", err)
-	}
-	var names []string
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		// Confirm the subdir actually contains SKILL.md before
-		// listing it; an empty subdir would surface as a name the
-		// install command can't honor.
-		if _, err := fs.Stat(canonicalSkillsFS, "skills/"+e.Name()+"/SKILL.md"); err != nil {
-			continue
-		}
-		names = append(names, e.Name())
-	}
-	slices.Sort(names)
-	return names, nil
+	return cliassets.SkillNames()
 }
 
 func printSkillsUsage(stderr io.Writer) {

@@ -1347,7 +1347,7 @@ func TestPlanExecuteImplementationEditObligationRequiresSourceLikePath(t *testin
 		"pkg/feature.go",
 		"web/component.tsx",
 		"native/src/system.cpp",
-		"cmd/idiom/lanes/plan-execute/preamble.md",
+		"internal/cliassets/lanes/plan-execute/preamble.md",
 	} {
 		if reason := obligations.RejectionReason([]string{path, "pkg/feature_test.go"}); reason != "" {
 			t.Fatalf("source-like path should satisfy implementation obligation, path=%s reason=%q", path, reason)

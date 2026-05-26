@@ -407,6 +407,150 @@ func TestPackExposesGraphViewContractCacheAndRankerReasons(t *testing.T) {
 	}
 }
 
+func TestReadViewStatsTreatsMismatchedWorkspaceStateAsHistorical(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/workspacestate\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	current := ViewKey{IndexID: build.IndexID, Task: "current", Mode: "plan"}
+	currentResult := PackResult{
+		PackID:         current.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+	}
+	AttachPackResultContract(&currentResult)
+	if err := SaveView(root, current, currentResult); err != nil {
+		t.Fatalf("save current: %v", err)
+	}
+	oldWorkspace := ViewKey{
+		IndexID: build.IndexID,
+		Task:    "old workspace state",
+		Mode:    "plan",
+		Query:   ViewQueryInputs{WorkspaceStateFingerprint: "old-workspace-state"},
+	}
+	oldResult := PackResult{
+		PackID:         oldWorkspace.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+		UnresolvedGapDetails: []GraphUnresolvedGap{{
+			Reason:  "stale_runtime_trace",
+			State:   "stale",
+			TraceID: "old-trace",
+		}},
+	}
+	AttachPackResultContract(&oldResult)
+	if err := SaveView(root, oldWorkspace, oldResult); err != nil {
+		t.Fatalf("save old workspace state: %v", err)
+	}
+
+	stats, err := ReadViewStats(root)
+	if err != nil {
+		t.Fatalf("ReadViewStats: %v", err)
+	}
+	if stats.Rows != 2 || stats.CurrentRows != 1 || stats.HistoricalRows != 1 || stats.NonCurrent != 1 {
+		t.Fatalf("workspace-state mismatch should make row historical: %+v", stats)
+	}
+	if stats.CurrentFreshUnresolvedGapRows != 0 || stats.CurrentFreshUnresolvedGapReasonCounts["stale_runtime_trace"] != 0 {
+		t.Fatalf("historical workspace-state gaps must not count as current fresh gaps: %+v", stats)
+	}
+}
+
+func TestReadViewStatsTreatsLegacyEmptyWorkspaceStateAsHistoricalWhenCurrentStateIsKeyed(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/legacyworkspacestate\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	legacy := ViewKey{IndexID: build.IndexID, Task: "legacy", Mode: "plan"}
+	legacyResult := PackResult{
+		PackID:         legacy.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+		UnresolvedGapDetails: []GraphUnresolvedGap{{
+			Reason:  "stale_runtime_trace",
+			State:   "stale",
+			TraceID: "legacy-trace",
+		}},
+	}
+	AttachPackResultContract(&legacyResult)
+	if err := SaveView(root, legacy, legacyResult); err != nil {
+		t.Fatalf("save legacy: %v", err)
+	}
+	if err := SaveLearnedWeights(root, map[string]float64{"pkg/x.go": 1.5}); err != nil {
+		t.Fatalf("SaveLearnedWeights: %v", err)
+	}
+	currentFP := ComprehensionStateFingerprint(root)
+	if currentFP == "" {
+		t.Fatal("expected non-empty current workspace-state fingerprint")
+	}
+	current := ViewKey{IndexID: build.IndexID, Task: "current", Mode: "plan", Query: ViewQueryInputs{WorkspaceStateFingerprint: currentFP}}
+	currentResult := PackResult{
+		PackID:         current.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+	}
+	AttachPackResultContract(&currentResult)
+	if err := SaveView(root, current, currentResult); err != nil {
+		t.Fatalf("save current: %v", err)
+	}
+
+	stats, err := ReadViewStats(root)
+	if err != nil {
+		t.Fatalf("ReadViewStats: %v", err)
+	}
+	if stats.Rows != 2 || stats.CurrentRows != 1 || stats.HistoricalRows != 1 || stats.NonCurrent != 1 {
+		t.Fatalf("legacy empty workspace fingerprint should be historical once current state is keyed: %+v", stats)
+	}
+	if stats.CurrentFreshUnresolvedGapRows != 0 || stats.CurrentFreshUnresolvedGapReasonCounts["stale_runtime_trace"] != 0 {
+		t.Fatalf("legacy empty workspace-state gaps must not count as current fresh gaps: %+v", stats)
+	}
+}
+
+func TestReadViewStatsCountsContractCoverageForCurrentRows(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/currentcontract\n\ngo 1.22\n")
+	writeFile(t, filepath.Join(root, "pkg", "x.go"), "package pkg\n\nfunc X() string { return \"x\" }\n")
+	build, err := Build(t.Context(), BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	legacy := ViewKey{IndexID: build.IndexID, Task: "legacy no contract", Mode: "plan"}
+	if err := SaveView(root, legacy, PackResult{
+		PackID:         legacy.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+	}); err != nil {
+		t.Fatalf("save legacy no-contract row: %v", err)
+	}
+	if err := SaveLearnedWeights(root, map[string]float64{"pkg/x.go": 1.5}); err != nil {
+		t.Fatalf("SaveLearnedWeights: %v", err)
+	}
+	currentFP := ComprehensionStateFingerprint(root)
+	current := ViewKey{IndexID: build.IndexID, Task: "current contract", Mode: "plan", Query: ViewQueryInputs{WorkspaceStateFingerprint: currentFP}}
+	currentResult := PackResult{
+		PackID:         current.ID(),
+		IndexID:        build.IndexID,
+		CandidateFiles: []PackFile{{Path: "pkg/x.go"}},
+	}
+	AttachPackResultContract(&currentResult)
+	if err := SaveView(root, current, currentResult); err != nil {
+		t.Fatalf("save current contract row: %v", err)
+	}
+
+	stats, err := ReadViewStats(root)
+	if err != nil {
+		t.Fatalf("ReadViewStats: %v", err)
+	}
+	if stats.Rows != 2 || stats.ContractRows != 1 || stats.CurrentRows != 1 || stats.CurrentContractRows != 1 {
+		t.Fatalf("historical no-contract row should not reduce current contract coverage: %+v", stats)
+	}
+}
+
 func TestPackCacheKeyChangesForPersistedWeightsAndRuntimeTraces(t *testing.T) {
 	ResetViewCacheCounters()
 	root := t.TempDir()

@@ -2978,10 +2978,10 @@ func TestHarnessAuditLinksStoppedTUIImplementationConversationToTelemetryLifecyc
 	}) {
 		t.Fatalf("pre-closeout TUI lifecycle gaps should not raise current high finding, got %#v", report.Findings)
 	}
-	if !slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+	if !slices.ContainsFunc(report.HistoricalFindings, func(finding harnessAuditFinding) bool {
 		return finding.ID == "historical_incomplete_implement_session_lifecycle" && finding.Severity == "info"
 	}) {
-		t.Fatalf("expected historical lifecycle finding, got %#v", report.Findings)
+		t.Fatalf("expected historical lifecycle finding, got %#v", report.HistoricalFindings)
 	}
 }
 

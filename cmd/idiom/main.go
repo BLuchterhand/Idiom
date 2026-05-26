@@ -44,6 +44,8 @@ type promptsRunner func(config.Config, []string, runOptions, io.Writer) ([]strin
 type modeRunner func(config.Config, runOptions) error
 type listSessionsRunner func(config.Config, io.Writer) error
 
+var commandTelemetryDir string
+
 func main() {
 	os.Exit(runMain(os.Args[1:], os.Stdout, os.Stderr))
 }
@@ -833,6 +835,7 @@ func startCommandTelemetry(args []string) *telemetry.Recorder {
 	wd, _ := os.Getwd()
 	wd = config.CanonicalizeExistingPath(wd)
 	rec, err := telemetry.Open(telemetry.Options{
+		Dir:           commandTelemetryDir,
 		Command:       commandTelemetryName(args),
 		Args:          commandTelemetryArgs(args),
 		WorkspaceRoot: wd,

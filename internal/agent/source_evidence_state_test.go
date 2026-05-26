@@ -122,6 +122,59 @@ func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *test
 	}
 }
 
+func TestSourceEvidenceStateTracksDirectOutlineRedirectToRelatedReadSymbol(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "implementation",
+		Contract:   "implementation_result",
+		Objective:  "fix workspace tool schemas",
+		TargetPacket: []string{
+			"candidate file: internal/workspace/tool_schemas.go",
+		},
+		AllowedTools: []string{"go_file_outline", "go_read_symbol", "edit_file"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/workspace/tool_schemas.go to go_file_outline",
+			Output: strings.Join([]string{
+				`candidate_request: {"tool":"go_file_outline","path":"internal/workspace/tool_schemas.go"}`,
+				"related_capability: read_symbol via go_read_symbol returns one declaration body by name.",
+			}, "\n"),
+		},
+	}
+
+	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
+	if len(pending) != 1 {
+		t.Fatalf("pending redirects = %#v, want one related symbol-body obligation", pending)
+	}
+	if pending[0].PendingTool != "go_read_symbol" {
+		t.Fatalf("PendingTool = %q, want go_read_symbol", pending[0].PendingTool)
+	}
+	tools := sourceEvidencePendingRedirectTools(brief.AllowedTools, pending)
+	for _, want := range []string{"go_read_symbol", "go_file_outline"} {
+		if !containsSourceEvidenceTool(tools, want) {
+			t.Fatalf("pending redirect tools missing %q: %#v", want, tools)
+		}
+	}
+	outline := workspace.ToolRequest{
+		Tool:            "go_file_outline",
+		Path:            "internal/workspace/tool_schemas.go",
+		NamedGap:        "need declarations before selecting a symbol body",
+		WhyNotAnswering: "the raw read redirected to an outline route first",
+	}
+	if !sourceEvidencePendingRedirectProgressAllowedForBrief(brief, outline, results) {
+		t.Fatal("direct outline redirect should allow one same-path outline before symbol body")
+	}
+	body := workspace.ToolRequest{
+		Tool:   "go_read_symbol",
+		Path:   "internal/workspace/tool_schemas.go",
+		Symbol: "ToolSchemas",
+	}
+	if !sourceEvidencePendingRedirectFollowupAllowedForBrief(brief, body, results) {
+		t.Fatal("related read_symbol route should satisfy the redirected source-body obligation")
+	}
+}
+
 func TestSourceEvidencePendingRedirectsForBriefDropsStaleRedirectAfterPlausibleBodyEvidence(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: "implementation",
@@ -151,6 +204,15 @@ func TestSourceEvidencePendingRedirectsForBriefDropsStaleRedirectAfterPlausibleB
 	if pending := sourceEvidencePendingRedirectsForBrief(brief, results); len(pending) != 0 {
 		t.Fatalf("scoped pending redirects = %#v, want stale unrelated redirect dropped after plausible source-body evidence", pending)
 	}
+}
+
+func containsSourceEvidenceTool(tools []string, want string) bool {
+	for _, tool := range tools {
+		if tool == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestSourceEvidencePendingRedirectsForBriefKeepsPlausibleRedirect(t *testing.T) {

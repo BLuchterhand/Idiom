@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"idiom/internal/readiness"
 )
 
 // TestRunDoctorMainEmitsTextReport verifies the human-readable format
@@ -114,7 +116,7 @@ func TestRunDoctorMainJSONFormat(t *testing.T) {
 	if total != len(got.Checks) {
 		t.Fatalf("summary counts (%d) don't match check count (%d)", total, len(got.Checks))
 	}
-	if len(got.ReadinessProfiles) != len(doctorReadinessProfileSpecs) {
+	if len(got.ReadinessProfiles) != readiness.ProfileCount() {
 		t.Fatalf("expected all readiness profiles in JSON output, got %#v", got.ReadinessProfiles)
 	}
 	for _, profile := range got.ReadinessProfiles {

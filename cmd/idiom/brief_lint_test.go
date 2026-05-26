@@ -8,23 +8,20 @@ import (
 	"testing"
 )
 
-// briefPreflightTestDeps locates the brief-preflight.py source on disk and
-// verifies python3 is on PATH. Returns the absolute script path. The tests
-// run the script directly (rather than going through runBriefLint's
-// embedded-script bootstrap) so that cmd.Dir can be set to a fake workspace
-// — that's how resolve_workspace_root(Path.cwd()) sees the right root.
+// briefPreflightTestDeps materializes the embedded brief-preflight.py script
+// and verifies python3 is on PATH. The tests run the script directly so
+// cmd.Dir can be set to a fake workspace; that's how resolve_workspace_root
+// sees the right root.
 func briefPreflightTestDeps(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 not available on PATH")
 	}
-	scriptPath, err := filepath.Abs("brief-preflight.py")
+	scriptPath, cleanup, err := writeEmbeddedBriefPreflight()
 	if err != nil {
-		t.Fatalf("resolve brief-preflight.py path: %v", err)
+		t.Fatalf("materialize brief-preflight.py: %v", err)
 	}
-	if _, err := os.Stat(scriptPath); err != nil {
-		t.Fatalf("brief-preflight.py not found at %s: %v", scriptPath, err)
-	}
+	t.Cleanup(cleanup)
 	return scriptPath
 }
 

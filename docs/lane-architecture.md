@@ -257,7 +257,7 @@ canonical base. Projects own the full text via
 Lane preambles/postambles are different. As of Phase 3 of the
 reusability migration, `idiom lane <mode>` wraps the brief with
 canonical-in-idiom mode-specific text loaded via `go:embed` from
-`cmd/idiom/lanes/<mode>/{preamble,postamble}.md`. A binary-only
+`internal/cliassets/lanes/<mode>/{preamble,postamble}.md`. A binary-only
 deployment carries the canonical lane wrapper without needing a
 co-located prompts directory. Projects extend (never replace) that
 wrapper via `<repo>/.idiom/prompts/lanes/<mode>/{preamble,postamble}.md`,
@@ -265,7 +265,7 @@ inserted between the canonical text and the brief body.
 
 The lane wrapper also prepends a **canonical generic rules** block to
 every composed prompt, loaded via `go:embed` from
-`cmd/idiom/lanes/rules/{loop-protocol, brief-skeleton,
+`internal/cliassets/lanes/rules/{loop-protocol, brief-skeleton,
 known-traps-generic}.md` (Phase 3 backfill, 2026-05-10). Project
 overrides at `<repo>/.idiom/prompts/rules/<name>.md` use same-name
 semantics: a project file matching a canonical name **replaces** that
@@ -371,7 +371,7 @@ Phases shipped
 
 - Phase 3 rules-embed backfill (2026-05-10) — canonical generic
   rules `loop-protocol.md`, `brief-skeleton.md`, and
-  `known-traps-generic.md` are embedded under `cmd/idiom/lanes/rules/`
+  `known-traps-generic.md` are embedded under `internal/cliassets/lanes/rules/`
   and prepended to every composed lane prompt. Project overlay at
   `<repo>/.idiom/prompts/rules/<name>.md` uses same-name semantics:
   matching project files **replace** the canonical entry in place;

@@ -290,7 +290,14 @@ func sourceEvidencePendingRedirectOutlineProgressAllowed(obligation sourceEviden
 		return false
 	}
 	tool := strings.TrimSpace(req.Tool)
-	if tool == "" || tool != strings.TrimSpace(obligation.PendingTool) {
+	pendingTool := strings.TrimSpace(obligation.PendingTool)
+	if tool == "" {
+		return false
+	}
+	if outlineTool := sourceEvidencePendingRedirectOutlineTool(pendingTool); outlineTool != "" && tool == outlineTool {
+		return true
+	}
+	if tool != pendingTool {
 		return false
 	}
 	switch tool {
@@ -347,6 +354,18 @@ func sourceEvidenceCapabilityIsOutline(value string) bool {
 	}
 }
 
+func sourceEvidencePendingRedirectOutlineTool(tool string) string {
+	tool = strings.TrimSpace(tool)
+	switch {
+	case strings.HasSuffix(tool, "_read_symbol"):
+		return strings.TrimSuffix(tool, "_read_symbol") + "_file_outline"
+	case strings.HasSuffix(tool, "_extract_body"):
+		return strings.TrimSuffix(tool, "_extract_body") + "_file_outline"
+	default:
+		return ""
+	}
+}
+
 func sourceEvidenceRequestHasSymbolPattern(req workspace.ToolRequest) bool {
 	return strings.TrimSpace(firstSourceEvidenceString(req.Pattern, req.Symbol, req.Query)) != ""
 }
@@ -378,18 +397,22 @@ func sourceEvidencePendingRedirectTools(baseTools []string, pending []sourceEvid
 	seen := make(map[string]struct{})
 	var tools []string
 	for _, obligation := range pending {
-		tool := strings.TrimSpace(obligation.PendingTool)
-		if tool == "" {
-			continue
+		for _, tool := range []string{
+			strings.TrimSpace(obligation.PendingTool),
+			sourceEvidencePendingRedirectOutlineTool(obligation.PendingTool),
+		} {
+			if tool == "" {
+				continue
+			}
+			if _, ok := available[tool]; !ok {
+				continue
+			}
+			if _, ok := seen[tool]; ok {
+				continue
+			}
+			seen[tool] = struct{}{}
+			tools = append(tools, tool)
 		}
-		if _, ok := available[tool]; !ok {
-			continue
-		}
-		if _, ok := seen[tool]; ok {
-			continue
-		}
-		seen[tool] = struct{}{}
-		tools = append(tools, tool)
 	}
 	return tools
 }
@@ -443,6 +466,9 @@ func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligatio
 	case tool == "read_only_capability":
 		return fmt.Sprintf("%s via read_only_capability inspect-symbol with pattern/symbol, or one outline first when the symbol is unknown", path)
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
+		if outlineTool := sourceEvidencePendingRedirectOutlineTool(tool); outlineTool != "" {
+			return fmt.Sprintf("%s via %s with pattern/symbol, or one %s same-path outline first when the symbol is unknown", path, tool, outlineTool)
+		}
 		return fmt.Sprintf("%s via %s with pattern/symbol", path, tool)
 	default:
 		return fmt.Sprintf("%s via %s source-body capability", path, tool)

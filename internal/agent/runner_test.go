@@ -4638,16 +4638,52 @@ func TestVisibleBriefForToolSurfaceNarrowsTargetWriteReadyManifest(t *testing.T)
 	}}
 
 	visible := runner.visibleBriefForToolSurface(brief, results)
-	if slices.Contains(visible.AllowedTools, "read_file") || slices.Contains(visible.AllowedTools, "search_content") {
-		t.Fatalf("target-write-ready visible surface retained read/search tools: %#v", visible.AllowedTools)
-	}
-	for _, want := range []string{"edit_file", "apply_patch"} {
+	for _, want := range []string{"edit_file", "apply_patch", "read_file", "search_content"} {
 		if !slices.Contains(visible.AllowedTools, want) {
 			t.Fatalf("target-write-ready visible surface missing %q: %#v", want, visible.AllowedTools)
 		}
 	}
-	if toolManifestHasTool(visible.ToolManifest, "read_file") {
-		t.Fatalf("target-write-ready tool manifest retained read_file: %#v", visible.ToolManifest)
+	if !toolManifestHasTool(visible.ToolManifest, "read_file") || !toolManifestHasTool(visible.ToolManifest, "search_content") {
+		t.Fatalf("target-write-ready tool manifest should include bounded source refresh tools: %#v", visible.ToolManifest)
+	}
+	if !strings.Contains(strings.Join(visible.SearchPolicy, "\n"), "bounded source refresh") {
+		t.Fatalf("target-write-ready visible brief did not explain bounded source refresh: %#v", visible.SearchPolicy)
+	}
+}
+
+func TestVisibleBriefForToolSurfaceKeepsPendingRedirectTool(t *testing.T) {
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         t.TempDir(),
+			EnableWrites: true,
+		}),
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		Objective:         "fix session panel scrolling",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "search_content", "code_navigate", "edit_file", "apply_patch"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/sessions_panel.go lines 1-20 (total lines: 80)",
+			Output:  "package app\n\nfunc PanelVisible() bool {\n\treturn true\n}\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/app/sessions.go to code_navigate",
+			Output:  "Use code_navigate for source-body evidence in internal/app/sessions.go.",
+		},
+	}
+
+	visible := runner.visibleBriefForToolSurface(brief, results)
+	if !slices.Contains(visible.AllowedTools, "code_navigate") || !toolManifestHasTool(visible.ToolManifest, "code_navigate") {
+		t.Fatalf("visible target-write-ready surface dropped pending redirect tool: tools=%#v manifest=%#v", visible.AllowedTools, visible.ToolManifest)
+	}
+	if slices.Contains(visible.AllowedTools, "read_file") || slices.Contains(visible.AllowedTools, "search_content") {
+		t.Fatalf("pending redirected source obligation should not expose broad refresh tools: %#v", visible.AllowedTools)
 	}
 }
 
@@ -6812,7 +6848,7 @@ func TestRunnerPromptSourceDoesNotContainRemovedToolPrescriptions(t *testing.T) 
 	}{
 		{path: "runner.go", forbidden: removedPromptSurfacePrescriptions},
 		{path: "runner_child_tasks.go", forbidden: removedPromptSurfacePrescriptions},
-		{path: filepath.Join("..", "..", "cmd", "idiom", "profiles", "claude-qwen-worker.md"), forbidden: rawProfileToolMenuTerms},
+		{path: filepath.Join("..", "..", "internal", "cliassets", "profiles", "claude-qwen-worker.md"), forbidden: rawProfileToolMenuTerms},
 		{path: filepath.Join("..", "..", "prompts", "profiles", "claude-qwen-worker.md"), forbidden: rawProfileToolMenuTerms},
 	}
 

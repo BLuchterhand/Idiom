@@ -6,9 +6,11 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/autonomy"
 	"idiom/internal/comprehension"
+	"idiom/internal/eval"
 )
 
 func TestBuildRankerLearningAuditEmptyWorkspace(t *testing.T) {
@@ -227,6 +229,195 @@ func TestRankerLearningIdleFindingExplainsExpectedFreshState(t *testing.T) {
 	}
 }
 
+func TestRankerLearningDormantSourcesStayInRecommendations(t *testing.T) {
+	findings := rankerLearningFindings(&harnessAuditRankerLearning{
+		WeightsFileExists: true,
+		LearningLogExists: true,
+		DormantSources:    []string{"verified_edit"},
+	})
+	if harnessAuditFindingByID(findings, "ranker_learning_dormant_sources") != nil {
+		t.Fatalf("dormant trigger recommendations should not be top-level findings: %#v", findings)
+	}
+}
+
+func TestSplitHistoricalHarnessAuditFindings(t *testing.T) {
+	current, historical := splitHistoricalHarnessAuditFindings([]harnessAuditFinding{
+		{ID: "freshness_refresh_failures"},
+		{ID: "historical_behavior_patterns"},
+		{ID: "context_cache_historical_stale_rows"},
+	})
+	if len(current) != 1 || current[0].ID != "freshness_refresh_failures" {
+		t.Fatalf("unexpected current findings: %#v", current)
+	}
+	if len(historical) != 2 {
+		t.Fatalf("unexpected historical findings: %#v", historical)
+	}
+}
+
+func TestFreshnessHealthFindingsIgnoreLogDerivedHistory(t *testing.T) {
+	historical := buildFreshnessHealthAudit(&eval.ContextStats{
+		FreshnessBlockers:        1,
+		FreshnessRefreshFailures: 1,
+		StaleUseBlocked:          1,
+	}, nil, true)
+	current := buildFreshnessHealthAudit(nil, nil, false)
+	if len(freshnessHealthFindings(&current)) != 0 {
+		t.Fatalf("empty current freshness health should not report findings")
+	}
+	if historical.TelemetryBlockers != 1 || historical.StaleUseBlocked != 1 {
+		t.Fatalf("historical telemetry should remain in freshness health: %#v", historical)
+	}
+	if findings := freshnessHealthFindings(&historical); len(findings) != 0 {
+		t.Fatalf("historical-only telemetry should not raise current findings: %#v", findings)
+	}
+}
+
+func TestFreshnessHealthFindingsReportCurrentLogDerivedBlockers(t *testing.T) {
+	findings := freshnessHealthFindings(&harnessAuditFreshnessHealth{
+		TelemetryBlockers:        1,
+		TelemetryRefreshFailures: 1,
+		TelemetryAllowStale:      1,
+		StaleUseBlocked:          1,
+	})
+	for _, id := range []string{
+		"freshness_allow_stale_invoked",
+		"freshness_refresh_failures",
+		"freshness_log_blockers",
+		"stale_use_blockers_observed",
+	} {
+		if harnessAuditFindingByID(findings, id) == nil {
+			t.Fatalf("expected current log-derived finding %q, got %#v", id, findings)
+		}
+	}
+}
+
+func TestFreshnessHealthFindingsIgnoreRecoveredCurrentLogBlockers(t *testing.T) {
+	health := buildFreshnessHealthAudit(&eval.ContextStats{
+		FreshnessBlockers:        1,
+		FreshnessRefreshFailures: 1,
+		StaleUseBlocked:          1,
+	}, &harnessAuditFreshnessWindow{
+		LatestState:               "fresh",
+		ResolvedBlockers:          1,
+		ResolvedRefreshFailures:   1,
+		ResolvedStaleUse:          1,
+		UnresolvedBlockers:        0,
+		UnresolvedRefreshFailures: 0,
+		UnresolvedStaleUse:        0,
+	}, false)
+	if health.TelemetryBlockers != 0 || health.TelemetryRefreshFailures != 0 || health.StaleUseBlocked != 0 {
+		t.Fatalf("recovered blockers should not remain unresolved: %#v", health)
+	}
+	if health.TelemetryResolvedBlockers != 1 || health.TelemetryResolvedRefreshFailures != 1 ||
+		health.ResolvedStaleUseBlocked != 1 || health.TelemetryLatestState != "fresh" {
+		t.Fatalf("recovered blockers should remain visible in health: %#v", health)
+	}
+	if findings := freshnessHealthFindings(&health); len(findings) != 0 {
+		t.Fatalf("recovered blockers should not raise active findings: %#v", findings)
+	}
+}
+
+func TestAuditCurrentFreshnessWindowTreatsLaterFreshResultAsRecovery(t *testing.T) {
+	window := auditCurrentFreshnessWindow("", []eval.PerfReport{
+		{
+			LogPath: "a.jsonl",
+			Context: &eval.ContextStats{
+				FreshnessBlockers:        1,
+				FreshnessRefreshFailures: 1,
+				StaleUseBlocked:          1,
+			},
+		},
+		{
+			LogPath: "b.jsonl",
+			Context: &eval.ContextStats{
+				FreshnessReadThroughResults: 1,
+				FreshResults:                1,
+				StaleUseFresh:               1,
+			},
+		},
+	})
+	if window == nil {
+		t.Fatal("expected freshness window")
+	}
+	if window.LatestState != "fresh" || window.UnresolvedBlockers != 0 ||
+		window.UnresolvedRefreshFailures != 0 || window.UnresolvedStaleUse != 0 {
+		t.Fatalf("later fresh result should clear unresolved blockers: %#v", window)
+	}
+	if window.ResolvedBlockers != 1 || window.ResolvedRefreshFailures != 1 ||
+		window.ResolvedStaleUse != 1 || window.FreshResultsAfterBlocker != 1 {
+		t.Fatalf("recovered blockers should be retained as resolved evidence: %#v", window)
+	}
+}
+
+func TestFreshnessHealthFindingsReportInProcessRefreshFailures(t *testing.T) {
+	findings := freshnessHealthFindings(&harnessAuditFreshnessHealth{RefreshFailures: 1})
+	if harnessAuditFindingByID(findings, "freshness_refresh_failures") == nil {
+		t.Fatalf("in-process refresh failure should remain actionable, got %#v", findings)
+	}
+}
+
+func TestFreshnessHealthFindingsEvidenceFiltersHistoricalOnlyTelemetry(t *testing.T) {
+	findings := freshnessHealthFindings(&harnessAuditFreshnessHealth{
+		RefreshFailures:          1,
+		TelemetryRefreshFailures: 3,
+		AllowStaleInvocations:    1,
+		TelemetryAllowStale:      2,
+		TelemetryHistoricalOnly:  true,
+	})
+	refresh := harnessAuditFindingByID(findings, "freshness_refresh_failures")
+	if refresh == nil || !strings.Contains(refresh.Evidence, "1 in-process and 0 current log-derived") {
+		t.Fatalf("refresh evidence should not label historical telemetry as current: %#v", findings)
+	}
+	allowStale := harnessAuditFindingByID(findings, "freshness_allow_stale_invoked")
+	if allowStale == nil || !strings.Contains(allowStale.Evidence, "1 in-process and 0 current log-derived") {
+		t.Fatalf("allow-stale evidence should not label historical telemetry as current: %#v", findings)
+	}
+}
+
+func TestHarnessAuditPerfReportTimeFallsBackToLogTimestamp(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "telemetry", "tool-context_pack-latest.jsonl")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.WriteFile(logPath, []byte(`{"ts":"2026-05-24T11:35:23.495627-04:00","type":"tool_result"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	got, ok := harnessAuditPerfReportTime(root, eval.PerfReport{
+		SessionID: "tool-context_pack-latest",
+		LogPath:   "logs/telemetry/tool-context_pack-latest.jsonl",
+	})
+	if !ok {
+		t.Fatal("expected timestamp from log body")
+	}
+	want := time.Date(2026, 5, 24, 15, 35, 23, 495627000, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("timestamp = %s, want %s", got, want)
+	}
+}
+
+func TestHarnessAuditPerfReportTimePrefersLogTimestampOverLocalFilename(t *testing.T) {
+	root := t.TempDir()
+	logPath := filepath.Join(root, "logs", "conversations", "20260526-040000.000.jsonl")
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o755); err != nil {
+		t.Fatalf("mkdir log dir: %v", err)
+	}
+	if err := os.WriteFile(logPath, []byte(`{"ts":"2026-05-26T04:00:00-04:00","type":"session_start"}`+"\n"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+	got, ok := harnessAuditPerfReportTime(root, eval.PerfReport{
+		SessionID: "20260526-040000",
+		LogPath:   "logs/conversations/20260526-040000.000.jsonl",
+	})
+	if !ok {
+		t.Fatal("expected timestamp from log body")
+	}
+	want := time.Date(2026, 5, 26, 8, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("timestamp = %s, want %s", got, want)
+	}
+}
+
 func TestContextCacheFindingsTreatHistoricalStaleRowsAsHistory(t *testing.T) {
 	findings := contextCacheFindings(&harnessAuditContextCache{
 		Rows:              10,
@@ -268,6 +459,36 @@ func TestContextCacheFindingsReportCurrentStaleRowsAsActionable(t *testing.T) {
 	}
 	if finding.Severity != "low" || !strings.Contains(finding.Evidence, "current-index") {
 		t.Fatalf("current stale finding should be scoped to current rows: %#v", finding)
+	}
+}
+
+func TestContextCacheFindingsIgnoreHistoricalContractGap(t *testing.T) {
+	findings := contextCacheFindings(&harnessAuditContextCache{
+		Rows:                2,
+		ContractRows:        1,
+		CurrentRows:         1,
+		CurrentContractRows: 1,
+		HistoricalRows:      1,
+	})
+	if harnessAuditFindingByID(findings, "context_cache_contract_gap") != nil {
+		t.Fatalf("historical no-contract rows should not raise active contract gap: %#v", findings)
+	}
+}
+
+func TestContextCacheFindingsReportCurrentContractGap(t *testing.T) {
+	findings := contextCacheFindings(&harnessAuditContextCache{
+		Rows:                2,
+		ContractRows:        1,
+		CurrentRows:         1,
+		CurrentContractRows: 0,
+		HistoricalRows:      1,
+	})
+	finding := harnessAuditFindingByID(findings, "context_cache_contract_gap")
+	if finding == nil {
+		t.Fatalf("current no-contract row should raise active contract gap, got %#v", findings)
+	}
+	if !strings.Contains(finding.Evidence, "current graph_views") {
+		t.Fatalf("contract gap evidence should be scoped to current rows: %#v", finding)
 	}
 }
 

@@ -3809,7 +3809,7 @@ func (r *Runner) visibleBriefForToolSurface(brief workerruntime.WorkerRuntimeBri
 	if implementationTargetSourcePending(brief, results) {
 		allowed = implementationTargetSourceAllowedTools(r.advertisedAllowedTools(r.Workspace.AllowedTools()))
 	} else if implementationTargetWriteReadySurfaceActive(brief, results) {
-		allowed = implementationTargetWriteReadyAllowedTools(r.advertisedAllowedTools(r.Workspace.AllowedTools()))
+		allowed = implementationTargetWriteReadyAllowedToolsForBrief(r.advertisedAllowedTools(r.Workspace.AllowedTools()), brief, results)
 	} else if implementationScopedEditSurfaceActive(brief, results) {
 		allowed = implementationScopedEditAllowedToolsWithRegistry(r.advertisedAllowedTools(r.Workspace.AllowedTools()), r.Workspace.ExternalToolsRegistry())
 	}
@@ -4058,9 +4058,9 @@ func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief
 func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) workerruntime.WorkerRuntimeBrief {
 	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
 	pendingTools := sourceEvidencePendingRedirectTools(brief.AllowedTools, pending)
+	sourceRefresh := len(pending) == 0 && implementationTargetWriteReadySourceRefreshProjectionActive(brief, results, brief.AllowedTools)
 	sourcedSummary := implementationTargetWriteReadySourcedPathSummary(results, 3)
-	allowed := implementationTargetWriteReadyAllowedTools(brief.AllowedTools)
-	allowed = uniquePhaseStrings(append(allowed, pendingTools...))
+	allowed := implementationTargetWriteReadyAllowedToolsForBrief(brief.AllowedTools, brief, results)
 	brief.AllowedTools = allowed
 	brief.ToolManifest = nil
 	if len(allowed) > 0 {
@@ -4071,14 +4071,31 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 	brief.RequiredNext = mergeRunnerStateStrings([]string{
 		"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 	}, brief.RequiredNext)
-	brief.InvalidActions = mergeRunnerStateStrings([]string{
-		"additional read/search after source-body evidence",
-		"verification before a successful write",
-	}, brief.InvalidActions)
-	brief.SearchPolicy = mergeRunnerStateStrings([]string{
-		"the gathered source-body evidence is the pre-write target surface",
-		"do not inspect further before the first write",
-	}, brief.SearchPolicy)
+	if sourceRefresh {
+		brief.RequiredNext = mergeRunnerStateStrings([]string{
+			"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+		}, brief.RequiredNext)
+		brief.InvalidActions = mergeRunnerStateStrings([]string{
+			"broad read/search after source-body evidence",
+			"read/search for already-sourced paths unless the request adds a bounded missing range or exact named_gap",
+			"verification before a successful write",
+		}, brief.InvalidActions)
+		brief.SearchPolicy = mergeRunnerStateStrings([]string{
+			"the gathered source-body evidence is the pre-write target surface",
+			"use bounded source refresh only when an exact missing edit-safety fact remains; otherwise write or block",
+			"read_file/search_content refreshes must name the gap and stay scoped to source code, not docs or broad discovery",
+		}, brief.SearchPolicy)
+		brief.Constraints = mergeRunnerStateStrings([]string{"bounded_source_refresh_allowance"}, brief.Constraints)
+	} else {
+		brief.InvalidActions = mergeRunnerStateStrings([]string{
+			"additional read/search after source-body evidence",
+			"verification before a successful write",
+		}, brief.InvalidActions)
+		brief.SearchPolicy = mergeRunnerStateStrings([]string{
+			"the gathered source-body evidence is the pre-write target surface",
+			"do not inspect further before the first write",
+		}, brief.SearchPolicy)
+	}
 	if sourcedSummary != "" {
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
 			"write using the already-read source-body evidence for: " + sourcedSummary,
@@ -12158,9 +12175,37 @@ func implementationTargetWriteReadyRedirectedReadTool(result workspace.ToolResul
 	}
 	tool := strings.Trim(fields[0], "`'\".,;:")
 	if !implementationTargetWriteReadyRedirectedSourceTool(tool) {
-		return "", false
+		if !strings.HasSuffix(tool, "_file_outline") {
+			return "", false
+		}
+		related, ok := implementationTargetWriteReadyRedirectedRelatedSourceTool(result)
+		if !ok {
+			return "", false
+		}
+		return related, true
 	}
 	return tool, true
+}
+
+func implementationTargetWriteReadyRedirectedRelatedSourceTool(result workspace.ToolResult) (string, bool) {
+	for _, line := range strings.Split(result.Output, "\n") {
+		lower := strings.ToLower(line)
+		if !strings.Contains(lower, "related_capability:") ||
+			!strings.Contains(lower, "read_symbol") ||
+			!strings.Contains(lower, " via ") {
+			continue
+		}
+		idx := strings.Index(lower, " via ")
+		fields := strings.Fields(line[idx+len(" via "):])
+		if len(fields) == 0 {
+			continue
+		}
+		tool := strings.Trim(fields[0], "`'\".,;:")
+		if implementationTargetWriteReadyRedirectedSourceTool(tool) {
+			return tool, true
+		}
+	}
+	return "", false
 }
 
 func implementationTargetWriteReadyRedirectedSourceTool(tool string) bool {

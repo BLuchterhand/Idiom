@@ -1731,7 +1731,7 @@
     {
       "id": "plan-execute-readiness-nudge",
       "family": "plan_then_execute_planner",
-      "prompt": "Update the lane preamble for plan-execute mode in cmd/idiom/lanes/plan-execute/preamble.md and the matching postamble.md.",
+      "prompt": "Update the lane preamble for plan-execute mode in internal/cliassets/lanes/plan-execute/preamble.md and the matching postamble.md.",
       "tags": [
         "plan-execute",
         "planner",

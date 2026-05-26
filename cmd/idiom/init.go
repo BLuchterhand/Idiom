@@ -1,28 +1,23 @@
 package main
 
 import (
-	_ "embed"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+
+	"idiom/internal/cliassets"
 )
 
 // initSeedCodingProfile / initSeedClaudeQwenWorkerProfile are the
 // canonical chat-profile templates `idiom init` seeds under
-// .idiom/prompts/profiles/. Embedded from the package-local
-// profiles/ directory; the canonical reference copies live at
-// prompts/profiles/<name>.md and are kept in sync (the embedded
-// versions here MUST match — there's no programmatic enforcement,
-// but the profile content rarely changes so a manual checkpoint
-// is sufficient until a Phase 7.x consolidates them).
-//
-//go:embed profiles/coding.md
-var initSeedCodingProfile string
+// .idiom/prompts/profiles/. Embedded assets live in internal/cliassets;
+// the canonical reference copies live at prompts/profiles/<name>.md and
+// tests keep both locations in sync.
+var initSeedCodingProfile = cliassets.MustProfile("coding.md")
 
-//go:embed profiles/claude-qwen-worker.md
-var initSeedClaudeQwenWorkerProfile string
+var initSeedClaudeQwenWorkerProfile = cliassets.MustProfile("claude-qwen-worker.md")
 
 // runInitMain creates the .idiom/ skeleton in the target directory
 // with template config files and README placeholders. Phase 7.1 of

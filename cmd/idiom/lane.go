@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -20,6 +19,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/app"
 	"idiom/internal/backends"
+	"idiom/internal/cliassets"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
@@ -41,19 +41,8 @@ const (
 	briefBodyEndMarker   = "<!-- IDIOM:BRIEF-BODY-END -->"
 )
 
-// canonicalLanePromptsFS holds the idiom-canonical lane prompt
-// preambles/postambles, embedded into the binary at build time so
-// `idiom lane <mode>` works against any project without depending on
-// a co-located prompts/ directory or per-project copy. Project-side
-// extensions still live at <project>/.idiom/prompts/lanes/<mode>/
-// and are concatenated AROUND the brief between idiom's canonical
-// preamble and postamble (see composeLanePromptToFile).
-//
-//go:embed lanes/implement/preamble.md lanes/implement/postamble.md lanes/plan-execute/preamble.md lanes/plan-execute/postamble.md lanes/rules/loop-protocol.md lanes/rules/brief-skeleton.md lanes/rules/known-traps-generic.md
-var canonicalLanePromptsFS embed.FS
-
 // canonicalRuleNames is the ordered set of idiom-canonical generic
-// rules embedded under cmd/idiom/lanes/rules/. Order is stable: rules
+// rules embedded under internal/cliassets/lanes/rules/. Order is stable: rules
 // are prepended to the composed lane prompt in this sequence so brief
 // authors and overlay authors can reason about where a replacement
 // falls inside the rules block.
@@ -62,11 +51,7 @@ var canonicalLanePromptsFS embed.FS
 // reusability design's "What about the dual-architect orchestrator
 // loop?" recommendation, that content belongs with skill templates
 // (Phase 7), not the executor's per-lane rules block.
-var canonicalRuleNames = []string{
-	"loop-protocol.md",
-	"brief-skeleton.md",
-	"known-traps-generic.md",
-}
+var canonicalRuleNames = cliassets.CanonicalLaneRuleNames()
 
 // laneSubcommandRunner is the function shape both runImplementMain
 // and runPlanExecuteMain expose. Capturing it as a type lets tests
@@ -1064,15 +1049,15 @@ func writeLaneContextGaps(b *strings.Builder, gaps []string, limit int) {
 // this function clean up after themselves before returning.
 //
 // Layer order (top-to-bottom in the composed prompt):
-//  1. canonical generic rules  (cmd/idiom/lanes/rules/*.md, embed; project
+//  1. canonical generic rules  (internal/cliassets/lanes/rules/*.md, embed; project
 //     files at .idiom/prompts/rules/<name>.md
 //     replace by name; non-canonical project
 //     files append alphabetically as extras)
-//  2. idiom canonical preamble (cmd/idiom/lanes/<mode>/preamble.md, embed)
+//  2. idiom canonical preamble (internal/cliassets/lanes/<mode>/preamble.md, embed)
 //  3. project preamble overlay (<root>/.idiom/prompts/lanes/<mode>/preamble.md)
 //  4. brief body               (the file at opts.BriefPath)
 //  5. project postamble overlay (<root>/.idiom/prompts/lanes/<mode>/postamble.md)
-//  6. idiom canonical postamble (cmd/idiom/lanes/<mode>/postamble.md, embed)
+//  6. idiom canonical postamble (internal/cliassets/lanes/<mode>/postamble.md, embed)
 //
 // Preamble/postamble project layers are additive — they extend, never
 // replace, idiom's canonical text. For rules, project files matching a
@@ -1129,7 +1114,7 @@ func composeLanePromptToFile(opts laneOptions, contextPackSection string) (strin
 
 // canonicalLanePreamble returns idiom's mode-specific preamble. The
 // canonical text is embedded at build time from
-// cmd/idiom/lanes/<mode>/preamble.md so the binary is self-contained
+// internal/cliassets/lanes/<mode>/preamble.md so the binary is self-contained
 // and a project consuming idiom needs no per-project preamble copy.
 // Unknown modes (or modes without an embedded preamble) return "".
 func canonicalLanePreamble(mode string) string {
@@ -1152,11 +1137,11 @@ func readEmbeddedLanePrompt(mode, filename string) string {
 	if strings.TrimSpace(mode) == "" {
 		return ""
 	}
-	body, err := canonicalLanePromptsFS.ReadFile("lanes/" + mode + "/" + filename)
+	body, err := cliassets.LanePrompt(mode, filename)
 	if err != nil {
 		return ""
 	}
-	return string(body)
+	return body
 }
 
 // readProjectLaneOverlay reads an optional overlay file from the
@@ -1208,11 +1193,11 @@ func canonicalLaneRules(projectRoot string) string {
 // name in canonicalRuleNames cannot crash the lane — at worst the rule
 // is silently skipped.
 func readEmbeddedRule(name string) string {
-	body, err := canonicalLanePromptsFS.ReadFile("lanes/rules/" + name)
+	body, err := cliassets.LaneRule(name)
 	if err != nil {
 		return ""
 	}
-	return string(body)
+	return body
 }
 
 // readProjectRulesFile reads a single rule file from the project's

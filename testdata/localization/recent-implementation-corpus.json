@@ -292,7 +292,7 @@
             "rationale": "Contains baseline prompt policy for harness feedback, runtime briefs, and context graph use."
           },
           {
-            "path": "cmd/idiom/lanes/rules/loop-protocol.md",
+            "path": "internal/cliassets/lanes/rules/loop-protocol.md",
             "rationale": "Documents generic loop and recovery protocol text for lane prompts."
           }
         ],

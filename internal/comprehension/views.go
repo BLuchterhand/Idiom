@@ -885,6 +885,7 @@ type ViewStats struct {
 	NewestCreated                         string         `json:"newest_created,omitempty"`
 	WorkspaceStateKeyedRows               int            `json:"workspace_state_keyed_rows"`
 	ContractRows                          int            `json:"contract_rows"`
+	CurrentContractRows                   int            `json:"current_contract_rows"`
 	UnresolvedGapRows                     int            `json:"unresolved_gap_rows"`
 	FreshUnresolvedGapRows                int            `json:"fresh_unresolved_gap_rows"`
 	StaleUnresolvedGapRows                int            `json:"stale_unresolved_gap_rows"`
@@ -933,6 +934,7 @@ func ReadViewStats(root string) (ViewStats, error) {
 	if meta, err := readSQLiteGraphMetadata(db); err == nil {
 		stats.CurrentIndexID = strings.TrimSpace(meta["index_id"])
 	}
+	currentWorkspaceFingerprint := ComprehensionStateFingerprint(root)
 	var oldest, newest sql.NullString
 	err = db.QueryRow(`SELECT
 		COUNT(*),
@@ -953,17 +955,24 @@ func ReadViewStats(root string) (ViewStats, error) {
 		stats.NewestCreated = newest.String
 	}
 	if stats.CurrentIndexID != "" {
+		workspaceCurrentSQL := `COALESCE(workspace_state_fingerprint, '') = ''`
+		if currentWorkspaceFingerprint != "" {
+			workspaceCurrentSQL = `COALESCE(workspace_state_fingerprint, '') = ?`
+		}
+		args := []any{stats.CurrentIndexID}
+		if currentWorkspaceFingerprint != "" {
+			args = append(args, currentWorkspaceFingerprint)
+		}
+		queryArgs := append([]any{}, args...)
+		queryArgs = append(queryArgs, args...)
+		queryArgs = append(queryArgs, args...)
+		queryArgs = append(queryArgs, args...)
 		err := db.QueryRow(`SELECT
-			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') <> ? THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND stale = 0 THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND stale = 1 THEN 1 ELSE 0 END), 0)
-			FROM graph_views`,
-			stats.CurrentIndexID,
-			stats.CurrentIndexID,
-			stats.CurrentIndexID,
-			stats.CurrentIndexID,
-		).Scan(&stats.NonCurrent, &stats.CurrentRows, &stats.CurrentFresh, &stats.CurrentStale)
+			COALESCE(SUM(CASE WHEN NOT (COALESCE(index_id, '') = ? AND `+workspaceCurrentSQL+`) THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND `+workspaceCurrentSQL+` THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND `+workspaceCurrentSQL+` AND stale = 0 THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN COALESCE(index_id, '') = ? AND `+workspaceCurrentSQL+` AND stale = 1 THEN 1 ELSE 0 END), 0)
+			FROM graph_views`, queryArgs...).Scan(&stats.NonCurrent, &stats.CurrentRows, &stats.CurrentFresh, &stats.CurrentStale)
 		if err != nil {
 			return stats, err
 		}
@@ -971,11 +980,12 @@ func ReadViewStats(root string) (ViewStats, error) {
 	} else {
 		stats.HistoricalRows = stats.Rows
 	}
-	contractStats, err := readViewContractStats(db, stats.CurrentIndexID)
+	contractStats, err := readViewContractStats(db, stats.CurrentIndexID, currentWorkspaceFingerprint)
 	if err != nil {
 		return stats, err
 	}
 	stats.ContractRows = contractStats.ContractRows
+	stats.CurrentContractRows = contractStats.CurrentContractRows
 	stats.UnresolvedGapRows = contractStats.UnresolvedGapRows
 	stats.FreshUnresolvedGapRows = contractStats.FreshUnresolvedGapRows
 	stats.StaleUnresolvedGapRows = contractStats.StaleUnresolvedGapRows
@@ -989,6 +999,7 @@ func ReadViewStats(root string) (ViewStats, error) {
 
 type viewContractStats struct {
 	ContractRows                          int
+	CurrentContractRows                   int
 	UnresolvedGapRows                     int
 	FreshUnresolvedGapRows                int
 	StaleUnresolvedGapRows                int
@@ -999,9 +1010,11 @@ type viewContractStats struct {
 	CurrentFreshUnresolvedGapReasonCounts map[string]int
 }
 
-func readViewContractStats(db *sql.DB, currentIndexID string) (viewContractStats, error) {
+func readViewContractStats(db *sql.DB, currentIndexID string, currentWorkspaceFingerprint string) (viewContractStats, error) {
 	var stats viewContractStats
-	rows, err := db.Query(`SELECT output_json, stale, COALESCE(index_id, '') FROM graph_views`)
+	currentIndexID = strings.TrimSpace(currentIndexID)
+	currentWorkspaceFingerprint = strings.TrimSpace(currentWorkspaceFingerprint)
+	rows, err := db.Query(`SELECT output_json, stale, COALESCE(index_id, ''), COALESCE(workspace_state_fingerprint, '') FROM graph_views`)
 	if err != nil {
 		return stats, err
 	}
@@ -1010,7 +1023,8 @@ func readViewContractStats(db *sql.DB, currentIndexID string) (viewContractStats
 		var output string
 		var stale int
 		var rowIndexID string
-		if err := rows.Scan(&output, &stale, &rowIndexID); err != nil {
+		var rowWorkspaceFingerprint string
+		if err := rows.Scan(&output, &stale, &rowIndexID, &rowWorkspaceFingerprint); err != nil {
 			return stats, err
 		}
 		var decoded struct {
@@ -1021,8 +1035,15 @@ func readViewContractStats(db *sql.DB, currentIndexID string) (viewContractStats
 		if err := json.Unmarshal([]byte(output), &decoded); err != nil {
 			continue
 		}
+		current := currentIndexID != "" &&
+			rowIndexID == currentIndexID &&
+			((currentWorkspaceFingerprint == "" && rowWorkspaceFingerprint == "") ||
+				(currentWorkspaceFingerprint != "" && rowWorkspaceFingerprint == currentWorkspaceFingerprint))
 		if decoded.Contract != nil && decoded.Contract.SchemaVersion == GraphViewResultContractVersion {
 			stats.ContractRows++
+			if current {
+				stats.CurrentContractRows++
+			}
 		}
 		gaps := decoded.UnresolvedGapDetails
 		if decoded.Contract != nil {
@@ -1032,7 +1053,6 @@ func readViewContractStats(db *sql.DB, currentIndexID string) (viewContractStats
 		if len(gaps) == 0 {
 			continue
 		}
-		current := strings.TrimSpace(currentIndexID) != "" && rowIndexID == currentIndexID
 		stats.UnresolvedGapRows++
 		if stale == 0 {
 			stats.FreshUnresolvedGapRows++

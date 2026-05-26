@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"embed"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -14,20 +13,9 @@ import (
 	"slices"
 	"strings"
 
+	"idiom/internal/cliassets"
 	"idiom/internal/telemetry"
 )
-
-//go:embed brief-preflight.py
-var briefPreflightScript []byte
-
-// canonicalBriefPreloadFS holds the idiom-canonical preload texts
-// (generic atom-spec drafting hygiene). Project-specific kinds
-// (scenario-output, test-append, data-additions in Colony's
-// vernacular) live under <project>/.idiom/prompts/brief/preload/
-// instead, where the project owns their wording.
-//
-//go:embed brief-preload/*.md
-var canonicalBriefPreloadFS embed.FS
 
 func runBriefMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runBriefMainWithTelemetry(args, stdout, stderr, nil)
@@ -142,11 +130,11 @@ func resolveBriefPreload(kind, projectRoot string) (string, string, error) {
 			return string(body), "overlay:" + path, nil
 		}
 	}
-	body, err := canonicalBriefPreloadFS.ReadFile("brief-preload/" + kind + ".md")
+	body, err := cliassets.BriefPreload(kind)
 	if err != nil {
 		return "", "", fmt.Errorf("brief preload: unknown kind %q (use --list)", kind)
 	}
-	return string(body), "canonical", nil
+	return body, "canonical", nil
 }
 
 // validatePreloadKind rejects any kind that isn't a single safe path
@@ -172,12 +160,8 @@ func validatePreloadKind(kind string) error {
 // which kinds the project has overridden.
 func printBriefPreloadList(stdout io.Writer, projectRoot string) {
 	kinds := make(map[string]string) // kind -> source
-	if entries, err := canonicalBriefPreloadFS.ReadDir("brief-preload"); err == nil {
-		for _, e := range entries {
-			name := strings.TrimSuffix(e.Name(), ".md")
-			if name == e.Name() {
-				continue // skip non-md files
-			}
+	if names, err := cliassets.BriefPreloadKinds(); err == nil {
+		for _, name := range names {
 			kinds[name] = "canonical"
 		}
 	}
@@ -558,7 +542,7 @@ func writeEmbeddedBriefPreflight() (path string, cleanup func(), err error) {
 	}
 	cleanup = func() { _ = os.RemoveAll(tmpDir) }
 	scriptPath := filepath.Join(tmpDir, "brief-preflight.py")
-	if err := os.WriteFile(scriptPath, briefPreflightScript, 0o755); err != nil {
+	if err := os.WriteFile(scriptPath, cliassets.BriefPreflightScript(), 0o755); err != nil {
 		cleanup()
 		return "", func() {}, err
 	}

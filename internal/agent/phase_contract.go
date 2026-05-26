@@ -499,11 +499,11 @@ func applyImplementationTargetSource(contract *TurnPhaseContract, baseTools []st
 func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string, results []workspace.ToolResult) {
 	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
 	pendingTools := sourceEvidencePendingRedirectTools(baseTools, pending)
+	sourceRefresh := len(pending) == 0 && implementationTargetWriteReadySourceRefreshProjectionActive(brief, results, baseTools)
 	contract.PhaseID = turnPhaseImplementationWriteReady
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
-	contract.AllowedTools = implementationTargetWriteReadyAllowedTools(baseTools)
-	contract.AllowedTools = uniquePhaseStrings(append(contract.AllowedTools, pendingTools...))
+	contract.AllowedTools = implementationTargetWriteReadyAllowedToolsForBrief(baseTools, brief, results)
 	contract.RequiredNext = []string{"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 	contract.InvalidNext = []string{"additional read/search after source-body evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
@@ -516,6 +516,17 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_write_or_blocker")
 	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
+	if sourceRefresh {
+		contract.RequiredNext = []string{"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.InvalidNext = []string{"broad read/search after source-body evidence", "read/search for already-sourced paths unless the request adds a bounded missing range or exact named_gap", "verification before a successful write", "generic probe", "prose-only final answer"}
+		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
+		contract.ActionPolicy.InvalidActionClasses = []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
+		contract.ActionPolicy.CallableToolNames = contract.AllowedTools
+		contract.RuntimeCall.ParserContract = "target_write_or_bounded_source_refresh"
+		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_bounded_source_refresh_write_or_blocker"
+		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
+		contract.Constraints = uniquePhaseStrings(append([]string{"bounded_source_refresh_allowance: read_file/search_content require named_gap and exact scope"}, contract.Constraints...))
+	}
 	if len(pendingTools) > 0 {
 		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
 		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
@@ -779,6 +790,24 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 
 func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
 	return filterPhaseTools(baseTools, "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit")
+}
+
+func implementationTargetWriteReadyAllowedToolsForBrief(baseTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
+	allowed := implementationTargetWriteReadyAllowedTools(baseTools)
+	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
+	allowed = append(allowed, sourceEvidencePendingRedirectTools(baseTools, pending)...)
+	if len(pending) == 0 && implementationTargetWriteReadySourceRefreshProjectionActive(brief, results, baseTools) {
+		allowed = append(allowed, implementationTargetWriteReadySourceRefreshTools(baseTools)...)
+	}
+	return uniquePhaseStrings(allowed)
+}
+
+func implementationTargetWriteReadySourceRefreshTools(baseTools []string) []string {
+	return filterPhaseTools(baseTools, "read_file", "search_content")
+}
+
+func implementationTargetWriteReadySourceRefreshProjectionActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, baseTools []string) bool {
+	return implementationTargetWriteReadySurfaceActive(brief, results) && len(implementationTargetWriteReadySourceRefreshTools(baseTools)) > 0
 }
 
 func implementationTargetWriteReadySurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {

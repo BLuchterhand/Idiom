@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"cmp"
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/cliassets"
 	"idiom/internal/frontier/pathparse"
 )
 
@@ -60,17 +60,13 @@ func writeRefineIterMetrics(iterDir string, m refineIterMetrics, stderr io.Write
 	}
 }
 
-//go:embed lanes/refine/draft.md
-var refineDraftTemplate string
+var refineDraftTemplate = cliassets.MustRefineTemplate("draft.md")
 
-//go:embed lanes/refine/draft-markdown.md
-var refineDraftMarkdownTemplate string
+var refineDraftMarkdownTemplate = cliassets.MustRefineTemplate("draft-markdown.md")
 
-//go:embed lanes/refine/review.md
-var refineReviewTemplate string
+var refineReviewTemplate = cliassets.MustRefineTemplate("review.md")
 
-//go:embed lanes/refine/patch.md
-var refinePatchTemplate string
+var refinePatchTemplate = cliassets.MustRefineTemplate("patch.md")
 
 // laneRefineOptions captures the refine-mode-specific flags.
 type laneRefineOptions struct {

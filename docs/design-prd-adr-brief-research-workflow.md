@@ -193,7 +193,7 @@ Verified Idiom facts on 2026-05-15:
   identity mismatches, scope mismatches, missing files, unsupported handles,
   validation gaps, stale context, unresolved questions, approval handoff issues,
   and placeholders.
-- `cmd/idiom/brief-preflight.py` enforces brief structure, no prompt-magic
+- `internal/cliassets/brief-preflight.py` enforces brief structure, no prompt-magic
   triggers, test-anchor preload, verified current state, exact-anchor
   specificity, file existence, and dispatch-safe brief wording.
 - `internal/eval/localization_corpus.go` and
@@ -1107,8 +1107,8 @@ Researcher output contract:
       "evidence": [
         {
           "type": "file",
-          "path": "cmd/idiom/brief-preflight.py",
-          "handle": "file://cmd/idiom/brief-preflight.py",
+          "path": "internal/cliassets/brief-preflight.py",
+          "handle": "file://internal/cliassets/brief-preflight.py",
           "freshness": "current"
         }
       ],

@@ -540,7 +540,9 @@ func TestDeriveTurnPhaseContractWriteReadyDropsSupersededPendingRedirect(t *test
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationWriteReady)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
-	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "code_navigate")
 	joined := strings.Join(append(append([]string{}, contract.RequiredNext...), contract.InvalidNext...), "\n")
 	if strings.Contains(joined, "pending redirected source-body obligation") ||
@@ -779,12 +781,16 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 	if contract.Phase != "target_write_ready" {
 		t.Fatalf("Phase = %q, want target_write_ready", contract.Phase)
 	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "edit_file")
 	assertContains(t, contract.AllowedTools, "apply_patch")
-	assertNotContains(t, contract.AllowedTools, "read_file")
-	assertNotContains(t, contract.AllowedTools, "search_content")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
+	if !strings.Contains(strings.Join(contract.Constraints, "\n"), "bounded_source_refresh_allowance") {
+		t.Fatalf("target-write-ready contract should project bounded source refresh allowance: %#v", contract.Constraints)
+	}
 }
 
 func TestDeriveTurnPhaseContractTargetWriteReadyShowsPendingRedirectedSourceObligation(t *testing.T) {
@@ -969,8 +975,10 @@ func TestDeriveTurnPhaseContractUnscopedImplementationPlausibleTargetReadBecomes
 		t.Fatalf("Phase = %q, want target_write_ready for objective-plausible source read; contract=%#v", contract.Phase, contract)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "edit_file")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "context_pack")
 }
 
@@ -1000,9 +1008,10 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysWriteReadyAfterMultip
 		t.Fatalf("Phase = %q, want target_write_ready", contract.Phase)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.AllowedTools, "edit_file")
-	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "code_navigate")
 }
 
@@ -1066,7 +1075,8 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(
 	}
 	assertContains(t, contract.AllowedTools, "edit_file")
 	assertContains(t, contract.AllowedTools, "apply_patch")
-	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "code_navigate")
 }
 
