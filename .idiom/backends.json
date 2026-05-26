@@ -13,12 +13,20 @@
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
-            "--temp", "0.6",
-            "--top-p", "0.95",
-            "--top-k", "20",
-            "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"
+            "--temp",
+            "0.6",
+            "--top-p",
+            "0.95",
+            "--top-k",
+            "20",
+            "--chat-template-args",
+            "{\"enable_thinking\":true,\"preserve_thinking\":true}"
           ],
-          "roles": ["planner", "classifier", "executor"]
+          "roles": [
+            "planner",
+            "classifier",
+            "executor"
+          ]
         },
         {
           "alias": "qwen3-coder-30b",
@@ -29,12 +37,18 @@
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
-            "--temp", "0.7",
-            "--top-p", "0.8",
-            "--top-k", "20",
-            "--chat-template-args", "{\"enable_thinking\":false}"
+            "--temp",
+            "0.7",
+            "--top-p",
+            "0.8",
+            "--top-k",
+            "20",
+            "--chat-template-args",
+            "{\"enable_thinking\":false}"
           ],
-          "roles": ["executor"]
+          "roles": [
+            "executor"
+          ]
         }
       ],
       "proxy": {
@@ -57,12 +71,19 @@
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
-            "--temp", "0.6",
-            "--top-p", "0.95",
-            "--top-k", "20",
-            "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"
+            "--temp",
+            "0.6",
+            "--top-p",
+            "0.95",
+            "--top-k",
+            "20",
+            "--chat-template-args",
+            "{\"enable_thinking\":true,\"preserve_thinking\":true}"
           ],
-          "roles": ["planner", "classifier"]
+          "roles": [
+            "planner",
+            "classifier"
+          ]
         },
         {
           "alias": "qwen3-coder-30b",
@@ -73,12 +94,18 @@
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
-            "--temp", "0.7",
-            "--top-p", "0.8",
-            "--top-k", "20",
-            "--chat-template-args", "{\"enable_thinking\":false}"
+            "--temp",
+            "0.7",
+            "--top-p",
+            "0.8",
+            "--top-k",
+            "20",
+            "--chat-template-args",
+            "{\"enable_thinking\":false}"
           ],
-          "roles": ["executor"]
+          "roles": [
+            "executor"
+          ]
         }
       ],
       "proxy": {
@@ -99,7 +126,11 @@
           "model": "glm-5.1",
           "base_url": "https://api.z.ai/api/coding/paas/v4",
           "api_key_env": "ZAI_API_KEY",
-          "roles": ["planner", "executor", "classifier"]
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
         }
       ],
       "proxy": {
@@ -122,12 +153,19 @@
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
           "extra_args": [
-            "--temp", "0.6",
-            "--top-p", "0.95",
-            "--top-k", "20",
-            "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}"
+            "--temp",
+            "0.6",
+            "--top-p",
+            "0.95",
+            "--top-k",
+            "20",
+            "--chat-template-args",
+            "{\"enable_thinking\":true,\"preserve_thinking\":true}"
           ],
-          "roles": ["planner", "classifier"]
+          "roles": [
+            "planner",
+            "classifier"
+          ]
         },
         {
           "alias": "MiniMax-M2.7",
@@ -135,7 +173,9 @@
           "model": "MiniMax-M2.7",
           "base_url": "https://api.minimax.io/v1",
           "api_key_env": "MINIMAX_API_KEY",
-          "roles": ["executor"]
+          "roles": [
+            "executor"
+          ]
         }
       ],
       "proxy": {
@@ -156,7 +196,11 @@
           "model": "gpt-5.5",
           "api_key_env": "OPENAI_API_KEY",
           "reasoning_effort": "high",
-          "roles": ["planner", "executor", "classifier"]
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
         }
       ],
       "proxy": {
@@ -165,6 +209,42 @@
         "default_executor": "gpt-5.5-high",
         "default_coder": "gpt-5.5-high",
         "default_classifier": "gpt-5.5-high"
+      }
+    },
+    "ds4": {
+      "_comment": "DeepSeek V4 Flash via ds4-server on :47786. Server binary at /Users/ben/models/ds4/ds4-server. Start externally with ~/scripts/start_ds4.sh or idiom backend start --profile ds4.",
+      "models": [
+        {
+          "alias": "ds4flash",
+          "binary": "/Users/ben/models/ds4/ds4-server",
+          "model_path": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
+          "port": 47786,
+          "host": "127.0.0.1",
+          "cache_size": 4,
+          "cache_bytes": 12884901888,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp",
+            "0.6",
+            "--top-p",
+            "0.95",
+            "--top-k",
+            "20"
+          ],
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "listen": 47786,
+        "default_alias": "ds4flash",
+        "default_planner": "ds4flash",
+        "default_executor": "ds4flash",
+        "default_coder": "ds4flash",
+        "default_classifier": "ds4flash"
       }
     }
   }

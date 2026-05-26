@@ -1,14 +1,14 @@
 {
   "_comment": "Self-hosted dispatch config for idiom-on-idiom development. Adapted from the root config.json with auto_start_server flipped off (we use `idiom backend start --profile qwen-pair` against .idiom/backends.json instead) and workspace.root pinned so tools resolve correctly when invoked from any cwd.",
-  "app_name": "Idiom (self-host)",
+  "app_name": "Idiom (ds4)",
   "llama_server": {
-    "kind": "mlx",
-    "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+    "kind": "llama",
+    "binary": "/Users/ben/models/ds4/ds4-server",
     "host": "127.0.0.1",
-    "port": 47680,
-    "model": "qwen3.6-35b",
-    "ctx_size": 262144,
-    "log_file": "logs/mlx-server.log"
+    "port": 47786,
+    "model": "ds4flash",
+    "ctx_size": 100000,
+    "log_file": "logs/ds4-server.log"
   },
   "chat": {
     "auto_start_server": false,
@@ -20,7 +20,9 @@
       "../prompts/base.md"
     ],
     "profiles_dir": "../prompts/profiles",
-    "default_profiles": ["coding"],
+    "default_profiles": [
+      "coding"
+    ],
     "project_root": "",
     "project_prompt_files": [],
     "preset": "qwen3-coding-preserve",
@@ -36,21 +38,15 @@
     "max_history": 20,
     "max_tool_steps": 0,
     "max_context_messages": 40,
-    "max_context_chars": 200000,
+    "max_context_chars": 100000,
     "max_model_calls": 40,
     "max_duration_seconds": 780,
     "request_timeout_seconds": 900,
-    "server_start_timeout_seconds": 240,
+    "server_start_timeout_seconds": 120,
     "implementation_dispatch": "plan_execute"
   },
   "route_classifier": {
-    "enabled": false,
-    "base_url": "http://127.0.0.1:11437",
-    "model": "",
-    "always_on": false,
-    "max_tokens": 512,
-    "timeout_seconds": 20,
-    "auto_start_server": false
+    "enabled": false
   },
   "workspace": {
     "root": "/Users/ben/Documents/GitHub/idiom",
@@ -75,5 +71,14 @@
       ]
     },
     "allow_private_network": false
+  },
+  "implementer": {
+    "kind": "llama",
+    "binary": "/Users/ben/models/ds4/ds4-server",
+    "host": "127.0.0.1",
+    "port": 47786,
+    "model": "ds4flash",
+    "ctx_size": 100000,
+    "log_file": "logs/ds4-implementer.log"
   }
 }
