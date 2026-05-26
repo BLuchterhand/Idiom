@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
@@ -301,11 +302,17 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 			len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0):
 		applyReviewRepairTerminal(contract, brief, baseTools)
 	case implementationTargetSourceWriteReady(brief, input.Results):
-		applyImplementationTargetWriteReady(contract, baseTools)
+		applyImplementationTargetWriteReady(contract, brief, baseTools, input.Results)
 	case implementationTargetSourcePending(brief, input.Results):
 		applyImplementationTargetSource(contract, baseTools)
 	case implementationScopedEditSurfaceActive(brief, input.Results):
 		applyImplementationWriteReady(contract, baseTools)
+	case runnerBriefRequiresMutation(brief) &&
+		func() bool {
+			_, failed := failedVerificationAfterLatestWrite(input.Results, brief)
+			return failed
+		}():
+		applyImplementationVerificationRepair(contract, brief, baseTools)
 	case runnerBriefRequiresMutation(brief) &&
 		(hasPendingVerificationAfterWrites(input.Results, brief) ||
 			sourceEditsNeedSemanticVerification(brief, input.Results)):
@@ -489,11 +496,14 @@ func applyImplementationTargetSource(contract *TurnPhaseContract, baseTools []st
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 }
 
-func applyImplementationTargetWriteReady(contract *TurnPhaseContract, baseTools []string) {
+func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string, results []workspace.ToolResult) {
+	pending := sourceEvidencePendingRedirectsForBrief(brief, results)
+	pendingTools := sourceEvidencePendingRedirectTools(baseTools, pending)
 	contract.PhaseID = turnPhaseImplementationWriteReady
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
 	contract.AllowedTools = implementationTargetWriteReadyAllowedTools(baseTools)
+	contract.AllowedTools = uniquePhaseStrings(append(contract.AllowedTools, pendingTools...))
 	contract.RequiredNext = []string{"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 	contract.InvalidNext = []string{"additional read/search after source-body evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
@@ -506,6 +516,19 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, baseTools 
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "target_write_or_blocker")
 	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
+	if len(pendingTools) > 0 {
+		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
+		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
+		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.InvalidNext = []string{"broad read/search while a redirected source-body obligation is pending", "read/navigation for any path except the exact pending redirected source-body follow-up: " + pendingActionSummary, "verification before a successful write", "generic probe", "prose-only final answer"}
+		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
+		contract.ActionPolicy.InvalidActionClasses = []string{actionSearch, actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
+		contract.ActionPolicy.CallableToolNames = contract.AllowedTools
+		contract.RuntimeCall.ParserContract = "target_write_or_source_refresh"
+		contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_pending_source_refresh_write_or_blocker"
+		contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
+		contract.Constraints = uniquePhaseStrings(append([]string{"pending_redirected_source_body_obligation: " + pendingSummary}, contract.Constraints...))
+	}
 }
 
 func applyImplementationWriteReady(contract *TurnPhaseContract, baseTools []string) {
@@ -530,7 +553,7 @@ func applyImplementationVerifyReady(contract *TurnPhaseContract, brief workerrun
 	contract.Phase = "verification"
 	contract.DerivationReason = "implementation_post_write_verification_pending"
 	contract.AllowedTools = filterPhaseTools(baseTools, "source_sanity", "shell", "git_diff", "git_status")
-	contract.RequiredNext = []string{"source_sanity for changed source files, one relevant source-aware test/build/check, or <<QUESTION>> with the exact verification blocker"}
+	contract.RequiredNext = []string{"one focused language-appropriate verification command/tool for changed source files, compiler-backed diagnostics, or <<QUESTION>> with the exact verification blocker"}
 	contract.InvalidNext = []string{"final answer before post-write verification", "more source reads/search before naming a verification blocker", "additional edits before verification unless verification fails"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
@@ -541,6 +564,27 @@ func applyImplementationVerifyReady(contract *TurnPhaseContract, brief workerrun
 	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "verification_tool_or_blocker")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionVerify, actionBlocker}
+}
+
+func applyImplementationVerificationRepair(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
+	contract.PhaseID = turnPhaseImplementationVerifyReady
+	contract.Phase = "verification_repair"
+	contract.DerivationReason = "implementation_post_write_verification_failed"
+	contract.AllowedTools = filterPhaseTools(baseTools,
+		"edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations",
+		"read_file", "code_navigate", "context_query", "context_zoom", "search_content",
+		"source_sanity", "shell", "git_diff", "git_status")
+	contract.RequiredNext = []string{"repair the failing in-scope changed/required path, use one narrow source/language/context lookup for an exact repair fact, rerun language-appropriate verification after the repair write, or <<QUESTION>> with the exact external blocker"}
+	contract.InvalidNext = []string{"final answer before repair and post-repair verification", "unrelated broad discovery", "verification retry before repair unless the failure is clearly environmental"}
+	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
+	contract.ActionPolicy = TurnActionClassPolicy{
+		AllowedActionClasses:   []string{actionPerEditWrite, actionRead, actionVerify, actionBlocker},
+		InvalidActionClasses:   []string{actionFinalAnswer, actionGenericProbe, actionProseFinal},
+		TerminalResponseShapes: []string{"<<QUESTION>>:"},
+		CallableToolNames:      contract.AllowedTools,
+	}
+	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "verification_repair_tool_or_blocker")
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionRead, actionVerify, actionBlocker}
 }
 
 func applyArtifactFinalAnswer(contract *TurnPhaseContract) {
@@ -639,7 +683,11 @@ func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, result
 	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
 		return true
 	}
-	return conversationEvidenceSatisfied(brief, results)
+	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
+		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+		return conversationEvidenceSatisfiedForObjective(brief, results)
+	}
+	return false
 }
 
 func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allowedTools []string, results []workspace.ToolResult) bool {
@@ -649,7 +697,12 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
 		return false
 	}
-	if genericReadOnlyAnswerEvidenceReady(results) {
+	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
+		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+		if genericReadOnlyEvidenceReady(brief, results) {
+			return false
+		}
+	} else if genericReadOnlyAnswerEvidenceReady(results) {
 		return false
 	}
 	return len(genericReadOnlyEvidenceTools(allowedTools)) > 0
@@ -718,7 +771,7 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return false
 	}
-	if implementationTargetSourceEvidenceReady(results) {
+	if implementationTargetSourceEvidenceReady(brief, results) {
 		return false
 	}
 	return brief.Readiness == nil || !brief.Readiness.ReadyToWrite
@@ -745,18 +798,162 @@ func implementationTargetSourceWriteReady(brief workerruntime.WorkerRuntimeBrief
 	if len(changedPathsFromToolResults(results)) > 0 {
 		return false
 	}
-	return implementationTargetSourceEvidenceReady(results)
+	return implementationTargetSourceEvidenceReady(brief, results)
 }
 
-func implementationTargetSourceEvidenceReady(results []workspace.ToolResult) bool {
+func implementationTargetSourceEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	for _, path := range concreteSourceEvidencePaths(results) {
 		lower := strings.ToLower(path)
 		if strings.HasSuffix(lower, ".md") || strings.HasSuffix(lower, ".mdx") {
 			continue
 		}
-		return true
+		if implementationTargetSourceEvidencePathPlausible(brief, path) {
+			return true
+		}
 	}
 	return false
+}
+
+func implementationTargetSourceEvidencePathPlausible(brief workerruntime.WorkerRuntimeBrief, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if implementationTargetSourceExplicitPathMatch(brief, path) {
+		return true
+	}
+	if implementationTargetPacketEditablePathMatch(brief, path) {
+		return true
+	}
+	if !implementationTargetSourceHasScopeHints(brief) {
+		return true
+	}
+	return implementationSourcePathOverlapsObjective(path, brief.Objective)
+}
+
+func implementationTargetSourceHasScopeHints(brief workerruntime.WorkerRuntimeBrief) bool {
+	return len(brief.TargetPacket) > 0 ||
+		len(brief.TargetRefs) > 0 ||
+		len(brief.EvidencePaths) > 0 ||
+		len(brief.UserBoundaries) > 0
+}
+
+func implementationTargetSourceExplicitPathMatch(brief workerruntime.WorkerRuntimeBrief, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	candidates := append([]string{}, brief.RequiredEditPaths...)
+	candidates = append(candidates, brief.TargetRefs...)
+	candidates = append(candidates, brief.EvidencePaths...)
+	candidates = append(candidates, brief.ChangedPaths...)
+	candidates = append(candidates, pathparse.MentionedWorkspacePaths(strings.Join(brief.UserBoundaries, "\n"))...)
+	candidates = append(candidates, pathparse.MentionedWorkspacePaths(brief.Objective)...)
+	if targetPacketSupportsWrite(brief) {
+		candidates = append(candidates, targetPacketWritableMentionedPaths(brief.TargetPacket)...)
+	}
+	for _, candidate := range candidates {
+		if normalizeRunnerPath(candidate) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func implementationTargetPacketEditablePathMatch(brief workerruntime.WorkerRuntimeBrief, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	for _, candidate := range targetPacketWritableMentionedPaths(brief.TargetPacket) {
+		if normalizeRunnerPath(candidate) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func targetPacketWritableMentionedPaths(lines []string) []string {
+	var paths []string
+	for _, line := range lines {
+		normalizedLine := strings.ToLower(strings.TrimSpace(line))
+		switch {
+		case strings.Contains(normalizedLine, "read_only_evidence"),
+			strings.Contains(normalizedLine, "weak packet candidate"),
+			strings.Contains(normalizedLine, "forbidden"),
+			strings.Contains(normalizedLine, "protected"):
+			continue
+		case strings.Contains(normalizedLine, "editable"),
+			strings.Contains(normalizedLine, "candidate file:"):
+			paths = append(paths, pathparse.MentionedWorkspacePaths(line)...)
+		}
+	}
+	return uniquePhaseStrings(paths)
+}
+
+func implementationSourcePathOverlapsObjective(path string, objective string) bool {
+	terms := recoveryObjectiveSearchWords(objective, 32)
+	if len(terms) == 0 {
+		return false
+	}
+	objectiveTerms := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		objectiveTerms[singularObjectiveWord(term)] = struct{}{}
+	}
+	matches := 0
+	for _, term := range implementationPathTerms(path) {
+		if _, ok := objectiveTerms[term]; ok {
+			matches++
+		}
+	}
+	return matches >= 2
+}
+
+func implementationPathTerms(path string) []string {
+	path = strings.TrimSuffix(normalizeRunnerPath(path), ".go")
+	parts := strings.FieldsFunc(path, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9')
+	})
+	seen := map[string]struct{}{}
+	var terms []string
+	for _, part := range parts {
+		for _, token := range splitImplementationPathToken(part) {
+			token = singularObjectiveWord(token)
+			if len(token) < 4 {
+				continue
+			}
+			switch token {
+			case "internal", "pkg", "cmd", "test", "tests":
+				continue
+			}
+			if _, ok := seen[token]; ok {
+				continue
+			}
+			seen[token] = struct{}{}
+			terms = append(terms, token)
+		}
+	}
+	return terms
+}
+
+func splitImplementationPathToken(token string) []string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil
+	}
+	var out []string
+	start := 0
+	for i, r := range token {
+		if i > start && r >= 'A' && r <= 'Z' {
+			out = append(out, token[start:i])
+			start = i
+		}
+	}
+	out = append(out, token[start:])
+	for i, value := range out {
+		out[i] = strings.ToLower(value)
+	}
+	return out
 }
 
 func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -856,13 +1053,7 @@ func phaseContractTextualOnly(input TurnPhaseContractInput, contract TurnPhaseCo
 	if !input.TextualToolParser && !strings.EqualFold(strings.TrimSpace(input.ToolTransportMode), "textual") {
 		return false
 	}
-	switch contract.PhaseID {
-	case turnPhaseSubmitReadyTextual, turnPhaseSubmitReadyNativeRequired,
-		turnPhaseMalformedSubmitPlanRecovery, turnPhaseReviewRepairTerminal:
-		return true
-	default:
-		return false
-	}
+	return contract.PhaseID != ""
 }
 
 func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/agent"
+	"idiom/internal/config"
 	"idiom/internal/workspace"
 )
 
@@ -39,5 +41,39 @@ func TestRequestApprovalAutoDeniesInHeadlessMode(t *testing.T) {
 	}
 	if !strings.Contains(emitted, `"tool":"edit_file"`) {
 		t.Fatalf("event should name the tool, got: %s", emitted)
+	}
+}
+
+func TestPreExecuteToolRequestConfigDenyOverridesModeAllow(t *testing.T) {
+	model := &Model{
+		workspace: workspace.NewManager(config.Workspace{
+			ToolRules: map[string][]config.ToolRule{
+				"read_file": {
+					{Pattern: ".idiom/deny-read-test.txt", Decision: "deny"},
+				},
+			},
+		}),
+	}
+	model.workspace.SetPermissionRules(map[string][]workspace.ToolRule{
+		"read_file": {
+			{Pattern: "*", Decision: workspace.ToolRuleAllow},
+		},
+	})
+
+	result := model.preExecuteToolRequest(1, workspace.ToolRequest{
+		Tool: "read_file",
+		Path: ".idiom/deny-read-test.txt",
+	}, agent.Mode{Name: "build"})
+	if result == nil {
+		t.Fatal("expected TUI pre-execute hook to block configured deny")
+	}
+	if result.Output != "" {
+		t.Fatalf("deny result must not include file output, got %q", result.Output)
+	}
+	if !strings.Contains(result.Summary, "permission rules") {
+		t.Fatalf("unexpected deny summary %q", result.Summary)
+	}
+	if !strings.Contains(result.Error, "deny read_file") {
+		t.Fatalf("unexpected deny error %q", result.Error)
 	}
 }

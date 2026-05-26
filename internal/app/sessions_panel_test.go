@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -8,6 +9,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
 
 	"idiom/internal/config"
 )
@@ -87,6 +89,33 @@ func TestRenderSessionsPanelEmptyShowsPlaceholder(t *testing.T) {
 	got := m.sessions.viewport.View()
 	if !strings.Contains(got, "No prior sessions") {
 		t.Errorf("empty panel should surface a placeholder, got:\n%s", got)
+	}
+}
+
+func TestSessionsPanelKeepsCursorVisibleWhenNavigating(t *testing.T) {
+	dir := t.TempDir()
+	for i := 0; i < 12; i++ {
+		name := fmt.Sprintf("20260101-0000%02d.jsonl", i)
+		writeSessionLog(t, dir, name, []string{fmt.Sprintf(`{"type":"message","role":"user","content":"session prompt %02d"}`, i)})
+	}
+	m := sessionsPanelModel(t, dir)
+	m.sessions.viewport = viewport.New(40, 5)
+	m.refreshSessionsList()
+	m.renderSessionsPanelContent()
+
+	for i := 0; i < 8; i++ {
+		handled, _ := m.handleSessionsPanelKey(tea.KeyMsg{Type: tea.KeyDown})
+		if !handled {
+			t.Fatalf("key down %d was not handled", i)
+		}
+	}
+
+	selected := m.sessions.list[m.sessions.cursor].ID
+	if got := m.sessions.viewport.View(); !strings.Contains(got, selected) {
+		t.Fatalf("selected session %q scrolled off-screen:\n%s", selected, got)
+	}
+	if m.sessions.viewport.YOffset == 0 {
+		t.Fatal("expected sessions viewport to scroll after navigating beyond visible rows")
 	}
 }
 

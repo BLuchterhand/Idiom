@@ -233,6 +233,32 @@ else
     -cf - .) | (cd "$workspace_root" && tar -xf -)
 fi
 
+python3 - "$workspace_root" <<'PY'
+import json
+import os
+import pathlib
+import sys
+
+root = pathlib.Path(sys.argv[1]).resolve()
+raw = os.environ.get("IDIOM_WORKSPACE_EXTRA_FILES_JSON", "").strip()
+if not raw:
+    raise SystemExit(0)
+entries = json.loads(raw)
+if not isinstance(entries, list):
+    raise SystemExit("IDIOM_WORKSPACE_EXTRA_FILES_JSON must be a JSON array")
+for entry in entries:
+    if not isinstance(entry, dict):
+        raise SystemExit("IDIOM_WORKSPACE_EXTRA_FILES_JSON entries must be objects")
+    rel = str(entry.get("path") or "").strip()
+    if not rel or rel.startswith("/") or "\x00" in rel:
+        raise SystemExit("extra file path must be a non-empty relative path")
+    path = (root / rel).resolve()
+    if path != root and root not in path.parents:
+        raise SystemExit(f"extra file path escapes workspace root: {rel}")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(str(entry.get("content") or ""), encoding="utf-8")
+PY
+
 git -C "$workspace_root" init -q
 git -C "$workspace_root" config user.email "live-contracts@example.invalid"
 git -C "$workspace_root" config user.name "Idiom Live Contracts"
@@ -320,6 +346,12 @@ workspace["root"] = workspace_root
 workspace["cwd"] = workspace_root
 workspace["enable_writes"] = os.environ.get("IDIOM_ENABLE_WRITES", "true").lower() != "false"
 workspace["enable_shell"] = os.environ.get("IDIOM_ENABLE_SHELL", "true").lower() != "false"
+tool_rules_json = os.environ.get("IDIOM_WORKSPACE_TOOL_RULES_JSON", "").strip()
+if tool_rules_json:
+    tool_rules = json.loads(tool_rules_json)
+    if not isinstance(tool_rules, dict):
+        raise SystemExit("IDIOM_WORKSPACE_TOOL_RULES_JSON must be a JSON object")
+    workspace["tool_rules"] = tool_rules
 
 scripted_base_url = os.environ.get("IDIOM_SCRIPTED_MODEL_BASE_URL", "").strip().rstrip("/")
 if scripted_base_url:

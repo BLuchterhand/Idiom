@@ -403,7 +403,7 @@ func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	var b strings.Builder
 	b.WriteString("Decision: source-satisfied\n")
-	b.WriteString("The exact-edit packet already matches the current workspace for every required edit path.")
+	b.WriteString("The requested final state is already present in the current workspace for every required edit path.")
 	if len(paths) > 0 {
 		b.WriteString("\n\nRequired edit paths:\n")
 		for _, path := range paths {
@@ -435,18 +435,7 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 }
 
 func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
-	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
-	if len(required) == 0 {
-		return nil
-	}
-	lowerAnswer := strings.ToLower(answer)
-	var missing []string
-	for _, path := range required {
-		if !strings.Contains(lowerAnswer, strings.ToLower(path)) {
-			missing = append(missing, path)
-		}
-	}
-	return missing
+	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredEditPaths)
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {

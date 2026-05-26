@@ -1,0 +1,17 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the required label implementation\"}"
+    },
+    {
+      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go"
+    },
+    {
+      "content": "{\"tool\":\"shell\",\"command\":\"go test ./...\"}"
+    },
+    {
+      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: go test ./... passed."
+    }
+  ]
+}

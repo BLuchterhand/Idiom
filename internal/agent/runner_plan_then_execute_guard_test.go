@@ -6447,6 +6447,62 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWrite(t *testing
 	}
 }
 
+func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWriteBecomesTerminalAfterRepeatedGate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-120 (total lines: 332)",
+			Output:  "1:package app\n2:func renderMessages() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/model_state.go lines 1-120 (total lines: 1456)",
+			Output:  "1:package app\n2:type modelState struct{}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present",
+		},
+	}
+
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
+	if !ok {
+		t.Fatal("expected terminal no-write recovery prompt")
+	}
+	if !hideReads {
+		t.Fatal("repeated no-write completion after concrete source evidence should hide reads")
+	}
+	for _, want := range []string{
+		"multiple no-write final answers",
+		"Read/search/discovery tools are hidden",
+		"parser-readable write tool call",
+		"internal/app/model_state.go",
+		"`<<QUESTION>>:`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("terminal no-write recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, notWant := range []string{"If one edit-safety fact", "`read_file`", "`search_content`"} {
+		if strings.Contains(prompt, notWant) {
+			t.Fatalf("terminal no-write recovery prompt should not invite more discovery with %q:\n%s", notWant, prompt)
+		}
+	}
+}
+
 func TestCompletionGateRecoveryPromptForDirectRequiredPathImplementationNoWrite(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -7262,6 +7318,86 @@ func TestUnscopedImplementationWriteReadyRejectsNonWriteTools(t *testing.T) {
 	}
 }
 
+func TestUnscopedImplementationWriteReadyDoesNotBlockOnSupersededRedirect(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "fix the session pane cursor scrolling",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"candidate file: internal/app/implementation_dispatch.go",
+				"candidate file: internal/app/sessions_panel.go",
+			},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/app/implementation_dispatch.go to code_navigate",
+			Output:  "Use code_navigate for source-body evidence in internal/app/implementation_dispatch.go.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+			Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("test setup should be in implementation write-ready state after plausible source-body evidence")
+	}
+	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/model_state.go"},
+		results,
+	)
+	if !reject {
+		t.Fatal("expected unrelated navigation to be rejected after write-ready")
+	}
+	joined := summary + " " + errorText + " " + prompt
+	if strings.Contains(joined, "pending redirected source-body obligation") ||
+		strings.Contains(joined, "implementation_dispatch.go via code_navigate") {
+		t.Fatalf("stale redirect should not dominate write-ready recovery after plausible source body was read: %q", joined)
+	}
+	for _, want := range []string{"Source-body evidence is already available", "internal/app/sessions_panel.go", "parser-readable write"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected recovery text to contain %q, got %q", want, joined)
+		}
+	}
+}
+
+func TestUnscopedImplementationWrongTargetReadDoesNotRejectFurtherLocalization(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "the session panel cursor should scroll down when navigating with arrow keys",
+			PermissionProfile: "guarded_workspace_write",
+			TargetPacket: []string{
+				"### Candidate Files",
+				"- `internal/app/app.go` (read_only_evidence): weak packet candidate",
+				"- `internal/agent/phase_contract.go` (editable): matched task terms",
+				"- `internal/agent/runner.go` (editable): matched task terms",
+			},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/app/app.go lines 1-55 (total lines: 55)",
+		Output:  "package app\n\ntype Model struct{}\n",
+	}}
+
+	if implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("non-plausible first source read should not lock implementation into write-ready")
+	}
+	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "context_pack", Task: "find session panel scrolling code"},
+		results,
+	); reject {
+		t.Fatal("target-source localization must remain available after a non-plausible first source read")
+	}
+}
+
 func TestUnscopedImplementationWriteReadyRejectsNonWriteAfterSymbolBody(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -7348,12 +7484,33 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 	) {
 		t.Fatal("expected one bounded new-target source read to be allowed after a different path made the turn write-ready")
 	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool: "read_file",
+			Path: "internal/productworkflow/coverage_gate_test.go",
+		},
+		results,
+		1,
+	) {
+		t.Fatal("expected rangeless new-target source read to remain available after one unrelated write-ready source expansion")
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/productworkflow/coverage_gate_test.go",
+			StartLine: 1,
+			EndLine:   80,
+			NamedGap:  "source-body evidence for newly selected implementation target",
+		},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("new-target source reads should stop at the write-ready source expansion allowance")
+	}
 	for name, req := range map[string]workspace.ToolRequest{
-		"design doc path":      {Tool: "read_file", Path: "docs/obsidian-export/docs/design-prd-adr-brief-research-workflow.md"},
-		"unbounded new source": {Tool: "read_file", Path: "internal/productworkflow/coverage_gate_test.go"},
-		"named gap only":       {Tool: "read_file", Path: "internal/productworkflow/coverage_gate_test.go", NamedGap: "need this new source before writing"},
-		"search":               {Tool: "search_content", Pattern: "coverage"},
-		"write":                {Tool: "edit_file", Path: "internal/productworkflow/coverage_gate.go"},
+		"design doc path": {Tool: "read_file", Path: "docs/obsidian-export/docs/design-prd-adr-brief-research-workflow.md"},
+		"search":          {Tool: "search_content", Pattern: "coverage"},
+		"write":           {Tool: "edit_file", Path: "internal/productworkflow/coverage_gate.go"},
 	} {
 		if runner.implementationTargetWriteReadySourceReadAllowed(req, results, 0) {
 			t.Fatalf("%s should not receive the source-read allowance", name)
@@ -7378,17 +7535,331 @@ func TestUnscopedImplementationWriteReadyAllowsOneSamePathSourceRefreshAfterSymb
 	) {
 		t.Fatal("same-path source refresh should not be allowed after a full read_file result")
 	}
-	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go"},
 		withFullRead,
-	); reject {
-		t.Fatal("range-less full reread should stay available to the existing no-write loop recovery")
+	)
+	if !reject {
+		t.Fatal("range-less full reread after a full source read should be rejected as non-progress")
+	}
+	joined := summary + " " + errorText + " " + prompt
+	for _, want := range []string{"target-write-ready", "internal/productworkflow/coverage_gate.go", "already available", "parser-readable write"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected full-reread recovery text to contain %q, got %q", want, joined)
+		}
+	}
+	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/productworkflow/coverage_gate.go", Capability: "file_outline"},
+		withFullRead,
+	); !reject {
+		t.Fatal("same-path navigation after a full source read should be rejected as non-progress")
 	}
 	if _, _, _, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/productworkflow/coverage_gate.go", StartLine: 4, EndLine: 8},
 		withFullRead,
 	); !reject {
 		t.Fatal("new ranged reads after a full source read should be rejected in write-ready state")
+	}
+}
+
+func TestUnscopedImplementationWriteReadyAllowsBoundedSamePathContinuation(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "update session pane scrolling",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+			Output:  "package app\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/app/sessions.go lines 1-100 (total lines: 418)",
+			Output:  "package app\n",
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("test setup should be in write-ready after plausible session source evidence")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/app/sessions.go",
+			StartLine: 100,
+			EndLine:   200,
+		},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("expected bounded same-path continuation to be allowed after partial source read")
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/app/sessions.go",
+			StartLine: 1,
+			EndLine:   80,
+		},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("covered same-path range should not be allowed")
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/app/sessions.go",
+			StartLine: 1,
+			EndLine:   500,
+		},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("oversized same-path continuation should not be allowed")
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/app/sessions.go",
+			StartLine: 419,
+			EndLine:   500,
+		},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("same-path continuation past known EOF should not be allowed")
+	}
+
+	atContinuationLimit := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f3 internal/app/sessions.go lines 100-200 (total lines: 418)",
+		Output:  "package app\n",
+	}, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f4 internal/app/sessions.go lines 201-300 (total lines: 418)",
+		Output:  "package app\n",
+	})
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:      "read_file",
+			Path:      "internal/app/sessions.go",
+			StartLine: 301,
+			EndLine:   400,
+		},
+		atContinuationLimit,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("same-path continuation should stop once the per-path read range cap is reached")
+	}
+}
+
+func TestUnscopedImplementationWriteReadyAllowsRedirectedSourceFollowup(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "update session pane scrolling",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+			Output:  "package app\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/app/sessions.go to code_navigate",
+			Output:  "Use code_navigate for source-body evidence in internal/app/sessions.go.",
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("test setup should be in write-ready after plausible session source evidence")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/sessions.go", Capability: "read_symbol", Pattern: "SessionList"},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("expected exact redirected source-body follow-up to satisfy the pending source-read obligation")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:            "code_navigate",
+			Path:            "internal/app/sessions.go",
+			Capability:      "file_outline",
+			NamedGap:        "declarations needed before selecting source-body evidence",
+			WhyNotAnswering: "need symbol names for the redirected source-body follow-up",
+		},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("expected one exact redirected file_outline follow-up to be allowed before a symbol is known")
+	}
+	for name, req := range map[string]workspace.ToolRequest{
+		"missing source-body capability": {Tool: "code_navigate", Path: "internal/app/sessions.go"},
+		"references":                     {Tool: "code_navigate", Path: "internal/app/sessions.go", Capability: "references", Pattern: "sessions.viewport"},
+		"read symbol missing pattern":    {Tool: "code_navigate", Path: "internal/app/sessions.go", Capability: "read_symbol"},
+	} {
+		if runner.implementationTargetWriteReadySourceReadAllowed(req, results, implementationTargetWriteReadySourceReadAllowanceLimit) {
+			t.Fatalf("%s should not satisfy the pending redirected source-body obligation", name)
+		}
+	}
+	summary, errorText, prompt, reject := runner.implementationTargetWriteReadyNonWriteRecovery(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/sessions.go", Capability: "references", Pattern: "sessions.viewport"},
+		results,
+	)
+	if !reject {
+		t.Fatal("non-source-body code_navigate follow-up should be rejected while a pending redirect remains")
+	}
+	joined := summary + " " + errorText + " " + prompt
+	for _, want := range []string{"capability=read_symbol", "pattern/symbol", "Do not use references"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("pending redirect recovery missing executable source-body guidance %q:\n%s", want, joined)
+		}
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/other.go"},
+		results,
+		0,
+	) {
+		t.Fatal("redirected source-body allowance must stay scoped to the redirected path")
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/other.go", StartLine: 1, EndLine: 80},
+		results,
+		0,
+	) {
+		t.Fatal("new source reads should wait while a redirected source-read obligation is pending")
+	}
+
+	withSourceBody := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read SessionList in internal/app/sessions.go lines 1-8",
+			"1:func SessionList() []Session {",
+			"2:\treturn nil",
+			"3:}",
+		}, "\n"),
+	})
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/sessions.go"},
+		withSourceBody,
+		0,
+	) {
+		t.Fatal("redirected follow-up should close once source-body evidence exists for that path")
+	}
+	withOutline := append(append([]workspace.ToolResult{}, results...), workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed file_outline via go_file_outline",
+		Output: strings.Join([]string{
+			"capability: file_outline",
+			"language: go",
+			"routed_tool: go_file_outline",
+			"route_summary: Outlined 1 top-level declaration(s) in internal/app/sessions.go.",
+			"declarations:",
+			"- SessionList lines 1-8",
+		}, "\n"),
+	})
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:            "code_navigate",
+			Path:            "internal/app/sessions.go",
+			Capability:      "file_outline",
+			NamedGap:        "declarations needed before selecting source-body evidence",
+			WhyNotAnswering: "need symbol names for the redirected source-body follow-up",
+		},
+		withOutline,
+		0,
+	) {
+		t.Fatal("redirected file_outline progress should be single-use")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/sessions.go", Capability: "read_symbol", Pattern: "SessionList"},
+		withOutline,
+		0,
+	) {
+		t.Fatal("source-body follow-up should remain allowed after file_outline progress")
+	}
+}
+
+func TestUnscopedImplementationWriteReadyAllowsTargetedLocalizationSearch(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "fix session pane cursor scrolling",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+			Output:  "package app\n",
+		},
+	}
+
+	if !implementationTargetWriteReadySurfaceActive(runner.RuntimeBrief, results) {
+		t.Fatal("test setup should be in write-ready after plausible session source evidence")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:     "search_content",
+			Path:     "internal/app",
+			Pattern:  "type sessionsModel",
+			NamedGap: "find related session model state before editing",
+		},
+		results,
+		0,
+	) {
+		t.Fatal("expected targeted source localization search to be allowed after one plausible source-body read")
+	}
+	if !runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{
+			Tool:     "search_content",
+			Pattern:  "type sessionsModel",
+			NamedGap: "find related session model state before editing",
+		},
+		results,
+		0,
+	) {
+		t.Fatal("expected narrow code-shaped search pattern to be allowed even without a path")
+	}
+	for name, req := range map[string]workspace.ToolRequest{
+		"empty search":        {Tool: "search_content", Path: "internal/app", NamedGap: "find related state"},
+		"short search":        {Tool: "search_content", Path: "internal/app", Pattern: "ui", NamedGap: "find related state"},
+		"missing named gap":   {Tool: "search_content", Path: "internal/app", Pattern: "type sessionsModel"},
+		"broad directory":     {Tool: "search_content", Path: "internal", Pattern: "type sessionsModel", NamedGap: "find related state"},
+		"repo-wide search":    {Tool: "search_content", Path: ".", Pattern: "type sessionsModel", NamedGap: "find related state"},
+		"generic code search": {Tool: "search_content", Path: "internal/app", Pattern: "return", NamedGap: "find related state"},
+		"all-caps search":     {Tool: "search_content", Path: "internal/app", Pattern: "TODO", NamedGap: "find related state"},
+		"already sourced":     {Tool: "search_content", Path: "internal/app", Pattern: "package app", NamedGap: "find related state"},
+		"search files":        {Tool: "search_files", Pattern: "sessions", NamedGap: "find related state"},
+		"generic navigation":  {Tool: "code_navigate", Path: "internal/app", Capability: "file_outline"},
+	} {
+		if runner.implementationTargetWriteReadySourceReadAllowed(req, results, 0) {
+			t.Fatalf("%s should not receive write-ready targeted localization allowance", name)
+		}
+	}
+	if runner.implementationTargetWriteReadySourceReadAllowed(
+		workspace.ToolRequest{Tool: "search_content", Path: "internal/app", Pattern: "type sessionsModel"},
+		results,
+		implementationTargetWriteReadySourceReadAllowanceLimit,
+	) {
+		t.Fatal("targeted localization search should stop at the write-ready source expansion allowance")
 	}
 }
 
@@ -7437,7 +7908,7 @@ func TestCompletionGateRetryLimitAllowsPostWriteVerificationRecovery(t *testing.
 	for _, want := range []string{
 		"post-write verification",
 		"parser-readable verification action",
-		"source_sanity",
+		"language-appropriate verification",
 		"internal/app/model_swap.go",
 	} {
 		if !strings.Contains(prompt, want) {

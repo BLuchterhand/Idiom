@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"regexp"
 	"strings"
+
+	"idiom/internal/config"
 )
 
 // Fix 6 (per-tool permission granularity) — OpenCode-style glob rules that
@@ -34,8 +36,8 @@ type ToolRule struct {
 
 // SetPermissionRules installs the active Mode's permission ruleset. Called
 // at session startup (from New) and when the user switches Mode via
-// /mode. Mode rules are consulted first; the Workspace config's ToolRules
-// block remains a fallback for tools the Mode doesn't cover.
+// /mode. Project-configured deny rules are still absolute; Mode rules are
+// consulted only after a request fails to match a config deny.
 func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
 	if m == nil {
 		return
@@ -55,14 +57,29 @@ func (m *Manager) SetPermissionRules(rules map[string][]ToolRule) {
 	m.permissionRules = copied
 }
 
-// EvaluateToolRule applies the Mode's permission rules first, then falls
-// back to the static config.Workspace.ToolRules. Returns ToolRuleNone when
+// EvaluateConfiguredToolRule applies only the static
+// config.Workspace.ToolRules layer. Callers use this for host-enforced
+// absolute denies so no active Mode can override a project rule.
+func (m *Manager) EvaluateConfiguredToolRule(req ToolRequest) ToolRuleDecision {
+	if m == nil || len(m.cfg.ToolRules) == 0 {
+		return ToolRuleNone
+	}
+	return MatchToolRule(strings.TrimSpace(req.Tool), req, convertConfiguredToolRules(m.cfg.ToolRules))
+}
+
+// EvaluateToolRule applies absolute project-configured deny rules first,
+// then the active Mode's permission rules, then non-deny static
+// config.Workspace.ToolRules as a fallback. Returns ToolRuleNone when
 // neither layer matches.
 func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 	if m == nil {
 		return ToolRuleNone
 	}
 	tool := strings.TrimSpace(req.Tool)
+	configDecision := m.EvaluateConfiguredToolRule(req)
+	if configDecision == ToolRuleDeny {
+		return ToolRuleDeny
+	}
 	m.mu.Lock()
 	modeRules := m.permissionRules
 	m.mu.Unlock()
@@ -71,21 +88,28 @@ func (m *Manager) EvaluateToolRule(req ToolRequest) ToolRuleDecision {
 			return decision
 		}
 	}
-	if len(m.cfg.ToolRules) == 0 {
-		return ToolRuleNone
+	if configDecision != ToolRuleNone {
+		return configDecision
 	}
-	fallback := make(map[string][]ToolRule, len(m.cfg.ToolRules))
-	for name, configRules := range m.cfg.ToolRules {
-		converted := make([]ToolRule, 0, len(configRules))
-		for _, r := range configRules {
+	return ToolRuleNone
+}
+
+func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[string][]ToolRule {
+	if len(configRules) == 0 {
+		return nil
+	}
+	convertedRules := make(map[string][]ToolRule, len(configRules))
+	for name, rules := range configRules {
+		converted := make([]ToolRule, 0, len(rules))
+		for _, r := range rules {
 			converted = append(converted, ToolRule{
 				Pattern:  r.Pattern,
 				Decision: ToolRuleDecision(strings.ToLower(strings.TrimSpace(r.Decision))),
 			})
 		}
-		fallback[name] = converted
+		convertedRules[name] = converted
 	}
-	return MatchToolRule(tool, req, fallback)
+	return convertedRules
 }
 
 // MatchToolRule evaluates the first rule whose pattern matches the request

@@ -38,7 +38,7 @@ func TestSourceEditsNeedSemanticVerificationAfterPatchHygieneOnly(t *testing.T) 
 	}
 }
 
-func TestSourceEditsAreSemanticallyVerifiedAfterSourceSanity(t *testing.T) {
+func TestSourceEditsAreSemanticallyVerifiedAfterCompilerBackedSourceSanity(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
@@ -46,7 +46,7 @@ func TestSourceEditsAreSemanticallyVerifiedAfterSourceSanity(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/app/app.go"},
 		{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/app/app.go\n"},
-		{Tool: "source_sanity", Summary: "source sanity passed"},
+		{Tool: "source_sanity", Summary: "source sanity passed", Output: "internal/app/app.go: no warnings or errors via go_diagnostics"},
 	}
 
 	latest, ok := latestVerificationAfterLatestSourceWrite(results)
@@ -57,17 +57,57 @@ func TestSourceEditsAreSemanticallyVerifiedAfterSourceSanity(t *testing.T) {
 		t.Fatalf("latest verification: want source_sanity, got %s", latest.Tool)
 	}
 	if sourceEditsNeedSemanticVerification(brief, results) {
-		t.Fatal("source_sanity should satisfy source edit semantic verification")
+		t.Fatal("compiler-backed source_sanity should satisfy source edit semantic verification")
 	}
 	if !sourceEditsAreSemanticallyVerified(brief, results) {
-		t.Fatal("source_sanity should mark source edits as semantically verified")
+		t.Fatal("compiler-backed source_sanity should mark source edits as semantically verified")
 	}
 }
 
-func TestRewriteVerificationShellReadToSourceSanityForChangedSource(t *testing.T) {
+func TestSourceEditsStillNeedVerificationAfterGenericSourceSanityFallback(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/app/app.go"},
+		{Tool: "source_sanity", Summary: "Source sanity passed for 1 file(s) (1 generic fallback)", Output: "internal/app/app.go: generic delimiter sanity passed via generic_source_sanity"},
+	}
+
+	if _, ok := latestVerificationAfterLatestSourceWrite(results); ok {
+		t.Fatal("generic source_sanity fallback must not count as source verification")
+	}
+	if !sourceEditsNeedSemanticVerification(brief, results) {
+		t.Fatal("generic source_sanity fallback should leave source edits needing language-aware verification")
+	}
+	if sourceEditsAreSemanticallyVerified(brief, results) {
+		t.Fatal("generic source_sanity fallback should not mark source edits as semantically verified")
+	}
+}
+
+func TestSourceEditsAreSemanticallyVerifiedAfterLanguageCommand(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/app/app.go"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ npm run build\nbuild succeeded"},
+	}
+
+	if sourceEditsNeedSemanticVerification(brief, results) {
+		t.Fatal("language/project verification command should satisfy source edit verification")
+	}
+	if !sourceEditsAreSemanticallyVerified(brief, results) {
+		t.Fatal("language/project verification command should mark source edits as semantically verified")
+	}
+}
+
+func TestRewriteVerificationShellReadToSourceSanityForPlannerOwnedChangedSource(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
@@ -91,6 +131,7 @@ func TestRewriteVerificationShellReadToSourceSanityRequiresAllowedToolAndChanged
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
@@ -114,10 +155,30 @@ func TestRewriteVerificationShellReadToSourceSanityRequiresAllowedToolAndChanged
 	}
 }
 
-func TestPostWriteSourceSanityRedirectsInvalidVerificationPhaseTools(t *testing.T) {
+func TestRewriteVerificationShellReadDoesNotPickSourceSanityForNormalImplementation(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	if _, ok := rewriteVerificationShellReadToSourceSanity(
+		workspace.ToolRequest{Tool: "shell", Command: "cat internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	); ok {
+		t.Fatal("normal implementation verification should not have the harness choose source_sanity")
+	}
+}
+
+func TestPostWriteSourceSanityRedirectsPlannerOwnedInvalidVerificationPhaseTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
@@ -137,14 +198,15 @@ func TestPostWriteSourceSanityRedirectsInvalidVerificationPhaseTools(t *testing.
 	}
 }
 
-func TestPostWriteSourceSanityRedirectRequiresPendingSourceVerification(t *testing.T) {
+func TestPostWriteSourceSanityRedirectRequiresPlannerOwnedPendingSourceVerification(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		Constraints:          []string{"planner_owned_verification"},
 	}
 	verified := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
-		{Tool: "source_sanity", Summary: "source sanity passed"},
+		{Tool: "source_sanity", Summary: "source sanity passed", Output: "internal/labels/labels.go: no warnings or errors via go_diagnostics"},
 	}
 	if _, ok := postWriteSourceSanityRedirect(
 		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
@@ -161,6 +223,77 @@ func TestPostWriteSourceSanityRedirectRequiresPendingSourceVerification(t *testi
 		[]string{"shell"},
 	); ok {
 		t.Fatal("must not redirect when source_sanity is not currently allowed")
+	}
+}
+
+func TestPostWriteSourceSanityRedirectDoesNotPickVerificationForNormalImplementation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	); ok {
+		t.Fatal("normal implementation verification should let the model choose the language-appropriate command/tool")
+	}
+}
+
+func TestPostWriteSourceSanityRedirectRecoversNormalImplementationAfterInvalidVerificationTool(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+		{
+			Tool:    "edit_file",
+			Summary: "Tool not available in current runtime contract",
+			Error:   "edit_file is not in the current allowed tool surface. Available tools: source_sanity, git_status, git_diff, shell.",
+		},
+	}
+
+	redirected, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	)
+	if !ok {
+		t.Fatal("expected repeated invalid verification-phase tool to recover through source_sanity")
+	}
+	if redirected.Tool != "source_sanity" || redirected.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestPostWriteSourceSanityRedirectIgnoresInvalidToolBeforeLatestSourceWrite(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "edit_file",
+			Summary: "Tool not available in current runtime contract",
+			Error:   "edit_file is not in the current allowed tool surface. Available tools: source_sanity, git_status, git_diff, shell.",
+		},
+		{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"},
+	}
+
+	if _, ok := postWriteSourceSanityRedirect(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels.go"},
+		brief,
+		results,
+		[]string{"source_sanity", "shell"},
+	); ok {
+		t.Fatal("invalid tool rejections before the latest source write must not trigger post-write source_sanity redirect")
 	}
 }
 
@@ -199,7 +332,7 @@ func TestVerifiedSourceCloseoutIgnoresIncidentalPathMentions(t *testing.T) {
 			Output: "Implement the feature by changing pkg/feature.go and pkg/feature_test.go.",
 		},
 		{Tool: "edit_file", Summary: "Edited pkg/feature.go"},
-		{Tool: "source_sanity", Summary: "source sanity passed"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ cargo check\nFinished dev profile"},
 	}
 
 	if prompt, ok := sourceEditCloseoutPrompt(workspace.ToolRequest{

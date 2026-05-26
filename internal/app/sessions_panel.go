@@ -125,6 +125,9 @@ func (m *Model) renderSessionsPanelContent() {
 		return
 	}
 	w := max(8, m.sessions.viewport.Width)
+	selectedStart := -1
+	selectedEnd := -1
+	line := 0
 
 	var b strings.Builder
 	title := "◇ Sessions"
@@ -133,6 +136,7 @@ func (m *Model) renderSessionsPanelContent() {
 	}
 	b.WriteString(panelTitleStyle.Width(w).Render(title))
 	b.WriteString("\n")
+	line++
 
 	if len(m.sessions.list) == 0 {
 		msg := "No prior sessions found."
@@ -141,6 +145,7 @@ func (m *Model) renderSessionsPanelContent() {
 			b.WriteString("\n")
 		}
 		m.sessions.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+		m.sessions.viewport.SetYOffset(0)
 		return
 	}
 
@@ -153,6 +158,7 @@ func (m *Model) renderSessionsPanelContent() {
 		header := fmt.Sprintf("%s · %s", s.ID, msgCount)
 		body := "  " + summary
 		focused := i == m.sessions.cursor && m.history.focused && m.panelTab == panelTabSessions
+		rowStart := line
 
 		if focused {
 			b.WriteString(panelFocusedStyle.Width(w).Render("▸ " + header))
@@ -160,7 +166,9 @@ func (m *Model) renderSessionsPanelContent() {
 			b.WriteString(lipgloss.NewStyle().Bold(true).Width(w).Render("  " + header))
 		}
 		b.WriteString("\n")
-		for _, wl := range wrapLines(body, max(1, w-2)) {
+		line++
+		wrappedBody := wrapLines(body, max(1, w-2))
+		for _, wl := range wrappedBody {
 			if focused {
 				b.WriteString(panelFocusedStyle.Width(w).Render(wl))
 			} else {
@@ -168,9 +176,30 @@ func (m *Model) renderSessionsPanelContent() {
 			}
 			b.WriteString("\n")
 		}
+		line += len(wrappedBody)
+		if i == m.sessions.cursor {
+			selectedStart = rowStart
+			selectedEnd = max(rowStart, line-1)
+		}
 	}
 
 	m.sessions.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+	m.ensureSessionsCursorVisible(selectedStart, selectedEnd)
+}
+
+func (m *Model) ensureSessionsCursorVisible(start, end int) {
+	if start < 0 || end < start {
+		return
+	}
+	height := max(1, m.sessions.viewport.Height)
+	top := m.sessions.viewport.YOffset
+	bottom := top + height - 1
+	switch {
+	case start < top:
+		m.sessions.viewport.SetYOffset(start)
+	case end > bottom:
+		m.sessions.viewport.SetYOffset(end - height + 1)
+	}
 }
 
 // handleSessionsPanelKey consumes a key press while the Sessions tab
@@ -187,14 +216,14 @@ func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {
 	case tea.KeyUp:
 		if m.sessions.cursor > 0 {
 			m.sessions.cursor--
-			m.renderSessionsPanelContent()
 		}
+		m.renderSessionsPanelContent()
 		return true, m.waitForEventCmd()
 	case tea.KeyDown:
 		if m.sessions.cursor < len(m.sessions.list)-1 {
 			m.sessions.cursor++
-			m.renderSessionsPanelContent()
 		}
+		m.renderSessionsPanelContent()
 		return true, m.waitForEventCmd()
 	case tea.KeyEnter:
 		if len(m.sessions.list) == 0 {

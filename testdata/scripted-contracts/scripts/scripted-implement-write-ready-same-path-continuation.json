@@ -1,0 +1,23 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read the plausible label implementation target before editing\",\"why_not_answering\":\"need exact source-body evidence for the target path\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/app/app.go\",\"start_line\":1,\"end_line\":3,\"named_gap\":\"read related app source before selecting the edit shape\",\"why_not_answering\":\"need one related source range before writing\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/app/app.go\",\"start_line\":4,\"end_line\":8,\"named_gap\":\"continue the same related source file with new uncovered lines\",\"why_not_answering\":\"need the next bounded source range before writing\"}"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label\"}"
+    },
+    {
+      "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
+    },
+    {
+      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+    }
+  ]
+}

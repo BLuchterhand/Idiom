@@ -42,6 +42,38 @@ func TestRunnerExecutionStateApplyResultVerificationResetsVerificationGuards(t *
 	}
 }
 
+func TestVerificationPhaseStateMarksGenericSourceSanityInsufficient(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "source_sanity",
+		Summary: "Source sanity passed for 1 file(s) (1 generic fallback)",
+		Output:  "internal/labels/labels.go: generic delimiter sanity passed via generic_source_sanity",
+	}
+
+	state, detail := verificationPhaseState(result)
+	if state != "insufficient" {
+		t.Fatalf("state = %q, want insufficient", state)
+	}
+	if !strings.Contains(detail, "insufficient") {
+		t.Fatalf("detail should explain insufficiency, got %q", detail)
+	}
+}
+
+func TestVerificationPhaseStateSeparatesPatchHygieneFromPassedVerification(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "shell",
+		Summary: "Ran shell command",
+		Output:  "$ git diff --check -- internal/labels/labels.go\n",
+	}
+
+	state, detail := verificationPhaseState(result)
+	if state != "hygiene" {
+		t.Fatalf("state = %q, want hygiene", state)
+	}
+	if !strings.Contains(detail, "patch hygiene") {
+		t.Fatalf("detail should identify patch hygiene, got %q", detail)
+	}
+}
+
 func TestRunnerExecutionStateApplyResultWriteProgressUpdatesCounters(t *testing.T) {
 	state := newRunnerExecutionState(false, 0)
 	budget := newRunnerRequestBudgetState(2)

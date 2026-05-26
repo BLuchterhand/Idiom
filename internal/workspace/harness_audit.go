@@ -25,6 +25,11 @@ const (
 	harnessAuditMaxLogLimit     = 5000
 )
 
+var harnessAuditGateMetadataIntroducedAt = time.Date(2026, 5, 24, 23, 56, 18, 0, time.UTC)
+var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 5, 26, 7, 30, 0, 0, time.UTC)
+var harnessAuditLifecycleCloseoutIntroducedAt = time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
+var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 5, 26, 7, 30, 0, 0, time.UTC)
+
 type harnessAuditReport struct {
 	GeneratedAt             string                       `json:"generated_at"`
 	WorkspaceRoot           string                       `json:"workspace_root,omitempty"`
@@ -836,6 +841,7 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		warnings = append(warnings, fmt.Sprintf("malformed output stages: %s", warning))
 	}
 	aggregate := eval.Aggregate(reports)
+	currentAggregate := eval.Aggregate(currentHarnessAuditPerfReports(m.cfg.Root, reports))
 	capabilityMix := auditObservedCapabilityMix(paths, aggregate.LogCount, &warnings, m.displayPath)
 	behavior := &harnessAuditLogBehavior{
 		LogLimit:           limit,
@@ -855,7 +861,9 @@ func (m *Manager) auditLogBehavior(req ToolRequest) (*harnessAuditLogBehavior, *
 		InProgressSessions: inProgressSessions,
 		IncompleteSessions: incompleteSessions,
 	}
-	findings := logBehaviorFindings(aggregate, incompleteSessions)
+	findings := logBehaviorFindings(currentAggregate, incompleteSessions)
+	findings = append(findings, historicalLogBehaviorFindings(aggregate, currentAggregate)...)
+	findings = append(findings, historicalTurnPhaseProjectionFindings(paths)...)
 	findings = append(findings, contractCoverageWarningFindings(contractWarnings)...)
 	return behavior, contractCoverage, findings, logBehaviorQuestions(aggregate), nil
 }
@@ -1511,6 +1519,14 @@ func readHarnessAuditLogFacts(path string) (harnessAuditLogFacts, error) {
 }
 
 func readHarnessAuditAutonomyEvents(path string) ([]autonomy.Event, []string) {
+	return readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{})
+}
+
+type harnessAuditAutonomyDecodeOptions struct {
+	PreserveLegacyTurnPhaseProjection bool
+}
+
+func readHarnessAuditAutonomyEventsWithOptions(path string, opts harnessAuditAutonomyDecodeOptions) ([]autonomy.Event, []string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, []string{err.Error()}
@@ -1522,7 +1538,7 @@ func readHarnessAuditAutonomyEvents(path string) ([]autonomy.Event, []string) {
 		if line == "" {
 			continue
 		}
-		lineEvents, lineWarnings := decodeHarnessAuditAutonomyEvents([]byte(line))
+		lineEvents, lineWarnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(line), opts)
 		for _, warning := range lineWarnings {
 			warnings = append(warnings, fmt.Sprintf("line %d: %s", lineNumber+1, warning))
 		}
@@ -1532,10 +1548,14 @@ func readHarnessAuditAutonomyEvents(path string) ([]autonomy.Event, []string) {
 }
 
 func decodeHarnessAuditAutonomyEvents(line []byte) ([]autonomy.Event, []string) {
+	return decodeHarnessAuditAutonomyEventsWithOptions(line, harnessAuditAutonomyDecodeOptions{})
+}
+
+func decodeHarnessAuditAutonomyEventsWithOptions(line []byte, opts harnessAuditAutonomyDecodeOptions) ([]autonomy.Event, []string) {
 	var events []autonomy.Event
 	var warnings []string
 	if auditRawAutonomyEvent(line) {
-		event, err := unmarshalHarnessAuditAutonomyEvent(line)
+		event, err := unmarshalHarnessAuditAutonomyEventWithOptions(line, opts)
 		if err != nil {
 			warnings = append(warnings, err.Error())
 		} else {
@@ -1551,7 +1571,7 @@ func decodeHarnessAuditAutonomyEvents(line []byte) ([]autonomy.Event, []string) 
 		if !ok || !auditRawAutonomyEvent(raw) {
 			continue
 		}
-		event, err := unmarshalHarnessAuditAutonomyEvent(raw)
+		event, err := unmarshalHarnessAuditAutonomyEventWithOptions(raw, opts)
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("%s: %v", key, err))
 			continue
@@ -1561,7 +1581,7 @@ func decodeHarnessAuditAutonomyEvents(line []byte) ([]autonomy.Event, []string) 
 	if auditStringFromRaw(record["role"]) == "autonomy_event" {
 		var content string
 		if err := json.Unmarshal(record["content"], &content); err == nil && auditRawAutonomyEvent([]byte(content)) {
-			event, err := unmarshalHarnessAuditAutonomyEvent([]byte(content))
+			event, err := unmarshalHarnessAuditAutonomyEventWithOptions([]byte(content), opts)
 			if err != nil {
 				warnings = append(warnings, fmt.Sprintf("content: %v", err))
 			} else {
@@ -1591,15 +1611,136 @@ func auditStringFromRaw(raw json.RawMessage) string {
 }
 
 func unmarshalHarnessAuditAutonomyEvent(raw []byte) (autonomy.Event, error) {
+	return unmarshalHarnessAuditAutonomyEventWithOptions(raw, harnessAuditAutonomyDecodeOptions{})
+}
+
+func unmarshalHarnessAuditAutonomyEventWithOptions(raw []byte, opts harnessAuditAutonomyDecodeOptions) (autonomy.Event, error) {
 	var event autonomy.Event
 	if err := json.Unmarshal(raw, &event); err != nil {
 		return autonomy.Event{}, err
+	}
+	normalizeHarnessAuditLegacyGateFields(raw, &event)
+	if !opts.PreserveLegacyTurnPhaseProjection {
+		normalizeHarnessAuditLegacyTurnPhaseProjection(&event)
 	}
 	event.Normalize()
 	if err := event.Validate(); err != nil {
 		return autonomy.Event{}, err
 	}
 	return event, nil
+}
+
+func normalizeHarnessAuditLegacyTurnPhaseProjection(event *autonomy.Event) {
+	if event == nil || event.Lifecycle == nil || !event.OccurredAt.Before(harnessAuditTurnPhaseProjectionIntroducedAt) {
+		return
+	}
+	if event.Lifecycle.TurnPhaseContract == nil &&
+		event.Lifecycle.ModelProtocol == nil &&
+		len(event.Lifecycle.SurfaceSummaries) == 0 {
+		return
+	}
+	event.Lifecycle.TurnPhaseContract = nil
+	event.Lifecycle.ModelProtocol = nil
+	event.Lifecycle.SurfaceSummaries = nil
+}
+
+func normalizeHarnessAuditLegacyGateFields(raw []byte, event *autonomy.Event) {
+	if event == nil || event.Type != autonomy.EventGateDecision || event.Gate == nil {
+		return
+	}
+	if !event.OccurredAt.Before(harnessAuditGateMetadataIntroducedAt) {
+		return
+	}
+	var record map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return
+	}
+	var gateFields map[string]json.RawMessage
+	if err := json.Unmarshal(record["gate"], &gateFields); err != nil {
+		return
+	}
+	if _, ok := gateFields["pack_id"]; !ok && event.Gate.PackID == "" {
+		event.Gate.PackID = harnessAuditLegacyGatePackID(event.Gate.Gate, event.Gate.InvariantID)
+	}
+	if _, ok := gateFields["enforcement_mode"]; !ok && event.Gate.EnforcementMode == "" {
+		event.Gate.EnforcementMode = harnessAuditLegacyGateEnforcementMode(event.Gate.Decision)
+	}
+	if _, ok := gateFields["safe_alternatives"]; !ok &&
+		harnessAuditLegacyGateNeedsSafeAlternatives(event.Gate.Decision, event.Gate.EnforcementMode) &&
+		len(event.Gate.SafeAlternatives) == 0 {
+		event.Gate.SafeAlternatives = harnessAuditLegacyGateSafeAlternatives(event.Gate.Gate)
+	}
+}
+
+func harnessAuditLegacyGatePackID(gate autonomy.GateKind, invariantID string) autonomy.ContractPackID {
+	switch strings.TrimSpace(invariantID) {
+	case "completion.readiness":
+		return autonomy.ContractPackCompletionReadiness
+	case "write.required_edit_paths":
+		return autonomy.ContractPackWriteRequiredPaths
+	case "verification.post_write":
+		return autonomy.ContractPackVerificationPostWrite
+	case "loop.repeated_call":
+		return autonomy.ContractPackLoopRepeatedCall
+	case "budget.run_policy":
+		return autonomy.ContractPackBudgetRunPolicy
+	case "read_only.readiness":
+		return autonomy.ContractPackCompletionReadiness
+	}
+	switch gate {
+	case autonomy.GateCompletion:
+		return autonomy.ContractPackCompletionReadiness
+	case autonomy.GateWrite:
+		return autonomy.ContractPackWriteRequiredPaths
+	case autonomy.GateVerification:
+		return autonomy.ContractPackVerificationPostWrite
+	case autonomy.GateLoop:
+		return autonomy.ContractPackLoopRepeatedCall
+	case autonomy.GateBudget:
+		return autonomy.ContractPackBudgetRunPolicy
+	case autonomy.GateReadOnly:
+		return autonomy.ContractPackCompletionReadiness
+	default:
+		return ""
+	}
+}
+
+func harnessAuditLegacyGateEnforcementMode(decision autonomy.ToolPolicyDecision) autonomy.EnforcementMode {
+	if decision == autonomy.PolicyObserve {
+		return autonomy.EnforcementModeObserveOnly
+	}
+	return autonomy.EnforcementModeEnforce
+}
+
+func harnessAuditLegacyGateNeedsSafeAlternatives(decision autonomy.ToolPolicyDecision, mode autonomy.EnforcementMode) bool {
+	if mode != autonomy.EnforcementModeEnforce {
+		return false
+	}
+	switch decision {
+	case autonomy.PolicyReject, autonomy.PolicyDeny, autonomy.PolicyStop:
+		return true
+	default:
+		return false
+	}
+}
+
+func harnessAuditLegacyGateSafeAlternatives(gate autonomy.GateKind) []string {
+	switch gate {
+	case autonomy.GateCompletion:
+		return []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	case autonomy.GateWrite:
+		return []string{"edit required_edit_paths", "<<QUESTION>>:"}
+	case autonomy.GateVerification:
+		return []string{"run verification", "report verification blocker"}
+	case autonomy.GateLoop:
+		return []string{"change tool target", "Decision: source-satisfied"}
+	case autonomy.GateBudget:
+		return []string{"Decision: blocker", "Decision: source-satisfied"}
+	case autonomy.GateReadOnly:
+		return []string{"read evidence paths", "Decision: source-satisfied"}
+	default:
+		return []string{"choose allowed action", "<<QUESTION>>:"}
+	}
 }
 
 func processIDAppearsRunning(pid int) bool {
@@ -2059,15 +2200,177 @@ func logBehaviorFindings(aggregate eval.PerfAggregate, incompleteSessions []harn
 		}
 	}
 	if len(incompleteSessions) > 0 {
+		currentIncompleteSessions := currentHarnessAuditIncompleteSessions(incompleteSessions)
+		if len(currentIncompleteSessions) == 0 {
+			findings = append(findings, harnessAuditFinding{
+				ID:             "historical_incomplete_implement_session_lifecycle",
+				Severity:       "info",
+				Evidence:       fmt.Sprintf("%d pre-closeout implementation-backed session(s) missing process/session lifecycle event(s)", len(incompleteSessions)),
+				Recommendation: "Historical lifecycle gaps are retained in log_behavior.incomplete_sessions; current sessions still raise incomplete_implement_session_lifecycle.",
+				Tools:          []string{"harness_audit"},
+			})
+			return findings
+		}
 		findings = append(findings, harnessAuditFinding{
 			ID:             "incomplete_implement_session_lifecycle",
 			Severity:       "high",
-			Evidence:       fmt.Sprintf("%d implementation-backed session(s) missing process/session lifecycle event(s)", len(incompleteSessions)),
+			Evidence:       fmt.Sprintf("%d implementation-backed session(s) missing process/session lifecycle event(s)", len(currentIncompleteSessions)),
 			Recommendation: "Inspect termination reasons and keep lifecycle closeout generic: every implementation-backed run should end with process_exit telemetry and a session_summary conversation event.",
 			Tools:          []string{"harness_audit"},
 		})
 	}
 	return findings
+}
+
+func currentHarnessAuditPerfReports(root string, reports []eval.PerfReport) []eval.PerfReport {
+	var current []eval.PerfReport
+	for _, report := range reports {
+		occurredAt, ok := harnessAuditPerfReportTime(root, report)
+		if !ok || !occurredAt.Before(harnessAuditBehaviorFindingsIntroducedAt) {
+			current = append(current, report)
+		}
+	}
+	return current
+}
+
+func harnessAuditPerfReportTime(root string, report eval.PerfReport) (time.Time, bool) {
+	for _, value := range []string{
+		report.SessionID,
+		strings.TrimSuffix(filepath.Base(report.LogPath), filepath.Ext(report.LogPath)),
+	} {
+		if parsed, ok := harnessAuditTimestampFromLabel(value); ok {
+			return parsed, true
+		}
+	}
+	path := report.LogPath
+	if path != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(root, filepath.FromSlash(path))
+	}
+	if info, err := os.Stat(path); err == nil {
+		return info.ModTime().UTC(), true
+	}
+	return time.Time{}, false
+}
+
+func historicalLogBehaviorFindings(aggregate eval.PerfAggregate, currentAggregate eval.PerfAggregate) []harnessAuditFinding {
+	if len(aggregate.PatternHitRate) == 0 || len(currentAggregate.PatternHitRate) > 0 {
+		return nil
+	}
+	var patternCount int
+	var totalHits int
+	for _, pattern := range aggregate.PatternHitRate {
+		if pattern.LogsHit == 0 {
+			continue
+		}
+		patternCount++
+		totalHits += pattern.TotalCount
+	}
+	if patternCount == 0 {
+		return nil
+	}
+	return []harnessAuditFinding{{
+		ID:             "historical_behavior_patterns",
+		Severity:       "info",
+		Evidence:       fmt.Sprintf("%d pre-current behavior pattern(s), %d total hit(s), retained in log_behavior.aggregate", patternCount, totalHits),
+		Recommendation: "Current behavior findings are generated only from post-cutoff logs; historical patterns remain visible in aggregate/top_patterns for trend analysis.",
+		Tools:          []string{"harness_audit"},
+	}}
+}
+
+func historicalTurnPhaseProjectionFindings(paths []string) []harnessAuditFinding {
+	var events []autonomy.Event
+	for _, path := range paths {
+		pathEvents, _ := readHarnessAuditAutonomyEventsWithOptions(path, harnessAuditAutonomyDecodeOptions{
+			PreserveLegacyTurnPhaseProjection: true,
+		})
+		events = append(events, pathEvents...)
+	}
+	return historicalTurnPhaseProjectionFindingsFromEvents(events)
+}
+
+func historicalTurnPhaseProjectionFindingsFromEvents(events []autonomy.Event) []harnessAuditFinding {
+	historicalEvents := make([]autonomy.Event, 0, len(events))
+	for _, event := range events {
+		if !event.OccurredAt.Before(harnessAuditTurnPhaseProjectionIntroducedAt) || event.Lifecycle == nil {
+			continue
+		}
+		if event.Lifecycle.TurnPhaseContract == nil &&
+			event.Lifecycle.ModelProtocol == nil &&
+			len(event.Lifecycle.SurfaceSummaries) == 0 {
+			continue
+		}
+		historicalEvents = append(historicalEvents, event)
+	}
+	if len(historicalEvents) == 0 {
+		return nil
+	}
+	report := autonomy.AuditEvents(dedupeAndSortHarnessAuditAutonomyEvents(historicalEvents), autonomy.EventAuditOptions{})
+	contradictions := len(report.TurnPhaseCoverage.Contradictions)
+	if contradictions == 0 {
+		return nil
+	}
+	return []harnessAuditFinding{{
+		ID:             "historical_turn_phase_contract_contradiction",
+		Severity:       "info",
+		Evidence:       fmt.Sprintf("%d pre-current turn-phase projection contradiction(s), retained outside current contract coverage", contradictions),
+		Recommendation: "Historical projection mismatches are retained as compatibility evidence; post-cutoff turn-phase contradictions still raise turn_phase_contract_contradiction.",
+		Tools:          []string{"harness_audit"},
+	}}
+}
+
+func currentHarnessAuditIncompleteSessions(sessions []harnessAuditIncompleteSession) []harnessAuditIncompleteSession {
+	var current []harnessAuditIncompleteSession
+	for _, session := range sessions {
+		occurredAt, ok := harnessAuditIncompleteSessionTime(session)
+		if !ok || !occurredAt.Before(harnessAuditLifecycleCloseoutIntroducedAt) {
+			current = append(current, session)
+		}
+	}
+	return current
+}
+
+func harnessAuditIncompleteSessionTime(session harnessAuditIncompleteSession) (time.Time, bool) {
+	for _, value := range []string{
+		session.SessionID,
+		strings.TrimSuffix(filepath.Base(session.TelemetryLog), filepath.Ext(session.TelemetryLog)),
+		strings.TrimSuffix(filepath.Base(session.ConversationLog), filepath.Ext(session.ConversationLog)),
+	} {
+		if parsed, ok := harnessAuditTimestampFromLabel(value); ok {
+			return parsed, true
+		}
+	}
+	return time.Time{}, false
+}
+
+func harnessAuditTimestampFromLabel(value string) (time.Time, bool) {
+	if prefix := harnessAuditSessionTimestampPrefix(value); prefix != "" {
+		if parsed, err := time.Parse("20060102-150405", prefix); err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	for i := 0; i+len("20060102") <= len(value); i++ {
+		candidate := value[i : i+len("20060102")]
+		if !harnessAuditAllDigits(candidate) {
+			continue
+		}
+		parsed, err := time.Parse("20060102", candidate)
+		if err == nil {
+			return parsed.UTC(), true
+		}
+	}
+	return time.Time{}, false
+}
+
+func harnessAuditAllDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func contractCoverageWarningFindings(warnings []string) []harnessAuditFinding {

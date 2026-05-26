@@ -45,13 +45,13 @@ func (m *Model) ResumeSession(id string) error {
 		return fmt.Errorf("session log %q: %w", path, err)
 	}
 
-	// Replay messages first so a parse failure aborts cleanly before we
-	// touch the logger.
-	replayed, err := replaySessionMessages(path)
+	// Replay messages and history-panel metadata first so a parse failure
+	// aborts cleanly before we touch the logger.
+	replayed, err := replaySessionLog(path)
 	if err != nil {
 		return err
 	}
-	if len(replayed) == 0 {
+	if len(replayed.messages) == 0 {
 		return fmt.Errorf("session log %q contained no user/assistant messages", path)
 	}
 
@@ -96,8 +96,18 @@ func (m *Model) ResumeSession(id string) error {
 	// Replace chat history with the replayed messages. We replace
 	// wholesale rather than append — on /resume mid-session, leftover
 	// messages from the current session would confuse the model.
-	m.messages = replayed
+	m.messages = replayed.messages
+	m.history.entries = replayed.history
+	if len(m.history.entries) > 0 {
+		m.history.selected = len(m.history.entries) - 1
+	} else {
+		m.history.selected = 0
+	}
+	m.currentTurnHistoryActive = false
+	m.currentTurnHistoryIndex = 0
+	m.currentTurnTools = nil
 	m.renderMessages(false)
+	m.requestHistoryPanelRender(true, true)
 
 	rehydratePlanState(m)
 	m.renderPlanPanelContent()

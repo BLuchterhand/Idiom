@@ -1379,6 +1379,7 @@ type planThenExecuteSourceEvidenceLevel string
 const (
 	planThenExecuteEvidenceNone                planThenExecuteSourceEvidenceLevel = ""
 	planThenExecuteEvidencePathSeen            planThenExecuteSourceEvidenceLevel = "path_seen"
+	planThenExecuteEvidenceSourceBodyPending   planThenExecuteSourceEvidenceLevel = "source_body_pending"
 	planThenExecuteEvidenceBodyWindow          planThenExecuteSourceEvidenceLevel = "body_window"
 	planThenExecuteEvidenceAnchorReady         planThenExecuteSourceEvidenceLevel = "anchor_ready"
 	planThenExecuteEvidenceExactAnchorContract planThenExecuteSourceEvidenceLevel = "exact_anchor_contract"
@@ -1527,7 +1528,7 @@ func planThenExecuteEvidenceRank(level planThenExecuteSourceEvidenceLevel) int {
 		return 3
 	case planThenExecuteEvidenceBodyWindow:
 		return 2
-	case planThenExecuteEvidencePathSeen:
+	case planThenExecuteEvidenceSourceBodyPending, planThenExecuteEvidencePathSeen:
 		return 1
 	default:
 		return 0
@@ -2536,6 +2537,10 @@ func successfulSubmitPlanResultCount(results []workspace.ToolResult) int {
 // evidence before the completion gate accepts the answer.
 func PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer string, requiredPaths []string) bool {
 	return plancontract.SourceSatisfiedAnswerCoversPaths(answer, requiredPaths)
+}
+
+func PlanThenExecuteSourceSatisfiedMissingCoveragePaths(answer string, requiredPaths []string) []string {
+	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredPaths)
 }
 
 // PlanThenExecuteSourceSatisfiedEvidencePaths extracts concrete path evidence

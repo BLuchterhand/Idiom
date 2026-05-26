@@ -1,0 +1,8 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "Idiom should treat ordinary chat as direct conversation: answer the user, avoid workspace tools, and leave the repository untouched."
+    }
+  ]
+}

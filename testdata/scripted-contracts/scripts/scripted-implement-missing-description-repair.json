@@ -5,12 +5,6 @@
       "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\"}"
     },
     {
-      "content": "{\"tool\":\"search_content\",\"path\":\".\",\"pattern\":\"ShortLabel\"}"
-    },
-    {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the save label\"}"
-    },
-    {
       "content": "{\"tool\":\"source_sanity\",\"path\":\"internal/labels/labels.go\"}"
     },
     {

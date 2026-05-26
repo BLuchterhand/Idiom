@@ -47,8 +47,12 @@ Important evidence sources include:
 - Audit-watch review packets.
 - Product-evidence and release-evidence bundle identifiers.
 
-For behavior bugs, start from logs and audit output before changing prompts or
-control rails.
+For behavior bugs, logs and audit output are the source of truth. Start from
+the newest relevant conversation JSONL, telemetry JSONL, lane stdout JSONL, and
+`harness_audit` before changing prompts or control rails. A diagnosis should
+name the exact session/log ids, stop reason, rejected-action counts,
+completion-gate or recovery events, and the tool sequence that proves the
+failure class.
 
 ## Event Stream Map
 
@@ -115,14 +119,23 @@ flowchart TD
     Failure["Observed behavior failure"]
     Logs["Inspect newest relevant logs"]
     Audit["Run harness_audit"]
+    Compare["Compare prior similar failures"]
     Localize["Map to prompt, runner, tool, lane, memory, or eval"]
     Test["Add regression fixture"]
     Fix["Implement smallest owner-level fix"]
     Verify["Run focused tests and audit/eval"]
     Docs["Update docs if contract changed"]
 
-    Failure --> Logs --> Audit --> Localize --> Test --> Fix --> Verify --> Docs
+    Failure --> Logs --> Audit --> Compare --> Localize --> Test --> Fix --> Verify --> Docs
 ```
+
+Minimum evidence before patching:
+
+- Newest relevant conversation log and telemetry log paths.
+- Stop reason, completion status, and budget/rejection counts.
+- Tool request/result sequence around the failure, including rejected tools.
+- Recovery and completion-gate events that shaped the next model-visible turn.
+- Prior similar sessions or audit pattern counts, when any exist.
 
 ## Ownership Of Fixes
 

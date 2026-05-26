@@ -2,7 +2,7 @@
   "model": "scripted-model",
   "responses": [
     {
-      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\"}"
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\"}"
     },
     {
       "content": "{\"tool\":\"search_content\",\"path\":\".\",\"pattern\":\"ShortLabel\"}"

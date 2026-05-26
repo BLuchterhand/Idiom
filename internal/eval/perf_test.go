@@ -523,6 +523,23 @@ func TestDetectRejectionRetry(t *testing.T) {
 	}
 }
 
+func TestDetectRejectionRetryFromUnpairedRejectedResults(t *testing.T) {
+	raw := `{"tool":"code_navigate","path":"a.go","capability":"file_outline"}`
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "edit a.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "action": "code_navigate:a.go", "raw": raw, "summary": "Implementation target write-ready tool rejected", "error": "rejected"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "code_navigate", "action": "code_navigate:a.go", "raw": raw, "summary": "Implementation target write-ready tool rejected", "error": "rejected"}},
+	}
+
+	rep := analyzeRecords("test", records)
+	if !hasPattern(rep, "rejection_retry") {
+		t.Fatalf("expected unpaired rejected tool_result records to feed rejection_retry, got: %+v", rep.AntiPatterns)
+	}
+	if rep.RejectedActions != 2 {
+		t.Fatalf("expected two logical rejected actions, got %d", rep.RejectedActions)
+	}
+}
+
 func TestDetectSameToolRepeatOnlyAtThreeOrMore(t *testing.T) {
 	raw := `{"tool":"read_file","path":"x.go"}`
 	records := buildSynth("", nil, []synthStep{

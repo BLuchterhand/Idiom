@@ -72,6 +72,8 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, contract TurnPhaseContract) autonomy.TurnPhaseSurfaceSummaryEvent {
 	payload := contract.autonomyEventPayload()
 	advertisedClasses := turnPhaseSurfaceActionClassesFromText(state.NextValidActions)
+	invalidClasses := turnPhaseSurfaceInvalidActionClassesFromText(state.InvalidNextActions)
+	invalidClasses = removeAllowedTurnPhaseInvalidActionClasses(invalidClasses, contract.ActionPolicy.AllowedActionClasses)
 	return autonomy.TurnPhaseSurfaceSummaryEvent{
 		SchemaVersion:           autonomy.TurnPhaseSurfaceSummarySchemaVersion,
 		SurfaceID:               "next_action_state",
@@ -80,7 +82,7 @@ func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, con
 		ModelCallID:             contract.ModelCallID,
 		ProtocolHash:            payload.ProtocolHash,
 		AdvertisedActionClasses: advertisedClasses,
-		InvalidActionClasses:    turnPhaseSurfaceInvalidActionClassesFromText(state.InvalidNextActions),
+		InvalidActionClasses:    invalidClasses,
 		ObligationRefs:          append([]string(nil), state.EvidencePaths...),
 	}
 }
@@ -158,7 +160,10 @@ func phaseStringsIntersect(left []string, right []string) bool {
 }
 
 func turnPhaseSurfaceInvalidActionClassesFromText(values []string) []string {
-	classes := turnPhaseSurfaceActionClassesFromText(values)
+	var classes []string
+	for _, value := range values {
+		classes = append(classes, turnPhaseSurfaceActionClassesFromText([]string{turnPhaseSurfaceInvalidActionLeadClause(value)})...)
+	}
 	out := classes[:0]
 	for _, actionClass := range classes {
 		switch actionClass {
@@ -169,6 +174,41 @@ func turnPhaseSurfaceInvalidActionClassesFromText(values []string) []string {
 		}
 	}
 	return out
+}
+
+func removeAllowedTurnPhaseInvalidActionClasses(invalidClasses []string, allowedClasses []string) []string {
+	if len(invalidClasses) == 0 || len(allowedClasses) == 0 {
+		return invalidClasses
+	}
+	out := invalidClasses[:0]
+	for _, actionClass := range invalidClasses {
+		if containsPhaseString(allowedClasses, actionClass) {
+			continue
+		}
+		out = append(out, actionClass)
+	}
+	return out
+}
+
+func turnPhaseSurfaceInvalidActionLeadClause(value string) string {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return ""
+	}
+	for _, marker := range []string{
+		" before ",
+		" after ",
+		" while ",
+		" until ",
+		" unless ",
+		" except ",
+		" without ",
+	} {
+		if before, _, ok := strings.Cut(lower, marker); ok {
+			return before
+		}
+	}
+	return lower
 }
 
 type runnerTurnPhaseContractInput struct {

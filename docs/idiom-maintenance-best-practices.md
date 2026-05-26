@@ -55,8 +55,17 @@ instead of using its normal editing capability.
 ## Log-First Debugging
 
 - Start behavior debugging from the compact run ledger, conversation JSONL,
-  telemetry JSONL, and `harness_audit`; do not reconstruct the story from
-  memory.
+  telemetry JSONL, and `harness_audit`; these logs are the source of truth for
+  what the harness and model actually did. Do not reconstruct the story from
+  memory, from a previous assistant summary, or from the user's paraphrase when
+  local logs exist.
+- Before proposing a behavior fix, write down the exact session/log paths,
+  stop reason, rejected-action counts, completion-gate/recovery events, and
+  tool sequence that prove the failure class. If any of those are missing,
+  continue log inspection before patching prompts, gates, or scoring.
+- Check the newest failure against prior similar logs and audit pattern counts.
+  Treat repeated signatures as system behavior until logs prove they are an
+  isolated target-repo defect.
 - For live TUI tests, keep the TUI attached to a detached PTY (`tmux`, `screen`,
   or an equivalent controller) and treat conversation/telemetry JSONL as the
   primary monitor. Do not poll the raw alternate-screen terminal as the normal

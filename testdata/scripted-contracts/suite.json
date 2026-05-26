@@ -2,9 +2,12 @@
   "name": "scripted-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 28,
+    "min_tasks": 36,
     "required_families": [
+      "general_chat",
       "direct_question",
+      "information_request",
+      "coding_help",
       "implementation",
       "verification_only",
       "plan_then_execute_planner",
@@ -15,6 +18,11 @@
       "fake-model",
       "rollback",
       "read-only",
+      "no-tool",
+      "chat",
+      "information",
+      "grounded-answer",
+      "coding-help",
       "implement",
       "plan-execute",
       "source-satisfied",
@@ -63,6 +71,8 @@
       "no_runner_rejections",
       "no_shell",
       "no_timeout",
+      "max_tool_requests",
+      "groundedness",
       "allow_source_satisfied",
       "forbid_typed_blocker",
       "min_user_turns",
@@ -70,6 +80,276 @@
     ]
   },
   "tasks": [
+    {
+      "id": "scripted-chat-no-workspace-tools",
+      "family": "general_chat",
+      "runner_mode": "auto",
+      "prompt": "In two short sentences, explain how Idiom should handle ordinary chat that does not ask for repository work.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "no-tool",
+        "chat",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-chat-no-workspace-tools",
+        "prompt_contains": [
+          "ordinary chat",
+          "does not ask for repository work"
+        ],
+        "final_assistant_contains": [
+          "direct conversation",
+          "avoid workspace tools",
+          "leave the repository untouched"
+        ],
+        "forbid_tools": [
+          "read_file",
+          "search_content",
+          "context_pack",
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 0,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-workspace-tool-rules-deny-read-file",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Please attempt to read .idiom/deny-read-test.txt using read_file and report the result.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "information",
+        "tool-rules",
+        "typed-blocker",
+        "recovery",
+        "rollback"
+      ],
+      "env": {
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\".idiom/deny-read-test.txt\",\"content\":\"SECRET_SENTINEL_DO_NOT_LEAK\\n\"}]",
+        "IDIOM_WORKSPACE_TOOL_RULES_JSON": "{\"read_file\":[{\"pattern\":\".idiom/deny-read-test.txt\",\"decision\":\"deny\"},{\"pattern\":\"*\",\"decision\":\"allow\"}]}"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-workspace-tool-rules-deny-read-file",
+        "prompt_contains": [
+          "deny-read-test.txt",
+          "using read_file"
+        ],
+        "final_assistant_contains": [
+          "workspace `tool_rules` deny `read_file`",
+          "No file contents were returned"
+        ],
+        "forbid_final_assistant_contains": [
+          "SECRET_SENTINEL_DO_NOT_LEAK"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "forbid_tools": [
+          "shell",
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "completion_gate"
+        ],
+        "require_run_events": [
+          "permission_decision",
+          "tool_policy_result",
+          "completion_status",
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 1,
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-information-readme-grounded-answer",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Summarize what this fixture repository is for. Use repository evidence and do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "information",
+        "grounded-answer",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-information-readme-grounded-answer",
+        "prompt_contains": [
+          "fixture repository",
+          "Use repository evidence"
+        ],
+        "final_assistant_contains": [
+          "deterministic Idiom scripted-contract tests",
+          "tiny real Git workspace",
+          "did not edit files"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "README.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "groundedness": {
+          "min_score": 0.55,
+          "context_fragments": [
+            "This repository exists only for deterministic Idiom scripted-contract tests. It gives the harness a tiny real Git workspace where a fake model can drive the real binary through workspace mutation, verification, and rollback."
+          ]
+        },
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-coding-help-test-advice-read-only",
+      "family": "coding_help",
+      "runner_mode": "auto",
+      "prompt": "Give coding help only: explain what internal/labels/labels_test.go should cover for ShortLabel and whether internal/labels/labels.go currently satisfies that expectation. Do not edit files or run tests.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "coding-help",
+        "grounded-answer",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-coding-help-test-advice-read-only",
+        "prompt_contains": [
+          "Give coding help only",
+          "internal/labels/labels_test.go",
+          "internal/labels/labels.go",
+          "Do not edit files"
+        ],
+        "final_assistant_contains": [
+          "TestShortLabel",
+          "expects \"Save\"",
+          "implementation still returns \"Save changes\"",
+          "did not edit files"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_no_timeout": true,
+        "groundedness": {
+          "min_score": 0.39,
+          "context_fragments": [
+            "internal/labels/labels.go package labels func ShortLabel() string return \"Save changes\"",
+            "internal/labels/labels_test.go package labels import testing func TestShortLabel t testing.T got := ShortLabel got != \"Save\" want \"Save\""
+          ]
+        },
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
     {
       "id": "scripted-question-does-not-mutate-label",
       "family": "direct_question",
@@ -278,6 +558,7 @@
         ],
         "require_tools": [
           "read_file",
+          "code_navigate",
           "edit_file",
           "source_sanity"
         ],
@@ -297,6 +578,506 @@
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-rangeless-target-read-after-write-ready",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". The model may inspect a nearby test first, then it must be able to read the real target source file without a line range before applying the edit.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-rangeless-target-read-after-write-ready",
+        "prompt_contains": [
+          "nearby test first",
+          "without a line range"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "implementation_target_write_ready_source_refresh_allowed",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-wrong-target-read-keeps-localizing",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the first inspected source file is generic and not the label target, the harness must still allow localization before the edit.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "env": {
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/app/app.go\",\"content\":\"package app\\n\\ntype Model struct{}\\n\"}]"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-wrong-target-read-keeps-localizing",
+        "prompt_contains": [
+          "first inspected source file is generic",
+          "allow localization before the edit"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "context_pack",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "require_no_runner_rejections": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/app/app.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-write-ready-same-path-continuation",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". After the target source is known, a related source file may need two bounded same-path ranges before the edit.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "env": {
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/app/app.go\",\"content\":\"package app\\n\\nconst AppLine1 = \\\"one\\\"\\nconst AppLine2 = \\\"two\\\"\\nconst AppLine3 = \\\"three\\\"\\nconst AppLine4 = \\\"four\\\"\\nconst AppLine5 = \\\"five\\\"\\nconst AppLine6 = \\\"six\\\"\\n\"}]"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-write-ready-same-path-continuation",
+        "prompt_contains": [
+          "two bounded same-path ranges",
+          "before the edit"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "implementation_target_write_ready_source_refresh_allowed",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "require_no_runner_rejections": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/app/app.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-targeted-search-after-write-ready",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: fix the session pane scroll boundary so the cursor stays visible when it moves past the viewport edge. After one plausible source file is read, a targeted search for related session model state must still be allowed before the edit.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "env": {
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"internal/app/sessions_panel.go\",\"content\":\"package app\\n\\nfunc sessionPaneOffset(cursor, height int) int {\\n\\tif cursor >= height {\\n\\t\\treturn 0\\n\\t}\\n\\treturn 0\\n}\\n\"},{\"path\":\"internal/app/sessions.go\",\"content\":\"package app\\n\\ntype sessionsModel struct {\\n\\tcursor int\\n\\tviewport int\\n}\\n\\nfunc (m sessionsModel) visibleCursor() int {\\n\\treturn m.cursor - m.viewport\\n}\\n\"}]"
+      },
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-targeted-search-after-write-ready",
+        "prompt_contains": [
+          "session pane scroll boundary",
+          "targeted search for related session model state"
+        ],
+        "require_changed_files": [
+          "internal/app/sessions_panel.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "implementation_target_write_ready_source_refresh_allowed",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "context_pack",
+          "context_query",
+          "search_files",
+          "read_file",
+          "search_content",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/app/sessions_panel.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "require_no_runner_rejections": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/app/sessions.go",
+          "internal/redirect/large.go",
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-redirected-outline-after-write-ready",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/redirect/large.go by marking the first padding line as visible. If the large target is redirected to code navigation after write-ready, the runner should allow the same-path outline and symbol-body follow-up before the edit.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "repeated-rejection",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-redirected-outline-after-write-ready",
+        "prompt_contains": [
+          "internal/redirect/large.go",
+          "same-path outline and symbol-body follow-up"
+        ],
+        "require_changed_files": [
+          "internal/redirect/large.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "tool_request_rewrite",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "context_pack",
+          "read_file",
+          "code_navigate",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/redirect/large.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "require_no_runner_rejections": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/app/sessions.go",
+          "internal/app/sessions_panel.go",
+          "internal/labels/labels.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-redundant-same-path-read-after-write-ready",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model tries to inspect the same fully read target again after write-ready, recover it into the write instead of allowing redundant source reads.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "repeated-rejection",
+        "rollback",
+        "target-source-recovery"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-redundant-same-path-read-after-write-ready",
+        "prompt_contains": [
+          "same fully read target again",
+          "recover it into the write"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "implementation_target_write_ready_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "search_content",
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-redirected-code-navigate-after-write-ready",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". After one source body is known, a large related Go source may redirect from read_file to code_navigate; follow the redirected route exactly, do not allow unrelated reads to replace the write, then run the language-appropriate validation command.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "rollback",
+        "target-source-recovery",
+        "post-write-verification"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-redirected-code-navigate-after-write-ready",
+        "prompt_contains": [
+          "redirect from read_file to code_navigate",
+          "language-appropriate validation command"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "discovery_redirect",
+          "implementation_target_write_ready_source_refresh_allowed",
+          "implementation_target_write_ready_recovery",
+          "post_write_verification_required",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "code_navigate",
+          "edit_file",
+          "shell"
+        ],
+        "forbid_tools": [
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "README.md",
+          "internal/redirect/large.go",
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-repeated-no-write-terminal-recovery",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement this feature in the frozen fixture: update internal/labels/labels.go so ShortLabel returns \"Save\" instead of \"Save changes\". If the model twice claims it can do the change after reading source but emits no write, the recovery lane must force a terminal write or blocker instead of allowing more discovery.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "recovery",
+        "repeated-rejection",
+        "rollback",
+        "completion-gate"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-repeated-no-write-terminal-recovery",
+        "prompt_contains": [
+          "twice claims it can do the change",
+          "force a terminal write or blocker"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "completion_gate_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "search_content",
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
         "max_duration_millis": 120000
       }
     },
@@ -456,7 +1237,7 @@
         ],
         "require_run_events": [
           "dynamic_validator_decision",
-          "write_description_repair_recovery",
+          "write_description_repair_synthesized",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
@@ -541,6 +1322,63 @@
           "internal/labels/labels.go",
           "internal/labels/labels_test.go"
         ],
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-repeated-missing-description-synthesized",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source. If a concrete implementation-lane write omits only the description metadata, the harness should repair the metadata and execute the write without requiring the model to re-emit the full edit.\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- Run source-aware verification.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "dynamic-validator",
+        "recovery"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-repeated-missing-description-synthesized",
+        "prompt_contains": [
+          "omits only the description metadata",
+          "without requiring the model to re-emit the full edit"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "write_description_repair_synthesized",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "read_file",
+          "edit_file",
+          "source_sanity"
+        ],
+        "forbid_tools": [
+          "shell"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
         "max_duration_millis": 120000
       }
     },
@@ -867,6 +1705,210 @@
         "forbid_source_satisfied": true,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-post-write-language-command-verification",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- After the source edit, choose the language-appropriate validation command for this fixture and report completion only after it passes.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "recovery",
+        "post-write-verification"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-post-write-language-command-verification",
+        "prompt_contains": [
+          "choose the language-appropriate validation command",
+          "internal/labels/labels.go"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "post_write_verification_required",
+          "completion_gate_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "shell"
+        ],
+        "forbid_tools": [
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-post-write-invalid-tool-recovers",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the label change from the current source.\n\nRequired edit paths:\n- internal/labels/labels.go\n\nAcceptance:\n- Change ShortLabel to return \"Save\".\n- If the model attempts a read or edit instead of post-write verification, recover and report completion only after source-aware verification passes.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "implement",
+        "rollback",
+        "control-rails",
+        "recovery",
+        "post-write-verification",
+        "repeated-rejection"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-implement-post-write-invalid-tool-recovers",
+        "prompt_contains": [
+          "post-write verification",
+          "internal/labels/labels.go"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "internal/labels/labels.go"
+          ]
+        },
+        "final_assistant_contains": [
+          "Implemented the label change",
+          "Verification: Source sanity passed"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "post_write_verification_required",
+          "tool_request_rewrite",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-implement-post-write-python-command-verification",
+      "family": "implementation",
+      "runner_mode": "implement",
+      "prompt": "Implement the Python label change from the current source.\n\nRequired edit paths:\n- labels/labels.py\n\nAcceptance:\n- Change short_label to return \"Save\".\n- After the source edit, choose the language-appropriate validation command for this Python fixture and report completion only after it passes.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "python",
+        "implement",
+        "rollback",
+        "control-rails",
+        "recovery",
+        "post-write-verification"
+      ],
+      "fixture": "fixtures/python-label-repo",
+      "scenario": {
+        "name": "scripted-implement-post-write-python-command-verification",
+        "prompt_contains": [
+          "Python label change",
+          "language-appropriate validation command",
+          "labels/labels.py"
+        ],
+        "require_control_rails": {
+          "lane": "implement",
+          "contract": "implementation_result",
+          "task_family": "implementation",
+          "permission_profile": "guarded_workspace_write",
+          "require_edit_paths": [
+            "labels/labels.py"
+          ]
+        },
+        "require_changed_files": [
+          "labels/labels.py"
+        ],
+        "require_run_events": [
+          "post_write_verification_required",
+          "completion_gate_recovery",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_tools": [
+          "edit_file",
+          "shell"
+        ],
+        "forbid_tools": [
+          "source_sanity"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "labels/labels.py"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "forbid_changed_files": [
+          "test_labels.py"
         ],
         "max_errors": 1,
         "max_duration_millis": 120000

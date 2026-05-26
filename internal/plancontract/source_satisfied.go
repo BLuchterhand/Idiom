@@ -8,20 +8,25 @@ import (
 )
 
 func SourceSatisfiedAnswerCoversPaths(answer string, requiredPaths []string) bool {
-	if !SourceSatisfiedAnswerIntent(answer) {
+	if len(sourceSatisfiedPathSet(requiredPaths)) == 0 || !SourceSatisfiedAnswerIntent(answer) {
 		return false
 	}
-	required := sourceSatisfiedPathSet(requiredPaths)
-	if len(required) == 0 {
-		return false
+	return len(SourceSatisfiedMissingCoveragePaths(answer, requiredPaths)) == 0
+}
+
+func SourceSatisfiedMissingCoveragePaths(answer string, requiredPaths []string) []string {
+	required := uniqueSourceSatisfiedPaths(requiredPaths)
+	if len(required) == 0 || !SourceSatisfiedAnswerIntent(answer) {
+		return required
 	}
-	lowerAnswer := strings.ToLower(answer)
-	for path := range required {
-		if !strings.Contains(lowerAnswer, strings.ToLower(path)) {
-			return false
+	evidence := sourceSatisfiedCoveragePathSet(answer, sourceSatisfiedPathSet(required))
+	var missing []string
+	for _, path := range required {
+		if _, ok := evidence[path]; !ok {
+			missing = append(missing, path)
 		}
 	}
-	return true
+	return missing
 }
 
 func SourceSatisfiedEvidencePaths(answer string) []string {
@@ -29,6 +34,16 @@ func SourceSatisfiedEvidencePaths(answer string) []string {
 		return nil
 	}
 	return uniqueSourceSatisfiedPaths(pathparse.MentionedWorkspacePaths(answer))
+}
+
+func sourceSatisfiedCoveragePathSet(answer string, requiredPaths map[string]struct{}) map[string]struct{} {
+	evidence := sourceSatisfiedPathSet(SourceSatisfiedEvidencePaths(answer))
+	for path := range requiredPaths {
+		if sourceSatisfiedTextMentionsExactPath(answer, path) {
+			evidence[path] = struct{}{}
+		}
+	}
+	return evidence
 }
 
 func SourceSatisfiedAnswerIntent(answer string) bool {
@@ -97,6 +112,42 @@ func normalizeSourceSatisfiedPath(path string) string {
 	path = strings.TrimSpace(path)
 	path = strings.TrimPrefix(path, "./")
 	return path
+}
+
+func sourceSatisfiedTextMentionsExactPath(text string, path string) bool {
+	path = normalizeSourceSatisfiedPath(path)
+	if path == "" {
+		return false
+	}
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "-*+")
+		line = strings.TrimSpace(line)
+		line = strings.TrimLeft(line, "`'\"*")
+		for _, candidate := range []string{path, "./" + path} {
+			if !strings.HasPrefix(line, candidate) {
+				continue
+			}
+			if sourceSatisfiedPathBoundary(line, len(candidate)) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func sourceSatisfiedPathBoundary(text string, index int) bool {
+	if index < 0 || index >= len(text) {
+		return true
+	}
+	b := text[index]
+	return !((b >= 'a' && b <= 'z') ||
+		(b >= 'A' && b <= 'Z') ||
+		(b >= '0' && b <= '9') ||
+		b == '/' ||
+		b == '.' ||
+		b == '_' ||
+		b == '-')
 }
 
 func containsAnySourceSatisfiedIntent(text string, needles ...string) bool {

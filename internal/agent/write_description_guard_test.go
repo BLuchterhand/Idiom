@@ -176,15 +176,13 @@ func TestRunnerRejectsEditWithoutDescription(t *testing.T) {
 	}
 }
 
-func TestScopedImplementationMissingWriteDescriptionForcesWriteRepairOrBlocker(t *testing.T) {
+func TestScopedImplementationConcreteMissingWriteDescriptionSynthesizesBeforeRetry(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	replies := []string{
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
-		`{"tool":"search_content","path":".","pattern":"before"}`,
-		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after","description":"update required file after adding missing write description"}`,
 		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
 	}
 	var requests int
@@ -204,7 +202,7 @@ func TestScopedImplementationMissingWriteDescriptionForcesWriteRepairOrBlocker(t
 
 	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
 	ws.MarkPathObserved("a.txt")
-	var sawValidatorDecision, sawRepairRecovery bool
+	var sawValidatorDecision, sawSynthesized bool
 	runner := &Runner{
 		Client:    llama.NewClient(server.URL, time.Second),
 		Workspace: ws,
@@ -221,8 +219,8 @@ func TestScopedImplementationMissingWriteDescriptionForcesWriteRepairOrBlocker(t
 			if event.Role == "dynamic_validator_decision" {
 				sawValidatorDecision = true
 			}
-			if event.Role == "write_description_repair_recovery" {
-				sawRepairRecovery = true
+			if event.Role == "write_description_repair_synthesized" {
+				sawSynthesized = true
 			}
 		},
 	}
@@ -248,10 +246,285 @@ func TestScopedImplementationMissingWriteDescriptionForcesWriteRepairOrBlocker(t
 		t.Fatalf("read a.txt: %v", err)
 	}
 	if string(data) != "after\n" {
-		t.Fatalf("corrected missing-description write should mutate file, got %q", data)
+		t.Fatalf("synthesized missing-description write should mutate file, got %q", data)
 	}
-	if !sawValidatorDecision || !sawRepairRecovery {
-		t.Fatalf("expected validator and repair events, saw decision=%v repair=%v", sawValidatorDecision, sawRepairRecovery)
+	if !sawValidatorDecision || !sawSynthesized {
+		t.Fatalf("expected validator and synthesized events, saw decision=%v synthesized=%v", sawValidatorDecision, sawSynthesized)
+	}
+}
+
+func TestScopedImplementationMissingWriteDescriptionSynthesizesDescription(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
+		"Changed paths:\n- a.txt\nVerification: not required for this test fixture.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+	ws.MarkPathObserved("a.txt")
+	var sawSynthesized bool
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: ws,
+		Policy:    RunPolicy{MaxToolSteps: 5, MaxNoProgressTurns: 5},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			EvidencePaths:        []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "write_description_repair_synthesized" {
+				sawSynthesized = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected final answer to report repaired write, got %q", answer)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(data) != "after\n" {
+		t.Fatalf("synthesized-description write should mutate file, got %q", data)
+	}
+	if !sawSynthesized {
+		t.Fatal("expected write_description_repair_synthesized event")
+	}
+}
+
+func TestWriteDescriptionRepairSynthesisRejectsUnsafeOrOutOfScopeWrites(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			RequiredEditPaths: []string{"allowed.txt"},
+		},
+	}
+	tests := []struct {
+		name         string
+		req          workspace.ToolRequest
+		repairActive bool
+	}{
+		{
+			name:         "non concrete edit",
+			repairActive: true,
+			req:          workspace.ToolRequest{Tool: "edit_file", Path: "allowed.txt"},
+		},
+		{
+			name:         "ambiguous old text only edit",
+			repairActive: true,
+			req:          workspace.ToolRequest{Tool: "edit_file", Path: "allowed.txt", OldText: "before"},
+		},
+		{
+			name:         "placeholder path",
+			repairActive: true,
+			req:          workspace.ToolRequest{Tool: "edit_file", Path: "<path>", OldText: "before", NewText: "after"},
+		},
+		{
+			name:         "empty path",
+			repairActive: true,
+			req:          workspace.ToolRequest{Tool: "write_file", Content: "after\n"},
+		},
+		{
+			name:         "malformed patch",
+			repairActive: true,
+			req:          workspace.ToolRequest{Tool: "apply_patch", Content: "*** Begin Patch\n*** End Patch\n"},
+		},
+		{
+			name:         "out of required scope",
+			repairActive: true,
+			req:          workspace.ToolRequest{Tool: "edit_file", Path: "other.txt", OldText: "before", NewText: "after"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if repaired, raw, ok := runner.writeDescriptionRepairSynthesizedRequest(tt.req, tt.repairActive); ok {
+				t.Fatalf("unexpected synthesis: repaired=%#v raw=%q", repaired, raw)
+			}
+		})
+	}
+	nonMutationRunner := &Runner{}
+	for _, repairActive := range []bool{false, true} {
+		if repaired, raw, ok := nonMutationRunner.writeDescriptionRepairSynthesizedRequest(workspace.ToolRequest{Tool: "edit_file", Path: "allowed.txt", OldText: "before", NewText: "after"}, repairActive); ok {
+			t.Fatalf("unexpected non-mutation synthesis with repairActive=%v: repaired=%#v raw=%q", repairActive, repaired, raw)
+		}
+	}
+	if _, _, ok := runner.writeDescriptionRepairSynthesizedRequest(workspace.ToolRequest{Tool: "edit_file", Path: "allowed.txt", OldText: "before", NewText: "after"}, false); !ok {
+		t.Fatal("expected implementation-lane concrete write to synthesize missing description on first pass")
+	}
+}
+
+func TestScopedImplementationSynthesizedWriteStillRequiresSourceEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
+		"<<QUESTION>>: Cannot edit a.txt before source-body evidence is available.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawSynthesized, sawSourceRejection bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "write_description_repair_synthesized" {
+				sawSynthesized = true
+			}
+		},
+	}
+	if _, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Summary == "Write rejected before source-body evidence" {
+				sawSourceRejection = true
+			}
+		},
+	); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawSynthesized || !sawSourceRejection {
+		t.Fatalf("expected synthesized write then source-evidence rejection, synthesized=%v sourceRejected=%v", sawSynthesized, sawSourceRejection)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(data) != "before\n" {
+		t.Fatalf("write should not execute before source evidence, got %q", data)
+	}
+}
+
+func TestScopedImplementationSynthesizedWriteStillHonorsPermissionDeny(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
+		"<<QUESTION>>: Cannot edit a.txt because the permission policy denied edit_file for that path.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	ws := workspace.NewManager(config.Workspace{Root: root, CWD: root, EnableWrites: true})
+	ws.MarkPathObserved("a.txt")
+	var sawSynthesized, sawPermissionDeny bool
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: ws,
+		Policy:    RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			EvidencePaths:        []string{"a.txt"},
+		},
+		PermissionPolicy: ToolPermissionPolicy{
+			Default: PermissionAllow,
+			Rules: []ToolPermissionRule{{
+				Tool:        "edit_file",
+				PathPattern: "a.txt",
+				Decision:    PermissionDeny,
+			}},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "write_description_repair_synthesized" {
+				sawSynthesized = true
+			}
+			if event.Role == "permission_decision" && strings.Contains(event.Content, `"decision":"deny"`) {
+				sawPermissionDeny = true
+			}
+		},
+	}
+	if _, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "Update a.txt."}}, llama.ChatOptions{}, nil, nil, nil); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawSynthesized || !sawPermissionDeny {
+		t.Fatalf("expected synthesized write then permission denial, synthesized=%v permissionDeny=%v", sawSynthesized, sawPermissionDeny)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "a.txt"))
+	if err != nil {
+		t.Fatalf("read a.txt: %v", err)
+	}
+	if string(data) != "before\n" {
+		t.Fatalf("permission-denied synthesized write should not mutate file, got %q", data)
 	}
 }
 
@@ -261,7 +534,7 @@ func TestScopedImplementationMissingWriteDescriptionRepeatedDetourReturnsTypedBl
 		t.Fatalf("seed: %v", err)
 	}
 	replies := []string{
-		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after"}`,
+		`{"tool":"edit_file","path":"a.txt"}`,
 		`{"tool":"search_content","path":".","pattern":"before"}`,
 		`{"tool":"search_content","path":".","pattern":"still before"}`,
 		`{"tool":"edit_file","path":"a.txt","old_text":"before","new_text":"after","description":"write after passive missing-description rejection"}`,
@@ -334,7 +607,6 @@ func TestScopedImplementationWriteDescriptionRepairClearsForTargetPath(t *testin
 	}
 	replies := []string{
 		`{"tool":"edit_file","path":"b.txt","old_text":"before","new_text":"after"}`,
-		`{"tool":"edit_file","path":"b.txt","old_text":"before","new_text":"after","description":"update the second required file after adding the missing write description"}`,
 		`{"tool":"read_file","path":"a.txt","named_gap":"confirm first required file before writing it"}`,
 		`{"tool":"edit_file","path":"a.txt","old_text":"alpha","new_text":"done","description":"update the first required file after the second file repair is complete"}`,
 		"Changed paths:\n- a.txt\n- b.txt\nVerification: not required for this test fixture.",
@@ -406,7 +678,7 @@ func TestScopedImplementationWriteDescriptionRepairClearsForTargetPath(t *testin
 		}
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected full repair/read/edit/final sequence, got %d requests", requests)
+		t.Fatalf("expected full synth/read/edit/final sequence, got %d requests", requests)
 	}
 }
 
@@ -531,21 +803,24 @@ func TestRunnerGuardFiresAfterPermissionDeny(t *testing.T) {
 	}
 }
 
-// TestRunnerBailsAfterTwoConsecutiveMissingDescriptions locks in the
-// safety valve: if the model emits two edit_file calls in a row with
-// no description, the runner stops the loop rather than letting the
-// guard fire indefinitely. Mirrors the guard_rejection_budget logic
-// for our new write_description_budget_exhausted stop reason.
-func TestRunnerBailsAfterTwoConsecutiveMissingDescriptions(t *testing.T) {
+// TestRunnerBailsAfterTwoNonConcreteMissingDescriptions locks in the
+// safety valve for missing-description writes that cannot be safely
+// synthesized: the runner stops the loop rather than letting the guard
+// fire indefinitely. Concrete in-scope writes are covered separately by
+// TestScopedImplementationMissingWriteDescriptionSynthesizesDescription.
+func TestRunnerBailsAfterTwoNonConcreteMissingDescriptions(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	if err := writeTestFile(root, "OTHER.md", "hello\n"); err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
 	// Use distinct args on each call so the "repeated tool request" guard
 	// doesn't pre-empt the description guard.
 	replies := []string{
-		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"bye\"}\n```",
-		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\",\"old_text\":\"hello\",\"new_text\":\"ciao\"}\n```",
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"README.md\"}\n```",
+		"```tool\n{\"tool\":\"edit_file\",\"path\":\"OTHER.md\"}\n```",
 		// If the bail never triggers, the loop will ask for a third reply.
 		"Gave up on description.",
 	}

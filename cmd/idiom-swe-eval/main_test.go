@@ -811,6 +811,97 @@ func TestScriptedContractSuiteLintsClean(t *testing.T) {
 	}
 }
 
+func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "testdata", "scripted-contracts", "suite.json")
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := map[string]eval.SWETask{}
+	for _, task := range suite.Tasks {
+		taskByID[task.ID] = task
+	}
+
+	chat, ok := taskByID["scripted-chat-no-workspace-tools"]
+	if !ok {
+		t.Fatalf("generic no-tool chat task missing")
+	}
+	assertTaskHasTags(t, chat, "chat", "no-tool", "read-only", "rollback")
+	assertTaskHasRunEvents(t, chat,
+		"idiom.live_contract.workspace_prepared",
+		"idiom.live_contract.resolved_config",
+		"idiom.live_contract.rollback",
+		"idiom.scripted_model.requests",
+	)
+	if chat.Family != "general_chat" || chat.Oracle.MaxToolRequests == nil || *chat.Oracle.MaxToolRequests != 0 || !chat.Oracle.RequireNoChangedFiles {
+		t.Fatalf("generic chat task must assert zero workspace-tool use and no mutation, family=%q oracle=%#v", chat.Family, chat.Oracle)
+	}
+	for _, forbidden := range []string{"read_file", "shell", "edit_file", "submit_plan"} {
+		if !slices.Contains(chat.Scenario.ForbidTools, forbidden) {
+			t.Fatalf("generic chat task must forbid %q, got %#v", forbidden, chat.Scenario.ForbidTools)
+		}
+	}
+
+	deniedRead, ok := taskByID["scripted-workspace-tool-rules-deny-read-file"]
+	if !ok {
+		t.Fatalf("workspace tool_rules deny read_file task missing")
+	}
+	assertTaskHasTags(t, deniedRead, "information", "tool-rules", "typed-blocker", "read-only", "rollback")
+	assertTaskHasRunEvents(t, deniedRead, "permission_decision", "tool_policy_result", "completion_status")
+	if deniedRead.Family != "information_request" {
+		t.Fatalf("workspace tool_rules deny task must be an information request, got %q", deniedRead.Family)
+	}
+	if !strings.Contains(deniedRead.Env["IDIOM_WORKSPACE_TOOL_RULES_JSON"], `"decision":"deny"`) ||
+		!strings.Contains(deniedRead.Env["IDIOM_WORKSPACE_EXTRA_FILES_JSON"], "SECRET_SENTINEL_DO_NOT_LEAK") {
+		t.Fatalf("workspace tool_rules deny task must configure a denied sentinel file, env=%#v", deniedRead.Env)
+	}
+	if !slices.Contains(deniedRead.Scenario.RequireTools, "read_file") ||
+		!slices.Contains(deniedRead.Scenario.ForbidTools, "completion_gate") {
+		t.Fatalf("workspace tool_rules deny task must require one read and forbid completion-gate recovery, scenario=%#v", deniedRead.Scenario)
+	}
+	if !slices.Contains(deniedRead.Scenario.ForbidFinalAssistantContains, "SECRET_SENTINEL_DO_NOT_LEAK") {
+		t.Fatalf("workspace tool_rules deny task must forbid sentinel leakage, scenario=%#v", deniedRead.Scenario)
+	}
+	if deniedRead.Oracle.MaxToolRequests == nil || *deniedRead.Oracle.MaxToolRequests != 1 ||
+		deniedRead.Oracle.MaxErrors == nil || *deniedRead.Oracle.MaxErrors != 1 ||
+		!deniedRead.Oracle.RequireNoChangedFiles {
+		t.Fatalf("workspace tool_rules deny task must pin one denied tool request and no mutation, oracle=%#v", deniedRead.Oracle)
+	}
+
+	info, ok := taskByID["scripted-information-readme-grounded-answer"]
+	if !ok {
+		t.Fatalf("grounded information task missing")
+	}
+	assertTaskHasTags(t, info, "information", "grounded-answer", "read-only", "rollback")
+	if info.Family != "information_request" || info.Oracle.Groundedness == nil || !slices.Contains(info.Scenario.RequireEvidencePaths, "README.md") {
+		t.Fatalf("information task must require README evidence and groundedness, family=%q scenario=%#v oracle=%#v", info.Family, info.Scenario, info.Oracle)
+	}
+	if !slices.Contains(info.Scenario.RequireTools, "read_file") || slices.Contains(info.Scenario.ForbidTools, "read_file") {
+		t.Fatalf("information task must allow exactly source-backed read behavior, scenario=%#v", info.Scenario)
+	}
+
+	help, ok := taskByID["scripted-coding-help-test-advice-read-only"]
+	if !ok {
+		t.Fatalf("read-only coding-help task missing")
+	}
+	assertTaskHasTags(t, help, "coding-help", "grounded-answer", "read-only", "rollback")
+	if help.Oracle.Groundedness == nil {
+		t.Fatalf("coding-help task must require groundedness, oracle=%#v", help.Oracle)
+	}
+	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
+		if !slices.Contains(help.Scenario.RequireEvidencePaths, want) {
+			t.Fatalf("coding-help task must require grounded evidence path %q, scenario=%#v oracle=%#v", want, help.Scenario, help.Oracle)
+		}
+	}
+	if len(help.Oracle.Groundedness.ContextFragments) == 0 {
+		t.Fatalf("coding-help task must include fixture-local groundedness fragments, oracle=%#v", help.Oracle)
+	}
+	if help.Family != "coding_help" || help.Scenario.RequireVerification != "none" || !help.Oracle.RequireNoShell || !help.Oracle.RequireNoChangedFiles {
+		t.Fatalf("coding-help task must stay read-only, family=%q scenario=%#v oracle=%#v", help.Family, help.Scenario, help.Oracle)
+	}
+}
+
 func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
 	suitePath := filepath.Join("..", "..", "testdata", "scripted-contracts", "suite.json")
 	suite, err := eval.LoadSWESuite(suitePath)

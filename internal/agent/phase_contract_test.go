@@ -328,7 +328,12 @@ func TestDeriveTurnPhaseContractGroundingRejectedPlanUsesSourceRefresh(t *testin
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
-	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
+	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
+		t.Fatalf("textual source refresh must not advertise manifest tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
+	}
+	if contract.RuntimeCall.ParserContract != "source_refresh" {
+		t.Fatalf("ParserContract = %q, want source_refresh", contract.RuntimeCall.ParserContract)
+	}
 }
 
 func TestDeriveTurnPhaseContractSubmitCorrectionAfterAnchorRefresh(t *testing.T) {
@@ -503,6 +508,47 @@ func TestDeriveTurnPhaseContractImplementationTargetSourceDoesNotOverrideWriteRe
 	}
 }
 
+func TestDeriveTurnPhaseContractWriteReadyDropsSupersededPendingRedirect(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "fix the session pane cursor scrolling",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
+			TargetPacket: []string{
+				"candidate file: internal/app/implementation_dispatch.go",
+				"candidate file: internal/app/sessions_panel.go",
+			},
+		},
+		Results: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Redirected internal/app/implementation_dispatch.go to code_navigate",
+				Output:  "Use code_navigate for source-body evidence in internal/app/implementation_dispatch.go.",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+				Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+			},
+		},
+		BaseAllowedTools: []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationWriteReady {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationWriteReady)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, contract.AllowedTools, "code_navigate")
+	joined := strings.Join(append(append([]string{}, contract.RequiredNext...), contract.InvalidNext...), "\n")
+	if strings.Contains(joined, "pending redirected source-body obligation") ||
+		strings.Contains(joined, "implementation_dispatch.go via code_navigate") {
+		t.Fatalf("stale redirected candidate should not remain a hard write-ready obligation: %#v / %#v", contract.RequiredNext, contract.InvalidNext)
+	}
+}
+
 func TestDeriveTurnPhaseContractPlanExecuteAllowedScopeDoesNotUseImplementationTargetSource(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -550,6 +596,118 @@ func TestDeriveTurnPhaseContractImplementationVerifyReady(t *testing.T) {
 	assertContains(t, contract.HiddenTools, "read_file")
 }
 
+func TestDeriveTurnPhaseContractImplementationTextualDoesNotAdvertiseManifestTools(t *testing.T) {
+	tests := []struct {
+		name           string
+		input          TurnPhaseContractInput
+		wantPhaseID    string
+		wantAction     string
+		wantHiddenTool string
+	}{
+		{
+			name: "target source",
+			input: TurnPhaseContractInput{
+				Brief: workerruntime.WorkerRuntimeBrief{
+					TaskFamily:        "implementation",
+					Contract:          "implementation_result",
+					PermissionProfile: "guarded_workspace_write",
+					AllowedTools:      []string{"context_pack", "search_content", "read_file", "code_navigate", "edit_file", "apply_patch"},
+				},
+				TextualToolParser: true,
+				ToolTransportMode: "textual",
+			},
+			wantPhaseID:    turnPhaseImplementationTargetSource,
+			wantAction:     actionRead,
+			wantHiddenTool: "read_file",
+		},
+		{
+			name: "write ready",
+			input: TurnPhaseContractInput{
+				Brief: workerruntime.WorkerRuntimeBrief{
+					TaskFamily:        "implementation",
+					Contract:          "implementation_result",
+					PermissionProfile: "guarded_workspace_write",
+					AllowedTools:      []string{"read_file", "edit_file", "apply_patch", "shell"},
+					RequiredEditPaths: []string{"pkg/feature.go"},
+				},
+				TextualToolParser: true,
+				ToolTransportMode: "textual",
+			},
+			wantPhaseID:    turnPhaseImplementationWriteReady,
+			wantAction:     actionPerEditWrite,
+			wantHiddenTool: "edit_file",
+		},
+		{
+			name: "verify ready",
+			input: TurnPhaseContractInput{
+				Brief: workerruntime.WorkerRuntimeBrief{
+					TaskFamily:        "implementation",
+					Contract:          "implementation_result",
+					PermissionProfile: "guarded_workspace_write",
+					AllowedTools:      []string{"read_file", "edit_file", "source_sanity", "shell", "git_diff"},
+				},
+				Results: []workspace.ToolResult{{
+					Tool:    "edit_file",
+					Summary: "Edited pkg/feature.go",
+				}},
+				TextualToolParser: true,
+				ToolTransportMode: "textual",
+			},
+			wantPhaseID:    turnPhaseImplementationVerifyReady,
+			wantAction:     actionVerify,
+			wantHiddenTool: "source_sanity",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contract := deriveTurnPhaseContract(tt.input)
+			if contract.PhaseID != tt.wantPhaseID {
+				t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, tt.wantPhaseID)
+			}
+			if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
+				t.Fatalf("textual implementation phase must not advertise manifest tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
+			}
+			assertContains(t, contract.HiddenTools, tt.wantHiddenTool)
+			assertContains(t, contract.ActionPolicy.AllowedActionClasses, tt.wantAction)
+			if issues := autonomy.ReconcileTurnPhaseSurface(
+				contract.autonomyEventPayload(),
+				autonomy.SurfaceSummaryFromTurnPhaseContract(contract.autonomyEventPayload()),
+			); len(issues) != 0 {
+				t.Fatalf("textual implementation self-summary should reconcile cleanly, got %#v", issues)
+			}
+		})
+	}
+}
+
+func TestDeriveTurnPhaseContractGenericTextualDoesNotAdvertiseManifestTools(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "debug_logs",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+			RequiredNext:      []string{"inspect the concrete log artifact or answer from existing evidence"},
+		},
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+
+	if contract.PhaseID != turnPhaseGeneric {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseGeneric)
+	}
+	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
+		t.Fatalf("textual generic phase must not advertise manifest tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
+	}
+	assertContains(t, contract.HiddenTools, "read_file")
+	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionFinalAnswer)
+	if issues := autonomy.ReconcileTurnPhaseSurface(
+		contract.autonomyEventPayload(),
+		autonomy.SurfaceSummaryFromTurnPhaseContract(contract.autonomyEventPayload()),
+	); len(issues) != 0 {
+		t.Fatalf("textual generic self-summary should reconcile cleanly, got %#v", issues)
+	}
+}
+
 func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerificationFirst(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -575,6 +733,32 @@ func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerific
 	assertNotContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.HiddenTools, "edit_file")
 	assertContains(t, contract.HiddenTools, "read_file")
+}
+
+func TestDeriveTurnPhaseContractFailedVerificationOpensRepairLane(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch", "source_sanity", "shell", "git_diff", "git_status"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "edit_file", Summary: "Edited pkg/feature.go"},
+			{Tool: "shell", Summary: "Ran shell command", Output: "$ npm run build\n", Error: "build failed"},
+		},
+	})
+
+	if contract.Phase != "verification_repair" {
+		t.Fatalf("Phase = %q, want verification_repair", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
+	assertContains(t, contract.AllowedTools, "edit_file")
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "shell")
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 }
 
 func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(t *testing.T) {
@@ -603,6 +787,49 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSourceBody(
 	assertNotContains(t, contract.AllowedTools, "search_content")
 }
 
+func TestDeriveTurnPhaseContractTargetWriteReadyShowsPendingRedirectedSourceObligation(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "fix session panel scrolling",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 internal/app/sessions_panel.go lines 1-20 (total lines: 80)",
+				Output:  "package app\n\nfunc PanelVisible() bool {\n\treturn true\n}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Redirected internal/app/sessions.go to code_navigate",
+				Output:  "Use code_navigate for source-body evidence in internal/app/sessions.go.",
+			},
+		},
+	})
+
+	if contract.Phase != "target_write_ready" {
+		t.Fatalf("Phase = %q, want target_write_ready with pending redirected source obligation; contract=%#v", contract.Phase, contract)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertContains(t, contract.AllowedTools, "code_navigate")
+	assertContains(t, contract.ActionPolicy.CallableToolNames, "code_navigate")
+	assertNotContains(t, contract.AllowedTools, "read_file")
+	assertNotContains(t, contract.AllowedTools, "search_content")
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+
+	joinedNext := strings.Join(contract.RequiredNext, "\n")
+	for _, want := range []string{"internal/app/sessions.go", "code_navigate", "source-body", "capability=read_symbol", "pattern/symbol"} {
+		if !strings.Contains(joinedNext, want) {
+			t.Fatalf("RequiredNext missing pending redirected source obligation detail %q: %#v", want, contract.RequiredNext)
+		}
+	}
+}
+
 func TestDeriveTurnPhaseContractUnscopedImplementationDesignDocReadStaysTargetSource(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -627,6 +854,124 @@ func TestDeriveTurnPhaseContractUnscopedImplementationDesignDocReadStaysTargetSo
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "context_pack")
 	assertContains(t, contract.AllowedTools, "edit_file")
+}
+
+func TestDeriveTurnPhaseContractUnscopedImplementationWrongTargetReadStaysTargetSource(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "the session panel cursor should scroll down when navigating with arrow keys",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "context_pack", "code_navigate", "search_content", "edit_file", "apply_patch"},
+			TargetPacket: []string{
+				"### Candidate Files",
+				"- `internal/app/app.go` (read_only_evidence): weak packet candidate",
+				"- `internal/agent/phase_contract.go` (editable): matched task terms",
+				"- `internal/agent/runner.go` (editable): matched task terms",
+			},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/app.go lines 1-55 (total lines: 55)",
+			Output:  "package app\n\ntype Model struct{}\n",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want target_source after non-plausible source read; contract=%#v", contract.PhaseID, contract)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.AllowedTools, "context_pack")
+	assertContains(t, contract.AllowedTools, "read_file")
+}
+
+func TestDeriveTurnPhaseContractSingleObjectiveTokenReadStaysTargetSource(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "The history tab's shortened text carries newlines that do not make sense for wrapping.",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "context_pack", "code_navigate", "search_content", "edit_file", "apply_patch"},
+			TargetPacket: []string{
+				"### Candidate Files",
+				"- `internal/agent/phase_contract.go` (editable): matched task terms",
+				"- `cmd/idiom/lane_history.go` (read_only_evidence): related by calls relationship",
+			},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 cmd/idiom/lane_history.go lines 1-331 (total lines: 331)",
+			Output:  "package main\n\ntype laneHistoryEvent struct{}\n",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want target_source after weak single-token evidence read; contract=%#v", contract.PhaseID, contract)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.AllowedTools, "context_pack")
+	assertContains(t, contract.AllowedTools, "search_content")
+}
+
+func TestDeriveTurnPhaseContractNonEditableTargetPacketReadStaysTargetSource(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "the session panel cursor should scroll down when navigating with arrow keys",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "context_pack", "code_navigate", "search_content", "edit_file", "apply_patch"},
+			TargetPacket: []string{
+				"### Candidate Files",
+				"- `internal/app/model_state_test.go` (test): related coverage only",
+			},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/model_state_test.go lines 1-80 (total lines: 80)",
+			Output:  "package app\n\nfunc TestModelState(t *testing.T) {}\n",
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want target_source after non-editable target-packet read; contract=%#v", contract.PhaseID, contract)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "context_pack")
+}
+
+func TestDeriveTurnPhaseContractUnscopedImplementationPlausibleTargetReadBecomesWriteReady(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "the session panel cursor should scroll down when navigating with arrow keys",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "context_pack", "code_navigate", "search_content", "edit_file", "apply_patch"},
+			TargetPacket: []string{
+				"### Candidate Files",
+				"- `internal/agent/phase_contract.go` (editable): matched task terms",
+				"- `internal/agent/runner.go` (editable): matched task terms",
+			},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/app/sessions_panel.go lines 1-80 (total lines: 320)",
+			Output:  "package app\n\ntype sessionsPanelModel struct{}\n",
+		}},
+	})
+
+	if contract.Phase != "target_write_ready" {
+		t.Fatalf("Phase = %q, want target_write_ready for objective-plausible source read; contract=%#v", contract.Phase, contract)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionPerEditWrite)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "context_pack")
 }
 
 func TestDeriveTurnPhaseContractUnscopedImplementationStaysWriteReadyAfterMultipleSourceReads(t *testing.T) {
@@ -798,6 +1143,29 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceReadyDoesNotAdvertis
 	}
 }
 
+func TestDeriveTurnPhaseContractReadOnlyConversationKeepsToolsForUnreadNamedPath(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Compare internal/labels/labels.go and internal/labels/labels_test.go.",
+			AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5"},
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending until every named path is read", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.AllowedTools, "read_file")
+}
+
 func TestDeriveTurnPhaseContractReadOnlyWorkspaceStaysPendingAfterShallowDiscovery(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -957,6 +1325,37 @@ func TestNextActionStateSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) 
 	}
 	if !foundInvalid {
 		t.Fatalf("expected invalid %s contradiction from rendered next-action state, got %#v", invalidActionClass, issues)
+	}
+}
+
+func TestWriteReadyNextActionStateDoesNotMarkAllowedWriteInvalid(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-20 (total lines: 20)",
+		}},
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	if contract.PhaseID != turnPhaseImplementationWriteReady {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseImplementationWriteReady)
+	}
+	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
+		Phase: "generic",
+		Step:  4,
+	}, contract)
+	summary := turnPhaseSurfaceSummaryFromNextActionState(state, contract)
+	if slices.Contains(summary.InvalidActionClasses, actionPerEditWrite) {
+		t.Fatalf("next-action summary must not mark allowed write invalid, got %#v from invalid text %#v", summary.InvalidActionClasses, state.InvalidNextActions)
+	}
+	if issues := autonomy.ReconcileTurnPhaseSurface(contract.autonomyEventPayload(), summary); len(issues) != 0 {
+		t.Fatalf("write-ready next-action summary should reconcile cleanly, got %#v", issues)
 	}
 }
 

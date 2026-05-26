@@ -24,6 +24,7 @@ __pycache__/
 .planning/
 logs/
 models/
+outputs/
 transcripts/
 testdata/live-contracts/generated-logs/
 testdata/scripted-contracts/generated-logs/

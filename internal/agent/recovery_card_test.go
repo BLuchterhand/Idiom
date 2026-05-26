@@ -167,6 +167,274 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, RenderRecoveryCard(card))
 }
 
+func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools: []string{
+				"context_pack", "read_file", "code_navigate", "search_content",
+				"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations",
+			},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+		Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+	}}
+
+	got := runner.renderRecoveryCardForRejectedAction(
+		workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/model.go"},
+		workspace.ToolResult{
+			Tool:    "code_navigate",
+			Summary: "Implementation target write-ready tool rejected",
+			Error:   "code_navigate is outside the implementation target-write-ready surface",
+		},
+		results,
+		[]string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations"},
+	)
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=implementation.write_ready",
+		"currently callable action classes: per_edit_write, blocker",
+		"deterministic safe next action: Emit one parser-readable write to the already-sourced path(s): internal/app/sessions_panel.go; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
+	)
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("write-ready recovery card should not advertise no safe action, got:\n%s", got)
+	}
+	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+}
+
+func TestBuildRecoveryCardDerivesSafeNextForClosedPlannerPhase(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseMalformedSubmitPlanRecovery,
+		RequiredNext: []string{"parser-readable submit_plan with one ordered edit entry for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses:   []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker},
+			InvalidActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite},
+			TerminalResponseShapes: []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"},
+			CallableToolNames:      []string{"submit_plan"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker},
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"submit_plan"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "read_file", Path: "internal/app/sessions_panel.go"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "read/search/source-refresh after plan-execute submit_plan readiness",
+		},
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=plan_execute.malformed_submit_plan_recovery",
+		"currently callable tools: submit_plan",
+		"deterministic safe next action: Emit one parser-readable planner outcome: parser-readable submit_plan with one ordered edit entry for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker",
+	)
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("closed planner recovery card should not advertise no safe action, got:\n%s", got)
+	}
+	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+}
+
+func TestRecoveryCardDoesNotAdvertiseUnavailablePendingRedirect(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseImplementationWriteReady,
+		RequiredNext: []string{"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionPerEditWrite, actionBlocker},
+			CallableToolNames:    []string{"apply_patch"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionPerEditWrite, actionBlocker},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Redirected internal/app/sessions_panel.go to code_navigate read_symbol",
+	}}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:               contract,
+		CurrentAllowedTools:         []string{"apply_patch"},
+		RejectedRequest:             workspace.ToolRequest{Tool: "read_file", Path: "internal/app/sessions_panel.go"},
+		RejectedResult:              workspace.ToolResult{Tool: "read_file", Summary: "Implementation target write-ready tool rejected"},
+		DeterministicSafeNextAction: recoveryCardSafeNextActionForRejectedAction(workerruntime.WorkerRuntimeBrief{}, contract, results),
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=implementation.write_ready",
+		"currently callable tools: apply_patch",
+		"currently callable action classes: per_edit_write, blocker",
+		"deterministic safe next action: Follow the active write-ready requirement: parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+	)
+	if strings.Contains(got, "Resolve the exact pending redirected source-body obligation") ||
+		strings.Contains(got, "via code_navigate") {
+		t.Fatalf("recovery card must not advertise unavailable pending read follow-up, got:\n%s", got)
+	}
+}
+
+func TestRecoveryCardAdvertisesCallablePendingRedirect(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseImplementationWriteReady,
+		RequiredNext: []string{"resolve the pending redirected source-body obligation, then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
+			CallableToolNames:    []string{"code_navigate", "apply_patch"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Redirected internal/app/sessions_panel.go to code_navigate read_symbol",
+	}}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:               contract,
+		CurrentAllowedTools:         []string{"code_navigate", "apply_patch"},
+		RejectedRequest:             workspace.ToolRequest{Tool: "search_content", Path: "internal/app"},
+		RejectedResult:              workspace.ToolResult{Tool: "search_content", Summary: "Implementation target write-ready pending source-body obligation rejected"},
+		DeterministicSafeNextAction: recoveryCardSafeNextActionForRejectedAction(workerruntime.WorkerRuntimeBrief{}, contract, results),
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"currently callable action classes: read, per_edit_write, blocker",
+		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/app/sessions_panel.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path, or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
+	)
+}
+
+func TestRecoveryCardScopesPendingRedirectsToActiveBrief(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "implementation",
+		Contract:   "implementation_result",
+		Objective:  "fix the session pane cursor scrolling",
+		TargetPacket: []string{
+			"candidate file: internal/app/implementation_dispatch.go",
+			"candidate file: internal/app/sessions.go",
+			"candidate file: internal/app/sessions_panel.go",
+		},
+	}
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseImplementationWriteReady,
+		RequiredNext: []string{"resolve the pending redirected source-body obligation, then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
+			CallableToolNames:    []string{"code_navigate", "apply_patch"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionRead, actionPerEditWrite, actionBlocker},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/app/implementation_dispatch.go to code_navigate",
+			Output:  "Use code_navigate for source-body evidence in internal/app/implementation_dispatch.go.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+			Output:  "func renderSessionsPanelContent() {}\nfunc handleSessionsPanelKey() {}\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Redirected internal/app/sessions.go to code_navigate",
+			Output:  "Use code_navigate for source-body evidence in internal/app/sessions.go.",
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:               contract,
+		CurrentAllowedTools:         []string{"code_navigate", "apply_patch"},
+		RejectedRequest:             workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/model_state.go"},
+		RejectedResult:              workspace.ToolResult{Tool: "code_navigate", Summary: "Implementation target write-ready pending source-body obligation rejected"},
+		DeterministicSafeNextAction: recoveryCardSafeNextActionForRejectedAction(brief, contract, results),
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/app/sessions.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path, or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
+	)
+	if strings.Contains(got, "implementation_dispatch.go via code_navigate") {
+		t.Fatalf("recovery card must not reintroduce stale scoped-out pending redirect, got:\n%s", got)
+	}
+}
+
+func TestBuildRecoveryCardDerivesSafeNextForVerificationReadyPhase(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"source_sanity", "shell", "git_diff", "git_status", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "apply_patch",
+			Summary: "Patched files",
+			Output:  "update internal/app/sessions_panel.go\n",
+		}},
+		BaseAllowedTools: []string{"source_sanity", "shell", "git_diff", "git_status", "apply_patch"},
+	})
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"source_sanity", "shell", "git_diff", "git_status"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "completion_gate"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Completion gate rejected final answer",
+			Error:   "post-write verification is unresolved",
+		},
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=implementation.verify_ready",
+		"currently callable action classes: verify, blocker",
+		"deterministic safe next action: Run one focused verification action from the active verification requirement: one focused language-appropriate verification command/tool for changed source files, compiler-backed diagnostics, or <<QUESTION>> with the exact verification blocker",
+	)
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("verification-ready recovery card should not advertise no safe action, got:\n%s", got)
+	}
+	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+}
+
+func TestBuildRecoveryCardDoesNotDeriveVerifyOnlySafeNextForVerificationRepair(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID:      turnPhaseImplementationVerifyReady,
+		Phase:        "verification_repair",
+		RequiredNext: []string{"repair the failing in-scope changed/required path, use one narrow source/language/context lookup for an exact repair fact, rerun language-appropriate verification after the repair write, or <<QUESTION>> with the exact external blocker"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionPerEditWrite, actionRead, actionVerify, actionBlocker},
+			CallableToolNames:    []string{"apply_patch", "read_file", "source_sanity"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionPerEditWrite, actionRead, actionVerify, actionBlocker},
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"apply_patch", "read_file", "source_sanity"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "completion_gate"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Completion gate rejected final answer",
+			Error:   "post-repair verification is unresolved",
+		},
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=implementation.verify_ready",
+		"currently callable action classes: per_edit_write, read, verify, blocker",
+		"deterministic safe next action: none available",
+	)
+	if strings.Contains(got, "Run one focused verification action") {
+		t.Fatalf("verification-repair recovery card must not imply verification before repair, got:\n%s", got)
+	}
+	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+}
+
 func TestBuildRecoveryCardDoesNotAdvertiseToolsForFinalOnlyPhase(t *testing.T) {
 	contract := TurnPhaseContract{
 		PhaseID:      turnPhaseGeneric,

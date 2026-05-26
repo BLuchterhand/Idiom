@@ -187,7 +187,7 @@ func TestShouldForceAnswerForPostCompletionVerificationCountsAfterSuccessfulSour
 	}
 	results := []workspace.ToolResult{
 		{Tool: "edit_file", Summary: "Edited a.go"},
-		{Tool: "source_sanity", Summary: "Source sanity passed"},
+		{Tool: "source_sanity", Summary: "Source sanity passed", Output: "a.go: no warnings or errors via go_diagnostics"},
 	}
 	counter := 0
 	read := workspace.ToolRequest{Tool: "read_file", Path: "a.go"}

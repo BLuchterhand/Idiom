@@ -24,12 +24,16 @@ const (
 )
 
 type routeContractProjection struct {
-	Source            routeSource            `json:"source"`
-	Family            string                 `json:"family"`
-	Lane              string                 `json:"lane"`
-	Contract          string                 `json:"contract"`
-	MutationAuthority routeMutationAuthority `json:"mutation_authority"`
-	MutationCapable   bool                   `json:"mutation_capable"`
+	Source             routeSource            `json:"source"`
+	Family             string                 `json:"family"`
+	Lane               string                 `json:"lane"`
+	Contract           string                 `json:"contract"`
+	MutationAuthority  routeMutationAuthority `json:"mutation_authority"`
+	MutationCapable    bool                   `json:"mutation_capable"`
+	RequestedOutcome   string                 `json:"requested_outcome,omitempty"`
+	WriteIntent        string                 `json:"write_intent,omitempty"`
+	ReadOnlyConstraint bool                   `json:"read_only_constraint,omitempty"`
+	ContinuationTarget string                 `json:"continuation_target,omitempty"`
 }
 
 func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProjection {
@@ -45,12 +49,16 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 		}
 	}
 	return routeContractProjection{
-		Source:            source,
-		Family:            strings.TrimSpace(plan.Family),
-		Lane:              strings.TrimSpace(plan.InitialLane),
-		Contract:          strings.TrimSpace(plan.Contract),
-		MutationAuthority: authority,
-		MutationCapable:   authority != routeMutationAuthorityNone,
+		Source:             source,
+		Family:             strings.TrimSpace(plan.Family),
+		Lane:               strings.TrimSpace(plan.InitialLane),
+		Contract:           strings.TrimSpace(plan.Contract),
+		MutationAuthority:  authority,
+		MutationCapable:    authority != routeMutationAuthorityNone,
+		RequestedOutcome:   strings.TrimSpace(plan.RequestedOutcome),
+		WriteIntent:        strings.TrimSpace(plan.WriteIntent),
+		ReadOnlyConstraint: plan.ReadOnlyConstraint,
+		ContinuationTarget: strings.TrimSpace(plan.ContinuationTarget),
 	}
 }
 

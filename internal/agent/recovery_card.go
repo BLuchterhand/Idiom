@@ -57,6 +57,10 @@ type RecoveryCardInput struct {
 func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 	contract := input.PhaseContract
 	invariantID := recoveryCardInvariantID(input)
+	deterministicSafeNextAction := firstRecoveryCardString(
+		input.DeterministicSafeNextAction,
+		recoveryCardSafeNextActionFromPhaseContract(contract),
+	)
 	return NormalizeRecoveryCard(RecoveryCard{
 		ContractID:  contract.ContractID,
 		PhaseID:     contract.PhaseID,
@@ -76,7 +80,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		CallableTools:               recoveryCardCallableTools(contract, input.CurrentAllowedTools),
 		CallableActionClasses:       recoveryCardCallableActionClasses(contract, input.CurrentAllowedTools),
 		TerminalOutcomes:            recoveryCardTerminalOutcomes(contract),
-		DeterministicSafeNextAction: strings.TrimSpace(input.DeterministicSafeNextAction),
+		DeterministicSafeNextAction: deterministicSafeNextAction,
 		ExactBlockerShape:           firstRecoveryCardString(input.ExactBlockerShape, recoveryCardBlockerShape(contract)),
 	})
 }
@@ -111,11 +115,12 @@ func (r *Runner) renderRecoveryCardForRejectedAction(req workspace.ToolRequest, 
 		BaseAllowedTools: currentAllowedTools,
 	})
 	return RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
-		PhaseContract:       contract,
-		CurrentAllowedTools: currentAllowedTools,
-		RejectedRequest:     req,
-		RejectedResult:      result,
-		EvidenceRefs:        runnerEvidencePathsForBrief(brief, results, 6),
+		PhaseContract:               contract,
+		CurrentAllowedTools:         currentAllowedTools,
+		RejectedRequest:             req,
+		RejectedResult:              result,
+		EvidenceRefs:                runnerEvidencePathsForBrief(brief, results, 6),
+		DeterministicSafeNextAction: recoveryCardSafeNextActionForRejectedAction(brief, contract, results),
 	}))
 }
 
@@ -339,6 +344,97 @@ func recoveryCardInvariantText(invariantID string, contract TurnPhaseContract) s
 	}
 }
 
+func recoveryCardSafeNextActionForRejectedAction(brief workerruntime.WorkerRuntimeBrief, contract TurnPhaseContract, results []workspace.ToolResult) string {
+	if contract.PhaseID != turnPhaseImplementationWriteReady {
+		return ""
+	}
+	if pending := sourceEvidencePendingRedirectsForBrief(brief, results); len(pending) > 0 {
+		if recoveryCardActionClassAllowed(contract, actionRead) {
+			callablePending := recoveryCardCallablePendingRedirects(contract, pending)
+			if summary := sourceEvidencePendingRedirectActionSummary(callablePending, 3); summary != "" {
+				return "Resolve the exact pending redirected source-body obligation (" + summary + "), then emit one parser-readable write to a sourced target path, or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
+			}
+		}
+	}
+	if sourcedSummary := implementationTargetWriteReadySourcedPathSummary(results, 3); sourcedSummary != "" {
+		return "Emit one parser-readable write to the already-sourced path(s): " + sourcedSummary + "; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
+	}
+	return ""
+}
+
+func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) string {
+	next := firstRecoveryCardString(contract.RequiredNext...)
+	if next == "" {
+		return ""
+	}
+	switch contract.PhaseID {
+	case turnPhaseImplementationWriteReady:
+		return "Follow the active write-ready requirement: " + next
+	case turnPhaseImplementationVerifyReady:
+		if contract.Phase != "verification" || !recoveryCardActionClassesExactly(contract, actionVerify, actionBlocker) {
+			return ""
+		}
+		return "Run one focused verification action from the active verification requirement: " + next
+	case turnPhaseSubmitReadyNativeRequired, turnPhaseSubmitReadyTextual, turnPhaseMalformedSubmitPlanRecovery:
+		return "Emit one parser-readable planner outcome: " + next
+	case turnPhaseReviewRepairTerminal:
+		return "Emit one terminal review-repair outcome: " + next
+	case turnPhaseArtifactFinalAnswer:
+		return "Emit the active terminal outcome: " + next
+	default:
+		return ""
+	}
+}
+
+func recoveryCardActionClassAllowed(contract TurnPhaseContract, class string) bool {
+	classes := firstNonEmptyRecoveryCardStrings(
+		contract.RuntimeCall.ExpressibleActionClasses,
+		contract.ActionPolicy.AllowedActionClasses,
+	)
+	return slicesContainRecoveryCardString(classes, class)
+}
+
+func recoveryCardActionClassesExactly(contract TurnPhaseContract, expected ...string) bool {
+	classes := firstNonEmptyRecoveryCardStrings(
+		contract.RuntimeCall.ExpressibleActionClasses,
+		contract.ActionPolicy.AllowedActionClasses,
+	)
+	classes = uniqueRecoveryCardStrings(classes)
+	expected = uniqueRecoveryCardStrings(expected)
+	if len(classes) != len(expected) {
+		return false
+	}
+	for _, class := range expected {
+		if !slicesContainRecoveryCardString(classes, class) {
+			return false
+		}
+	}
+	return true
+}
+
+func recoveryCardCallablePendingRedirects(contract TurnPhaseContract, pending []sourceEvidenceObligation) []sourceEvidenceObligation {
+	callableTools := firstNonEmptyRecoveryCardStrings(
+		contract.ActionPolicy.CallableToolNames,
+		contract.AllowedTools,
+	)
+	if len(callableTools) == 0 || len(pending) == 0 {
+		return nil
+	}
+	callable := make(map[string]struct{}, len(callableTools))
+	for _, tool := range callableTools {
+		if tool = strings.TrimSpace(tool); tool != "" {
+			callable[tool] = struct{}{}
+		}
+	}
+	filtered := make([]sourceEvidenceObligation, 0, len(pending))
+	for _, obligation := range pending {
+		if _, ok := callable[strings.TrimSpace(obligation.PendingTool)]; ok {
+			filtered = append(filtered, obligation)
+		}
+	}
+	return filtered
+}
+
 func recoveryCardInvalidRepeats(invariantID string, contract TurnPhaseContract) []string {
 	var repeats []string
 	switch invariantID {
@@ -420,7 +516,7 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 			continue
 		case tool == "submit_plan":
 			classes = append(classes, actionSubmitPlan)
-		case tool == "source_sanity" || tool == "harness_feedback" || tool == "idiom_feedback" || tool == "context_trace_pack" || strings.HasSuffix(tool, "_diagnostics"):
+		case tool == "source_sanity" || tool == "harness_feedback" || tool == "idiom_feedback" || tool == "context_trace_pack" || tool == "git_diff" || tool == "git_status" || strings.HasSuffix(tool, "_diagnostics"):
 			classes = append(classes, actionVerify)
 		case tool == "shell":
 			if slicesContainRecoveryCardString(contractClasses, actionVerify) {

@@ -1,11 +1,9 @@
 package main
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -16,37 +14,28 @@ import (
 // metrics.json from #79 is the most recent thing written, so the
 // most-recent iter's mtime decides the whole title.
 //
-// Mirrors cleanupStalePlanArtifacts intentionally: best-effort, never
-// returns an error, logs failures to logOut. Called at session start
-// (#73 — clear leftovers from interrupted prior runs) and via defer
-// at session end (#77 — companion sweep after a clean ship).
+// Best-effort: never returns an error, logs failures to logOut. Called
+// at session start (#73 — clear leftovers from interrupted prior runs)
+// and via defer at session end (#77 — companion sweep after a clean ship).
 func cleanupStaleRefineState(root string, threshold time.Duration, logOut io.Writer) {
-	dir := filepath.Join(strings.TrimSpace(root), ".idiom", "refine")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			fmt.Fprintf(logOut, "refine cleanup: read %s: %v\n", dir, err)
-		}
-		return
+	cleanupStaleIDIOMEntries(staleCleanupConfig{
+		root:         root,
+		subdir:       "refine",
+		label:        "refine",
+		threshold:    threshold,
+		logOut:       logOut,
+		shouldRemove: staleRefineTitlePath,
+		remove:       os.RemoveAll,
+	})
+}
+
+func staleRefineTitlePath(dir string, entry os.DirEntry, cutoff time.Time) (string, bool, error) {
+	if !entry.IsDir() {
+		return "", false, nil
 	}
-	cutoff := time.Now().Add(-threshold)
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
-		}
-		titleDir := filepath.Join(dir, entry.Name())
-		stale, err := titleDirIsStale(titleDir, cutoff)
-		if err != nil {
-			fmt.Fprintf(logOut, "refine cleanup: scan %s: %v\n", titleDir, err)
-			continue
-		}
-		if !stale {
-			continue
-		}
-		if err := os.RemoveAll(titleDir); err != nil {
-			fmt.Fprintf(logOut, "refine cleanup: remove %s: %v\n", titleDir, err)
-		}
-	}
+	titleDir := filepath.Join(dir, entry.Name())
+	stale, err := titleDirIsStale(titleDir, cutoff)
+	return titleDir, stale, err
 }
 
 // titleDirIsStale reports whether every file under titleDir has

@@ -2222,6 +2222,319 @@ func TestHarnessAuditBehaviorIncludesContractCoverage(t *testing.T) {
 	}
 }
 
+func TestHarnessAuditIgnoresLegacyTurnPhaseProjectionContradictions(t *testing.T) {
+	encoded := mustWorkspaceTextualTurnPhaseProjectionEvent(t, harnessAuditTurnPhaseProjectionIntroducedAt.Add(-time.Minute))
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if report.TurnPhaseCoverage.Total != 0 {
+		t.Fatalf("legacy turn-phase projection should not feed current coverage, got %#v", report.TurnPhaseCoverage)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding autonomy.EventAuditFinding) bool {
+		return finding.ID == "turn_phase_contract_contradiction"
+	}) {
+		t.Fatalf("legacy turn-phase projection should not create current contradiction findings, got %#v", report.Findings)
+	}
+
+	historicalEvents, historicalWarnings := decodeHarnessAuditAutonomyEventsWithOptions([]byte(encoded), harnessAuditAutonomyDecodeOptions{
+		PreserveLegacyTurnPhaseProjection: true,
+	})
+	if len(historicalWarnings) != 0 {
+		t.Fatalf("unexpected historical warnings: %#v", historicalWarnings)
+	}
+	historicalFindings := historicalTurnPhaseProjectionFindingsFromEvents(historicalEvents)
+	if !slices.ContainsFunc(historicalFindings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "historical_turn_phase_contract_contradiction" &&
+			strings.Contains(finding.Evidence, "3 pre-current turn-phase projection contradiction(s)")
+	}) {
+		t.Fatalf("legacy turn-phase contradiction should be retained as historical finding")
+	}
+}
+
+func TestHarnessAuditStillFlagsCurrentTurnPhaseProjectionContradictions(t *testing.T) {
+	encoded := mustWorkspaceTextualTurnPhaseProjectionEvent(t, harnessAuditTurnPhaseProjectionIntroducedAt.Add(time.Minute))
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(encoded))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if report.TurnPhaseCoverage.Total == 0 {
+		t.Fatalf("current turn-phase projection should feed coverage")
+	}
+	if !slices.ContainsFunc(report.Findings, func(finding autonomy.EventAuditFinding) bool {
+		return finding.ID == "turn_phase_contract_contradiction"
+	}) {
+		t.Fatalf("current malformed turn-phase projection should still be flagged, got %#v", report.Findings)
+	}
+}
+
+func mustWorkspaceTextualTurnPhaseProjectionEvent(t *testing.T, occurredAt time.Time) string {
+	t.Helper()
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind:    autonomy.InvocationLane,
+			Lane:              "explore",
+			LaneRunID:         "turn-phase-projection-session",
+			TaskFamily:        "debug_logs",
+			RuntimeContract:   "grounded_explanation",
+			PermissionProfile: "read_only_workspace",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	phase := autonomy.TurnPhaseContractEvent{
+		SchemaVersion: "idiom.turn_phase_contract.v1",
+		ContractID:    contract.ContractID,
+		PhaseID:       "generic",
+		ModelCallID:   contract.ContractID + ":model_call_1",
+		ProtocolHash:  "sha256:turn-phase-projection-test",
+		Phase:         "generic",
+		AllowedTools:  []string{"read_file"},
+		ActionPolicy: autonomy.TurnActionClassPolicyEvent{
+			AllowedActionClasses:   []string{"final_answer"},
+			TerminalResponseShapes: []string{"final answer"},
+			CallableToolNames:      []string{"read_file"},
+		},
+		RuntimeCall: autonomy.RuntimeCallContractEvent{
+			ToolTransportMode:        "textual",
+			ExpectedVisibleOutput:    "visible_text_tool_request",
+			ExpressibleActionClasses: []string{"final_answer"},
+		},
+		TerminalOutcomes: []string{"final answer"},
+		EnforcementMode:  "observe_only",
+	}
+	event := mustWorkspaceAutonomyEvent(autonomy.NewContractPresentedEvent(contract, autonomy.ContractLifecycleEvent{
+		Reason:            "turn_phase_contract",
+		ProtocolHash:      phase.ProtocolHash,
+		TurnPhaseContract: &phase,
+		SurfaceSummaries: []autonomy.TurnPhaseSurfaceSummaryEvent{
+			autonomy.SurfaceSummaryFromTurnPhaseContract(phase),
+		},
+	}, occurredAt, 1))
+	return mustMarshalWorkspaceAutonomyEvent(t, event)
+}
+
+func TestHarnessAuditBackfillsLegacyGatePackAndEnforcementMode(t *testing.T) {
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind: autonomy.InvocationLane,
+			Lane:           "implement",
+			LaneRunID:      "legacy-gate-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:        autonomy.GateReadOnly,
+		Decision:    autonomy.PolicyObserve,
+		InvariantID: "read_only.readiness",
+		ReasonCode:  "read_only_contract",
+		Source:      "legacy_harness_audit_test",
+	}, harnessAuditGateMetadataIntroducedAt.Add(-time.Minute), 1))
+	encoded := mustMarshalWorkspaceAutonomyEvent(t, gateEvent)
+	legacy := mutateWorkspaceAutonomyGateFields(t, encoded, func(gate map[string]any) {
+		delete(gate, "pack_id")
+		delete(gate, "enforcement_mode")
+	})
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(legacy))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.GateCoverage.MissingPackIDRefs) != 0 || len(report.GateCoverage.MissingEnforcementModeRefs) != 0 {
+		t.Fatalf("legacy absent fields should be backfilled, got %#v", report.GateCoverage)
+	}
+	if report.GateCoverage.DecisionCountsByPackID[string(autonomy.ContractPackCompletionReadiness)] != 1 ||
+		report.GateCoverage.DecisionCountsByEnforcementMode[string(autonomy.EnforcementModeObserveOnly)] != 1 {
+		t.Fatalf("expected backfilled pack/mode counts, got %#v", report.GateCoverage)
+	}
+}
+
+func TestHarnessAuditStillFlagsCurrentAbsentGatePackAndEnforcementMode(t *testing.T) {
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind: autonomy.InvocationLane,
+			Lane:           "implement",
+			LaneRunID:      "current-absent-gate-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:        autonomy.GateReadOnly,
+		Decision:    autonomy.PolicyObserve,
+		InvariantID: "read_only.readiness",
+		ReasonCode:  "read_only_contract",
+		Source:      "current_harness_audit_test",
+	}, harnessAuditGateMetadataIntroducedAt.Add(time.Minute), 1))
+	encoded := mustMarshalWorkspaceAutonomyEvent(t, gateEvent)
+	currentAbsent := mutateWorkspaceAutonomyGateFields(t, encoded, func(gate map[string]any) {
+		delete(gate, "pack_id")
+		delete(gate, "enforcement_mode")
+	})
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(currentAbsent))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.GateCoverage.MissingPackIDRefs) != 1 || len(report.GateCoverage.MissingEnforcementModeRefs) != 1 {
+		t.Fatalf("current absent fields should still be flagged, got %#v", report.GateCoverage)
+	}
+}
+
+func TestHarnessAuditStillFlagsExplicitEmptyGatePackAndEnforcementMode(t *testing.T) {
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind: autonomy.InvocationLane,
+			Lane:           "implement",
+			LaneRunID:      "explicit-empty-gate-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:        autonomy.GateReadOnly,
+		Decision:    autonomy.PolicyObserve,
+		InvariantID: "read_only.readiness",
+		ReasonCode:  "read_only_contract",
+		Source:      "legacy_harness_audit_test",
+	}, harnessAuditGateMetadataIntroducedAt.Add(-time.Minute), 1))
+	encoded := mustMarshalWorkspaceAutonomyEvent(t, gateEvent)
+	explicitEmpty := mutateWorkspaceAutonomyGateFields(t, encoded, func(gate map[string]any) {
+		gate["pack_id"] = ""
+		gate["enforcement_mode"] = ""
+	})
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(explicitEmpty))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.GateCoverage.MissingPackIDRefs) != 1 || len(report.GateCoverage.MissingEnforcementModeRefs) != 1 {
+		t.Fatalf("explicit empty fields should still be flagged, got %#v", report.GateCoverage)
+	}
+}
+
+func TestHarnessAuditBackfillsLegacyBlockingGateSafeAlternatives(t *testing.T) {
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind: autonomy.InvocationLane,
+			Lane:           "implement",
+			LaneRunID:      "legacy-blocking-gate-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:        autonomy.GateCompletion,
+		Decision:    autonomy.PolicyReject,
+		InvariantID: "completion.readiness",
+		ReasonCode:  "required_obligations_open",
+		Source:      "legacy_harness_audit_test",
+	}, harnessAuditGateMetadataIntroducedAt.Add(-time.Minute), 1))
+	encoded := mustMarshalWorkspaceAutonomyEvent(t, gateEvent)
+	legacy := mutateWorkspaceAutonomyGateFields(t, encoded, func(gate map[string]any) {
+		delete(gate, "pack_id")
+		delete(gate, "enforcement_mode")
+		delete(gate, "safe_alternatives")
+	})
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(legacy))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.GateCoverage.MissingPackIDRefs) != 0 ||
+		len(report.GateCoverage.MissingEnforcementModeRefs) != 0 ||
+		len(report.GateCoverage.MissingSafeAlternativesRefs) != 0 {
+		t.Fatalf("legacy blocking gate fields should be backfilled, got %#v", report.GateCoverage)
+	}
+	if report.GateCoverage.EventsWithSafeAlternatives != 1 {
+		t.Fatalf("expected backfilled safe alternatives count, got %#v", report.GateCoverage)
+	}
+}
+
+func TestHarnessAuditStillFlagsCurrentAbsentBlockingGateSafeAlternatives(t *testing.T) {
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind: autonomy.InvocationLane,
+			Lane:           "implement",
+			LaneRunID:      "current-absent-safe-alternatives-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:            autonomy.GateCompletion,
+		Decision:        autonomy.PolicyReject,
+		PackID:          autonomy.ContractPackCompletionReadiness,
+		EnforcementMode: autonomy.EnforcementModeEnforce,
+		InvariantID:     "completion.readiness",
+		ReasonCode:      "required_obligations_open",
+		Source:          "current_harness_audit_test",
+	}, harnessAuditGateMetadataIntroducedAt.Add(time.Minute), 1))
+	encoded := mustMarshalWorkspaceAutonomyEvent(t, gateEvent)
+	currentAbsent := mutateWorkspaceAutonomyGateFields(t, encoded, func(gate map[string]any) {
+		delete(gate, "safe_alternatives")
+	})
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(currentAbsent))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.GateCoverage.MissingSafeAlternativesRefs) != 1 {
+		t.Fatalf("current absent safe alternatives should still be flagged, got %#v", report.GateCoverage)
+	}
+}
+
+func TestHarnessAuditStillFlagsExplicitEmptyBlockingGateSafeAlternatives(t *testing.T) {
+	contract, err := autonomy.NewContract(autonomy.ContractInput{
+		Scope: autonomy.ContractScope{
+			InvocationKind: autonomy.InvocationLane,
+			Lane:           "implement",
+			LaneRunID:      "explicit-empty-safe-alternatives-session",
+		},
+	})
+	if err != nil {
+		t.Fatalf("NewContract returned error: %v", err)
+	}
+	gateEvent := mustWorkspaceAutonomyEvent(autonomy.NewGateDecisionEvent(contract, autonomy.ContractGateEvent{
+		Gate:            autonomy.GateCompletion,
+		Decision:        autonomy.PolicyReject,
+		PackID:          autonomy.ContractPackCompletionReadiness,
+		EnforcementMode: autonomy.EnforcementModeEnforce,
+		InvariantID:     "completion.readiness",
+		ReasonCode:      "required_obligations_open",
+		Source:          "legacy_harness_audit_test",
+	}, harnessAuditGateMetadataIntroducedAt.Add(-time.Minute), 1))
+	encoded := mustMarshalWorkspaceAutonomyEvent(t, gateEvent)
+	explicitEmpty := mutateWorkspaceAutonomyGateFields(t, encoded, func(gate map[string]any) {
+		gate["safe_alternatives"] = []any{}
+	})
+
+	events, warnings := decodeHarnessAuditAutonomyEvents([]byte(explicitEmpty))
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %#v", warnings)
+	}
+	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
+	if len(report.GateCoverage.MissingSafeAlternativesRefs) != 1 {
+		t.Fatalf("explicit empty safe alternatives should still be flagged, got %#v", report.GateCoverage)
+	}
+}
+
 func TestHarnessAuditContractCoverageSortsEventsBeforeAuditing(t *testing.T) {
 	root := t.TempDir()
 	contract, err := autonomy.NewContract(autonomy.ContractInput{
@@ -2329,6 +2642,24 @@ func mustMarshalWorkspaceAutonomyEvent(t *testing.T, event autonomy.Event) strin
 		t.Fatalf("marshal event: %v", err)
 	}
 	return string(encoded)
+}
+
+func mutateWorkspaceAutonomyGateFields(t *testing.T, encoded string, mutate func(map[string]any)) string {
+	t.Helper()
+	var record map[string]any
+	if err := json.Unmarshal([]byte(encoded), &record); err != nil {
+		t.Fatalf("decode event: %v", err)
+	}
+	gate, ok := record["gate"].(map[string]any)
+	if !ok {
+		t.Fatalf("event has no gate object: %s", encoded)
+	}
+	mutate(gate)
+	out, err := json.Marshal(record)
+	if err != nil {
+		t.Fatalf("marshal mutated event: %v", err)
+	}
+	return string(out)
 }
 
 func TestHarnessAuditBehaviorDefaultIncludesIdiomConversationLogs(t *testing.T) {
@@ -2641,6 +2972,27 @@ func TestHarnessAuditLinksStoppedTUIImplementationConversationToTelemetryLifecyc
 		!slices.Contains(session.Missing, "process_exit") ||
 		!slices.Contains(session.Missing, "session_summary") {
 		t.Fatalf("unexpected stopped TUI lifecycle session: %#v", session)
+	}
+	if slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "incomplete_implement_session_lifecycle"
+	}) {
+		t.Fatalf("pre-closeout TUI lifecycle gaps should not raise current high finding, got %#v", report.Findings)
+	}
+	if !slices.ContainsFunc(report.Findings, func(finding harnessAuditFinding) bool {
+		return finding.ID == "historical_incomplete_implement_session_lifecycle" && finding.Severity == "info"
+	}) {
+		t.Fatalf("expected historical lifecycle finding, got %#v", report.Findings)
+	}
+}
+
+func TestHarnessAuditTimestampFromLabelParsesDatedReplayLogs(t *testing.T) {
+	got, ok := harnessAuditTimestampFromLabel("tool-governance-scripted-contract-replay-20260525")
+	if !ok {
+		t.Fatal("expected dated replay label to parse")
+	}
+	want := time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
+	if !got.Equal(want) {
+		t.Fatalf("timestamp = %s, want %s", got, want)
 	}
 }
 

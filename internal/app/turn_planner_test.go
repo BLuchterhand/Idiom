@@ -2886,6 +2886,48 @@ func TestPlanExecuteSourceSatisfiedCoverageIgnoresAllowedCandidatePaths(t *testi
 	}
 }
 
+func TestPlanExecuteSourceSatisfiedCoverageBlockerUsesExactMissingPaths(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		RequiredPaths: []string{"pkg/parser.go", "pkg/parser_test.go"},
+		Result: planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
+			FailureReason: "source-satisfied evidence missed one required path",
+			PlannerAnswer: "Decision: source-satisfied\n- pkg/parser.go.bak: already present.\n- pkg/parser_test.go: already present.",
+		},
+	}
+
+	answer, ok := humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(failure)
+	if !ok {
+		t.Fatalf("expected exact source-satisfied mismatch blocker")
+	}
+	if !strings.Contains(answer, "\n- pkg/parser.go") {
+		t.Fatalf("blocker should name the exact missing path, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteSourceSatisfiedCoverageBlockerReportsExtensionlessCoveredPath(t *testing.T) {
+	failure := implementationDispatchPlanExecuteFailure{
+		RequiredPaths: []string{"BUILD", "Dockerfile"},
+		Result: planexecute.RunResult{
+			ExitCode:      1,
+			FailureKind:   string(implementationDispatchFailurePlanArtifactMissing),
+			FailureReason: "source-satisfied evidence missed one required path",
+			PlannerAnswer: "Decision: source-satisfied\n- Dockerfile: already present.",
+		},
+	}
+
+	answer, ok := humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(failure)
+	if !ok {
+		t.Fatalf("expected extensionless source-satisfied mismatch blocker")
+	}
+	for _, want := range []string{"Covered source-satisfied evidence paths:\n- Dockerfile", "Missing required edit paths:\n- BUILD"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("blocker missing %q:\n%s", want, answer)
+		}
+	}
+}
+
 func TestHandleStreamDoneClearsPlanPhaseOnTerminalPlannerFailure(t *testing.T) {
 	m := &Model{
 		streaming:     true,
@@ -6090,9 +6132,14 @@ func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T
 		t.Fatalf("classifier request must use valid deterministic top_p, got:\n%s", requestText)
 	}
 	for _, want := range []string{
+		"Classify the requested outcome first",
+		"requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate",
+		"write_intent enum: yes, no, ambiguous",
+		"continuation_target enum: prior_change, current_prompt_only, none",
 		"Question-shaped wording is not a lane signal by itself",
 		"Classify by requested outcome",
 		"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive",
+		"After a completed implementation, do not keep a sticky implementation state",
 		"Can you implement this feature: docs/tdd-feature.md",
 	} {
 		if !strings.Contains(requestText, want) {

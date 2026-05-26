@@ -125,13 +125,28 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 }
 
 func verificationPhaseState(result workspace.ToolResult) (state string, detail string) {
-	state = "done"
 	detail = strings.TrimSpace(result.Summary)
 	if strings.TrimSpace(result.Error) != "" {
 		state = "failed"
 		detail = strings.TrimSpace(result.Error)
+	} else if verificationResultIsPatchHygieneOnly(result) {
+		state = "hygiene"
+		if detail == "" {
+			detail = "patch hygiene completed"
+		} else {
+			detail += "; patch hygiene completed"
+		}
+	} else if resultCountsAsSuccessfulVerification(result) {
+		state = "done"
+	} else {
+		state = "insufficient"
+		if detail == "" {
+			detail = "verification evidence was insufficient"
+		} else {
+			detail += "; verification evidence was insufficient"
+		}
 	}
-	if detail == "" {
+	if strings.TrimSpace(detail) == "" {
 		detail = "verification completed"
 	}
 	return state, detail

@@ -4575,10 +4575,6 @@ func implementationDispatchScopeTokenIsWeak(token string, fromPrompt bool) bool 
 
 func humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(failure implementationDispatchPlanExecuteFailure) (string, bool) {
 	answer := strings.TrimSpace(failure.Result.PlannerAnswer)
-	evidencePaths := agent.PlanThenExecuteSourceSatisfiedEvidencePaths(answer)
-	if len(evidencePaths) == 0 {
-		return "", false
-	}
 	requiredCoveragePaths := implementationDispatchPlanExecuteFailureRequiredCoveragePaths(failure)
 	if len(requiredCoveragePaths) == 0 {
 		return "", false
@@ -4588,6 +4584,10 @@ func humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(failure implementatio
 	}
 	missing := implementationDispatchPathsMissingFromAnswer(requiredCoveragePaths, answer)
 	if len(missing) == 0 {
+		return "", false
+	}
+	evidencePaths := implementationDispatchCoveredSourceSatisfiedPaths(requiredCoveragePaths, missing)
+	if len(evidencePaths) == 0 {
 		return "", false
 	}
 	var b strings.Builder
@@ -4618,14 +4618,21 @@ func implementationDispatchPlanExecuteFailureRequiredCoveragePaths(failure imple
 }
 
 func implementationDispatchPathsMissingFromAnswer(paths []string, answer string) []string {
-	lowerAnswer := strings.ToLower(answer)
-	var missing []string
-	for _, path := range uniqueImplementationDispatchPaths(paths) {
-		if !strings.Contains(lowerAnswer, strings.ToLower(path)) {
-			missing = append(missing, path)
+	return agent.PlanThenExecuteSourceSatisfiedMissingCoveragePaths(answer, uniqueImplementationDispatchPaths(paths))
+}
+
+func implementationDispatchCoveredSourceSatisfiedPaths(requiredPaths []string, missingPaths []string) []string {
+	missing := map[string]struct{}{}
+	for _, path := range uniqueImplementationDispatchPaths(missingPaths) {
+		missing[path] = struct{}{}
+	}
+	var covered []string
+	for _, path := range uniqueImplementationDispatchPaths(requiredPaths) {
+		if _, ok := missing[path]; !ok {
+			covered = append(covered, path)
 		}
 	}
-	return missing
+	return uniqueImplementationDispatchPaths(covered)
 }
 
 func implementationDispatchRankSearchPaths(prompt string, output string, max int) []string {

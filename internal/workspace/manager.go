@@ -680,11 +680,27 @@ func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResu
 		result = annotateLanguagePrecisionTier(result)
 		result = annotateLanguageRelationships(result)
 	}()
+	if m.EvaluateConfiguredToolRule(req) == ToolRuleDeny {
+		return m.toolRuleDeniedResult(req)
+	}
 	timeout := toolTimeoutForRequest(req)
 	if timeout <= 0 {
 		return m.executeDispatch(ctx, req)
 	}
 	return m.executeWithTimeout(ctx, req, timeout)
+}
+
+func (m *Manager) toolRuleDeniedResult(req ToolRequest) ToolResult {
+	tool := strings.TrimSpace(req.Tool)
+	target := extractToolRuleTarget(tool, req)
+	if target == "" {
+		target = "<request>"
+	}
+	return ToolResult{
+		Tool:    tool,
+		Summary: "Tool request denied by workspace tool_rules",
+		Error:   fmt.Sprintf("workspace tool_rules deny %s on %s", tool, target),
+	}
 }
 
 // executeWithTimeout runs the tool dispatch in a goroutine and races it

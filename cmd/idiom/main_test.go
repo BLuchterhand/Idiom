@@ -267,6 +267,56 @@ func TestRunDefaultUsesTUIRunner(t *testing.T) {
 	}
 }
 
+func TestRunDefaultLoadsWorkspaceToolRulesFromRootConfig(t *testing.T) {
+	root := t.TempDir()
+	configPath := filepath.Join(root, "config.json")
+	configJSON := fmt.Sprintf(`{
+  "workspace": {
+    "root": %q,
+    "cwd": %q,
+    "tool_rules": {
+      "read_file": [
+        {"pattern": ".idiom/deny-read-test.txt", "decision": "deny"},
+        {"pattern": "*", "decision": "allow"}
+      ]
+    }
+  }
+}`, root, root)
+	if err := os.WriteFile(configPath, []byte(configJSON+"\n"), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	var gotCfg config.Config
+	code := run(
+		[]string{"-config", configPath},
+		&stdout,
+		&stderr,
+		func(config.Config, string, runOptions, io.Writer) (string, error) {
+			t.Fatal("prompt runner should not be called in default mode")
+			return "", nil
+		},
+		nopPrompts,
+		func(cfg config.Config, _ runOptions) error {
+			gotCfg = cfg
+			return nil
+		},
+		func(config.Config, runOptions) error {
+			t.Fatal("server runner should not be called in default mode")
+			return nil
+		},
+		nopList,
+	)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stderr=%s", code, stderr.String())
+	}
+	mgr := workspace.NewManager(gotCfg.Workspace)
+	decision := mgr.EvaluateConfiguredToolRule(workspace.ToolRequest{Tool: "read_file", Path: ".idiom/deny-read-test.txt"})
+	if decision != workspace.ToolRuleDeny {
+		t.Fatalf("default TUI config must carry root config tool_rules deny, got %s in %#v", decision, gotCfg.Workspace.ToolRules)
+	}
+}
+
 func TestRunReportsConfigAndRunnerErrors(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run(

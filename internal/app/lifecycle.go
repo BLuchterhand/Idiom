@@ -863,30 +863,7 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 			m.logRunEvent(event)
 		},
 		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
-			switch m.workspace.EvaluateToolRule(req) {
-			case workspace.ToolRuleAllow:
-				m.recordRollbackSnapshot(req)
-				m.capturePlanSnapshot(step, req)
-				return nil
-			case workspace.ToolRuleDeny:
-				return &workspace.ToolResult{
-					Tool:    req.Tool,
-					Summary: "Tool request blocked by Mode permission rules",
-					Error:   fmt.Sprintf("agent mode %q denies this request", mode.Name),
-				}
-			case workspace.ToolRuleAsk:
-				if m.requestApproval(req, mode.Name) {
-					m.recordRollbackSnapshot(req)
-					m.capturePlanSnapshot(step, req)
-					return nil
-				}
-				return &workspace.ToolResult{
-					Tool:    req.Tool,
-					Summary: "Tool request denied by user",
-					Error:   fmt.Sprintf("user denied %s under agent mode %q", req.Tool, mode.Name),
-				}
-			}
-			return nil
+			return m.preExecuteToolRequest(step, req, mode)
 		},
 		DoomLoopGate: func(req workspace.ToolRequest, count int) bool {
 			return m.requestApproval(req, mode.Name)
@@ -943,6 +920,36 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	}
 	m.lastAssistantReasoningContent = strings.TrimSpace(runner.LastAssistantMessage.ReasoningContent)
 	return answer, err
+}
+
+func (m *Model) preExecuteToolRequest(step int, req workspace.ToolRequest, mode agent.Mode) *workspace.ToolResult {
+	if m == nil || m.workspace == nil {
+		return nil
+	}
+	switch m.workspace.EvaluateToolRule(req) {
+	case workspace.ToolRuleAllow:
+		m.recordRollbackSnapshot(req)
+		m.capturePlanSnapshot(step, req)
+		return nil
+	case workspace.ToolRuleDeny:
+		return &workspace.ToolResult{
+			Tool:    req.Tool,
+			Summary: "Tool request blocked by permission rules",
+			Error:   fmt.Sprintf("permission rules deny %s under agent mode %q", req.Tool, mode.Name),
+		}
+	case workspace.ToolRuleAsk:
+		if m.requestApproval(req, mode.Name) {
+			m.recordRollbackSnapshot(req)
+			m.capturePlanSnapshot(step, req)
+			return nil
+		}
+		return &workspace.ToolResult{
+			Tool:    req.Tool,
+			Summary: "Tool request denied by user",
+			Error:   fmt.Sprintf("user denied %s under agent mode %q", req.Tool, mode.Name),
+		}
+	}
+	return nil
 }
 
 // pinPathsFromToolResult attaches any file a successful tool result touched

@@ -1,0 +1,26 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":5,\"named_gap\":\"read the label target source before editing\",\"why_not_answering\":\"need source-body evidence for the required edit path\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/redirect/large.go\",\"named_gap\":\"inspect the large related redirect fixture before deciding the edit shape\",\"why_not_answering\":\"need the redirected source route before the write\"}"
+    },
+    {
+      "content": "{\"tool\":\"code_navigate\",\"capability\":\"read_symbol\",\"path\":\"internal/redirect/large.go\",\"pattern\":\"RedirectTarget\",\"named_gap\":\"follow the redirected code_navigate route for RedirectTarget\",\"why_not_answering\":\"the previous read_file was redirected to code_navigate for this path\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"README.md\",\"start_line\":1,\"end_line\":20,\"named_gap\":\"unrelated read that should remain blocked once write-ready\",\"why_not_answering\":\"attempting to inspect unrelated prose before writing\"}"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten save label after redirected code navigation follow-up\"}"
+    },
+    {
+      "content": "{\"tool\":\"shell\",\"command\":\"go test ./...\"}"
+    },
+    {
+      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: go test ./... passed."
+    }
+  ]
+}

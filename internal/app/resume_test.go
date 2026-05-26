@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/bubbles/viewport"
+
+	"idiom/internal/config"
 	"idiom/internal/workspace"
 )
 
@@ -162,5 +165,46 @@ func TestReplaySessionMessagesReadsUserAssistantOnly(t *testing.T) {
 	}
 	if msgs[2].Role != "user" || msgs[2].Content != "second question" {
 		t.Errorf("msgs[2] wrong: %#v", msgs[2])
+	}
+}
+
+func TestResumeSessionRestoresHistoryPanelGovernance(t *testing.T) {
+	root := t.TempDir()
+	logDir := filepath.Join(root, "logs", "conversations")
+	writeSessionLog(t, logDir, "governed.jsonl", []string{
+		`{"type":"message","role":"user","content":"show the guardrails"}`,
+		`{"type":"message","role":"route_plan","content":"initial=explore followup=implement contract=implementation_result"}`,
+		`{"type":"tool_request","step":1,"tool":"read_file","action":"inspect the harness state","discovery_class":"source","discovery_scope":"file","discovery_cost":"low"}`,
+		`{"type":"tool_result","step":1,"tool":"read_file","summary":"read internal/app/sessions.go","output_lines":40,"output_chars":1200}`,
+		`{"type":"message","role":"completion_status","content":"{\"lane\":\"implement\",\"contract\":\"implementation_result\",\"status\":\"satisfied\",\"edit_attempted\":true,\"verification_seen\":true}"}`,
+		`{"type":"message","role":"assistant","content":"The loaded session includes the governance trail."}`,
+	})
+
+	m := snapshotModel(t, root)
+	m.cfg = config.Config{Chat: config.Chat{DebugLogDir: logDir, DebugLogMode: "redacted"}}
+	m.history.panelOpen = true
+	m.history.viewport = viewport.New(96, 24)
+	m.history.expanded = true
+	m.panelTab = panelTabHistory
+
+	if err := m.ResumeSession("governed"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+	if len(m.messages) != 2 {
+		t.Fatalf("expected resumed model messages, got %d: %#v", len(m.messages), m.messages)
+	}
+	if len(m.history.entries) != 2 {
+		t.Fatalf("expected resumed history entries, got %d: %#v", len(m.history.entries), m.history.entries)
+	}
+	view := collapseWhitespace(m.history.viewport.View())
+	for _, want := range []string{
+		"Route: explore -> implement (implementation_result)",
+		"Tools: 1 call(s) (1 discovery)",
+		"Latest: read_file ok - inspect the harness state",
+		"Contracts: contract satisfied",
+	} {
+		if !strings.Contains(view, want) {
+			t.Fatalf("resumed history missing %q:\n%s", want, view)
+		}
 	}
 }

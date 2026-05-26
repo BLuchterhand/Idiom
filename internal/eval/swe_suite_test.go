@@ -1206,6 +1206,32 @@ func TestEvaluateSWETaskDistinguishesLowValueActionsFromRunnerRejections(t *test
 	}
 }
 
+func TestEvaluateSWETaskMaxErrorsUsesErrorEventsNotUniqueMessages(t *testing.T) {
+	maxErrors := 1
+	task := SWETask{
+		ID:       "repeat-error",
+		Family:   "implementation",
+		Scenario: Scenario{Name: "repeat-error"},
+		Oracle:   SWEOracle{MaxErrors: &maxErrors},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "same rejection"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "same rejection"}},
+	}
+
+	report := EvaluateSWETask("repeat-error.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected max_errors to fail on two identical error events")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "errors exceeded oracle limit: got 2 want <= 1") {
+		t.Fatalf("expected error event count finding, got %q", joined)
+	}
+	if report.Metrics.ErrorCount != 2 || len(report.Metrics.Errors) != 1 {
+		t.Fatalf("expected event count plus deduplicated messages, got count=%d errors=%#v", report.Metrics.ErrorCount, report.Metrics.Errors)
+	}
+}
+
 func TestEvaluateSWETaskRequiresNoTimeout(t *testing.T) {
 	task := SWETask{
 		ID:       "timeout",

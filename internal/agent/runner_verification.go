@@ -15,7 +15,7 @@ func resultCountsAsSuccessfulVerification(result workspace.ToolResult) bool {
 		return false
 	}
 	if strings.TrimSpace(result.Tool) == "source_sanity" {
-		return true
+		return sourceSanityResultUsesLanguageDiagnostics(result)
 	}
 	if isDiagnosticsVerificationTool(result.Tool) {
 		return true
@@ -44,16 +44,19 @@ func sourceEditVerificationRejection(req workspace.ToolRequest, brief workerrunt
 	}
 	if plannerOwnsVerification(brief) {
 		return "Source edit verification required",
-			fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Required evidence is source-sanity on the changed source path; the harness routes it to language diagnostics when available and falls back to generic source syntax sanity. If source sanity is unavailable, answer with the concrete lane-sanity blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
+			fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no compiler-backed source-aware check at all. Required evidence is compiler-backed source-sanity, language diagnostics, or the concrete lane-sanity blocker before doing more reads.", summarizeRunnerPaths(paths, 3)),
 			true
 	}
 	return "Source edit verification required",
-		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no source-aware check at all. Required evidence is source-sanity on the changed source path; the harness routes it to language diagnostics when available and falls back to generic source syntax sanity. A focused source-aware build/test or concrete verification blocker also satisfies this contract before more reads.", summarizeRunnerPaths(paths, 3)),
+		fmt.Sprintf("source edits are present in %s, but the latest successful check is only patch hygiene (`git diff --check`) or no compiler-backed source-aware check at all. Required evidence is a focused language-appropriate build/test/check command, compiler-backed source-sanity, language diagnostics, or the concrete verification blocker before more reads.", summarizeRunnerPaths(paths, 3)),
 		true
 }
 
 func rewriteVerificationShellReadToSourceSanity(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
 	if strings.TrimSpace(req.Tool) != "shell" || !containsRunnerTool(allowedTools, "source_sanity") {
+		return workspace.ToolRequest{}, false
+	}
+	if !plannerOwnsVerification(brief) {
 		return workspace.ToolRequest{}, false
 	}
 	if !sourceEditsNeedSemanticVerification(brief, results) {
@@ -76,6 +79,9 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 	if !containsRunnerTool(allowedTools, "source_sanity") || !sourceEditsNeedSemanticVerification(brief, results) {
 		return workspace.ToolRequest{}, false
 	}
+	if !plannerOwnsVerification(brief) && !postWriteVerificationInvalidToolRejectionSeen(results) {
+		return workspace.ToolRequest{}, false
+	}
 	if isVerificationRequest(req) || strings.TrimSpace(req.Tool) == "source_sanity" {
 		return workspace.ToolRequest{}, false
 	}
@@ -89,6 +95,30 @@ func postWriteSourceSanityRedirect(req workspace.ToolRequest, brief workerruntim
 		return workspace.ToolRequest{}, false
 	}
 	return workspace.ToolRequest{Tool: "source_sanity", Path: paths[0]}, true
+}
+
+func postWriteVerificationInvalidToolRejectionSeen(results []workspace.ToolResult) bool {
+	seenSourceWrite := false
+	for _, result := range results {
+		if toolResultChangedSourcePath(result) {
+			seenSourceWrite = true
+			continue
+		}
+		if !seenSourceWrite {
+			continue
+		}
+		if strings.TrimSpace(result.Summary) != "Tool not available in current runtime contract" {
+			continue
+		}
+		if !strings.Contains(strings.ToLower(result.Error), "current allowed tool surface") {
+			continue
+		}
+		switch strings.TrimSpace(result.Tool) {
+		case "read_file", "search_content", "search_files", "edit_file", "write_file", "append_file", "apply_patch":
+			return true
+		}
+	}
+	return false
 }
 
 func sourceEditCloseoutPrompt(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -190,6 +220,25 @@ func resultIsVerificationAttempt(result workspace.ToolResult) bool {
 		return true
 	}
 	return isVerificationCommandText(result.Output) || isVerificationCommandText(result.Summary)
+}
+
+func sourceSanityResultUsesLanguageDiagnostics(result workspace.ToolResult) bool {
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Output))
+	if text == "" {
+		return false
+	}
+	if strings.Contains(text, "generic fallback") ||
+		strings.Contains(text, "generic_source_sanity") ||
+		strings.Contains(text, "generic delimiter") ||
+		strings.Contains(text, "generic source sanity") {
+		return false
+	}
+	for _, tool := range workspace.DiagnosticToolNames() {
+		if strings.Contains(text, strings.ToLower(strings.TrimSpace(tool))) {
+			return true
+		}
+	}
+	return false
 }
 
 func sourceVerificationGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -346,7 +395,7 @@ func plannerOwnedVerificationShellRejection(req workspace.ToolRequest, brief wor
 		return "", "", false
 	}
 	return "Planner-owned verification shell rejected",
-		"this implementation lane delegates build/test verification to the caller. Source edits require source-sanity evidence; git diff --check is only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
+		"this implementation lane delegates build/test verification to the caller. Source edits require compiler-backed source-sanity or language diagnostics; git diff --check and generic source-sanity fallback are only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
 		true
 }
 
@@ -354,7 +403,7 @@ func verificationRequiredAfterWritesMessage(brief workerruntime.WorkerRuntimeBri
 	summary = "Verification required after workspace edits"
 	if plannerOwnsVerification(brief) {
 		return summary, fmt.Sprintf(
-			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. Source edits require source-sanity evidence routed by the harness to language diagnostics when available and generic syntax sanity otherwise; git diff --check is only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
+			"the workspace has %d successful write(s) since the last lane sanity check. This route delegates build/test verification to the planner; do not run build or test commands. Source edits require compiler-backed source-sanity or language diagnostics; generic source-sanity fallback and git diff --check are only patch-hygiene evidence. The other contract outcome is changed paths plus the concrete planner-owned verification status.",
 			writesSinceVerification,
 		)
 	}

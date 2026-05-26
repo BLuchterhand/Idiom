@@ -203,6 +203,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 
 	var steps []toolStep
 	agentBehavior := false
+	countedStepKeys := make(map[string]struct{})
 	// Walk records once, collecting what every pattern needs.
 	for _, rec := range records {
 		ingestLocalOpsTelemetry(&rep, rec.Type, rec.Data)
@@ -265,6 +266,12 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			tool, _ := rec.Data["tool"].(string)
 			action, _ := rec.Data["action"].(string)
 			raw, _ := rec.Data["raw"].(string)
+			if key := perfToolStepKey(rec.Data); key != "" {
+				if _, ok := countedStepKeys[key]; ok {
+					continue
+				}
+				countedStepKeys[key] = struct{}{}
+			}
 			steps = append(steps, toolStep{
 				index:   len(steps) + 1,
 				tool:    tool,
@@ -277,7 +284,7 @@ func analyzeRecords(path string, records []Record) PerfReport {
 			tool, _ := rec.Data["tool"].(string)
 			errMsg, _ := rec.Data["error"].(string)
 			summary, _ := rec.Data["summary"].(string)
-			if len(steps) > 0 && steps[len(steps)-1].tool == tool {
+			if len(steps) > 0 && steps[len(steps)-1].tool == tool && !steps[len(steps)-1].hasError && !steps[len(steps)-1].isReject {
 				idx := len(steps) - 1
 				if errMsg != "" {
 					steps[idx].hasError = true
@@ -295,6 +302,30 @@ func analyzeRecords(path string, records []Record) PerfReport {
 						rep.RejectedActions++
 					}
 				}
+			} else if errMsg != "" {
+				key := perfToolStepKey(rec.Data)
+				if key != "" {
+					if _, ok := countedStepKeys[key]; ok {
+						continue
+					}
+					countedStepKeys[key] = struct{}{}
+				}
+				step := toolStep{
+					index:    len(steps) + 1,
+					tool:     tool,
+					action:   stringField(rec.Data, "action"),
+					rawArgs:  stringField(rec.Data, "raw"),
+					target:   util.FirstNonEmpty(targetFromAction(stringField(rec.Data, "action")), stringField(rec.Data, "path")),
+					hasError: true,
+					errText:  errMsg,
+				}
+				lowered := strings.ToLower(summary)
+				if strings.Contains(lowered, "rejected") || strings.Contains(lowered, "retry blocked") || strings.Contains(lowered, "preempted") {
+					step.isReject = true
+					step.rejectWhy = summary
+					rep.RejectedActions++
+				}
+				steps = append(steps, step)
 			}
 			countTool(&rep.Tools, tool, summary)
 			ingestContextTelemetry(&rep, rec.Data)
@@ -360,6 +391,15 @@ func analyzeRecords(path string, records []Record) PerfReport {
 	rep.PromptRedacted = rep.UserPrompt != ""
 
 	return rep
+}
+
+func perfToolStepKey(data map[string]any) string {
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	step := intField(data, "step")
+	if tool == "" || step <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("step:%d:%s", step, tool)
 }
 
 func ingestContextTelemetry(rep *PerfReport, data map[string]any) {

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -97,8 +98,8 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 	if !isVerificationRequest(workspace.ToolRequest{Tool: "source_sanity", Path: "native/tests/test_cart_system.cpp"}) {
 		t.Fatal("source_sanity should count as a verification request")
 	}
-	if !hasSuccessfulVerificationResult([]workspace.ToolResult{{Tool: "source_sanity", Summary: "Source sanity passed"}}) {
-		t.Fatal("successful source_sanity should count as verification")
+	if !hasSuccessfulVerificationResult([]workspace.ToolResult{{Tool: "source_sanity", Summary: "Source sanity passed", Output: "native/tests/test_cart_system.cpp: no warnings or errors via cpp_diagnostics"}}) {
+		t.Fatal("compiler-backed source_sanity should count as verification")
 	}
 }
 
@@ -122,6 +123,57 @@ func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
 	results = append(results, workspace.ToolResult{Tool: "cpp_diagnostics", Summary: "Collected C++ diagnostics for 1 file(s).", Output: "native/tests/test_cart_system.cpp: no warnings or errors"})
 	if result, rejected := runner.mutationCompletionRejection("Changed paths:\n- native/tests/test_cart_system.cpp\n\nVerification: cpp_diagnostics passed.", results); rejected {
 		t.Fatalf("expected language diagnostics to satisfy source edit completion, got %#v", result)
+	}
+}
+
+func TestMutationCompletionGateRejectsBlockersNoneBeforeSourceVerification(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		},
+	}
+	write := workspace.ToolResult{Tool: "edit_file", Summary: "Edited internal/labels/labels.go"}
+	answer := "Changed paths:\n- internal/labels/labels.go\n\nVerification: not run.\n\nBlockers: none."
+
+	cases := []struct {
+		name    string
+		results []workspace.ToolResult
+		want    string
+	}{
+		{
+			name: "patch hygiene only",
+			results: []workspace.ToolResult{
+				write,
+				{Tool: "shell", Summary: "Ran shell command", Output: "$ git diff --check -- internal/labels/labels.go\n"},
+			},
+			want: "patch hygiene",
+		},
+		{
+			name: "generic source sanity fallback",
+			results: []workspace.ToolResult{
+				write,
+				{Tool: "source_sanity", Summary: "Source sanity passed for 1 file(s) (1 generic fallback)", Output: "internal/labels/labels.go: generic delimiter sanity passed via generic_source_sanity"},
+			},
+			want: "latest successful write",
+		},
+		{
+			name: "failed verification",
+			results: []workspace.ToolResult{
+				write,
+				{Tool: "shell", Summary: "Ran shell command", Output: "$ go test ./...", Error: "internal/labels/labels.go:4: undefined: missing"},
+			},
+			want: "latest successful write",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result, rejected := runner.mutationCompletionRejection(answer, tc.results)
+			if !rejected || !strings.Contains(result.Error, tc.want) {
+				t.Fatalf("expected verification rejection containing %q, rejected=%v result=%#v", tc.want, rejected, result)
+			}
+		})
 	}
 }
 
@@ -149,9 +201,9 @@ func TestPlannerOwnedVerificationRequiresSourceSanityBeforeDelegatedStatus(t *te
 		t.Fatalf("expected planner-owned delegated status without source sanity to reject, rejected=%v result=%#v", rejected, result)
 	}
 
-	results = append(results, workspace.ToolResult{Tool: "source_sanity", Summary: "Source sanity passed", Output: "native/tests/test_cart_system.cpp: generic delimiter sanity passed"})
+	results = append(results, workspace.ToolResult{Tool: "source_sanity", Summary: "Source sanity passed", Output: "native/tests/test_cart_system.cpp: no warnings or errors via cpp_diagnostics"})
 	if result, rejected := runner.mutationCompletionRejection(delegatedAnswer+"\nSource sanity: passed.", results); rejected {
-		t.Fatalf("expected source_sanity plus delegated build/test status to satisfy closeout, got %#v", result)
+		t.Fatalf("expected compiler-backed source_sanity plus delegated build/test status to satisfy closeout, got %#v", result)
 	}
 }
 
@@ -618,7 +670,7 @@ func TestPlannerOwnedVerificationGateNamesLaneSanity(t *testing.T) {
 	if summary != "Verification required after workspace edits" {
 		t.Fatalf("unexpected summary %q", summary)
 	}
-	for _, want := range []string{"delegates build/test verification to the planner", "source-sanity evidence", "git diff --check", "do not run build or test"} {
+	for _, want := range []string{"delegates build/test verification to the planner", "compiler-backed source-sanity", "git diff --check", "do not run build or test"} {
 		if !strings.Contains(errorText, want) {
 			t.Fatalf("expected planner-owned verification message to contain %q, got %q", want, errorText)
 		}
@@ -4408,6 +4460,42 @@ func TestConversationEvidenceSatisfiedForceAnswerReadyUsesGatheredSource(t *test
 	}
 }
 
+func TestConversationEvidenceSatisfiedForceAnswerWaitsForNamedSourcePaths(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain internal/labels/labels.go and internal/labels/labels_test.go.",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+			Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+		},
+	}
+	if runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
+		t.Fatal("force-answer fired before all named source paths had concrete source evidence")
+	}
+
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/labels/labels_test.go"},
+		Results: results,
+	})
+	if decision.ForceAnswer != nil || decision.RejectSummary != "" {
+		t.Fatalf("second named source read should remain available, got %#v", decision)
+	}
+
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f2 internal/labels/labels_test.go lines 1-9 (total lines: 9)",
+		Output:  "1:package labels\n3:func TestShortLabel(t *testing.T) {\n4:\tif got := ShortLabel(); got != \"Save\" {\n",
+	})
+	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
+		t.Fatal("expected force-answer after all named source paths had concrete source evidence")
+	}
+}
+
 func TestConversationPreflightForcesAnswerAfterRepeatedBroadDiscoveryRecovery(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
@@ -4913,7 +5001,7 @@ func TestMutationCompletionGateRequiresWriteAndVerification(t *testing.T) {
 	// just patch hygiene (`git diff --check`). Post-#74 the gate
 	// distinguishes these: patch hygiene alone is insufficient for
 	// source paths.
-	verify := workspace.ToolResult{Tool: "source_sanity", Summary: "Source sanity passed"}
+	verify := workspace.ToolResult{Tool: "source_sanity", Summary: "Source sanity passed", Output: "foo.go: no warnings or errors via go_diagnostics"}
 	if result, rejected := runner.mutationCompletionRejection("Done.", []workspace.ToolResult{write, verify}); rejected {
 		t.Fatalf("expected verified mutation to pass, got %#v", result)
 	}
@@ -5446,6 +5534,9 @@ func TestRepeatedCompletionGateRejectionsReturnTypedBlocker(t *testing.T) {
 
 func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrite(t *testing.T) {
 	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/target\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 	if err := writeTestFile(root, "target.go", "package target\n\nfunc Name() string { return \"old\" }\n"); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -5454,8 +5545,8 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 		"Done.",
 		`{"tool":"edit_file","path":"target.go","old_text":"return \"old\"","new_text":"return \"new\"","description":"update displayed name"}`,
 		"Done.",
-		`{"tool":"source_sanity","path":"target.go"}`,
-		"Updated target.go and source sanity passed.",
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Updated target.go and go test ./... passed.",
 	}
 	type requestPayload struct {
 		Messages []struct {
@@ -5502,7 +5593,9 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 		Workspace: workspace.NewManager(config.Workspace{
 			Root:         root,
 			CWD:          root,
+			Shell:        "/bin/sh",
 			EnableWrites: true,
+			EnableShell:  true,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -5537,7 +5630,7 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 	for _, want := range []string{
 		"post-write verification",
 		"parser-readable verification action",
-		"source_sanity",
+		"language-appropriate verification",
 		"target.go",
 	} {
 		if !strings.Contains(recoveryPrompt, want) {
@@ -5561,8 +5654,8 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 	for _, tool := range postWriteRequest.Tools {
 		postWriteTools[strings.TrimSpace(tool.Function.Name)] = true
 	}
-	if !postWriteTools["source_sanity"] {
-		t.Fatalf("post-write verification request must expose source_sanity, got tools=%v", postWriteTools)
+	if !postWriteTools["shell"] {
+		t.Fatalf("post-write verification request must expose shell, got tools=%v", postWriteTools)
 	}
 	var recoveryText strings.Builder
 	for _, message := range recoveryRequest.Messages {
@@ -5574,7 +5667,7 @@ func TestCompletionGateAttachesVerificationRecoveryAfterPreWriteRejectionAndWrit
 	if !strings.Contains(recoveryText.String(), recoveryPrompt) {
 		t.Fatalf("verification recovery prompt was not attached to the next model request:\n%s", recoveryText.String())
 	}
-	if !strings.Contains(answer, "source sanity passed") {
+	if !strings.Contains(answer, "go test ./... passed") {
 		t.Fatalf("expected verified final answer, got:\n%s", answer)
 	}
 }
@@ -7932,6 +8025,125 @@ func TestRunnerSalvagesExplicitVisibleToolJSONAfterCompletionGateRecovery(t *tes
 	}
 }
 
+func TestRunnerSalvagesVisibleNestedEditFileJSONAfterCompletionGateRecovery(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/sessions_panel.go lines 1-219 (total lines: 219)",
+			Output:  "1:package app\n2:func updateSessionsPanel() {}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Mutation completion gate rejected final answer",
+			Error:   "this task asks for a workspace change, but no successful write tool result is present",
+		},
+	}
+	nested := `{"path":"internal/app/sessions_panel.go","old_text":"func updateSessionsPanel() {}","new_text":"func updateSessionsPanel() { renderSessionsPanelContent() }","description":"keep selected session visible"}`
+	reply := `{"tool":"edit_file","request":` + strconv.Quote(nested) + `}`
+
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results)
+	if !ok {
+		t.Fatal("expected visible nested edit_file request to be salvaged after completion-gate recovery")
+	}
+	if req.Tool != "edit_file" || req.Path != "internal/app/sessions_panel.go" || req.OldText != "func updateSessionsPanel() {}" {
+		t.Fatalf("unexpected salvaged request: %#v", req)
+	}
+	if !strings.Contains(raw, `"tool":"edit_file"`) || !strings.Contains(raw, `"request"`) {
+		t.Fatalf("expected raw nested edit_file JSON, got %s", raw)
+	}
+}
+
+func TestRunnerRejectsVisibleNestedEditFileJSONWithoutSourceEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "completion_gate",
+		Summary: "Mutation completion gate rejected final answer",
+		Error:   "this task asks for a workspace change, but no successful write tool result is present",
+	}}
+	nested := `{"path":"internal/app/sessions_panel.go","old_text":"func updateSessionsPanel() {}","new_text":"func updateSessionsPanel() { renderSessionsPanelContent() }","description":"keep selected session visible"}`
+	reply := `{"tool":"edit_file","request":` + strconv.Quote(nested) + `}`
+
+	if req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, results); ok {
+		t.Fatalf("visible edit salvage must require source evidence for unscoped implementation writes, req=%#v raw=%s", req, raw)
+	}
+}
+
+func TestUnscopedImplementationWriteReadyNonWriteLoopStopsBeforeModelBudget(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
+		t.Fatalf("write labels.go: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":20,"named_gap":"current target source before edit","why_not_answering":"need source before writing"}`,
+		`{"tool":"search_content","path":"internal/labels","pattern":"ShortLabel"}`,
+		`{"tool":"search_files","pattern":"labels"}`,
+		`{"tool":"code_navigate","capability":"file_outline","path":"internal/labels/labels.go"}`,
+		`{"tool":"search_content","path":"internal/labels","pattern":"Save changes"}`,
+		`{"tool":"search_files","pattern":"ShortLabel"}`,
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 0, MaxNoProgressTurns: 20, MaxModelCalls: 40},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update ShortLabel in internal/labels/labels.go."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "target-write-ready recovery rejected repeated read/search/navigation attempts") {
+		t.Fatalf("expected typed write-ready loop blocker, got %q", answer)
+	}
+	if requests >= len(replies) {
+		t.Fatalf("expected loop fuse before exhausting scripted replies, got %d requests", requests)
+	}
+}
+
 func TestRunnerSalvagesVisibleLineToolRequest(t *testing.T) {
 	runner := &Runner{}
 	req, raw, ok := runner.salvageVisibleToolRequestFromProse(strings.Join([]string{
@@ -8367,6 +8579,9 @@ func TestRunnerTargetSourceRejectsWriteAfterReadingDifferentPath(t *testing.T) {
 
 func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t *testing.T) {
 	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/recovery\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 	if err := writeTestFile(root, "a.go", "package main\n\nconst a = \"read\"\n"); err != nil {
 		t.Fatalf("write a: %v", err)
 	}
@@ -8378,8 +8593,8 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
 		`{"tool":"read_file","path":"b.go","start_line":1,"end_line":3,"named_gap":"current b.go source before retrying the rejected edit"}`,
 		`{"tool":"edit_file","path":"b.go","old_text":"before","new_text":"after","description":"replace value"}`,
-		`{"tool":"source_sanity","path":"b.go"}`,
-		"Changed paths: b.go\n\nVerification: source_sanity passed.",
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths: b.go\n\nVerification: go test ./... passed.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -8404,13 +8619,15 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 		Workspace: workspace.NewManager(config.Workspace{
 			Root:         root,
 			CWD:          root,
+			Shell:        "/bin/sh",
 			EnableWrites: true,
+			EnableShell:  true,
 		}),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"read_file", "search_content", "edit_file", "source_sanity"},
+			AllowedTools:      []string{"read_file", "search_content", "edit_file", "source_sanity", "shell"},
 		},
 		Policy: RunPolicy{MaxToolSteps: 7, MaxNoProgressTurns: 7},
 		OnEvent: func(event RunEvent) {
@@ -8457,8 +8674,295 @@ func TestRunnerTargetSourceAllowsNewTargetReadAfterDifferentPathWriteRejection(t
 	}
 }
 
+func TestRunnerTargetSourceAllowsRedirectedSourceFollowupAfterWriteReady(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/session\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/app/sessions_panel.go", "package app\n\nfunc PanelVisible() bool {\n\treturn true\n}\n"); err != nil {
+		t.Fatalf("write sessions_panel: %v", err)
+	}
+	if err := writeTestFile(root, "internal/app/sessions.go", "package app\n\nfunc ScrollOffset() int {\n\treturn 0\n}\n"); err != nil {
+		t.Fatalf("write sessions: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"internal/app/sessions_panel.go","start_line":1,"end_line":20,"named_gap":"session panel source before editing scroll behavior"}`,
+		`{"tool":"read_file","path":"internal/app/sessions.go"}`,
+		`{"tool":"code_navigate","capability":"read_symbol","path":"internal/app/sessions.go","pattern":"ScrollOffset"}`,
+		`{"tool":"edit_file","path":"internal/app/sessions.go","old_text":"return 0","new_text":"return 1","description":"advance scroll offset when selection reaches the pane edge"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths: internal/app/sessions.go\n\nVerification: go test ./... passed.",
+	}
+	requests := 0
+	var trace []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d\n%s", requests, strings.Join(trace, "\n"))
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawRedirectAllowance bool
+	var rejectedRedirectedFollowup bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "edit_file", "source_sanity", "shell"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
+			switch strings.TrimSpace(req.Tool) {
+			case "read_file":
+				if normalizeRunnerPath(req.Path) == "internal/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
+					return &workspace.ToolResult{
+						Tool:    "read_file",
+						Summary: "Redirected internal/app/sessions.go to code_navigate",
+						Output:  `candidate_request: {"tool":"code_navigate","capability":"file_outline","path":"internal/app/sessions.go","language":"go"}`,
+					}
+				}
+			case "code_navigate":
+				if normalizeRunnerPath(req.Path) == "internal/app/sessions.go" {
+					return &workspace.ToolResult{
+						Tool:    "code_navigate",
+						Summary: "Code navigation routed read_symbol via go_read_symbol",
+						Output: strings.Join([]string{
+							"capability: read_symbol",
+							"language: go",
+							"routed_tool: go_read_symbol",
+							"route_summary: Read ScrollOffset in internal/app/sessions.go lines 3-5",
+							"3:func ScrollOffset() int {",
+							"4:\treturn 0",
+							"5:}",
+						}, "\n"),
+					}
+				}
+			}
+			return nil
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "implementation_target_write_ready_source_refresh_allowed",
+				"implementation_target_write_ready_recovery",
+				"post_write_verification_required",
+				"completion_gate_recovery":
+				trace = append(trace, "event "+event.Role+": "+event.Content)
+			}
+			if event.Role == "implementation_target_write_ready_source_refresh_allowed" &&
+				strings.Contains(event.Content, "code_navigate") {
+				sawRedirectAllowance = true
+			}
+		},
+	}
+	onToolResult := func(event ToolResultEvent) {
+		trace = append(trace, fmt.Sprintf("tool %s %s => %s err=%s", event.Request.Tool, event.Request.Path, event.Result.Summary, event.Result.Error))
+		if event.Request.Tool == "code_navigate" &&
+			event.Request.Path == "internal/app/sessions.go" &&
+			strings.Contains(event.Result.Summary, "rejected") {
+			rejectedRedirectedFollowup = true
+		}
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "fix session panel scrolling"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(answer, "target-write-ready recovery rejected") {
+		t.Fatalf("runner returned write-ready blocker:\n%s", answer)
+	}
+	if rejectedRedirectedFollowup {
+		t.Fatal("redirected code_navigate follow-up was rejected, recreating the latest write-ready loop")
+	}
+	if !sawRedirectAllowance {
+		t.Fatal("expected write-ready allowance event for redirected code_navigate source follow-up")
+	}
+	got, err := os.ReadFile(filepath.Join(root, "internal/app/sessions.go"))
+	if err != nil {
+		t.Fatalf("read sessions.go: %v", err)
+	}
+	if !strings.Contains(string(got), "return 1") || strings.Contains(string(got), "return 0") {
+		t.Fatalf("expected edit after redirected source-body follow-up:\n%s", got)
+	}
+}
+
+func TestRunnerTargetSourceAllowsRedirectedOutlineThenSymbolAfterWriteReady(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/session\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/app/sessions_panel.go", "package app\n\nfunc PanelVisible() bool {\n\treturn true\n}\n"); err != nil {
+		t.Fatalf("write sessions_panel: %v", err)
+	}
+	if err := writeTestFile(root, "internal/app/sessions.go", "package app\n\nfunc ScrollOffset() int {\n\treturn 0\n}\n"); err != nil {
+		t.Fatalf("write sessions: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"internal/app/sessions_panel.go","start_line":1,"end_line":20,"named_gap":"session panel source before editing scroll behavior"}`,
+		`{"tool":"read_file","path":"internal/app/sessions.go"}`,
+		`{"tool":"read_file","path":"internal/app/sessions.go"}`,
+		`{"tool":"read_file","path":"internal/app/sessions.go"}`,
+		`{"tool":"edit_file","path":"internal/app/sessions.go","old_text":"return 0","new_text":"return 1","description":"advance scroll offset when selection reaches the pane edge"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths: internal/app/sessions.go\n\nVerification: go test ./... passed.",
+	}
+	requests := 0
+	var trace []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d\n%s", requests, strings.Join(trace, "\n"))
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawOutlineRewrite bool
+	var sawReadSymbolRewrite bool
+	var rejectedRedirectedFollowup bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			Objective:         "fix session pane ScrollOffset behavior",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "edit_file", "source_sanity", "shell"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 9, MaxNoProgressTurns: 9},
+		PreExecute: func(_ int, req workspace.ToolRequest) *workspace.ToolResult {
+			switch strings.TrimSpace(req.Tool) {
+			case "read_file":
+				if normalizeRunnerPath(req.Path) == "internal/app/sessions.go" && req.StartLine <= 0 && req.EndLine <= 0 {
+					return &workspace.ToolResult{
+						Tool:    "read_file",
+						Summary: "Redirected internal/app/sessions.go to code_navigate",
+						Output:  `candidate_request: {"tool":"code_navigate","capability":"file_outline","path":"internal/app/sessions.go","language":"go"}`,
+					}
+				}
+			case "code_navigate":
+				if normalizeRunnerPath(req.Path) == "internal/app/sessions.go" && req.Capability == "file_outline" {
+					return &workspace.ToolResult{
+						Tool:    "code_navigate",
+						Summary: "Code navigation routed file_outline via go_file_outline",
+						Output: strings.Join([]string{
+							"capability: file_outline",
+							"language: go",
+							"routed_tool: go_file_outline",
+							"route_summary: Outlined 1 top-level declaration(s) in internal/app/sessions.go.",
+							"declarations:",
+							"- ScrollOffset lines 3-5 tags: implementation",
+						}, "\n"),
+					}
+				}
+				if normalizeRunnerPath(req.Path) == "internal/app/sessions.go" && req.Capability == "read_symbol" {
+					return &workspace.ToolResult{
+						Tool:    "code_navigate",
+						Summary: "Code navigation routed read_symbol via go_read_symbol",
+						Output: strings.Join([]string{
+							"capability: read_symbol",
+							"language: go",
+							"routed_tool: go_read_symbol",
+							"route_summary: Read ScrollOffset in internal/app/sessions.go lines 3-5",
+							"3:func ScrollOffset() int {",
+							"4:\treturn 0",
+							"5:}",
+						}, "\n"),
+					}
+				}
+			}
+			return nil
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "tool_request_rewrite" {
+				trace = append(trace, "rewrite: "+event.Content)
+				if strings.Contains(event.Content, `file_outline`) {
+					sawOutlineRewrite = true
+				}
+				if strings.Contains(event.Content, `read_symbol`) {
+					sawReadSymbolRewrite = true
+				}
+			}
+			if event.Role == "implementation_target_write_ready_recovery" {
+				trace = append(trace, "recovery: "+event.Content)
+			}
+		},
+	}
+	onToolResult := func(event ToolResultEvent) {
+		trace = append(trace, fmt.Sprintf("tool %s %s => %s err=%s", event.Request.Tool, event.Request.Path, event.Result.Summary, event.Result.Error))
+		if event.Request.Tool == "code_navigate" &&
+			event.Request.Path == "internal/app/sessions.go" &&
+			strings.Contains(event.Result.Summary, "rejected") {
+			rejectedRedirectedFollowup = true
+		}
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "fix session panel scrolling"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		onToolResult,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(answer, "target-write-ready recovery rejected") {
+		t.Fatalf("runner returned write-ready blocker:\n%s\ntrace:\n%s", answer, strings.Join(trace, "\n"))
+	}
+	if !sawOutlineRewrite || !sawReadSymbolRewrite {
+		t.Fatalf("expected repeated read_file redirects to outline then read_symbol, outline=%v read_symbol=%v\n%s", sawOutlineRewrite, sawReadSymbolRewrite, strings.Join(trace, "\n"))
+	}
+	if rejectedRedirectedFollowup {
+		t.Fatalf("redirected code_navigate follow-up was rejected:\n%s", strings.Join(trace, "\n"))
+	}
+	got, err := os.ReadFile(filepath.Join(root, "internal/app/sessions.go"))
+	if err != nil {
+		t.Fatalf("read sessions: %v", err)
+	}
+	if !strings.Contains(string(got), "return 1") {
+		t.Fatalf("expected edit after redirected outline/read_symbol follow-up:\n%s\ntrace:\n%s", got, strings.Join(trace, "\n"))
+	}
+}
+
 func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) {
 	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/labels\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
@@ -8467,12 +8971,12 @@ func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) 
 		edit,
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":20,"named_gap":"confirm exact ShortLabel source before editing"}`,
 		edit,
-		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
-		"Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed.",
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths: internal/labels/labels.go\n\nVerification: go test ./... passed.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reply := "Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed."
+		reply := "Changed paths: internal/labels/labels.go\n\nVerification: go test ./... passed."
 		if requests < len(replies) {
 			reply = replies[requests]
 		}
@@ -8492,13 +8996,15 @@ func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) 
 		Workspace: workspace.NewManager(config.Workspace{
 			Root:         root,
 			CWD:          root,
+			Shell:        "/bin/sh",
 			EnableWrites: true,
+			EnableShell:  true,
 		}),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"read_file", "edit_file", "source_sanity"},
+			AllowedTools:      []string{"read_file", "edit_file", "source_sanity", "shell"},
 			EvidencePaths:     []string{"internal/labels/labels.go"},
 		},
 		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
@@ -8522,20 +9028,20 @@ func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) 
 		t.Fatalf("source-backed write retry must not be blocked as stale rejection, got %d events=%v", got, eventRolesFor(events))
 	}
 	seenInitialRejection := false
-	seenSourceSanity := false
+	seenVerification := false
 	for _, result := range results {
 		if result.Summary == "Write rejected before source-body evidence" {
 			seenInitialRejection = true
 		}
-		if result.Tool == "source_sanity" && strings.TrimSpace(result.Error) == "" {
-			seenSourceSanity = true
+		if result.Tool == "shell" && strings.TrimSpace(result.Error) == "" {
+			seenVerification = true
 		}
 	}
 	if !seenInitialRejection {
 		t.Fatal("expected first write to be rejected before source-body evidence")
 	}
-	if !seenSourceSanity {
-		t.Fatalf("expected source_sanity to run after accepted edit, results=%#v", results)
+	if !seenVerification {
+		t.Fatalf("expected language verification command to run after accepted edit, results=%#v", results)
 	}
 	got, err := os.ReadFile(filepath.Join(root, "internal/labels/labels.go"))
 	if err != nil {
@@ -8546,20 +9052,115 @@ func TestRunnerTargetSourceAllowsSameWriteAfterSourceBodyEvidence(t *testing.T) 
 	}
 }
 
+func TestRunnerPostWriteVerificationRecoversRepeatedInvalidToolThroughSourceSanity(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/labels\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
+		t.Fatalf("write target: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":6,"named_gap":"current ShortLabel source before editing"}`,
+		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`,
+		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save\"","new_text":"return \"Save\"","description":"retry same label change"}`,
+		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":6}`,
+		"Changed paths: internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected request %d", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var results []workspace.ToolResult
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			Shell:        "/bin/sh",
+			EnableWrites: true,
+			EnableShell:  true,
+		}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "edit_file", "source_sanity", "shell", "git_diff", "git_status"},
+			EvidencePaths:     []string{"internal/labels/labels.go"},
+		},
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 6},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "update internal/labels/labels.go"}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			results = append(results, event.Result)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
+		t.Fatalf("post-write invalid tool recovery must not force a pending-verification answer, got %d events=%v", got, eventRolesFor(events))
+	}
+	sawRewrite := false
+	for _, event := range events {
+		if event.Role == "tool_request_rewrite" && strings.Contains(event.Content, `"rewritten_tool":"source_sanity"`) {
+			sawRewrite = true
+		}
+	}
+	if !sawRewrite {
+		t.Fatalf("expected repeated invalid verification tool to be rewritten to source_sanity, events=%v", eventRolesFor(events))
+	}
+	sawSourceSanity := false
+	for _, result := range results {
+		if result.Tool == "source_sanity" && result.Error == "" {
+			sawSourceSanity = true
+		}
+	}
+	if !sawSourceSanity {
+		t.Fatalf("expected source_sanity recovery result, got %#v", results)
+	}
+	if !strings.Contains(answer, "Verification: Source sanity passed") {
+		t.Fatalf("expected verified final answer, got:\n%s", answer)
+	}
+}
+
 func TestRunnerEmptyImplementationReplyAutoReadsSingleEvidencePath(t *testing.T) {
 	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/labels\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
 		t.Fatalf("write target: %v", err)
 	}
 	replies := []string{
 		"",
 		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`,
-		`{"tool":"source_sanity","path":"internal/labels/labels.go"}`,
-		"Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed.",
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths: internal/labels/labels.go\n\nVerification: go test ./... passed.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reply := "Changed paths: internal/labels/labels.go\n\nVerification: source_sanity passed."
+		reply := "Changed paths: internal/labels/labels.go\n\nVerification: go test ./... passed."
 		if requests < len(replies) {
 			reply = replies[requests]
 		}
@@ -8579,13 +9180,15 @@ func TestRunnerEmptyImplementationReplyAutoReadsSingleEvidencePath(t *testing.T)
 		Workspace: workspace.NewManager(config.Workspace{
 			Root:         root,
 			CWD:          root,
+			Shell:        "/bin/sh",
 			EnableWrites: true,
+			EnableShell:  true,
 		}),
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
-			AllowedTools:      []string{"read_file", "edit_file", "source_sanity"},
+			AllowedTools:      []string{"read_file", "edit_file", "source_sanity", "shell"},
 			EvidencePaths:     []string{"internal/labels/labels.go"},
 		},
 		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
@@ -9211,6 +9814,92 @@ func TestRunnerPermissionPolicyDeniesToolBeforeExecution(t *testing.T) {
 	}
 	if permissionEvent == "" {
 		t.Fatal("expected deny permission decision event")
+	}
+}
+
+func TestRunnerWorkspaceToolRulesDenyBeforePolicyAllow(t *testing.T) {
+	root := t.TempDir()
+	secret := "SECRET_SENTINEL_DO_NOT_LEAK"
+	if err := os.WriteFile(filepath.Join(root, "secret.txt"), []byte(secret), 0o600); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	replies := []string{
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"secret.txt\"}\n```",
+		"```tool\n{\"tool\":\"read_file\",\"path\":\"secret.txt\"}\n```",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var permissionEvent string
+	var allowEvent string
+	var completionStatus string
+	var leaked bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+			ToolRules: map[string][]config.ToolRule{
+				"read_file": {
+					{Pattern: "secret.txt", Decision: "deny"},
+				},
+			},
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+		PermissionPolicy: ToolPermissionPolicy{
+			Default: PermissionAllow,
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "permission_decision" {
+				if strings.Contains(event.Content, `"decision":"deny"`) {
+					permissionEvent = event.Content
+				}
+				if strings.Contains(event.Content, `"decision":"allow"`) {
+					allowEvent = event.Content
+				}
+			}
+			if event.Role == "completion_status" {
+				completionStatus = event.Content
+			}
+			if strings.Contains(event.Content, secret) {
+				leaked = true
+			}
+		},
+	}
+
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "read secret"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "workspace `tool_rules` deny `read_file`") {
+		t.Fatalf("unexpected answer %q", answer)
+	}
+	if requests != 1 {
+		t.Fatalf("workspace deny should close before a second model call, got %d requests", requests)
+	}
+	if permissionEvent == "" || !strings.Contains(permissionEvent, "workspace.tool_rules") {
+		t.Fatalf("expected workspace tool_rules deny event, got %q", permissionEvent)
+	}
+	if !strings.Contains(completionStatus, `"blocker_kind":"workspace_tool_rules_deny"`) {
+		t.Fatalf("expected workspace tool_rules completion status, got %q", completionStatus)
+	}
+	if allowEvent != "" {
+		t.Fatalf("workspace deny must not emit allow permission event: %s", allowEvent)
+	}
+	if leaked {
+		t.Fatal("deny path leaked sentinel content")
 	}
 }
 
@@ -14148,6 +14837,9 @@ func TestRejectionRetryBlocked(t *testing.T) {
 
 func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testing.T) {
 	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/labels\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string { return \"Save changes\" }\n"); err != nil {
 		t.Fatalf("write seed: %v", err)
 	}
@@ -14157,7 +14849,8 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
 		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
 		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`,
-		`{"tool":"source_sanity","path":"internal/labels/labels.go"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/labels/labels.go\n\nVerification: go test ./... passed.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -14179,7 +14872,9 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 		Workspace: workspace.NewManager(config.Workspace{
 			Root:         root,
 			CWD:          root,
+			Shell:        "/bin/sh",
 			EnableWrites: true,
+			EnableShell:  true,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -14205,11 +14900,11 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if requests != len(replies) {
-		t.Fatalf("expected recovery to close immediately after source-aware verification, got %d requests", requests)
+	if requests != len(replies)-1 {
+		t.Fatalf("expected recovery to close immediately after source-aware verification without a redundant final-answer request, got %d requests", requests)
 	}
-	if got := countEventsByRole(events, "mutation_no_write_loop_recovery"); got != 1 {
-		t.Fatalf("expected one mutation no-write loop recovery event, got %d; events=%v", got, eventRolesFor(events))
+	if got := countEventsByRole(events, "implementation_target_write_ready_recovery"); got != 2 {
+		t.Fatalf("expected two target-write-ready recovery events, got %d; events=%v", got, eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "mutation_rejected_retry_write_recovery"); got != 0 {
 		t.Fatalf("repeated full reads should not use rejected-retry recovery, got %d events; events=%v", got, eventRolesFor(events))
@@ -14229,6 +14924,97 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 	}
 	if !strings.Contains(strings.ToLower(answer), "verification") {
 		t.Fatalf("expected final answer to report verification status, got:\n%s", answer)
+	}
+}
+
+func TestRunnerRepeatedNoWriteRecoveryRepairsBlockedNonWriteBeforeClosing(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "go.mod", "module example.com/labels\n\ngo 1.24\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
+		t.Fatalf("write label source: %v", err)
+	}
+
+	replies := []string{
+		"I found the label source and can make the change.",
+		`{"tool":"list_files","path":"internal/labels"}`,
+		`{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"return \"Save changes\"","new_text":"return \"Save\"","description":"shorten save label"}`,
+		`{"tool":"shell","command":"go test ./..."}`,
+		"Changed paths:\n- internal/labels/labels.go\n\nVerification: go test ./... passed.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	defer server.Close()
+
+	mgr := workspace.NewManager(config.Workspace{
+		Root:         root,
+		CWD:          root,
+		Shell:        "/bin/sh",
+		EnableWrites: true,
+		EnableShell:  true,
+	})
+	mgr.MarkPathObserved("internal/labels/labels.go")
+
+	var events []RunEvent
+	var completionStatuses []string
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, time.Second),
+		Workspace: mgr,
+		Policy:    RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10, MaxModelCalls: 20},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"internal/labels/labels.go"},
+			Constraints:       []string{"exact_anchor_implementation", "implementation_packet_write_ready"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+			if event.Role == "completion_status" {
+				completionStatuses = append(completionStatuses, event.Content)
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Shorten the save label in the session tab."}},
+		llama.ChatOptions{MaxTokens: 8192},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if got := countEventsByRole(events, "implementation_write_only_recovery_non_write_repair"); got != 1 {
+		t.Fatalf("expected one write-only non-write repair event, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	for _, status := range completionStatuses {
+		if strings.Contains(status, "write_only_recovery_no_edit_attempted") ||
+			strings.Contains(status, "write_only_recovery_required_paths_remaining") {
+			t.Fatalf("write-only non-write should get one repair turn before closeout, got status %s; events=%s", status, formatRunEventsForTest(events))
+		}
+	}
+	data, err := os.ReadFile(filepath.Join(root, "internal/labels/labels.go"))
+	if err != nil {
+		t.Fatalf("read edited file: %v", err)
+	}
+	if !strings.Contains(string(data), `return "Save"`) || strings.Contains(string(data), `Save changes`) {
+		t.Fatalf("expected repair turn to apply edit, got:\n%s", string(data))
+	}
+	if !strings.Contains(answer, "internal/labels/labels.go") || !strings.Contains(strings.ToLower(answer), "verification") {
+		t.Fatalf("expected final implementation answer after repair, got:\n%s", answer)
 	}
 }
 
@@ -14330,6 +15116,22 @@ func eventRolesFor(events []RunEvent) []string {
 		}
 	}
 	return out
+}
+
+func formatRunEventsForTest(events []RunEvent) string {
+	lines := make([]string, 0, len(events))
+	for _, ev := range events {
+		content := strings.TrimSpace(ev.Content)
+		if len(content) > 240 {
+			content = content[:240] + "..."
+		}
+		if content == "" {
+			lines = append(lines, ev.Role)
+			continue
+		}
+		lines = append(lines, ev.Role+": "+content)
+	}
+	return strings.Join(lines, "\n")
 }
 
 // TestFingerprintNudgeFiresOncePerFingerprint verifies that when the model

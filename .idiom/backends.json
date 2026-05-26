@@ -146,6 +146,26 @@
         "default_coder": "MiniMax-M2.7",
         "default_classifier": "qwen3.6-35b"
       }
+    },
+    "all-gpt-5.5-high": {
+      "_comment": "Hosted Codex/GPT profile using OpenAI's Responses API for every harness role. Set OPENAI_API_KEY in the shell; no local backend process or alias proxy is required.",
+      "models": [
+        {
+          "alias": "gpt-5.5-high",
+          "kind": "codex",
+          "model": "gpt-5.5",
+          "api_key_env": "OPENAI_API_KEY",
+          "reasoning_effort": "high",
+          "roles": ["planner", "executor", "classifier"]
+        }
+      ],
+      "proxy": {
+        "default_alias": "gpt-5.5-high",
+        "default_planner": "gpt-5.5-high",
+        "default_executor": "gpt-5.5-high",
+        "default_coder": "gpt-5.5-high",
+        "default_classifier": "gpt-5.5-high"
+      }
     }
   }
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -15,13 +16,18 @@ import (
 )
 
 type turnRoutePlan struct {
-	InitialLane  string      `json:"initial_lane,omitempty"`
-	FollowupLane string      `json:"followup_lane,omitempty"`
-	Reason       string      `json:"reason,omitempty"`
-	Contract     string      `json:"contract,omitempty"`
-	Family       string      `json:"family,omitempty"`
-	Thoroughness string      `json:"thoroughness,omitempty"`
-	RouteSource  routeSource `json:"-"`
+	InitialLane        string      `json:"initial_lane,omitempty"`
+	FollowupLane       string      `json:"followup_lane,omitempty"`
+	Reason             string      `json:"reason,omitempty"`
+	Contract           string      `json:"contract,omitempty"`
+	Family             string      `json:"family,omitempty"`
+	Thoroughness       string      `json:"thoroughness,omitempty"`
+	RequestedOutcome   string      `json:"requested_outcome,omitempty"`
+	WriteIntent        string      `json:"write_intent,omitempty"`
+	ReadOnlyConstraint bool        `json:"read_only_constraint,omitempty"`
+	ContinuationTarget string      `json:"continuation_target,omitempty"`
+	ReasonCodes        []string    `json:"reason_codes,omitempty"`
+	RouteSource        routeSource `json:"-"`
 }
 
 func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent.Mode) turnRoutePlan {
@@ -31,7 +37,9 @@ func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent
 	}
 	fallback := fallbackTurnRoute(prompt, mode)
 	if planned, ok := m.classifyTurnRouteWithModel(ctx, prompt, mode); ok {
+		classified := planned
 		planned = correctTurnRoutePlanForPrompt(planned, prompt, mode)
+		m.logTurnRouteCorrection(classified, planned)
 		if shouldPreferFallbackRoute(fallback, planned, prompt) {
 			return fallback
 		}
@@ -58,8 +66,12 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Return strict JSON only.",
 				"Choose the best family from this enum:",
 				"conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
-				"Also return initial_lane, optional followup_lane, reason, contract, and optional thoroughness.",
+				"Also return initial_lane, optional followup_lane, reason, contract, optional thoroughness, requested_outcome, write_intent, read_only_constraint, continuation_target, and reason_codes.",
 				"Use coarse OpenCode-shaped routing: conversation for normal question-answer turns, read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
+				"Classify the requested outcome first. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate.",
+				"write_intent enum: yes, no, ambiguous. Use yes only when the requested outcome is to edit files, repair behavior, add tests/docs/config, or otherwise change the workspace. Use no for explanation, how-to, status, and read-only investigation.",
+				"continuation_target enum: prior_change, current_prompt_only, none. A post-completion defect report like 'that did not fix it' or 'it still fails' targets prior_change.",
+				"Explicit read-only constraints such as 'do not edit', 'just explain', 'without changing files', or 'diagnose only' set read_only_constraint=true and keep the route read-only even if the topic mentions a possible change.",
 				"Prefer conversation by default for questions, status requests, how-to requests, and lightweight repo questions. Conversation may use efficient read-only workspace tools when the answer depends on code or logs.",
 				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
@@ -68,6 +80,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Prefer plan_then_execute_planner when the requested outcome is to dispatch a durable implementation atom or brief through the plan-execute workflow, where valid terminal outcomes include a submit_plan artifact, source-satisfied closeout, or typed blocker before execution.",
 				"Question-shaped wording is not a lane signal by itself. Classify by requested outcome: a polite request such as 'can you implement/fix/update/add...' is implementation when it asks the agent to perform the change now; a deliberative question such as 'can we/should we/how would we...' stays conversation when it asks about whether or how to change.",
 				"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive.",
+				"After a completed implementation, do not keep a sticky implementation state. Route the new prompt from its requested_outcome: 'what did you change?' => answer/read-only; 'why did it fail?' => diagnose/read-only; 'it still goes off-screen, fix it' or 'that did not fix it' => change_workspace/prior_change/write_intent=yes unless a read-only constraint is present.",
 				"Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => plan_then_execute_planner; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.",
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
 				"Prefer architecture for broad design, boundary, cross-component assessment, or repo-internal subsystem explanations where the answer depends on harness/tool/control-flow implementation evidence. Use conversation for ordinary explanation-only questions that do not need repository architecture evidence.",
@@ -127,11 +140,16 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 	plan.RouteSource = routeSourceClassifier
 	plan = normalizeTurnRoutePlan(plan, mode)
 	m.logRouteClassifierDecision(map[string]any{
-		"status":       "accepted",
-		"family":       plan.Family,
-		"initial_lane": plan.InitialLane,
-		"reason":       plan.Reason,
-		"contract":     plan.Contract,
+		"status":               "accepted",
+		"family":               plan.Family,
+		"initial_lane":         plan.InitialLane,
+		"reason":               plan.Reason,
+		"contract":             plan.Contract,
+		"requested_outcome":    plan.RequestedOutcome,
+		"write_intent":         plan.WriteIntent,
+		"read_only_constraint": plan.ReadOnlyConstraint,
+		"continuation_target":  plan.ContinuationTarget,
+		"reason_codes":         plan.ReasonCodes,
 	})
 	return plan, plan.Family != ""
 }
@@ -156,6 +174,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 				"Choose family from: conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
 				"Use contracts from: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
 				"Use lanes from: main, explore, verification, locate, review, architecture, implement.",
+				"Include requested_outcome, write_intent, read_only_constraint, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. continuation_target enum: prior_change, current_prompt_only, none.",
 			}, "\n"),
 		},
 		{
@@ -186,6 +205,40 @@ func (m *Model) logRouteClassifierDecision(fields map[string]any) {
 	if body, err := json.Marshal(fields); err == nil {
 		m.logMessage("route_classifier_decision", string(body))
 	}
+}
+
+func (m *Model) logTurnRouteCorrection(before, after turnRoutePlan) {
+	if m == nil || !routePlanCorrectionChanged(before, after) {
+		return
+	}
+	fields := map[string]any{
+		"schema_version":       "idiom.route_classifier_correction.v1",
+		"before_family":        before.Family,
+		"before_initial_lane":  before.InitialLane,
+		"before_contract":      before.Contract,
+		"after_family":         after.Family,
+		"after_initial_lane":   after.InitialLane,
+		"after_contract":       after.Contract,
+		"requested_outcome":    after.RequestedOutcome,
+		"write_intent":         after.WriteIntent,
+		"read_only_constraint": after.ReadOnlyConstraint,
+		"continuation_target":  after.ContinuationTarget,
+		"reason_codes":         after.ReasonCodes,
+	}
+	if body, err := json.Marshal(fields); err == nil {
+		m.logMessage("route_classifier_correction", string(body))
+	}
+}
+
+func routePlanCorrectionChanged(before, after turnRoutePlan) bool {
+	return before.Family != after.Family ||
+		before.InitialLane != after.InitialLane ||
+		before.FollowupLane != after.FollowupLane ||
+		before.Contract != after.Contract ||
+		before.RequestedOutcome != after.RequestedOutcome ||
+		before.WriteIntent != after.WriteIntent ||
+		before.ReadOnlyConstraint != after.ReadOnlyConstraint ||
+		before.ContinuationTarget != after.ContinuationTarget
 }
 
 func (m *Model) routeClassifierChatClient() llama.LLMClient {
@@ -299,10 +352,17 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	plan.Contract = normalizeRouteValue(plan.Contract)
 	plan.Family = normalizeRouteValue(plan.Family)
 	plan.Thoroughness = normalizeRouteValue(plan.Thoroughness)
+	plan.RequestedOutcome = normalizeRouteOutcome(plan.RequestedOutcome)
+	plan.WriteIntent = normalizeRouteWriteIntent(plan.WriteIntent)
+	plan.ContinuationTarget = normalizeRouteContinuationTarget(plan.ContinuationTarget)
+	plan.ReasonCodes = normalizeRouteReasonCodes(plan.ReasonCodes)
 	plan.RouteSource = source
 	switch plan.Family {
 	case "plan_execute", "plan_execute_planner", "plan_then_execute":
 		plan.Family = agent.PlanThenExecutePlannerTaskFamily
+	}
+	if plan.Family == "" {
+		plan.Family = familyForRouteOutcome(plan.RequestedOutcome, plan.WriteIntent)
 	}
 	if plan.Family == "" {
 		return fallbackTurnRoute("", mode)
@@ -408,6 +468,9 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	normalized := normalizeTurnRoutePlan(plan, mode)
+	if corrected, ok := routePlanCorrectedByOutcomeContract(normalized, mode); ok {
+		normalized = corrected
+	}
 	if shouldUpgradeConversationRouteToArchitecture(normalized, prompt) {
 		normalized.Family = "architecture"
 		normalized.InitialLane = "architecture"
@@ -417,6 +480,80 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent
 		return normalizeTurnRoutePlan(normalized, mode)
 	}
 	return normalized
+}
+
+func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
+	if plan.ReadOnlyConstraint || plan.WriteIntent == "no" {
+		if isImplementationLikeFamily(plan.Family) {
+			return readOnlyRouteForOutcome(plan, mode, "route_outcome_read_only_constraint"), true
+		}
+		return plan, false
+	}
+	switch plan.RequestedOutcome {
+	case "change_workspace":
+		if !isImplementationLikeFamily(plan.Family) && plan.WriteIntent != "no" {
+			plan.Family = "implementation"
+			plan.InitialLane = "implement"
+			plan.FollowupLane = ""
+			plan.Contract = "implementation_result"
+			plan.WriteIntent = "yes"
+			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_change_workspace")
+			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_change_workspace")
+			return normalizeTurnRoutePlan(plan, mode), true
+		}
+	case "diagnose_then_change":
+		if !isImplementationLikeFamily(plan.Family) {
+			plan.Family = "explore_then_implement"
+			plan.InitialLane = "explore"
+			plan.FollowupLane = "implement"
+			plan.Contract = "implementation_result"
+			plan.WriteIntent = "yes"
+			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_diagnose_then_change")
+			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_diagnose_then_change")
+			return normalizeTurnRoutePlan(plan, mode), true
+		}
+	case "verify":
+		if plan.Family != "verification_only" && plan.WriteIntent != "yes" {
+			plan.Family = "verification_only"
+			plan.InitialLane = "main"
+			plan.FollowupLane = ""
+			plan.Contract = "direct_answer"
+			plan.Reason = util.FirstNonEmpty(plan.Reason, "route_outcome_verify")
+			plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_outcome_verify")
+			return normalizeTurnRoutePlan(plan, mode), true
+		}
+	}
+	if plan.WriteIntent == "yes" && !isImplementationLikeFamily(plan.Family) {
+		plan.Family = "implementation"
+		plan.InitialLane = "implement"
+		plan.FollowupLane = ""
+		plan.Contract = "implementation_result"
+		plan.RequestedOutcome = util.FirstNonEmpty(plan.RequestedOutcome, "change_workspace")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "route_write_intent_yes")
+		plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, "route_write_intent_yes")
+		return normalizeTurnRoutePlan(plan, mode), true
+	}
+	return plan, false
+}
+
+func readOnlyRouteForOutcome(plan turnRoutePlan, mode agent.Mode, reasonCode string) turnRoutePlan {
+	switch plan.RequestedOutcome {
+	case "diagnose":
+		plan.Family = "debug_logs"
+	case "verify":
+		plan.Family = "verification_only"
+	case "locate":
+		plan.Family = "locate"
+	default:
+		plan.Family = "conversation"
+	}
+	plan.InitialLane = ""
+	plan.FollowupLane = ""
+	plan.Contract = ""
+	plan.WriteIntent = "no"
+	plan.Reason = util.FirstNonEmpty(plan.Reason, reasonCode)
+	plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, reasonCode)
+	return normalizeTurnRoutePlan(plan, mode)
 }
 
 func shouldUpgradeConversationRouteToArchitecture(plan turnRoutePlan, prompt string) bool {
@@ -457,6 +594,95 @@ func plannerWordsContainAny(words string, phrases ...string) bool {
 		}
 	}
 	return false
+}
+
+func normalizeRouteOutcome(value string) string {
+	switch normalizeRouteValue(value) {
+	case "answer", "direct_answer", "conversation":
+		return "answer"
+	case "diagnose", "debug", "debug_logs", "investigate", "explain_failure":
+		return "diagnose"
+	case "change", "change_workspace", "implementation", "implement", "repair", "fix":
+		return "change_workspace"
+	case "diagnose_then_change", "investigate_then_implement", "explore_then_implement", "repair_after_diagnosis":
+		return "diagnose_then_change"
+	case "verify", "verification", "verification_only", "test":
+		return "verify"
+	case "plan", "planner", "plan_then_execute", "plan_then_execute_planner":
+		return "plan"
+	case "review", "security_review", "performance_review", "architecture":
+		return "review"
+	case "locate", "find":
+		return "locate"
+	default:
+		return ""
+	}
+}
+
+func normalizeRouteWriteIntent(value string) string {
+	switch normalizeRouteValue(value) {
+	case "yes", "true", "write", "edit", "mutate", "mutation":
+		return "yes"
+	case "no", "false", "none", "read_only", "readonly":
+		return "no"
+	case "ambiguous", "unknown", "unclear":
+		return "ambiguous"
+	default:
+		return ""
+	}
+}
+
+func normalizeRouteContinuationTarget(value string) string {
+	switch normalizeRouteValue(value) {
+	case "prior_change", "previous_change", "last_change", "previous_fix", "prior_fix":
+		return "prior_change"
+	case "current_prompt_only", "current_prompt", "current":
+		return "current_prompt_only"
+	case "none", "no":
+		return "none"
+	default:
+		return ""
+	}
+}
+
+func normalizeRouteReasonCodes(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		value = normalizeRouteValue(value)
+		if value != "" && !slices.Contains(out, value) {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func familyForRouteOutcome(outcome, writeIntent string) string {
+	if writeIntent == "yes" {
+		return "implementation"
+	}
+	switch outcome {
+	case "answer":
+		return "conversation"
+	case "diagnose":
+		return "debug_logs"
+	case "change_workspace":
+		return "implementation"
+	case "diagnose_then_change":
+		return "explore_then_implement"
+	case "verify":
+		return "verification_only"
+	case "plan":
+		return agent.PlanThenExecutePlannerTaskFamily
+	case "review":
+		return "security_review"
+	case "locate":
+		return "locate"
+	default:
+		return ""
+	}
 }
 
 func shouldPreferFallbackRoute(fallback turnRoutePlan, planned turnRoutePlan, prompt string) bool {
@@ -546,6 +772,21 @@ func renderTurnRoutePlan(plan turnRoutePlan) string {
 	}
 	if plan.Thoroughness != "" {
 		parts = append(parts, "thoroughness="+plan.Thoroughness)
+	}
+	if plan.RequestedOutcome != "" {
+		parts = append(parts, "requested_outcome="+plan.RequestedOutcome)
+	}
+	if plan.WriteIntent != "" {
+		parts = append(parts, "write_intent="+plan.WriteIntent)
+	}
+	if plan.ReadOnlyConstraint {
+		parts = append(parts, "read_only_constraint=true")
+	}
+	if plan.ContinuationTarget != "" {
+		parts = append(parts, "continuation_target="+plan.ContinuationTarget)
+	}
+	if len(plan.ReasonCodes) > 0 {
+		parts = append(parts, "reason_codes="+strings.Join(plan.ReasonCodes, ","))
 	}
 	return strings.Join(parts, " ")
 }

@@ -150,10 +150,16 @@ failure patterns that have cost time in real Idiom/Colony runs.
 
 ## Audit, Logs, And Feedback Traps
 
-- **Diagnosing from memory**: start behavior debugging from lane history,
-  conversation JSONL, telemetry JSONL, and `harness_audit`. If the cause cannot
-  be seen without hand-reconstructing prose, improve structured logs/audit as
-  part of the fix.
+- **Diagnosing from memory**: for behavior bugs, lane history, conversation
+  JSONL, telemetry JSONL, and `harness_audit` are the source of truth. Start
+  there, cite the exact log/session ids, stop reason, rejected-action counts,
+  completion-gate/recovery events, and tool sequence, then patch. If the cause
+  cannot be seen without hand-reconstructing prose, improve structured
+  logs/audit as part of the fix.
+- **Treating the latest run as isolated**: compare the newest failure with
+  prior similar logs before classifying root cause. If the same signature
+  appears across attempts, fix the reusable harness contract or audit/scorer
+  gap rather than adding a one-off prompt nudge.
 - **Skipping model-state checks**: for hallucinated paths, malformed tool JSON,
   missing visible tool calls, repeated `submit_plan` rejection loops, or
   suddenly weak local-model behavior, explicitly check the logged model alias,
@@ -233,11 +239,13 @@ Before calling an Idiom harness change complete, check:
 4. Are all valid terminal states visible to both the model and the gate?
 5. Would source-satisfied, stale, dirty, or non-dispatchable work be classified
    before a model spends tokens?
-6. Do logs/audits expose enough structured evidence to explain the run without
+6. Did you cite the exact log/session ids, stop reason, rejected-action counts,
+   recovery/gate events, and tool sequence before changing behavior?
+7. Do logs/audits expose enough structured evidence to explain the run without
    reading the whole transcript?
-7. Did the change add regression coverage for the bad behavior and a valid
+8. Did the change add regression coverage for the bad behavior and a valid
    allowed path?
-8. Did an independent reviewer check the root cause, north-star alignment, and
+9. Did an independent reviewer check the root cause, north-star alignment, and
    rabbit-hole risk before the fix was finalized?
-9. Was the reviewer set minimal and matched to the failure signature, rather
+10. Was the reviewer set minimal and matched to the failure signature, rather
    than the full bench by default?

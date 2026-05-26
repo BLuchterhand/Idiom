@@ -888,8 +888,8 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 	if oracle.MaxDurationMillis != nil && report.Metrics.DurationMillis > *oracle.MaxDurationMillis {
 		addFinding("duration exceeded oracle limit: got %dms want <= %dms", report.Metrics.DurationMillis, *oracle.MaxDurationMillis)
 	}
-	if oracle.MaxErrors != nil && len(report.Metrics.Errors) > *oracle.MaxErrors {
-		addFinding("errors exceeded oracle limit: got %d want <= %d", len(report.Metrics.Errors), *oracle.MaxErrors)
+	if oracle.MaxErrors != nil && report.Metrics.TotalErrorEvents() > *oracle.MaxErrors {
+		addFinding("errors exceeded oracle limit: got %d want <= %d", report.Metrics.TotalErrorEvents(), *oracle.MaxErrors)
 	}
 	if oracle.MinUserTurns != nil && report.Metrics.UserTurns < *oracle.MinUserTurns {
 		addFinding("user turns below oracle minimum: got %d want >= %d", report.Metrics.UserTurns, *oracle.MinUserTurns)

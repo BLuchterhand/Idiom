@@ -497,6 +497,11 @@ func historyAuditAutonomyEvent(content string) (historyAuditEvent, bool) {
 
 func historyAuditTextEvent(role string, content string) (historyAuditEvent, bool) {
 	switch role {
+	case "route_plan":
+		detail := safeHistoryAuditDetail(content)
+		return historyAuditEvent{kind: "lane", label: "route selected", detail: detail, status: auditDetailValue(detail, "initial")}, true
+	case "control_rails":
+		return historyAuditEvent{kind: "control rails", label: "runtime contract visible", detail: safeHistoryAuditDetail(content)}, true
 	case "discovery_redirect":
 		return historyAuditEvent{kind: "routing", label: "discovery redirected", detail: safeHistoryAuditDetail(content), status: "redirected"}, true
 	case "discovery_decision_guide":

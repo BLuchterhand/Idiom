@@ -143,7 +143,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		return decision
 	}
 
-	if conversationEvidenceSatisfied(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
+	if conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
 		decision.RejectSummary = "Conversation contract rejected extra exploration after bounded evidence"
 		decision.RejectError = "the conversation lane already has enough bounded read/search evidence to answer. Return a concise, well formatted answer from the gathered evidence; name one exact uncertainty only if it materially affects the answer."
 		decision.ForceAnswer = &runnerForcedAnswer{
@@ -286,8 +286,39 @@ func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, resul
 	return readOnlyAnalysisReadyFromEvidence(results)
 }
 
+func conversationEvidenceSatisfiedForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !conversationEvidenceSatisfied(brief, results) {
+		return false
+	}
+	for _, path := range conversationNamedEvidencePaths(brief) {
+		if !concreteSourceEvidenceReadForPath(path, results) {
+			return false
+		}
+	}
+	return true
+}
+
+func conversationNamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
+	candidates := append([]string{}, brief.TargetRefs...)
+	candidates = append(candidates, pathparse.MentionedWorkspaceFiles(brief.Objective)...)
+	paths := make([]string, 0, len(candidates))
+	seen := map[string]struct{}{}
+	for _, candidate := range candidates {
+		path := normalizeRunnerPath(candidate)
+		if path == "" || !pathparse.HasWorkspaceFileExtension(path) {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
+}
+
 func (r *Runner) conversationEvidenceSatisfiedForceAnswerReady(results []workspace.ToolResult) bool {
-	if r == nil || !conversationEvidenceSatisfied(r.RuntimeBrief, results) ||
+	if r == nil || !conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, results) ||
 		runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return false
 	}

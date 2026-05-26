@@ -280,6 +280,79 @@ func TestEvaluatePlanExecuteVerificationFailureFailsPassedRequirement(t *testing
 	}
 }
 
+func TestAnalyzeDoesNotTreatGenericSourceSanityFallbackAsPassedVerification(t *testing.T) {
+	records := []Record{{
+		Type: "tool_result",
+		Data: map[string]any{
+			"agent":   "implement_verify",
+			"tool":    "source_sanity",
+			"summary": "Source sanity passed for 1 file(s) (1 generic fallback)",
+			"output":  "internal/labels/labels.go: generic delimiter sanity passed via generic_source_sanity",
+			"error":   "",
+		},
+	}}
+
+	metrics := Analyze(records)
+	if metrics.VerificationChecks != 1 {
+		t.Fatalf("VerificationChecks = %d, want 1", metrics.VerificationChecks)
+	}
+	if metrics.VerificationPassed || metrics.VerificationFailed {
+		t.Fatalf("generic fallback should be insufficient, not passed/failed: passed=%t failed=%t", metrics.VerificationPassed, metrics.VerificationFailed)
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "generic-source-sanity-fallback",
+		RequireVerification: "passed",
+	})
+	if report.Passed {
+		t.Fatalf("generic fallback should not satisfy passed verification requirement")
+	}
+}
+
+func TestAnalyzeDoesNotTreatPatchHygienePhaseAsPassedVerification(t *testing.T) {
+	records := []Record{{
+		Type: "phase",
+		Data: map[string]any{
+			"lane":   "implement",
+			"phase":  "verify",
+			"state":  "hygiene",
+			"detail": "git diff --check passed; patch hygiene completed",
+		},
+	}}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "patch-hygiene-only",
+		RequireVerification: "passed",
+	})
+	if report.Metrics.VerificationPassed || report.Passed {
+		t.Fatalf("patch hygiene phase should not satisfy passed verification, passed=%t report=%t", report.Metrics.VerificationPassed, report.Passed)
+	}
+}
+
+func TestAnalyzeDoesNotTreatPatchHygieneToolResultAsPassedVerification(t *testing.T) {
+	records := []Record{{
+		Type: "tool_result",
+		Data: map[string]any{
+			"agent":   "implement_verify",
+			"tool":    "shell",
+			"summary": "Ran shell command",
+			"output":  "$ git diff --check -- internal/labels/labels.go\n",
+			"error":   "",
+		},
+	}}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:                "patch-hygiene-tool-result",
+		RequireVerification: "passed",
+	})
+	if report.Metrics.VerificationChecks != 1 {
+		t.Fatalf("VerificationChecks = %d, want 1", report.Metrics.VerificationChecks)
+	}
+	if report.Metrics.VerificationPassed || report.Metrics.VerificationFailed || report.Passed {
+		t.Fatalf("patch hygiene tool result should be insufficient, passed=%t failed=%t report=%t", report.Metrics.VerificationPassed, report.Metrics.VerificationFailed, report.Passed)
+	}
+}
+
 func TestAnalyzeUsesLaneSummaryAsAssistantFallback(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "prepare a plan"}},
@@ -462,6 +535,104 @@ func TestEvaluateScenarioReportsFailures(t *testing.T) {
 	}
 }
 
+func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/labels/labels.go", "error": ""}},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":    2,
+				"tool":    "code_navigate",
+				"summary": "Implementation target write-ready tool rejected",
+				"error":   "code_navigate is outside the target-write-ready surface",
+			},
+		},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":    3,
+				"tool":    "read_file",
+				"summary": "Implementation target write-ready tool rejected",
+				"error":   "read_file is outside the target-write-ready surface",
+			},
+		},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 3 {
+		t.Fatalf("expected rejected unrequested tool_result attempts to count as tool requests, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["code_navigate"] != 1 {
+		t.Fatalf("expected rejected code_navigate attempt to count as tool usage, got %#v", metrics.Tools)
+	}
+	if metrics.DiscoveryTools["code_navigate"] != 1 || metrics.DiscoveryClasses["language_symbol"] != 1 {
+		t.Fatalf("expected rejected code_navigate attempt to count as discovery attempt, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
+	}
+	if metrics.ErrorCount != 2 || len(metrics.Errors) != 2 {
+		t.Fatalf("expected two error events and two unique errors, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
+	}
+}
+
+func TestAnalyzeKeepsRepeatedIdenticalErrorEventCount(t *testing.T) {
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ErrorCount != 2 {
+		t.Fatalf("expected repeated identical errors to count as two events, got %d", metrics.ErrorCount)
+	}
+	if len(metrics.Errors) != 1 {
+		t.Fatalf("expected retained error messages to remain deduplicated, got %#v", metrics.Errors)
+	}
+}
+
+func TestAnalyzeDeduplicatesMirroredToolAndErrorRecordsByStep(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "action": "read_file:a.go"}},
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "action": "read_file:a.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "same rejection"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "same rejection"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 2 {
+		t.Fatalf("expected mirrored records to count as two logical attempts, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["read_file"] != 1 || metrics.Tools["code_navigate"] != 1 {
+		t.Fatalf("expected logical tool counts, got %#v", metrics.Tools)
+	}
+	if metrics.ErrorCount != 1 {
+		t.Fatalf("expected duplicate rejected result records to count as one logical error event, got %d", metrics.ErrorCount)
+	}
+}
+
+func TestEvaluateScenarioToolAssertionsIncludeRejectedAttempts(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "edit the label"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Implementation target write-ready tool rejected", "error": "code_navigate rejected"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:         "rejected attempt required",
+		RequireTools: []string{"code_navigate"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected required tool assertion to include rejected attempts, got %#v", report.Findings)
+	}
+
+	report = Evaluate("log.jsonl", records, Scenario{
+		Name:        "rejected attempt forbidden",
+		ForbidTools: []string{"code_navigate"},
+	})
+	if report.Passed || !strings.Contains(strings.Join(report.Findings, "\n"), `forbidden tool "code_navigate" was used`) {
+		t.Fatalf("expected forbidden tool assertion to include rejected attempts, passed=%t findings=%#v", report.Passed, report.Findings)
+	}
+}
+
 func TestEvaluateScenarioRequiresAssistantForEachUserTurn(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Can you identify opportunities for us to refactor our repo for long-term maintainability"}},
@@ -585,6 +756,31 @@ func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testin
 	}
 	if got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]; got != 1 {
 		t.Fatalf("expected RecordTypes to count preflight_failed once, got %d", got)
+	}
+}
+
+func TestEvaluateScenarioRequireRunEventsMatchesNestedAutonomyEventTypes(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "read the denied file"}},
+		{
+			Type: "run_event",
+			Data: map[string]any{
+				"role":    "autonomy_event",
+				"content": `{"schema_version":"idiom.autonomy.event.v1","event_id":"event-1","type":"tool_policy_result","effect":"observe_only","occurred_at":"2026-05-25T14:00:00Z","sequence":1,"contract_id":"contract-1","correlation":{"lane":"main","task_family":"conversation","runtime_contract":"direct_answer","permission_profile":"read_only_workspace"},"policy":{"tool_name":"read_file","action_class":"read","action_key":"read:read_file:bounded_read:.idiom/deny-read-test.txt","transport":"textual_tool_call","capability":"bounded_read","side_effect":"read_only","arguments_digest":"sha256:0000000000000000000000000000000000000000000000000000000000000000","decision":"deny","reason_code":"permission_policy","result":"denied","error_class":"permission_policy","source":"runner_permission_policy"}}`,
+			},
+		},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "The read was denied."}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:             "autonomy tool policy result observed",
+		RequireRunEvents: []string{"tool_policy_result"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected scenario to pass when autonomy event payload type appears, got findings %v", report.Findings)
+	}
+	if got := report.Metrics.RecordTypes["tool_policy_result"]; got != 1 {
+		t.Fatalf("expected RecordTypes to count nested tool_policy_result once, got %d", got)
 	}
 }
 

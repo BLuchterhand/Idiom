@@ -1,0 +1,20 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save changes\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"shorten the required label implementation\"}"
+    },
+    {
+      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go"
+    },
+    {
+      "content": "{\"tool\":\"edit_file\",\"path\":\"internal/labels/labels.go\",\"old_text\":\"return \\\"Save\\\"\",\"new_text\":\"return \\\"Save\\\"\",\"description\":\"retry the already-applied label edit\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":8}"
+    },
+    {
+      "content": "Implemented the label change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: Source sanity passed for internal/labels/labels.go."
+    }
+  ]
+}

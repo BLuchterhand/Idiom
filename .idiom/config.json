@@ -62,6 +62,18 @@
     "max_directory_entries": 400,
     "enable_shell": true,
     "enable_writes": true,
+    "tool_rules": {
+      "read_file": [
+        {
+          "pattern": ".idiom/deny-read-test.txt",
+          "decision": "deny"
+        },
+        {
+          "pattern": "*",
+          "decision": "allow"
+        }
+      ]
+    },
     "allow_private_network": false
   }
 }

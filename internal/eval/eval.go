@@ -601,6 +601,7 @@ type Metrics struct {
 	LanguageCapabilities      []LanguageCapabilitySnapshot    `json:"language_capabilities,omitempty"`
 	MessageRoles              map[string]int                  `json:"message_roles,omitempty"`
 	RecordTypes               map[string]int                  `json:"record_types,omitempty"`
+	ErrorCount                int                             `json:"error_count,omitempty"`
 	Errors                    []string                        `json:"errors,omitempty"`
 }
 
@@ -618,6 +619,13 @@ type Report struct {
 	Passed   bool     `json:"passed"`
 	Findings []string `json:"findings,omitempty"`
 	Metrics  Metrics  `json:"metrics"`
+}
+
+func (m Metrics) TotalErrorEvents() int {
+	if m.ErrorCount > 0 {
+		return m.ErrorCount
+	}
+	return len(m.Errors)
 }
 
 func LoadRecords(path string) ([]Record, error) {

@@ -78,10 +78,14 @@ func Analyze(records []Record) Metrics {
 	}
 	verifyAgentSeen := false
 	verifyHasFailure := false
+	verifyHasInsufficient := false
 	laneSummaryTurns := 0
 	lastLaneSummary := ""
 	observedChangedFiles := []string(nil)
 	autonomyEvents := []autonomy.Event(nil)
+	requestedToolEventKeys := make(map[string]struct{})
+	countedToolEventKeys := make(map[string]struct{})
+	countedErrorEventKeys := make(map[string]struct{})
 	var firstTS time.Time
 	var lastTS time.Time
 	for _, record := range records {
@@ -93,14 +97,10 @@ func Analyze(records []Record) Metrics {
 				lastTS = ts
 			}
 		}
-		if rtype := strings.TrimSpace(record.Type); rtype != "" {
-			if metrics.RecordTypes == nil {
-				metrics.RecordTypes = map[string]int{}
-			}
-			metrics.RecordTypes[rtype]++
-		}
+		countMetricsRecordType(&metrics, record.Type)
 		if event, ok := autonomyEventFromRecord(record); ok {
 			autonomyEvents = append(autonomyEvents, event)
+			countMetricsRecordType(&metrics, string(event.Type))
 		}
 		switch record.Type {
 		case "session_start":
@@ -283,57 +283,40 @@ func Analyze(records []Record) Metrics {
 			}
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromJSONContent(content)...)
 		case "tool_request":
-			metrics.ToolRequests++
-			tool := stringField(record.Data, "tool")
-			if tool != "" {
-				metrics.Tools[tool]++
-			}
-			class := strings.TrimSpace(stringField(record.Data, "discovery_class"))
-			scope := strings.TrimSpace(stringField(record.Data, "discovery_scope"))
-			cost := strings.TrimSpace(stringField(record.Data, "discovery_cost"))
-			if class == "shell" {
-				class, scope, cost = "other", "", ""
-			}
-			if class == "" || scope == "" || cost == "" {
-				fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
-				if class == "" {
-					class = fallbackClass
+			if key := toolAttemptEventKey(record.Data); key != "" {
+				requestedToolEventKeys[key] = struct{}{}
+				if _, ok := countedToolEventKeys[key]; ok {
+					continue
 				}
-				if scope == "" {
-					scope = fallbackScope
-				}
-				if cost == "" {
-					cost = fallbackCost
-				}
+				countedToolEventKeys[key] = struct{}{}
 			}
-			if class != "" && class != "other" {
-				metrics.DiscoveryTools[tool]++
-				metrics.DiscoveryClasses[class]++
-				if scope != "" {
-					metrics.DiscoveryScopes[scope]++
-				}
-				if cost != "" {
-					metrics.DiscoveryCosts[cost]++
-					if cost == "high" {
-						metrics.HeavyDiscoveryRequests++
-					}
-				}
-			}
-			if boolField(record.Data, "broad") {
-				metrics.BroadToolRequests++
-			}
+			recordToolAttemptMetrics(&metrics, record.Data)
 		case "tool_result":
 			summary := strings.ToLower(stringField(record.Data, "summary"))
 			tool := strings.TrimSpace(stringField(record.Data, "tool"))
+			errText := strings.TrimSpace(stringField(record.Data, "error"))
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromText(stringField(record.Data, "summary"))...)
 			if tool == "completion_gate" && strings.TrimSpace(stringField(record.Data, "error")) != "" {
 				if metrics.CompletionGateRejections < 1 {
 					metrics.CompletionGateRejections = 1
 				}
 			}
-			if strings.Contains(summary, "rejected") && strings.TrimSpace(stringField(record.Data, "error")) != "" {
+			if toolResultCountsAsRejectedAttempt(record.Data) {
 				if metrics.RejectedActions < 1 {
 					metrics.RejectedActions = 1
+				}
+			}
+			if errText != "" && !toolResultAttemptWasRequested(record.Data, requestedToolEventKeys, metrics.Tools) {
+				if key := toolAttemptEventKey(record.Data); key != "" {
+					if _, ok := countedToolEventKeys[key]; ok {
+						// Duplicate runner/telemetry records should not
+						// inflate logical tool-attempt counts.
+					} else {
+						countedToolEventKeys[key] = struct{}{}
+						recordToolAttemptMetrics(&metrics, record.Data)
+					}
+				} else {
+					recordToolAttemptMetrics(&metrics, record.Data)
 				}
 			}
 			if strings.Contains(summary, "repeated dead-end action rejected") {
@@ -342,14 +325,23 @@ func Analyze(records []Record) Metrics {
 			if strings.Contains(summary, "repeated tool request rejected") {
 				metrics.RepeatedToolRejections++
 			}
-			if errText := strings.TrimSpace(stringField(record.Data, "error")); errText != "" {
+			if errText != "" {
+				if key := toolErrorEventKey(record.Data); key == "" {
+					metrics.ErrorCount++
+				} else if _, ok := countedErrorEventKeys[key]; !ok {
+					countedErrorEventKeys[key] = struct{}{}
+					metrics.ErrorCount++
+				}
 				metrics.Errors = append(metrics.Errors, errText)
 			}
 			if stringField(record.Data, "agent") == "implement_verify" {
 				verifyAgentSeen = true
 				metrics.VerificationChecks++
-				if strings.TrimSpace(stringField(record.Data, "error")) != "" {
+				switch verificationToolResultState(record.Data) {
+				case "failed":
 					verifyHasFailure = true
+				case "insufficient":
+					verifyHasInsufficient = true
 				}
 			}
 		case "phase":
@@ -437,7 +429,7 @@ func Analyze(records []Record) Metrics {
 	}
 	if !metrics.VerificationPassed && !metrics.VerificationFailed && verifyAgentSeen {
 		metrics.VerificationFailed = verifyHasFailure
-		metrics.VerificationPassed = !verifyHasFailure && metrics.VerificationChecks > 0
+		metrics.VerificationPassed = !verifyHasFailure && !verifyHasInsufficient && metrics.VerificationChecks > 0
 	}
 	metrics.ChangedFiles = util.UniqueNonEmpty(append(observedChangedFiles, extractChangedFiles(metrics.FinalAssistant)...))
 	if !firstTS.IsZero() && !lastTS.IsZero() && !lastTS.Before(firstTS) {
@@ -468,6 +460,105 @@ func autonomyEventFromRecord(record Record) (autonomy.Event, bool) {
 	default:
 		return autonomy.Event{}, false
 	}
+}
+
+func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
+	if metrics == nil {
+		return
+	}
+	metrics.ToolRequests++
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	if tool != "" {
+		metrics.Tools[tool]++
+	}
+	class := strings.TrimSpace(stringField(data, "discovery_class"))
+	scope := strings.TrimSpace(stringField(data, "discovery_scope"))
+	cost := strings.TrimSpace(stringField(data, "discovery_cost"))
+	if class == "shell" {
+		class, scope, cost = "other", "", ""
+	}
+	if class == "" || scope == "" || cost == "" {
+		fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
+		if class == "" {
+			class = fallbackClass
+		}
+		if scope == "" {
+			scope = fallbackScope
+		}
+		if cost == "" {
+			cost = fallbackCost
+		}
+	}
+	if class != "" && class != "other" {
+		metrics.DiscoveryTools[tool]++
+		metrics.DiscoveryClasses[class]++
+		if scope != "" {
+			metrics.DiscoveryScopes[scope]++
+		}
+		if cost != "" {
+			metrics.DiscoveryCosts[cost]++
+			if cost == "high" {
+				metrics.HeavyDiscoveryRequests++
+			}
+		}
+	}
+	if boolField(data, "broad") {
+		metrics.BroadToolRequests++
+	}
+}
+
+func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
+	if strings.TrimSpace(stringField(data, "error")) == "" {
+		return false
+	}
+	summary := strings.ToLower(stringField(data, "summary"))
+	return strings.Contains(summary, "rejected") ||
+		strings.Contains(summary, "retry blocked") ||
+		strings.Contains(summary, "preempted")
+}
+
+func toolResultAttemptWasRequested(data map[string]any, requestedKeys map[string]struct{}, tools map[string]int) bool {
+	if key := toolAttemptEventKey(data); key != "" {
+		_, ok := requestedKeys[key]
+		return ok
+	}
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	return tool != "" && tools[tool] > 0
+}
+
+func toolAttemptEventKey(data map[string]any) string {
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	if tool == "" {
+		return ""
+	}
+	if step := intField(data, "step"); step > 0 {
+		return fmt.Sprintf("step:%d:%s", step, tool)
+	}
+	if action := strings.TrimSpace(stringField(data, "action")); action != "" {
+		return "action:" + tool + ":" + action
+	}
+	if raw := strings.TrimSpace(stringField(data, "raw")); raw != "" {
+		return "raw:" + tool + ":" + raw
+	}
+	return ""
+}
+
+func toolErrorEventKey(data map[string]any) string {
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	errText := strings.TrimSpace(stringField(data, "error"))
+	if tool == "" || errText == "" {
+		return ""
+	}
+	if step := intField(data, "step"); step > 0 {
+		return fmt.Sprintf("step:%d:%s:%s", step, tool, errText)
+	}
+	if action := strings.TrimSpace(stringField(data, "action")); action != "" {
+		return "action:" + tool + ":" + action + ":" + errText
+	}
+	if raw := strings.TrimSpace(stringField(data, "raw")); raw != "" {
+		return "raw:" + tool + ":" + raw + ":" + errText
+	}
+	return ""
 }
 
 func autonomyEventFromContent(content string) (autonomy.Event, bool) {
@@ -633,6 +724,28 @@ func recordVerificationStatus(metrics *Metrics, status string) {
 	}
 }
 
+func verificationToolResultState(data map[string]any) string {
+	if strings.TrimSpace(stringField(data, "error")) != "" {
+		return "failed"
+	}
+	text := strings.ToLower(strings.TrimSpace(strings.Join([]string{
+		stringField(data, "tool"),
+		stringField(data, "summary"),
+		stringField(data, "output"),
+	}, "\n")))
+	if (strings.Contains(text, "source_sanity") || strings.Contains(text, "source sanity")) &&
+		(strings.Contains(text, "generic fallback") ||
+			strings.Contains(text, "generic_source_sanity") ||
+			strings.Contains(text, "generic delimiter") ||
+			strings.Contains(text, "generic source sanity")) {
+		return "insufficient"
+	}
+	if strings.Contains(text, "git diff --check") {
+		return "insufficient"
+	}
+	return "passed"
+}
+
 func runnerRejectionSignalsFromRunEvent(role string, content string) (runnerRejected bool, completionGateRejected bool) {
 	role = strings.TrimSpace(role)
 	content = strings.TrimSpace(content)
@@ -685,6 +798,20 @@ func countMetricsRole(metrics *Metrics, role string) {
 		metrics.MessageRoles = map[string]int{}
 	}
 	metrics.MessageRoles[trimmedRole]++
+}
+
+func countMetricsRecordType(metrics *Metrics, recordType string) {
+	if metrics == nil {
+		return
+	}
+	trimmedType := strings.TrimSpace(recordType)
+	if trimmedType == "" {
+		return
+	}
+	if metrics.RecordTypes == nil {
+		metrics.RecordTypes = map[string]int{}
+	}
+	metrics.RecordTypes[trimmedType]++
 }
 
 func Evaluate(logPath string, records []Record, scenario Scenario) Report {
