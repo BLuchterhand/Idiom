@@ -1241,6 +1241,16 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 	brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
 		`For broad architecture, impact, tracing, security, or history questions, the bounded discovery-packet capability is available before ad hoc list/search/read; choose purpose from the tool schema and follow with targeted reads only for named gaps.`,
 	))
+	if toolAllowedInBrief(brief.AllowedTools, "context_pack") && !discoveryExamplesWouldCompeteWithWriteReadyPacket(brief) {
+		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+			`For repo-localization questions, call context_pack with the task string first to get a ranked cached packet of candidate files, symbols, and tests.`,
+		))
+	}
+	if toolAllowedInBrief(brief.AllowedTools, "context_query") {
+		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+			`For graph-shaped questions (what calls X? what tests cover Y? what depends on Z?), use context_query — it answers structured questions without dumping raw files. Prefer context_query over search_content for codebase questions.`,
+		))
+	}
 	return brief
 }
 
