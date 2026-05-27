@@ -306,6 +306,37 @@ func conversationNamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []st
 	return paths
 }
 
+// conversationInspectedPathSummary returns a compact summary of the
+// most recent read/navigation results. It reports evidence without
+// declaring readiness — the model owns the decision of when evidence
+// is sufficient.
+func conversationInspectedPathSummary(results []workspace.ToolResult) string {
+	var inspected []string
+	for i := len(results) - 1; i >= 0 && len(inspected) < 5; i-- {
+		r := results[i]
+		if strings.TrimSpace(r.Error) != "" {
+			continue
+		}
+		tool := strings.TrimSpace(r.Tool)
+		if tool == "context_pack" || tool == "task" {
+			continue
+		}
+		summary := strings.TrimSpace(r.Summary)
+		if summary == "" {
+			continue
+		}
+		inspected = append(inspected, summary)
+	}
+	if len(inspected) == 0 {
+		return ""
+	}
+	// Reverse to show oldest first
+	for i, j := 0, len(inspected)-1; i < j; i, j = i+1, j-1 {
+		inspected[i], inspected[j] = inspected[j], inspected[i]
+	}
+	return strings.Join(inspected, "; ")
+}
+
 func (r *Runner) conversationEvidenceSatisfiedForceAnswerReady(results []workspace.ToolResult) bool {
 	if r == nil || !conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, results) ||
 		runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {

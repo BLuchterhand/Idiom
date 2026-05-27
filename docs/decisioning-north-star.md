@@ -11,6 +11,13 @@ This is the decisioning standard for the harness.
 - The model owns strategy.
 - The harness owns contracts.
 
+The harness tracks evidence (inspected paths, closed claims, open
+obligations) and may present that evidence to the model as context. The
+harness must not declare that evidence is sufficient or that the model is
+ready to answer. The model owns the decision of when it understands enough
+to synthesize a response. The harness must not degrade the tool surface
+or change the contract based on its own readiness assessment.
+
 In practice:
 
 - The model chooses which tool to call next, whether to answer now, whether a narrow follow-up is worth it, and how to synthesize the evidence.

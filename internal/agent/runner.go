@@ -2739,14 +2739,20 @@ func (r *Runner) Run(
 				rebuildTools()
 			}
 		}
+		// Conversation lane: the harness tracks inspected paths and
+		// evidence but does NOT declare the model ready to answer.
+		// Per north star: the model owns the strategy decision of
+		// when evidence is sufficient. The harness must not degrade
+		// the tool surface based on its own readiness assessment.
 		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) && !conversationEvidenceNudged {
 			conversationEvidenceNudged = true
-			delegatedReadOnlyAnswerReady = true
-			r.RuntimeBrief.Constraints = mergeRunnerStateStrings(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
-			nudge := "The conversation lane already has enough bounded evidence to answer the user's question. Answer now in a concise, well formatted, on-topic response. If one exact missing claim would make answering now materially wrong, name it along with the one exact probe that would resolve it — and include named_gap and why_not_answering on any tool call. Do not chain further reads for completeness. Never emit XML or HTML markup (such as <n_tool_calls> or <invoke>) in your response — use only the normal tool-call mechanism or plain prose."
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
-			r.emitEvent(RunEvent{Role: "conversation_evidence_sufficient_nudge", Content: nudge})
-			rebuildTools()
+			inspected := conversationInspectedPathSummary(collectedResults)
+			if inspected != "" {
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: "Inspected paths so far: " + inspected,
+				})
+			}
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
