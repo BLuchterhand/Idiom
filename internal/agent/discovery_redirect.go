@@ -503,3 +503,52 @@ func (d *DiscoveryRedirect) considerConversationRedirect(req workspace.ToolReque
 		},
 	}
 }
+
+// considerConversationReadFileRedirect redirects repeated read_file
+// calls on the same file to code_navigate read_symbol. The model
+// often reads a file in small chunks (50-line windows) when it could
+// use read_symbol to get the full symbol body in one call.
+func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) RedirectDecision {
+	if d == nil {
+		return RedirectDecision{}
+	}
+	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
+		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") &&
+		!strings.EqualFold(strings.TrimSpace(brief.Contract), "grounded_evidence_summary") {
+		return RedirectDecision{}
+	}
+	if !strings.EqualFold(strings.TrimSpace(req.Tool), "read_file") {
+		return RedirectDecision{}
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" {
+		return RedirectDecision{}
+	}
+	// Only redirect after the model has already read this file at
+	// least twice this turn. First read is legitimate exploration.
+	fp := "read_file|" + path + "|conversation"
+	fpFires := d.fingerprintFireCount[fp] + 1
+	d.fingerprintFireCount[fp] = fpFires
+	if fpFires < 3 {
+		return RedirectDecision{}
+	}
+	d.firedRedirects[fp] = true
+
+	summary := "Redirected repeated read_file to code_navigate"
+	msg := fmt.Sprintf(
+		"You have read %s %d times this turn. Instead of reading small chunks, use code_navigate read_symbol with the symbol name to get the full body in one call. Try:\n\n"+
+			fmt.Sprintf(`{"tool":"code_navigate","capability":"read_symbol","path":%q,"pattern":"<symbol name>"}`, path)+"\n\n"+
+			"If you don't know the symbol name, use code_navigate file_outline first to list available symbols.",
+		path, fpFires,
+	)
+
+	return RedirectDecision{
+		ShouldRedirect: true,
+		Result: workspace.ToolResult{
+			Tool:    req.Tool,
+			Summary: summary,
+			Output:  msg,
+		},
+	}
+}
+

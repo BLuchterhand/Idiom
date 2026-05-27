@@ -1895,6 +1895,16 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "discovery_redirect_conversation", Content: fmt.Sprintf("%s → context_query", req.Tool)})
 				continue
 			}
+			// Conversation-lane redirect: repeated read_file → code_navigate.
+			// The model often reads the same file in 50-line chunks when it
+			// could use read_symbol to get full symbol bodies in one call.
+			if decision := discoveryRedirect.considerConversationReadFileRedirect(req, r.RuntimeBrief); decision.ShouldRedirect {
+				result := decision.Result
+				recorder.activeToolCall = activeToolCall
+				recorder.record(stepNumber, req, result, "discovery_redirect_conversation_read", false, false)
+				r.emitEvent(RunEvent{Role: "discovery_redirect_conversation", Content: fmt.Sprintf("%s → code_navigate read_symbol", req.Tool)})
+				continue
+			}
 			if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
 				// Hard-reject path: the model has been nudged enough times
 				// on this redirect class. Route through rejectTool so the
