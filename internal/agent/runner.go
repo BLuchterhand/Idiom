@@ -2765,13 +2765,25 @@ func (r *Runner) Run(
 		// Per north star: the model owns the strategy decision of
 		// when evidence is sufficient. The harness must not degrade
 		// the tool surface based on its own readiness assessment.
-		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) && !conversationEvidenceNudged {
-			conversationEvidenceNudged = true
-			inspected := conversationInspectedPathSummary(collectedResults)
-			if inspected != "" {
+		//
+		// Soft synthesis nudge: after 10+ tool calls with evidence
+		// gathered, suggest the model consider answering. No tool
+		// surface change, no forced close — just a hint.
+		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) {
+			if !conversationEvidenceNudged {
+				conversationEvidenceNudged = true
+				inspected := conversationInspectedPathSummary(collectedResults)
+				if inspected != "" {
+					turnMessages = append(turnMessages, llama.ChatMessage{
+						Role:    "system",
+						Content: "Inspected paths so far: " + inspected,
+					})
+				}
+			}
+			if metrics.ToolCalls >= 10 && metrics.ToolCalls%10 == 0 {
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
-					Content: "Inspected paths so far: " + inspected,
+					Content: fmt.Sprintf("You have made %d tool calls this turn and gathered substantial evidence. Consider whether you can now answer the user's question in prose. You do not need to exhaust every possible investigation — a well-reasoned answer with the evidence you have is better than raw code references.", metrics.ToolCalls),
 				})
 			}
 		}
