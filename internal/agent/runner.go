@@ -6550,19 +6550,15 @@ func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, res
 	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
 		return workspace.ToolResult{}, false
 	}
-	if !genericReadOnlyAnswerEvidenceReady(results) {
-		return workspace.ToolResult{}, false
-	}
+	// A tool-result transcript answer is garbage regardless of
+	// whether the evidence gate declares evidence ready. Check format
+	// first, evidence status second.
 	trimmed := strings.TrimSpace(reply)
 	if trimmed == "" || strings.HasPrefix(trimmed, "<<QUESTION>>") {
 		return workspace.ToolResult{}, false
 	}
 	lower := strings.ToLower(trimmed)
-	if !containsAny(lower,
-		"matching line(s)",
-		"returned hit(s)",
-		"tool-local",
-	) && !looksLikeToolResultTranscript(lower) && !toolLocalSearchHandlePattern.MatchString(trimmed) {
+	if !looksLikeToolResultTranscript(lower) && !toolLocalSearchHandlePattern.MatchString(trimmed) {
 		return workspace.ToolResult{}, false
 	}
 	return workspace.ToolResult{
