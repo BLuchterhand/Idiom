@@ -213,6 +213,11 @@ func New(cfg config.Config) *Model {
 	// isn't declared, the cfg.* field is the source of truth and the
 	// behavior is identical to the pre-roles wiring.
 	projectRoot := strings.TrimSpace(cfg.Workspace.Root)
+	if projectRoot == "" {
+		if cwd, err := os.Getwd(); err == nil {
+			projectRoot = cwd
+		}
+	}
 
 	plannerSpec, _ := roleSpec(projectRoot, backends.RolePlanner, cfg.LlamaServer)
 	plannerClient := llama.NewClientForServer(plannerSpec, callTimeout)
@@ -849,12 +854,24 @@ func toolRequestTraceTarget(req workspace.ToolRequest) string {
 func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama.ChatMessage, opts llama.ChatOptions, plan promptExecutionPlan) (string, error) {
 	mode := m.currentMode()
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
+	policy := modeRunPolicy(mode, m.cfg.Chat)
+	// Conversation and read-only lanes: do not cap tool steps or
+	// model calls. The model owns the decision of when evidence is
+	// sufficient. The doom-loop guard catches repeated identical
+	// calls; genuine investigation should not be preempted by a
+	// budget wall.
+	if plan.route.Family == "conversation" || plan.route.Family == "direct_answer" ||
+		plan.route.Contract == "direct_answer" || plan.route.Contract == "grounded_evidence_summary" {
+		policy.MaxModelCalls = 0
+		policy.MaxToolSteps = 0
+		steps = 0
+	}
 	runner := &agent.Runner{
 		Client:              m.client,
 		ImplementerClient:   m.implementerClient,
 		Workspace:           m.workspace,
 		MaxToolSteps:        steps,
-		Policy:              modeRunPolicy(mode, m.cfg.Chat),
+		Policy:              policy,
 		AgentName:           "main",
 		RuntimeBrief:        plan.runtimeBrief,
 		InstructionAttacher: m.instructionAttacher,
