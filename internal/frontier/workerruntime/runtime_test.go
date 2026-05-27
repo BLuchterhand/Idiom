@@ -1175,9 +1175,9 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 		AllowedTools:      []string{"search_content", "read_file", "context_query"},
 	})
 	if !strings.Contains(step.Directive, "default read-only answer lane") ||
-		!strings.Contains(step.Directive, "discovery hierarchy") ||
+		!strings.Contains(step.Directive, "every response must either") ||
 		!strings.Contains(step.Directive, "context_pack to localize") ||
-		!strings.Contains(step.Directive, "Do not return raw tool summaries or JSON envelopes") {
+		!strings.Contains(step.Directive, "Do not return raw tool summaries") {
 		t.Fatalf("conversation initial directive should explain the default read-only answer contract:\n%s", step.Directive)
 	}
 }

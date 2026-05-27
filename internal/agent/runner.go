@@ -261,19 +261,7 @@ func (r *Runner) Run(
 		var tools []llama.Tool
 		if len(allowed) > 0 || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
 			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
-		// Conversation and read-only lanes: expose an "answer" tool so
-		// tool-biased models have a tool-call-shaped way to produce prose.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
-			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
-			tools = append(tools, llama.Tool{
-				Type: "function",
-				Function: llama.ToolFunction{
-					Name:        "answer",
-					Description: "Answer the user's question in natural prose. Call this tool when you have gathered enough evidence and are ready to provide your final answer.",
-					Parameters: json.RawMessage(`{"type":"object","properties":{"content":{"type":"string","description":"The answer text to return to the user. Write in clear, natural prose. Reference specific evidence paths when relevant."}},"required":["content"]}`),
-				},
-			})
-		}
+
 		}
 		// Schema-level enforcement of closure-biased contracts: once the
 		// lane has reached answer readiness, received a child packet, or
@@ -2794,30 +2782,17 @@ func (r *Runner) Run(
 				rebuildTools()
 			}
 		}
-		// Conversation lane: the harness tracks inspected paths and
+		// Conversation lane: the harness tracks inspected paths as
 		// evidence but does NOT declare the model ready to answer.
-		// Per north star: the model owns the strategy decision of
-		// when evidence is sufficient. The harness must not degrade
-		// the tool surface based on its own readiness assessment.
-		//
-		// Soft synthesis nudge: after 10+ tool calls with evidence
-		// gathered, suggest the model consider answering. No tool
-		// surface change, no forced close — just a hint.
-		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) {
-			if !conversationEvidenceNudged {
-				conversationEvidenceNudged = true
-				inspected := conversationInspectedPathSummary(collectedResults)
-				if inspected != "" {
-					turnMessages = append(turnMessages, llama.ChatMessage{
-						Role:    "system",
-						Content: "Inspected paths so far: " + inspected,
-					})
-				}
-			}
-			if metrics.ToolCalls >= 10 && metrics.ToolCalls%10 == 0 {
+		// Per north star: the model owns the decision of when
+		// evidence is sufficient.
+		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) && !conversationEvidenceNudged {
+			conversationEvidenceNudged = true
+			inspected := conversationInspectedPathSummary(collectedResults)
+			if inspected != "" {
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
-					Content: fmt.Sprintf("You have made %d tool calls this turn and gathered substantial evidence. Consider whether you can now answer the user's question in prose. You do not need to exhaust every possible investigation — a well-reasoned answer with the evidence you have is better than raw code references.", metrics.ToolCalls),
+					Content: "Inspected paths so far: " + inspected,
 				})
 			}
 		}
