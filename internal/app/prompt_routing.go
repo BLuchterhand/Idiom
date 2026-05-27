@@ -167,7 +167,8 @@ func (m *Model) finishPromptOnceReply(reply string) string {
 		strings.Contains(reply, "<n_tool") ||
 		strings.Contains(reply, "<n_invoke") ||
 		strings.Contains(reply, "<janus_tool") ||
-		strings.Contains(reply, "<invoke name=") {
+		strings.Contains(reply, "<invoke name=") ||
+		strings.Contains(reply, "DSML") {
 		if m.debugLogger != nil {
 			_ = m.debugLogger.LogRunEvent("presentation_layer_xml_rejected", fmt.Sprintf("final answer contained tool-call markup (%d chars); replaced with clean message", len(reply)))
 		}

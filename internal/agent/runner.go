@@ -405,7 +405,8 @@ func (r *Runner) Run(
 				strings.Contains(value, "<n_tool") ||
 				strings.Contains(value, "<n_invoke") ||
 				strings.Contains(value, "<janus_tool") ||
-				strings.Contains(value, "<invoke name=") {
+				strings.Contains(value, "<invoke name=") ||
+				strings.Contains(value, "DSML") {
 				value = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
 			}
 			emitAcceptedAnswerSignalsOnce(value)
@@ -17855,7 +17856,8 @@ func looksLikeTextualToolCall(text string) bool {
 		strings.Contains(lower, "<n_invoke") ||
 		strings.Contains(lower, "</n_invoke") ||
 		strings.Contains(lower, "<n_parameter") ||
-		strings.Contains(lower, "</n_parameter") {
+		strings.Contains(lower, "</n_parameter") ||
+		strings.Contains(lower, "dsml") {
 		return true
 	}
 	return looksLikeLineOrientedToolRequest(lower)

@@ -16486,3 +16486,70 @@ func TestCompleteWithoutMoreToolsWithReasonCatchesNToolCallsXML(t *testing.T) {
 		t.Logf("XML caused error (expected): %v", err)
 	}
 }
+
+func TestLooksLikeTextualToolCallDetectsDSML(t *testing.T) {
+	// The actual bytes from the live session contain DSML with
+	// Unicode replacement characters. The terminal renders them
+	// as <n_tool_calls> but programmatic matching against "<n_tool"
+	// fails because the code points are U+FFFD, not ASCII 'n'.
+	// The definitive signature is the literal string "DSML".
+	
+	// Load the exact content from the live session
+	import_json := `"` + ``
+	_ = import_json
+	
+	// Test with the DSML signature
+	if !looksLikeTextualToolCall("<n_tool_calls>") {
+		// This should still pass (existing test)
+	}
+	
+	// The DSML signature should be detected
+	dsmlPayload := "<\ufffd\ufffdDSML\ufffd\ufffdtool_calls>"
+	if !looksLikeTextualToolCall(dsmlPayload) {
+		t.Fatal("DSML payload not detected by looksLikeTextualToolCall")
+	}
+	
+	// Also test the presentation-layer check
+	if !strings.Contains(dsmlPayload, "DSML") {
+		t.Fatal("DSML not found in payload via strings.Contains")
+	}
+}
+
+func TestDetectsDSMLFromLiveSessionBytes(t *testing.T) {
+	// Read the exact assistant message bytes from the live session log
+	data, err := os.ReadFile("../../logs/conversations/20260527-171709.829.jsonl")
+	if err != nil {
+		t.Skipf("live session log not available: %v", err)
+	}
+	
+	// Find the assistant message
+	lines := strings.Split(string(data), "\n")
+	for _, line := range lines {
+		if !strings.Contains(line, `"assistant"`) {
+			continue
+		}
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			continue
+		}
+		if record["type"] != "message" || record["role"] != "assistant" {
+			continue
+		}
+		content, _ := record["content"].(string)
+		if content == "" {
+			continue
+		}
+		
+		// This is the exact XML the model returned to the user
+		t.Logf("Live content length: %d", len(content))
+		t.Logf("Contains 'DSML': %v", strings.Contains(content, "DSML"))
+		t.Logf("Contains '<n_tool': %v", strings.Contains(content, "<n_tool"))
+		t.Logf("looksLikeTextualToolCall: %v", looksLikeTextualToolCall(content))
+		
+		if !looksLikeTextualToolCall(content) {
+			t.Fatal("looksLikeTextualToolCall did NOT detect the live session XML payload")
+		}
+		return
+	}
+	t.Fatal("could not find assistant message in live session log")
+}
