@@ -1080,23 +1080,18 @@ func (r *Runner) Run(
 				Role:    "implementation_target_write_ready_source_refresh_allowed",
 				Content: fmt.Sprintf("allowed write-ready %s source expansion on target path %q", strings.TrimSpace(req.Tool), normalizeRunnerPath(req.Path)),
 			})
-		} else if summary, errorText, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
-			result := workspace.ToolResult{
-				Tool:    req.Tool,
-				Summary: summary,
-				Error:   errorText,
-			}
-			controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+		} else if _, _, prompt, reject := r.implementationTargetWriteReadyNonWriteRecovery(req, collectedResults); reject {
 			implementationTargetWriteReadyNonWriteRejections++
-			if implementationTargetWriteReadyNonWriteRejections >= 4 {
+			if implementationTargetWriteReadyNonWriteRejections >= 12 {
 				blockerKind := "implementation_target_write_ready_non_write_repeated"
 				emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
-				answer := "<<QUESTION>>: target-write-ready recovery rejected repeated read/search/navigation attempts before any write. The lane needs a parser-readable write to a sourced target path, or the exact edit blocker/no-op evidence."
+				answer := fmt.Sprintf("<<QUESTION>>: after %d nudges toward writing, no workspace edit was recorded. Source evidence is available. Report the exact edit blocker or no-op evidence.", implementationTargetWriteReadyNonWriteRejections)
 				return finish(answer, nil, blockerKind, true)
 			}
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_recovery", Content: prompt})
-			continue
+			requestBudget.writeReadyNudgeActive = true
+			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, implementationTargetWriteReadyNonWriteRejections)
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
+			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_nudge", Content: nudgeMsg})
 		}
 		scopedHiddenNonWrite := implementationScopedHiddenTools[strings.TrimSpace(req.Tool)] && !workspace.IsWorkspaceWriteTool(req.Tool)
 		if summary, errorText, prompt, reject := r.implementationScopedDisallowedToolRecovery(req, collectedResults); reject && !(scopedHiddenNonWrite && scopedHiddenNonWriteRecoveryUsed) {
@@ -12392,6 +12387,26 @@ func implementationTargetWriteReadySourceSymbolTool(tool string) bool {
 	return strings.HasSuffix(tool, "_read_symbol") || strings.HasSuffix(tool, "_extract_body")
 }
 
+// targetWriteReadyStagedNudge builds a progressively stronger nudge message
+// as the model accumulates non-write calls without making an edit. Early
+// nudges are soft reminders; late stages require action before more discovery.
+func targetWriteReadyStagedNudge(basePrompt string, req workspace.ToolRequest, nudgeCount int) string {
+	tool := strings.TrimSpace(req.Tool)
+	if tool == "" {
+		tool = "requested tool"
+	}
+	suffix := fmt.Sprintf("\n\nYour %s request will execute. Nudge %d of 12.", tool, nudgeCount)
+
+	evidencePrefix := strings.TrimSpace(basePrompt)
+	if evidencePrefix == "" {
+		evidencePrefix = "Source evidence is available for sourced target path(s)."
+	}
+
+	if nudgeCount <= 6 {
+		return fmt.Sprintf("%s Either write to a sourced target path, or name the one exact missing claim and one exact probe that would resolve it, then take that probe.%s", evidencePrefix, suffix)
+	}
+	return fmt.Sprintf("You have taken %d discovery calls without a write. %s Before more discovery: name the one exact missing claim and one exact probe that would resolve it. If you cannot name both, you have enough evidence — write to a sourced target path or answer <<QUESTION>> with the exact blocker.%s", nudgeCount, evidencePrefix, suffix)
+}
 func implementationTargetWriteReadyTargetedCodeNavigate(req workspace.ToolRequest, results []workspace.ToolResult) bool {
 	path := normalizeRunnerPath(req.Path)
 	if !implementationTargetWriteReadySourcePath(path) {
@@ -13132,11 +13147,12 @@ func literalRecoverySearchPattern(objective string) string {
 
 func recoverySearchStopWords() map[string]struct{} {
 	return map[string]struct{}{
-		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "model": {}, "alias": {},
+		"actual": {}, "please": {}, "replace": {}, "with": {}, "from": {}, "that": {}, "this": {}, "the": {}, "and": {}, "for": {}, "you": {}, "can": {}, "top": {}, "right": {}, "left": {}, "path": {}, "alias": {},
 		"continuing": {}, "continue": {}, "completion": {}, "complete": {}, "work": {}, "docs": {}, "document": {}, "design": {}, "implement": {}, "implementation": {}, "bounded": {}, "topic": {}, "only": {}, "must": {},
 		"against": {}, "existing": {}, "focus": {}, "focused": {}, "add": {}, "regression": {}, "tests": {}, "test": {}, "proving": {}, "without": {}, "partial": {}, "durable": {}, "mutation": {},
 		"repo": {}, "repository": {}, "discovery": {}, "first": {}, "make": {}, "minimal": {}, "code": {}, "changes": {}, "change": {}, "requested": {}, "request": {},
 		"tdd": {}, "prd": {}, "adr": {}, "brief": {}, "research": {}, "workflow": {}, "workflows": {}, "markdown": {},
+		// "model" intentionally kept — it carries domain signal for path→objective matching.
 		"send": {}, "through": {}, "plan": {}, "execute": {}, "expose": {}, "read": {}, "external": {}, "agents": {},
 	}
 }
@@ -14385,7 +14401,7 @@ func isConcreteInspectionTool(tool string) bool {
 // so mutating tools can never be miscounted. Shell is excluded because it
 // can mutate even when the command looks benign.
 func isReadClassTool(req workspace.ToolRequest) bool {
-	return util.IsReadTool(strings.TrimSpace(req.Tool))
+	return workspace.IsReadTool(strings.TrimSpace(req.Tool))
 }
 
 func toolActionClass(req workspace.ToolRequest) string {
@@ -18509,7 +18525,7 @@ func hasPendingVerificationAfterWrites(results []workspace.ToolResult, brief wor
 			// (`git diff --check`) IS available and satisfies the gate. A
 			// SUBSEQUENT source write still sets pending — mixed atoms
 			// require source-aware sanity regardless of lane shape.
-			if docLane && (writeTouchesOnlyNonSourcePaths(result) || mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
+			if writeTouchesOnlyNonSourcePaths(result) || (docLane && mkdirTouchesOnlyRequiredPathParents(result, brief.RequiredEditPaths)) {
 				continue
 			}
 			pending = true

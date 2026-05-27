@@ -17,6 +17,10 @@ type fingerprintTrackingState struct {
 	nudgeFired      map[string]bool
 	zeroHit         map[string]string
 	rejected        map[string]string
+	// rejectedRetries counts how many times a fingerprint has been
+	// retried after a prior rejection. Nudge on first retry, force-answer
+	// on the second — matching the nudge-then-block pattern.
+	rejectedRetries map[string]int
 }
 
 type postChildBudgetState struct {
@@ -30,6 +34,13 @@ type postChildBudgetState struct {
 type runnerRequestBudgetState struct {
 	fingerprint fingerprintTrackingState
 	postChild   postChildBudgetState
+
+	// writeReadyNudgeActive is set by the write-ready nudge path in
+	// runner.go when the model is in a write-ready-but-not-writing
+	// state. When true, the rejection retry budget defers to the
+	// write-ready escalation contract (12-nudge countdown) instead
+	// of force-answering on the first rejection retry.
+	writeReadyNudgeActive bool
 
 	broadEvidenceDelegationRequired  bool
 	broadEvidenceDelegationSatisfied bool
@@ -109,10 +120,11 @@ func (d runnerRequestBudgetDecision) apply(ctx budgetDecisionContext) budgetDeci
 func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetState {
 	return runnerRequestBudgetState{
 		fingerprint: fingerprintTrackingState{
-			counts:     make(map[string]int),
-			nudgeFired: make(map[string]bool),
-			zeroHit:    make(map[string]string),
-			rejected:   make(map[string]string),
+			counts:          make(map[string]int),
+			nudgeFired:      make(map[string]bool),
+			zeroHit:         make(map[string]string),
+			rejected:        make(map[string]string),
+			rejectedRetries: make(map[string]int),
 		},
 		scopedReadRejections: make(map[string]int),
 		postChild: postChildBudgetState{
@@ -185,17 +197,42 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 	if decision := s.terminalArtifactRejectedRetryDecision(req, currentFingerprint); decision.Handled {
 		return decision
 	}
-	if priorSummary, seen := s.fingerprint.rejected[currentFingerprint]; seen {
+	if priorSummary, ok := s.fingerprint.rejected[currentFingerprint]; ok {
 		if isRecoverablePostReadinessGapRejection(priorSummary) && postReadinessGap(req) != "" {
 			delete(s.fingerprint.rejected, currentFingerprint)
+			delete(s.fingerprint.rejectedRetries, currentFingerprint)
 			return runnerRequestBudgetDecision{}
+		}
+		// When write-ready nudge escalation is active, defer to that
+		// contract rather than force-answering on rejection retry.
+		if s.writeReadyNudgeActive {
+			s.fingerprint.rejectedRetries[currentFingerprint]++
+			return runnerRequestBudgetDecision{
+				Handled:   true,
+				EventRole: "rejection_retry_deferred_to_write_ready",
+				Nudge: fmt.Sprintf(
+					"You retried a rejected %s call. The write-ready contract is active — either write to a sourced target path or name the exact missing claim and probe. The rejection retry budget is deferred until the write-ready escalation completes.",
+					req.Tool),
+			}
+		}
+		retries := s.fingerprint.rejectedRetries[currentFingerprint] + 1
+		s.fingerprint.rejectedRetries[currentFingerprint] = retries
+		if retries == 1 {
+			return runnerRequestBudgetDecision{
+				Handled:   true,
+				EventRole: "rejection_retry_nudge",
+				EventContent: fmt.Sprintf("model retried a previously rejected %s call (%s) — nudging", req.Tool, priorSummary),
+				Nudge: fmt.Sprintf(
+					"You retried a %s request that was already rejected this turn (%q). The rejection reason still applies — repeating the same call will not change the outcome. Either take a materially different approach, or answer with the evidence you already have.",
+					req.Tool, priorSummary),
+			}
 		}
 		return runnerRequestBudgetDecision{
 			Handled:           true,
 			EventRole:         "rejection_retry_blocked",
-			EventContent:      fmt.Sprintf("model retried a previously rejected %s call (%s) — forcing answer with the evidence already gathered", req.Tool, priorSummary),
+			EventContent:      fmt.Sprintf("model retried a previously rejected %s call %d times (%s) — forcing answer with the evidence already gathered", req.Tool, retries, priorSummary),
 			ForceAnswerReason: "rejection_retry_blocked",
-			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected this turn (\"%s\"). Tools are now disabled. Treat the rejected request as adding no new evidence, and write the normal final answer from the evidence already gathered. Mention the rejected probe only if it leaves one user-relevant claim unsupported.", req.Tool, priorSummary),
+			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected %d times this turn and were warned. Tools are now disabled. Write the normal final answer from the evidence already gathered.", req.Tool, retries),
 		}
 	}
 	return runnerRequestBudgetDecision{}
@@ -382,10 +419,12 @@ func (s *runnerRequestBudgetState) noteVerification() {
 
 func (s *runnerRequestBudgetState) noteWriteProgress() {
 	s.readCallsSinceWrite = 0
+	s.writeReadyNudgeActive = false
 	// A successful write moves the lane from target/source acquisition
 	// into post-write verification. Rejections from the pre-write phase
 	// must not poison verification tools with stale retry fingerprints.
 	clear(s.fingerprint.rejected)
+	clear(s.fingerprint.rejectedRetries)
 }
 
 func (s *runnerRequestBudgetState) noteReadOnlyChildPacket(paths []string) {

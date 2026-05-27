@@ -78,9 +78,16 @@ func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) 
 			fingerprint := "read_file|README.md"
 			state.fingerprint.rejected[fingerprint] = summary
 
+			// First retry: nudge (nudge-then-block pattern)
 			decision := state.earlyRejectedFingerprintDecision(req, fingerprint)
+			if !decision.Handled || decision.Nudge == "" {
+				t.Fatalf("expected nudge on first retry, got %#v", decision)
+			}
+
+			// Second retry: blocked
+			decision = state.earlyRejectedFingerprintDecision(req, fingerprint)
 			if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {
-				t.Fatalf("expected repeated range-less read retry to be blocked before re-rejection, got %#v", decision)
+				t.Fatalf("expected block on second retry, got %#v", decision)
 			}
 		})
 	}
@@ -114,9 +121,16 @@ func TestRunnerRequestBudgetStillBlocksRejectedRetryWithoutNamedGap(t *testing.T
 	fingerprint := "read_file|internal/agent/runner.go"
 	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
+	// First retry without named gap: nudge (nudge-then-block pattern)
 	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
+	if !decision.Handled || decision.Nudge == "" {
+		t.Fatalf("expected nudge on first retry without named gap, got %#v", decision)
+	}
+
+	// Second retry: blocked
+	decision = state.fingerprintDecision(RunPolicy{}, req, fingerprint)
 	if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {
-		t.Fatalf("expected unchanged retry to stay blocked, got %#v", decision)
+		t.Fatalf("expected block on second retry without named gap, got %#v", decision)
 	}
 }
 
@@ -287,5 +301,81 @@ func TestRunnerRequestBudgetNudgesPostChildRereadsButDoesNotBlock(t *testing.T) 
 	}
 	if decision.RejectStopReason != "" {
 		t.Fatalf("expected no stop reason on repeated post-child reread, got %q", decision.RejectStopReason)
+	}
+}
+
+// TestWriteReadyNudgeActiveDefersRejectionRetry verifies that when
+// writeReadyNudgeActive is true, a rejection retry returns a nudge
+// instead of force-answering, deferring to the write-ready escalation.
+func TestWriteReadyNudgeActiveDefersRejectionRetry(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	state.writeReadyNudgeActive = true
+	req := workspace.ToolRequest{Tool: "search_content", Path: "internal/app"}
+	fingerprint := "search_content|internal/app"
+	state.fingerprint.rejected[fingerprint] = "Chained search rejected"
+	state.fingerprint.rejectedRetries = make(map[string]int)
+
+	decision := state.rejectedFingerprintDecision(req, fingerprint)
+	if !decision.Handled {
+		t.Fatal("expected rejection retry to be handled")
+	}
+	if decision.ForceAnswerReason != "" {
+		t.Fatalf("expected nudge (not force-answer) when writeReadyNudgeActive, got ForceAnswerReason=%q", decision.ForceAnswerReason)
+	}
+	if decision.EventRole != "rejection_retry_deferred_to_write_ready" {
+		t.Fatalf("expected rejection_retry_deferred_to_write_ready event, got %q", decision.EventRole)
+	}
+	if decision.Nudge == "" {
+		t.Fatal("expected a nudge message when writeReadyNudgeActive is true")
+	}
+	t.Logf("nudge: %s", decision.Nudge)
+}
+
+// TestRejectionRetryNudgeThenBlock verifies the nudge-then-block pattern:
+// first retry of a rejected fingerprint gets a nudge, second gets force-answered.
+func TestRejectionRetryNudgeThenBlock(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	req := workspace.ToolRequest{Tool: "list_files", Path: "."}
+	fingerprint := "list_files|."
+	state.fingerprint.rejected[fingerprint] = "Broad inspection blocked"
+	state.fingerprint.rejectedRetries = make(map[string]int)
+
+	// First retry: nudge
+	d1 := state.rejectedFingerprintDecision(req, fingerprint)
+	if !d1.Handled || d1.Nudge == "" {
+		t.Fatalf("expected nudge on first retry, got %#v", d1)
+	}
+	if d1.ForceAnswerReason != "" {
+		t.Fatalf("expected nudge (not force-answer) on first retry, got ForceAnswerReason=%q", d1.ForceAnswerReason)
+	}
+	t.Log("first retry: nudge")
+
+	// Second retry: blocked
+	d2 := state.rejectedFingerprintDecision(req, fingerprint)
+	if !d2.Handled || d2.ForceAnswerReason != "rejection_retry_blocked" {
+		t.Fatalf("expected force-answer on second retry, got %#v", d2)
+	}
+	t.Log("second retry: blocked")
+}
+
+// TestNoteWriteProgressClearsWriteReadyNudgeAndRejectionState verifies
+// that noteWriteProgress clears writeReadyNudgeActive and both
+// rejected/rejectedRetries maps.
+func TestNoteWriteProgressClearsWriteReadyNudgeAndRejectionState(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	state.writeReadyNudgeActive = true
+	state.fingerprint.rejected["fp"] = "test rejection"
+	state.fingerprint.rejectedRetries = map[string]int{"fp": 3}
+
+	state.noteWriteProgress()
+
+	if state.writeReadyNudgeActive {
+		t.Fatal("writeReadyNudgeActive should be false after noteWriteProgress")
+	}
+	if _, ok := state.fingerprint.rejected["fp"]; ok {
+		t.Fatal("rejected fingerprints should be cleared after noteWriteProgress")
+	}
+	if _, ok := state.fingerprint.rejectedRetries["fp"]; ok {
+		t.Fatal("rejectedRetries should be cleared after noteWriteProgress")
 	}
 }

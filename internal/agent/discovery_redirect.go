@@ -33,6 +33,13 @@ type DiscoveryRedirect struct {
 	// the guidance more explicit, but remain soft so the redirect layer
 	// does not become a read-budget stop.
 	kindFireCount map[string]int
+	// fingerprintFireCount keys on the redirect fingerprint. Tracks how
+	// many times this exact (tool+path+pattern) fingerprint has fired a
+	// redirect this turn. The fallthrough gating uses this per-fingerprint
+	// counter, not the kind-level counter, so that different patterns that
+	// share the same (language, capability) class don't jointly exhaust
+	// the fallthrough budget for each other.
+	fingerprintFireCount map[string]int
 	// allowedTools is the active lane/runtime surface. When a
 	// language-specific direct tool is present in the workspace manager
 	// but hidden by the lane contract, redirects must point at an
@@ -59,7 +66,8 @@ func NewDiscoveryRedirect() *DiscoveryRedirect {
 	return &DiscoveryRedirect{
 		firedRedirects:      make(map[string]bool),
 		decisionTablesShown: make(map[string]bool),
-		kindFireCount:       make(map[string]int),
+		kindFireCount:          make(map[string]int),
+		fingerprintFireCount:  make(map[string]int),
 	}
 }
 
@@ -131,12 +139,15 @@ func (d *DiscoveryRedirect) Consider(req workspace.ToolRequest, ws *workspace.Ma
 	fp := redirectFingerprint(req)
 	kind := lang.Name + "|" + string(cap)
 	priorKindFires := d.kindFireCount[kind]
-	if d.firedRedirects[fp] && priorKindFires < 2 {
-		// Fallback: model retried the same generic call after a
-		// redirect. Honor it — as long as this redirect class is still
-		// in its grace period (first two fires). Past that, we stop
-		// letting anything through because the model has been warned
-		// twice and kept ignoring the structured tool.
+
+	// Increment the per-fingerprint counter first so the fallthrough
+	// check uses this call's count. Call 1 (fpFires=1): redirect.
+	// Call 2 (fpFires=2): fall through — honor the model's retry.
+	// Calls 3+ (fpFires>=3): redirect again with escalated messaging.
+	fpFires := d.fingerprintFireCount[fp] + 1
+	d.fingerprintFireCount[fp] = fpFires
+	if fpFires == 2 {
+		// Model retried the same call after one redirect — honor it.
 		return RedirectDecision{}
 	}
 	d.firedRedirects[fp] = true
@@ -225,16 +236,16 @@ func redirectSummary(req workspace.ToolRequest, replacement string) string {
 // sees the streak, not just an anonymous scolding.
 func escalateRedirectMessage(base string, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, fireNumber int) string {
 	preface := fmt.Sprintf(
-		"Redirect #%d for %s %s this turn. Prefer the capability route for this code-inspection question; raw range reads remain available when a declaration outline cannot answer the specific claim. Available capability route: %s or the related structured adapter listed below.\n\n",
-		fireNumber, lang.Name, cap, replacement,
+		"This exact call has been redirected %d times this turn. The structured tool route via %s for %s code queries remains available. If the structured tool already returned results for this symbol, those results are your answer.\n\n",
+		fireNumber, replacement, lang.Name,
 	)
 	return preface + base
 }
 
 func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, cap workspace.Capability, replacement string, adapter redirectAdapter) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "The request targets %s code. Capability route: %s via adapter %s instead of raw %s.\n",
-		lang.Name, cap, adapter.Label(), req.Tool)
+	fmt.Fprintf(&b, "This %s code query is answered through the %s capability via %s.\n",
+		lang.Name, cap, adapter.Label())
 	switch cap {
 	case workspace.CapFileOutline:
 		writeRedirectCandidateRequest(&b, adapter, cap, lang.Name, req.Path, "")
@@ -265,7 +276,7 @@ func redirectMessage(req workspace.ToolRequest, lang workspace.LanguageSupport, 
 		// model can construct the call from its schema.
 		fmt.Fprintf(&b, "candidate_adapter: %s with equivalent arguments from the rejected request.\n", adapter.Label())
 	}
-	b.WriteString("direct_tool_fallback: if the capability route returns nothing, the original request remains available.")
+	b.WriteString("The structured route remains available. This redirect has fired for this exact fingerprint this turn.")
 	return strings.TrimSpace(b.String())
 }
 

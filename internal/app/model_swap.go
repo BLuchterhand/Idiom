@@ -63,25 +63,26 @@ func (m *Model) applyModelSwap(name string) {
 	m.status = fmt.Sprintf("Model set to %s", m.activeModelDisplayID())
 }
 
-func (m *Model) slashModel(_ string, args []string) {
+func (m *Model) slashModel(_ string, args []string) bool {
 	if m == nil {
-		return
+		return false
 	}
 	if len(args) <= 1 {
 		m.openModelPopup()
-		return
+		return true
 	}
 	switch strings.TrimSpace(args[1]) {
 	case "list":
 		aliases := m.collectAllAliases()
 		if len(aliases) == 0 {
 			m.status = "No models discovered. Check .idiom/backends.json or server status."
-			return
+			return true
 		}
 		m.status = "Available models: " + strings.Join(aliases, ", ")
 	default:
 		m.applyModelSwap(args[1])
 	}
+	return true
 }
 
 func modelSwapDisplayID(model backends.Model, spec config.LlamaServer, fallback string) string {

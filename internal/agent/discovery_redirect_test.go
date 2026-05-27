@@ -200,7 +200,7 @@ func TestReadFileOutlineRedirectStaysSoftAfterRepeatedClass(t *testing.T) {
 		if strings.TrimSpace(decision.Result.Error) != "" {
 			t.Fatalf("request %d: soft redirect should not surface as an error: %#v", i+1, decision.Result)
 		}
-		if i >= 1 && !strings.Contains(decision.Result.Output, "Redirect #") {
+		if i >= 1 && !strings.Contains(strings.ToLower(decision.Result.Output), "this exact call has been redirected") {
 			t.Fatalf("request %d: repeated redirect should still carry explicit guidance:\n%s", i+1, decision.Result.Output)
 		}
 	}
@@ -408,8 +408,8 @@ func TestRedirectResultNamesReplacementTool(t *testing.T) {
 	if !strings.Contains(output, `"path":"main.go"`) {
 		t.Fatalf("result output missing example request path: %q", output)
 	}
-	if !strings.Contains(output, "direct_tool_fallback") {
-		t.Fatalf("result output should mention fallback behavior: %q", output)
+	if !strings.Contains(output, "structured route remains available") {
+		t.Fatalf("result output should mention not retrying: %q", output)
 	}
 	if strings.Contains(output, "Try:") || strings.Contains(output, "Next step:") {
 		t.Fatalf("redirect output should avoid imperative strategy menu text: %q", output)
@@ -577,5 +577,80 @@ func TestStructuredToolDetectionUsesLanguageRegistry(t *testing.T) {
 				t.Fatalf("%s should be classified as a structured language tool", tool)
 			}
 		})
+	}
+}
+
+// TestSearchContentIdenticalFingerprintFallsBackOnce verifies that repeated
+// identical search_content calls get exactly one redirect, then one fallthrough,
+// then escalate (redirect #3+ fires again). This is the per-fingerprint behavior
+// that a per-kind counter previously broke when two different patterns shared
+// the same (language, capability) class, jointly exhausting the fallthrough budget.
+func TestSearchContentIdenticalFingerprintFallsBackOnce(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	req := workspace.ToolRequest{Tool: "search_content", Pattern: "renderModelPopup", Glob: "*.go"}
+
+	// Call 1: first time → should redirect
+	d1 := d.Consider(req, ws)
+	if !d1.ShouldRedirect {
+		t.Fatal("call 1: expected redirect for first occurrence")
+	}
+	t.Logf("call 1: redirect, Language=%s Capability=%s", d1.Language, d1.Capability)
+
+	// Call 2: same fingerprint → should FALLTHROUGH (model honored the retry)
+	d2 := d.Consider(req, ws)
+	if d2.ShouldRedirect {
+		t.Fatalf("call 2: expected fallthrough (no redirect), got ShouldRedirect=%v", d2.ShouldRedirect)
+	}
+	t.Log("call 2: fallthrough (correct)")
+
+	// Call 3: same fingerprint again → should redirect (escalated, model keeps repeating)
+	d3 := d.Consider(req, ws)
+	if !d3.ShouldRedirect {
+		t.Fatalf("call 3: expected redirect (escalated), got ShouldRedirect=%v", d3.ShouldRedirect)
+	}
+	t.Logf("call 3: redirect, Language=%s Capability=%s (escalated)", d3.Language, d3.Capability)
+
+	// Call 4: still same → should still redirect
+	d4 := d.Consider(req, ws)
+	if !d4.ShouldRedirect {
+		t.Fatalf("call 4: expected redirect, got ShouldRedirect=%v", d4.ShouldRedirect)
+	}
+	t.Logf("call 4: redirect, Language=%s Capability=%s (escalated)", d4.Language, d4.Capability)
+}
+
+// TestSearchContentDifferentFingerprintsDontCrossExhaust verifies that
+// two different search_content patterns that share the same (lang, capability)
+// class each get their own independent redirect+fallthrough cycle. This is
+// the regression test for the bug where kindFireCount jointly exhausted both.
+func TestSearchContentDifferentFingerprintsDontCrossExhaust(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	d := NewDiscoveryRedirect()
+
+	reqA := workspace.ToolRequest{Tool: "search_content", Pattern: "openModelPopup", Glob: "*.go"}
+	reqB := workspace.ToolRequest{Tool: "search_content", Pattern: "renderModelPopup", Glob: "*.go"}
+
+	// reqA call 1: redirect
+	if !d.Consider(reqA, ws).ShouldRedirect {
+		t.Fatal("reqA call 1: expected redirect")
+	}
+	// reqA call 2: fallthrough
+	if d.Consider(reqA, ws).ShouldRedirect {
+		t.Fatal("reqA call 2: expected fallthrough")
+	}
+
+	// reqB call 1: should STILL redirect (different fingerprint, not cross-exhausted)
+	if !d.Consider(reqB, ws).ShouldRedirect {
+		t.Fatal("reqB call 1: expected redirect (different fp, not exhausted)")
+	}
+	// reqB call 2: should fallthrough (own independent cycle)
+	if d.Consider(reqB, ws).ShouldRedirect {
+		t.Fatal("reqB call 2: expected fallthrough")
+	}
+
+	// reqA call 3: should redirect again (escalated)
+	if !d.Consider(reqA, ws).ShouldRedirect {
+		t.Fatal("reqA call 3: expected redirect (escalated)")
 	}
 }

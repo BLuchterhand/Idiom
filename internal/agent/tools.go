@@ -2,7 +2,9 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
+	"time"
 
 	"idiom/internal/llama"
 	"idiom/internal/workspace"
@@ -317,10 +319,20 @@ func postReadinessFieldDescription(name string) string {
 // rather than becoming system-strength prompt text. The nil-call fallback
 // remains only for low-level tests or non-runner callers.
 func toolResultMessage(call *llama.ToolCall, result workspace.ToolResult) llama.ChatMessage {
-	if call != nil && call.ID != "" {
+	if call != nil {
+		id := call.ID
+		if id == "" {
+			// DeepSeek and other strict OpenAI-protocol backends require
+			// a tool message with tool_call_id after every tool_calls
+			// message. Generate a synthetic ID when the call's ID is
+			// empty (e.g., when the harness injects a rejected-result
+			// message for a textual-tool backend that was normalized to
+			// a native-tool history shape).
+			id = fmt.Sprintf("rejected_%s_%d", call.Function.Name, time.Now().UnixNano())
+		}
 		return llama.ChatMessage{
 			Role:       "tool",
-			ToolCallID: call.ID,
+			ToolCallID: id,
 			Name:       call.Function.Name,
 			Content:    workspace.FormatToolResultForModel(result),
 		}

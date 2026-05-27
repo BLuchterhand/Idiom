@@ -39,6 +39,7 @@ var slashCommands = map[string]slashCommandFunc{
 	"/preset":           (*Model).slashPreset,
 	"/server":           (*Model).slashServer,
 	"/profile":          (*Model).slashProfile,
+	"/model":            (*Model).slashModel,
 	"/product-status":   (*Model).slashProductStatus,
 	"/product-continue": (*Model).slashProductContinue,
 	"/product-approve":  (*Model).slashProductApprove,

@@ -2,9 +2,11 @@ package agent
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"idiom/internal/llama"
+	"idiom/internal/workspace"
 )
 
 func TestParseToolCall_BuiltinTypedFields(t *testing.T) {
@@ -190,5 +192,82 @@ func TestLanePolicyClassifiersIgnoreMCP(t *testing.T) {
 	}
 	if isPostReadinessGapTool("mcp:fetch/fetch") {
 		t.Errorf("isPostReadinessGapTool(mcp:fetch/fetch) = true, want false")
+	}
+}
+
+// TestToolResultMessageSyntheticIDForEmptyCallID verifies that
+// toolResultMessage generates a synthetic tool_call_id when the
+// call's ID is empty, so strict-protocol backends (DeepSeek) see a
+// proper role:"tool" message with tool_call_id.
+func TestToolResultMessageSyntheticIDForEmptyCallID(t *testing.T) {
+	call := &llama.ToolCall{
+		ID:   "", // empty — simulates textual-tool fallback
+		Type: "function",
+		Function: llama.ToolCallFunc{
+			Name:      "search_content",
+			Arguments: `{"pattern":"test"}`,
+		},
+	}
+	result := workspace.ToolResult{
+		Tool:    "search_content",
+		Summary: "Rejected by retry budget",
+		Error:   "test rejection",
+	}
+
+	msg := toolResultMessage(call, result)
+
+	if msg.Role != "tool" {
+		t.Fatalf("expected role=tool for non-nil call even with empty ID, got role=%q", msg.Role)
+	}
+	if msg.ToolCallID == "" {
+		t.Fatal("expected non-empty ToolCallID (synthetic), got empty")
+	}
+	if !strings.Contains(msg.ToolCallID, "rejected_search_content_") {
+		t.Fatalf("expected synthetic ID to contain 'rejected_search_content_', got %q", msg.ToolCallID)
+	}
+	if msg.Name != "search_content" {
+		t.Fatalf("expected Name=search_content, got %q", msg.Name)
+	}
+	t.Logf("synthetic ID: %s", msg.ToolCallID)
+}
+
+// TestToolResultMessageHonorsRealCallID verifies that when a real
+// call ID is present, it is used directly (no synthetic generation).
+func TestToolResultMessageHonorsRealCallID(t *testing.T) {
+	call := &llama.ToolCall{
+		ID:   "call_abc123",
+		Type: "function",
+		Function: llama.ToolCallFunc{
+			Name:      "read_file",
+			Arguments: `{"path":"main.go"}`,
+		},
+	}
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read main.go",
+	}
+
+	msg := toolResultMessage(call, result)
+
+	if msg.Role != "tool" {
+		t.Fatalf("expected role=tool, got %q", msg.Role)
+	}
+	if msg.ToolCallID != "call_abc123" {
+		t.Fatalf("expected ToolCallID=call_abc123, got %q", msg.ToolCallID)
+	}
+}
+
+// TestToolResultMessageNilCallReturnsSystem verifies that when call
+// is nil, the legacy system-role fallback is preserved.
+func TestToolResultMessageNilCallReturnsSystem(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read main.go",
+	}
+
+	msg := toolResultMessage(nil, result)
+
+	if msg.Role != "system" {
+		t.Fatalf("expected role=system for nil call, got %q", msg.Role)
 	}
 }
