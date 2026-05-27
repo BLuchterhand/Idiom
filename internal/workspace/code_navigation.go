@@ -29,6 +29,18 @@ type codeNavigationSpec struct {
 }
 
 func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult {
+
+	// Fallback: when the model omits capability, infer it from the request
+	// shape. The normalizer also handles this, but textual transports can
+	// sometimes bypass the normalization pipeline — double-gating here
+	// prevents needless "capability is required" errors.
+	if strings.TrimSpace(req.Capability) == "" {
+		if strings.TrimSpace(req.Path) != "" {
+			req.Capability = "file_outline"
+		} else if strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Query) != "" || strings.TrimSpace(req.Symbol) != "" {
+			req.Capability = "read_symbol"
+		}
+	}
 	spec, err := codeNavigationSpecFor(req.Capability)
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: err.Error()}

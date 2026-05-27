@@ -53,7 +53,7 @@ const scopedImplementationLargeReadByteThreshold = 96 * 1024
 const scopedImplementationBoundedReadWindowLines = 180
 const scopedImplementationBoundedReadLineCharCap = 400
 
-const forceAnswerTailGatheredEvidence = "Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer."
+const forceAnswerTailGatheredEvidence = "Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer. Do not emit XML tool-call tags, tool JSON, or tool-request syntax — write only the plain user-visible final answer."
 
 const forceAnswerTailEvidenceAlreadyGathered = "Write the normal final answer from the evidence already gathered; if one exact claim remains unsupported, state that uncertainty after the supported answer."
 
@@ -122,6 +122,7 @@ func (r *Runner) Run(
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
+	conversationEvidenceNudged := false
 	planThenExecuteCorrectionAfterRefreshNudged := false
 	planThenExecuteUnreadSourceNudgedFor := ""
 	delegatedReadOnlyAnswerReady := slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached")
@@ -268,6 +269,10 @@ func (r *Runner) Run(
 		// fields fail at the model's tool-call decoder instead of being
 		// chased only through prose rejections.
 		if delegatedReadOnlyAnswerReady || postChildPacketActive || writeReadyPacketReadContractActive(r.RuntimeBrief, collectedResults) || implementationScopedEditSurfaceActive(r.RuntimeBrief, collectedResults) {
+			// Strip broad discovery tools from the native transport array
+			// when the lane has reached answer readiness. The model should
+			// only have narrow, targeted reads available — not broad search.
+			tools = stripPostReadinessBroadTools(tools)
 			tools = applyPostReadinessSchemaRequirements(tools)
 		}
 		opts.Tools = tools
@@ -1783,27 +1788,14 @@ func (r *Runner) Run(
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				requestBudget.postReadinessNoGapRejections++
-				if strings.HasPrefix(r.agentName(), "child:") {
-					if requestBudget.postReadinessNoGapRejections >= 2 {
-						prompt := "You have repeatedly issued post-readiness reads without `named_gap`. Tools are now disabled. " + forceAnswerTailEvidenceAlreadyGathered
-						answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-						return finish(answer, err, "post_readiness_no_gap_repeated", true)
-					}
-					// Note: the hard post-readiness counter was removed (see
-					// runnerRequestBudgetState.readBudgetDecision).
-					// The schema rejection below still nudges the model toward
-					// answer-now-or-named-gap; doom_loop_guard + MaxToolSteps
-					// handle pathological loops.
-					summary, errorText := missingPostReadinessGapMessage(scope)
-					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
-					if done {
-						return finish(answer, err, "post_readiness_gap_required", true)
-					}
-					continue
+				// Nudge the model: name the gap or answer. Do not force-answer.
+				// The completion gate and budget gate handle real closures.
+				summary, errorText := missingPostReadinessGapMessage(scope)
+				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+				if done {
+					return finish(answer, err, "post_readiness_gap_required", true)
 				}
-				prompt := "You issued a post-readiness read without `named_gap`. Tools are now disabled. " + forceAnswerTailEvidenceAlreadyGathered
-				answer, err := controller.completeWithoutMoreToolsWithReason(prompt)
-				return finish(answer, err, "post_readiness_no_gap", true)
+				continue
 			}
 			if summary, errorText, rejected := invalidPostReadinessGap(scope, r.RuntimeBrief.Objective, req, collectedResults); rejected {
 				// Note: the per-rejection counter was removed (see
@@ -2728,13 +2720,14 @@ func (r *Runner) Run(
 				rebuildTools()
 			}
 		}
-		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) {
-			r.emitEvent(RunEvent{
-				Role:    "conversation_evidence_sufficient_force_answer",
-				Content: "conversation direct-answer evidence is sufficient; tools are disabled for a model-authored final answer",
-			})
-			answer, err := controller.completeWithoutMoreToolsWithReason("The conversation lane has enough bounded evidence. Tools are now disabled. Answer the user's actual question now in a concise, well formatted, on-topic response. Name the files or evidence you used when workspace evidence matters. Do not return raw tool summaries as the answer.")
-			return finish(answer, err, "conversation_evidence_sufficient", true)
+		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) && !conversationEvidenceNudged {
+			conversationEvidenceNudged = true
+			delegatedReadOnlyAnswerReady = true
+			r.RuntimeBrief.Constraints = mergeRunnerStateStrings(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
+			nudge := "The conversation lane already has enough bounded evidence to answer the user's question. Answer now in a concise, well formatted, on-topic response. If one exact missing claim would make answering now materially wrong, name it along with the one exact probe that would resolve it — and include named_gap and why_not_answering on any tool call. Do not chain further reads for completeness."
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
+			r.emitEvent(RunEvent{Role: "conversation_evidence_sufficient_nudge", Content: nudge})
+			rebuildTools()
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
@@ -4364,6 +4357,11 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		ResultError:       truncateRunnerStateText(result.Error, 260),
 		ResultOutputChars: len(result.Output),
 		EvidencePaths:     runnerEvidencePathsForBrief(brief, results, 6),
+	}
+	// When context_pack returns a view with candidate files that carry
+	// symbol handles, surface the top symbols as actionable annotations.
+	if strings.TrimSpace(tool) == "context_pack" && strings.TrimSpace(result.Error) == "" {
+		state.CandidateSymbols = contextPackCandidateSymbols(result.Output, 5)
 	}
 	if status := scratchpadDeliverableFailedEvidenceStatus(brief, results); status != "" {
 		state.EvidenceStatus = []string{status}
@@ -8527,6 +8525,54 @@ func contextPackResultHasTargets(result workspace.ToolResult) bool {
 		return false
 	}
 	return len(view.CandidateFiles) > 0 || len(view.CandidateSymbols) > 0 || len(view.Tests) > 0
+}
+
+// contextPackCandidateSymbols extracts the top-ranked symbol references from
+// a context_pack view JSON. It reads candidate_files.handles (which carry
+// symbol URIs like symbol://path#Name) and formats them as human-readable
+// "path#qualified_name" annotations the model can act on directly.
+func contextPackCandidateSymbols(output string, max int) []string {
+	output = strings.TrimSpace(output)
+	if output == "" || max <= 0 {
+		return nil
+	}
+	var view struct {
+		CandidateFiles []struct {
+			Path    string   `json:"path"`
+			Role    string   `json:"role"`
+			Handles []string `json:"handles"`
+		} `json:"candidate_files"`
+	}
+	if err := json.Unmarshal([]byte(output), &view); err != nil {
+		return nil
+	}
+	var symbols []string
+	for _, f := range view.CandidateFiles {
+		if len(symbols) >= max {
+			break
+		}
+		path := strings.TrimSpace(f.Path)
+		if path == "" {
+			continue
+		}
+		if strings.TrimSpace(f.Role) == "test" {
+			continue
+		}
+		for _, handle := range f.Handles {
+			if len(symbols) >= max {
+				break
+			}
+			handle = strings.TrimPrefix(strings.TrimSpace(handle), "symbol://")
+			if handle == "" || handle == path {
+				continue
+			}
+			symbols = append(symbols, handle)
+		}
+	}
+	if len(symbols) == 0 {
+		return nil
+	}
+	return symbols
 }
 
 func concreteRecoveryEvidencePaths(results []workspace.ToolResult, max int) []string {
@@ -17214,7 +17260,7 @@ func (r *Runner) completeWithoutMoreTools(
 
 func answerFirstNoToolsPrompt(reason string) string {
 	reason = strings.TrimSpace(reason)
-	contract := "Final answer contract: tools are unavailable now. Write the normal final answer from the evidence already gathered. If the evidence supports a concrete answer, answer directly and do not lead with budget, blocker, partial-findings, or recommended-next-step framing. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action."
+	contract := "Final answer contract: tools are unavailable now. Write the normal final answer from the evidence already gathered. Do not emit XML tool-call tags, tool JSON, or tool-request syntax of any kind — write only plain prose. If the evidence supports a concrete answer, answer directly and do not lead with budget, blocker, partial-findings, or recommended-next-step framing. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action."
 	if reason == "" {
 		return contract
 	}
@@ -17712,6 +17758,12 @@ func textOnlyMaxTokensForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 	}
 }
 
+// IsTextualToolCall returns true when text looks like tool-call markup
+// that should never reach the user-facing presentation layer.
+func IsTextualToolCall(text string) bool {
+	return looksLikeTextualToolCall(text)
+}
+
 func looksLikeTextualToolCall(text string) bool {
 	lower := strings.ToLower(strings.TrimSpace(text))
 	if lower == "" {
@@ -17720,7 +17772,11 @@ func looksLikeTextualToolCall(text string) bool {
 	if strings.Contains(lower, "<tool_call") ||
 		strings.Contains(lower, "</tool_call>") ||
 		strings.Contains(lower, "<function=") ||
-		strings.Contains(lower, "</function>") {
+		strings.Contains(lower, "</function>") ||
+		strings.Contains(lower, "<invoke") ||
+		strings.Contains(lower, "</invoke>") ||
+		strings.Contains(lower, "<janus_tool") ||
+		strings.Contains(lower, "</janus_tool") {
 		return true
 	}
 	return looksLikeLineOrientedToolRequest(lower)

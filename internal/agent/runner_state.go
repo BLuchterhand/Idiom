@@ -249,6 +249,7 @@ type runnerNextActionState struct {
 	ResultError        string   `json:"result_error,omitempty"`
 	ResultOutputChars  int      `json:"result_output_chars,omitempty"`
 	EvidencePaths      []string `json:"evidence_paths,omitempty"`
+	CandidateSymbols   []string `json:"candidate_symbols,omitempty"`
 	EvidenceStatus     []string `json:"evidence_status,omitempty"`
 	Constraints        []string `json:"constraints,omitempty"`
 	InvalidNextActions []string `json:"invalid_next_actions,omitempty"`

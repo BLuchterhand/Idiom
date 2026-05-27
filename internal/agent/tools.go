@@ -95,6 +95,26 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 	return out
 }
 
+// stripPostReadinessBroadTools removes tools that are inappropriate after
+// answer readiness is declared. Broad discovery (search_content, search_files,
+// list_files) encourages the model to keep exploring instead of answering or
+// making one exact targeted read. These are stripped from the native transport
+// array — the model literally cannot call them.
+func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
+	if len(tools) == 0 {
+		return tools
+	}
+	out := make([]llama.Tool, 0, len(tools))
+	for _, t := range tools {
+		name := strings.TrimSpace(t.Function.Name)
+		if name == "search_content" || name == "search_files" || name == "list_files" {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 func mutateSchemaExposeLineRange(raw json.RawMessage) (json.RawMessage, bool) {
 	if len(raw) == 0 {
 		return nil, false
@@ -253,9 +273,10 @@ func mutateSchemaRequireFields(raw json.RawMessage, fields []string) (json.RawMe
 		props = make(map[string]any)
 	}
 	for _, name := range fields {
-		if _, exists := props[name]; !exists {
+		if _, exists := props[name]; !exists || props[name].(map[string]any)["minLength"] == nil {
 			props[name] = map[string]any{
 				"type":        "string",
+				"minLength":   1,
 				"description": postReadinessFieldDescription(name),
 			}
 		}

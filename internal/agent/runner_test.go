@@ -4431,14 +4431,11 @@ func TestApplyLanePreflightForcesAnswerAfterConversationEvidence(t *testing.T) {
 		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/app/prompt_routing.go"},
 		Results: results,
 	})
-	if decision.RejectSummary != "Conversation contract rejected extra exploration after bounded evidence" {
-		t.Fatalf("expected conversation evidence gate, got %#v", decision)
+	if decision.RejectSummary != "" {
+		t.Fatalf("expected tool to pass through preflight (no reject), got %#v", decision)
 	}
-	if decision.ForceAnswer == nil || decision.ForceAnswer.Reason != "conversation_evidence_sufficient" {
-		t.Fatalf("expected forced conversation answer, got %#v", decision)
-	}
-	if !strings.Contains(decision.ForceAnswer.Prompt, "Do not return raw tool summaries") {
-		t.Fatalf("expected answer-quality prompt, got %#v", decision.ForceAnswer)
+	if decision.ForceAnswer != nil {
+		t.Fatalf("expected no force-answer on preflight (nudge fires post-result instead), got %#v", decision.ForceAnswer)
 	}
 }
 
@@ -4534,8 +4531,11 @@ func TestConversationPreflightForcesAnswerAfterRepeatedBroadDiscoveryRecovery(t 
 		Request: workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go", StartLine: 1, EndLine: 80},
 		Results: results,
 	})
-	if decision.ForceAnswer != nil || decision.RejectSummary != "" {
-		t.Fatalf("narrow source reads should remain available after localization, got %#v", decision)
+	if decision.RejectSummary != "" {
+		t.Fatalf("expected narrow read to pass preflight (nudge fires post-result), got %#v", decision)
+	}
+	if decision.ForceAnswer != nil {
+		t.Fatalf("expected no force-answer on preflight for conversation evidence (nudge replaces force), got %#v", decision.ForceAnswer)
 	}
 }
 
@@ -4615,6 +4615,70 @@ func TestConversationFollowupDoesNotCollapseAfterRecoveryBroadSearch(t *testing.
 		if result.Result.Tool == "context_query" && strings.TrimSpace(result.Result.Error) == "" {
 			t.Fatalf("context_query should have been intercepted before execution, got result %#v", result.Result)
 		}
+	}
+}
+
+func TestConversationEvidenceSatisfiedContextPackAloneFiresGate(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/abc123.json with 4 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go"},{"path":"internal/agent/runner_lane_policy.go"}]}`,
+		},
+	}
+	// context_pack alone is no longer sufficient — the model should read
+	// at least one source body before the nudge fires. This prevents the
+	// nudge from triggering after a single discovery call for questions
+	// that genuinely need source-body inspection.
+	if conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
+		t.Fatal("context_pack alone should not fire evidence-satisfied gate — wait for at least one source-body read")
+	}
+	if runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
+		t.Fatal("context_pack alone should not trigger force-answer readiness")
+	}
+
+	// Add a source-body read — now evidence should be satisfied.
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner.go lines 1-80",
+		Output:  "package agent\n\nfunc (r *Runner) Run(...",
+	})
+	if !conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
+		t.Fatal("context_pack + source-body read should fire evidence-satisfied gate")
+	}
+	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
+		t.Fatal("context_pack + source-body read should trigger force-answer readiness")
+	}
+}
+
+func TestConversationEvidenceSatisfiedFileOutlineFindSymbolProbesFireGate(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "File outline for internal/agent/runner_lane_policy.go",
+				Output:  "route_summary:\ncapability: file_outline\nlanguage: go\nrouted_tool: go_file_outline\n",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Found symbol conversationEvidenceSatisfied in internal/agent/runner_lane_policy.go",
+				Output:  "route_summary:\ncapability: find_symbol\nlanguage: go\nrouted_tool: go_find_symbol\n",
+		},
+	}
+	if !conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
+		t.Fatal("expected file_outline + find_symbol probes to fire evidence-satisfied gate for conversation/direct_answer")
+	}
+	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
+		t.Fatal("expected force-answer readiness after file_outline + find_symbol evidence")
 	}
 }
 
@@ -9742,7 +9806,56 @@ func TestLooksLikeTextualToolCallRejectsLineOrientedToolPayload(t *testing.T) {
 	if looksLikeTextualToolCall("Tool: route classifier\n\nThis section explains the classifier in prose.") {
 		t.Fatalf("prose heading should not be rejected as a line-oriented tool payload")
 	}
+
+	// <invoke> XML tool-call markup detection
+	if !looksLikeTextualToolCall("<invoke name=\"context_pack\">") {
+		t.Fatalf("expected <invoke> XML to be detected as textual tool call")
+	}
+	if !looksLikeTextualToolCall("</invoke>") {
+		t.Fatalf("expected </invoke> XML to be detected as textual tool call")
+	}
+	if !looksLikeTextualToolCall("<invoke") {
+		t.Fatalf("expected partial <invoke to be detected as textual tool call")
+	}
+	if !looksLikeTextualToolCall("<invoke>\n<invoke name=\"search_files\">\n</invoke>") {
+		t.Fatalf("expected invoke XML block to be detected as textual tool call")
+	}
 }
+
+
+// Test that janus_tool_calls XML is detected as textual tool call
+func TestLooksLikeTextualToolCallDetectsJanusToolCalls(t *testing.T) {
+	// The exact format from the live conversation log
+	livePayload := `<janus_tool_calls>
+<janus_invoke name="code_navigate">
+<janus_parameter name="capability" string="true">find_symbol</janus_parameter>
+<janus_parameter name="named_gap" string="true">Find PlanThenExecutePlannerTaskFamily constant</janus_parameter>
+<janus_parameter name="path" string="true">internal/agent</janus_parameter>
+</janus_invoke>
+</janus_tool_calls>`
+	if !looksLikeTextualToolCall(livePayload) {
+		t.Fatal("expected janus_tool_calls XML to be detected as textual tool call")
+	}
+	if !looksLikeTextualToolCall("<janus_tool_calls>") {
+		t.Fatal("expected bare janus_tool_calls open tag to be detected")
+	}
+	if !looksLikeTextualToolCall("</janus_tool_calls>") {
+		t.Fatal("expected bare janus_tool_calls close tag to be detected")
+	}
+}
+func TestIsTextualToolCallExportedAPI(t *testing.T) {
+	// Verify the exported API that the presentation layer uses
+	if !IsTextualToolCall("<invoke name=\"context_pack\">") {
+		t.Fatal("IsTextualToolCall should detect invoke XML")
+	}
+	if !IsTextualToolCall("<tool_call>{\"tool\":\"read\"}</tool_call>") {
+		t.Fatal("IsTextualToolCall should detect tool_call XML")
+	}
+	if IsTextualToolCall("The lane transition works by returning to main state after implementation.") {
+		t.Fatal("IsTextualToolCall should not flag normal prose")
+	}
+}
+
 
 func TestFinalAnswerNeedsDecorationRejectsStructuredAnswerEnvelope(t *testing.T) {
 	answer := `{"answer":["The route classifier chooses the workflow family."],"verification":["internal/app/turn_planner.go"]}`

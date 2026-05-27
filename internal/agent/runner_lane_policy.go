@@ -142,17 +142,6 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		}
 		return decision
 	}
-
-	if conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, input.Results) && isReadClassTool(decision.Request) {
-		decision.RejectSummary = "Conversation contract rejected extra exploration after bounded evidence"
-		decision.RejectError = "the conversation lane already has enough bounded read/search evidence to answer. Return a concise, well formatted answer from the gathered evidence; name one exact uncertainty only if it materially affects the answer."
-		decision.ForceAnswer = &runnerForcedAnswer{
-			Reason: "conversation_evidence_sufficient",
-			Prompt: "The conversation lane has enough bounded evidence. Answer the user's actual question now in a concise, well formatted, on-topic response. Name the files or evidence you used when workspace evidence matters. Do not return raw tool summaries as the answer.",
-		}
-		return decision
-	}
-
 	if summary, errorText, reject := prematureTargetReadRejection(decision.Request, input.Results, r.RuntimeBrief); reject {
 		decision.RejectSummary = summary
 		decision.RejectError = errorText
@@ -1086,6 +1075,11 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 		switch strings.TrimSpace(result.Tool) {
 		case "read_file":
 			if span := toolResultReadSpan(result); span > 0 && span <= 120 {
+				count++
+			}
+		case "code_navigate":
+			if strings.Contains(result.Output, "capability: file_outline") ||
+				strings.Contains(result.Output, "capability: find_symbol") {
 				count++
 			}
 		case "go_read_symbol", "go_extract_body",
