@@ -22,9 +22,11 @@ const loadingModelRetryDelay = 500 * time.Millisecond
 type Client struct {
 	baseURL         string
 	backend         string
+	modelName       string
 	apiKeyEnv       string
 	reasoningEffort string
 	verbosity       string
+	toolNameReverse map[string]string
 	http            *http.Client
 }
 
@@ -300,7 +302,7 @@ func isOpenAIResponsesBackend(backend string) bool {
 
 func isHostedChatBackend(backend string) bool {
 	b := strings.ToLower(strings.TrimSpace(backend))
-	return b == config.BackendZAI || b == config.BackendMiniMax
+	return b == config.BackendZAI || b == config.BackendMiniMax || b == config.BackendDeepSeek
 }
 
 func backendRequiresAuth(backend string) bool {
@@ -315,6 +317,8 @@ func defaultAPIKeyEnv(backend string) string {
 		return "ZAI_API_KEY"
 	case config.BackendMiniMax:
 		return "MINIMAX_API_KEY"
+	case config.BackendDeepSeek:
+		return "DEEPSEEK_API_KEY"
 	default:
 		return ""
 	}
@@ -346,6 +350,8 @@ func (c *Client) WithBackend(backend string) *Client {
 		c.backend = config.BackendCodex
 	case config.BackendZAI:
 		c.backend = config.BackendZAI
+	case config.BackendDeepSeek:
+		c.backend = config.BackendDeepSeek
 	case "", config.BackendLlama:
 		c.backend = config.BackendLlama
 	default:
@@ -366,6 +372,11 @@ func (c *Client) WithReasoningEffort(effort string) *Client {
 
 func (c *Client) WithVerbosity(verbosity string) *Client {
 	c.verbosity = strings.TrimSpace(verbosity)
+	return c
+}
+
+func (c *Client) WithModel(model string) *Client {
+	c.modelName = strings.TrimSpace(model)
 	return c
 }
 
@@ -446,23 +457,52 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 }
 
 type hostedChatPayload struct {
-	Model           string        `json:"model"`
-	Messages        []ChatMessage `json:"messages"`
-	Stream          bool          `json:"stream"`
-	MaxTokens       int           `json:"max_tokens,omitempty"`
-	Temperature     float64       `json:"temperature,omitempty"`
-	TopP            float64       `json:"top_p,omitempty"`
-	PresencePenalty float64       `json:"presence_penalty,omitempty"`
-	Tools           any           `json:"tools,omitempty"`
-	ToolChoice      string        `json:"tool_choice,omitempty"`
-	Thinking        any           `json:"thinking,omitempty"`
-	ResponseFormat  any           `json:"response_format,omitempty"`
+	Model           string            `json:"model"`
+	Messages        []ChatMessage     `json:"messages"`
+	Stream          bool              `json:"stream"`
+	MaxTokens       int               `json:"max_tokens,omitempty"`
+	Temperature     float64           `json:"temperature,omitempty"`
+	TopP            float64           `json:"top_p,omitempty"`
+	PresencePenalty float64           `json:"presence_penalty,omitempty"`
+	Tools           any               `json:"tools,omitempty"`
+	ToolNameReverse map[string]string `json:"-"`
+	ToolChoice      string            `json:"tool_choice,omitempty"`
+	Thinking        any               `json:"thinking,omitempty"`
+	ResponseFormat  any               `json:"response_format,omitempty"`
+}
+
+// normalizeHostedTools maps tool function names that contain characters
+// unsupported by some hosted APIs (notably DeepSeek requires
+// ^[a-zA-Z0-9_-]+$). Returns sanitized tools and a reverse map for
+// mapping tool-call responses back to original names.
+func normalizeHostedTools(tools []Tool) ([]Tool, map[string]string) {
+	if len(tools) == 0 {
+		return tools, nil
+	}
+	reverse := make(map[string]string)
+	normalized := make([]Tool, len(tools))
+	for i, t := range tools {
+		orig := t.Function.Name
+		sanitized := strings.NewReplacer(":", "_", "/", "_").Replace(orig)
+		if sanitized != orig {
+			reverse[sanitized] = orig
+		}
+		normalized[i] = Tool{
+			Type: t.Type,
+			Function: ToolFunction{
+				Name:        sanitized,
+				Description: t.Function.Description,
+				Parameters:  t.Function.Parameters,
+			},
+		}
+	}
+	return normalized, reverse
 }
 
 func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream bool, backend string) any {
 	payload := hostedChatPayload{
 		Model:    opts.Model,
-		Messages: hostedChatMessages(messages),
+		Messages: hostedChatMessages(repairMessageToolPairing(messages)),
 		Stream:   stream,
 	}
 	if opts.MaxTokens > 0 {
@@ -478,7 +518,9 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 		payload.PresencePenalty = opts.PresencePenalty
 	}
 	if len(opts.Tools) > 0 && BackendSupportsNativeTools(backend) {
-		payload.Tools = opts.Tools
+		normalized, rev := normalizeHostedTools(opts.Tools)
+		payload.Tools = normalized
+		payload.ToolNameReverse = rev
 	}
 	if opts.ToolChoice != "" && BackendSupportsNativeTools(backend) {
 		payload.ToolChoice = opts.ToolChoice
@@ -496,6 +538,64 @@ func hostedChatRequestPayload(messages []ChatMessage, opts ChatOptions, stream b
 	return payload
 }
 
+// repairMessageToolPairing ensures every assistant message with tool_calls
+// has matching role:"tool" responses. Hosted APIs (DeepSeek) reject
+// requests where tool_calls entries are unpaired. This guard injects
+// synthetic tool error messages for any orphaned tool_calls.
+func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
+	if len(messages) == 0 {
+		return messages
+	}
+	// Build a lookup: tool_call_id -> tool response message index
+	toolRespIdx := make(map[string]int)
+	for i, msg := range messages {
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			toolRespIdx[msg.ToolCallID] = i
+		}
+	}
+	// Build the repaired array: for each assistant with tool_calls,
+	// emit the assistant, then immediately emit all matching tool
+	// responses, then emit other messages normally (skipping tool
+	// responses that were already emitted).
+	emittedTool := make(map[int]bool)
+	repaired := make([]ChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role != "assistant" || len(msg.ToolCalls) == 0 {
+			if msg.Role == "tool" {
+				continue // tool responses are emitted after their assistant
+			}
+			repaired = append(repaired, msg)
+			continue
+		}
+		// Emit the assistant message.
+		repaired = append(repaired, msg)
+		// Emit all matching tool responses immediately after.
+		for _, tc := range msg.ToolCalls {
+			if tc.ID == "" {
+				continue
+			}
+			if ti, ok := toolRespIdx[tc.ID]; ok && !emittedTool[ti] {
+				repaired = append(repaired, messages[ti])
+				emittedTool[ti] = true
+			} else if !ok {
+				// Orphaned tool_call with no matching tool response.
+				// Strict OpenAI-protocol backends (DeepSeek) require a
+				// role:"tool" message after every tool_calls entry.
+				// Inject a synthetic error so the request is protocol-
+				// compliant. Happens when a gate halts execution before
+				// the tool runs (budget gate, completion gate, etc.).
+				repaired = append(repaired, ChatMessage{
+					Role:       "tool",
+					ToolCallID: tc.ID,
+					Content:    fmt.Sprintf("tool %q execution skipped: session halted before tool ran", tc.Function.Name),
+				})
+			}
+		}
+	}
+	return repaired
+}
+
+
 func hostedChatMessages(messages []ChatMessage) []ChatMessage {
 	if len(messages) == 0 {
 		return nil
@@ -510,7 +610,12 @@ func hostedChatMessages(messages []ChatMessage) []ChatMessage {
 
 func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts ChatOptions, onDelta func(string) error) error {
 	if opts.Model == "" {
-		opts.Model = "local-model"
+		if isHostedChatBackend(c.Backend()) || isOpenAIResponsesBackend(c.Backend()) {
+			opts.Model = c.modelName
+		}
+		if opts.Model == "" {
+			opts.Model = "local-model"
+		}
 	}
 	if isOpenAIResponsesBackend(c.Backend()) {
 		return fmt.Errorf("streaming is not implemented for %s backend", c.Backend())
@@ -519,7 +624,11 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	var payload any
 	if isHostedChatBackend(c.Backend()) {
 		payload = hostedChatRequestPayload(messages, opts, true, c.Backend())
+		if hp, ok := payload.(hostedChatPayload); ok {
+			c.toolNameReverse = hp.ToolNameReverse
+		}
 	} else {
+		messages = repairMessageToolPairing(messages)
 		reqPayload := chatRequest{
 			Model:              opts.Model,
 			Messages:           messages,
@@ -841,7 +950,7 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	return ChatMessage{
 		Role:      role,
 		Content:   stripSpecialTokens(content.String()),
-		ToolCalls: toolCalls,
+		ToolCalls: remapToolCalls(toolCalls, c.toolNameReverse),
 		Usage: Usage{
 			PromptTokens:     parsed.Usage.InputTokens,
 			CompletionTokens: parsed.Usage.OutputTokens,
@@ -851,9 +960,30 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	}, nil
 }
 
+// remapToolCalls applies a reverse name mapping to tool calls returned
+// by a hosted API, undoing the sanitization applied in normalizeHostedTools.
+func remapToolCalls(calls []ToolCall, reverse map[string]string) []ToolCall {
+	if len(reverse) == 0 || len(calls) == 0 {
+		return calls
+	}
+	out := make([]ToolCall, len(calls))
+	for i, call := range calls {
+		out[i] = call
+		if orig, ok := reverse[call.Function.Name]; ok {
+			out[i].Function.Name = orig
+		}
+	}
+	return out
+}
+
 func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage, opts ChatOptions) (ChatMessage, error) {
 	if opts.Model == "" {
-		opts.Model = "local-model"
+		if isHostedChatBackend(c.Backend()) || isOpenAIResponsesBackend(c.Backend()) {
+			opts.Model = c.modelName
+		}
+		if opts.Model == "" {
+			opts.Model = "local-model"
+		}
 	}
 	if isOpenAIResponsesBackend(c.Backend()) {
 		return c.completeResponsesChatMessage(ctx, messages, opts)
@@ -862,7 +992,11 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 	var payload any
 	if isHostedChatBackend(c.Backend()) {
 		payload = hostedChatRequestPayload(messages, opts, false, c.Backend())
+		if hp, ok := payload.(hostedChatPayload); ok {
+			c.toolNameReverse = hp.ToolNameReverse
+		}
 	} else {
+		messages = repairMessageToolPairing(messages)
 		reqPayload := chatRequest{
 			Model:              opts.Model,
 			Messages:           messages,
@@ -952,7 +1086,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 			Role:             role,
 			Content:          stripSpecialTokens(message.Content),
 			ReasoningContent: reasoning,
-			ToolCalls:        message.ToolCalls,
+			ToolCalls:        remapToolCalls(message.ToolCalls, c.toolNameReverse),
 			Usage:            parsed.Usage,
 			FinishReason:     strings.TrimSpace(choice.FinishReason),
 		}, nil

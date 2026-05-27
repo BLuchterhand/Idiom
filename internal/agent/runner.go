@@ -398,6 +398,16 @@ func (r *Runner) Run(
 				}
 			}
 			value = decorated
+			// Last-resort gate: no XML tool-call markup ever reaches
+			// the app layer as a final answer. Even if the upstream
+			// checks miss it, the finish function is the final gate.
+			if looksLikeTextualToolCall(value) ||
+				strings.Contains(value, "<n_tool") ||
+				strings.Contains(value, "<n_invoke") ||
+				strings.Contains(value, "<janus_tool") ||
+				strings.Contains(value, "<invoke name=") {
+				value = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
+			}
 			emitAcceptedAnswerSignalsOnce(value)
 		}
 		return value, finishErr
@@ -569,6 +579,7 @@ func (r *Runner) Run(
 			autonomyRecorder.emitTurnPhaseContract(phaseContract, modelProtocol)
 		}
 		modelStart := time.Now()
+		turnMessages = stripOrphanedToolCalls(turnMessages)
 		requestMessages := turnMessages
 		if hasModelProtocol {
 			requestMessages = modelMessagesWithProtocolProjection(requestMessages, modelProtocol)
@@ -814,6 +825,13 @@ func (r *Runner) Run(
 					autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
 				}
 				controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
+				// When the gate rejects XML tool-call markup, clear
+				// the persisted assistant message so the raw XML does
+				// not appear in the conversation log as a user-visible
+				// artifact.
+				if looksLikeTextualToolCall(reply) {
+					r.LastAssistantMessage.Content = "[XML tool-call markup detected and sanitized — the model emitted its native XML format instead of a proper tool call or prose. The harness recovery path will retry with a corrected prompt.]"
+				}
 				completionGateRejections = priorGateRejections + 1
 				shouldAttachRecoveryPrompt := priorGateRejections == 0 ||
 					result.Summary == "Completion gate rejected unresolved process narration" ||
@@ -2724,7 +2742,7 @@ func (r *Runner) Run(
 			conversationEvidenceNudged = true
 			delegatedReadOnlyAnswerReady = true
 			r.RuntimeBrief.Constraints = mergeRunnerStateStrings(r.RuntimeBrief.Constraints, []string{"answer_readiness_reached"})
-			nudge := "The conversation lane already has enough bounded evidence to answer the user's question. Answer now in a concise, well formatted, on-topic response. If one exact missing claim would make answering now materially wrong, name it along with the one exact probe that would resolve it — and include named_gap and why_not_answering on any tool call. Do not chain further reads for completeness."
+			nudge := "The conversation lane already has enough bounded evidence to answer the user's question. Answer now in a concise, well formatted, on-topic response. If one exact missing claim would make answering now materially wrong, name it along with the one exact probe that would resolve it — and include named_gap and why_not_answering on any tool call. Do not chain further reads for completeness. Never emit XML or HTML markup (such as <n_tool_calls> or <invoke>) in your response — use only the normal tool-call mechanism or plain prose."
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 			r.emitEvent(RunEvent{Role: "conversation_evidence_sufficient_nudge", Content: nudge})
 			rebuildTools()
@@ -3259,6 +3277,40 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 		return
 	}
 	r.OnEvent(RunEvent{Role: "thinking_trace", Content: string(data)})
+}
+
+
+// stripOrphanedToolCalls returns a copy of messages with any assistant
+// messages removed that have tool_calls but no matching role:"tool"
+// responses. When the budget gate or post-readiness nudge continues
+// the loop without executing a pending tool, the orphaned tool_calls
+// must not reach the model — strict backends (DeepSeek) reject the
+// request with "insufficient tool messages following tool_calls".
+func stripOrphanedToolCalls(messages []llama.ChatMessage) []llama.ChatMessage {
+	// Build lookup: tool_call_id -> has matching tool response
+	hasToolResponse := make(map[string]bool)
+	for _, msg := range messages {
+		if msg.Role == "tool" && msg.ToolCallID != "" {
+			hasToolResponse[msg.ToolCallID] = true
+		}
+	}
+	out := make([]llama.ChatMessage, 0, len(messages))
+	for _, msg := range messages {
+		if msg.Role == "assistant" && len(msg.ToolCalls) > 0 {
+			orphaned := false
+			for _, tc := range msg.ToolCalls {
+				if tc.ID != "" && !hasToolResponse[tc.ID] {
+					orphaned = true
+					break
+				}
+			}
+			if orphaned {
+				continue // drop this assistant message entirely
+			}
+		}
+		out = append(out, msg)
+	}
+	return out
 }
 
 func chatMessagesForOptions(messages []llama.ChatMessage, opts llama.ChatOptions) []llama.ChatMessage {
@@ -6234,6 +6286,13 @@ func closurePromptInvalidActions(scope string) []string {
 }
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
+	if looksLikeTextualToolCall(reply) {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Textual tool-call markup rejected as final answer",
+			Error:   "the reply contains XML tool-call markup (e.g. <n_tool_calls>, <invoke>, <janus_tool>) instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose. Do not emit XML or HTML markup.",
+		}, true
+	}
 	if result, rejected := r.unexecutedToolRequestCompletionRejection(reply); rejected {
 		return result, true
 	}
@@ -17314,6 +17373,10 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	if metrics != nil {
 		metrics.ModelCalls++
 	}
+	// Strip orphaned tool_calls before the final API call so that
+	// strict backends (DeepSeek) never see an assistant tool_calls
+	// message without a matching role:"tool" response.
+	turnMessages = stripOrphanedToolCalls(turnMessages)
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
 	requestMessages := chatMessagesForOptions(turnMessages, textOnlyOpts)
@@ -17480,6 +17543,10 @@ func (r *Runner) repairInternalFinalAnswer(
 	if metrics != nil {
 		metrics.ModelCalls++
 	}
+	// Strip orphaned tool_calls before the final API call so that
+	// strict backends (DeepSeek) never see an assistant tool_calls
+	// message without a matching role:"tool" response.
+	repairMessages = stripOrphanedToolCalls(repairMessages)
 	modelStart := time.Now()
 	requestMessages := chatMessagesForOptions(repairMessages, opts)
 	repairMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
@@ -17544,6 +17611,10 @@ func (r *Runner) retryInvalidFinalAnswer(
 	if metrics != nil {
 		metrics.ModelCalls++
 	}
+	// Strip orphaned tool_calls before the final API call so that
+	// strict backends (DeepSeek) never see an assistant tool_calls
+	// message without a matching role:"tool" response.
+	retryMessages = stripOrphanedToolCalls(retryMessages)
 	modelStart := time.Now()
 	requestMessages := chatMessagesForOptions(retryMessages, opts)
 	retryMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
@@ -17776,7 +17847,15 @@ func looksLikeTextualToolCall(text string) bool {
 		strings.Contains(lower, "<invoke") ||
 		strings.Contains(lower, "</invoke>") ||
 		strings.Contains(lower, "<janus_tool") ||
-		strings.Contains(lower, "</janus_tool") {
+		strings.Contains(lower, "</janus_tool") ||
+		strings.Contains(lower, "<janus_invoke") ||
+		strings.Contains(lower, "</janus_invoke") ||
+		strings.Contains(lower, "<n_tool") ||
+		strings.Contains(lower, "</n_tool") ||
+		strings.Contains(lower, "<n_invoke") ||
+		strings.Contains(lower, "</n_invoke") ||
+		strings.Contains(lower, "<n_parameter") ||
+		strings.Contains(lower, "</n_parameter") {
 		return true
 	}
 	return looksLikeLineOrientedToolRequest(lower)
@@ -18744,6 +18823,10 @@ func (r *Runner) ensureNonEmptyAnswer(
 	if metrics != nil {
 		metrics.ModelCalls++
 	}
+	// Strip orphaned tool_calls before the final API call so that
+	// strict backends (DeepSeek) never see an assistant tool_calls
+	// message without a matching role:"tool" response.
+	retryMessages = stripOrphanedToolCalls(retryMessages)
 	modelStart := time.Now()
 	textOnlyOpts := textOnlyChatOptions(opts, r.RuntimeBrief)
 	requestMessages := chatMessagesForOptions(retryMessages, textOnlyOpts)

@@ -9842,7 +9842,44 @@ func TestLooksLikeTextualToolCallDetectsJanusToolCalls(t *testing.T) {
 	if !looksLikeTextualToolCall("</janus_tool_calls>") {
 		t.Fatal("expected bare janus_tool_calls close tag to be detected")
 	}
+	if !looksLikeTextualToolCall("<janus_invoke name=\"code_navigate\">") {
+		t.Fatal("expected janus_invoke open tag to be detected")
+	}
+	if !looksLikeTextualToolCall("</janus_invoke>") {
+		t.Fatal("expected janus_invoke close tag to be detected")
+	}
 }
+
+// Test that n_tool_calls XML (DeepSeek's native tool-call markup when
+// forced into text-only mode) is detected as textual tool call.
+func TestLooksLikeTextualToolCallDetectsNToolCalls(t *testing.T) {
+	payload := `<n_tool_calls>
+<n_invoke name="code_navigate">
+<n_parameter name="capability" string="true">find_symbol</n_parameter>
+<n_parameter name="named_gap" string="true">Find constant</n_parameter>
+<n_parameter name="path" string="true">internal/agent</n_parameter>
+</n_invoke>
+</n_tool_calls>`
+	if !looksLikeTextualToolCall(payload) {
+		t.Fatal("expected n_tool_calls XML to be detected as textual tool call")
+	}
+	if !looksLikeTextualToolCall("<n_tool_calls>") {
+		t.Fatal("expected bare n_tool_calls open tag to be detected")
+	}
+	if !looksLikeTextualToolCall("</n_tool_calls>") {
+		t.Fatal("expected bare n_tool_calls close tag to be detected")
+	}
+	if !looksLikeTextualToolCall("<n_invoke name=\"read_file\">") {
+		t.Fatal("expected n_invoke open tag to be detected")
+	}
+	if !looksLikeTextualToolCall("</n_invoke>") {
+		t.Fatal("expected n_invoke close tag to be detected")
+	}
+	if !looksLikeTextualToolCall("<n_parameter name=\"path\" string=\"true\">foo</n_parameter>") {
+		t.Fatal("expected n_parameter tag to be detected")
+	}
+}
+
 func TestIsTextualToolCallExportedAPI(t *testing.T) {
 	// Verify the exported API that the presentation layer uses
 	if !IsTextualToolCall("<invoke name=\"context_pack\">") {
@@ -16202,5 +16239,250 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 	}
 	if msg.ToolCallID != "call_dangling_1" {
 		t.Fatalf("expected ToolCallID=call_dangling_1, got %q", msg.ToolCallID)
+	}
+}
+
+func TestStripOrphanedToolCalls(t *testing.T) {
+	t.Run("removes assistant with orphaned tool_calls", func(t *testing.T) {
+		messages := []llama.ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []llama.ToolCall{
+					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
+				},
+			},
+			// No matching tool response — orphaned
+		}
+		stripped := stripOrphanedToolCalls(messages)
+		if len(stripped) != 2 {
+			t.Fatalf("expected 2 messages, got %d", len(stripped))
+		}
+		if stripped[0].Role != "system" || stripped[1].Role != "user" {
+			t.Fatal("expected system and user messages only")
+		}
+	})
+
+	t.Run("keeps assistant when all tool_calls have responses", func(t *testing.T) {
+		messages := []llama.ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []llama.ToolCall{
+					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: "result"},
+		}
+		stripped := stripOrphanedToolCalls(messages)
+		if len(stripped) != 4 {
+			t.Fatalf("expected 4 messages, got %d", len(stripped))
+		}
+	})
+
+	t.Run("removes assistant when one of multiple calls is orphaned", func(t *testing.T) {
+		messages := []llama.ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []llama.ToolCall{
+					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
+					{ID: "call_2", Function: llama.ToolCallFunc{Name: "search_content"}},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: "result"},
+			// call_2 has no response — orphaned, so whole assistant message is removed
+		}
+		stripped := stripOrphanedToolCalls(messages)
+		if len(stripped) != 2 {
+			t.Fatalf("expected 2 messages (system + tool), got %d", len(stripped))
+		}
+	})
+
+	t.Run("no-op when no tool_calls present", func(t *testing.T) {
+		messages := []llama.ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{Role: "assistant", Content: "hi there!"},
+		}
+		stripped := stripOrphanedToolCalls(messages)
+		if len(stripped) != 3 {
+			t.Fatalf("expected 3 messages, got %d", len(stripped))
+		}
+	})
+}
+
+func TestCompletionGateRejectsTextualXMLToolMarkup(t *testing.T) {
+	// Real payloads from live DeepSeek sessions that emitted XML
+	// instead of proper tool calls or prose.
+	xmlPayloads := []string{
+		// DeepSeek's n_tool_calls format
+		`<n_tool_calls>
+<n_invoke name="code_navigate">
+<n_parameter name="capability" string="true">find_symbol</n_parameter>
+<n_parameter name="path" string="true">internal/agent</n_parameter>
+</n_invoke>
+</n_tool_calls>`,
+		// Bare open tag
+		"<n_tool_calls>",
+		// DeepSeek janus format
+		`<janus_tool_calls>
+<janus_invoke name="read_file">
+<janus_parameter name="path" string="true">internal/agent/runner.go</janus_parameter>
+</janus_invoke>
+</janus_tool_calls>`,
+		// Generic invoke XML
+		`<invoke name="context_pack">
+<parameter name="task" string="true">find validation</parameter>
+</invoke>`,
+		// Mixed prose with XML - the model might wrap XML in text
+		"Let me check that.\n\n<n_tool_calls>\n<n_invoke name=\"search_content\">\n</n_invoke>\n</n_tool_calls>",
+		// tool_call XML variant
+		`<tool_call>
+<function name="read_file">
+<parameter name="path">test.go</parameter>
+</function>
+</tool_call>`,
+	}
+
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "answer the user's question",
+		},
+	}
+
+	for i, payload := range xmlPayloads {
+		result, rejected := runner.completionGateRejection(payload, nil, 0, nil, false)
+		if !rejected {
+			t.Errorf("payload %d: expected XML to be rejected, got accepted\npayload: %s", i, payload[:min(len(payload), 100)])
+			continue
+		}
+		if result.Tool != "completion_gate" {
+			t.Errorf("payload %d: expected tool='completion_gate', got %q", i, result.Tool)
+		}
+		if !strings.Contains(result.Error, "XML") && !strings.Contains(result.Error, "markup") {
+			t.Errorf("payload %d: expected error to mention XML/markup, got: %s", i, result.Error)
+		}
+	}
+}
+
+func TestCompletionGateAcceptsNormalProse(t *testing.T) {
+	// Verify that normal prose answers are NOT rejected by the XML check
+	proseAnswers := []string{
+		"The implement lane and plan-execute lane share the same base validation requirements including source_sanity checks and compilation verification.",
+		"Based on the evidence from helpers.go and edit_set_obligations.go, both lanes require go test compilation checks.",
+		"Here's what I found:\n\n- Plan-execute: requires submit_plan with edit obligations\n- Implement: requires preflight write guard\n\nThey differ in that...",
+		"", // empty reply
+	}
+
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "answer the user's question",
+		},
+	}
+
+	for i, prose := range proseAnswers {
+		_, rejected := runner.completionGateRejection(prose, nil, 0, nil, false)
+		if rejected {
+			// It might be rejected for other reasons (like evidence insufficiency),
+			// but it must NOT be rejected for XML/markup
+			result, _ := runner.completionGateRejection(prose, nil, 0, nil, false)
+			if strings.Contains(result.Error, "XML") || strings.Contains(result.Error, "markup") {
+				t.Errorf("prose %d: normal prose incorrectly flagged as XML markup", i)
+			}
+		}
+	}
+}
+
+func TestIsTextualToolCallDetectsLiveSessionXML(t *testing.T) {
+	// Exact XML payload from session 20260527-163710 event 566
+	liveXML := `<n_tool_calls>
+<n_invoke name="search_content">
+<n_parameter name="pattern" string="true">PlannerOwnedVerification</n_parameter>
+<n_parameter name="path" string="true">internal</n_parameter>
+<n_parameter name="named_gap" string="true">find where PlannerOwnedVerification field is set in opts for each lane</n_parameter>
+<n_parameter name="why_not_answering" string="true">need to see how implement vs plan-execute set verification contract</n_parameter>
+</n_invoke>
+</n_tool_calls>`
+	if !IsTextualToolCall(liveXML) {
+		t.Fatal("live session n_tool_calls XML was NOT detected as a textual tool call")
+	}
+}
+
+
+
+func TestCompleteWithoutMoreToolsWithReasonCatchesNToolCallsXML(t *testing.T) {
+	// Simulate the exact flow: model emits n_tool_calls XML in a forced completion
+	xmlContent := `<n_tool_calls>
+<n_invoke name="code_navigate">
+<n_parameter name="capability" string="true">find_definition</n_parameter>
+<n_parameter name="symbol" string="true">IsDiagnosticToolName</n_parameter>
+<n_parameter name="path" string="true">internal/workspace</n_parameter>
+</n_invoke>
+</n_tool_calls>`
+
+	// Multiple replies: first is XML (caught), retry might produce XML too
+	replies := []string{
+		xmlContent,                              // first call: XML detected, triggers retry
+		"ok I will answer now",                  // retry: clean prose
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "answer the user's question",
+		},
+		Policy: RunPolicy{MaxToolSteps: 1, MaxNoProgressTurns: 3},
+	}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "hello"}},
+		llama.ChatOptions{},
+		nil,
+		"Model-call budget is exhausted.",
+		nil,
+	)
+
+	if err == nil {
+		// If no error, the answer must NOT be the raw XML
+		if strings.Contains(answer, "<n_tool_calls>") || strings.Contains(answer, "<n_invoke") {
+			t.Fatalf("completeWithoutMoreToolsWithReason returned raw n_tool_calls XML instead of catching it:\n%s", answer)
+		}
+		// The answer should be a clean fallback
+		if answer == "" {
+			t.Fatal("completeWithoutMoreToolsWithReason returned empty string for XML input")
+		}
+		t.Logf("XML was caught, returned: %s", answer[:min(len(answer), 100)])
+	} else {
+		t.Logf("XML caused error (expected): %v", err)
 	}
 }

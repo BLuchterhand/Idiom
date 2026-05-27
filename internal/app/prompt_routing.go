@@ -159,6 +159,20 @@ func (m *Model) finishPromptOnceReply(reply string) string {
 		}
 		return reply
 	}
+	// Common presentation layer: no tool-call XML ever reaches the user.
+	// Double-check: IsTextualToolCall is supposed to catch everything,
+	// but as a last resort also check raw substrings for the known
+	// DeepSeek XML tool-call namespaces.
+	if agent.IsTextualToolCall(reply) ||
+		strings.Contains(reply, "<n_tool") ||
+		strings.Contains(reply, "<n_invoke") ||
+		strings.Contains(reply, "<janus_tool") ||
+		strings.Contains(reply, "<invoke name=") {
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogRunEvent("presentation_layer_xml_rejected", fmt.Sprintf("final answer contained tool-call markup (%d chars); replaced with clean message", len(reply)))
+		}
+		reply = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
+	}
 	m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: reply})
 	m.logMessage("assistant", reply)
 	m.emitJSONFinal(reply)

@@ -506,3 +506,132 @@ func TestShouldRetryLoadingModel(t *testing.T) {
 		t.Fatal("400 should not retry")
 	}
 }
+
+func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
+	t.Run("orphaned tool_call gets synthetic tool response", func(t *testing.T) {
+		messages := []ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
+				},
+			},
+			// No matching tool response — orphaned
+		}
+		repaired := repairMessageToolPairing(messages)
+		// Should have the system, user, assistant, plus one synthetic tool message
+		if len(repaired) != 4 {
+			t.Fatalf("expected 4 messages, got %d", len(repaired))
+		}
+		last := repaired[len(repaired)-1]
+		if last.Role != "tool" {
+			t.Fatalf("expected last message role 'tool', got %q", last.Role)
+		}
+		if last.ToolCallID != "call_1" {
+			t.Fatalf("expected ToolCallID 'call_1', got %q", last.ToolCallID)
+		}
+		if last.Content == "" {
+			t.Fatal("expected non-empty synthetic content")
+		}
+	})
+
+	t.Run("mixed paired and orphaned calls", func(t *testing.T) {
+		messages := []ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
+					{ID: "call_2", Function: ToolCallFunc{Name: "search_content"}},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: "file contents here"},
+			// call_2 has no matching response — orphaned
+		}
+		repaired := repairMessageToolPairing(messages)
+		// Should have: system, user, assistant, call_1 response (real), call_2 response (synthetic)
+		if len(repaired) != 5 {
+			t.Fatalf("expected 5 messages, got %d", len(repaired))
+		}
+		// Find the real and synthetic tool responses
+		var realTool, synTool *ChatMessage
+		for i := range repaired {
+			if repaired[i].Role == "tool" {
+				if repaired[i].ToolCallID == "call_1" {
+					realTool = &repaired[i]
+				} else if repaired[i].ToolCallID == "call_2" {
+					synTool = &repaired[i]
+				}
+			}
+		}
+		if realTool == nil {
+			t.Fatal("missing real tool response for call_1")
+		}
+		if realTool.Content != "file contents here" {
+			t.Fatalf("real tool response content mismatch: %q", realTool.Content)
+		}
+		if synTool == nil {
+			t.Fatal("missing synthetic tool response for orphaned call_2")
+		}
+		if synTool.Content == "" {
+			t.Fatal("synthetic tool response has empty content")
+		}
+	})
+
+	t.Run("no orphaned calls is a no-op", func(t *testing.T) {
+		messages := []ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []ToolCall{
+					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
+				},
+			},
+			{Role: "tool", ToolCallID: "call_1", Content: "result"},
+		}
+		repaired := repairMessageToolPairing(messages)
+		if len(repaired) != 4 {
+			t.Fatalf("expected 4 messages, got %d", len(repaired))
+		}
+		// No synthetic injection when all tool_calls are paired
+	})
+
+	t.Run("no tool_calls in messages is unchanged", func(t *testing.T) {
+		messages := []ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{Role: "assistant", Content: "hi there!"},
+		}
+		repaired := repairMessageToolPairing(messages)
+		if len(repaired) != 3 {
+			t.Fatalf("expected 3 messages, got %d", len(repaired))
+		}
+	})
+
+	t.Run("empty tool_call ID is skipped", func(t *testing.T) {
+		messages := []ChatMessage{
+			{Role: "system", Content: "you are a helpful assistant"},
+			{Role: "user", Content: "hello"},
+			{
+				Role: "assistant",
+				Content: "",
+				ToolCalls: []ToolCall{
+					{ID: "", Function: ToolCallFunc{Name: "unknown"}}, // empty ID
+				},
+			},
+			// No tool response — but ID is empty so it's skipped, not treated as orphan
+		}
+		repaired := repairMessageToolPairing(messages)
+		// Should only have system, user, assistant (no synthetic for empty ID)
+		if len(repaired) != 3 {
+			t.Fatalf("expected 3 messages (empty IDs skipped), got %d", len(repaired))
+		}
+	})
+}
