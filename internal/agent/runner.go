@@ -6500,6 +6500,27 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 	}, true
 }
 
+
+// looksLikeToolResultTranscript returns true when the reply looks like
+// a raw tool result transcript (e.g. "The inspected source in X contains
+// func Foo, if bar != nil, and return baz"). Catches the pattern where
+// the model dumps raw function signatures instead of synthesizing prose.
+func looksLikeToolResultTranscript(lower string) bool {
+	// "The inspected source in `path` contains `code`"
+	if strings.Contains(lower, "the inspected source in") &&
+		strings.Contains(lower, " contains `") {
+		return true
+	}
+	// " contains `f" where f is any function/symbol name
+	if strings.Contains(lower, " contains `func ") ||
+		strings.Contains(lower, " contains `type ") ||
+		strings.Contains(lower, " contains `var ") ||
+		strings.Contains(lower, " contains `const ") {
+		return true
+	}
+	return false
+}
+
 func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if r == nil {
 		return workspace.ToolResult{}, false
@@ -6519,10 +6540,8 @@ func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, res
 	if !containsAny(lower,
 		"matching line(s)",
 		"returned hit(s)",
-		"the inspected source in `f",
-		" contains `f",
 		"tool-local",
-	) && !toolLocalSearchHandlePattern.MatchString(trimmed) {
+	) && !looksLikeToolResultTranscript(lower) && !toolLocalSearchHandlePattern.MatchString(trimmed) {
 		return workspace.ToolResult{}, false
 	}
 	return workspace.ToolResult{
@@ -17496,17 +17515,19 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	if err != nil {
 		return "", err
 	}
-	if result, rejected := r.completionGateRejection(answer, collectedResults, 0, nil, false); rejected {
+	if _, rejected := r.completionGateRejection(answer, collectedResults, 0, nil, false); rejected {
 		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
-		return "", fmt.Errorf("%s", result.Error)
+		// No deterministic fallback available — return a clean user-facing
+		// message instead of an error so the user sees something useful.
+		return "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?", nil
 	}
-	if result, rejected := r.readOnlyNonSubstantiveCompletionRejection(answer, collectedResults); rejected {
+	if _, rejected := r.readOnlyNonSubstantiveCompletionRejection(answer, collectedResults); rejected {
 		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, nil
 		}
-		return "", fmt.Errorf("%s", result.Error)
+		return "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?", nil
 	}
 	if finalAnswerNeedsDecoration(answer) {
 		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, textOnlyOpts, answer, collectedResults, metrics); err != nil {

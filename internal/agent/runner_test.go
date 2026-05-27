@@ -16553,3 +16553,43 @@ func TestDetectsDSMLFromLiveSessionBytes(t *testing.T) {
 	}
 	t.Fatal("could not find assistant message in live session log")
 }
+
+func TestCompletionGateRejectsRawToolResultTranscriptFormats(t *testing.T) {
+	// Exact answer from session 20260527-184529
+	liveAnswer := "The inspected source in `internal/planexecute/run.go` contains `func emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, \"writer_route_decision\", decision.EventFields())`, `if resumeState != nil {` and `return runResumeReviewRepair(cfg, opts, prompt, *resumeState, resumeStatePath, promptRun, rec, stdout, stderr)`. No files were changed."
+	
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "answer the user's question",
+			AllowedTools:      []string{"read_file", "search_content", "context_pack"},
+		},
+	}
+	
+	result, rejected := runner.completionGateRejection(liveAnswer, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 internal/planexecute/run.go lines 1-50"},
+		{Tool: "context_query", Summary: "Found 5 references"},
+	}, 0, nil, false)
+	
+	if !rejected {
+		t.Fatal("live session answer was NOT rejected by completion gate")
+	}
+	if result.Summary != "Read-only completion gate rejected search-hit inventory" {
+		t.Errorf("unexpected summary: %s", result.Summary)
+	}
+
+	// Also test other variants
+	variants := []string{
+		"The inspected source in `some/file.go` contains `func Foo()`, `type Bar struct`, and `var baz = 1`.",
+		"The inspected source in `other.go` contains `const X = 1`, `func Y()`, and `type Z int`.",
+	}
+	for i, v := range variants {
+		if _, rejected := runner.completionGateRejection(v, []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 some/file.go lines 1-50"},
+		}, 0, nil, false); !rejected {
+			t.Errorf("variant %d not rejected: %s", i, v[:min(len(v), 60)])
+		}
+	}
+}
