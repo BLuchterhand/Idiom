@@ -1884,6 +1884,17 @@ func (r *Runner) Run(
 		}
 		discoveryRedirect.SetAllowedTools(currentAllowedTools)
 		if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, collectedResults, req) {
+			// Conversation-lane redirect: search_content → context_query.
+			// The model defaults to grep because it's familiar; redirect
+			// to structured graph query that answers the same question
+			// with callers/definitions instead of raw line hits.
+			if decision := discoveryRedirect.considerConversationRedirect(req, r.RuntimeBrief); decision.ShouldRedirect {
+				result := decision.Result
+				recorder.activeToolCall = activeToolCall
+				recorder.record(stepNumber, req, result, "discovery_redirect_conversation", false, false)
+				r.emitEvent(RunEvent{Role: "discovery_redirect_conversation", Content: fmt.Sprintf("%s → context_query", req.Tool)})
+				continue
+			}
 			if decision := discoveryRedirect.Consider(req, r.Workspace); decision.ShouldRedirect {
 				// Hard-reject path: the model has been nudged enough times
 				// on this redirect class. Route through rejectTool so the

@@ -3,8 +3,10 @@ package agent
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
 
@@ -431,4 +433,73 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 		return lang, cap, true
 	}
 	return workspace.LanguageSupport{}, "", false
+}
+
+
+// considerConversationRedirect handles conversation-lane redirects from
+// generic text-search tools to structured discovery tools. The model
+// defaults to search_content (grep) because it is familiar; this redirect
+// converts the search pattern into a context_query graph question, which
+// answers the same need with structured results instead of raw line hits.
+//
+// Only fires in conversation/read-only lanes. Follows the same
+// one-redirect-per-fingerprint pattern as language redirects.
+func (d *DiscoveryRedirect) considerConversationRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) RedirectDecision {
+	if d == nil {
+		return RedirectDecision{}
+	}
+	// Only for conversation and read-only lanes
+	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
+		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") &&
+		!strings.EqualFold(strings.TrimSpace(brief.Contract), "grounded_evidence_summary") {
+		return RedirectDecision{}
+	}
+	tool := strings.TrimSpace(req.Tool)
+	if tool != "search_content" {
+		return RedirectDecision{}
+	}
+	// Don't redirect if context_query isn't available
+	if !slices.Contains(d.allowedTools, "context_query") {
+		return RedirectDecision{}
+	}
+	fp := redirectFingerprint(req)
+	fpFires := d.fingerprintFireCount[fp] + 1
+	d.fingerprintFireCount[fp] = fpFires
+	if fpFires == 2 {
+		// Model retried the same search after one redirect — honor it.
+		return RedirectDecision{}
+	}
+	d.firedRedirects[fp] = true
+
+	// Convert the search pattern into a context_query question
+	pattern := strings.TrimSpace(req.Pattern)
+	if pattern == "" {
+		pattern = strings.TrimSpace(req.Command)
+	}
+	if pattern == "" {
+		return RedirectDecision{}
+	}
+
+	query := fmt.Sprintf("find references, definitions, or uses of %s", pattern)
+	contextQueryRequest := fmt.Sprintf(
+		`{"tool":"context_query","query":%q,"resolution":"symbol"}`,
+		query,
+	)
+
+	summary := "Redirected search_content to context_query"
+	msg := "Instead of raw text search, use context_query for structured graph questions. " +
+		"The same investigation is better served by:\n\n" +
+		contextQueryRequest + "\n\n" +
+		"context_query returns callers, definitions, and references from the codebase graph " +
+		"without dumping raw file content. You can refine the query in natural language. " +
+		"If context_query returns nothing, you can retry search_content as a fallback."
+
+	return RedirectDecision{
+		ShouldRedirect: true,
+		Result: workspace.ToolResult{
+			Tool:    req.Tool,
+			Summary: summary,
+			Output:  msg,
+		},
+	}
 }
