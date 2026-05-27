@@ -149,8 +149,13 @@ Hard enforcement is still required for invariants. These are not strategy sugges
 - Native tool-call protocol correctness.
 - Verification requirements after writes.
 - Final-answer readiness and evidence contracts.
-- Repeated identical-call loop breaks after warnings.
-- Post-budget “no more tools” cutoffs.
+- Repeated identical-call loop breaks after warnings (doom-loop guard).
+- Mutation-lane budget limits: writes must complete within a bounded
+  window to avoid unbounded resource consumption on concrete deliverables.
+- Read-only and conversation lanes must not have model-call budgets. The
+  model owns the decision of when evidence is sufficient to answer. The
+  doom-loop guard catches genuine loops; budget walls that preempt
+  legitimate investigation produce garbage forced answers.
 
 ## No Prompt-Magic Contract Triggers
 
