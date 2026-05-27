@@ -261,6 +261,19 @@ func (r *Runner) Run(
 		var tools []llama.Tool
 		if len(allowed) > 0 || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
 			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
+		// Conversation and read-only lanes: expose an "answer" tool so
+		// tool-biased models have a tool-call-shaped way to produce prose.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
+			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
+			tools = append(tools, llama.Tool{
+				Type: "function",
+				Function: llama.ToolFunction{
+					Name:        "answer",
+					Description: "Answer the user's question in natural prose. Call this tool when you have gathered enough evidence and are ready to provide your final answer.",
+					Parameters: json.RawMessage(`{"type":"object","properties":{"content":{"type":"string","description":"The answer text to return to the user. Write in clear, natural prose. Reference specific evidence paths when relevant."}},"required":["content"]}`),
+				},
+			})
+		}
 		}
 		// Schema-level enforcement of closure-biased contracts: once the
 		// lane has reached answer readiness, received a child packet, or
@@ -772,6 +785,27 @@ func (r *Runner) Run(
 				req, raw = recoveredReq, recoveredRaw
 				activeToolCall = nil
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_grounding", Content: fmt.Sprintf("completion recovery replaced repeated ungrounded submit_plan with %s", req.Tool)})
+			}
+		}
+		// Answer tool: the model can explicitly signal it's ready to
+		// answer by calling the "answer" tool. This gives tool-biased
+		// models a tool-call-shaped way to produce prose, matching their
+		// training bias toward tool use over spontaneous prose.
+		if ok && strings.TrimSpace(req.Tool) == "answer" {
+			// The answer content comes from the tool call's arguments.
+			// For native tool calls, raw is the JSON arguments string
+			// like {"content": "the answer text"}. For textual tool
+			// calls, raw is the full tool request JSON.
+			answerContent := ""
+			var answerArgs struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal([]byte(raw), &answerArgs); err == nil && answerArgs.Content != "" {
+				answerContent = answerArgs.Content
+			}
+			if answerContent != "" {
+				emitAcceptedAnswerSignalsOnce(answerContent)
+				return finish(answerContent, nil, "model_answer_tool", false)
 			}
 		}
 		if !ok {
