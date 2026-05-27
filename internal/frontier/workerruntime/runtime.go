@@ -857,12 +857,20 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	} else if state.Readiness != nil && state.Readiness.ReadyToWrite {
 		directive += " The readiness state says writing is supported by the current packet/evidence; the contract outcome is an edit or <<QUESTION>> with the exact edit blocker."
 	}
+	// Readiness state directive tells the model it can answer, but
+	// this contradicts the conversation lane's tool-or-answer contract
+	// ("keep investigating until you have enough evidence"). The
+	// conversation lane must not receive a premature "you're ready"
+	// signal — it causes indefinite tool calling when the model can't
+	// reconcile "keep investigating" with "one more probe then stop."
 	if state.Readiness != nil &&
 		state.Readiness.ReadyToAnswer &&
 		!state.Readiness.ReadyToWrite &&
 		!state.Readiness.ReadyToVerify &&
 		!implementationStateHasRequiredPathsForMutation(state) &&
-		!genericGuardedMutationNeedsTargetContract(state) {
+		!genericGuardedMutationNeedsTargetContract(state) &&
+		!strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") &&
+		!strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
 		directive += " The readiness state says answering is supported; continue only for one exact missing claim and one exact probe."
 	}
 	return StepInstruction{

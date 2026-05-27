@@ -1174,7 +1174,7 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 		PermissionProfile: "read_only_workspace",
 		AllowedTools:      []string{"search_content", "read_file", "context_query"},
 	})
-	if !strings.Contains(step.Directive, "default read-only answer lane") ||
+	if !strings.Contains(step.Directive, "Conversation lane") ||
 		!strings.Contains(step.Directive, "every response must either") ||
 		!strings.Contains(step.Directive, "context_pack to localize") ||
 		!strings.Contains(step.Directive, "Do not return raw tool summaries") {

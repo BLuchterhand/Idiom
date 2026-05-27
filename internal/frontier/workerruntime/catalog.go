@@ -74,7 +74,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    "read_only_workspace",
 			ToolProfile:          CapabilityConversationReadOnly,
 			RequiredEvidence:     []string{"answer_addresses_user_request"},
-			SearchPolicy:         []string{"answer_from_visible_context_when_sufficient", "for repo-specific questions use one efficient context/search/read path", "prefer bounded source reads over broad scans", "stop_after_enough_evidence_to_answer"},
+			SearchPolicy:         []string{"answer_from_visible_context_when_sufficient", "for repo-specific questions use one efficient context/search/read path", "prefer context_pack for initial workspace-localization before ad-hoc search/read", "prefer bounded source reads over broad scans", "stop_after_enough_evidence_to_answer"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"answered_user_request", "blocked_by_missing_information"},
 			FinalCritic:          []string{"answers_actual_user_request", "well_formatted_informative_on_topic", "cite_or_name_evidence_when_workspace_used"},
@@ -294,12 +294,6 @@ func RuntimeBriefForTaskFamily(family string, lane string, allowedWorkspaceTools
 	if spec.PermissionProfile == "read_only_workspace" {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})
 	}
-	if spec.TaskFamily == "conversation" && spec.Contract == "direct_answer" {
-		brief.Budget = BudgetBrief{
-			MaxToolSteps:  4,
-			MaxModelCalls: 6,
-		}
-	}
 	if spec.PermissionProfile == "read_only_verification_shell" {
 		brief.ForbiddenTools = mergeStrings(brief.ForbiddenTools, []string{"mutating_shell"})
 	}
@@ -384,6 +378,7 @@ func readOnlyDiscoveryToolNames() []string {
 		"discovery_query",
 		"structural_search",
 		"task",
+		"note",
 	}
 }
 

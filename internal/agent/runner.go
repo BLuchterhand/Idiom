@@ -261,6 +261,23 @@ func (r *Runner) Run(
 		var tools []llama.Tool
 		if len(allowed) > 0 || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
 			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
+		// Conversation and read-only lanes: expose a "note" tool that
+		// lets the model capture intermediate findings while investigating.
+		// Without a synthesis scaffold, the model accumulates raw evidence
+		// but has nowhere to put what it learned — forcing every answer to
+		// be composed in a single step from raw context.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
+			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") ||
+			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "grounded_evidence_summary") {
+			tools = append(tools, llama.Tool{
+				Type: "function",
+				Function: llama.ToolFunction{
+					Name:        "note",
+					Description: "Record an intermediate finding while investigating. Use this to build an answer scaffold: capture key facts, file paths, function names, and relationships as you discover them. Notes are saved to .idiom/notes/ and can be referenced when synthesizing your final answer.",
+					Parameters:  json.RawMessage(`{"type":"object","properties":{"key":{"type":"string","description":"A short identifier for this finding (e.g. 'implement-lane-gate', 'source-sanity-call-chain')"},"content":{"type":"string","description":"What you learned. Include file paths, function names, line numbers, and a brief description of the mechanism or relationship."}},"required":["key","content"]}`),
+				},
+			})
+		}
 
 		}
 		// Schema-level enforcement of closure-biased contracts: once the
@@ -1903,6 +1920,40 @@ func (r *Runner) Run(
 			} else if res.shouldContinue {
 				continue
 			}
+		}
+		// Note tool: intercept before workspace execution.
+		// Writes structured observations to .idiom/notes/<key>.md.
+		// Gives the model a synthesis scaffold so it can build an
+		// answer incrementally rather than composing from raw context.
+		if ok && strings.TrimSpace(req.Tool) == "note" {
+			var noteArgs struct {
+				Key     string `json:"key"`
+				Content string `json:"content"`
+			}
+			noteResult := workspace.ToolResult{Tool: "note"}
+			if err := json.Unmarshal([]byte(raw), &noteArgs); err != nil || noteArgs.Key == "" {
+				noteResult.Error = "note requires a non-empty key and content"
+				noteResult.Summary = "Note rejected: missing key or content"
+			} else {
+				noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
+				if err := os.MkdirAll(noteDir, 0755); err != nil {
+					noteResult.Error = fmt.Sprintf("cannot create notes directory: %v", err)
+					noteResult.Summary = "Note failed: directory error"
+				} else {
+					notePath := filepath.Join(noteDir, noteArgs.Key+".md")
+					if err := os.WriteFile(notePath, []byte(noteArgs.Content+"\n"), 0644); err != nil {
+						noteResult.Error = fmt.Sprintf("cannot write note: %v", err)
+						noteResult.Summary = "Note failed: write error"
+					} else {
+						noteResult.Summary = fmt.Sprintf("Note saved: %s", noteArgs.Key)
+						noteResult.Output = fmt.Sprintf("Recorded finding %q (%d chars)", noteArgs.Key, len(noteArgs.Content))
+					}
+				}
+			}
+			recorder.activeToolCall = activeToolCall
+			recorder.record(stepNumber, req, noteResult, "note_tool", false, false)
+			r.emitEvent(RunEvent{Role: "note_tool", Content: fmt.Sprintf("note %s: %s", noteArgs.Key, noteResult.Summary)})
+			continue
 		}
 		discoveryRedirect.SetAllowedTools(currentAllowedTools)
 		if !implementationScopedReadFileRequestInExplicitScope(r.RuntimeBrief, collectedResults, req) {
@@ -17383,7 +17434,7 @@ func (r *Runner) completeWithoutMoreTools(
 
 func answerFirstNoToolsPrompt(reason string) string {
 	reason = strings.TrimSpace(reason)
-	contract := "Final answer contract: tools are unavailable now. Write the normal final answer from the evidence already gathered. Do not emit XML tool-call tags, tool JSON, or tool-request syntax of any kind — write only plain prose. If the evidence supports a concrete answer, answer directly and do not lead with budget, blocker, partial-findings, or recommended-next-step framing. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action."
+	contract := "Final answer contract: tools are unavailable now. Write the normal final answer from the evidence already gathered. Do not emit XML tool-call tags, tool JSON, or tool-request syntax of any kind — write only plain prose. If the evidence supports a concrete answer, answer directly and do not lead with budget, blocker, partial-findings, or recommended-next-step framing. If one exact claim remains unsupported, state that uncertainty after the supported answer with the smallest useful next action.\n\nA good answer explains the mechanism and names the evidence: state what happens, which code paths are involved, and cite the files or functions you inspected. For example: 'Post-write validation runs through source_sanity (runner_verification.go:120-200) which checks changed files with go vet. The implement lane calls this directly after each write, while plan-execute defers verification to the review-repair phase.' Do not dump raw function signatures — synthesize what you learned."
 	if reason == "" {
 		return contract
 	}
