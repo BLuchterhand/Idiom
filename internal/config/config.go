@@ -124,6 +124,7 @@ const (
 	BackendOpenAIResponses = "openai_responses"
 	BackendCodex           = "codex"
 	BackendZAI             = "zai"
+	BackendDeepSeek        = "deepseek"
 )
 
 // LlamaServer describes an inference backend the harness can talk to. The
@@ -177,8 +178,12 @@ func (l LlamaServer) IsMiniMax() bool {
 	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendMiniMax)
 }
 
+func (l LlamaServer) IsDeepSeek() bool {
+	return strings.EqualFold(strings.TrimSpace(l.Kind), BackendDeepSeek)
+}
+
 func (l LlamaServer) IsHosted() bool {
-	return l.IsOpenAIResponses() || l.IsZAI() || l.IsMiniMax()
+	return l.IsOpenAIResponses() || l.IsZAI() || l.IsMiniMax() || l.IsDeepSeek()
 }
 
 func (l LlamaServer) IsLaunchable() bool {
@@ -200,6 +205,8 @@ func (l LlamaServer) EndpointBaseURL() string {
 		return "https://api.z.ai/api/paas/v4"
 	case l.IsMiniMax():
 		return "https://api.minimax.io/v1"
+	case l.IsDeepSeek():
+		return "https://api.deepseek.com"
 	default:
 		return fmt.Sprintf("http://%s:%d", l.Host, l.Port)
 	}
@@ -216,6 +223,8 @@ func (l LlamaServer) APIKeyEnvName() string {
 		return "ZAI_API_KEY"
 	case l.IsMiniMax():
 		return "MINIMAX_API_KEY"
+	case l.IsDeepSeek():
+		return "DEEPSEEK_API_KEY"
 	default:
 		return ""
 	}
@@ -1058,7 +1067,7 @@ func applyChatPreset(chat *Chat, preset ChatPreset) {
 }
 
 func knownBackendKinds() []string {
-	return []string{BackendLlama, BackendMLX, BackendMiniMax, BackendOpenAIResponses, BackendCodex, BackendZAI}
+	return []string{BackendLlama, BackendMLX, BackendMiniMax, BackendOpenAIResponses, BackendCodex, BackendZAI, BackendDeepSeek}
 }
 
 func isKnownBackendKind(kind string) bool {

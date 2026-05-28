@@ -76,7 +76,7 @@
     "kind": "llama",
     "binary": "/Users/ben/models/ds4/ds4-server",
     "host": "127.0.0.1",
-    "port": 47786,
+    "port": 47787,
     "model": "ds4flash",
     "ctx_size": 100000,
     "log_file": "logs/ds4-implementer.log"

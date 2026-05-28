@@ -1,8 +1,121 @@
 {
-  "_comment": "idiom's own backend config for self-hosted dispatch. It declares the same local Qwen lanes Colony uses while keeping idiom's existing 35B sampling defaults. qwen-pair currently routes planner/classifier/executor to 35B while TUI implementation-lane hardening is evaluated; the coder executor remains declared for comparison and opt-in routing. qwen-27b-pair is an opt-in planner/orchestrator eval stack: 27B-6bit planner/classifier plus the coder executor. Refine uses the 35B lane with request-level --no-thinking instead of launching a duplicate 35B no-think process. `idiom backend start --profile qwen-pair` brings the default pair up; `idiom backend start --profile qwen-27b-pair` brings the 27B eval pair up. `idiom backend proxy --profile <profile>` runs the alias router on :47680.",
-  "default_profile": "qwen-pair",
+  "default_profile": "deepseek-v4-pro",
   "profiles": {
-    "qwen-pair": {
+    "all-gpt-5.5-high": {
+      "models": [
+        {
+          "alias": "gpt-5.5-high",
+          "binary": "",
+          "model_path": "",
+          "model": "gpt-5.5",
+          "port": 0,
+          "kind": "codex",
+          "api_key_env": "OPENAI_API_KEY",
+          "reasoning_effort": "high",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "gpt-5.5-high",
+        "default_coder": "gpt-5.5-high",
+        "default_planner": "gpt-5.5-high",
+        "default_executor": "gpt-5.5-high",
+        "default_classifier": "gpt-5.5-high"
+      }
+    },
+    "deepseek-v4-pro": {
+      "models": [
+        {
+          "alias": "deepseek-v4-pro",
+          "binary": "",
+          "model_path": "",
+          "model": "deepseek-chat",
+          "port": 0,
+          "kind": "deepseek",
+          "api_key_env": "DEEPSEEK_API_KEY",
+          "reasoning_effort": "high",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "deepseek-v4-pro",
+        "default_coder": "deepseek-v4-pro",
+        "default_planner": "deepseek-v4-pro",
+        "default_executor": "deepseek-v4-pro",
+        "default_classifier": "deepseek-v4-pro"
+      }
+    },
+    "ds4": {
+      "models": [
+        {
+          "alias": "ds4flash",
+          "binary": "/Users/ben/models/ds4/ds4-server",
+          "model_path": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
+          "port": 47786,
+          "host": "127.0.0.1",
+          "kind": "llama",
+          "cache_size": 4,
+          "cache_bytes": 12884901888,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp",
+            "0.6",
+            "--top-p",
+            "0.95",
+            "--top-k",
+            "20"
+          ],
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "listen": 47786,
+        "default_alias": "ds4flash",
+        "default_coder": "ds4flash",
+        "default_planner": "ds4flash",
+        "default_executor": "ds4flash",
+        "default_classifier": "ds4flash"
+      }
+    },
+    "glm-5.1": {
+      "models": [
+        {
+          "alias": "glm-5.1",
+          "binary": "",
+          "model_path": "",
+          "model": "glm-5.1",
+          "port": 0,
+          "kind": "zai",
+          "base_url": "https://api.z.ai/api/coding/paas/v4",
+          "api_key_env": "ZAI_API_KEY",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "glm-5.1",
+        "default_coder": "glm-5.1",
+        "default_planner": "glm-5.1",
+        "default_executor": "glm-5.1",
+        "default_classifier": "glm-5.1"
+      }
+    },
+    "minimax-m2.7": {
       "models": [
         {
           "alias": "qwen3.6-35b",
@@ -24,28 +137,18 @@
           ],
           "roles": [
             "planner",
-            "classifier",
-            "executor"
+            "classifier"
           ]
         },
         {
-          "alias": "qwen3-coder-30b",
-          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
-          "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
-          "port": 47781,
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "extra_args": [
-            "--temp",
-            "0.7",
-            "--top-p",
-            "0.8",
-            "--top-k",
-            "20",
-            "--chat-template-args",
-            "{\"enable_thinking\":false}"
-          ],
+          "alias": "MiniMax-M2.7",
+          "binary": "",
+          "model_path": "",
+          "model": "MiniMax-M2.7",
+          "port": 0,
+          "kind": "minimax",
+          "base_url": "https://api.minimax.io/v1",
+          "api_key_env": "MINIMAX_API_KEY",
           "roles": [
             "executor"
           ]
@@ -54,9 +157,9 @@
       "proxy": {
         "listen": 47680,
         "default_alias": "qwen3.6-35b",
+        "default_coder": "MiniMax-M2.7",
         "default_planner": "qwen3.6-35b",
-        "default_executor": "qwen3.6-35b",
-        "default_coder": "qwen3.6-35b",
+        "default_executor": "MiniMax-M2.7",
         "default_classifier": "qwen3.6-35b"
       }
     },
@@ -111,38 +214,13 @@
       "proxy": {
         "listen": 47680,
         "default_alias": "qwen3.6-27b",
+        "default_coder": "qwen3-coder-30b",
         "default_planner": "qwen3.6-27b",
         "default_executor": "qwen3-coder-30b",
-        "default_coder": "qwen3-coder-30b",
         "default_classifier": "qwen3.6-27b"
       }
     },
-    "glm-5.1": {
-      "_comment": "Hosted Z.ai GLM-5.1 profile. Set ZAI_API_KEY in the shell; do not store the key in this file. Local backend start/proxy commands do not apply to this hosted profile.",
-      "models": [
-        {
-          "alias": "glm-5.1",
-          "kind": "zai",
-          "model": "glm-5.1",
-          "base_url": "https://api.z.ai/api/coding/paas/v4",
-          "api_key_env": "ZAI_API_KEY",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "glm-5.1",
-        "default_planner": "glm-5.1",
-        "default_executor": "glm-5.1",
-        "default_coder": "glm-5.1",
-        "default_classifier": "glm-5.1"
-      }
-    },
-    "minimax-m2.7": {
-      "_comment": "Hosted MiniMax M2.7 implementer profile. Local Qwen 35B handles planner/classifier; MiniMax M2.7 serves as the hosted executor (implementer). Set MINIMAX_API_KEY in the shell; do not store the key in this file. `idiom backend start --profile minimax-m2.7` launches the local Qwen planner only; the hosted executor requires no local process.",
+    "qwen-pair": {
       "models": [
         {
           "alias": "qwen3.6-35b",
@@ -164,15 +242,28 @@
           ],
           "roles": [
             "planner",
-            "classifier"
+            "classifier",
+            "executor"
           ]
         },
         {
-          "alias": "MiniMax-M2.7",
-          "kind": "minimax",
-          "model": "MiniMax-M2.7",
-          "base_url": "https://api.minimax.io/v1",
-          "api_key_env": "MINIMAX_API_KEY",
+          "alias": "qwen3-coder-30b",
+          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
+          "port": 47781,
+          "cache_size": 4,
+          "cache_bytes": 12884901888,
+          "max_tokens": 8192,
+          "extra_args": [
+            "--temp",
+            "0.7",
+            "--top-p",
+            "0.8",
+            "--top-k",
+            "20",
+            "--chat-template-args",
+            "{\"enable_thinking\":false}"
+          ],
           "roles": [
             "executor"
           ]
@@ -181,70 +272,10 @@
       "proxy": {
         "listen": 47680,
         "default_alias": "qwen3.6-35b",
+        "default_coder": "qwen3.6-35b",
         "default_planner": "qwen3.6-35b",
-        "default_executor": "MiniMax-M2.7",
-        "default_coder": "MiniMax-M2.7",
+        "default_executor": "qwen3.6-35b",
         "default_classifier": "qwen3.6-35b"
-      }
-    },
-    "all-gpt-5.5-high": {
-      "_comment": "Hosted Codex/GPT profile using OpenAI's Responses API for every harness role. Set OPENAI_API_KEY in the shell; no local backend process or alias proxy is required.",
-      "models": [
-        {
-          "alias": "gpt-5.5-high",
-          "kind": "codex",
-          "model": "gpt-5.5",
-          "api_key_env": "OPENAI_API_KEY",
-          "reasoning_effort": "high",
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "default_alias": "gpt-5.5-high",
-        "default_planner": "gpt-5.5-high",
-        "default_executor": "gpt-5.5-high",
-        "default_coder": "gpt-5.5-high",
-        "default_classifier": "gpt-5.5-high"
-      }
-    },
-    "ds4": {
-      "_comment": "DeepSeek V4 Flash via ds4-server on :47786. Server binary at /Users/ben/models/ds4/ds4-server. Start externally with ~/scripts/start_ds4.sh or idiom backend start --profile ds4.",
-      "models": [
-        {
-          "alias": "ds4flash",
-          "binary": "/Users/ben/models/ds4/ds4-server",
-          "model_path": "/Users/ben/models/ds4/gguf/DeepSeek-V4-Flash-IQ2XXS-w2Q2K-AProjQ8-SExpQ8-OutQ8-chat-v2-imatrix.gguf",
-          "port": 47786,
-          "host": "127.0.0.1",
-          "cache_size": 4,
-          "cache_bytes": 12884901888,
-          "max_tokens": 8192,
-          "extra_args": [
-            "--temp",
-            "0.6",
-            "--top-p",
-            "0.95",
-            "--top-k",
-            "20"
-          ],
-          "roles": [
-            "planner",
-            "executor",
-            "classifier"
-          ]
-        }
-      ],
-      "proxy": {
-        "listen": 47786,
-        "default_alias": "ds4flash",
-        "default_planner": "ds4flash",
-        "default_executor": "ds4flash",
-        "default_coder": "ds4flash",
-        "default_classifier": "ds4flash"
       }
     }
   }

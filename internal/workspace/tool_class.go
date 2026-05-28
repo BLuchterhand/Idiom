@@ -1,5 +1,7 @@
-package util
+package workspace
 
+// ToolCategory classifies workspace tools into broad capability groups
+// for gating, recovery-card rendering, and autonomy recording.
 type ToolCategory int
 
 const (
@@ -163,6 +165,7 @@ var toolCategories = map[string]ToolCategory{
 	"java_file_outline":     CategoryRead,
 }
 
+// ClassifyTool returns the ToolCategory for a given tool name.
 func ClassifyTool(name string) ToolCategory {
 	if c, ok := toolCategories[name]; ok {
 		return c
@@ -173,19 +176,24 @@ func ClassifyTool(name string) ToolCategory {
 	return CategoryUnknown
 }
 
+// IsReadTool reports whether name is a read, search, or discovery tool.
 func IsReadTool(name string) bool {
 	c := ClassifyTool(name)
 	return c == CategoryRead || c == CategorySearch || c == CategoryDiscovery
 }
 
+// IsWriteTool reports whether name is a write tool.
 func IsWriteTool(name string) bool {
 	return ClassifyTool(name) == CategoryWrite
 }
 
+// IsSearchTool reports whether name is a search tool.
 func IsSearchTool(name string) bool {
 	return ClassifyTool(name) == CategorySearch
 }
 
+// IsDiscoveryTool reports whether name is a discovery tool.
 func IsDiscoveryTool(name string) bool {
 	return ClassifyTool(name) == CategoryDiscovery
 }
+

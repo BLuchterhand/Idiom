@@ -1673,10 +1673,9 @@ func (r *Runner) Run(
 		// after the increment and before any gate continues.
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
 			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 {
-			turnMessages = append(turnMessages, llama.ChatMessage{
-				Role:    "system",
-				Content: fmt.Sprintf("You have used %d tool calls this session. Consider whether the evidence you have gathered supports a clear answer, or whether you need to continue investigating. You control when to stop.", metrics.ToolCalls),
-			})
+			msg := fmt.Sprintf("You have used %d tool calls this session. Consider whether the evidence you have gathered supports a clear answer, or whether you need to continue investigating. You control when to stop.", metrics.ToolCalls)
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: msg})
+			r.emitEvent(RunEvent{Role: "call_count_awareness", Content: msg})
 		}
 		actionClass := toolActionClass(req)
 		discoveryProfile := workspace.DiscoveryProfileForRequest(req)

@@ -19,6 +19,7 @@ const (
 	CapabilityArtifactDistiller     ToolCapabilityProfile = "artifact_distiller"
 	CapabilityGuardedWrite          ToolCapabilityProfile = "guarded_write"
 	CapabilityIsolatedWrite         ToolCapabilityProfile = "isolated_write"
+	CapabilityImplementationScopedEdit ToolCapabilityProfile = "implementation_scoped_edit"
 )
 
 type RuntimeContractSpec struct {
@@ -327,7 +328,9 @@ func AllowedToolsForCapabilityProfile(available []string, profile ToolCapability
 	case CapabilityReadOnlyDiscovery:
 		return filterAllowedTools(available, profile, readOnlyDiscoveryToolNames()...)
 	case CapabilityConversationReadOnly:
-		return filterAllowedTools(available, profile, readOnlyConversationToolNames()...)
+		return filterAllowedTools(available, profile, readOnlyDiscoveryToolNames()...)
+	case CapabilityImplementationScopedEdit:
+		return filterAllowedTools(available, profile, implementationScopedEditToolNames()...)
 	default:
 		return append([]string(nil), available...)
 	}
@@ -356,6 +359,8 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 		opts.IncludeTask = true
 	case CapabilityVerificationOnly, CapabilityLocateOnly, CapabilityDebugLogInvestigator, CapabilityArtifactDistiller:
 		// no extra options
+	case CapabilityImplementationScopedEdit:
+		opts.IncludeWriteTools = true
 	}
 	return opts
 }
@@ -456,8 +461,24 @@ func guardedWriteToolNames() []string {
 	}
 }
 
-func readOnlyConversationToolNames() []string {
-	return readOnlyDiscoveryToolNames()
+func implementationScopedEditToolNames() []string {
+	names := append([]string{}, workspace.WorkspaceWriteToolNames()...)
+	names = append(names,
+		"read_file",
+		"code_navigate",
+		"submit_plan",
+		"context_status",
+		"context_query",
+		"context_zoom",
+		"context_pack",
+		"context_impact",
+		"discovery_query",
+		"structural_search",
+		"dependency_graph",
+		"ctags_symbols",
+		"source_sanity",
+	)
+	return names
 }
 
 func selectAllowedTools(available []string, allowWrites bool, allowShell bool, allowTask bool) []string {
@@ -520,6 +541,8 @@ func capabilityProfileAllowsExternalTools(profile ToolCapabilityProfile) bool {
 	switch profile {
 	case CapabilityDebugLogInvestigator, CapabilityVerificationOnly, CapabilityPlanSubmissionReview, CapabilityArtifactDistiller:
 		return false
+	case CapabilityImplementationScopedEdit:
+		return false
 	default:
 		return true
 	}
@@ -543,68 +566,13 @@ func isExternalToolName(name string) bool {
 	if strings.HasPrefix(name, "mcp:") {
 		return true
 	}
-	if _, ok := builtinToolNames[name]; ok {
+	// rg is a search_content alias; it is not a separate manifest entry
+	// but must still be recognized as built-in.
+	if name == "rg" {
 		return false
 	}
-	// Language-prefixed built-ins (kept here, not in the map, because
-	// their full set is large and updated in lock-step with language
-	// support additions in workspace/).
-	for _, prefix := range []string{"go_", "python_", "py_", "ts_", "rust_", "java_", "cpp_"} {
-		if strings.HasPrefix(name, prefix) {
-			return false
-		}
+	if workspace.IsBuiltInToolName(name) {
+		return false
 	}
 	return true
-}
-
-// builtinToolNames enumerates non-language-prefixed built-in tools.
-// Kept in lock-step with the dispatch switch in workspace/manager.go's
-// Manager.Execute. New built-ins must be added here so external-tool
-// pass-through doesn't accidentally include them.
-var builtinToolNames = map[string]struct{}{
-	"task_ledger":          {},
-	"task":                 {},
-	"pwd":                  {},
-	"list_files":           {},
-	"search_files":         {},
-	"search_content":       {},
-	"rg":                   {},
-	"read_file":            {},
-	"file_stats":           {},
-	"code_navigate":        {},
-	"read_only_capability": {},
-	"source_sanity":        {},
-	"harness_audit":        {},
-	"harness_feedback":     {},
-	"recovery_inspect":     {},
-	"recovery_status":      {},
-	"recovery_decompose":   {},
-	"product_efforts":      {},
-	"product_status":       {},
-	"context_index":        {},
-	"context_status":       {},
-	"context_query":        {},
-	"context_zoom":         {},
-	"context_pack":         {},
-	"context_impact":       {},
-	"context_trace_pack":   {},
-	"discovery_query":      {},
-	"structural_search":    {},
-	"dependency_graph":     {},
-	"history_range":        {},
-	"history_symbol":       {},
-	"blame_range":          {},
-	"ctags_symbols":        {},
-	"semgrep_scan":         {},
-	"joern_scan":           {},
-	"git_status":           {},
-	"git_diff":             {},
-	"shell":                {},
-	"mkdir":                {},
-	"edit_file":            {},
-	"write_file":           {},
-	"append_file":          {},
-	"apply_patch":          {},
-	"submit_plan":          {},
-	"delegate_edit":        {},
 }

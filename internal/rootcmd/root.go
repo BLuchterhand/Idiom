@@ -68,6 +68,8 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		case "lane":
 			return runLaneMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "backend":
+		case "profile":
+			return runProfileMain(subcommandArgs, stdout, stderr)
 			return runBackendMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "architect":
 			return runArchitectMainWithTelemetry(subcommandArgs, stdout, stderr, rec)

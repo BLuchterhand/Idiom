@@ -546,7 +546,7 @@ func applyImplementationWriteReady(contract *TurnPhaseContract, baseTools []stri
 	contract.PhaseID = turnPhaseImplementationWriteReady
 	contract.Phase = "write_ready"
 	contract.DerivationReason = "implementation_required_paths_remaining"
-	contract.AllowedTools = implementationScopedEditAllowedTools(baseTools)
+	contract.AllowedTools = implementationScopedEditAllowedToolsWithRegistry(baseTools, nil)
 	contract.RequiredNext = []string{"scoped required-path edit or <<QUESTION>> with the exact edit blocker"}
 	contract.InvalidNext = []string{"broad search", "unrelated per-edit write", "generic probe"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}

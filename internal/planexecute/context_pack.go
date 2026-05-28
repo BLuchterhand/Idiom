@@ -280,12 +280,17 @@ func promptContextPackTask(opts PromptContextPackOptions, brief string) string {
 	if len(body) > 8000 {
 		body = body[:8000]
 	}
+	// Mode is passed separately via ToolRequest.Mode, so including
+	// "lane: implement" in the task string only pollutes the ranking
+	// with generic implementation-keyword matches, drowning out the
+	// actual target files for the user request.
+	//
+	// Use title + body: title gives the ranker a focused anchor while
+	// the body provides the full task context for keyword matching.
 	return strings.TrimSpace(strings.Join([]string{
-		"lane: " + firstPromptContextNonEmpty(strings.TrimSpace(opts.Mode), "plan-execute"),
-		"title: " + title,
-		"brief:",
+		title,
 		body,
-	}, "\n"))
+	}, "\n\n"))
 }
 
 func normalizePromptContextBody(body string) string {

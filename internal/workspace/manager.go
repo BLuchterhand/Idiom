@@ -38,6 +38,19 @@ var exploreBlockedTools = map[string]string{
 	"apply_patch":          "applying patches",
 }
 
+// Manager coordinates workspace tool dispatch. It is intentionally being
+// decomposed into smaller capability-specific types:
+//
+//   ToolSurface   — tool manifest, classification, and allowed-tools computation
+//                   (see tool_class.go, tool_manifest.go, capabilities.go)
+//   PathTracker   — file handle assignment, path observation, and handle resolution
+//   LanguageIndex — per-language LSP index management (goIndex, cppIndex, goplsPath)
+//   ExternalTools — MCP registry and external tool registration
+//   EditRecovery  — edit-recovery state tracking
+//
+// The ToolSurface extraction has started (ToolCategory and classification moved
+// from internal/util to workspace/tool_class.go). Future work should continue
+// extracting the remaining subsystems.
 type Manager struct {
 	cfg config.Workspace
 
@@ -4715,7 +4728,7 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 				lines = append(lines, output)
 				failures = append(failures, output)
 			}
-			if pkg, ok := goTestCompilePackageForDiagnosticFile(rel); ok {
+			if pkg, ok := goPackageForDiagnosticFile(rel); ok {
 				if _, seen := compiled[pkg]; seen {
 					continue
 				}
@@ -4747,7 +4760,7 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 	if err != nil {
 		result.Error = err.Error()
 	}
-	for _, pkg := range goTestCompilePackagesForDiagnosticFiles(files) {
+	for _, pkg := range goPackagesForDiagnosticFiles(files) {
 		line, compileErr := m.goTestCompileDiagnostic(ctx, pkg)
 		if strings.TrimSpace(result.Output) == "" {
 			result.Output = line
@@ -4765,11 +4778,11 @@ func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult
 	return result
 }
 
-func goTestCompilePackagesForDiagnosticFiles(files []string) []string {
+func goPackagesForDiagnosticFiles(files []string) []string {
 	seen := make(map[string]struct{})
 	var out []string
 	for _, file := range files {
-		pkg, ok := goTestCompilePackageForDiagnosticFile(file)
+		pkg, ok := goPackageForDiagnosticFile(file)
 		if !ok {
 			continue
 		}
@@ -4783,10 +4796,10 @@ func goTestCompilePackagesForDiagnosticFiles(files []string) []string {
 	return out
 }
 
-func goTestCompilePackageForDiagnosticFile(file string) (string, bool) {
+func goPackageForDiagnosticFile(file string) (string, bool) {
 	file = filepath.ToSlash(strings.TrimSpace(file))
-	if !strings.HasSuffix(strings.ToLower(filepath.Base(file)), "_test.go") {
-		return "", false
+	if !strings.HasSuffix(strings.ToLower(filepath.Base(file)), ".go") {
+	return "", false
 	}
 	dir := filepath.ToSlash(filepath.Dir(file))
 	if dir == "" || dir == "." {

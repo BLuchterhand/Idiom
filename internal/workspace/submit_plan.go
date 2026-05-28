@@ -286,7 +286,7 @@ func validatePlanEdit(edit PlanEdit) error {
 		return fmt.Errorf("%s contains placeholder edit body marker %q; submit complete executable source text, or answer <<QUESTION>> with the missing body/anchor blocker", field, marker)
 	}
 	if reason := PlanEditUnsupportedProofClaimReason(edit); reason != "" {
-		return fmt.Errorf("%s", reason)
+		return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, reason)
 	}
 	return nil
 }
@@ -775,7 +775,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 				if edit.StartLine > 0 && edit.EndLine >= edit.StartLine {
 					errorText += fmt.Sprintf("\nLine-range edit detail: submit_plan edit for %s declared start_line=%d and end_line=%d. The `content` replaces exactly that inclusive current-source range; if the replacement includes source that currently lives after end_line, extend end_line to cover it, otherwise trim trailing unchanged context from content. If you are inserting after a current line, use insert_after_line with non-empty content instead.", edit.Path, edit.StartLine, edit.EndLine)
 				}
-				return fmt.Errorf("%s", errorText)
+				return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, errorText)
 			}
 		} else {
 			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
@@ -808,7 +808,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			return fmt.Errorf("edit would introduce adjacent duplicate code line %d in %s: %q", lineNo, edit.Path, line)
 		}
 		if rejected := m.rejectInvalidPlannedWrite("submit_plan", "Plan edit rejected", path, []byte(updated)); rejected != nil {
-			return fmt.Errorf("%s", strings.TrimSpace(rejected.Error))
+			return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, strings.TrimSpace(rejected.Error))
 		}
 	} else {
 		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)

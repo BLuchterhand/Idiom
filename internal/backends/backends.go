@@ -377,3 +377,16 @@ func isAlnum(b byte) bool {
 	}
 	return false
 }
+
+// Save writes the File back to the given path as indented JSON.
+func (f File) Save(path string) error {
+	body, err := json.MarshalIndent(f, "", "  ")
+	if err != nil {
+		return fmt.Errorf("backends: marshal: %w", err)
+	}
+	body = append(body, '\n')
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		return fmt.Errorf("backends: write %q: %w", path, err)
+	}
+	return nil
+}

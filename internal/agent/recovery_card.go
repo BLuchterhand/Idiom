@@ -6,7 +6,6 @@ import (
 
 	"idiom/internal/autonomy"
 	"idiom/internal/frontier/workerruntime"
-	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -525,16 +524,16 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 				classes = append(classes, actionGenericProbe)
 			}
 		default:
-			switch util.ClassifyTool(tool) {
-			case util.CategorySearch:
+			switch workspace.ClassifyTool(tool) {
+			case workspace.CategorySearch:
 				classes = append(classes, actionSearch)
-			case util.CategoryRead, util.CategoryDiscovery:
+			case workspace.CategoryRead, workspace.CategoryDiscovery:
 				classes = append(classes, actionRead)
-			case util.CategoryWrite:
+			case workspace.CategoryWrite:
 				classes = append(classes, actionPerEditWrite)
-			case util.CategoryVerification:
+			case workspace.CategoryVerification:
 				classes = append(classes, actionVerify)
-			case util.CategoryShell, util.CategoryMCP:
+			case workspace.CategoryShell, workspace.CategoryMCP:
 				classes = append(classes, actionGenericProbe)
 			}
 		}

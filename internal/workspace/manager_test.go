@@ -127,6 +127,36 @@ func TestSourceSanityCompilesGoTestFiles(t *testing.T) {
 	}
 }
 
+func TestSourceSanityCatchesCrossFileCompileErrorInNonTestPackage(t *testing.T) {
+	root := t.TempDir()
+	goMod := []byte("module example.com/source-sanity\n\ngo 1.22\n")
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), goMod, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pkgDir := filepath.Join(root, "pkg")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	a := filepath.Join(pkgDir, "a.go")
+	if err := os.WriteFile(a, []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b := filepath.Join(pkgDir, "b.go")
+	if err := os.WriteFile(b, []byte("package pkg\n\nfunc Double() int { return missingFunc() * 2 }\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, CommandTimeoutSeconds: 30})
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "source_sanity", Path: filepath.Join("pkg", "b.go")})
+
+	if result.Error == "" {
+		t.Fatalf("expected source_sanity to fail on cross-file compile error in non-test package, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "go test compile failed") || !strings.Contains(result.Error, "missingFunc") {
+		t.Fatalf("expected go test compile diagnostics with missingFunc, output=\n%s\nerror=\n%s", result.Output, result.Error)
+	}
+}
+
 func TestSourceSanityCatchesGDScriptFunctionWithoutBody(t *testing.T) {
 	root := t.TempDir()
 	source := filepath.Join(root, "scripts", "panel_test.gd")

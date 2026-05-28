@@ -258,11 +258,11 @@ func genericSourceSanity(absPath string) (string, error) {
 		return "generic source sanity failed", fmt.Errorf("file is not valid UTF-8")
 	}
 	if issue := genericDelimiterSanity(filepath.Ext(absPath), string(data)); issue != "" {
-		return "generic source sanity failed", fmt.Errorf("%s", issue)
+		return "generic source sanity failed", fmt.Errorf("%w: %s", ErrSourceSanityFailed, issue)
 	}
 	if strings.EqualFold(filepath.Ext(absPath), ".gd") {
 		if issue := gdscriptStructuralSanity(string(data)); issue != "" {
-			return "generic source sanity failed", fmt.Errorf("%s", issue)
+			return "generic source sanity failed", fmt.Errorf("%w: %s", ErrSourceSanityFailed, issue)
 		}
 	}
 	return "generic delimiter sanity passed", nil

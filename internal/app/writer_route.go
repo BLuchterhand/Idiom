@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"idiom/internal/agent"
@@ -11,7 +12,13 @@ import (
 
 func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecutionPlan) writerroute.Decision {
 	mode := writerroute.ModeReadOnly
-	lane := strings.TrimSpace(plan.mode.Name)
+	lane := strings.TrimSpace(plan.route.InitialLane)
+	if lane == "" {
+		if m.debugLogger != nil {
+			_ = m.debugLogger.LogRunEvent("writer_route_empty_initial_lane", fmt.Sprintf("route classifier produced no InitialLane for task family %q; falling back to \"main\". A normalizeTurnRoutePlan call may have been skipped.", plan.route.Family))
+		}
+		lane = "main"
+	}
 	taskFamily := strings.TrimSpace(plan.route.Family)
 	reasonCodes := []string{"route.read_only_question"}
 	verificationOwner := ""

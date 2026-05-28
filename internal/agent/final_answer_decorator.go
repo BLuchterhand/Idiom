@@ -705,7 +705,8 @@ func finalAnswerNeedsDecoration(answer string) bool {
 	if looksLikeStructuredAnswerEnvelope(lower) {
 		return true
 	}
-	if strings.HasPrefix(lower, "what i found:") ||
+	if strings.Contains(lower, "<invoke") ||
+		strings.HasPrefix(lower, "what i found:") ||
 		strings.HasPrefix(lower, "partial findings from this turn") ||
 		strings.HasPrefix(lower, "## grounded answer") ||
 		strings.HasPrefix(lower, "question:") ||

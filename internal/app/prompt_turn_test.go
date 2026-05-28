@@ -101,6 +101,25 @@ func TestFinishPromptOnceReplySuppressesNestedPlanExecuteTranscript(t *testing.T
 	}
 }
 
+func TestFinishPromptOnceReplyRejectsToolCallXML(t *testing.T) {
+	m := &Model{}
+	got := m.finishPromptOnceReply("<invoke name=\"read_file\">\n<parameter name=\"path\">foo.go</parameter>\n</invoke>")
+	if got == "<invoke name=\"read_file\">\n<parameter name=\"path\">foo.go</parameter>\n</invoke>" {
+		t.Fatal("finishPromptOnceReply should replace tool-call XML with clean message")
+	}
+	if strings.Contains(got, "<invoke") || strings.Contains(got, "</invoke>") {
+		t.Fatalf("reply still contains invoke XML: %q", got)
+	}
+	if len(got) < 10 {
+		t.Fatalf("expected substantive replacement, got %q", got)
+	}
+	// Verify clean prose also passes through unchanged
+	clean := m.finishPromptOnceReply("The lane transitions back to main state after implementation success.")
+	if clean != "The lane transitions back to main state after implementation success." {
+		t.Fatalf("clean prose should pass through unchanged, got %q", clean)
+	}
+}
+
 // renderMessages spinner behaviour — the second half of the fix.
 
 func newRenderModel(t *testing.T) *Model {

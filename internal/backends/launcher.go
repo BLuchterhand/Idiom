@@ -81,7 +81,7 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 
 func isHostedModelKind(kind string) bool {
 	switch strings.ToLower(strings.TrimSpace(kind)) {
-	case "codex", "minimax", "openai_responses", "zai":
+	case "codex", "deepseek", "minimax", "openai_responses", "zai":
 		return true
 	default:
 		return false

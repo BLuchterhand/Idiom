@@ -11510,13 +11510,13 @@ func TestImplementationScopedEditAllowsSubmitPlan(t *testing.T) {
 		t.Fatalf("pre-write surface must allow submit_plan; otherwise exact-anchor pre-write hides the planner's write")
 	}
 	for _, tool := range []string{"edit_file", "apply_patch", "read_file", "code_navigate", "submit_plan", "context_query", "cpp_find_symbol", "cpp_definition", "source_sanity"} {
-		got := implementationScopedEditAllowedTools([]string{tool})
+		got := implementationScopedEditAllowedToolsWithRegistry([]string{tool}, nil)
 		if len(got) != 1 || got[0] != tool {
 			t.Fatalf("scoped-edit allowlist should pass %q through, got %v", tool, got)
 		}
 	}
 	for _, tool := range []string{"shell", "git_status", "task", "search_content", "list_files", "context_index"} {
-		got := implementationScopedEditAllowedTools([]string{tool})
+		got := implementationScopedEditAllowedToolsWithRegistry([]string{tool}, nil)
 		if len(got) != 0 {
 			t.Fatalf("scoped-edit allowlist should drop %q, got %v", tool, got)
 		}

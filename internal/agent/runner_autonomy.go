@@ -1554,7 +1554,7 @@ func runnerAutonomyActionClassForRequest(req workspace.ToolRequest) autonomy.Act
 		return autonomy.ActionClassPerEditWrite
 	case runnerAutonomyVerificationTool(req):
 		return autonomy.ActionClassVerify
-	case util.IsReadTool(tool):
+	case workspace.IsReadTool(tool):
 		if strings.Contains(toolActionClass(req), "broad_inspection") ||
 			tool == "search_files" || tool == "search_content" || tool == "rg" || tool == "grep" {
 			return autonomy.ActionClassSearch

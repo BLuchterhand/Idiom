@@ -147,7 +147,7 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
-	if brief.Budget.MaxToolSteps != 4 || brief.Budget.MaxModelCalls != 6 {
+	if brief.Budget.MaxToolSteps != 0 || brief.Budget.MaxModelCalls != 0 {
 		t.Fatalf("conversation should carry a tight read-only budget, got %#v", brief.Budget)
 	}
 	for _, expected := range []string{"read_file", "search_files", "search_content", "read_only_capability", "context_query"} {

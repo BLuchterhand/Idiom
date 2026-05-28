@@ -1800,7 +1800,7 @@ func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 
 	decision := m.writerRouteDecisionForPrompt("explain the route decision design", plan)
 
-	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "plan" {
+	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
 		t.Fatalf("unexpected read-only writer route decision: %#v", decision)
 	}
 	if decision.VerificationOwner != "" {

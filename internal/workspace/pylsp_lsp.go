@@ -67,7 +67,7 @@ func pythonLSPInstallHint() string {
 func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error) {
 	binary, server := m.pythonLSPBinary()
 	if binary == "" {
-		return nil, fmt.Errorf("%s", pythonLSPInstallHint())
+		return nil, fmt.Errorf("%w: %s", ErrPythonLSPUnavailable, pythonLSPInstallHint())
 	}
 	var args []string
 	switch server {

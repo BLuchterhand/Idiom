@@ -12,6 +12,7 @@ import (
 func NewClientForServer(spec config.LlamaServer, timeout time.Duration) *Client {
 	return NewClient(spec.EndpointBaseURL(), timeout).
 		WithBackend(spec.Kind).
+		WithModel(spec.Model).
 		WithAPIKeyEnv(spec.APIKeyEnvName()).
 		WithReasoningEffort(spec.ReasoningEffort).
 		WithVerbosity(spec.Verbosity)

@@ -17,6 +17,7 @@ import (
 	"idiom/internal/initcmd"
 	"idiom/internal/lanehistory"
 	"idiom/internal/localopscmd"
+	"idiom/internal/profilecmd"
 	"idiom/internal/probecmd"
 	"idiom/internal/productevidence"
 	"idiom/internal/queuecmd"
@@ -90,6 +91,11 @@ func runAuditMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer
 func runBackendMain(args []string, stdout io.Writer, stderr io.Writer) int {
 	return runBackendMainWithTelemetry(args, stdout, stderr, nil)
 }
+
+func runProfileMain(args []string, stdout io.Writer, stderr io.Writer) int {
+	return profilecmd.Run(args, stdout, stderr)
+}
+
 
 func runBackendMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return backendcmd.RunWithTelemetry(args, stdout, stderr, rec)

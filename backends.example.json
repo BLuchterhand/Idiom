@@ -23,7 +23,9 @@
           "port": 47780,
           "kind": "mlx",
           "max_tokens": 8192,
-          "roles": ["planner"]
+          "roles": [
+            "planner"
+          ]
         },
         {
           "alias": "qwen3-coder-30b",
@@ -33,7 +35,9 @@
           "port": 47781,
           "kind": "mlx",
           "max_tokens": 8192,
-          "roles": ["executor"]
+          "roles": [
+            "executor"
+          ]
         }
       ]
     },
@@ -71,7 +75,11 @@
           "model": "gpt-5.5",
           "api_key_env": "OPENAI_API_KEY",
           "reasoning_effort": "high",
-          "roles": ["planner", "executor", "classifier"]
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
         }
       ],
       "proxy": {
@@ -80,6 +88,30 @@
         "default_executor": "gpt-5.5-high",
         "default_coder": "gpt-5.5-high",
         "default_classifier": "gpt-5.5-high"
+      }
+    },
+    "deepseek-v4-pro": {
+      "_comment": "Hosted DeepSeek V4 Pro profile. Set DEEPSEEK_API_KEY in the shell; do not store the key in this file. Local backend start/proxy commands do not apply to this hosted profile.",
+      "models": [
+        {
+          "alias": "deepseek-v4-pro",
+          "kind": "deepseek",
+          "model": "deepseek-chat",
+          "api_key_env": "DEEPSEEK_API_KEY",
+          "reasoning_effort": "high",
+          "roles": [
+            "planner",
+            "executor",
+            "classifier"
+          ]
+        }
+      ],
+      "proxy": {
+        "default_alias": "deepseek-v4-pro",
+        "default_planner": "deepseek-v4-pro",
+        "default_executor": "deepseek-v4-pro",
+        "default_coder": "deepseek-v4-pro",
+        "default_classifier": "deepseek-v4-pro"
       }
     }
   }
