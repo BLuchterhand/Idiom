@@ -354,6 +354,11 @@ func (r *Runner) Run(
 			hideExactAnchorReadTools(turnHiddenTools, exactAnchorHiddenTools, r.Workspace)
 		}
 		rebuildTools()
+		// Sync currentAllowedTools from opts.Tools so synthetic tools
+		// (note, added in rebuildTools) are recognized by the tool
+		// surface rejection check. Without this, the model can see
+		// the tool schema but gets "not in allowed surface" on use.
+		syncCurrentAllowedToolsFromOptions()
 	}
 	if strings.TrimSpace(opts.ToolChoice) == "" && len(opts.Tools) > 0 {
 		opts.ToolChoice = "auto"
@@ -17690,6 +17695,13 @@ func (r *Runner) repairInternalFinalAnswer(
 		content = cleaned
 	}
 	if finalAnswerNeedsDecoration(content) {
+		return "", false, nil
+	}
+	// Run the completion gate on the repaired answer. The retry path
+	// (retryInvalidFinalAnswer) already runs this gate, but this
+	// fallback-repair path was skipping it, allowing garbage answers
+	// like raw tool result transcripts to reach the user.
+	if _, rejected := r.completionGateRejection(content, collectedResults, 0, nil, false); rejected {
 		return "", false, nil
 	}
 	r.LastAssistantMessage = repairMessage

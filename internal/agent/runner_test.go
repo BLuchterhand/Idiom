@@ -16593,3 +16593,94 @@ func TestCompletionGateRejectsRawToolResultTranscriptFormats(t *testing.T) {
 		}
 	}
 }
+
+func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
+	// Exact answer from session 20260527-191920
+	garbageAnswer := "The inspected source in `internal/agent/runner_test.go` contains `func TestVerificationContractSkipsGate(t *testing.T) {`, `cases := []struct {` and `contract string`. No files were changed."
+
+	// Simulate 50 read/navigate tool results (enough for evidence-ready)
+	results := make([]workspace.ToolResult, 50)
+	for i := range results {
+		results[i] = workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/agent/runner_test.go lines 1-50",
+		}
+	}
+
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "context_query", "search_content"},
+			Objective:         "answer the user's question",
+		},
+	}
+
+	// Call the COMPLETION GATE directly - this is what completeWithoutMoreToolsWithReason calls
+	result, rejected := runner.completionGateRejection(garbageAnswer, results, 0, nil, false)
+	
+	if !rejected {
+		// Try the specific checks individually to find the gap
+		t.Log("completionGateRejection did not reject - checking individual checks...")
+		
+		// Check 1: looksLikeTextualToolCall
+		if looksLikeTextualToolCall(garbageAnswer) {
+			t.Error("looksLikeTextualToolCall: true (but this gate fires BEFORE search-hit check in completionGateRejection)")
+		} else {
+			t.Log("looksLikeTextualToolCall: false (correct - not XML)")
+		}
+		
+		// Check 2: unexecuted tool request
+		if unexec, _ := runner.unexecutedToolRequestCompletionRejection(garbageAnswer); unexec.Tool != "" {
+			t.Logf("unexecutedToolRequest: rejected - %s", unexec.Summary)
+		} else {
+			t.Log("unexecutedToolRequest: not rejected")
+		}
+		
+		// Check 3: raw tool result transcript
+		if raw, _ := rawToolResultTranscriptCompletionRejection(garbageAnswer); raw.Tool != "" {
+			t.Logf("rawToolResultTranscript: rejected - %s", raw.Summary)
+		} else {
+			t.Log("rawToolResultTranscript: not rejected")
+		}
+		
+		// Check 4: read-only evidence 
+		if ev, _ := runner.readOnlyEvidenceCompletionRejection(garbageAnswer, results); ev.Tool != "" {
+			t.Logf("readOnlyEvidence: rejected - %s", ev.Summary)
+		} else {
+			t.Log("readOnlyEvidence: not rejected (evidence is ready)")
+		}
+		
+		// Check 5: read-only non-substantive
+		if ns, _ := runner.readOnlyNonSubstantiveCompletionRejection(garbageAnswer, results); ns.Tool != "" {
+			t.Logf("readOnlyNonSubstantive: rejected - %s", ns.Summary)
+		} else {
+			t.Log("readOnlyNonSubstantive: not rejected (answer has enough words)")
+		}
+		
+		// Check 6: read-only search hit inventory - THIS IS THE ONE THAT SHOULD CATCH IT
+		if si, rejected2 := runner.readOnlySearchHitInventoryCompletionRejection(garbageAnswer, results); rejected2 {
+			t.Logf("readOnlySearchHitInventory: REJECTED - %s", si.Summary)
+		} else {
+			t.Log("readOnlySearchHitInventory: NOT REJECTED - this is the gap!")
+			// Debug: check the individual conditions
+			brief := workerruntime.NormalizeRuntimeBrief(runner.RuntimeBrief)
+			t.Logf("  PermissionProfile: %s (needs 'read_only_workspace')", brief.PermissionProfile)
+			t.Logf("  EvidenceReady: %v", genericReadOnlyAnswerEvidenceReady(results))
+			t.Logf("  looksLikeToolResultTranscript: %v", looksLikeToolResultTranscript(strings.ToLower(garbageAnswer)))
+			
+			// Check containsAny patterns
+			lower := strings.ToLower(garbageAnswer)
+			for _, pat := range []string{"matching line(s)", "returned hit(s)", "tool-local"} {
+				t.Logf("  contains %q: %v", pat, strings.Contains(lower, pat))
+			}
+			t.Logf("  contains 'the inspected source in': %v", strings.Contains(lower, "the inspected source in"))
+			t.Logf("  contains ' contains `': %v", strings.Contains(lower, " contains `"))
+		}
+		
+		t.Fatal("GARBAGE ANSWER WAS NOT REJECTED BY COMPLETION GATE")
+	}
+	
+	t.Logf("Garbage answer caught: %s", result.Summary)
+}
