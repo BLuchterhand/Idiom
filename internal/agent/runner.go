@@ -2906,7 +2906,7 @@ func (r *Runner) Run(
 		// findings so the model can plan its own wrap-up strategy.
 		// No force, no threat — just transparent information.
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 && strings.TrimSpace(result.Error) == "" {
+			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 {
 			var b strings.Builder
 			b.WriteString(fmt.Sprintf("You have used %d tool calls this session. ", metrics.ToolCalls))
 			// Auto-capture findings at milestone markers
