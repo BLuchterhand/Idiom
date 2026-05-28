@@ -247,6 +247,8 @@ type Model struct {
 	currentTurnBusyStatus    string
 	currentTurnHistoryIndex  int
 	currentTurnHistoryActive bool
+	// slashSuggestions tracks the autocomplete state when the user types /
+	slashSuggestions slashSuggestionsState
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.

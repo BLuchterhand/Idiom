@@ -19,6 +19,40 @@ func (m *Model) handleWindowSize(msg tea.WindowSizeMsg) (tea.Cmd, bool) {
 }
 
 func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
+
+	// Slash-command suggestion navigation takes priority when the popup is visible.
+	if m.slashSuggestions.visible {
+		switch msg.Type {
+		case tea.KeyEsc:
+			m.slashSuggestions = slashSuggestionsState{}
+			return m.waitForEventCmd(), true
+		case tea.KeyTab, tea.KeyEnter:
+			if m.slashSuggestions.selected >= 0 && m.slashSuggestions.selected < len(m.slashSuggestions.matches) {
+				sel := m.slashSuggestions.matches[m.slashSuggestions.selected].command
+				// Preserve any text on prior lines (multi-line input).
+				oldVal := m.input.Value()
+				if idx := strings.LastIndex(oldVal, "\n"); idx >= 0 {
+					m.input.SetValue(oldVal[:idx+1] + sel + " ")
+				} else {
+					m.input.SetValue(sel + " ")
+				}
+				m.input.CursorEnd()
+			}
+			m.slashSuggestions = slashSuggestionsState{}
+			return m.waitForEventCmd(), true
+		case tea.KeyUp:
+			if m.slashSuggestions.selected > 0 {
+				m.slashSuggestions.selected--
+			}
+			return m.waitForEventCmd(), true
+		case tea.KeyDown:
+			if m.slashSuggestions.selected < len(m.slashSuggestions.matches)-1 {
+				m.slashSuggestions.selected++
+			}
+			return m.waitForEventCmd(), true
+		}
+	}
+
 	if m.history.panelOpen && m.history.focused && m.panelTab == panelTabPlan {
 		if handled, cmd := m.handlePlanPanelKey(msg); handled {
 			return cmd, true

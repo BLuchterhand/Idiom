@@ -553,8 +553,9 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var inputCmd tea.Cmd
-	oldInputHeight := m.input.Height()
 	m.input, inputCmd = m.input.Update(msg)
+	m.updateSlashSuggestions()
+	oldInputHeight := m.input.Height()
 	if m.ready && m.syncInputHeight() != oldInputHeight {
 		m.resize()
 	}

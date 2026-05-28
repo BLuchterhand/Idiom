@@ -74,6 +74,15 @@ func (m *Model) View() string {
 	}
 
 	parts := []string{header, divider, contentRow, divider, m.input.View()}
+
+	// Slash-command suggestion popup — floats above the input area.
+	if m.slashSuggestions.visible && len(m.slashSuggestions.matches) > 0 {
+		popup := m.renderSlashSuggestions()
+		if popup != "" {
+			parts = append(parts, popup)
+		}
+	}
+
 	if footer != "" {
 		parts = append(parts, footer)
 	}

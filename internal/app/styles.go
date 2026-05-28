@@ -93,3 +93,13 @@ var (
 	popupDescStyle          = lipgloss.NewStyle().Foreground(colorDim)
 	popupBoxStyle           = lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(colorPrimary).Padding(1, 2)
 )
+
+// ── Slash-command suggestion popup ────────────────────────────────────────────
+
+var (
+	slashSuggestBoxStyle     = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(colorMuted).Padding(0, 1)
+	slashSuggestActiveStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
+	slashSuggestInactiveStyle = lipgloss.NewStyle().Foreground(colorText).Padding(0, 1)
+	slashSuggestUsageStyle   = lipgloss.NewStyle().Foreground(colorDim)
+	slashSuggestHintStyle    = lipgloss.NewStyle().Foreground(colorDim)
+)
