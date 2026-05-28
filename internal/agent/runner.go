@@ -565,13 +565,19 @@ func (r *Runner) Run(
 
 	for step := 0; policy.unbounded() || step < policy.MaxToolSteps; step++ {
 		stepNumber := step + 1
-		if policy.shouldStopForDuration(metrics.startedAt) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-			return finish(answer, err, "duration_budget_exhausted", true)
-		}
-		if policy.shouldStopForModelCalls(metrics.ModelCalls) {
-			answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
-			return finish(answer, err, "model_call_budget_exhausted", true)
+		// Conversation lanes: the model owns the stop decision. Duration
+		// and model-call budgets cut off legitimate investigation and
+		// produce garbage forced answers. Per north star, trust the
+		// model's intelligence — if it needs more time, let it continue.
+		if !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
+			if policy.shouldStopForDuration(metrics.startedAt) {
+				answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
+				return finish(answer, err, "duration_budget_exhausted", true)
+			}
+			if policy.shouldStopForModelCalls(metrics.ModelCalls) {
+				answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
+				return finish(answer, err, "model_call_budget_exhausted", true)
+			}
 		}
 		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
 			metrics.Compactions++
@@ -1777,7 +1783,14 @@ func (r *Runner) Run(
 			if autonomyRecorder != nil {
 				autonomyRecorder.emitLoopGate(req, autonomy.PolicyStop, "doom_loop_guard", currentFingerprint, identicalCallRun)
 			}
-			if r.DoomLoopGate != nil {
+			// Conversation lanes: repeated reads on the same file are
+			// legitimate investigation, not loops. The model is probing
+			// different symbols, line ranges, or patterns — not stuck.
+			// Skip the doom-loop gate for read-class tools in conversation.
+			if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+				isReadClassTool(req) {
+				requestBudget.fingerprint.identicalRun = 0
+			} else if r.DoomLoopGate != nil {
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
 				if r.DoomLoopGate(req, identicalCallRun) {
 					// User approved — reset the streak and let this call execute.
@@ -4306,7 +4319,7 @@ func implementationPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) 
 }
 
 func implementationScopedEditRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
-	allowed := implementationScopedEditAllowedTools(brief.AllowedTools)
+	allowed := implementationScopedEditAllowedToolsWithRegistry(brief.AllowedTools, nil)
 	brief.AllowedTools = allowed
 	brief.ToolManifest = nil
 	if len(allowed) > 0 {
@@ -4429,7 +4442,7 @@ func implementationTargetSourceRuntimeBrief(brief workerruntime.WorkerRuntimeBri
 }
 
 func exactAnchorPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
-	allowed := exactAnchorPreWriteAllowedTools(brief.AllowedTools)
+	allowed := implementationPreWriteAllowedTools(brief.AllowedTools)
 	brief.AllowedTools = allowed
 	brief.ToolManifest = nil
 	if len(allowed) > 0 {
@@ -14134,15 +14147,11 @@ func hideExactAnchorReadTools(hidden map[string]bool, exactHidden map[string]boo
 		return
 	}
 	for _, tool := range manager.AllowedTools() {
-		if !exactAnchorPreWriteToolAllowed(tool) {
+		if !implementationPreWriteToolAllowed(tool) {
 			hidden[tool] = true
 			exactHidden[tool] = true
 		}
 	}
-}
-
-func exactAnchorPreWriteToolAllowed(tool string) bool {
-	return implementationPreWriteToolAllowed(tool)
 }
 
 func implementationPreWriteToolAllowed(tool string) bool {
@@ -14160,10 +14169,6 @@ func implementationPreWriteToolAllowed(tool string) bool {
 		return true
 	}
 	return false
-}
-
-func exactAnchorPreWriteAllowedTools(tools []string) []string {
-	return implementationPreWriteAllowedTools(tools)
 }
 
 func implementationPreWriteAllowedTools(tools []string) []string {
@@ -14211,10 +14216,6 @@ func implementationScopedEditToolAllowedWithRegistry(tool string, extReg *worksp
 	return extReg != nil && extReg.IsReadOnlyDiscovery(tool)
 }
 
-func implementationScopedEditAllowedTools(tools []string) []string {
-	return implementationScopedEditAllowedToolsWithRegistry(tools, nil)
-}
-
 func implementationScopedEditAllowedToolsWithRegistry(tools []string, extReg *workspace.ExternalToolRegistry) []string {
 	if len(tools) == 0 {
 		return nil
@@ -14234,16 +14235,12 @@ func implementationScopedSemanticDiscoveryToolAllowed(tool string) bool {
 	if tool == "" {
 		return false
 	}
-	switch tool {
-	case "context_status", "context_query", "context_zoom", "context_pack", "context_impact",
-		"discovery_query", "structural_search", "dependency_graph", "ctags_symbols", "source_sanity":
+	// Delegate explicit tool-name classification to the catalog profile.
+	if len(workerruntime.AllowedToolsForCapabilityProfile([]string{tool}, workerruntime.CapabilityImplementationScopedEdit)) > 0 {
 		return true
-	case "list_files", "search_files", "search_content", "rg", "grep", "file_stats",
-		"harness_audit", "harness_feedback", "context_index", "context_trace_pack",
-		"history_range", "history_symbol", "blame_range", "semgrep_scan", "joern_scan",
-		"git_status", "git_diff", "shell", "task", "task_ledger":
-		return false
 	}
+	// Language-prefixed tools (go_find_symbol, cpp_definition, etc.) are
+	// not in the explicit name list; classify via their discovery profile.
 	profile := workspace.DiscoveryProfileForRequest(workspace.ToolRequest{Tool: tool})
 	switch profile.Class {
 	case "language_symbol", "language_relationship", "diagnostics":
