@@ -541,17 +541,6 @@ func (r *Runner) Run(
 	if req, ok := r.verificationBootstrapRequest(); ok && r.Workspace != nil && len(collectedResults) == 0 {
 		raw := marshalToolRequestRaw(req)
 		metrics.ToolCalls++
-		// Conversation lane: periodic call-count awareness.
-		// Fires right after the increment, before any gate can
-		// continue past it. At 25, 50, 75... calls, report the
-		// count so the model can plan its own wrap-up strategy.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 {
-			turnMessages = append(turnMessages, llama.ChatMessage{
-				Role:    "system",
-				Content: fmt.Sprintf("You have used %d tool calls this session. Consider whether the evidence you have gathered supports a clear answer, or whether you need to continue investigating. You control when to stop.", metrics.ToolCalls),
-			})
-		}
 		if onToolRequest != nil {
 			profile := workspace.DiscoveryProfileForRequest(req)
 			onToolRequest(ToolRequestEvent{
@@ -1679,6 +1668,16 @@ func (r *Runner) Run(
 		}
 
 		metrics.ToolCalls++
+		// Conversation lane: periodic call-count awareness at every
+		// 25th successful tool execution. Fires in the main tool loop,
+		// after the increment and before any gate continues.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 {
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: fmt.Sprintf("You have used %d tool calls this session. Consider whether the evidence you have gathered supports a clear answer, or whether you need to continue investigating. You control when to stop.", metrics.ToolCalls),
+			})
+		}
 		actionClass := toolActionClass(req)
 		discoveryProfile := workspace.DiscoveryProfileForRequest(req)
 		if !discoveryProfile.Discovery {
