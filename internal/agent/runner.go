@@ -250,14 +250,28 @@ func (r *Runner) Run(
 		if writeOnlySurface {
 			allowed = implementationPreWriteAllowedTools(allowed)
 		} else if scopedEditSurface {
-			allowed = implementationScopedEditAllowedToolsWithRegistry(allowed, r.Workspace.ExternalToolsRegistry())
+			contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+				Brief:            r.RuntimeBrief,
+				Results:          collectedResults,
+				BaseAllowedTools: allowed,
+			})
+			allowed = append([]string(nil), contract.AllowedTools...)
+			// applyImplementationWriteReady uses a nil external registry.
+			// External read-only discovery tools bypass that narrow.
+			if extReg := r.Workspace.ExternalToolsRegistry(); extReg != nil {
+				for _, name := range r.Workspace.AvailableExternalToolNames() {
+					if extReg.IsReadOnlyDiscovery(name) && !containsRunnerTool(allowed, name) {
+						allowed = append(allowed, name)
+					}
+				}
+			}
 		} else if contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 			Brief:            r.RuntimeBrief,
 			Results:          collectedResults,
 			BaseAllowedTools: allowed,
 		}); contract.PhaseID == turnPhaseImplementationTargetSource ||
 			contract.PhaseID == turnPhaseImplementationVerifyReady ||
-			contract.Phase == "target_write_ready" {
+			contract.PhaseID == turnPhaseImplementationWriteReady {
 			allowed = append([]string(nil), contract.AllowedTools...)
 		}
 		if len(turnHiddenTools) > 0 {
@@ -1861,17 +1875,17 @@ func (r *Runner) Run(
 				continue
 			}
 		}
+		// Conversation lanes: the fingerprint hard block's forced
+		// completion cuts off legitimate investigation. Clear the
+		// ForceAnswerPrompt before apply() so the model can continue.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+			fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
+			fingerprintDecision.ForceAnswerPrompt = ""
+			fingerprintDecision.ForceAnswerReason = ""
+		}
 		if res := fingerprintDecision.apply(budgetDecisionContext{
 			controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 		}); res.shouldFinish {
-			// Conversation lanes: the fingerprint hard block cuts off
-			// legitimate investigation. Per north star, trust the model's
-			// intelligence. If it needs more reads, let it continue.
-			if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-				strings.Contains(res.reason, "fingerprint_hard_block") {
-				// Don't force-answer. Just continue the loop.
-				continue
-			}
 			return finish(res.answer, res.err, res.reason, true)
 		} else if res.shouldContinue {
 			continue
