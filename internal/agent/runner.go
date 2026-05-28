@@ -1851,6 +1851,14 @@ func (r *Runner) Run(
 		if res := fingerprintDecision.apply(budgetDecisionContext{
 			controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 		}); res.shouldFinish {
+			// Conversation lanes: the fingerprint hard block cuts off
+			// legitimate investigation. Per north star, trust the model's
+			// intelligence. If it needs more reads, let it continue.
+			if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+				strings.Contains(res.reason, "fingerprint_hard_block") {
+				// Don't force-answer. Just continue the loop.
+				continue
+			}
 			return finish(res.answer, res.err, res.reason, true)
 		} else if res.shouldContinue {
 			continue
