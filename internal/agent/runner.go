@@ -2895,9 +2895,19 @@ func (r *Runner) Run(
 			if inspected != "" {
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
-					Content: "Inspected paths so far: " + inspected,
+					Content: "Inspected paths so far: " + inspected + ". Use the note tool to capture your key findings now — notes persist across context compactions and will help you build your final answer. After capturing notes, consider whether you can answer the user's question.",
 				})
 			}
+		}
+		// Conversation lane: after sustained investigation, remind the
+		// model about the note tool for capturing findings. Context
+		// compactions destroy working memory; notes survive them.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+			metrics.ToolCalls == 15 && strings.TrimSpace(result.Error) == "" {
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: "You have made 15 tool calls. Before continuing, use the note tool to capture your key findings so far. Notes persist across context compactions — without them, your discoveries may be lost. After noting your findings, continue investigating or answer if you have enough evidence.",
+			})
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
