@@ -1,0 +1,21 @@
+{
+  "schema_version": "idiom.tdd_ledger.v1",
+  "effort_id": "test-fixture-effort",
+  "task_id": "test-task",
+  "coverage_tier": "behavior_standard",
+  "coverage": {
+    "ears_total": 1,
+    "ears_mapped": 1
+  },
+  "obligations": [
+    {
+      "id": "TDD-1",
+      "type": "acceptance",
+      "behavior": "Thing works",
+      "owner": "implementor",
+      "command": "go test ./...",
+      "required_before": "implementation",
+      "status": "open"
+    }
+  ]
+}

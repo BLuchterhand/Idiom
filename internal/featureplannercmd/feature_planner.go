@@ -18,6 +18,8 @@ import (
 	"idiom/internal/featureplanner"
 	"idiom/internal/llama"
 	"idiom/internal/telemetry"
+	"idiom/internal/productworkflow"
+	"path/filepath"
 )
 
 type featurePlannerOptions struct {
@@ -29,6 +31,8 @@ type featurePlannerOptions struct {
 	JSONEvents            bool
 	MaxPlanningIterations int
 	MaxAtoms              int
+	EffortRoot            string
+	EffortID              string
 }
 
 type featurePlannerRequest struct {
@@ -41,6 +45,8 @@ type featurePlannerRequest struct {
 	JSONEvents            bool
 	MaxPlanningIterations int
 	MaxAtoms              int
+	EffortRoot            string
+	EffortID              string
 	Deps                  Dependencies
 }
 
@@ -113,6 +119,8 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 		JSONEvents:            opts.JSONEvents,
 		MaxPlanningIterations: opts.MaxPlanningIterations,
 		MaxAtoms:              opts.MaxAtoms,
+		EffortRoot:            opts.EffortRoot,
+		EffortID:              opts.EffortID,
 		Deps:                  deps,
 	}, stdout)
 	if err != nil {
@@ -141,6 +149,138 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec
 	return 0
 }
 
+// loadProductWorkflowBrief loads product workflow artifacts from an effort
+// folder and populates a ProductWorkflowBrief for the feature-planner.
+// Returns nil if effortRoot is empty (standalone mode).
+func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflowBrief, error) {
+	if strings.TrimSpace(effortRoot) == "" {
+		return nil, nil
+	}
+	root := filepath.Clean(effortRoot)
+
+	// Load workflow_state.json
+	stateData, err := os.ReadFile(filepath.Join(root, "workflow_state.json"))
+	if err != nil {
+		return nil, fmt.Errorf("load workflow state: %w", err)
+	}
+	workflowState, err := productworkflow.ParseWorkflowStateJSON(stateData)
+	if err != nil {
+		return nil, fmt.Errorf("parse workflow state: %w", err)
+	}
+
+	// Load PRD
+	prdData, err := os.ReadFile(filepath.Join(root, "prd.md"))
+	if err != nil {
+		return nil, fmt.Errorf("load prd.md: %w", err)
+	}
+	prd, err := productworkflow.ParsePRDMarkdown(prdData)
+	if err != nil {
+		return nil, fmt.Errorf("parse prd.md: %w", err)
+	}
+
+	// Load TDD ledger
+	tddData, err := os.ReadFile(filepath.Join(root, "tdd.json"))
+	if err != nil {
+		return nil, fmt.Errorf("load tdd.json: %w", err)
+	}
+	tdd, err := productworkflow.ParseTDDLedgerJSON(tddData)
+	if err != nil {
+		return nil, fmt.Errorf("parse tdd.json: %w", err)
+	}
+
+	// Load ADR index
+	adrIndexData, err := os.ReadFile(filepath.Join(root, "adrs", "index.json"))
+	var adrIndex productworkflow.ADRIndex
+	var parsedADRs []productworkflow.ParsedADR
+	if err == nil {
+		adrIndex, err = productworkflow.ParseADRIndexJSON(adrIndexData)
+		if err != nil {
+			return nil, fmt.Errorf("parse adrs/index.json: %w", err)
+		}
+		for _, entry := range adrIndex.ADRs {
+			if entry.Status != "accepted" || strings.TrimSpace(entry.Path) == "" {
+				continue
+			}
+			adrData, adrErr := os.ReadFile(filepath.Join(root, "adrs", entry.Path))
+			if adrErr != nil {
+				continue
+			}
+			adrDoc, adrErr := productworkflow.ParseADRMarkdown(adrData)
+			if adrErr != nil {
+				continue
+			}
+			parsedADRs = append(parsedADRs, productworkflow.ParsedADR{
+				Doc:         adrDoc,
+				RelPath:     filepath.Join("adrs", entry.Path),
+				RawMarkdown: string(adrData),
+			})
+		}
+	}
+
+	// Load traceability matrix
+	var traceability productworkflow.TraceabilityMatrix
+	matrixData, matrixErr := os.ReadFile(filepath.Join(root, "evidence", "traceability_matrix.json"))
+	if matrixErr == nil {
+		traceability, _ = productworkflow.ParseTraceabilityMatrixJSON(matrixData)
+	}
+
+	// Evaluate coverage gate
+	coverage := productworkflow.EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability)
+
+	// Build the brief
+	brief := &featureplanner.ProductWorkflowBrief{
+		EffortID:           workflowState.EffortID,
+		TaskID:             workflowState.TaskID,
+		EffortRoot:         effortRoot,
+		CoverageTier:       tdd.CoverageTier,
+		CoverageGatePassed: coverage.Status == "pass",
+		ArtifactRootPath:   effortRoot,
+	}
+
+	for _, req := range prd.Requirements {
+		id := strings.TrimSpace(req.ID)
+		if id == "" {
+			continue
+		}
+		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{
+			ID:          id,
+			Priority:    strings.TrimSpace(req.Priority),
+			Statement:   strings.TrimSpace(req.Statement),
+			Testability: strings.TrimSpace(req.Testability),
+			Metric:      strings.TrimSpace(req.Metric),
+			Obligations: append([]string{}, req.TDDObligations...),
+		})
+	}
+
+	for _, entry := range adrIndex.ADRs {
+		if entry.Status != "accepted" {
+			continue
+		}
+		brief.AcceptedADRIDs = append(brief.AcceptedADRIDs, entry.ADRID)
+		brief.AcceptedADRPaths = append(brief.AcceptedADRPaths, filepath.Join("adrs", entry.Path))
+	}
+
+	for _, obl := range tdd.Obligations {
+		id := strings.TrimSpace(obl.ID)
+		if id == "" {
+			continue
+		}
+		brief.TDDObligations = append(brief.TDDObligations, featureplanner.TDDObligationBrief{
+			ID:             id,
+			Behavior:       strings.TrimSpace(obl.Behavior),
+			Command:        strings.TrimSpace(obl.Command),
+			RequiredBefore: strings.TrimSpace(obl.RequiredBefore),
+			Status:         strings.TrimSpace(obl.Status),
+		})
+	}
+
+	for _, b := range coverage.Blockers {
+		brief.CoverageBlockers = append(brief.CoverageBlockers, b.Message)
+	}
+
+	return brief, nil
+}
+
 func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {
 	state, err := loadOrCreateFeaturePlannerState(req)
 	if err != nil {
@@ -150,6 +290,15 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	if strings.TrimSpace(req.Resume) != "" && hasOpenFeaturePlannerQuestion(state) {
 		resumeAnswer = req.Prompt
 	}
+		effortRoot := ""
+	if strings.TrimSpace(req.EffortRoot) != "" {
+		effortRoot = req.EffortRoot
+	}
+	pwBrief, briefErr := loadProductWorkflowBrief(effortRoot)
+	if briefErr != nil {
+		fmt.Fprintf(stdout, "feature-planner: product workflow context unavailable: %v\n", briefErr)
+	}
+
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                req.Prompt,
 		PromptFile:            req.PromptFile,
@@ -157,6 +306,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		MaxAtoms:              req.MaxAtoms,
 		ResumeAnswer:          resumeAnswer,
 		Now:                   time.Now().UTC(),
+		ProductWorkflowBrief:  pwBrief,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
@@ -411,6 +561,8 @@ func parseFeaturePlannerOptions(args []string, stderr io.Writer) (featurePlanner
 	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
 	fs.IntVar(&opts.MaxPlanningIterations, "max-planning-iterations", 3, "maximum planner repair/question iterations before marking planning stuck")
 	fs.IntVar(&opts.MaxAtoms, "max-atoms", 0, "maximum queued atoms to dispatch in this invocation; 0 dispatches all ready atoms")
+	fs.StringVar(&opts.EffortRoot, "effort-root", "", "path to product workflow effort folder")
+	fs.StringVar(&opts.EffortID, "effort-id", "", "product workflow effort ID")
 	if err := fs.Parse(args); err != nil {
 		return featurePlannerOptions{}, err
 	}

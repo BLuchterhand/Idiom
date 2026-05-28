@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/featureplanner"
 )
@@ -271,4 +272,132 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+
+func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
+	// Verify that ProductWorkflowBrief can be constructed from fixture data
+	// and that BuildPlannerPrompt injects real artifact IDs.
+
+	brief := &featureplanner.ProductWorkflowBrief{
+		EffortID:   "test-fixture-effort",
+		TaskID:     "test-task",
+		EffortRoot: "testdata/feature-planner-pw-integration/effort",
+		PRDRequirements: []featureplanner.PRDRequirementBrief{
+			{ID: "REQ-001", Priority: "P0", Statement: "Add a thing that works",
+				Testability: "automated", Obligations: []string{"TDD-1"}},
+		},
+		AcceptedADRIDs:   []string{"ADR-001"},
+		AcceptedADRPaths: []string{"adrs/001-test.md"},
+		TDDObligations: []featureplanner.TDDObligationBrief{
+			{ID: "TDD-1", Behavior: "Thing works", Command: "go test ./...",
+				RequiredBefore: "implementation", Status: "open"},
+		},
+		CoverageTier:       "behavior_standard",
+		CoverageGatePassed: true,
+		FilesToModify:      []string{"internal/example/thing.go"},
+		Tests:              []string{"go test ./internal/example/..."},
+		ArtifactRootPath:   "testdata/feature-planner-pw-integration/effort",
+	}
+
+	state := featureplanner.NewState("test-session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	prompt := featureplanner.BuildPlannerPrompt("Add a thing", state, brief)
+
+	// With brief, prompt should contain real artifact IDs
+	if !strings.Contains(prompt, "REQ-001") {
+		t.Error("prompt missing PRD requirement REQ-001")
+	}
+	if !strings.Contains(prompt, "ADR-001") {
+		t.Error("prompt missing ADR ID ADR-001")
+	}
+	if !strings.Contains(prompt, "TDD-1") {
+		t.Error("prompt missing TDD obligation TDD-1")
+	}
+	if !strings.Contains(prompt, "Product Workflow Context") {
+		t.Error("prompt missing Product Workflow Context section")
+	}
+	if !strings.Contains(prompt, "idiom.feature_plan.v2") {
+		t.Error("prompt should reference v2 schema")
+	}
+
+	// Should NOT contain the hallucination template
+	if strings.Contains(prompt, "docs/path.md") {
+		t.Error("prompt must not contain the hallucination template docs/path.md")
+	}
+}
+
+func TestFeaturePlanner_ProductWorkflowIntegration_CoverageGateBlocked(t *testing.T) {
+	// When coverage gate has NOT passed, the prompt should tell the model
+	// not to produce a plan.
+
+	brief := &featureplanner.ProductWorkflowBrief{
+		EffortID:           "test-effort",
+		CoverageTier:       "contract_high",
+		CoverageGatePassed: false,
+	}
+
+	state := featureplanner.NewState("test-session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	prompt := featureplanner.BuildPlannerPrompt("Add a thing", state, brief)
+
+	if !strings.Contains(prompt, "coverage gate has NOT passed") {
+		t.Error("prompt should warn when coverage gate is blocked")
+	}
+	if !strings.Contains(prompt, "ask_planner_question") {
+		t.Error("prompt should suggest ask_planner_question when gate is blocked")
+	}
+}
+
+func TestFeaturePlanner_ProductWorkflowIntegration_StandaloneMode(t *testing.T) {
+	// Without ProductWorkflowBrief (nil), the prompt should use acceptance
+	// criteria fallback and NOT contain the hallucination template.
+
+	state := featureplanner.NewState("test-session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	prompt := featureplanner.BuildPlannerPrompt("Add a thing", state, nil)
+
+	if strings.Contains(prompt, `"refs":["docs/path.md:line"]`) {
+		t.Error("standalone JSON template must not use docs/path.md as a ref value")
+	}
+	if strings.Contains(prompt, `"sdd_refs":["docs/path.md:line"]`) {
+		t.Error("standalone JSON template must not use docs/path.md as an atom sdd_ref")
+	}
+	if !strings.Contains(prompt, "acceptance criteria") {
+		t.Error("standalone prompt should mention acceptance criteria as fallback")
+	}
+}
+
+func TestFeaturePlanner_ProductWorkflowIntegration_JSONRoundTrip(t *testing.T) {
+	brief := featureplanner.ProductWorkflowBrief{
+		EffortID: "test-effort",
+		PRDRequirements: []featureplanner.PRDRequirementBrief{
+			{ID: "REQ-001", Priority: "P0", Statement: "Do the thing",
+				Testability: "automated", Obligations: []string{"TDD-1"}},
+		},
+		AcceptedADRIDs: []string{"ADR-001"},
+		TDDObligations: []featureplanner.TDDObligationBrief{
+			{ID: "TDD-1", Behavior: "test passes", Command: "go test ./...",
+				RequiredBefore: "implementation", Status: "open"},
+		},
+		CoverageTier:       "behavior_standard",
+		CoverageGatePassed: true,
+	}
+
+	data, err := json.Marshal(brief)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	var roundTripped featureplanner.ProductWorkflowBrief
+	if err := json.Unmarshal(data, &roundTripped); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if roundTripped.EffortID != "test-effort" {
+		t.Errorf("EffortID: got %q want test-effort", roundTripped.EffortID)
+	}
+	if len(roundTripped.PRDRequirements) != 1 {
+		t.Fatalf("PRDRequirements length: got %d want 1", len(roundTripped.PRDRequirements))
+	}
+	if roundTripped.PRDRequirements[0].ID != "REQ-001" {
+		t.Errorf("PRDRequirements[0].ID: got %q want REQ-001", roundTripped.PRDRequirements[0].ID)
+	}
 }

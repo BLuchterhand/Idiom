@@ -19,7 +19,7 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 }
 
 func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
-	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()))
+	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), nil)
 
 	for _, want := range []string{
 		`return the FeaturePlan object itself`,

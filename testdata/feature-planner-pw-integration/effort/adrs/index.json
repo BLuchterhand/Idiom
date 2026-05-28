@@ -1,0 +1,11 @@
+[
+  {
+    "id": "ADR-001",
+    "title": "Test ADR",
+    "status": "accepted",
+    "file": "001-test.md",
+    "accepted_at": "2026-05-28T18:00:00Z",
+    "accepted_by": "test-operator",
+    "acceptance_profile": "test"
+  }
+]

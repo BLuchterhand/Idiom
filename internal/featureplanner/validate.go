@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"strings"
 	"time"
-)
+
+	"os"
+	"path/filepath")
 
 type ParsedPlannerOutput struct {
 	Kind     string
@@ -61,6 +63,9 @@ func ValidatePlan(plan FeaturePlan) error {
 	require(&errs, plan.TopLevelScope.Objective, "feature plan missing top_level_scope.objective")
 	if len(plan.TopLevelScope.SuccessCriteria) == 0 {
 		errs = append(errs, errors.New("feature plan missing top_level_scope.success_criteria"))
+	}
+	if plan.CoverageGateResult != nil && plan.CoverageGateResult.Status != "pass" {
+		errs = append(errs, errors.New("feature plan blocked: upstream coverage gate has not passed"))
 	}
 	if len(plan.SDDContract.Refs) == 0 && len(plan.SDDContract.Acceptance) == 0 {
 		errs = append(errs, errors.New("feature plan missing SDD refs or acceptance criteria"))
@@ -134,7 +139,7 @@ func ValidatePlan(plan FeaturePlan) error {
 
 func ValidateDurablePlan(plan FeaturePlan) error {
 	var errs []error
-	if plan.SchemaVersion != "" && plan.SchemaVersion != FeaturePlanSchemaVersion {
+	if plan.SchemaVersion != "" && plan.SchemaVersion != FeaturePlanSchemaVersion && plan.SchemaVersion != "idiom.feature_plan.v1" {
 		errs = append(errs, fmt.Errorf("unsupported feature plan schema %q", plan.SchemaVersion))
 	}
 	if err := ValidatePlan(plan); err != nil {
@@ -159,6 +164,77 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 		}
 		if mismatches := MismatchedStrictPreDispatchTDD(atom); len(mismatches) > 0 {
 			errs = append(errs, fmt.Errorf("%s mismatched durable pre-dispatch TDD fields: %s", prefix, strings.Join(mismatches, ", ")))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+
+// ValidatePlanSDDRefs checks that SDD ref strings point to real files
+// within the artifact root. It strips :line suffixes and verifies
+// file existence. Called from the CLI layer, not from featureplanner core.
+func ValidatePlanSDDRefs(plan FeaturePlan, artifactRoot string) error {
+	if artifactRoot == "" {
+		return nil
+	}
+	absRoot, err := filepath.Abs(artifactRoot)
+	if err != nil {
+		return fmt.Errorf("validate SDD refs: resolve artifact root %q: %w", artifactRoot, err)
+	}
+	var errs []error
+	for i, ref := range plan.SDDContract.Refs {
+		errs = append(errs, validateSDDRef(ref, absRoot, fmt.Sprintf("sdd_contract.refs[%d]", i))...)
+	}
+	for i, atom := range plan.Atoms {
+		for j, ref := range atom.SDDRefs {
+			errs = append(errs, validateSDDRef(ref, absRoot, fmt.Sprintf("atom %d sdd_refs[%d]", i, j))...)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func validateSDDRef(ref string, absRoot string, label string) []error {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return nil
+	}
+	// Strip :line suffix
+	if idx := strings.IndexByte(ref, ':'); idx >= 0 {
+		ref = ref[:idx]
+	}
+	if ref == "" {
+		return nil
+	}
+	fullPath := filepath.Join(absRoot, ref)
+	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
+		return []error{fmt.Errorf("%s %q does not exist", label, ref)}
+	} else if err != nil {
+		return []error{fmt.Errorf("%s cannot access %q: %w", label, ref, err)}
+	}
+	return nil
+}
+
+
+// ValidatePlanTDDObligations checks that every TDD obligation ID in the plan
+// references a known obligation from the product workflow ledger.
+// Called from the CLI layer, not from featureplanner core.
+func ValidatePlanTDDObligations(plan FeaturePlan, knownObligationIDs map[string]bool) error {
+	if len(knownObligationIDs) == 0 {
+		return nil
+	}
+	var errs []error
+	for i, obligation := range plan.TDDContract.Obligations {
+		id := strings.TrimSpace(obligation.ID)
+		if id != "" && !knownObligationIDs[id] {
+			errs = append(errs, fmt.Errorf("tdd_contract.obligations[%d] references unknown obligation %q", i, id))
+		}
+	}
+	for i, atom := range plan.Atoms {
+		for j, ref := range atom.TestFirst.ObligationRefs {
+			ref = strings.TrimSpace(ref)
+			if ref != "" && !knownObligationIDs[ref] {
+				errs = append(errs, fmt.Errorf("atom %d test_first.obligation_refs[%d] references unknown obligation %q", i, j, ref))
+			}
 		}
 	}
 	return errors.Join(errs...)

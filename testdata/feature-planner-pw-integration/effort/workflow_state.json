@@ -1,0 +1,32 @@
+{
+  "schema_version": "idiom.product_workflow_state.v1",
+  "effort_id": "test-fixture-effort",
+  "task_id": "test-task",
+  "title": "Test fixture for e2e integration",
+  "created_at": "2026-05-28T18:00:00Z",
+  "updated_at": "2026-05-28T18:00:00Z",
+  "state_revision": 0,
+  "status_bucket": "started",
+  "current_phase": "implementation",
+  "current_state": "implementing",
+  "artifact_paths": {
+    "prd": "prd.md",
+    "adr_index": "adrs/index.json",
+    "tdd_ledger": "tdd.json"
+  },
+  "open_obligations": [],
+  "open_questions": [],
+  "blockers": [],
+  "coverage": {
+    "coverage_tier": "behavior_standard",
+    "gate_results": [],
+    "blocking_criteria": [],
+    "advisory_criteria": []
+  },
+  "privacy": {
+    "redaction_status": "clean"
+  },
+  "folder_path": "started/test-fixture-effort",
+  "prior_folder_paths": [],
+  "durability_level": "test_fixture"
+}

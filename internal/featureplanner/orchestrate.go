@@ -17,6 +17,7 @@ type RunOptions struct {
 	MaxAtoms              int
 	ResumeAnswer          string
 	Now                   time.Time
+	ProductWorkflowBrief  *ProductWorkflowBrief
 }
 
 type RunResult struct {
@@ -60,7 +61,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		}, nil
 	}
 
-	plannerPrompt := BuildPlannerPrompt(opts.Prompt, state)
+	plannerPrompt := BuildPlannerPrompt(opts.Prompt, state, opts.ProductWorkflowBrief)
 	answer, err := runner(plannerPrompt, "feature_planner_planner")
 	if err != nil {
 		state.Status = FeatureStateFailed
@@ -86,14 +87,65 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	return RunResult{State: state, Events: events}, nil
 }
 
-func BuildPlannerPrompt(userPrompt string, state FeatureState) string {
+func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWorkflowBrief) string {
 	var b strings.Builder
 	b.WriteString("You are the feature planner. Produce exactly one JSON object.\n")
 	b.WriteString("Valid tools: submit_feature_plan or ask_planner_question.\n")
 	b.WriteString("For submit_feature_plan, return the FeaturePlan object itself with tool=\"submit_feature_plan\" at the top level. Do not nest the plan under a plan, payload, arguments, or input field.\n")
 	b.WriteString("Every atom must name at least one concrete required_edit_paths or allowed_edit_paths entry. A no-mutation planning test still names the intended source or test paths as allowed scope; do not return both arrays empty.\n")
-	b.WriteString("Required submit_feature_plan shape:\n")
-	b.WriteString(`{"tool":"submit_feature_plan","schema_version":"idiom.feature_plan.v1","feature_id":"feature-id","source_task":{"kind":"operator_prompt","summary":"..."},"summary":"...","top_level_scope":{"objective":"...","success_criteria":["..."]},"sdd_contract":{"refs":["docs/path.md:line"],"acceptance":["..."]},"tdd_contract":{"coverage_tier":"contract_high","required_before_implementation":true,"obligations":[{"id":"TDD-1","behavior":"...","command":"go test ./...","required_before":"implementation"}]},"atoms":[{"schema_version":"idiom.feature_atom.v1","id":"atom-1","title":"...","summary":"...","required_edit_paths":["internal/example/source.go"],"allowed_edit_paths":["internal/example/source.go","internal/example/source_test.go"],"sdd_refs":["docs/path.md:line"],"tdd_obligations":["TDD-1"],"required_tests":["go test ./..."],"test_first":{"obligation_refs":["TDD-1"],"commands":["go test ./..."],"baseline_required":true,"test_artifact_paths":["path_test.go"],"pre_execution_event_ids":["evt-tdd-1"],"expected_pre_execution_result":"red-confirmed","coverage_gate_event_id":"evt-tdd-1"},"planned_tdd_snapshot":{"snapshot_id":"snap-tdd-1","snapshot_digest":"sha256:...","obligation_ids":["TDD-1"],"test_commands":["go test ./..."],"test_artifact_paths":["path_test.go"],"expected_pre_execution_results":["red-confirmed"],"created_before_dispatch_event_id":"evt-tdd-1"},"prompt":"..."}]}` + "\n")
+
+	if brief != nil {
+		b.WriteString("\nProduct Workflow Context:\n")
+		fmt.Fprintf(&b, "Effort: %s (task %s)\n", brief.EffortID, brief.TaskID)
+		fmt.Fprintf(&b, "Coverage tier: %s, gate passed: %v\n", brief.CoverageTier, brief.CoverageGatePassed)
+
+		if len(brief.PRDRequirements) > 0 {
+			b.WriteString("PRD Requirements:\n")
+			for _, req := range brief.PRDRequirements {
+				fmt.Fprintf(&b, "  - %s [%s]: %s", req.ID, req.Priority, req.Statement)
+				if len(req.Obligations) > 0 {
+					fmt.Fprintf(&b, " (TDD obligations: %s)", strings.Join(req.Obligations, ", "))
+				}
+				b.WriteString("\n")
+			}
+		}
+		if len(brief.AcceptedADRIDs) > 0 {
+			fmt.Fprintf(&b, "Accepted ADRs: %s\n", strings.Join(brief.AcceptedADRIDs, ", "))
+		}
+		if len(brief.TDDObligations) > 0 {
+			b.WriteString("TDD Obligations:\n")
+			for _, obl := range brief.TDDObligations {
+				fmt.Fprintf(&b, "  - %s: %s (command: %s, status: %s)\n", obl.ID, obl.Behavior, obl.Command, obl.Status)
+			}
+		}
+		if len(brief.FilesToModify) > 0 {
+			fmt.Fprintf(&b, "Files to modify: %s\n", strings.Join(brief.FilesToModify, ", "))
+		}
+		if len(brief.Tests) > 0 {
+			fmt.Fprintf(&b, "Tests: %s\n", strings.Join(brief.Tests, ", "))
+		}
+		if len(brief.Constraints) > 0 {
+			fmt.Fprintf(&b, "Constraints: %s\n", strings.Join(brief.Constraints, "; "))
+		}
+		if len(brief.Blockers) > 0 {
+			fmt.Fprintf(&b, "Blockers: %s\n", strings.Join(brief.Blockers, "; "))
+		}
+
+		if brief.CoverageGatePassed {
+			b.WriteString("\nRequired submit_feature_plan shape:\n")
+			fmt.Fprintf(&b, "{\"tool\":\"submit_feature_plan\",\"schema_version\":\"idiom.feature_plan.v2\",\"feature_id\":\"feature-id\",\"source_task\":{\"kind\":\"operator_prompt\",\"summary\":\"...\"},\"summary\":\"...\",\"top_level_scope\":{\"objective\":\"...\",\"success_criteria\":[\"...\"]},\"sdd_contract\":{\"prd_requirement_refs\":[\"REQ-001\"],\"adr_refs\":[\"ADR-001\"],\"acceptance\":[\"...\"]},\"tdd_contract\":{\"coverage_tier\":\"%s\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-1\",\"behavior\":\"...\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}],\"coverage_gate_event_id\":\"evt-cov-1\"},\"atoms\":[{\"schema_version\":\"idiom.feature_atom.v1\",\"id\":\"atom-1\",\"title\":\"...\",\"summary\":\"...\",\"required_edit_paths\":[\"internal/example/source.go\"],\"allowed_edit_paths\":[\"internal/example/source.go\",\"internal/example/source_test.go\"],\"sdd_refs\":[\"REQ-001\"],\"tdd_obligations\":[\"TDD-1\"],\"required_tests\":[\"go test ./...\"],\"test_first\":{\"obligation_refs\":[\"TDD-1\"],\"commands\":[\"go test ./...\"],\"baseline_required\":true,\"test_artifact_paths\":[\"path_test.go\"],\"pre_execution_event_ids\":[\"evt-tdd-1\"],\"expected_pre_execution_result\":\"red-confirmed\",\"coverage_gate_event_id\":\"evt-tdd-1\"},\"planned_tdd_snapshot\":{\"snapshot_id\":\"snap-tdd-1\",\"snapshot_digest\":\"sha256:...\",\"obligation_ids\":[\"TDD-1\"],\"test_commands\":[\"go test ./...\"],\"test_artifact_paths\":[\"path_test.go\"],\"expected_pre_execution_results\":[\"red-confirmed\"],\"created_before_dispatch_event_id\":\"evt-tdd-1\"},\"prompt\":\"...\"}]}\n", brief.CoverageTier)
+			b.WriteString("Your FeaturePlan SDD refs MUST reference only PRD requirement IDs and ADR IDs from the context above.\n")
+			b.WriteString("Your TDD obligations MUST reference only the obligation IDs listed above.\n")
+		} else {
+			b.WriteString("\nThe coverage gate has NOT passed. Do not produce a feature plan; instead, use ask_planner_question to report the blocked gate.\n")
+		}
+	} else {
+		b.WriteString("\nRequired submit_feature_plan shape:\n")
+		b.WriteString("{\"tool\":\"submit_feature_plan\",\"schema_version\":\"idiom.feature_plan.v2\",\"feature_id\":\"feature-id\",\"source_task\":{\"kind\":\"operator_prompt\",\"summary\":\"...\"},\"summary\":\"...\",\"top_level_scope\":{\"objective\":\"...\",\"success_criteria\":[\"...\"]},\"sdd_contract\":{\"prd_requirement_refs\":[],\"adr_refs\":[],\"acceptance\":[\"your-acceptance-criteria-here\"]},\"tdd_contract\":{\"coverage_tier\":\"contract_high\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-1\",\"behavior\":\"...\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}]},\"atoms\":[{\"schema_version\":\"idiom.feature_atom.v1\",\"id\":\"atom-1\",\"title\":\"...\",\"summary\":\"...\",\"required_edit_paths\":[\"internal/example/source.go\"],\"allowed_edit_paths\":[\"internal/example/source.go\",\"internal/example/source_test.go\"],\"sdd_refs\":[],\"tdd_obligations\":[\"TDD-1\"],\"required_tests\":[\"go test ./...\"],\"test_first\":{\"obligation_refs\":[\"TDD-1\"],\"commands\":[\"go test ./...\"],\"baseline_required\":true,\"test_artifact_paths\":[\"path_test.go\"],\"pre_execution_event_ids\":[\"evt-tdd-1\"],\"expected_pre_execution_result\":\"red-confirmed\",\"coverage_gate_event_id\":\"evt-tdd-1\"},\"planned_tdd_snapshot\":{\"snapshot_id\":\"snap-tdd-1\",\"snapshot_digest\":\"sha256:...\",\"obligation_ids\":[\"TDD-1\"],\"test_commands\":[\"go test ./...\"],\"test_artifact_paths\":[\"path_test.go\"],\"expected_pre_execution_results\":[\"red-confirmed\"],\"created_before_dispatch_event_id\":\"evt-tdd-1\"},\"prompt\":\"...\"}]}\n")
+		b.WriteString("No upstream design docs are available. Use acceptance criteria strings in sdd_contract.acceptance instead of file paths.\n")
+		b.WriteString("Do NOT invent file paths like docs/path.md — acceptance criteria strings are valid and preferred when no docs exist.\n")
+	}
+
 	b.WriteString("Before any atom can be dispatched, every atom must carry SDD refs and test_first commands tied to TDD obligations required_before implementation.\n")
 	b.WriteString("Top-level scope is the smallest releasable feature objective; atoms are independently dispatchable implementation units.\n\n")
 	if len(state.OpenQuestions) > 0 {

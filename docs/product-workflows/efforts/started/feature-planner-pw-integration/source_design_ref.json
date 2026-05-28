@@ -1,0 +1,20 @@
+{
+  "design_doc": "docs/design-feature-planner-product-workflow-integration.md",
+  "referenced_designs": [
+    "docs/design-prd-adr-brief-research-workflow.md",
+    "docs/design-feature-planner-orchestration.md",
+    "docs/design-tdd-coverage.md",
+    "docs/decisioning-north-star.md"
+  ],
+  "reviewer_bench_evidence": {
+    "date": "2026-05-28",
+    "reviewers": [
+      "incident-root-cause",
+      "prompt-protocol",
+      "tdd-acceptance",
+      "north-star-architecture",
+      "harness-go"
+    ],
+    "convergence": "unanimous on diagnosis and fix direction"
+  }
+}

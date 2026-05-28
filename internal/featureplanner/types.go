@@ -3,7 +3,7 @@ package featureplanner
 const SchemaVersion = "idiom.feature_planner.state.v1"
 const (
 	FeatureStateSchemaVersion    = "idiom.feature_state.v1"
-	FeaturePlanSchemaVersion     = "idiom.feature_plan.v1"
+	FeaturePlanSchemaVersion     = "idiom.feature_plan.v2"
 	FeatureAtomSchemaVersion     = "idiom.feature_atom.v1"
 	PlannerQuestionSchemaVersion = "idiom.feature_planner_question.v1"
 	FeatureEventSchemaVersion    = "idiom.feature_event.v1"
@@ -93,6 +93,8 @@ type FeatureState struct {
 	EventsPath              string                    `json:"events_path,omitempty"`
 	ReleaseContractPath     string                    `json:"release_contract_path,omitempty"`
 	PlannerRevision         int                       `json:"planner_revision,omitempty"`
+	EffortID                string                    `json:"effort_id,omitempty"`
+	EffortRoot              string                    `json:"effort_root,omitempty"`
 	SessionID               string                    `json:"session_id"`
 	CreatedAt               string                    `json:"created_at"`
 	UpdatedAt               string                    `json:"updated_at"`
@@ -145,6 +147,7 @@ type FeaturePlan struct {
 	SDDContract   SDDContract       `json:"sdd_contract"`
 	TDDContract   TDDContract       `json:"tdd_contract"`
 	Atoms         []FeatureAtomPlan `json:"atoms"`
+	CoverageGateResult *CoverageGateResult `json:"coverage_gate_result,omitempty"`
 }
 
 type SourceTask struct {
@@ -167,14 +170,17 @@ type TopLevelScope struct {
 }
 
 type SDDContract struct {
-	Refs       []string `json:"refs,omitempty"`
-	Acceptance []string `json:"acceptance,omitempty"`
+	Refs                 []string `json:"refs,omitempty"`                    // legacy — treated as acceptance criteria in v2
+	Acceptance           []string `json:"acceptance,omitempty"`              // acceptance criteria strings
+	PRDRequirementRefs   []string `json:"prd_requirement_refs,omitempty"`   // PRD requirement IDs
+	ADRRefs              []string `json:"adr_refs,omitempty"`                // ADR IDs
 }
 
 type TDDContract struct {
 	CoverageTier                 string          `json:"coverage_tier"`
 	RequiredBeforeImplementation bool            `json:"required_before_implementation"`
 	Obligations                  []TDDObligation `json:"obligations"`
+	CoverageGateEventID string `json:"coverage_gate_event_id,omitempty"` // plan-level binding to upstream coverage gate
 }
 
 type TDDObligation struct {
@@ -182,6 +188,16 @@ type TDDObligation struct {
 	Behavior       string `json:"behavior"`
 	Command        string `json:"command"`
 	RequiredBefore string `json:"required_before"`
+}
+
+// CoverageGateResult carries the pass/fail status from the upstream
+// product workflow coverage gate. It is a plain data struct with no
+// import of productworkflow.
+type CoverageGateResult struct {
+	Status       string `json:"status"`        // "pass" or "blocked"
+	EffortID     string `json:"effort_id"`     // product workflow effort identity
+	CoverageTier string `json:"coverage_tier"` // coverage tier at time of evaluation
+	CheckedAt    string `json:"checked_at"`    // ISO 8601 timestamp
 }
 
 type FeatureAtomPlan struct {
