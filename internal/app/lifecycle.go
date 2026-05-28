@@ -855,6 +855,14 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	mode := m.currentMode()
 	steps := modeStepCap(m.cfg.Chat.MaxToolSteps, mode)
 	policy := modeRunPolicy(mode, m.cfg.Chat)
+	// Conversation and read-only lanes: raise context compaction
+	// thresholds. Structured discovery tools return compact results
+	// but the default 40-message limit compacts every ~13 tool calls,
+	// destroying working memory before the model can synthesize.
+	if plan.route.Family == "conversation" || plan.route.Contract == "direct_answer" {
+		policy.MaxContextMessages = 200
+		policy.MaxContextChars = 1000000
+	}
 	// Conversation and read-only lanes: do not cap tool steps or
 	// model calls. The model owns the decision of when evidence is
 	// sufficient. The doom-loop guard catches repeated identical
