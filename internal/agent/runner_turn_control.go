@@ -67,6 +67,13 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 				return "", nil, false
 			}
 		}
+		// Conversation lanes: the "last chance before harness ends"
+		// force-complete contradicts the investigation directive.
+		// Instead of force-completing, let the model continue.
+		if c.runner != nil && strings.EqualFold(strings.TrimSpace(c.runner.RuntimeBrief.TaskFamily), "conversation") {
+			*c.consecutiveRejected = 0
+			return "", nil, false
+		}
 		answer, err := c.runner.completeWithoutMoreTools(c.ctx, c.currentMessages(), c.currentOpts(), c.snapshotResults(), c.metrics)
 		return answer, err, true
 	}

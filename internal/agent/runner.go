@@ -192,6 +192,19 @@ func (r *Runner) Run(
 		}
 		defer restoreWorkspacePlanThenExecuteMode()
 	}
+	syncCurrentAllowedToolsFromOptions := func() {
+		currentAllowedTools = currentAllowedTools[:0]
+		for _, tool := range opts.Tools {
+			name := strings.TrimSpace(tool.Function.Name)
+			if name != "" {
+				currentAllowedTools = append(currentAllowedTools, name)
+			}
+		}
+		setCurrentAllowedTools(currentAllowedTools)
+	}
+		// Sync currentAllowedTools from opts.Tools so synthetic
+		// tools (note) added by this closure are recognized.
+		syncCurrentAllowedToolsFromOptions()
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -300,16 +313,6 @@ func (r *Runner) Run(
 			opts.ToolChoice = "auto"
 		}
 	}
-	syncCurrentAllowedToolsFromOptions := func() {
-		currentAllowedTools = currentAllowedTools[:0]
-		for _, tool := range opts.Tools {
-			name := strings.TrimSpace(tool.Function.Name)
-			if name != "" {
-				currentAllowedTools = append(currentAllowedTools, name)
-			}
-		}
-		setCurrentAllowedTools(currentAllowedTools)
-	}
 	terminalSubmitPlanNativeTools := func() bool {
 		return !planThenExecuteNativeSubmitPlanDisabled && r.supportsTerminalSubmitPlanNativeTools(collectedResults)
 	}
@@ -354,11 +357,6 @@ func (r *Runner) Run(
 			hideExactAnchorReadTools(turnHiddenTools, exactAnchorHiddenTools, r.Workspace)
 		}
 		rebuildTools()
-		// Sync currentAllowedTools from opts.Tools so synthetic tools
-		// (note, added in rebuildTools) are recognized by the tool
-		// surface rejection check. Without this, the model can see
-		// the tool schema but gets "not in allowed surface" on use.
-		syncCurrentAllowedToolsFromOptions()
 	}
 	if strings.TrimSpace(opts.ToolChoice) == "" && len(opts.Tools) > 0 {
 		opts.ToolChoice = "auto"
@@ -16296,6 +16294,13 @@ func (r *Runner) agentName() string {
 
 func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []workspace.ToolResult) string {
 	if r == nil || r.Workspace == nil || r.DisableTaskTool || strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
+		return ""
+	}
+	// The exploration delegation nudge uses mutation language
+	// ("without a write") and assumes write-then-answer lanes.
+	// The conversation lane has its own evidence path and should
+	// not receive mutation-framed nudges.
+	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
 		return ""
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
