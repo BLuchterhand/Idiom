@@ -1678,9 +1678,14 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	}
 	readOnly := profile == "conversation_only" || profile == "read_only_workspace" || profile == "read_only_verification_shell"
 	if readOnly && !opts.ModelThinkingFloor {
-		thinkingOff := false
-		opts.EnableThinking = &thinkingOff
-		opts.PreserveThinking = false
+		// direct_answer (conversation lane) preserves thinking so the model
+		// maintains context across turns; other read-only contracts
+		// still disable it to reduce token overhead on focused probes.
+		if contract != "direct_answer" {
+			thinkingOff := false
+			opts.EnableThinking = &thinkingOff
+			opts.PreserveThinking = false
+		}
 		opts.ChatTemplateKwargs = true
 	}
 	if readOnly {
@@ -1695,7 +1700,7 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 		if opts.ModelThinkingFloor {
 			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 4096)
 		} else {
-			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1024)
+			opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 3072)
 		}
 	case "grounded_explanation", "locate_targets":
 		opts.MaxTokens = clampPositiveMin(opts.MaxTokens, 1536)

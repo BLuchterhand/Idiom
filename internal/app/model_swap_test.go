@@ -333,14 +333,14 @@ func TestRoutingLocalModelDisablesThinkingForReadOnly(t *testing.T) {
 
 	tuned := tuneChatOptionsForPlan(opts, plan)
 
-	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatal("expected thinking OFF for local model with read-only profile (no thinking floor)")
+	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
+		t.Fatal("expected thinking ON for local model with direct_answer read-only (conversation lane preserves thinking)")
 	}
-	if tuned.PreserveThinking {
-		t.Fatal("expected PreserveThinking=false for local model on read-only route")
+	if !tuned.PreserveThinking {
+		t.Fatal("expected PreserveThinking=true for direct_answer read-only route")
 	}
 	if !tuned.ChatTemplateKwargs {
-		t.Fatal("expected ChatTemplateKwargs=true for local model on read-only route")
+		t.Fatal("expected ChatTemplateKwargs=true for read-only route")
 	}
 }
 
@@ -365,8 +365,8 @@ func TestRoutingLocalModelMaxTokensOverrideWinsOverClamp(t *testing.T) {
 	if tuned.MaxTokens != 8192 {
 		t.Fatalf("expected maxTokensOverride=8192 to win over 4096 clamp, got %d", tuned.MaxTokens)
 	}
-	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatal("expected thinking OFF for local model regardless of maxTokensOverride")
+	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
+		t.Fatal("expected thinking ON for direct_answer read-only (conversation lane preserves thinking)")
 	}
 }
 
@@ -476,8 +476,8 @@ func TestFullFlowLocalModelSwapDisablesThinkingButOverrideWinsOnTokens(t *testin
 	tuned := tuneChatOptionsForPlan(opts, plan)
 	tuned = applyMaxTokensOverride(tuned, m.maxTokensOverride)
 
-	if tuned.EnableThinking == nil || *tuned.EnableThinking {
-		t.Fatal("expected thinking OFF for local-qwen on read-only route")
+	if tuned.EnableThinking == nil || !*tuned.EnableThinking {
+		t.Fatal("expected thinking ON for direct_answer conversation lane (preserves thinking)")
 	}
 	if tuned.MaxTokens != 8192 {
 		t.Fatalf("expected maxTokens=8192 (override wins over 4096 clamp), got %d", tuned.MaxTokens)

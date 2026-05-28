@@ -786,7 +786,7 @@ func TestTextOnlyChatOptionsUsesContractAwareCaps(t *testing.T) {
 		want     int
 	}{
 		{name: "artifact final answer", contract: "artifact_final_answer", input: 20000, want: 8192},
-		{name: "direct answer", contract: "direct_answer", input: 8192, want: 1024},
+		{name: "direct answer", contract: "direct_answer", input: 8192, want: 3072},
 		{name: "grounded explanation", contract: "grounded_explanation", input: 8192, want: 1536},
 		{name: "delegated evidence summary", contract: "grounded_evidence_summary", input: 8192, want: 1536},
 		{name: "architecture assessment", contract: "architecture_assessment", input: 8192, want: 2048},
