@@ -1890,7 +1890,12 @@ func (r *Runner) Run(
 		} else if res.shouldContinue {
 			continue
 		}
-		if !r.planThenExecutePlannerPhase() {
+			if !r.planThenExecutePlannerPhase() &&
+		// The synthesis nudge uses generic "answer now" language that
+		// contradicts the conversation lane's evidence requirement
+		// (file:line from at least one inspected source location).
+		// The conversation lane has its own evidence-aligned nudge.
+		!strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
 			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
@@ -19194,6 +19199,13 @@ var recoveryNudgeRules = []recoveryNudgeRule{
 // the first rule that fires returns its nudge. If none fire, the
 // tool-shape-specific lastChanceRecoveryNudge always produces a default.
 func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.ToolResult, mgr *workspace.Manager, brief workerruntime.WorkerRuntimeBrief, agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool) string {
+	// Conversation lanes: the model owns readiness. Do not inject
+	// nudges that declare evidence is sufficient or that the harness
+	// will end the turn. The force-completion path is also gated in
+	// rejectTool; this keeps the nudge text consistent.
+	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") {
+		return ""
+	}
 	in := recoveryNudgeInputs{
 		req:                          req,
 		results:                      results,
@@ -19326,6 +19338,12 @@ func debugLogInvestigationRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
 }
 
 func closureReadyRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
+	// Conversation lanes: the model owns readiness. The caller-level
+	// gate in buildRejectionRecoveryNudge handles this, but this
+	// belt-and-suspenders check keeps the individual nudge safe.
+	if strings.EqualFold(strings.TrimSpace(in.brief.TaskFamily), "conversation") {
+		return "", false
+	}
 	scope := postReadinessGapScope(
 		in.agent,
 		in.delegatedReadOnlyAnswerReady || delegatedReadOnlyClosureReady(in.agent, in.brief, in.results),

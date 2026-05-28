@@ -172,7 +172,7 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 				EventRole:         "fingerprint_hard_block",
 				EventContent:      fmt.Sprintf("%s repeated %d times; hard-blocking", req.Tool, count),
 				ForceAnswerReason: "fingerprint_hard_block_exhausted",
-				ForceAnswerPrompt: fmt.Sprintf("You called %s with identical arguments %d times after being warned. Tools are now disabled. Write the normal final answer from the evidence already gathered. If the repeated request reflects one unsupported claim, state that uncertainty after the supported answer with the smallest useful next action.", req.Tool, count),
+				ForceAnswerPrompt: fmt.Sprintf("You called %s with identical arguments %d times after being warned. Further tools are not available. Provide your final answer from the evidence already gathered. If the repeated request reflects one unsupported claim, state that uncertainty after the supported answer with the smallest useful next action.", req.Tool, count),
 			}
 		}
 	}
@@ -232,7 +232,7 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 			EventRole:         "rejection_retry_blocked",
 			EventContent:      fmt.Sprintf("model retried a previously rejected %s call %d times (%s) — forcing answer with the evidence already gathered", req.Tool, retries, priorSummary),
 			ForceAnswerReason: "rejection_retry_blocked",
-			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected %d times this turn and were warned. Tools are now disabled. Write the normal final answer from the evidence already gathered.", req.Tool, retries),
+			ForceAnswerPrompt: fmt.Sprintf("You retried a %s request that was already rejected %d times this turn and were warned. Further tools are not available. Provide your final answer from the evidence already gathered.", req.Tool, retries),
 		}
 	}
 	return runnerRequestBudgetDecision{}
