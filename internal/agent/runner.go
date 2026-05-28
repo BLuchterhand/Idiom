@@ -2899,10 +2899,40 @@ func (r *Runner) Run(
 				})
 			}
 		}
-		// Conversation lane: auto-capture findings to survive context
-		// compactions. After 15 calls, write a findings summary to
-		// .idiom/notes/auto-findings.md. The model sees a notification
-		// but doesn't need to call any tool — the harness handles it.
+		// Conversation lane: periodic call-count awareness.
+		// The model owns the stop decision per north star, but it
+		// benefits from knowing how long it's been investigating.
+		// At 25, 50, 75... calls, report the count and auto-captured
+		// findings so the model can plan its own wrap-up strategy.
+		// No force, no threat — just transparent information.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 && strings.TrimSpace(result.Error) == "" {
+			var b strings.Builder
+			b.WriteString(fmt.Sprintf("You have used %d tool calls this session. ", metrics.ToolCalls))
+			// Auto-capture findings at milestone markers
+			if r.Workspace != nil {
+				noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
+				if err := os.MkdirAll(noteDir, 0755); err == nil {
+					var noteContent strings.Builder
+					noteContent.WriteString(fmt.Sprintf("# Findings at %d calls\n\n", metrics.ToolCalls))
+					noteContent.WriteString(fmt.Sprintf("Question: %s\n\n## Inspected paths\n\n", r.RuntimeBrief.Objective))
+					for _, r := range collectedResults {
+						if strings.TrimSpace(r.Error) == "" && strings.TrimSpace(r.Summary) != "" {
+							noteContent.WriteString(fmt.Sprintf("- %s\n", r.Summary))
+						}
+					}
+					notePath := filepath.Join(noteDir, fmt.Sprintf("findings-%d.md", metrics.ToolCalls))
+					os.WriteFile(notePath, []byte(noteContent.String()), 0644)
+				}
+			}
+			b.WriteString("Your findings are captured in .idiom/notes/. Consider whether the evidence you have gathered supports a clear answer, or whether you need to continue investigating. You control when to stop — a well-reasoned answer with the evidence you have is your decision to make.")
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: b.String(),
+			})
+		}
+		// Conversation lane: auto-capture findings at 15 calls (first
+		// milestone, before the 25-call periodic checks begin).
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
 			metrics.ToolCalls == 15 && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
 			noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
