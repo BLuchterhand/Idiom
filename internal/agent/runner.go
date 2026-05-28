@@ -290,6 +290,15 @@ func (r *Runner) Run(
 					Parameters:  json.RawMessage(`{"type":"object","properties":{"key":{"type":"string","description":"A short identifier for this finding (e.g. 'implement-lane-gate', 'source-sanity-call-chain')"},"content":{"type":"string","description":"What you learned. Include file paths, function names, line numbers, and a brief description of the mechanism or relationship."}},"required":["key","content"]}`),
 				},
 			})
+			// Also inject note into the RuntimeBrief's AllowedTools so it
+			// appears in control_rails / visibleRuntimeBrief. opts.Tools
+			// (LLM schema) and currentAllowedTools (runner tracking) get
+			// the note tool, but visibleRuntimeBrief reads from a separate
+			// source — the RuntimeBrief's AllowedTools field.
+			// Append note to RuntimeBrief.AllowedTools if not already present.
+			if !slices.Contains(r.RuntimeBrief.AllowedTools, "note") {
+				r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, "note")
+			}
 		}
 
 		}
