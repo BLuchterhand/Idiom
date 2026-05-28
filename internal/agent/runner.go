@@ -2899,15 +2899,30 @@ func (r *Runner) Run(
 				})
 			}
 		}
-		// Conversation lane: after sustained investigation, remind the
-		// model about the note tool for capturing findings. Context
-		// compactions destroy working memory; notes survive them.
+		// Conversation lane: auto-capture findings to survive context
+		// compactions. After 15 calls, write a findings summary to
+		// .idiom/notes/auto-findings.md. The model sees a notification
+		// but doesn't need to call any tool — the harness handles it.
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			metrics.ToolCalls == 15 && strings.TrimSpace(result.Error) == "" {
-			turnMessages = append(turnMessages, llama.ChatMessage{
-				Role:    "system",
-				Content: "You have made 15 tool calls. Before continuing, use the note tool to capture your key findings so far. Notes persist across context compactions — without them, your discoveries may be lost. After noting your findings, continue investigating or answer if you have enough evidence.",
-			})
+			metrics.ToolCalls == 15 && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
+			noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
+			if err := os.MkdirAll(noteDir, 0755); err == nil {
+				var b strings.Builder
+				b.WriteString("# Auto-captured findings\n\n")
+				b.WriteString(fmt.Sprintf("Question: %s\n\n", r.RuntimeBrief.Objective))
+				b.WriteString("## Inspected paths\n\n")
+				for _, r := range collectedResults {
+					if strings.TrimSpace(r.Error) == "" && strings.TrimSpace(r.Summary) != "" {
+						b.WriteString(fmt.Sprintf("- %s\n", r.Summary))
+					}
+				}
+				notePath := filepath.Join(noteDir, "auto-findings.md")
+				os.WriteFile(notePath, []byte(b.String()), 0644)
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: "The harness has captured your findings so far to .idiom/notes/auto-findings.md. This note persists across context compactions — review it if your working memory is refreshed. Continue investigating, or answer if you have enough evidence.",
+				})
+			}
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
