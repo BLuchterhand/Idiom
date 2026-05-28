@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -142,6 +143,16 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 	case tea.KeyEnter:
 		text := strings.TrimSpace(m.input.Value())
 		if text == "" {
+			// Empty Enter with evidence panel: toggle the last completed
+			// container's expand/collapse state.
+			if m.cfg.TUI.EvidencePanel && len(m.pastTurnContainers) > 0 {
+				last := &m.pastTurnContainers[len(m.pastTurnContainers)-1]
+				last.expanded = !last.expanded
+				if !last.expanded {
+					last.scrollOff = 0 // reset scroll on collapse
+				}
+				m.renderMessages(false)
+			}
 			break
 		}
 		m.input.SetValue("")
@@ -283,6 +294,44 @@ func (m *Model) handleStreamDone(msg streamDoneMsg) (tea.Cmd, bool) {
 		m.status = "Response complete."
 		m.recordAgentTurn()
 	}
+
+	// Finalize the evidence container and move to past containers.
+	if m.turnEvidence != nil && len(m.turnEvidence.tools) > 0 {
+		m.turnEvidence.finalized = true
+
+		// Deep-copy rows into a completedEvidence struct.
+		rows := make([]evidenceRow, len(m.turnEvidence.tools))
+		copy(rows, m.turnEvidence.tools)
+
+		_, catBreakdown, verifyStatus := evidenceStats(rows)
+		budgetStr := ""
+		if m.lastBudget != nil {
+			budgetStr = formatBudgetSummary(m.lastBudget)
+		}
+		summary := renderEvidenceSummary(len(rows), catBreakdown, verifyStatus, budgetStr, false)
+
+		completed := completedEvidence{
+			tools:    rows,
+			summary:  summary,
+			expanded: msg.err != nil, // stay expanded on error
+			budget:   m.lastBudget,
+		}
+		m.lastBudget = nil
+		m.pastTurnContainers = append(m.pastTurnContainers, completed)
+		m.turnEvidence = nil
+
+		// Start 2s auto-collapse timer unless there was an error (stays open).
+		if msg.err == nil {
+			m.renderMessages(false)
+			return func() tea.Msg {
+				time.Sleep(2 * time.Second)
+				return evidenceCollapseMsg{}
+			}, false
+		}
+	} else {
+		m.turnEvidence = nil
+	}
+
 	m.renderMessages(false)
 	return nil, false
 }
@@ -312,6 +361,42 @@ func (m *Model) handleToolTrace(msg toolTraceMsg) (tea.Cmd, bool) {
 		m.logMessage("tool", msg.text)
 	}
 	m.recordToolTraceInHistory(msg.step, msg.text, msg.intent, msg.running, msg.auditKind, msg.outcome, msg.auditEvents)
+	m.renderMessages(false)
+	return nil, false
+}
+
+// evidenceCollapseMsg is sent by the auto-collapse timer after streamDoneMsg.
+type evidenceCollapseMsg struct{}
+
+func (m *Model) handleBudgetLedger(msg budgetLedgerMsg) (tea.Cmd, bool) {
+	m.lastBudget = &budgetData{
+		totalTokens:     msg.totalTokens,
+		usedToolResults: msg.usedToolResults,
+		maxToolSteps:    msg.maxToolSteps,
+		usedModelCalls:  msg.usedModelCalls,
+		maxModelCalls:   msg.maxModelCalls,
+		lane:            msg.lane,
+	}
+	// If the turn already finalized, update the last past container's budget
+	// and re-render so the summary line reflects the budget.
+	if n := len(m.pastTurnContainers); n > 0 {
+		m.pastTurnContainers[n-1].budget = m.lastBudget
+		// Rebuild the summary line with budget included.
+		rows := m.pastTurnContainers[n-1].tools
+		_, catBreakdown, verifyStatus := evidenceStats(rows)
+		budgetStr := formatBudgetSummary(m.lastBudget)
+		m.pastTurnContainers[n-1].summary = renderEvidenceSummary(len(rows), catBreakdown, verifyStatus, budgetStr, m.pastTurnContainers[n-1].expanded)
+	}
+	m.renderMessages(false)
+	return nil, false
+}
+
+func (m *Model) handleEvidenceCollapse(msg evidenceCollapseMsg) (tea.Cmd, bool) {
+	// Auto-collapse the last completed container if it was untouched.
+	// The timer only fires if no user interaction cancelled it.
+	if n := len(m.pastTurnContainers); n > 0 {
+		m.pastTurnContainers[n-1].expanded = false
+	}
 	m.renderMessages(false)
 	return nil, false
 }

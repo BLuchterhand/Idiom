@@ -151,6 +151,311 @@ func modelPayloadHistory(history []llama.ChatMessage) []llama.ChatMessage {
 	return out
 }
 
+// ── Evidence container rendering ─────────────────────────────────────────────
+
+// evidenceDisplayName maps a raw tool name to a compact display name with an
+// optional language tag suffix.
+func evidenceDisplayName(rawTool string) string {
+	tool := strings.TrimSpace(rawTool)
+	// Language-prefixed tools: extract language tag.
+	if idx := strings.Index(tool, "_"); idx > 0 {
+		prefix := strings.ToLower(tool[:idx])
+		suffix := tool[idx+1:]
+		switch prefix {
+		case "go", "cpp", "rust", "python", "java", "ts":
+			// Map suffix to short display name.
+			display := suffix
+			switch suffix {
+			case "read_symbol":
+				display = "read"
+			case "file_outline":
+				display = "outline"
+			case "find_symbol", "find_type", "find_const", "find_package":
+				display = "find"
+			case "related_files":
+				display = "related"
+			case "definition", "references", "implementations":
+				display = suffix
+			case "calls_from", "calls_into":
+				display = "trace"
+			case "extract_body":
+				display = "body"
+			case "importers", "who_includes":
+				display = "importers"
+			case "diagnostics":
+				display = "diag"
+			case "workspace_symbol":
+				display = "symbol"
+			case "blast_radius":
+				display = "blast"
+			case "dead_symbol":
+				display = "dead"
+			case "overview", "entrypoints":
+				display = suffix
+			default:
+				display = suffix
+			}
+			return display + " [" + prefix + "]"
+		}
+	}
+	// Generic tools.
+	switch tool {
+	case "read_file":
+		return "read"
+	case "edit_file", "write_file", "append_file", "apply_patch":
+		return "edit"
+	case "search_content", "search_files":
+		return "search"
+	case "list_files":
+		return "list"
+	case "shell":
+		return "run"
+	case "context_pack":
+		return "context"
+	case "discovery_query":
+		return "discover"
+	case "dependency_graph":
+		return "deps"
+	case "task_ledger":
+		return "plan"
+	case "child_task":
+		return "delegate"
+	case "submit_plan":
+		return "submit"
+	case "source_sanity":
+		return "verify"
+	default:
+		return strings.ToLower(tool)
+	}
+}
+
+// renderEvidenceSummary builds the collapsed summary line for an evidence
+// container.
+func renderEvidenceSummary(toolCount int, catBreakdown, verifyStatus, budget string, expanded bool) string {
+	indicator := "▸"
+	if expanded {
+		indicator = "▾"
+	}
+	parts := []string{indicator, fmt.Sprintf("%d tools", toolCount)}
+	if catBreakdown != "" {
+		parts = append(parts, catBreakdown)
+	}
+	if verifyStatus != "" {
+		vs := verifyStatus
+		switch verifyStatus {
+		case "tests passed":
+			vs = lipgloss.NewStyle().Foreground(colorSuccess).Render(verifyStatus)
+		case "tests failed", "tests mixed", "unverified":
+			vs = lipgloss.NewStyle().Foreground(colorWarningFg).Render(verifyStatus)
+		default:
+			vs = lipgloss.NewStyle().Foreground(colorDim).Render(verifyStatus)
+		}
+		parts = append(parts, vs)
+	}
+	if budget != "" {
+		parts = append(parts, budget)
+	}
+	return lipgloss.NewStyle().Foreground(colorDim).Render(strings.Join(parts, " · "))
+}
+
+// renderCompletedContainer renders a past-turn evidence container.
+func renderCompletedContainer(c *completedEvidence, width, maxRows int) string {
+	if c == nil || len(c.tools) == 0 {
+		return ""
+	}
+	toolCount, catBreakdown, verifyStatus := evidenceStats(c.tools)
+	budget := ""
+	if c.budget != nil {
+		budget = formatBudgetSummary(c.budget)
+	}
+
+	var b strings.Builder
+	b.WriteString(renderEvidenceSummary(toolCount, catBreakdown, verifyStatus, budget, c.expanded))
+
+	if c.expanded {
+		start := c.scrollOff
+		end := start + maxRows
+		if end > len(c.tools) {
+			end = len(c.tools)
+		}
+		for _, row := range c.tools[start:end] {
+			b.WriteString("\n  ")
+			b.WriteString(renderEvidenceRow(row))
+		}
+		if end < len(c.tools) {
+			remaining := len(c.tools) - end
+			b.WriteString("\n  ")
+			b.WriteString(lipgloss.NewStyle().Foreground(colorDim).Render(
+				fmt.Sprintf("%d more…", remaining)))
+		}
+	}
+	return b.String()
+}
+
+// renderActiveContainer renders the current turn's live evidence container.
+func renderActiveContainer(te *turnEvidence, width, maxRows int, streaming bool) string {
+	if te == nil || len(te.tools) == 0 {
+		return ""
+	}
+	toolCount, catBreakdown, verifyStatus := evidenceStats(te.tools)
+	budget := ""
+	if te.finalized && len(te.tools) > 0 {
+		// Budget not yet available during active rendering; comes via
+		// budgetLedgerMsg after turn ends.
+	}
+
+	expanded := te.expanded && !te.userCollapsed
+	if streaming && !te.userCollapsed {
+		expanded = true
+	}
+
+	var b strings.Builder
+	b.WriteString(renderEvidenceSummary(toolCount, catBreakdown, verifyStatus, budget, expanded))
+
+	if expanded {
+		start := te.scrollOff
+		end := start + maxRows
+		if end > len(te.tools) {
+			end = len(te.tools)
+		}
+		for _, row := range te.tools[start:end] {
+			b.WriteString("\n  ")
+			b.WriteString(renderEvidenceRow(row))
+		}
+		if end < len(te.tools) {
+			remaining := len(te.tools) - end
+			b.WriteString("\n  ")
+			b.WriteString(lipgloss.NewStyle().Foreground(colorDim).Render(
+				fmt.Sprintf("%d more…", remaining)))
+		}
+	}
+	return b.String()
+}
+
+// renderEvidenceRow renders a single evidence row.
+func renderEvidenceRow(row evidenceRow) string {
+	toolStyle := lipgloss.NewStyle().Foreground(colorTool).Bold(true)
+	targetStyle := lipgloss.NewStyle().Foreground(colorDim)
+	dimStyle := lipgloss.NewStyle().Foreground(colorDim)
+
+	var glyph string
+	switch row.glyph {
+	case "✔":
+		glyph = lipgloss.NewStyle().Foreground(colorSuccess).Render("✔")
+	case "✘":
+		glyph = lipgloss.NewStyle().Foreground(colorErrorFg).Render("✘")
+	default:
+		glyph = dimStyle.Render(row.glyph)
+	}
+
+	if row.isThought {
+		return dimStyle.Render("thought") + " " + dimStyle.Render(strings.TrimSpace(row.summary))
+	}
+
+	name := evidenceDisplayName(row.toolName)
+	line := glyph + " " + toolStyle.Render(name)
+	if row.target != "" {
+		line += " " + targetStyle.Render(row.target)
+	}
+	if row.summary != "" && !row.running {
+		line += "  " + dimStyle.Render(row.summary)
+	}
+	return line
+}
+
+// evidenceStats computes the count, category breakdown, and verification
+// status for a set of evidence rows.
+func evidenceStats(rows []evidenceRow) (count int, catBreakdown, verifyStatus string) {
+	if len(rows) == 0 {
+		return 0, "", ""
+	}
+	catCounts := map[string]int{}
+	hasWrite := false
+	hasPass := false
+	hasFail := false
+	hasVerify := false
+
+	for _, r := range rows {
+		if r.running {
+			continue
+		}
+		catCounts[r.toolName]++
+		switch r.auditKind {
+		case "write":
+			hasWrite = true
+		case "verification", "shell":
+			hasVerify = true
+			switch {
+			case strings.HasPrefix(strings.ToLower(r.outcome), "failed"):
+				hasFail = true
+			default:
+				hasPass = true
+			}
+		}
+	}
+	count = len(rows)
+
+	// Build category breakdown from the most common tool names.
+	type kv struct {
+		k string
+		v int
+	}
+	var sorted []kv
+	for k, v := range catCounts {
+		// Use display names for the breakdown.
+		display := evidenceDisplayName(k)
+		sorted = append(sorted, kv{display, v})
+	}
+	// Sort by count descending, then name.
+	for i := 0; i < len(sorted); i++ {
+		for j := i + 1; j < len(sorted); j++ {
+			if sorted[j].v > sorted[i].v || (sorted[j].v == sorted[i].v && sorted[j].k < sorted[i].k) {
+				sorted[i], sorted[j] = sorted[j], sorted[i]
+			}
+		}
+	}
+	parts := make([]string, 0, len(sorted))
+	for _, s := range sorted {
+		parts = append(parts, fmt.Sprintf("%d %s", s.v, s.k))
+	}
+	catBreakdown = strings.Join(parts, ", ")
+
+	// Verification status.
+	switch {
+	case hasVerify && hasPass && !hasFail:
+		verifyStatus = "tests passed"
+	case hasVerify && hasFail && !hasPass:
+		verifyStatus = "tests failed"
+	case hasVerify && hasPass && hasFail:
+		verifyStatus = "tests mixed"
+	case hasWrite && !hasVerify:
+		verifyStatus = "unverified"
+	}
+	return count, catBreakdown, verifyStatus
+}
+
+// formatBudgetSummary formats per-turn budget data for the summary line.
+func formatBudgetSummary(b *budgetData) string {
+	if b == nil {
+		return ""
+	}
+	parts := []string{formatTokens(b.totalTokens)}
+	if b.maxToolSteps > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d tools", b.usedToolResults, b.maxToolSteps))
+	}
+	if b.maxModelCalls > 0 {
+		parts = append(parts, fmt.Sprintf("%d/%d calls", b.usedModelCalls, b.maxModelCalls))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func formatTokens(n int) string {
+	if n >= 1000 {
+		return fmt.Sprintf("%.1fk tokens", float64(n)/1000.0)
+	}
+	return fmt.Sprintf("%d tokens", n)
+}
+
 func (m *Model) renderMessages(forceBottom bool) {
 	if !m.ready {
 		return
@@ -159,18 +464,67 @@ func (m *Model) renderMessages(forceBottom bool) {
 	defer m.logUISlowPath("ui.render_messages", start, fmt.Sprintf("messages=%d streaming=%t width=%d", len(m.messages), m.streaming, m.viewport.Width))
 
 	stickBottom := forceBottom || m.viewport.AtBottom()
+	enabled := m.cfg.TUI.EvidencePanel
+	width := max(1, m.viewport.Width)
+	msgBodyStyle := bodyStyle.Width(width)
+	const maxContainerRows = 15
 
-	msgBodyStyle := bodyStyle.Width(max(1, m.viewport.Width))
-	base := m.renderedMessageBody()
-
-	// While a turn is in flight, render a live busy affordance after the last
-	// message. The in-flight reply is NOT kept in m.messages as an empty
-	// placeholder (that caused double-rendering via the reply bookkeeping
-	// path); we draw the spinner inline instead.
-	var b strings.Builder
-	if base != "" {
-		b.WriteString(base)
+	// If evidence panel is disabled, use the existing cached-body path.
+	if !enabled {
+		base := m.renderedMessageBody()
+		var b strings.Builder
+		if base != "" {
+			b.WriteString(base)
+		}
+		if m.streaming {
+			label := assistantLabelStyle.Render("Qwen")
+			content := m.spinner.View() + " " + m.streamingBusyText()
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(label)
+			b.WriteString("\n")
+			b.WriteString(msgBodyStyle.Render(content))
+		}
+		if base == "" && !m.streaming {
+			b.WriteString(msgBodyStyle.Render("No messages yet. Type a prompt below or use /help."))
+		}
+		m.viewport.SetContent(strings.TrimRight(b.String(), "\n"))
+		if stickBottom {
+			m.viewport.GotoBottom()
+		}
+		return
 	}
+
+	// Evidence panel enabled: render messages iteratively, inserting
+	// evidence containers after each assistant message.
+	containerIdx := 0
+	var b strings.Builder
+	for i, msg := range m.messages {
+		if i > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(m.cachedMessageRender(msg, msgBodyStyle))
+
+		if msg.Role == "assistant" && strings.TrimSpace(msg.Content) != "" {
+			if containerIdx < len(m.pastTurnContainers) {
+				b.WriteString("\n")
+				c := &m.pastTurnContainers[containerIdx]
+				b.WriteString(renderCompletedContainer(c, width, maxContainerRows))
+				containerIdx++
+			}
+		}
+	}
+
+	// Active turn evidence container.
+	if m.turnEvidence != nil && len(m.turnEvidence.tools) > 0 {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(renderActiveContainer(m.turnEvidence, width, maxContainerRows, m.streaming))
+	}
+
+	// Streaming spinner below everything.
 	if m.streaming {
 		label := assistantLabelStyle.Render("Qwen")
 		content := m.spinner.View() + " " + m.streamingBusyText()
@@ -182,7 +536,7 @@ func (m *Model) renderMessages(forceBottom bool) {
 		b.WriteString(msgBodyStyle.Render(content))
 	}
 
-	if base == "" && !m.streaming {
+	if b.Len() == 0 && !m.streaming {
 		b.WriteString(msgBodyStyle.Render("No messages yet. Type a prompt below or use /help."))
 	}
 
@@ -190,6 +544,20 @@ func (m *Model) renderMessages(forceBottom bool) {
 	if stickBottom {
 		m.viewport.GotoBottom()
 	}
+}
+
+// cachedMessageRender returns the rendered body for a single message, using
+// the per-message render cache.
+func (m *Model) cachedMessageRender(msg llama.ChatMessage, msgBodyStyle lipgloss.Style) string {
+	for i, existing := range m.messages {
+		if i >= len(m.perMsgRenderCache) {
+			break
+		}
+		if existing.Role == msg.Role && existing.Content == msg.Content && m.perMsgRenderCache[i] != "" {
+			return m.perMsgRenderCache[i]
+		}
+	}
+	return m.renderSingleMessage(msg, msgBodyStyle)
 }
 
 func (m *Model) streamingBusyText() string {

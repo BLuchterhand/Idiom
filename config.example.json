@@ -72,6 +72,9 @@
     "log_file": "logs/route-classifier.log",
     "extra_args": []
   },
+  "tui": {
+    "evidence_panel": true
+  },
   "workspace": {
     "root": "",
     "cwd": "",

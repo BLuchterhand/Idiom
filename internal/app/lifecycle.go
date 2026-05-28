@@ -496,6 +496,22 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
+	case budgetLedgerMsg:
+		cmd, done := m.handleBudgetLedger(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case evidenceCollapseMsg:
+		cmd, done := m.handleEvidenceCollapse(msg)
+		if done {
+			return m, cmd
+		}
+		if cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case historyAuditMsg:
 		cmd, done := m.handleHistoryAudit(msg)
 		if done {

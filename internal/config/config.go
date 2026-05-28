@@ -18,9 +18,18 @@ type Config struct {
 	LlamaServer     LlamaServer     `json:"llama_server"`
 	Implementer     *LlamaServer    `json:"implementer,omitempty"`
 	Chat            Chat            `json:"chat"`
+	TUI             TUI             `json:"tui,omitempty"`
 	Workspace       Workspace       `json:"workspace"`
 	MCP             []MCPServer     `json:"mcp,omitempty"`
 	RouteClassifier RouteClassifier `json:"route_classifier"`
+}
+
+// TUI holds terminal-UI behaviour flags.
+type TUI struct {
+	// EvidencePanel enables collapsible evidence containers beneath each
+	// agent response in the main viewport. When false, compact mode
+	// behaviour is unchanged (spinner-only with no inline tool visibility).
+	EvidencePanel bool `json:"evidence_panel"`
 }
 
 // RouteClassifier describes the secondary (small) model used for lightweight

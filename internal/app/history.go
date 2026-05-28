@@ -136,6 +136,16 @@ func (m *Model) beginAgentHistoryTurn() {
 	m.history.selected = len(m.history.entries) - 1
 
 	m.requestHistoryPanelRender(true, true)
+
+	// Allocate the evidence container for this turn. Auto-expanded and
+	// auto-scrolling to the tail during streaming.
+	m.turnEvidence = &turnEvidence{expanded: true, autoTail: true}
+
+	// Collapse all past evidence containers so the viewport stays clean
+	// during the new turn.
+	for i := range m.pastTurnContainers {
+		m.pastTurnContainers[i].expanded = false
+	}
 }
 
 func (m *Model) activeAgentHistoryEntry() (int, *historyEntry, bool) {
@@ -165,9 +175,42 @@ func (m *Model) recordToolTraceInHistory(step int, text, intent string, running 
 		entry.auditEvents = append(entry.auditEvents, auditEvents...)
 		entry.summary = localFallbackSummary(entry)
 		m.requestHistoryPanelRender(false, true)
+	} else {
+		m.currentTurnTools = append(m.currentTurnTools, line)
+	}
+
+	// Evidence container side-effect: populate turnEvidence from the same
+	// event stream so the history panel and evidence container stay in sync.
+	if m.turnEvidence == nil {
 		return
 	}
-	m.currentTurnTools = append(m.currentTurnTools, line)
+	if running {
+		// Tool request: create a new evidence row.
+		row := evidenceRow{
+			step:      step,
+			toolName:  parseToolNameFromTrace(text),
+			target:    parseTargetFromTrace(text),
+			intent:    strings.TrimSpace(intent),
+			auditKind: strings.TrimSpace(kind),
+			running:   true,
+			glyph:     "…",
+		}
+		m.turnEvidence.tools = append(m.turnEvidence.tools, row)
+		if m.turnEvidence.autoTail {
+			m.turnEvidence.scrollOff = max(0, len(m.turnEvidence.tools)-15)
+		}
+	} else {
+		// Tool result: update the existing row by step.
+		for i := range m.turnEvidence.tools {
+			if m.turnEvidence.tools[i].step == step && m.turnEvidence.tools[i].running {
+				m.turnEvidence.tools[i].outcome = strings.TrimSpace(outcome)
+				m.turnEvidence.tools[i].summary = line
+				m.turnEvidence.tools[i].running = false
+				m.turnEvidence.tools[i].glyph = resolveEvidenceGlyph(outcome, false)
+				break
+			}
+		}
+	}
 }
 
 func (entry *historyEntry) upsertToolCall(step int, line, intent string, running bool, kind string, outcome string) {
@@ -392,6 +435,49 @@ func historyAuditSummary(events []historyAuditEvent) string {
 		return kind + ": " + label
 	}
 	return ""
+}
+
+// resolveEvidenceGlyph maps a tool result outcome string to a display glyph.
+func resolveEvidenceGlyph(outcome string, hasError bool) string {
+	if hasError {
+		return "✘"
+	}
+	o := strings.ToLower(strings.TrimSpace(outcome))
+	switch {
+	case o == "":
+		return "✔"
+	case strings.HasPrefix(o, "failed"):
+		return "✘"
+	case strings.HasPrefix(o, "completed"), strings.HasPrefix(o, "ok"):
+		return "✔"
+	case strings.HasPrefix(o, "denied"), strings.HasPrefix(o, "skipped"):
+		return "◌"
+	default:
+		return "✔"
+	}
+}
+
+// parseToolNameFromTrace extracts the tool name from a toolTraceMsg text line.
+// Tool trace lines have the form "tool_name | running ..." or "tool_name | result ...".
+func parseToolNameFromTrace(text string) string {
+	text = strings.TrimSpace(text)
+	if idx := strings.Index(text, " | "); idx > 0 {
+		return strings.TrimSpace(text[:idx])
+	}
+	return text
+}
+
+// parseTargetFromTrace extracts the target (path, command, etc.) from a
+// toolTraceMsg text line. The target follows " | running " or " | ".
+func parseTargetFromTrace(text string) string {
+	text = strings.TrimSpace(text)
+	if idx := strings.Index(text, " | running "); idx > 0 {
+		return strings.TrimSpace(text[idx+len(" | running "):])
+	}
+	if idx := strings.Index(text, " | "); idx > 0 {
+		return strings.TrimSpace(text[idx+len(" | "):])
+	}
+	return text
 }
 
 func collapseWhitespace(s string) string {

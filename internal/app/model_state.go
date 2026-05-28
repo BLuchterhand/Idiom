@@ -170,6 +170,9 @@ type Model struct {
 	composedPromptCacheKey         string
 	activeProfiles                 []string
 	streaming                      bool
+	turnEvidence       *turnEvidence
+	pastTurnContainers []completedEvidence
+	lastBudget         *budgetData
 	bootingServer                  bool
 	serverUp                       bool
 	managedServer                  bool
@@ -284,6 +287,65 @@ type planRefreshMsg struct{}
 type planPhaseMsg struct {
 	phase  string
 	detail string
+}
+
+// ── Evidence container types ─────────────────────────────────────────────────
+
+// budgetLedgerMsg carries per-turn budget data from logRunEvent to the UI
+// event loop for the evidence container summary line.
+type budgetLedgerMsg struct {
+	totalTokens     int
+	usedToolResults int
+	maxToolSteps    int
+	usedModelCalls  int
+	maxModelCalls   int
+	lane            string
+}
+
+// budgetData is the stored form of budgetLedgerMsg, attached to a
+// completedEvidence container after streamDoneMsg.
+type budgetData struct {
+	totalTokens     int
+	usedToolResults int
+	maxToolSteps    int
+	usedModelCalls  int
+	maxModelCalls   int
+	lane            string
+}
+
+// turnEvidence tracks the active turn's live evidence container.
+type turnEvidence struct {
+	tools         []evidenceRow
+	expanded      bool
+	userCollapsed bool
+	finalized     bool
+	scrollOff     int
+	autoTail      bool
+}
+
+// completedEvidence stores a finished turn's evidence container with full
+// tool rows so past containers remain independently expandable and scrollable.
+type completedEvidence struct {
+	tools     []evidenceRow
+	summary   string
+	expanded  bool
+	scrollOff int
+	budget    *budgetData
+}
+
+// evidenceRow is a single step in the evidence container — one tool call or
+// one thinking block.
+type evidenceRow struct {
+	step      int
+	toolName  string
+	target    string
+	intent    string
+	auditKind string
+	outcome   string
+	summary   string
+	running   bool
+	glyph     string
+	isThought bool
 }
 
 func formatPlanPhaseText(phase, detail string) string {
@@ -1187,6 +1249,17 @@ func (m *Model) logRunEvent(event agent.RunEvent) {
 					StopReason:               payload.StopReason,
 					BudgetExhausted:          payload.BudgetExhausted,
 				})
+			}
+
+			// Emit budget data to the UI event loop for the evidence
+			// container summary line.
+			m.events <- budgetLedgerMsg{
+				totalTokens:     payload.TotalTokens,
+				usedToolResults: payload.UsedToolResults,
+				maxToolSteps:    payload.MaxToolSteps,
+				usedModelCalls:  payload.UsedModelCalls,
+				maxModelCalls:   payload.MaxModelCalls,
+				lane:            payload.Lane,
 			}
 		}
 		return
