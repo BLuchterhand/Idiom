@@ -771,6 +771,11 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
+			// Blank line after tool fields ends this tool call
+			// so a second tool: block later is ignored.
+			if sawKeyValue && strings.TrimSpace(values["tool"]) != "" {
+				break
+			}
 			continue
 		}
 		key, value, ok := strings.Cut(line, ":")
@@ -785,6 +790,10 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		value = strings.Trim(strings.TrimSpace(value), `"'`)
 		if key == "" || value == "" {
 			return workspace.ToolRequest{}, false, true
+		}
+		// Stop at a second tool: line — parse only the first.
+		if key == "tool" && strings.TrimSpace(values["tool"]) != "" {
+			break
 		}
 		if !keyValueToolRequestFieldAllowed(key) {
 			return workspace.ToolRequest{}, false, true
@@ -823,6 +832,30 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		Resolution:      values["resolution"],
 		NamedGap:        values["named_gap"],
 		WhyNotAnswering: values["why_not_answering"],
+		Purpose:         values["purpose"],
+		Command:         values["command"],
+		Description:     values["description"],
+		Content:         values["content"],
+		Prompt:          values["prompt"],
+		Agent:           values["agent"],
+		Workdir:         values["workdir"],
+		Handle:          values["handle"],
+		Root:            values["root"],
+		Destination:     values["destination"],
+		Status:          values["status"],
+		PacketPath:      values["packet_path"],
+		OutputPath:      values["output_path"],
+		Component:       values["component"],
+		Category:        values["category"],
+		SessionID:       values["session_id"],
+		Confidence:      values["confidence"],
+		Severity:        values["severity"],
+		SuggestedFix:    values["suggested_fix"],
+		Expected:        values["expected"],
+		Observed:        values["observed"],
+		Workaround:      values["workaround"],
+		Impact:          values["impact"],
+		TaskID:          values["task_id"],
 	}
 	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Operation) != "" {
 		req.Capability = req.Operation
@@ -913,7 +946,10 @@ func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
 	case "tool", "id", "path", "file", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
 		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
-		"include_evidence", "include_source", "include_files", "refresh", "lines":
+		"include_evidence", "include_source", "include_files", "refresh", "lines",
+		"purpose", "command", "description", "content", "prompt", "agent", "workdir", "handle", "root", "destination", "status",
+		"packet_path", "output_path", "component", "category", "session_id", "confidence", "severity", "suggested_fix",
+		"expected", "observed", "workaround", "impact", "task_id", "recursive":
 		return true
 	default:
 		return false
