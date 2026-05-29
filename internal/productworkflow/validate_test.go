@@ -3403,3 +3403,105 @@ func repoRoot(t *testing.T) string {
 		dir = next
 	}
 }
+
+func fenceOpen() string  { return "`" + "`" + "`" }
+func fenceClose() string { return "`" + "`" + "`" }
+
+func fenced(inner string) string {
+	return fenceOpen() + "markdown\n" + inner + "\n" + fenceClose()
+}
+
+func fencedPlain(inner string) string {
+	return fenceOpen() + "\n" + inner + "\n" + fenceClose()
+}
+
+const prdBody = `---
+schema_version: idiom.prd.v1
+prd_id: prd-test
+status: draft
+task_id: task-test
+created_at: 2026-05-17T00:00:00Z
+---
+
+# PRD: Test
+
+## Requirements
+
+### REQ-TEST-001
+
+- **id**: REQ-TEST-001
+- **priority**: P1
+- **statement**: Test requirement
+- **owner_alignment**: team
+- **testability**: automated
+- **metric**: coverage > 80%
+- **evidence_refs**: [EV-001]
+- **tdd_obligations**: [TDD-001]
+- **open_questions**: []
+`
+
+func TestUnwrapSingleMarkdownFence(t *testing.T) {
+	input := fenced(prdBody)
+	result := UnwrapSingleMarkdownFence(input)
+	expected := strings.TrimSpace(prdBody)
+	if result != expected {
+		t.Fatalf("expected unwrapped PRD content, got: %s", result)
+	}
+}
+
+func TestUnwrapSingleMarkdownFenceNoFenceReturnsOriginal(t *testing.T) {
+	result := UnwrapSingleMarkdownFence(prdBody)
+	if result != prdBody {
+		t.Fatalf("expected unchanged input, got: %s", result)
+	}
+}
+
+func TestUnwrapSingleMarkdownFenceMissingClosingReturnsOriginal(t *testing.T) {
+	input := fenced(prdBody)
+	input = input[:len(input)-len(fenceClose())-1]
+	result := UnwrapSingleMarkdownFence(input)
+	if result != input {
+		t.Fatalf("expected unchanged input for unclosed fence, got: %s", result)
+	}
+}
+
+func TestUnwrapSingleMarkdownFenceEmptyBodyReturnsOriginal(t *testing.T) {
+	input := fenceOpen() + "markdown\n\n" + fenceClose()
+	result := UnwrapSingleMarkdownFence(input)
+	if result != input {
+		t.Fatalf("expected unchanged input for empty fence body, got: %s", result)
+	}
+}
+
+func TestParsePRDMarkdownWithFenceWrappedInput(t *testing.T) {
+	prd := fenced(prdBody)
+	unwrapped := UnwrapSingleMarkdownFence(prd)
+	if unwrapped == prd {
+		t.Fatal("expected fence to be unwrapped")
+	}
+	doc, err := ParsePRDMarkdown([]byte(unwrapped))
+	if err != nil {
+		t.Fatalf("expected fence-wrapped PRD to parse after unwrapping: %v", err)
+	}
+	if doc.FrontMatter.PRDID != "prd-test" {
+		t.Fatalf("expected prd_id prd-test, got %q", doc.FrontMatter.PRDID)
+	}
+	if len(doc.Requirements) != 1 {
+		t.Fatalf("expected 1 requirement, got %d", len(doc.Requirements))
+	}
+}
+
+func TestParsePRDMarkdownWithPlainCodeFence(t *testing.T) {
+	prd := fencedPlain(prdBody)
+	unwrapped := UnwrapSingleMarkdownFence(prd)
+	if unwrapped == prd {
+		t.Fatal("expected unlabeled fence to be unwrapped")
+	}
+	doc, err := ParsePRDMarkdown([]byte(unwrapped))
+	if err != nil {
+		t.Fatalf("expected fence-wrapped PRD (unlabeled) to parse after unwrapping: %v", err)
+	}
+	if doc.FrontMatter.PRDID != "prd-test" {
+		t.Fatalf("expected prd_id prd-test, got %q", doc.FrontMatter.PRDID)
+	}
+}
