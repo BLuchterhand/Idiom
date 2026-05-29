@@ -84,3 +84,32 @@ func TestQwenKeyValuePurposeField(t *testing.T) {
 		t.Fatalf("unexpected fields: task=%q mode=%q limit=%d", result.Request.Task, result.Request.Mode, result.Request.Limit)
 	}
 }
+
+// TestQwenKeyValuePromptWithColon verifies that a prompt value
+// containing a colon (e.g. "Evidence": ...) is handled gracefully.
+// Unparseable continuation lines after the first colon are skipped
+// rather than causing unsafe_to_infer.
+func TestQwenKeyValuePromptWithColon(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: task",
+			"agent: explorer",
+			"mode: read_only",
+			`prompt: Inspect the idiom harness to define "Evidence": where it is declared`,
+			"and how it is consumed",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key-value tool request to normalize despite continuation lines")
+	}
+	if result.Request.Tool != "task" || result.Request.Agent != "explorer" || result.Request.Mode != "read_only" {
+		t.Fatalf("unexpected request: tool=%q agent=%q mode=%q", result.Request.Tool, result.Request.Agent, result.Request.Mode)
+	}
+	if !strings.Contains(result.Request.Prompt, `Inspect the idiom harness to define "Evidence"`) {
+		t.Fatalf("prompt not captured correctly: %q", result.Request.Prompt)
+	}
+}

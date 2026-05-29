@@ -781,7 +781,9 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			if sawKeyValue {
-				return workspace.ToolRequest{}, false, true
+				// Continuation line (e.g. prompt value with a colon).
+				// Skip it — we already have enough tool fields.
+				continue
 			}
 			return workspace.ToolRequest{}, false, false
 		}
