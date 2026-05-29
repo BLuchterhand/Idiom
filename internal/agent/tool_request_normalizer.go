@@ -621,22 +621,22 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return workspace.ToolRequest{}, false, false
+		return workspace.ToolRequest{}, false, true
 	}
 	if strings.Contains(trimmed, "\n") {
 		if strings.Contains(trimmed, "(") && keyValueLikeText(trimmed) {
-			return workspace.ToolRequest{}, false, true
+			return workspace.ToolRequest{}, false, false
 		}
 		return workspace.ToolRequest{}, false, false
 	}
 	key, body, ok := strings.Cut(trimmed, ":")
 	if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
-		return workspace.ToolRequest{}, false, false
+		return workspace.ToolRequest{}, false, true
 	}
 	body = strings.TrimSpace(body)
 	open := strings.Index(body, "(")
 	if open < 0 {
-		return workspace.ToolRequest{}, false, false
+		return workspace.ToolRequest{}, false, true
 	}
 	if !strings.HasSuffix(body, ")") {
 		return workspace.ToolRequest{}, false, true
@@ -763,7 +763,7 @@ func toolRequestSyntaxIdentifier(value string) bool {
 func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return workspace.ToolRequest{}, false, false
+		return workspace.ToolRequest{}, false, true
 	}
 	lines := strings.Split(trimmed, "\n")
 	values := map[string]string{}
@@ -785,7 +785,7 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 				// Skip it — we already have enough tool fields.
 				continue
 			}
-			return workspace.ToolRequest{}, false, false
+			return workspace.ToolRequest{}, false, true
 		}
 		sawKeyValue = true
 		key = strings.ToLower(strings.TrimSpace(key))
@@ -803,7 +803,7 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		values[key] = value
 	}
 	if !sawKeyValue {
-		return workspace.ToolRequest{}, false, false
+		return workspace.ToolRequest{}, false, true
 	}
 	tool := strings.TrimSpace(values["tool"])
 	if tool == "" {

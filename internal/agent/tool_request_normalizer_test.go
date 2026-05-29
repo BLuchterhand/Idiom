@@ -293,19 +293,10 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSON(t *testing.T) {
 		}, "\n"),
 	})
 
-	if result.ParseErr != nil {
-		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	if result.OK {
+		t.Fatalf("function-call-like multi-line text should not normalize: %#v", result.Request)
 	}
-	if !result.OK {
-		t.Fatal("expected key/value args JSON tool request to normalize")
-	}
-	if result.Request.Tool != "code_navigate" ||
-		result.Request.Capability != "definition" ||
-		result.Request.Path != "cmd/idiom/audit.go" ||
-		result.Request.Pattern != "RunAudit" {
-		t.Fatalf("unexpected request: %#v", result.Request)
-	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -318,7 +309,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSONRejectsToolMismatch(t *testin
 	if result.OK {
 		t.Fatalf("mismatched key/value args request must not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -430,7 +421,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONEdit(t *testing.T) 
 	if result.OK {
 		t.Fatalf("unsafe missing-tool edit shape must not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportTextual {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -443,7 +434,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONShell(t *testing.T)
 	if result.OK {
 		t.Fatalf("unsafe missing-tool shell shape must not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportTextual {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -456,7 +447,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferUnsafeBareJSONTask(t *testing.T) 
 	if result.OK {
 		t.Fatalf("unsafe missing-tool task shape must not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportTextual {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -516,7 +507,7 @@ func TestNormalizeToolRequestSyntaxMalformedOutputFixtureMatrix(t *testing.T) {
 			content:   `{"path":"README.md","old_text":"old","new_text":"new"}`,
 			wantOK:    false,
 			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-			transport: toolRequestNormalizerTransportTextual,
+			transport: toolRequestNormalizerTransportFunctionCall,
 		},
 		{
 			name:      "unsafe function-call edit shape rejected",
@@ -539,7 +530,7 @@ func TestNormalizeToolRequestSyntaxMalformedOutputFixtureMatrix(t *testing.T) {
 			content:   `{"command":"go test ./..."}`,
 			wantOK:    false,
 			outcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
-			transport: toolRequestNormalizerTransportTextual,
+			transport: toolRequestNormalizerTransportFunctionCall,
 		},
 	}
 
