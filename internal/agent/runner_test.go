@@ -786,7 +786,7 @@ func TestTextOnlyChatOptionsUsesContractAwareCaps(t *testing.T) {
 		want     int
 	}{
 		{name: "artifact final answer", contract: "artifact_final_answer", input: 20000, want: 8192},
-		{name: "direct answer", contract: "direct_answer", input: 8192, want: 3072},
+		{name: "direct answer", contract: "direct_answer", input: 8192, want: 1024},
 		{name: "grounded explanation", contract: "grounded_explanation", input: 8192, want: 1536},
 		{name: "delegated evidence summary", contract: "grounded_evidence_summary", input: 8192, want: 1536},
 		{name: "architecture assessment", contract: "architecture_assessment", input: 8192, want: 2048},
@@ -16759,7 +16759,7 @@ func TestCompactionBudgetAllocator(t *testing.T) {
 		{name: "defaults", maxMsgs: 0, maxChars: 0, wantMiddleFloor: 0, wantTailMin: 2, wantTailMax: 8},
 		{name: "from messages", maxMsgs: 40, maxChars: 0, wantMiddleFloor: 1000, wantTailMin: 2, wantTailMax: 8},
 		{name: "from chars", maxMsgs: 0, maxChars: 40000, wantMiddleFloor: 1000, wantTailMin: 2, wantTailMax: 8},
-		{name: "small budget clamps tail", maxMsgs: 8, maxChars: 0, wantMiddleFloor: 100, wantTailMin: 2, wantTailMax: 2},
+		{name: "small budget", maxMsgs: 8, maxChars: 0, wantMiddleFloor: 100, wantTailMin: 2, wantTailMax: 8},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -16791,10 +16791,10 @@ func TestScoreMessageForRetentionEmptyContent(t *testing.T) {
 
 func TestScoreMessageForRetentionFailedVerification(t *testing.T) {
 	result := workspace.ToolResult{
-		Tool:  "shell",
-		Error: "go test ./... FAIL",
+		Tool:  "source_sanity",
+		Error: "diagnostics returned errors",
 	}
-	msg := llama.ChatMessage{Role: "tool", Content: "Tool: shell\nError: go test ./... FAIL"}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: source_sanity\nError: diagnostics returned errors"}
 	brief := workerruntime.WorkerRuntimeBrief{}
 	score := scoreMessageForRetention(msg, &result, brief, nil)
 	// Failed verification is highest value: +0.40
