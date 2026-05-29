@@ -3179,7 +3179,7 @@ func (m *Model) applyExecutorPromptRoute(ctx context.Context, routeLabel string,
 	m.plannerSpec = m.executorSpec
 	m.modelID = resolveModelID(m.executorSpec, m.executorSpec.Model)
 	m.modelDisplayID = resolveModelDisplayID(m.executorSpec, m.executorSpec.Model)
-	m.modelThinkingFloor = m.executorSpec.IsHosted()
+	m.modelThinkingFloor = m.executorSpec.IsHosted() || m.executorSpec.IsMLX()
 	m.invalidateComposedPrompt()
 	m.logMessage("dispatch_route", fmt.Sprintf("%s using executor model %s", routeLabel, strings.TrimSpace(m.activeModelDisplayID())))
 
@@ -3778,6 +3778,7 @@ type implementationDispatchPlanExecuteFailure struct {
 	Result        planexecute.RunResult
 	Stdout        string
 	Stderr        string
+	PlannerBlockedChainDepth int
 }
 
 func implementationDispatchFailureKindToEditSetObligation(kind string) (planexecute.EditSetObligationKind, bool) {
@@ -3813,6 +3814,14 @@ func implementationDispatchShouldChainMissingEditRecovery(result planexecute.Run
 }
 
 func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure implementationDispatchPlanExecuteFailure) (string, bool, error) {
+	const maxPlannerBlockedChainDepth = 3
+	if failure.PlannerBlockedChainDepth >= maxPlannerBlockedChainDepth {
+		m.logMessage("dispatch_recovery", fmt.Sprintf("planner_blocked chain depth %d reached limit %d; surfacing to user", failure.PlannerBlockedChainDepth, maxPlannerBlockedChainDepth))
+		return humanPlanExecutePlannerBlockedMessage(failure, implementationDispatchRecoveryDecision{
+			Decision: "surface",
+			Reason:   fmt.Sprintf("plan-execute retry chain depth %d exceeded; surfacing blocker to user", failure.PlannerBlockedChainDepth),
+		}), true, nil
+	}
 	if answer, ok := humanPlanExecuteSourceSatisfiedCoverageBlockerMessage(failure); ok {
 		m.logMessage("dispatch_recovery", "surfacing source-satisfied coverage mismatch without retry")
 		return answer, true, nil
@@ -3854,6 +3863,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryFailure.Stderr = retryErr.String()
 		if implementationDispatchShouldChainMissingEditRecovery(retryResult) {
 			m.logMessage("dispatch_recovery", fmt.Sprintf("missing-test retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		if implementationDispatchPlanExecuteRunFailureIs(retryResult, implementationDispatchFailureExecutorFailed) {
@@ -3904,6 +3914,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryFailure.Stderr = retryErr.String()
 		if implementationDispatchShouldChainMissingEditRecovery(retryResult) {
 			m.logMessage("dispatch_recovery", fmt.Sprintf("missing-implementation retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		if implementationDispatchPlanExecuteRunFailureIs(retryResult, implementationDispatchFailureExecutorFailed) {
@@ -3949,6 +3960,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryFailure.Stderr = retryErr.String()
 		if implementationDispatchShouldChainMissingEditRecovery(retryResult) {
 			m.logMessage("dispatch_recovery", fmt.Sprintf("discovered-scope retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
@@ -3981,10 +3993,12 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryFailure.Stderr = retryErr.String()
 		if implementationDispatchShouldChainMissingEditRecovery(retryResult) {
 			m.logMessage("dispatch_recovery", fmt.Sprintf("source-read retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		if planExecutePlannerBlockedCanRetryOnActiveModel(retryFailure) {
 			m.logMessage("dispatch_recovery", "source-read retry hit repeated submit_plan gate; chaining to active-model fallback")
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
@@ -4012,6 +4026,7 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryFailure.Stderr = retryErr.String()
 		if implementationDispatchShouldChainMissingEditRecovery(retryResult) {
 			m.logMessage("dispatch_recovery", fmt.Sprintf("active-model retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{
@@ -4048,10 +4063,12 @@ func (m *Model) handlePlanExecutePlannerBlocked(ctx context.Context, failure imp
 		retryFailure.Stderr = retryErr.String()
 		if implementationDispatchShouldChainMissingEditRecovery(retryResult) {
 			m.logMessage("dispatch_recovery", fmt.Sprintf("planner-blocked retry produced %s; chaining missing-edit recovery", strings.TrimSpace(retryResult.FailureKind)))
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		if planExecutePlannerBlockedCanRetryOnActiveModel(retryFailure) {
 			m.logMessage("dispatch_recovery", "planner-blocked retry hit repeated submit_plan gate; chaining to active-model fallback")
+			retryFailure.PlannerBlockedChainDepth = failure.PlannerBlockedChainDepth + 1
 			return m.handlePlanExecutePlannerBlocked(ctx, retryFailure)
 		}
 		return humanPlanExecutePlannerBlockedMessage(retryFailure, implementationDispatchRecoveryDecision{

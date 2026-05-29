@@ -44,7 +44,10 @@ func (m *Model) applyModelSwap(name string) {
 	spec := backendsModelToLlamaServer(model, m.cfg.LlamaServer)
 	m.plannerSpec = spec
 	m.cfg.LlamaServer = spec
-	m.modelThinkingFloor = spec.IsHosted()
+	// MLX backends running thinking-capable models (e.g. Qwen 3.6) need
+	// the thinking floor to prevent prompt_routing from disabling thinking
+	// for read-only contracts like architecture_assessment.
+	m.modelThinkingFloor = spec.IsHosted() || spec.IsMLX()
 	m.maxTokensOverride = model.MaxTokens
 	m.modelID = resolveModelID(spec, spec.Model)
 	m.modelDisplayID = modelSwapDisplayID(model, spec, name)
