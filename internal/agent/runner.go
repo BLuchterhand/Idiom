@@ -3539,23 +3539,72 @@ func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, poli
 	}
 
 	prefixEnd := runnerCompactionPrefixEnd(current)
-	tailCount := 6
-	if maxTail := len(current) - prefixEnd - 2; maxTail < tailCount {
-		tailCount = maxTail
-	}
-	if tailCount < 2 {
-		tailCount = 2
-	}
-	tailStart := len(current) - tailCount
+	middleBudget, tailFloor := compactionBudget(policy)
+
+	// Always keep a tail floor for conversation continuity.
+	tailStart := len(current) - tailFloor
 	if tailStart < prefixEnd {
 		tailStart = prefixEnd
 	}
+
+	// Score middle messages (between prefix and tail floor) for evidence value.
+	middleEnd := tailStart
+	if middleEnd <= prefixEnd {
+		middleEnd = prefixEnd
+	}
+	type scoredMsg struct {
+		msg     llama.ChatMessage
+		origIdx int
+		score   float64
+	}
+	var scored []scoredMsg
+	usedChars := 0
+	for i := prefixEnd; i < middleEnd; i++ {
+		msg := current[i]
+		resultIdx := resultIndexForMessage(current, i, len(results))
+		var result *workspace.ToolResult
+		if resultIdx >= 0 {
+			result = &results[resultIdx]
+		}
+		s := scoreMessageForRetention(msg, result, r.RuntimeBrief, results)
+		scored = append(scored, scoredMsg{msg: msg, origIdx: i, score: s})
+	}
+	// Sort by score descending; tie-break by position (earlier first).
+	sort.SliceStable(scored, func(i, j int) bool {
+		if scored[i].score != scored[j].score {
+			return scored[i].score > scored[j].score
+		}
+		return scored[i].origIdx < scored[j].origIdx
+	})
+
+	// Keep scored messages verbatim up to the evidence budget.
+	keptMiddle := make(map[int]bool)
+	const minScoreThreshold = 0.15
+	for _, sm := range scored {
+		if sm.score < minScoreThreshold {
+			break
+		}
+		chars := msgCharCount(sm.msg)
+		if usedChars+chars > middleBudget {
+			break
+		}
+		usedChars += chars
+		keptMiddle[sm.origIdx] = true
+	}
+
 	summary := llama.ChatMessage{
 		Role:    "system",
 		Content: r.runnerCompactionSummary(policy, ledger, results),
 	}
-	compacted := make([]llama.ChatMessage, 0, prefixEnd+1+len(current)-tailStart)
+
+	// Build compacted: prefix + kept middle + summary + tail floor.
+	compacted := make([]llama.ChatMessage, 0, prefixEnd+len(keptMiddle)+1+tailFloor)
 	compacted = append(compacted, current[:prefixEnd]...)
+	for i := prefixEnd; i < middleEnd; i++ {
+		if keptMiddle[i] {
+			compacted = append(compacted, current[i])
+		}
+	}
 	compacted = append(compacted, summary)
 	compacted = append(compacted, current[tailStart:]...)
 	if len(compacted) >= len(current) {
@@ -3570,7 +3619,7 @@ func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, poli
 		MaxChars:         policy.MaxContextChars,
 		PinnedPaths:      runnerPinnedPathsForBrief(r.RuntimeBrief, results, 8),
 		PinnedMemoryKind: "runner_task_state",
-		Strategy:         "retain_system_and_user_objective_with_task_ledger_recent_tools_and_blockers",
+		Strategy:         "retain_system_and_user_objective_with_evidence_weighted_middle",
 	})
 	return true
 }
@@ -3673,6 +3722,115 @@ func chatMessagesCharCount(messages []llama.ChatMessage) int {
 	}
 	return total
 }
+
+func msgCharCount(msg llama.ChatMessage) int {
+	return len(msg.Role) + len(msg.Content) + len(msg.ReasoningContent)
+}
+
+func compactionBudget(policy RunPolicy) (middleBudget int, tailFloor int) {
+	const estCharsPerMsg = 500
+	totalBudget := policy.MaxContextChars
+	if totalBudget <= 0 && policy.MaxContextMessages > 0 {
+		totalBudget = policy.MaxContextMessages * estCharsPerMsg
+	}
+	if totalBudget <= 0 {
+		totalBudget = 40 * estCharsPerMsg
+	}
+	// 30% middle evidence, 50% tail continuity, 20% buffer.
+	middleBudget = totalBudget * 30 / 100
+	tailChars := totalBudget * 50 / 100
+	tailFloor = tailChars / estCharsPerMsg
+	if tailFloor < 2 {
+		tailFloor = 2
+	}
+	if tailFloor > 8 {
+		tailFloor = 8
+	}
+	return middleBudget, tailFloor
+}
+
+func resultIndexForMessage(messages []llama.ChatMessage, msgIndex int, resultsLen int) int {
+	if resultsLen == 0 {
+		return -1
+	}
+	toolResultCount := 0
+	for i := 0; i <= msgIndex && i < len(messages); i++ {
+		role := strings.ToLower(strings.TrimSpace(messages[i].Role))
+		if role == "tool" || role == "tool_result" {
+			toolResultCount++
+		}
+		if role == "system" && strings.Contains(messages[i].Content, "Tool:") {
+			toolResultCount++
+		}
+	}
+	idx := toolResultCount - 1
+	if idx >= 0 && idx < resultsLen {
+		return idx
+	}
+	return -1
+}
+
+// scoreMessageForRetention scores a message in the compaction middle range.
+// Returns 0.0-1.0 where higher means "keep this verbatim."
+// Weights reflect evidence hierarchy (verification > edit paths > evidence paths > tool type),
+// not tuned constants. Tune only when eval runs show systematic quality degradation.
+func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief, allResults []workspace.ToolResult) float64 {
+	if strings.TrimSpace(msg.Content) == "" {
+		return 0.0
+	}
+	var score float64
+	if result != nil {
+		if strings.TrimSpace(result.Error) != "" {
+			if resultIsVerificationAttempt(*result) {
+				score += 0.40
+			} else {
+				score += 0.10
+			}
+		}
+		if workspace.IsWorkspaceWriteTool(strings.TrimSpace(result.Tool)) && strings.TrimSpace(result.Error) == "" {
+			score += 0.20
+		}
+		tool := strings.TrimSpace(result.Tool)
+		if tool == "read_file" || tool == "code_navigate" || tool == "source_sanity" ||
+			tool == "go_read_symbol" || tool == "go_extract_body" ||
+			tool == "cpp_read_symbol" || tool == "cpp_extract_body" ||
+			tool == "python_read_symbol" || tool == "python_extract_body" {
+			score += 0.10
+		}
+	}
+	content := strings.ToLower(msg.Content)
+	editPaths := append([]string{}, brief.RequiredEditPaths...)
+	editPaths = append(editPaths, mapKeys(changedPathsFromToolResults(allResults))...)
+	editScore := 0.0
+	for _, path := range editPaths {
+		normalized := normalizeRunnerPath(path)
+		if normalized != "" && strings.Contains(content, strings.ToLower(normalized)) {
+			editScore += 0.25
+			break
+		}
+	}
+	if editScore > 0.50 {
+		editScore = 0.50
+	}
+	score += editScore
+	evidenceScore := 0.0
+	for _, path := range brief.EvidencePaths {
+		normalized := normalizeRunnerPath(path)
+		if normalized != "" && strings.Contains(content, strings.ToLower(normalized)) {
+			evidenceScore += 0.15
+			break
+		}
+	}
+	if evidenceScore > 0.30 {
+		evidenceScore = 0.30
+	}
+	score += evidenceScore
+	if score > 1.0 {
+		score = 1.0
+	}
+	return score
+}
+
 
 func tailToolResults(results []workspace.ToolResult, max int) []workspace.ToolResult {
 	if max <= 0 || len(results) <= max {
