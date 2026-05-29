@@ -32,7 +32,7 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"real required or selected path",
 		"never placeholders",
 		"Required `submit_plan` coverage for this run: 2 required path(s)",
-		"After every existing required path has satisfied its source-body obligation, your first successful `submit_plan.edits` array must include at least one real edit for every path above",
+		"After every existing required path has satisfied its source-body obligation (new files satisfy this automatically",
 		"Do not treat a source read as plan coverage",
 	} {
 		if !strings.Contains(got, want) {

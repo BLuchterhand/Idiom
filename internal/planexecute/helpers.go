@@ -167,10 +167,11 @@ func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string,
 		"Treat the brief body and any preloaded Context Pack below as the planner target packet.",
 		"",
 		"Visible response protocol — choose exactly one action per turn:",
-		"1. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
-		"2. Once every existing required_edit_path has satisfied its source-body obligation, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
-		"3. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path.",
-		"4. If the plan cannot be produced from available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.",
+		"1. If a required_edit_path does not exist on disk, it is a new file — do not attempt to read or search for it. Its source-body obligation is satisfied immediately. Proceed directly to a terminal outcome: submit_plan using replace_all:true and new_text, Decision: source-satisfied, or <<QUESTION>>:.",
+		"2. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
+		"3. Once every existing required_edit_path has satisfied its source-body obligation, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
+		"4. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path.",
+		"5. If the plan cannot be produced from available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.",
 		"",
 		"Plan artifact rules:",
 		"1. Per-edit write capabilities are blocked in the planner phase; the available write contract is `submit_plan`.",
@@ -270,7 +271,7 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
-	b.WriteString("After every existing required path has satisfied its source-body obligation, your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	b.WriteString("After every existing required path has satisfied its source-body obligation (new files satisfy this automatically — do not read them), your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
 	return strings.TrimSpace(b.String())
 }
 

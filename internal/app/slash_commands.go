@@ -40,6 +40,7 @@ var slashCommands = map[string]slashCommandFunc{
 	"/server":           (*Model).slashServer,
 	"/profile":          (*Model).slashProfile,
 	"/model":            (*Model).slashModel,
+	"/product-create":  (*Model).slashProductCreate,
 	"/product-status":   (*Model).slashProductStatus,
 	"/product-continue": (*Model).slashProductContinue,
 	"/product-approve":  (*Model).slashProductApprove,
@@ -51,7 +52,7 @@ func (m *Model) slashQuit(_ string, _ []string) bool {
 }
 
 func (m *Model) slashHelp(_ string, _ []string) bool {
-	m.status = "Commands: /save /clear /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
+	m.status = "Commands: /save /clear /compact /system <text> /temp <value> /preset [list|name] /server <start|stop|restart|status> /profile <list|add|remove> /product-create [--effort-root <path>] /product-status [--effort-root <path>] /product-continue <action> [--effort-root <path>] /product-approve [--effort-root <path>] /recover-status [--packet <path>|<path>] /context /workspace /pwd /debuglog [mode redacted|full] /trace [compact|detail] /mode [build|plan|general] /approve /deny /undo /panel /plan /feature-planner <objective> /implement <objective> /plan-execute <objective> /resume [id] /help | Ctrl+T cycles panel tabs | transcript: PgUp/PgDn or mouse wheel"
 	return false
 }
 

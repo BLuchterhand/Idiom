@@ -3505,3 +3505,76 @@ func TestParsePRDMarkdownWithPlainCodeFence(t *testing.T) {
 		t.Fatalf("expected prd_id prd-test, got %q", doc.FrontMatter.PRDID)
 	}
 }
+
+func TestTryParseADRMarkdown(t *testing.T) {
+	adr := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-TEST
+status: draft
+prd_refs:
+  - REQ-1
+evidence_refs:
+  - EV-1
+tdd_obligations:
+  - TDD-1
+coverage_tier: unit
+---
+
+# ADR-TEST: Test
+
+## Context
+Test.
+
+## Decision
+Test.
+
+## Alternatives Considered
+None.
+
+## Evidence
+- EV-1: Test.
+
+## Consequences
+None.
+
+## Compatibility and Migration
+Compatible.
+
+## TDD Obligations
+- TDD-1: Test.
+
+## Rollback
+Revert.
+
+## Open Questions
+None.
+`
+	doc, repaired, err := TryParseADRMarkdown(adr)
+	if err != nil {
+		t.Fatalf("TryParseADRMarkdown: %v", err)
+	}
+	if doc.FrontMatter.ADRID != "ADR-TEST" {
+		t.Fatalf("expected ADR-TEST, got %q", doc.FrontMatter.ADRID)
+	}
+	if repaired != strings.TrimSpace(adr) {
+		t.Fatalf("expected repaired text to match input, got: %q vs %q", repaired, strings.TrimSpace(adr))
+	}
+}
+
+func TestTryParseADRMarkdownWithFence(t *testing.T) {
+	fenced := "```markdown\n---\nschema_version: idiom.adr.v1\nadr_id: ADR-TEST\nstatus: draft\nprd_refs:\n  - REQ-1\nevidence_refs:\n  - EV-1\ntdd_obligations:\n  - TDD-1\ncoverage_tier: unit\n---\n\n# ADR-TEST: Test\n\n## Context\nTest.\n\n## Decision\nTest.\n\n## Alternatives Considered\nNone.\n\n## Evidence\n- EV-1: Test.\n\n## Consequences\nNone.\n\n## Compatibility and Migration\nCompatible.\n\n## TDD Obligations\n- TDD-1: Test.\n\n## Rollback\nRevert.\n\n## Open Questions\nNone.\n```"
+	doc, _, err := TryParseADRMarkdown(fenced)
+	if err != nil {
+		t.Fatalf("TryParseADRMarkdown with fence: %v", err)
+	}
+	if doc.FrontMatter.ADRID != "ADR-TEST" {
+		t.Fatalf("expected ADR-TEST, got %q", doc.FrontMatter.ADRID)
+	}
+}
+
+func TestTryParseADRMarkdownGarbageFails(t *testing.T) {
+	_, _, err := TryParseADRMarkdown("not an ADR at all")
+	if err == nil {
+		t.Fatal("expected error for garbage input")
+	}
+}

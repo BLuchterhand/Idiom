@@ -1,0 +1,47 @@
+{
+  "schema_version": "idiom.product_workflow_state.v1",
+  "effort_id": "design-a-document-viewer-tab-in-the-side-pane-it-should",
+  "task_id": "design-a-document-viewer-tab-in-the-side-pane-it-should",
+  "title": "design a document viewer tab in the side-pane; it should have first-class support for PRD and ADR files, also providing support for any other markdown document that the user clicks in their chat history of that session.",
+  "created_at": "2026-05-29T16:59:59Z",
+  "updated_at": "2026-05-29T16:59:59Z",
+  "state_revision": 0,
+  "last_event_id": "evt-create-init-2026-05-29T16:59:59Z",
+  "workspace_fingerprint": "",
+  "status_bucket": "started",
+  "current_phase": "prd_drafting",
+  "current_state": "planned",
+  "artifact_paths": {
+    "prd": "prd.md"
+  },
+  "context": {
+    "context_pack_id": "create-design-a-document-viewer-tab-in-the-side-pane-it-should",
+    "freshness_state": "fresh",
+    "referenced_paths": null,
+    "unresolved_gaps": null,
+    "refresh_policy": ""
+  },
+  "coverage": {
+    "coverage_tier": "unit",
+    "gate_results": null,
+    "blocking_criteria": null,
+    "advisory_criteria": null
+  },
+  "open_obligations": null,
+  "open_questions": null,
+  "blockers": null,
+  "privacy": {
+    "redaction_status": "clean",
+    "fields_excluded": null
+  },
+  "session_ids": null,
+  "folder_path": "/Users/ben/Documents/GitHub/idiom/docs/product-workflows/efforts/started/design-a-document-viewer-tab-in-the-side-pane-it-should",
+  "prior_folder_paths": null,
+  "last_reconciliation_at": "",
+  "reconciliation_mismatch": false,
+  "next_valid_actions": [
+    "approve_prd",
+    "edit_requirements"
+  ],
+  "durability_level": "standard"
+}

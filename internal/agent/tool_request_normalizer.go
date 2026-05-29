@@ -842,6 +842,23 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && syntaxToolRequestUsesPatternAlias(req.Tool) {
 		req.Pattern = req.Query
 	}
+
+	// Parse lines alias: "lines: N-M" becomes start_line=N, end_line=M;
+	// "lines: N" becomes start_line=N, end_line=N.
+	if raw := strings.TrimSpace(values["lines"]); raw != "" {
+		if dash := strings.Index(raw, "-"); dash >= 0 {
+			if s, err := strconv.Atoi(strings.TrimSpace(raw[:dash])); err == nil {
+				req.StartLine = s
+			}
+			if e, err := strconv.Atoi(strings.TrimSpace(raw[dash+1:])); err == nil {
+				req.EndLine = e
+			}
+		} else if v, err := strconv.Atoi(raw); err == nil {
+			req.StartLine = v
+			req.EndLine = v
+		}
+	}
+
 	for key, assign := range map[string]func(int){
 		"start_line":    func(v int) { req.StartLine = v },
 		"end_line":      func(v int) { req.EndLine = v },
@@ -894,9 +911,9 @@ func syntaxToolRequestUsesCapabilityAlias(tool string) bool {
 
 func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
-	case "tool", "id", "path", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
+	case "tool", "id", "path", "file", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
 		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
-		"include_evidence", "include_source", "include_files", "refresh":
+		"include_evidence", "include_source", "include_files", "refresh", "lines":
 		return true
 	default:
 		return false

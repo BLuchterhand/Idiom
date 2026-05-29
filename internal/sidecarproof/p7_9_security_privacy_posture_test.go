@@ -11,7 +11,7 @@ import (
 
 	"idiom/internal/autonomy"
 	"idiom/internal/localops"
-	"idiom/internal/localopscmd"
+	localopscmd "idiom/internal/cmd/localops"
 	"idiom/internal/workspace"
 )
 

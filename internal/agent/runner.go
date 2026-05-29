@@ -6659,10 +6659,14 @@ func closurePromptInvalidActions(scope string) []string {
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
 	if looksLikeTextualToolCall(reply) {
+		msg := "the reply contains textual tool-call markup instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose."
+		if looksLikeXMLToolCall(reply) {
+			msg = "the reply contains XML tool-call markup (e.g. <n_tool_calls>, <invoke>, <janus_tool>) instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose. Do not emit XML or HTML markup."
+		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Textual tool-call markup rejected as final answer",
-			Error:   "the reply contains XML tool-call markup (e.g. <n_tool_calls>, <invoke>, <janus_tool>) instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose. Do not emit XML or HTML markup.",
+			Error:   msg,
 		}, true
 	}
 	if result, rejected := r.unexecutedToolRequestCompletionRejection(reply); rejected {
@@ -18248,6 +18252,33 @@ func textOnlyMaxTokensForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 // that should never reach the user-facing presentation layer.
 func IsTextualToolCall(text string) bool {
 	return looksLikeTextualToolCall(text)
+}
+
+// looksLikeXMLToolCall returns true when the text contains XML/HTML
+// tool-call markup tags (llama.cpp DSML, janus, n_tool, etc.).
+// Does not match line-oriented key-value tool requests.
+func looksLikeXMLToolCall(text string) bool {
+	lower := strings.ToLower(strings.TrimSpace(text))
+	if lower == "" {
+		return false
+	}
+	return strings.Contains(lower, "<tool_call") ||
+		strings.Contains(lower, "</tool_call>") ||
+		strings.Contains(lower, "<function=") ||
+		strings.Contains(lower, "</function>") ||
+		strings.Contains(lower, "<invoke") ||
+		strings.Contains(lower, "</invoke>") ||
+		strings.Contains(lower, "<janus_tool") ||
+		strings.Contains(lower, "</janus_tool") ||
+		strings.Contains(lower, "<janus_invoke") ||
+		strings.Contains(lower, "</janus_invoke") ||
+		strings.Contains(lower, "<n_tool") ||
+		strings.Contains(lower, "</n_tool") ||
+		strings.Contains(lower, "<n_invoke") ||
+		strings.Contains(lower, "</n_invoke") ||
+		strings.Contains(lower, "<n_parameter") ||
+		strings.Contains(lower, "</n_parameter") ||
+		strings.Contains(lower, "dsml")
 }
 
 func looksLikeTextualToolCall(text string) bool {

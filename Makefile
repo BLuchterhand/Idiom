@@ -24,7 +24,7 @@ CLASSIFIER_GPU_LAYERS ?= 0
 CLASSIFIER_LOG ?= logs/route-classifier.log
 CLASSIFIER_EXTRA_ARGS ?=
 
-.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts
+.PHONY: run server opencode classifier-server route-classifier build install-path refresh-queue-daemon fmt tidy test test-install-docker test-install-tools coverage coverage-report eval swe-eval swe-suite swe-live swe-live-subset live-contract-suite live-contracts scripted-contract-suite scripted-contracts lint lint-vet
 
 run:
 	go run ./cmd/idiom -config $(CONFIG)
@@ -157,3 +157,8 @@ scripted-contract-suite:
 
 scripted-contracts: build
 	IDIOM_BIN="$(CANONICAL_APP)" go run ./cmd/idiom-swe-eval -suite $(SCRIPTED_CONTRACT_SUITE) -run-live -run-live-continue-on-error -generated-logs $(SCRIPTED_CONTRACT_LOGS) -runner-command "$(CURDIR)/scripts/scripted-contract-runner.sh"
+
+lint: lint-vet
+
+lint-vet:
+	go vet ./...

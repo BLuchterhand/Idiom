@@ -173,6 +173,18 @@ func TryParsePRDMarkdown(raw string) (PRDDocument, string, error) {
 	return doc, repaired, nil
 }
 
+// TryParseADRMarkdown applies repair strategies and attempts to parse a single ADR.
+// Returns the parsed document, the repaired text, and any parse error.
+func TryParseADRMarkdown(raw string) (ADRDocument, string, error) {
+	repaired := RepairMarkdownFrontMatter(raw)
+	doc, err := ParseADRMarkdown([]byte(repaired))
+	if err != nil {
+		return ADRDocument{}, "", fmt.Errorf("parse ADR after repair: %w", err)
+	}
+	return doc, repaired, nil
+}
+
+// ADRParseFailure records a single ADR chunk that failed to parse.
 // ADRParseFailure records a single ADR chunk that failed to parse.
 type ADRParseFailure struct {
 	ChunkIndex int

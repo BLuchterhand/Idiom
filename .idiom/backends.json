@@ -1,5 +1,5 @@
 {
-  "default_profile": "deepseek-v4-pro",
+  "default_profile": "qwen-pair",
   "profiles": {
     "all-gpt-5.5-high": {
       "models": [

@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"idiom/internal/rootcmd"
+	rootcmd "idiom/internal/cmd/root"
 )
 
 // version is set at build time via -ldflags "-X main.version=v1.2.3".

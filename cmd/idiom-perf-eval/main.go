@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"idiom/internal/perfevalcmd"
+	perfevalcmd "idiom/internal/cmd/perfeval"
 )
 
 func main() {
