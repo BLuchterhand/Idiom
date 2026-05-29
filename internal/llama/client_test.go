@@ -173,7 +173,7 @@ func TestMLXBackendSendsExplicitChatTemplateKwargs(t *testing.T) {
 	}
 }
 
-func TestMLXBackendOmitsNativeToolDefinitions(t *testing.T) {
+func TestMLXBackendIncludesNativeToolDefinitions(t *testing.T) {
 	var got chatRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&got); err != nil {
@@ -199,8 +199,8 @@ func TestMLXBackendOmitsNativeToolDefinitions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CompleteChatMessage: %v", err)
 	}
-	if len(got.Tools) != 0 || got.ToolChoice != "" {
-		t.Fatalf("MLX requests should use idiom JSON tool protocol, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
+	if len(got.Tools) == 0 || got.ToolChoice == "" {
+		t.Fatalf("MLX requests should pass native tools to the backend, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
 	}
 }
 
@@ -425,8 +425,8 @@ func TestOpenAIResponsesBackendConvertsToolsAndParsesOutput(t *testing.T) {
 }
 
 func TestBackendSupportsNativeTools(t *testing.T) {
-	if BackendSupportsNativeTools(config.BackendMLX) {
-		t.Fatal("MLX should use idiom textual JSON tools, not native tool parsing")
+	if !BackendSupportsNativeTools(config.BackendMLX) {
+		t.Fatal("MLX should support native tools")
 	}
 	if !BackendSupportsNativeTools(config.BackendLlama) {
 		t.Fatal("llama backend should keep native tools")
@@ -437,8 +437,8 @@ func TestBackendSupportsNativeTools(t *testing.T) {
 	if !NewClient("http://example.invalid", time.Second).WithBackend(config.BackendLlama).SupportsNativeTools() {
 		t.Fatal("llama client should report native tool support")
 	}
-	if NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX).SupportsNativeTools() {
-		t.Fatal("MLX client should report textual tool mode")
+	if !NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX).SupportsNativeTools() {
+		t.Fatal("MLX client should report native tool support")
 	}
 }
 
@@ -450,7 +450,7 @@ func TestBackendStructuredOutputCapabilitiesAreConservative(t *testing.T) {
 		thinkingControl bool
 	}{
 		{config.BackendLlama, true, true, true},
-		{config.BackendMLX, false, true, true},
+		{config.BackendMLX, true, true, true},
 		{config.BackendCodex, true, true, false},
 		{config.BackendZAI, true, true, true},
 	} {

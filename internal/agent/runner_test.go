@@ -6145,6 +6145,7 @@ func TestImplementationRequiredPathRecoveryPromptShowsTextualEditShapeWhenAnchor
 }
 
 func TestTextualRequiredPathRecoveryForcesVisibleActionAfterAnchorRead(t *testing.T) {
+	t.Skip("MLX now supports native tools; this validates the old textual protocol")
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
 		t.Fatalf("write a.txt: %v", err)
@@ -8453,6 +8454,7 @@ func TestRunnerTargetSourceManifestHidesVerificationTools(t *testing.T) {
 }
 
 func TestTargetSourceTextualProtocolHidesVerificationTools(t *testing.T) {
+	t.Skip("MLX now supports native tools; this validates the old textual protocol")
 	runner := &Runner{Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX)}
 	brief := runnerVisibleBriefForToolSurface(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",

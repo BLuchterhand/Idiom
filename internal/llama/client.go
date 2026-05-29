@@ -254,8 +254,6 @@ func normalizeChatRequestForBackend(req *chatRequest, opts ChatOptions, backend 
 
 func BackendSupportsNativeTools(backend string) bool {
 	switch strings.ToLower(strings.TrimSpace(backend)) {
-	case config.BackendMLX:
-		return false
 	default:
 		return true
 	}
