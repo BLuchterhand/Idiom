@@ -2881,6 +2881,14 @@ func extractQwenXMLPrefixedToolPayload(text string) (string, bool, error) {
 
 func extractQwenXMLPrefixedToolBodyPayload(tool string, body string) (string, bool, error) {
 	if object, ok := extractFirstJSONObject(body); ok {
+		// Only treat the extracted JSON as a tool call if it contains
+		// fields that match Qwen's actual tool-call schema ("name" or
+		// "arguments"). Without this guard, any JSON inside <tool_NAME>
+		// tags — including descriptive prose — is misclassified as a
+		// tool invocation, causing false-positive parse rejections.
+		if !qwenXMLObjectLooksLikeToolCall(object) {
+			return "", false, nil
+		}
 		payload, err := normalizeExplicitToolJSONObjectPayload("prefixed XML", tool, object)
 		if err != nil {
 			return object, true, err
@@ -2905,6 +2913,32 @@ func qwenXMLUnclosedPrefixedToolBody(body string) string {
 		}
 	}
 	return body
+}
+
+// qwenXMLObjectLooksLikeToolCall checks whether a JSON object extracted
+// from inside <tool_NAME> tags looks like a genuine Qwen tool call rather
+// than descriptive prose. Real Qwen tool calls use either the standard
+// {"name":"tool","arguments":{...}} format or have a "tool" field.
+// JSON that merely describes tool parameters (e.g. {"key":"...","content":"..."})
+// without a name/tool marker should not be treated as a tool invocation.
+func qwenXMLObjectLooksLikeToolCall(object string) bool {
+	if strings.TrimSpace(object) == "" {
+		return false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(object), &fields); err != nil {
+		return false
+	}
+	if _, ok := fields["name"]; ok {
+		return true
+	}
+	if _, ok := fields["arguments"]; ok {
+		return true
+	}
+	if _, ok := fields["tool"]; ok {
+		return true
+	}
+	return false
 }
 
 func xmlToolNameIsSafe(tool string) bool {
