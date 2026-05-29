@@ -119,6 +119,8 @@ func (r *Runner) Run(
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
 	conversationEvidenceNudged := false
+	convFirstMilestone, convNudgeInterval := conversationMilestones(r.ContextSize)
+
 	planThenExecuteCorrectionAfterRefreshNudged := false
 	planThenExecuteUnreadSourceNudgedFor := ""
 	delegatedReadOnlyAnswerReady := slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached")
@@ -1664,14 +1666,28 @@ func (r *Runner) Run(
 		}
 
 		metrics.ToolCalls++
-		// Conversation lane: periodic call-count awareness at every
-		// 25th successful tool execution. Fires in the main tool loop,
-		// after the increment and before any gate continues.
+		// Conversation lane: periodic call-count awareness nudges.
+		// Milestones derived from model context window size so
+		// smaller models get earlier nudges, larger models later ones.
+		// The auto-findings capture fires at convFirstMilestone;
+		// awareness nudges begin one nudgeInterval later so the two
+		// signals are staggered rather than competing at the same call.
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			metrics.ToolCalls > 10 && metrics.ToolCalls%25 == 0 {
-			msg := fmt.Sprintf("You have used %d tool calls this session. Consider whether the evidence you have gathered supports a clear answer, or whether you need to continue investigating. You control when to stop.", metrics.ToolCalls)
-			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: msg})
-			r.emitEvent(RunEvent{Role: "call_count_awareness", Content: msg})
+			metrics.ToolCalls > 5 {
+			shouldNudge := false
+			var nudgeMsg string
+			firstNudgeAt := convFirstMilestone + convNudgeInterval
+			if metrics.ToolCalls == firstNudgeAt {
+				shouldNudge = true
+				nudgeMsg = fmt.Sprintf("You have used %d tool calls. The user asked: %q. If you have evidence to answer this specific question, answer now in plain prose. Do not begin new investigation on neighboring topics.", metrics.ToolCalls, strings.TrimSpace(r.RuntimeBrief.Objective))
+			} else if metrics.ToolCalls >= firstNudgeAt+convNudgeInterval && (metrics.ToolCalls-firstNudgeAt)%convNudgeInterval == 0 {
+				shouldNudge = true
+				nudgeMsg = fmt.Sprintf("You have used %d tool calls. The user asked: %q. Answer this question directly from the evidence gathered, or if more evidence is genuinely needed, take one narrow next step. Do not explore related code or begin new investigations.", metrics.ToolCalls, strings.TrimSpace(r.RuntimeBrief.Objective))
+			}
+			if shouldNudge {
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
+				r.emitEvent(RunEvent{Role: "call_count_awareness", Content: nudgeMsg})
+			}
 		}
 		actionClass := toolActionClass(req)
 		discoveryProfile := workspace.DiscoveryProfileForRequest(req)
@@ -2905,10 +2921,10 @@ func (r *Runner) Run(
 			}
 		}
 
-		// Conversation lane: auto-capture findings at 15 calls (first
-		// milestone, before the 25-call periodic checks begin).
+		// Conversation lane: auto-capture findings at the first context-derived
+		// milestone so discoveries survive context compactions.
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			metrics.ToolCalls == 15 && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
+			metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
 			noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
 			if err := os.MkdirAll(noteDir, 0755); err == nil {
 				var b strings.Builder

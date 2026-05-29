@@ -16684,3 +16684,308 @@ func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
 	
 	t.Logf("Garbage answer caught: %s", result.Summary)
 }
+
+
+func TestConversationMilestonesDefaultContext(t *testing.T) {
+	first, interval := conversationMilestones(0)
+	// Default 65536 ctxSize: thresholdMsgs = 65536*40/100/125 = 209 → clamped to 200
+	// maxToolCalls = 100, first = max(15, 25) = 25, interval = max(20, 35) = 35
+	if first != 25 {
+		t.Errorf("default context: firstMilestone = %d, want 25", first)
+	}
+	if interval != 35 {
+		t.Errorf("default context: nudgeInterval = %d, want 35", interval)
+	}
+}
+
+func TestConversationMilestonesSmallContext(t *testing.T) {
+	first, interval := conversationMilestones(32768)
+	// 32K: thresholdMsgs = 32768*40/100/125 = 104, maxToolCalls = 52
+	// first = max(15, 13) = 15, interval = max(20, 18) = 20
+	if first != 15 {
+		t.Errorf("32K context: firstMilestone = %d, want 15 (floor)", first)
+	}
+	if interval != 20 {
+		t.Errorf("32K context: nudgeInterval = %d, want 20 (floor)", interval)
+	}
+}
+
+func TestConversationMilestonesLargeContext(t *testing.T) {
+	first, interval := conversationMilestones(131072)
+	// 128K: thresholdMsgs = 131072*40/100/125 = 419 → clamped to 200
+	// maxToolCalls = 100, first = max(15, 25) = 25, interval = max(20, 35) = 35
+	if first != 25 {
+		t.Errorf("128K context: firstMilestone = %d, want 25", first)
+	}
+	if interval != 35 {
+		t.Errorf("128K context: nudgeInterval = %d, want 35", interval)
+	}
+}
+
+func TestConversationMilestonesAllContextSizes(t *testing.T) {
+	tests := []struct {
+		ctxSize             int
+		wantFirst, wantInterval int
+	}{
+		{0, 25, 35},        // unknown → 65K default → clamped
+		{16384, 15, 20},    // 16K: thresholdMsgs=16K*0.4/125=52, maxCalls=26, first=max(15,6)=15, interval=max(20,9)=20
+		{32768, 15, 20},    // 32K: thresholdMsgs=104, maxCalls=52, first=max(15,13)=15, interval=max(20,18)=20
+		{65536, 25, 35},    // 65K: thresholdMsgs=209→clamped 200, maxCalls=100, first=25, interval=35
+		{131072, 25, 35},   // 128K: clamped
+		{262144, 25, 35},   // 256K: clamped
+	}
+	for _, tt := range tests {
+		t.Run(fmt.Sprintf("ctx=%d", tt.ctxSize), func(t *testing.T) {
+			first, interval := conversationMilestones(tt.ctxSize)
+			if first != tt.wantFirst {
+				t.Errorf("ctx=%d: firstMilestone = %d, want %d", tt.ctxSize, first, tt.wantFirst)
+			}
+			if interval != tt.wantInterval {
+				t.Errorf("ctx=%d: nudgeInterval = %d, want %d", tt.ctxSize, interval, tt.wantInterval)
+			}
+		})
+	}
+}
+
+func TestCompactionBudgetAllocator(t *testing.T) {
+	tests := []struct {
+		name            string
+		maxMsgs         int
+		maxChars        int
+		wantMiddleFloor int // middle budget must be at least this
+		wantTailMin     int
+		wantTailMax     int
+	}{
+		{name: "defaults", maxMsgs: 0, maxChars: 0, wantMiddleFloor: 0, wantTailMin: 2, wantTailMax: 8},
+		{name: "from messages", maxMsgs: 40, maxChars: 0, wantMiddleFloor: 1000, wantTailMin: 2, wantTailMax: 8},
+		{name: "from chars", maxMsgs: 0, maxChars: 40000, wantMiddleFloor: 1000, wantTailMin: 2, wantTailMax: 8},
+		{name: "small budget clamps tail", maxMsgs: 8, maxChars: 0, wantMiddleFloor: 100, wantTailMin: 2, wantTailMax: 2},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			middle, tailFloor := compactionBudget(RunPolicy{
+				MaxContextMessages: tt.maxMsgs,
+				MaxContextChars:    tt.maxChars,
+			})
+			if tailFloor < tt.wantTailMin {
+				t.Errorf("tailFloor = %d, want >= %d", tailFloor, tt.wantTailMin)
+			}
+			if tailFloor > tt.wantTailMax {
+				t.Errorf("tailFloor = %d, want <= %d", tailFloor, tt.wantTailMax)
+			}
+			if middle < tt.wantMiddleFloor {
+				t.Errorf("middleBudget = %d, want >= %d", middle, tt.wantMiddleFloor)
+			}
+		})
+	}
+}
+
+func TestScoreMessageForRetentionEmptyContent(t *testing.T) {
+	msg := llama.ChatMessage{Role: "system", Content: ""}
+	brief := workerruntime.WorkerRuntimeBrief{}
+	score := scoreMessageForRetention(msg, nil, brief, nil)
+	if score != 0.0 {
+		t.Fatalf("expected score 0.0 for empty content, got %.2f", score)
+	}
+}
+
+func TestScoreMessageForRetentionFailedVerification(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:  "shell",
+		Error: "go test ./... FAIL",
+	}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: shell\nError: go test ./... FAIL"}
+	brief := workerruntime.WorkerRuntimeBrief{}
+	score := scoreMessageForRetention(msg, &result, brief, nil)
+	// Failed verification is highest value: +0.40
+	if score < 0.35 {
+		t.Fatalf("expected score >= 0.35 for failed verification, got %.2f", score)
+	}
+}
+
+func TestScoreMessageForRetentionEditPathMention(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Extracted body of ProcessRequest",
+	}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: code_navigate\nPath: internal/auth/middleware.go\nSummary: Extracted body of ProcessRequest"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"internal/auth/middleware.go"},
+	}
+	score := scoreMessageForRetention(msg, &result, brief, nil)
+	// Edit path mention +0.25 + high-value tool +0.10 = 0.35
+	if score < 0.30 {
+		t.Fatalf("expected score >= 0.30 for edit-path evidence, got %.2f", score)
+	}
+}
+
+func TestScoreMessageForRetentionEvidencePathMention(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read internal/auth/middleware_test.go",
+	}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: read_file\nPath: internal/auth/middleware_test.go"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		EvidencePaths: []string{"internal/auth/middleware_test.go"},
+	}
+	score := scoreMessageForRetention(msg, &result, brief, nil)
+	// Evidence path +0.15 + high-value tool +0.10 = 0.25
+	if score < 0.20 {
+		t.Fatalf("expected score >= 0.20 for evidence-path read, got %.2f", score)
+	}
+}
+
+func TestScoreMessageForRetentionSuccessfulWrite(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "edit_file",
+		Summary: "Replaced 3 lines in config.go",
+	}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: edit_file\nPath: config.go"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"config.go"},
+	}
+	score := scoreMessageForRetention(msg, &result, brief, nil)
+	// Edit path +0.25 + successful write +0.20 = 0.45
+	if score < 0.35 {
+		t.Fatalf("expected score >= 0.35 for successful write on edit path, got %.2f", score)
+	}
+}
+
+func TestScoreMessageForRetentionNoiseFolds(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "search_content",
+		Summary: "Found 0 results for 'nonexistent'",
+	}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: search_content\nPattern: nonexistent\nFound 0 results"}
+	brief := workerruntime.WorkerRuntimeBrief{}
+	score := scoreMessageForRetention(msg, &result, brief, nil)
+	// No edit path, no evidence path, no high-value tool, no error -> 0.0
+	if score > 0.01 {
+		t.Fatalf("expected score ~0.0 for noise, got %.2f", score)
+	}
+}
+
+func TestScoreMessageForRetentionCeiling(t *testing.T) {
+	// Verify score never exceeds 1.0 even with all signals
+	result := workspace.ToolResult{
+		Tool:  "shell",
+		Error: "test FAIL",
+	}
+	msg := llama.ChatMessage{Role: "tool", Content: "Tool: shell\nPath: internal/auth/middleware.go\nPath: internal/auth/middleware_test.go"}
+	brief := workerruntime.WorkerRuntimeBrief{
+		RequiredEditPaths: []string{"internal/auth/middleware.go"},
+		EvidencePaths:     []string{"internal/auth/middleware_test.go"},
+	}
+	score := scoreMessageForRetention(msg, &result, brief, nil)
+	if score > 1.0 {
+		t.Fatalf("score exceeded 1.0: got %.2f", score)
+	}
+}
+
+func TestResultIndexForMessage(t *testing.T) {
+	messages := []llama.ChatMessage{
+		{Role: "system", Content: "prompt"},
+		{Role: "user", Content: "do work"},
+		{Role: "assistant", Content: "calling tool"},
+		{Role: "tool", Content: "result 1"},
+		{Role: "assistant", Content: "calling another tool"},
+		{Role: "tool", Content: "result 2"},
+		{Role: "assistant", Content: "calling third tool"},
+		{Role: "system", Content: "Tool: shell\nError: exiting"}, // system-formatted tool result
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "first"},
+		{Tool: "search_content", Summary: "second"},
+		{Tool: "shell", Summary: "third", Error: "failed"},
+	}
+
+	// First tool result message at index 3 -> result index 0
+	idx := resultIndexForMessage(messages, 3, len(results))
+	if idx != 0 {
+		t.Errorf("message 3 -> result index %d, want 0", idx)
+	}
+
+	// Second tool result message at index 5 -> result index 1
+	idx = resultIndexForMessage(messages, 5, len(results))
+	if idx != 1 {
+		t.Errorf("message 5 -> result index %d, want 1", idx)
+	}
+
+	// System-formatted tool result at index 7 -> result index 2
+	idx = resultIndexForMessage(messages, 7, len(results))
+	if idx != 2 {
+		t.Errorf("message 7 -> result index %d, want 2", idx)
+	}
+
+	// Non-tool message -> -1
+	idx = resultIndexForMessage(messages, 1, len(results))
+	if idx != -1 {
+		t.Errorf("message 1 -> result index %d, want -1", idx)
+	}
+
+	// Empty results -> -1
+	idx = resultIndexForMessage(messages, 3, 0)
+	if idx != -1 {
+		t.Errorf("empty results -> result index %d, want -1", idx)
+	}
+}
+
+func TestCompactionKeepsPrefixAndModifiesStrategy(t *testing.T) {
+	// Verify the new strategy string appears in compaction events.
+	calls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "```tool\n{\"tool\":\"task_ledger\",\"todos\":[{\"id\":\"x\",\"content\":\"work\",\"status\":\"completed\"}]}\n```"},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawEvidenceWeighted bool
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 5*time.Second),
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: t.TempDir(),
+			CWD:  ".",
+		}),
+		Policy: RunPolicy{
+			MaxToolSteps:       3,
+			MaxNoProgressTurns: 10,
+			MaxContextMessages: 4,
+		},
+		TaskLedger: TaskLedgerPolicy{Required: true},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "context_compaction" {
+				if strings.Contains(event.Content, "evidence_weighted") {
+					sawEvidenceWeighted = true
+				}
+			}
+		},
+	}
+
+	_, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "do work"}}, llama.ChatOptions{}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawEvidenceWeighted {
+		t.Fatal("expected evidence_weighted strategy in compaction event")
+	}
+}
+
+func TestMsgCharCount(t *testing.T) {
+	msg := llama.ChatMessage{Role: "tool", Content: "result", ReasoningContent: ""}
+	got := msgCharCount(msg)
+	want := len("tool") + len("result")
+	if got != want {
+		t.Errorf("msgCharCount = %d, want %d", got, want)
+	}
+	msg2 := llama.ChatMessage{Role: "assistant", Content: "hello", ReasoningContent: "thinking"}
+	got2 := msgCharCount(msg2)
+	want2 := len("assistant") + len("hello") + len("thinking")
+	if got2 != want2 {
+		t.Errorf("msgCharCount with reasoning = %d, want %d", got2, want2)
+	}
+}

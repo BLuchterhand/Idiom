@@ -337,6 +337,33 @@ func conversationInspectedPathSummary(results []workspace.ToolResult) string {
 	return strings.Join(inspected, "; ")
 }
 
+
+// conversationMilestones derives context-window-aware timing for
+// conversation-lane auto-findings capture and call-count awareness nudges.
+// Returns (firstMilestone, nudgeInterval) in tool calls.
+//
+// The derivation mirrors compactionParams in internal/app/compaction.go:
+// firstMilestone is 25% of the compaction threshold in tool calls,
+// nudgeInterval is 35%. Both are floored at current hardcoded defaults
+// (15 and 20) so small models keep the existing schedule; large models
+// get proportionally later milestones to match their larger context windows.
+func conversationMilestones(ctxSize int) (firstMilestone int, nudgeInterval int) {
+	if ctxSize <= 0 {
+		ctxSize = 65536
+	}
+	const estTokensPerMsg = 125
+	thresholdMsgs := ctxSize * 40 / 100 / estTokensPerMsg
+	if thresholdMsgs > 200 {
+		thresholdMsgs = 200
+	}
+	maxToolCalls := thresholdMsgs / 2
+
+	firstMilestone = max(15, maxToolCalls*25/100)
+	nudgeInterval = max(20, maxToolCalls*35/100)
+
+	return firstMilestone, nudgeInterval
+}
+
 func (r *Runner) conversationEvidenceSatisfiedForceAnswerReady(results []workspace.ToolResult) bool {
 	if r == nil || !conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, results) ||
 		runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
