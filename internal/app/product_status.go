@@ -93,7 +93,7 @@ func (m *Model) slashProductStatus(_ string, fields []string) bool {
 
 func (m *Model) slashProductApprove(_ string, fields []string) bool {
 	// If in a product creation phase, run the creation-specific approval gate.
-	if m.featurePlannerPhase == "prd_drafting" || m.featurePlannerPhase == "adr_drafting" {
+	if m.featurePlannerPhase == productworkflow.PhasePRDDrafting || m.featurePlannerPhase == productworkflow.PhaseADRDrafting {
 		if m.streaming {
 			m.status = "A product creation turn is already in progress."
 			return false

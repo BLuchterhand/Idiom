@@ -235,7 +235,7 @@ func buildPRDFormatRepairPrompt(badOutput string, parseErr error, effortRoot str
 	b.WriteString("- The document MUST start with --- on its own line (YAML front matter delimiter)\n")
 	b.WriteString("- Front matter fields: schema_version: idiom.prd.v1, prd_id: ")
 	b.WriteString(effortID)
-	b.WriteString(fmt.Sprintf(", status: draft, task_id: %s, created_at: %s\n", effortID, now))
+	b.WriteString(fmt.Sprintf("- status: draft\n- task_id: %s\n- created_at: %s\n", effortID, now))
 	b.WriteString("- Do NOT wrap the output in ``` code fences\n")
 	b.WriteString("- Do NOT add any preamble text before the --- delimiter\n")
 	b.WriteString("- Output only the PRD markdown, nothing else\n")
@@ -340,7 +340,7 @@ func (m *Model) runADRDraftingTurn(ctx context.Context, message string) (string,
 	if err != nil {
 		return "", fmt.Errorf("read prd.md: %w", err)
 	}
-	prd, err := productworkflow.ParsePRDMarkdown(prdData)
+	prd, _, err := productworkflow.TryParsePRDMarkdown(string(prdData))
 	if err != nil {
 		return "", fmt.Errorf("parse prd.md: %w", err)
 	}
@@ -434,7 +434,37 @@ func (m *Model) generateADRs(ctx context.Context, effortRoot string) ([]productw
 		return nil, nil, fmt.Errorf("parse prd.md: %w", err)
 	}
 
-	return m.generateADRsWithRepair(ctx, effortRoot, prdData, prd, buildADRGenerationPrompt)
+	adrDocs, indexEntries, genErr := m.generateADRsWithRepair(ctx, effortRoot, prdData, prd, buildADRGenerationPrompt)
+	if genErr != nil {
+		return nil, nil, genErr
+	}
+
+	// Write successfully parsed ADRs (only for initial generation path —
+	// the refinement path in runADRDraftingTurn handles its own writes
+	// after mergeADRIndex).
+	for i, doc := range adrDocs {
+		path := indexEntries[i].Path
+		if writeErr := productworkflow.WriteADRMarkdown(effortRoot, path, doc); writeErr != nil {
+			return nil, nil, fmt.Errorf("write %s: %w", path, writeErr)
+		}
+	}
+
+	// Write index.
+	ws, wsErr := productworkflow.LoadWorkflowState(effortRoot)
+	effortID := filepath.Base(effortRoot)
+	if wsErr == nil {
+		effortID = ws.EffortID
+	}
+	idx := productworkflow.ADRIndex{
+		SchemaVersion: "idiom.adr_index.v1",
+		EffortID:      effortID,
+		ADRs:          indexEntries,
+	}
+	if writeErr := productworkflow.WriteADRIndexJSON(effortRoot, idx); writeErr != nil {
+		return nil, nil, fmt.Errorf("write adrs/index.json: %w", writeErr)
+	}
+
+	return adrDocs, indexEntries, nil
 }
 
 // generateADRsWithRepair calls the model and attempts to split/parse ADR output.
@@ -508,29 +538,6 @@ func (m *Model) tryGenerateADRs(
 	if splitErr != nil && len(adrDocs) == 0 {
 		// All chunks failed — return for repair.
 		return answer, nil, nil, failures, nil
-	}
-
-	// Write successfully parsed ADRs.
-	for i, doc := range adrDocs {
-		path := indexEntries[i].Path
-		if writeErr := productworkflow.WriteADRMarkdown(effortRoot, path, doc); writeErr != nil {
-			return answer, adrDocs, indexEntries, failures, fmt.Errorf("write %s: %w", path, writeErr)
-		}
-	}
-
-	// Write index.
-	ws, wsErr := productworkflow.LoadWorkflowState(effortRoot)
-	effortID := filepath.Base(effortRoot)
-	if wsErr == nil {
-		effortID = ws.EffortID
-	}
-	idx := productworkflow.ADRIndex{
-		SchemaVersion: "idiom.adr_index.v1",
-		EffortID:      effortID,
-		ADRs:          indexEntries,
-	}
-	if writeErr := productworkflow.WriteADRIndexJSON(effortRoot, idx); writeErr != nil {
-		return answer, adrDocs, indexEntries, failures, fmt.Errorf("write adrs/index.json: %w", writeErr)
 	}
 
 	return answer, adrDocs, indexEntries, failures, nil
@@ -668,7 +675,8 @@ func (m *Model) approvePRDAndAdvance(effortRoot string) (string, error) {
 				opts.MaxTokens = 8192
 				repair, repErr := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
 				if repErr == nil {
-					if repairedPRD, parseErr := productworkflow.ParsePRDMarkdown([]byte(repair)); parseErr == nil {
+					repairedPRD, _, parseErr := productworkflow.TryParsePRDMarkdown(repair)
+					if parseErr == nil {
 						_ = productworkflow.WritePRDMarkdown(effortRoot, repairedPRD)
 						newIntake := productworkflow.ValidatePRDIntake(repairedPRD)
 						if newIntake.Passed {
@@ -689,12 +697,12 @@ func (m *Model) approvePRDAndAdvance(effortRoot string) (string, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if serr := m.ensureServerReady(ctx); serr != nil {
-		return formatPRDApproved(), serr
+		return "", fmt.Errorf("server not ready for ADR generation: %w", serr)
 	}
 
 	adrDocs, indexEntries, genErr := m.generateADRs(ctx, effortRoot)
 	if genErr != nil {
-		return formatPRDApproved(), nil
+		return "", fmt.Errorf("PRD approved but ADR generation failed: %w", genErr)
 	}
 
 	// Advance to ADR drafting in workflow state.
@@ -727,14 +735,15 @@ func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
 	_, _ = productworkflow.AdvanceCreatePhase(effortRoot, productworkflow.PhaseTDDSynthesis)
 
 	planResult, planErr := m.synthesizeTDDAndRunPlanner(effortRoot)
-	_, _ = productworkflow.CompleteEffort(effortRoot)
-
-	m.featurePlannerPhase = ""
-	m.featurePlannerEffortRoot = ""
-
 	if planErr != nil {
 		return "", fmt.Errorf("feature planning: %w", planErr)
 	}
+
+	// Only mark complete and clear phase on success.
+	_, _ = productworkflow.CompleteEffort(effortRoot)
+	m.featurePlannerPhase = ""
+	m.featurePlannerEffortRoot = ""
+
 	return planResult, nil
 }
 
