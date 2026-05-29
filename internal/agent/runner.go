@@ -295,8 +295,13 @@ func (r *Runner) Run(
 		// Without a synthesis scaffold, the model accumulates raw evidence
 		// but has nowhere to put what it learned — forcing every answer to
 		// be composed in a single step from raw context.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
-			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") ||
+		// Skip the note tool for direct_answer contracts: the model is only
+		// allowed blocker or final_answer actions, and a visible tool in the
+		// prompt causes some backends (e.g. Qwen via MLX textual transport)
+		// to emit tool-call-like prose that the parser misinterprets.
+		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
+			// bypass note injection
+		} else if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
 			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "grounded_evidence_summary") {
 			tools = append(tools, llama.Tool{
 				Type: "function",
@@ -963,6 +968,14 @@ func (r *Runner) Run(
 				continue
 			}
 			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, opts, collectedResults, &metrics)
+			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
+				// The retry answer is a hedge or meta-response about evidence
+				// sufficiency rather than a substantive answer — reject and block.
+				r.emitCompletionStatus("blocked", reason, "content_gap", collectedResults, true)
+				blockerResult := workspace.ToolResult{Tool: "completion_gate", Summary: "Retry answer rejected as hedge", Error: reason}
+				overridden := r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
+				return finish(overridden, nil, "content_gap", true)
+			}
 			if blockerKind, reason := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" {
 				// Override only fires when the model fabricates
 				// completion. A <<QUESTION>>: per-path blocker IS the
@@ -12477,6 +12490,34 @@ func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool
 	default:
 		return false
 	}
+}
+
+// retryAnswerHedgeRejectionReason checks whether the retry answer from
+// ensureNonEmptyAnswer is a hedge or meta-response about evidence sufficiency
+// rather than a substantive answer. This catches cases where the model, after
+// being forced to retry an empty response, produces text that describes why it
+// cannot answer instead of actually answering.
+func retryAnswerHedgeRejectionReason(reply string) string {
+	trimmed := strings.TrimSpace(reply)
+	if trimmed == "" || len(trimmed) > 500 {
+		return ""
+	}
+	lower := strings.ToLower(trimmed)
+	for _, phrase := range []string{
+		"does not retain enough",
+		"not retain enough",
+		"cannot provide",
+		"unable to provide",
+		"retained source context",
+		"not sufficient",
+		"insufficient evidence",
+		"does not contain enough",
+	} {
+		if strings.Contains(lower, phrase) {
+			return "the answer is a hedge about evidence sufficiency rather than a substantive response to the user's question"
+		}
+	}
+	return ""
 }
 
 func readOnlyExplanationMetaRejectionReason(reply string) string {

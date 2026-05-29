@@ -15,6 +15,7 @@ a large committee.
 | Prompt / Protocol Reviewer | The model emits prose, malformed tools, stale anchors, missing evidence, wrong terminal states, or repeatedly needs recovery nudges. | Does the model-facing protocol match the gate order and tool schema? Are prompts conflicting, over-specific, or relying on reminders where typed contracts should exist? |
 | TDD / Acceptance Reviewer | The failure involves implementation correctness, acceptance criteria, product-workflow evidence, failing tests, or TDD artifacts. | Does the produced work satisfy the requested behavior and tests? If not, what failure packet should go back through the lane rather than being manually patched? |
 | North-Star / Architecture Reviewer | The proposed fix changes broad harness behavior, weakens a gate, adds a new recovery path, changes lane semantics, or follows repeated failures. | Is this model-strategy vs harness-contract boundary correct? Does the change avoid scenario-specific hardcoding and compensating-fix chains? |
+| Model-Agnostic / Cross-Backend Reviewer | The fix touches tool injection, prompt construction, tool-call transport, parser extraction, or anything that behaves differently across MLX, llama.cpp, DeepSeek, or other backends. Also use when the failure was observed on one backend but the fix alters shared code. | Does this fix preserve correct behavior for backends not involved in the failure? Would a native-tool-call backend (DeepSeek) still work? Would a textual-transport backend (MLX/Qwen) still work? Are backend-specific assumptions leaking into shared code? |
 
 ## Usage Rule
 
@@ -25,8 +26,8 @@ an implementor role.
 
 1. For every non-trivial behavior fix, send an Incident Root-Cause Reviewer.
 2. Add exactly one specialist reviewer for the most likely class of failure:
-   Model Runtime / Config, Harness / Go, Prompt / Protocol, or TDD /
-   Acceptance.
+   Model Runtime / Config, Harness / Go, Prompt / Protocol, TDD /
+   Acceptance, or Model-Agnostic / Cross-Backend.
 3. Add a second specialist only when the root-cause evidence already spans two
    concrete domains, such as model tool-call transport plus prompt protocol, or
    runner state plus TDD acceptance semantics. Do not add a second specialist
@@ -51,6 +52,7 @@ Use these triggers to pick the specialist reviewer.
 | The model sees the right tools but emits prose, malformed JSON/tool calls, stale anchors, missing evidence, or wrong terminal states | Prompt / Protocol Reviewer |
 | Code or artifacts are produced but do not satisfy acceptance criteria, tests, product workflow evidence, or TDD obligations | TDD / Acceptance Reviewer |
 | The proposed fix broadens policy, changes lane semantics, weakens a gate, or starts to look scenario-specific | North-Star / Architecture Reviewer |
+| The fix touches tool injection, prompt construction, parser extraction, or shared code that must work identically across MLX, llama.cpp, DeepSeek, and other backends — or a failure was observed on one backend but the fix alters code shared by all | Model-Agnostic / Cross-Backend Reviewer |
 
 ## Required Reviewer Output
 
