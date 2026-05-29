@@ -285,8 +285,8 @@ func TestRoutingHostedThinkingFloorPreservesThinking(t *testing.T) {
 	if tuned.PreserveThinking != true {
 		t.Fatal("expected PreserveThinking=true for hosted model")
 	}
-	if tuned.MaxTokens != 4096 {
-		t.Fatalf("expected direct_answer contract clamp 4096, got %d", tuned.MaxTokens)
+	if tuned.MaxTokens != 8192 {
+		t.Fatalf("expected direct_answer floor of 4096 (8192 exceeds, should stay), got %d", tuned.MaxTokens)
 	}
 }
 

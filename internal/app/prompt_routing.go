@@ -1732,7 +1732,7 @@ func clampPositiveMin(current, limit int) int {
 	if limit <= 0 {
 		return current
 	}
-	if current <= 0 || current > limit {
+	if current <= 0 || current < limit {
 		return limit
 	}
 	return current

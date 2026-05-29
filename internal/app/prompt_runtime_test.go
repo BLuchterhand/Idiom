@@ -309,8 +309,8 @@ func TestTuneChatOptionsForReadOnlyPlanDisablesThinkingAndCapsTokens(t *testing.
 	if tuned.Temperature != 0.2 || tuned.TopP != 1 {
 		t.Fatalf("read-only sampling = temp %.2f top_p %.2f, want deterministic cap", tuned.Temperature, tuned.TopP)
 	}
-	if tuned.MaxTokens != 1536 {
-		t.Fatalf("expected grounded explanation token cap, got %d", tuned.MaxTokens)
+	if tuned.MaxTokens != 8192 {
+		t.Fatalf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens)
 	}
 }
 
@@ -494,8 +494,8 @@ func TestApplyMaxTokensOverrideLeavesRouteClampWhenUnset(t *testing.T) {
 	tuned := tuneChatOptionsForPlan(opts, plan)
 	tuned = applyMaxTokensOverride(tuned, 0)
 
-	if tuned.MaxTokens != 1536 {
-		t.Fatalf("expected grounded explanation token cap, got %d", tuned.MaxTokens)
+	if tuned.MaxTokens != 8192 {
+		t.Fatalf("expected grounded explanation token floor of 1536 (8192 exceeds floor, should stay 8192), got %d", tuned.MaxTokens)
 	}
 }
 
