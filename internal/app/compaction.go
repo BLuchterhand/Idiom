@@ -15,18 +15,90 @@ import (
 // message so long-horizon intent survives window pressure. See
 // docs/opencode-fixes-design.md §5.
 
-// defaultCompactionThreshold is the message count that triggers compaction
-// when m.cfg.Chat.MaxHistory leaves no lower bound. Chosen to keep
-// compaction from firing on short sessions yet triggering well before
-// Qwen's 65k ctx fills.
-const defaultCompactionThreshold = 30
-
-// recentMessagesToKeepVerbatim is the number of most-recent messages that
-// are never folded into the digest — the model still sees them word-for-
-// word so immediate local context is preserved.
-const recentMessagesToKeepVerbatim = 12
+// Compaction thresholds are now derived automatically from the model's
+// context-window size (LlamaServer.CtxSize). See compactionContextSize()
+// and compactionParams() below. No per-model tuning is needed — a model
+// with a 32K context window will compact earlier than one with a 128K
+// window, proportionally.
 
 const compactionSystemPromptPreamble = "You are producing a compact session digest. Preserve only the facts that the next turn needs to act correctly: the user's original goals, any hard constraints or boundaries, files and paths that have been read or edited, outcomes of tool calls, open questions, and the last known blocker. Write plain prose in 12 lines or fewer. Do not invent facts. Do not request tools."
+
+
+// compactionContextSize returns the context window size in tokens used for
+// deriving compaction thresholds. It reads from the main model's LlamaServer
+// config and falls back through available sources.
+func (m *Model) compactionContextSize() int {
+	if m == nil {
+		return 65536
+	}
+	if sz := m.cfg.LlamaServer.CtxSize; sz > 0 {
+		return sz
+	}
+	if sz := m.cfg.RouteClassifier.CtxSize; sz > 0 {
+		return sz
+	}
+	return 65536
+}
+
+// compactionParams derives message-count thresholds from the model's context
+// window size. Returns (triggerThreshold, recentMessagesToKeep).
+//
+// The derivation uses a conservative chars-per-token estimate so models with
+// different context-window sizes get proportional thresholds automatically —
+// no per-model tuning needed. A 32K model compacts earlier than a 128K model.
+func compactionParams(ctxSize int) (threshold int, recentToKeep int) {
+	// Rough estimate: ~4 chars per token, ~500 chars per message avg
+	// => ~125 tokens per message.
+	const estTokensPerMsg = 125
+
+	// Fire compaction when history occupies ~40% of context window.
+	// Keep ~20% of context window as recent verbatim messages.
+	thresholdTokens := ctxSize * 40 / 100
+	recentTokens := ctxSize * 20 / 100
+
+	threshold = thresholdTokens / estTokensPerMsg
+	recentToKeep = recentTokens / estTokensPerMsg
+
+	// Clamp to sensible bounds.
+	if threshold < 10 {
+		threshold = 10
+	}
+	if recentToKeep < 3 {
+		recentToKeep = 3
+	}
+	// recentToKeep must not exceed half the threshold — otherwise compaction
+	// would fold almost nothing.
+	if recentToKeep > threshold/2 {
+		recentToKeep = threshold / 2
+	}
+	// Cap at reasonable maxima even for huge context windows.
+	if threshold > 200 {
+		threshold = 200
+	}
+	if recentToKeep > 40 {
+		recentToKeep = 40
+	}
+
+	return threshold, recentToKeep
+}
+
+// runnerContextLimitsForConversation returns generous (MaxContextMessages,
+// MaxContextChars) for conversation/read-only lanes where the model should not
+// be artificially limited by message count or character budgets. Values are
+// derived from the context window so they scale with model size.
+func runnerContextLimitsForConversation(ctxSize int) (maxMsgs int, maxChars int) {
+	if ctxSize <= 0 {
+		ctxSize = 65536
+	}
+	// 80% of context window for messages, using the same token estimate as
+	// compactionParams.
+	const estTokensPerMsg = 125
+	maxMsgs = (ctxSize * 80 / 100) / estTokensPerMsg
+	// Character limit: tokens * 4 (rough chars-per-token), at 80% of window.
+	maxChars = ctxSize * 4 * 80 / 100
+	return maxMsgs, maxChars
+}
+
 
 type historyCompactionResult struct {
 	Messages  []llama.ChatMessage
@@ -43,7 +115,7 @@ type compactHistoryDoneMsg struct {
 // MaybeCompactHistory applies Fix 5 when the history length exceeds the
 // configured threshold. It returns a new history whose leading entries have
 // been replaced by a single `session_digest` system message. The most recent
-// recentMessagesToKeepVerbatim messages are preserved verbatim.
+// messages (count derived from context window) are preserved verbatim.
 //
 // Safe for nil clients: if the model call fails or the client is absent, a
 // deterministic fallback digest (regex-shape extraction) is used so the
@@ -84,7 +156,17 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 		result.Reason = "below_threshold"
 		return result
 	}
-	keepFrom := len(history) - recentMessagesToKeepVerbatim
+	threshold, recentToKeep := compactionParams(m.compactionContextSize())
+	// When MaxHistory is the binding constraint (more restrictive than the
+	// context-derived threshold), recentToKeep must scale down accordingly
+	// so keepFrom stays positive and compaction actually folds messages
+	// instead of silently falling through to hard truncation.
+	if limit := m.cfg.Chat.MaxHistory; limit > 0 && limit < threshold {
+		if recentToKeep > limit/2 {
+			recentToKeep = limit / 2
+		}
+	}
+	keepFrom := len(history) - recentToKeep
 	if keepFrom <= 0 {
 		if !force || len(history) < 2 {
 			result.Reason = "too_short"
@@ -137,17 +219,16 @@ func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bo
 
 func (m *Model) compactionThreshold() int {
 	if m == nil {
-		return defaultCompactionThreshold
+		ctxThreshold, _ := compactionParams(65536)
+		return ctxThreshold
 	}
-	// If MaxHistory is set, stay above it so compaction kicks in before
-	// requestMessages' hard-truncate would have. Otherwise use the default.
-	if limit := m.cfg.Chat.MaxHistory; limit > 0 {
-		if limit > defaultCompactionThreshold {
-			return limit
-		}
-		return defaultCompactionThreshold
+	ctxThreshold, _ := compactionParams(m.compactionContextSize())
+	// If MaxHistory is set and is more restrictive than the context-derived
+	// threshold, use it so compaction fires before hard truncation.
+	if limit := m.cfg.Chat.MaxHistory; limit > 0 && limit < ctxThreshold {
+		return limit
 	}
-	return defaultCompactionThreshold
+	return ctxThreshold
 }
 
 func (m *Model) buildSessionDigest(ctx context.Context, oldest []llama.ChatMessage) string {

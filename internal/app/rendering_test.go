@@ -160,8 +160,12 @@ func TestRequestMessagesDoesNotCompactOperatorMessages(t *testing.T) {
 			{Role: "user", Content: "original implementation goal"},
 			{Role: "operator", Content: "recover status: ready\npacket: .idiom/recovery/secret/packet.json"},
 		},
+		cfg: config.Config{
+			LlamaServer: config.LlamaServer{CtxSize: 8000},
+		},
 	}
-	for i := 0; i < defaultCompactionThreshold+1; i++ {
+	threshold := m.compactionThreshold()
+	for i := 0; i < threshold+1; i++ {
 		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: "assistant turn"})
 	}
 

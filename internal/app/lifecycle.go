@@ -864,8 +864,9 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// but the default 40-message limit compacts every ~13 tool calls,
 	// destroying working memory before the model can synthesize.
 	if plan.route.Family == "conversation" || plan.route.Contract == "direct_answer" {
-		policy.MaxContextMessages = 200
-		policy.MaxContextChars = 1000000
+		maxMsgs, maxChars := runnerContextLimitsForConversation(m.compactionContextSize())
+		policy.MaxContextMessages = maxMsgs
+		policy.MaxContextChars = maxChars
 	}
 	// Conversation and read-only lanes: do not cap tool steps or
 	// model calls. The model owns the decision of when evidence is
