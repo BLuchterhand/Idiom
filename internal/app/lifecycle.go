@@ -686,19 +686,6 @@ func (m *Model) sendPlanExecuteCommandAsync(objective string) {
 	}()
 }
 
-func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
-	m.streaming = true
-	m.workingFrame = 0
-	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
-	m.beginAgentHistoryTurn()
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		defer cancel()
-		_, err := m.runFeaturePlannerCommandOnce(ctx, objective)
-		m.events <- streamDoneMsg{err: err}
-	}()
-}
-
 func (m *Model) sendImplementCommandAsync(objective string) {
 	m.streaming = true
 	m.workingFrame = 0

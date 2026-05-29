@@ -2,7 +2,7 @@
   "name": "scripted-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 36,
+    "min_tasks": 61,
     "required_families": [
       "general_chat",
       "direct_question",
@@ -51,7 +51,10 @@
       "boundary-value",
       "fault-tree",
       "post-mortem",
-      "formal-verification"
+      "formal-verification",
+      "product-workflow",
+      "prd",
+      "adr"
     ],
     "required_scenario_assertions": [
       "prompt_contains",
@@ -3806,6 +3809,71 @@
         "require_no_timeout": true,
         "max_errors": 0,
         "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-product-workflow-e2e",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Add an internal/greeting package with Hello function",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "tdd",
+        "sdd",
+        "slash-command",
+        "product-workflow",
+        "prd",
+        "adr",
+        "multi-turn",
+        "rollback"
+      ],
+      "turns": [
+        "/feature-planner Add greeting package",
+        "/product-approve",
+        "/product-approve"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-feature-planner-tui-product-workflow-e2e",
+        "prompt_contains": [
+          "/feature-planner",
+          "greeting package"
+        ],
+        "final_assistant_contains": [
+          "feature-planner: complete",
+          "atom-add-greeting",
+          "TDD-001",
+          "REQ-001"
+        ],
+        "require_changed_files": [
+          "internal/greeting/greeting.go",
+          "internal/greeting/greeting_test.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.feature_planner.start",
+          "idiom.feature_planner.atom_completed",
+          "idiom.feature_planner.complete",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/greeting/greeting.go",
+          "internal/greeting/greeting_test.go"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 180000
       }
     }
   ]

@@ -11,6 +11,55 @@ import (
 	"idiom/internal/productworkflow"
 )
 
+func (m *Model) slashProductCreate(_ string, fields []string) bool {
+	effortRoot, err := m.productCreateEffortRoot(fields)
+	if err != nil {
+		m.status = "/product-create: " + err.Error()
+		return false
+	}
+	opts := productworkflow.CreateEffortOptions{EffortRoot: effortRoot}
+	result, createErr := productworkflow.InitializeEffort(opts)
+	if createErr != nil {
+		m.status = fmt.Sprintf("/product-create: %v", createErr)
+		return false
+	}
+	displayRoot := m.displayPath(result.EffortRoot)
+	m.insertBeforePendingAssistant(llama.ChatMessage{
+		Role:    "operator",
+		Content: fmt.Sprintf("product create: %s\n  status: %s\n  phase: %s\n  next: %s", displayRoot, result.Status, result.CurrentPhase, result.NextValidAction),
+	})
+	switch result.Status {
+	case "ok":
+		m.status = fmt.Sprintf("Product effort created at %s: %s", displayRoot, result.CurrentPhase)
+	case "resumed":
+		m.status = fmt.Sprintf("Product effort resumed at %s: %s", displayRoot, result.CurrentPhase)
+	case "blocked":
+		m.status = fmt.Sprintf("Product create blocked at %s: %s", displayRoot, result.CurrentPhase)
+	default:
+		m.status = fmt.Sprintf("Product create %s: %s", result.Status, displayRoot)
+	}
+	return false
+}
+
+func (m *Model) productCreateEffortRoot(fields []string) (string, error) {
+	switch len(fields) {
+	case 1:
+		return m.productStatusAbsPath(".")
+	case 2:
+		if fields[1] == "--effort-root" {
+			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+		}
+		return m.productStatusAbsPath(fields[1])
+	case 3:
+		if fields[1] != "--effort-root" {
+			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+		}
+		return m.productStatusAbsPath(fields[2])
+	default:
+		return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+	}
+}
+
 func (m *Model) slashProductStatus(_ string, fields []string) bool {
 	absRoot, err := m.productStatusEffortRoot(fields)
 	if err != nil {
@@ -43,6 +92,35 @@ func (m *Model) slashProductStatus(_ string, fields []string) bool {
 }
 
 func (m *Model) slashProductApprove(_ string, fields []string) bool {
+	// If in a product creation phase, run the creation-specific approval gate.
+	if m.featurePlannerPhase == "prd_drafting" || m.featurePlannerPhase == "adr_drafting" {
+		if m.streaming {
+			m.status = "A product creation turn is already in progress."
+			return false
+		}
+		phase := m.featurePlannerPhase
+		m.streaming = true
+		m.workingFrame = 0
+		m.currentTurnBusyStatus = "Running " + phase + " approval..."
+		m.beginAgentHistoryTurn()
+		go func() {
+			answer, err := m.runProductApproveGate()
+			if err != nil {
+				m.events <- streamDoneMsg{err: err}
+				return
+			}
+			m.insertBeforePendingAssistant(llama.ChatMessage{
+				Role:    "operator",
+				Content: fmt.Sprintf("product approve: %s phase", phase),
+			})
+			m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: answer})
+			m.logMessage("assistant", answer)
+			m.events <- streamDoneMsg{}
+		}()
+		m.status = "Product approval in progress..."
+		return false
+	}
+
 	absRoot, err := m.productStatusEffortRoot(fields)
 	if err != nil {
 		m.status = strings.Replace(err.Error(), "/product-status", "/product-approve", 1)

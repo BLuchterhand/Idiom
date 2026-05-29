@@ -170,7 +170,11 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			}
 		} else if !m.streaming {
 			m.appendHistoryMessage("user", text, nil)
-			m.sendPromptAsync(text)
+			if m.featurePlannerPhase != "" {
+				m.sendProductFeaturePlannerTurnAsync(text)
+			} else {
+				m.sendPromptAsync(text)
+			}
 		}
 		m.renderMessages(true)
 	}

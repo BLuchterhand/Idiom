@@ -252,6 +252,16 @@ type Model struct {
 	currentTurnHistoryActive bool
 	// slashSuggestions tracks the autocomplete state when the user types /
 	slashSuggestions slashSuggestionsState
+
+	// featurePlannerEffortRoot is the absolute path to the product workflow
+	// effort folder when the TUI is in a product creation phase (PRD/ADR
+	// drafting). Empty when no product creation session is active.
+	featurePlannerEffortRoot string
+
+	// featurePlannerPhase tracks the current creation phase when a product
+	// workflow session is active. One of productworkflow.PhasePRDDrafting,
+	// PhaseADRDrafting, etc. Empty when no session is active.
+	featurePlannerPhase string
 }
 
 // pinnedFilesRegistry returns the lazy-initialized per-session pin set.

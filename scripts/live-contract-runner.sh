@@ -462,7 +462,7 @@ task_timeout="${IDIOM_SWE_TASK_TIMEOUT:-240}"
 (
   cd "$run_dir"
   if [[ "$runner_mode" == "tui" ]]; then
-    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" python3 - "$idiom_bin" "$config_path" "$prompt_file" "$task_timeout" <<'PY'
+    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" python3 - "$idiom_bin" "$config_path" "$prompt_file" "$task_timeout" "$turns_json" "$turn_count" <<'PY'
 import os
 import pty
 import select
@@ -472,11 +472,24 @@ import time
 import json
 import pathlib
 
-idiom_bin, config_path, prompt_file, timeout_s = sys.argv[1:]
+idiom_bin, config_path, prompt_file, timeout_s, turns_json_raw, turn_count_raw = sys.argv[1:]
 timeout = max(10, int(timeout_s))
-prompt = open(prompt_file, encoding="utf-8").read().rstrip("\n")
-if not prompt.lstrip().startswith("/feature-planner"):
-    prompt = "/feature-planner " + prompt
+turn_count = max(1, int(turn_count_raw))
+# Build turn list: if turns_json has multiple entries, use them; otherwise use prompt_file.
+turns = []
+if turns_json_raw and turns_json_raw != "null":
+    try:
+        parsed = json.loads(turns_json_raw)
+        if isinstance(parsed, list) and len(parsed) > 0:
+            turns = [str(t).strip() for t in parsed if str(t).strip()]
+    except json.JSONDecodeError:
+        pass
+if not turns:
+    prompt = open(prompt_file, encoding="utf-8").read().rstrip("\n")
+    if not prompt.lstrip().startswith("/feature-planner"):
+        prompt = "/feature-planner " + prompt
+    turns = [prompt]
+
 cfg = json.load(open(config_path, encoding="utf-8"))
 debug_log_dir = pathlib.Path(cfg.get("chat", {}).get("debug_log_dir") or "")
 env = os.environ.copy()
@@ -493,9 +506,12 @@ proc = subprocess.Popen(
 os.close(slave)
 out = bytearray()
 marker = b"feature-planner:"
-sent = False
+turn_index = 0
 deadline = time.time() + timeout
 completed = False
+turn_sent_at = 0.0
+min_turn_delay = 2.0  # seconds between turns to let async handlers complete
+
 def debug_log_completed():
     if not debug_log_dir:
         return False
@@ -516,6 +532,17 @@ def debug_log_completed():
     )
     return any(role in text for role in terminal_roles)
 
+def should_send_next_turn():
+    global turn_index, turn_sent_at
+    if turn_index >= len(turns):
+        return False
+    if turn_index == 0:
+        return True  # first turn after initial delay
+    # Subsequent turns: wait for streaming to complete (no active turn)
+    if time.time() - turn_sent_at < min_turn_delay:
+        return False
+    return True
+
 try:
     while time.time() < deadline:
         readable, _, _ = select.select([master], [], [], 0.1)
@@ -527,16 +554,18 @@ try:
             if not chunk:
                 break
             out.extend(chunk)
-            if marker in out:
+            if marker in out and turn_index >= len(turns):
                 completed = True
                 break
         if debug_log_completed():
             completed = True
             break
-        if not sent and time.time() + 1 < deadline:
-            time.sleep(0.7)
-            os.write(master, prompt.encode("utf-8") + b"\r")
-            sent = True
+        if turn_index < len(turns) and should_send_next_turn():
+            time.sleep(0.5)
+            turn = turns[turn_index]
+            os.write(master, turn.encode("utf-8") + b"\r")
+            turn_sent_at = time.time()
+            turn_index += 1
     sys.stdout.buffer.write(bytes(out))
     sys.stdout.flush()
 finally:
