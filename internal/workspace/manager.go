@@ -2917,10 +2917,17 @@ func qwenXMLUnclosedPrefixedToolBody(body string) string {
 
 // qwenXMLObjectLooksLikeToolCall checks whether a JSON object extracted
 // from inside <tool_NAME> tags looks like a genuine Qwen tool call rather
-// than descriptive prose. Real Qwen tool calls use either the standard
-// {"name":"tool","arguments":{...}} format or have a "tool" field.
-// JSON that merely describes tool parameters (e.g. {"key":"...","content":"..."})
-// without a name/tool marker should not be treated as a tool invocation.
+// than descriptive prose. It accepts objects that contain recognized
+// tool-parameter field names (drawn from the ToolRequest struct) or the
+// standard Qwen call-envelope fields ("tool", "name", "arguments").
+//
+// This prevents false positives where Qwen writes prose like
+//   <tool_note>{"key":"evidence","content":"found X"}</tool_note>
+// where the JSON describes what a tool does rather than invoking one,
+// while still accepting legitimate prefixed Qwen tool calls like
+//   <tool_code_navigate>{"path":"foo.go","capability":"read_symbol","symbol":"Bar"}</tool_code_navigate>
+// where the JSON carries tool parameters even though the tool name
+// comes from the XML tag.
 func qwenXMLObjectLooksLikeToolCall(object string) bool {
 	if strings.TrimSpace(object) == "" {
 		return false
@@ -2929,6 +2936,7 @@ func qwenXMLObjectLooksLikeToolCall(object string) bool {
 	if err := json.Unmarshal([]byte(object), &fields); err != nil {
 		return false
 	}
+	// Standard Qwen call-envelope fields.
 	if _, ok := fields["name"]; ok {
 		return true
 	}
@@ -2938,7 +2946,32 @@ func qwenXMLObjectLooksLikeToolCall(object string) bool {
 	if _, ok := fields["tool"]; ok {
 		return true
 	}
+	// Recognized tool-parameter fields from the ToolRequest struct.
+	// These strongly indicate the JSON is tool arguments, not prose.
+	for _, param := range qwenXMLToolParameterFields {
+		if _, ok := fields[param]; ok {
+			return true
+		}
+	}
 	return false
+}
+
+// qwenXMLToolParameterFields lists ToolRequest JSON field names that
+// strongly indicate a tool invocation when found inside <tool_NAME>
+// tags. Fields that are common in prose (e.g. "content", "description",
+// "summary", "name" without arguments) are intentionally excluded.
+var qwenXMLToolParameterFields = []string{
+	"path", "pattern", "symbol", "capability", "command", "prompt",
+	"task", "query", "rationale", "edits", "old_text", "new_text",
+	"agent", "language", "start_line", "end_line", "replace_all",
+	"recursive", "operation", "action", "resolution", "glob",
+	"include_evidence", "include_source", "include_files", "refresh",
+	"category", "component", "expected", "observed", "workaround",
+	"impact", "evidence", "suggested_fix", "required_tests",
+	"required_edit_paths", "forbidden_paths", "destination",
+	"declarations", "moves", "todos", "items", "named_gap",
+	"why_not_answering", "budget_tokens", "limit", "max_depth",
+	"mode", "freshness_policy", "freshness_max_files",
 }
 
 func xmlToolNameIsSafe(tool string) bool {

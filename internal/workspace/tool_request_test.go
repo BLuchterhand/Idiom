@@ -955,6 +955,214 @@ func TestParseToolRequestRejectsUnsafeBoolStringFields(t *testing.T) {
 	}
 }
 
+// TestParseToolRequestRejectsProseJSONInsideQwenPrefixedTags ensures that
+// XML-tagged JSON that describes tool behaviour rather than invoking a tool
+// is not misclassified as a tool request. Qwen in thinking mode may produce
+// prose like <tool_note>{"key":"evidence","content":"found X"}</tool_note>
+// when it is explaining what it would do, not actually calling note.
+func TestParseToolRequestRejectsProseJSONInsideQwenPrefixedTags(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+	}{
+		{
+			name: "note tool descriptive JSON",
+			text: `<tool_note>
+{"key":"evidence","content":"Found the runner gate in internal/agent/runner.go"}
+</tool_note>`,
+		},
+		{
+			name: "note tool descriptive JSON without tool fields",
+			text: `<tool_note>
+{"key":"plan-cache","content":"The context_pack cache uses content-addressed keys with workspace fingerprints"}
+</tool_note>`,
+		},
+		{
+			name: "prose inside arbitrary tool tag",
+			text: `<tool_read_file>
+{"status":"ok","summary":"done"}
+</tool_read_file>`,
+		},
+		{
+			name: "descriptive JSON with only generic fields",
+			text: `<tool_context_pack>
+{"description":"I need to find the runner source","confidence":"high"}
+</tool_context_pack>`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, ok, err := ParseToolRequest(tc.text)
+			if err != nil {
+				t.Fatalf("ParseToolRequest returned unexpected error: %v", err)
+			}
+			if ok {
+				t.Fatalf("expected prose JSON inside prefixed tool tags to remain answer content, got ok=true for: %s", tc.name)
+			}
+		})
+	}
+}
+
+// TestParseToolRequestAcceptsDeepSeekNativeJSONFormat verifies that the
+// standard {"tool":"name",...} JSON format used by DeepSeek and other
+// native-tool-call backends parses correctly after the Qwen XML guard.
+func TestParseToolRequestAcceptsDeepSeekNativeJSONFormat(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "read_file bare JSON",
+			text: `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}`,
+			want: "read_file",
+		},
+		{
+			name: "search_content bare JSON",
+			text: `{"tool":"search_content","pattern":"ParseToolRequest","path":"internal/workspace"}`,
+			want: "search_content",
+		},
+		{
+			name: "code_navigate bare JSON",
+			text: `{"tool":"code_navigate","capability":"read_symbol","path":"internal/agent/runner.go","symbol":"Runner.Run"}`,
+			want: "code_navigate",
+		},
+		{
+			name: "context_pack bare JSON",
+			text: `{"tool":"context_pack","task":"find the runner gate","mode":"plan","limit":8}`,
+			want: "context_pack",
+		},
+		{
+			name: "fenced tool JSON (markdown style)",
+			text: "```tool\n" + `{"tool":"read_file","path":"internal/agent/runner.go"}` + "\n```",
+			want: "read_file",
+		},
+		{
+			name: "line-anchored tool JSON",
+			text: "tool: read_file {\"path\":\"README.md\",\"start_line\":1,\"end_line\":80}",
+			want: "read_file",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _, ok, err := ParseToolRequest(tc.text)
+			if err != nil {
+				t.Fatalf("ParseToolRequest: %v", err)
+			}
+			if !ok {
+				t.Fatalf("expected DeepSeek-native tool request to be accepted: %s", tc.name)
+			}
+			if req.Tool != tc.want {
+				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseToolRequestAcceptsAllQwenFormatsAfterGuard verifies that every
+// Qwen tool-call format continues to parse correctly after the XML guard
+// that rejects descriptive prose.
+func TestParseToolRequestAcceptsAllQwenFormatsAfterGuard(t *testing.T) {
+	cases := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "Qwen JSON envelope",
+			text: `<tool_call>
+{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}
+</tool_call>`,
+			want: "read_file",
+		},
+		{
+			name: "Qwen name+arguments envelope",
+			text: `<tool_call>
+{"name":"submit_plan","arguments":{"rationale":"plan","edits":[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update"}]}}
+</tool_call>`,
+			want: "submit_plan",
+		},
+		{
+			name: "Qwen function envelope",
+			text: `<tool_call>
+<function=submit_plan>
+<parameter=rationale>Add the gate.</parameter>
+<parameter=edits>[{"path":"a.go","old_text":"old","new_text":"new","purpose":"update"}]</parameter>
+</function>
+</tool_call>`,
+			want: "submit_plan",
+		},
+		{
+			name: "Qwen prefixed tag with parameters",
+			text: `<tool_code_navigate>
+<parameter=path>internal/app/lifecycle.go</parameter>
+<parameter=operation>read_symbol</parameter>
+<parameter=symbol>Lifecycle.Run</parameter>
+</tool_code_navigate>`,
+			want: "code_navigate",
+		},
+		{
+			name: "Qwen prefixed tag with JSON arguments",
+			text: `<tool_code_navigate>
+{"path":"internal/productworkflow/coverage_gate.go","capability":"read_symbol","symbol":"CoverageGate"}
+</tool_code_navigate>`,
+			want: "code_navigate",
+		},
+		{
+			name: "Qwen prefixed tag with JSON without capability",
+			text: `<tool_code_navigate>
+{"language":"go","path":"internal/productworkflow/coverage_gate.go","precision_tier":"syntax-index","symbol":"CoverageGate"}
+</tool_code_navigate>`,
+			want: "code_navigate",
+		},
+		{
+			name: "Qwen unclosed prefixed tag",
+			text: `<tool_call>
+<tool_code_navigate>
+<parameter=action>read_symbol</parameter>
+<parameter=path>internal/productworkflow/coverage_gate.go</parameter>
+<parameter=symbol>CoverageGate</parameter>
+</tool_call>`,
+			want: "code_navigate",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _, ok, err := ParseToolRequest(tc.text)
+			if err != nil {
+				t.Fatalf("ParseToolRequest: %v", err)
+			}
+			if !ok {
+				t.Fatalf("expected Qwen tool request to be accepted after guard: %s", tc.name)
+			}
+			if req.Tool != tc.want {
+				t.Fatalf("tool = %q, want %q", req.Tool, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseToolRequestRejectsProseWithToolPrefixNoJSON ensures that prose
+// containing <tool_ references without a valid tool-call body is still
+// treated as a final answer.
+func TestParseToolRequestRejectsProseWithToolPrefixNoJSON(t *testing.T) {
+	cases := []string{
+		"Use `<tool_read_file>` only when emitting an actual tool envelope.",
+		"After the <tool_code_navigate> step, inspect the results.",
+		"Do not write <tool_note> tags in your final answer prose.",
+	}
+	for _, tc := range cases {
+		_, _, ok, err := ParseToolRequest(tc)
+		if err != nil {
+			t.Fatalf("ParseToolRequest returned unexpected error for prose: %v (text=%q)", err, tc)
+		}
+		if ok {
+			t.Fatalf("expected prose with <tool_ references to remain answer content: %q", tc)
+		}
+	}
+}
+
+
 func TestExploreShellClassificationAndValidation(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "shell", Command: "find . -maxdepth 2"}) {
 		t.Fatal("expected find shell command to be broad inspection")
