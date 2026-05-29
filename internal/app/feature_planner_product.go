@@ -149,9 +149,13 @@ func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string,
 	opts.MaxTokens = 8192
 
 	// PRD generation with parse-repair loop.
-	_, prd, err := m.generatePRDWithRepair(ctx, prompt, opts, effortRoot, hasExisting)
+	answer, prd, err := m.generatePRDWithRepair(ctx, prompt, opts, effortRoot, hasExisting)
 	if err != nil {
 		return "", fmt.Errorf("PRD generation: %w", err)
+	}
+	if len(prd.Requirements) == 0 {
+		// Parse-repair exhausted; answer is the user-visible message.
+		return answer, nil
 	}
 
 	// Parse succeeded — write and validate.
@@ -205,16 +209,17 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 		}
 	}
 
-	// All retries exhausted — save final raw output and return typed blocker.
+	// All retries exhausted — save final raw output and return a message,
+	// not a fatal error, so the session stays alive and the operator can
+	// inspect the raw output.
 	saveRawParseFailure(effortRoot, "prd_parse_failure_final.md", answer)
-	// Return an empty success with a message, not a fatal error, so the
-	// session stays alive and the operator can inspect the raw output.
-	return answer, productworkflow.PRDDocument{}, fmt.Errorf(
-		"PRD parsing failed after %d repair attempts. The raw model output has been saved to %s.\nParse error: %w",
+	msg := fmt.Sprintf(
+		"PRD parsing failed after %d total attempts. The raw model output has been saved to %s.\nParse error: %v\n\nContinue chatting to refine the PRD, or type /product-approve to attempt auto-repair.",
 		maxParseRepairRetries+1,
 		filepath.Join(effortRoot, "prd_parse_failure_final.md"),
 		parseErr,
 	)
+	return msg, productworkflow.PRDDocument{}, nil
 }
 
 // buildPRDFormatRepairPrompt creates a prompt asking the model to fix
@@ -232,13 +237,15 @@ func buildPRDFormatRepairPrompt(badOutput string, parseErr error, effortRoot str
 	b.WriteString("\n\n")
 	b.WriteString("Please fix the formatting and output the complete, corrected PRD.\n")
 	b.WriteString("Requirements:\n")
-	b.WriteString("- The document MUST start with --- on its own line (YAML front matter delimiter)\n")
-	b.WriteString("- Front matter fields: schema_version: idiom.prd.v1, prd_id: ")
-	b.WriteString(effortID)
-	b.WriteString(fmt.Sprintf("- status: draft\n- task_id: %s\n- created_at: %s\n", effortID, now))
+	b.WriteString("- The document MUST begin with --- on its own line and MUST end the front matter block with a second --- on its own line immediately after the last field\n")
+	b.WriteString(fmt.Sprintf("- Required front matter between the --- delimiters:\n  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", effortID, effortID, now))
 	b.WriteString("- Do NOT wrap the output in ``` code fences\n")
 	b.WriteString("- Do NOT add any preamble text before the --- delimiter\n")
 	b.WriteString("- Output only the PRD markdown, nothing else\n")
+	b.WriteString("- Example: the front matter block must look like this (both --- lines are required):\n")
+	b.WriteString("  ---\n")
+	b.WriteString(fmt.Sprintf("  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", effortID, effortID, now))
+	b.WriteString("  ---\n")
 	return b.String()
 }
 
@@ -269,7 +276,7 @@ func buildPRDGenerationPrompt(featureDescription, effortRoot string) string {
 	b.WriteString("You are drafting a Product Requirements Document (PRD). ")
 	b.WriteString("Given the feature description below, produce a complete PRD in markdown format.\n\n")
 	b.WriteString("PRD format requirements:\n")
-	b.WriteString("- Include YAML front matter (between --- delimiters) with these exact fields:\n")
+	b.WriteString("- Include YAML front matter with an opening --- on its own line, the fields below, and a closing --- on its own line:\n")
 	b.WriteString("  schema_version: idiom.prd.v1\n")
 	b.WriteString(fmt.Sprintf("  prd_id: %s\n", effortID))
 	b.WriteString("  status: draft\n")
@@ -308,8 +315,8 @@ func buildPRDRefinementPrompt(currentPRD, feedback, effortRoot string) string {
 	b.WriteString("\n\nOperator feedback:\n")
 	b.WriteString(feedback)
 	b.WriteString("\n\n")
-	b.WriteString("Preserve the existing PRD format. Front matter fields must remain: ")
-	b.WriteString(fmt.Sprintf("schema_version: idiom.prd.v1, prd_id: %s, status: draft, task_id: %s, created_at: %s", effortID, effortID, now))
+	b.WriteString("Preserve the existing PRD format, including the opening and closing --- front matter delimiters. The front matter fields must remain:\n")
+	b.WriteString(fmt.Sprintf("  schema_version: idiom.prd.v1\n  prd_id: %s\n  status: draft\n  task_id: %s\n  created_at: %s\n", effortID, effortID, now))
 	b.WriteString("\nKeep or update the requirements list based on the feedback. Output only the complete PRD markdown, nothing else.\n")
 	return b.String()
 }
@@ -394,7 +401,8 @@ func (m *Model) runADRDraftingTurn(ctx context.Context, message string) (string,
 	adrDocs, indexEntries = mergeADRIndex(existingIdx, adrDocs, indexEntries)
 
 	if len(adrDocs) == 0 {
-		return "", fmt.Errorf("no ADRs produced by model after repair")
+		// Parse-repair exhausted — raw output on disk for operator inspection.
+		return "ADR parsing failed after all repair attempts. The raw model output has been saved to adrs_parse_failure_final.txt in the effort directory. Continue chatting to refine the ADRs.", nil
 	}
 
 	for i, doc := range adrDocs {
@@ -429,7 +437,7 @@ func (m *Model) generateADRs(ctx context.Context, effortRoot string) ([]productw
 	if err != nil {
 		return nil, nil, fmt.Errorf("read prd.md: %w", err)
 	}
-	prd, err := productworkflow.ParsePRDMarkdown(prdData)
+	prd, _, err := productworkflow.TryParsePRDMarkdown(string(prdData))
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse prd.md: %w", err)
 	}
@@ -469,6 +477,9 @@ func (m *Model) generateADRs(ctx context.Context, effortRoot string) ([]productw
 
 // generateADRsWithRepair calls the model and attempts to split/parse ADR output.
 // If all ADR chunks fail to parse, it enters a repair loop with retry budget.
+// The repair loop parses the repair model output directly via TrySplitAndParseADRs
+// rather than routing through tryGenerateADRs (which would rebuild the prompt
+// and call the model a second time).
 func (m *Model) generateADRsWithRepair(
 	ctx context.Context,
 	effortRoot string,
@@ -481,11 +492,11 @@ func (m *Model) generateADRsWithRepair(
 		return nil, nil, err
 	}
 	if len(adrDocs) > 0 {
-		// At least some ADRs parsed — partial success is OK.
 		return adrDocs, indexEntries, nil
 	}
 
 	// All chunks failed — enter repair loop.
+	var splitErr error
 	for attempt := 0; attempt < maxParseRepairRetries; attempt++ {
 		saveRawParseFailure(effortRoot, fmt.Sprintf("adrs_parse_failure_raw_%03d.txt", attempt+1), rawAnswer)
 
@@ -499,23 +510,22 @@ func (m *Model) generateADRsWithRepair(
 		}
 
 		rawAnswer = repairAnswer
-		_, adrDocs, indexEntries, failures, err = m.tryGenerateADRs(ctx, effortRoot, rawAnswer, prd, buildPrompt)
-		if err != nil {
-			return nil, nil, err
+		// Parse the repair output directly — the closure would ignore the content
+		// parameter, and routing through tryGenerateADRs would make a redundant
+		// model call via buildPrompt.
+		adrDocs, indexEntries, failures, splitErr = productworkflow.TrySplitAndParseADRs(rawAnswer, prd)
+		if splitErr != nil && len(adrDocs) == 0 {
+			continue
 		}
 		if len(adrDocs) > 0 {
 			return adrDocs, indexEntries, nil
 		}
 	}
 
-	// All retries exhausted.
+	// All retries exhausted — save final raw output and return non-fatal.
+	// The raw output is on disk for operator inspection.
 	saveRawParseFailure(effortRoot, "adrs_parse_failure_final.txt", rawAnswer)
-	return nil, nil, fmt.Errorf(
-		"ADR parsing failed after %d repair attempts (%d chunks failed). Raw output saved to %s",
-		maxParseRepairRetries+1,
-		len(failures),
-		filepath.Join(effortRoot, "adrs_parse_failure_final.txt"),
-	)
+	return nil, nil, nil
 }
 
 // tryGenerateADRs makes one model call and attempts to parse ADR output.
@@ -558,7 +568,7 @@ func buildADRFormatRepairPrompt(badOutput string, failures []productworkflow.ADR
 	b.WriteString("\n\n")
 	b.WriteString("Please fix the formatting and output the complete, corrected set of ADRs.\n")
 	b.WriteString("Requirements:\n")
-	b.WriteString("- Each ADR MUST start with --- on its own line (YAML front matter delimiter)\n")
+	b.WriteString("- Each ADR MUST begin with --- on its own line and MUST end the front matter block with a second --- on its own line immediately after the last field\n")
 	b.WriteString("- Separate ADRs with a line containing exactly three equals signs: ===\n")
 	b.WriteString(fmt.Sprintf("- Effort ID: %s\n", effortID))
 	b.WriteString("- Do NOT wrap the output in ``` code fences\n")
@@ -579,7 +589,7 @@ func buildADRGenerationPrompt(prdContent string, effortRoot string) string {
 	b.WriteString("\n\n")
 	b.WriteString("Output format: write each ADR as a standalone markdown document with YAML front matter. ")
 	b.WriteString("Separate ADRs with a line containing exactly three equals signs: ===\n\n")
-	b.WriteString("Each ADR must have YAML front matter with these fields:\n")
+	b.WriteString("Each ADR must have YAML front matter: opening --- on its own line, the fields below, and a closing --- on its own line:\n")
 	b.WriteString("- schema_version: idiom.adr.v1\n")
 	b.WriteString("- adr_id: ADR-001 (increment for each ADR)\n")
 	b.WriteString("- status: draft\n")
@@ -608,7 +618,7 @@ func buildADRRefinementPrompt(currentADRs, feedback, effortRoot string) string {
 	b.WriteString(feedback)
 	b.WriteString("\n\n")
 	b.WriteString(fmt.Sprintf("Effort ID: %s. ", effortID))
-	b.WriteString("Maintain the same ADR format with YAML front matter and all required sections. ")
+	b.WriteString("Maintain the same ADR format, including opening and closing --- front matter delimiters, YAML front matter fields, and all required sections. ")
 	b.WriteString("Output the complete set of ADRs separated by === lines. Do not add any preamble or postamble.\n")
 	return b.String()
 }
@@ -778,7 +788,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, error) {
 		if readErr != nil {
 			continue
 		}
-		adrDoc, parseErr := productworkflow.ParseADRMarkdown(adrData)
+		adrDoc, _, parseErr := productworkflow.TryParseADRMarkdown(string(adrData))
 		if parseErr != nil {
 			continue
 		}
@@ -1050,7 +1060,7 @@ func sanitizeEffortSlug(s string) string {
 	for _, r := range s {
 		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			result.WriteRune(r)
-		} else if r == ' ' || r == '-' || r == '_' {
+		} else if r == ' ' || r == '-' || r == '_' || r == '.' {
 			if result.Len() > 0 && result.String()[result.Len()-1] != '-' {
 				result.WriteByte('-')
 			}
@@ -1060,6 +1070,10 @@ func sanitizeEffortSlug(s string) string {
 	if len(slug) > 60 {
 		slug = slug[:60]
 		slug = strings.TrimRight(slug, "-")
+		// Truncate back to last word boundary to avoid partial words.
+		if lastDash := strings.LastIndex(slug, "-"); lastDash > 0 {
+			slug = slug[:lastDash]
+		}
 	}
 	if slug == "" {
 		slug = fmt.Sprintf("effort-%d", time.Now().Unix())
