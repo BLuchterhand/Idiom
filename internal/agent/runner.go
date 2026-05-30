@@ -2354,7 +2354,7 @@ func (r *Runner) Run(
 					hideBroadDiscoveryTools(turnHiddenTools)
 					rebuildTools()
 					requestBudget.postChild.readCalls = 0
-					nudge := childPacketBoundaryNudge(r.RuntimeBrief.Objective, evidencePaths, postChildReadBudget)
+					nudge := childPacketBoundaryNudge(r.RuntimeBrief.Objective, []workspace.ToolResult{result}, evidencePaths, postChildReadBudget)
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 					r.emitEvent(RunEvent{Role: "child_packet_boundary", Content: nudge})
 				}
@@ -5794,9 +5794,9 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 	return closurePromptEvidencePaths(paths, max)
 }
 
-func childPacketBoundaryNudge(_ string, evidencePaths []string, probeBudget int) string {
+func childPacketBoundaryNudge(objective string, results []workspace.ToolResult, evidencePaths []string, probeBudget int) string {
 	evidencePaths = closurePromptEvidencePaths(evidencePaths, 4)
-	validity, _ := closureDecisionRationale("", nil, evidencePaths)
+	validity, _ := closureDecisionRationale(objective, results, evidencePaths)
 	lines := []string{
 		"The delegated read_only child result is now your evidence packet.",
 	}
@@ -5805,6 +5805,9 @@ func childPacketBoundaryNudge(_ string, evidencePaths []string, probeBudget int)
 	}
 	if len(evidencePaths) > 0 {
 		lines = append(lines, "Packet-named paths: "+summarizePostChildEvidencePaths(evidencePaths, 3))
+	}
+	if suggestion := closureProbeSuggestionLine(results, 3); suggestion != "" {
+		lines = append(lines, suggestion)
 	}
 	lines = append(lines, postReadinessContinuationContract("child_packet_available", probeBudget))
 	lines = append(lines,
@@ -9475,9 +9478,32 @@ func parseVisibleLineToolRequest(text string) (workspace.ToolRequest, string, bo
 	if text == "" || strings.Contains(text, "{") || strings.Contains(text, "```") {
 		return workspace.ToolRequest{}, "", false
 	}
+	// Scan for the first tool: line, skipping leading prose.
+	// Models sometimes emit conversational text before a tool call.
 	lines := strings.Split(text, "\n")
+	toolLineIdx := -1
+	proseLines := 0
+	for i, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, _, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "tool") {
+			toolLineIdx = i
+			break
+		}
+		proseLines++
+		if proseLines > 10 {
+			return workspace.ToolRequest{}, "", false
+		}
+	}
+	if toolLineIdx < 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	// Parse from the tool: line onward.
 	values := map[string]string{}
-	for _, line := range lines {
+	for _, line := range lines[toolLineIdx:] {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

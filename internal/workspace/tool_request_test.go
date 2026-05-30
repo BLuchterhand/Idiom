@@ -1207,3 +1207,88 @@ func TestScopedListFilesIsNarrowingNotBroadInspection(t *testing.T) {
 		t.Fatal("scoped list_files should be a narrowing request")
 	}
 }
+
+func TestParseToolRequestAcceptsCallingToolEnvelope(t *testing.T) {
+	// Exact format emitted by Qwen 3.6b-35b in session 20260530-052348.879
+	text := `[Calling tool: search_content({"glob":"*.go","pattern":"type.*Evidence","named_gap":"exact definition of Evidence type/struct/interface","path":".","tool":"search_content","why_not_answering":"Without the Evidence type definition, I cannot describe how evidence is structured in the idiom harness."})]`
+	req, raw, ok, err := ParseToolRequest(text)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request for [Calling tool: ...] format")
+	}
+	if req.Tool != "search_content" {
+		t.Fatalf("expected tool=search_content, got %q", req.Tool)
+	}
+	if req.Pattern != "type.*Evidence" {
+		t.Fatalf("expected pattern=type.*Evidence, got %q", req.Pattern)
+	}
+	if req.Path != "." {
+		t.Fatalf("expected path=., got %q", req.Path)
+	}
+	if req.NamedGap != "exact definition of Evidence type/struct/interface" {
+		t.Fatalf("expected named_gap to be preserved, got %q", req.NamedGap)
+	}
+	if !strings.HasPrefix(raw, `{"`) {
+		t.Fatalf("expected JSON object payload, got %q", raw)
+	}
+}
+
+func TestParseToolRequestAcceptsCallingToolEnvelopeLowercase(t *testing.T) {
+	text := `[calling tool: search_content({"glob":"*.go","pattern":"type.*Evidence","path":".","tool":"search_content"})]`
+	req, _, ok, err := ParseToolRequest(text)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request for [calling tool: ...] format (lowercase)")
+	}
+	if req.Tool != "search_content" {
+		t.Fatalf("expected tool=search_content, got %q", req.Tool)
+	}
+}
+
+func TestParseToolRequestRejectsCallingToolWithoutJSON(t *testing.T) {
+	text := `[Calling tool: search_content not valid json]`
+	_, _, ok, _ := ParseToolRequest(text)
+	if ok {
+		t.Fatal("expected rejection for [Calling tool: ...] without JSON object")
+	}
+}
+
+func TestParseToolRequestRejectsCallingToolWithoutToolKey(t *testing.T) {
+	text := `[Calling tool: search_content({"pattern":"type.*Evidence","path":"."})]`
+	_, _, ok, _ := ParseToolRequest(text)
+	if ok {
+		t.Fatal("expected rejection for [Calling tool: ...] without tool key in JSON")
+	}
+}
+
+func TestParseToolRequestAcceptsCallingToolEnvelopeWithWhitespace(t *testing.T) {
+	text := `[Calling tool:   search_content ( {"glob":"*.go","pattern":"type.*Evidence","path":".","tool":"search_content"} ) ]`
+	req, _, ok, err := ParseToolRequest(text)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request for [Calling tool: ...] with whitespace")
+	}
+	if req.Tool != "search_content" {
+		t.Fatalf("expected tool=search_content, got %q", req.Tool)
+	}
+}
+
+func TestParseToolRequestRejectsCallingToolProseWithoutJSON(t *testing.T) {
+	for _, text := range []string{
+		`I am [Calling tool: the workshop about tooling] today`,
+		`[Calling tool: read_file not a json object]`,
+		`Use [Calling tool: read_file] to read the file`,
+		`[Calling conventions: we use {"status":"ok"} for responses]`,
+	} {
+		_, _, ok, _ := ParseToolRequest(text)
+		if ok {
+			t.Fatalf("expected rejection for prose: %q", text)
+		}
+	}
+}

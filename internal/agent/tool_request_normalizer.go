@@ -765,14 +765,36 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
 		return workspace.ToolRequest{}, false, true
 	}
+	// Scan for the first tool: line, skipping leading prose.
+	// Models sometimes emit conversational text before a tool call.
 	lines := strings.Split(trimmed, "\n")
-	values := map[string]string{}
-	sawKeyValue := false
-	for _, line := range lines {
+	toolLineIdx := -1
+	proseLines := 0
+	for i, line := range lines {
 		line = strings.TrimSpace(line)
 		if line == "" {
-			// Blank line after tool fields ends this tool call
-			// so a second tool: block later is ignored.
+			continue
+		}
+		key, _, ok := strings.Cut(line, ":")
+		if ok && strings.EqualFold(strings.TrimSpace(key), "tool") {
+			toolLineIdx = i
+			break
+		}
+		// Allow at most 5 prose lines before giving up.
+		proseLines++
+		if proseLines > 5 {
+			return workspace.ToolRequest{}, false, true
+		}
+	}
+	if toolLineIdx < 0 {
+		return workspace.ToolRequest{}, false, true
+	}
+	// Parse from the tool: line onward.
+	values := map[string]string{}
+	sawKeyValue := false
+	for _, line := range lines[toolLineIdx:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			if sawKeyValue && strings.TrimSpace(values["tool"]) != "" {
 				break
 			}
@@ -781,8 +803,6 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		key, value, ok := strings.Cut(line, ":")
 		if !ok {
 			if sawKeyValue {
-				// Continuation line (e.g. prompt value with a colon).
-				// Skip it — we already have enough tool fields.
 				continue
 			}
 			return workspace.ToolRequest{}, false, true
@@ -793,7 +813,6 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		if key == "" || value == "" {
 			return workspace.ToolRequest{}, false, true
 		}
-		// Stop at a second tool: line — parse only the first.
 		if key == "tool" && strings.TrimSpace(values["tool"]) != "" {
 			break
 		}

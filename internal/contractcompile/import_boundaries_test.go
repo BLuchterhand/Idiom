@@ -1,4 +1,4 @@
-package architecture_test
+package contractcompile_test
 
 import (
 	"encoding/json"

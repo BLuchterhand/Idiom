@@ -12025,7 +12025,7 @@ func TestFinalAnswerDecoratorPreservesSubstantiveModelAnswerOverEvidencePacket(t
 }
 
 func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
-	nudge := childPacketBoundaryNudge("Explain how this harness uses subagents.", []string{
+	nudge := childPacketBoundaryNudge("Explain how this harness uses subagents.", nil, []string{
 		"internal/agent/discovery_redirect.go",
 		"internal/workspace/discovery_query.go",
 	}, 2)
@@ -12054,7 +12054,7 @@ func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
 		{budget: 1, want: "one targeted probe"},
 		{budget: 0, want: "no further reads"},
 	} {
-		nudge := childPacketBoundaryNudge("q", []string{"internal/agent/runner.go"}, tc.budget)
+		nudge := childPacketBoundaryNudge("q", nil, []string{"internal/agent/runner.go"}, tc.budget)
 		if !strings.Contains(nudge, tc.want) {
 			t.Fatalf("budget=%d: expected nudge to contain %q, got:\n%s", tc.budget, tc.want, nudge)
 		}
@@ -12062,7 +12062,7 @@ func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
 }
 
 func TestChildPacketBoundaryNudgeFiltersNonFileArtifacts(t *testing.T) {
-	nudge := childPacketBoundaryNudge("Explain how this harness uses subagents.", []string{
+	nudge := childPacketBoundaryNudge("Explain how this harness uses subagents.", nil, []string{
 		".idiom/discovery/queries/query.json",
 		"start_line/end_line",
 		"internal/agent/runner_child_tasks.go",

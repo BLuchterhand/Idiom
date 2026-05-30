@@ -165,6 +165,23 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(internalAnswer); ok {
 		return cleaned, true
 	}
+	// For non-mutation turns where the model produced a genuine substantive
+	// answer, prefer it over source-body fact extraction. Source-body extraction
+	// from read_file results produces nonsense like "The inspected source
+	// contains `"strings"`, `)` and `)`. No files were changed." for
+	// conversation questions. But only apply this when the answer doesn't look
+	// like a budget-closure or post-readiness stub — those need composition.
+	if !runnerBriefRequiresMutation(brief) && looksLikeSubstantiveFinalAnswer(internalAnswer) {
+		lower := strings.ToLower(internalAnswer)
+		if !strings.Contains(lower, "partial findings from this turn") &&
+			!strings.Contains(lower, "budget was reached") &&
+			!strings.Contains(lower, "post-readiness") {
+			substantive := stripInternalEvidenceAppendix(internalAnswer)
+			if len(strings.TrimSpace(substantive)) >= 120 {
+				return substantive, true
+			}
+		}
+	}
 	if exact, ok := presentableExactProbeAnswer(brief, results); ok {
 		return exact, true
 	}

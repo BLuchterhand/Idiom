@@ -2594,6 +2594,10 @@ func extractToolPayload(text string) (string, bool) {
 		return payload, true
 	}
 
+	if payload, ok := extractCallingToolPayload(trimmed); ok {
+		return payload, true
+	}
+
 	if strings.HasPrefix(trimmed, "{") {
 		if object, ok := extractFirstJSONObject(trimmed); ok {
 			if bareJSONObjectIsToolPayload(object) {
@@ -2672,6 +2676,45 @@ func looksLikeFileHandleID(id string) bool {
 		}
 	}
 	return true
+}
+
+// extractCallingToolPayload detects the [Calling tool: name({json})]
+// format that some models emit in textual-transport mode. The JSON object
+// inside the envelope already contains a "tool" field — the extractor
+// just needs to unwrap the outer brackets and return the JSON payload
+// for standard DecodeToolRequestJSON decoding.
+// Uses extractFirstJSONObject for bracket-depth-aware, string-escape-aware
+// extraction, consistent with the other extractors in the chain.
+func extractCallingToolPayload(text string) (string, bool) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", false
+	}
+	// Match case-insensitive [Calling tool: prefix.
+	lower := strings.ToLower(trimmed)
+	const prefix = "[calling tool:"
+	idx := strings.Index(lower, prefix)
+	if idx < 0 {
+		return "", false
+	}
+	// Skip past the prefix. The format is: TOOL_NAME(JSON_OBJECT)].
+	rest := strings.TrimSpace(trimmed[idx+len(prefix):])
+	// Find the first '{' to locate the JSON payload, then delegate to
+	// extractFirstJSONObject for bracket-depth-aware, string-escape-aware
+	// extraction.
+	braceIdx := strings.Index(rest, "{")
+	if braceIdx < 0 {
+		return "", false
+	}
+	payload, ok := extractFirstJSONObject(rest[braceIdx:])
+	if !ok {
+		return "", false
+	}
+	// Must contain "tool" key to distinguish from prose JSON.
+	if !strings.Contains(payload, `"tool"`) {
+		return "", false
+	}
+	return payload, true
 }
 
 func extractPlainToolPrefixPayload(text string) (string, bool) {
