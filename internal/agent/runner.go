@@ -83,6 +83,12 @@ type Runner struct {
 	// the running config separately. Zero means unknown.
 	ContextSize     int
 	DisableTaskTool bool
+	// LanePolicy is the lane-specific behavioral policy derived from
+	// RuntimeBrief at runner construction time. The policy replaces
+	// inline TaskFamily/Contract string-comparison guards with a
+	// single dispatch point. When nil, falls back to DefaultLanePolicy.
+	LanePolicy LanePolicy
+
 	// InstructionAttacher injects configured per-directory guidance
 	// whenever the model touches a file under that directory.
 	InstructionAttacher *InstructionAttacher
@@ -100,6 +106,18 @@ func (r *Runner) supportsNativeTools() bool {
 	return r == nil || r.Client == nil || r.Client.SupportsNativeTools()
 }
 
+
+// lanePolicy returns the lane-specific behavioral policy, falling back
+// to LanePolicyForBrief when the Runner.LanePolicy field is nil.
+func (r *Runner) lanePolicy() LanePolicy {
+	if r != nil && r.LanePolicy != nil {
+		return r.LanePolicy
+	}
+	if r != nil {
+		return LanePolicyForBrief(r.RuntimeBrief)
+	}
+	return DefaultLanePolicy{}
+}
 func (r *Runner) supportsTerminalSubmitPlanNativeTools(results []workspace.ToolResult) bool {
 	if r == nil || r.Client == nil {
 		return true
@@ -119,11 +137,18 @@ func (r *Runner) Run(
 	onToolResult func(ToolResultEvent),
 ) (answer string, err error) {
 	turnMessages := append([]llama.ChatMessage(nil), messages...)
+
+	// Ensure LanePolicy is initialized — falls back to auto-detection from RuntimeBrief.
+	if r.LanePolicy == nil {
+		r.LanePolicy = LanePolicyForBrief(r.RuntimeBrief)
+	}
+	lp := r.LanePolicy
+
 	executionState := newRunnerExecutionState(r.InitialNeedsNarrowing, r.InitialBroadInspects)
 	delegatedReadOnlyAnswerReadyNudged := false
 	planThenExecuteReadinessNudged := false
 	conversationEvidenceNudged := false
-	convFirstMilestone, convNudgeInterval := conversationMilestones(r.ContextSize)
+	convFirstMilestone, convNudgeInterval := lp.CallCountMilestones(r.ContextSize)
 
 	planThenExecuteCorrectionAfterRefreshNudged := false
 	planThenExecuteUnreadSourceNudgedFor := ""
@@ -300,9 +325,10 @@ func (r *Runner) Run(
 		// prompt causes some backends (e.g. Qwen via MLX textual transport)
 		// to emit tool-call-like prose that the parser misinterprets.
 		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
-			// bypass note injection
-		} else if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
-			strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "grounded_evidence_summary") {
+			// bypass note injection — direct_answer contract with
+			// textual transport (e.g. Qwen/MLX) misparses the note
+			// tool schema as tool-call prose.
+		} else if r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
 			tools = append(tools, llama.Tool{
 				Type: "function",
 				Function: llama.ToolFunction{
@@ -590,11 +616,13 @@ func (r *Runner) Run(
 		// and model-call budgets cut off legitimate investigation and
 		// produce garbage forced answers. Per north star, trust the
 		// model's intelligence — if it needs more time, let it continue.
-		if !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
+		if !r.lanePolicy().SkipDurationBudget() {
 			if policy.shouldStopForDuration(metrics.startedAt) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Run duration budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "duration_budget_exhausted", true)
 			}
+		}
+		if !r.lanePolicy().SkipModelCallBudget() {
 			if policy.shouldStopForModelCalls(metrics.ModelCalls) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "model_call_budget_exhausted", true)
@@ -1689,8 +1717,7 @@ func (r *Runner) Run(
 		// The auto-findings capture fires at convFirstMilestone;
 		// awareness nudges begin one nudgeInterval later so the two
 		// signals are staggered rather than competing at the same call.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			metrics.ToolCalls > 5 {
+		if convFirstMilestone > 0 && metrics.ToolCalls > 5 {
 			shouldNudge := false
 			var nudgeMsg string
 			firstNudgeAt := convFirstMilestone + convNudgeInterval
@@ -1840,8 +1867,7 @@ func (r *Runner) Run(
 			// different symbols, line ranges, or patterns — not stuck.
 			// Skip the doom-loop gate for read-class tools in conversation,
 			// but still track same-path fixations with a coarser fingerprint.
-			if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-				isReadClassTool(req) {
+			if r.lanePolicy().SkipFingerprintHardBlock() && isReadClassTool(req) {
 				requestBudget.fingerprint.identicalRun = 0
 				// Track same-tool + same-path (ignoring query parameters)
 				// to detect fixation on one file despite varied arguments.
@@ -1926,8 +1952,7 @@ func (r *Runner) Run(
 		// Conversation lanes: the fingerprint hard block's forced
 		// completion cuts off legitimate investigation. Clear the
 		// ForceAnswerPrompt before apply() so the model can continue.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
-			fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
+		if r.lanePolicy().SkipFingerprintHardBlock() && fingerprintDecision.ForceAnswerReason == "fingerprint_hard_block_exhausted" {
 			fingerprintDecision.ForceAnswerPrompt = ""
 			fingerprintDecision.ForceAnswerReason = ""
 		}
@@ -2001,7 +2026,7 @@ func (r *Runner) Run(
 		// contradicts the conversation lane's evidence requirement
 		// (file:line from at least one inspected source location).
 		// The conversation lane has its own evidence-aligned nudge.
-		!strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
+		!r.lanePolicy().SkipSynthesisNudge() {
 			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
@@ -2964,7 +2989,7 @@ func (r *Runner) Run(
 
 		// Conversation lane: auto-capture findings at the first context-derived
 		// milestone so discoveries survive context compactions.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+		if r.lanePolicy().AutoCaptureFindings() &&
 			metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
 			noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
 			if err := os.MkdirAll(noteDir, 0755); err == nil {
@@ -16673,7 +16698,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 	// ("without a write") and assumes write-then-answer lanes.
 	// The conversation lane has its own evidence path and should
 	// not receive mutation-framed nudges.
-	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
+	if r.lanePolicy().SkipExplorationDelegationNudge() {
 		return ""
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
@@ -19596,7 +19621,7 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 	// nudges that declare evidence is sufficient or that the harness
 	// will end the turn. The force-completion path is also gated in
 	// rejectTool; this keeps the nudge text consistent.
-	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") {
+	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() {
 		return ""
 	}
 	in := recoveryNudgeInputs{
@@ -19734,7 +19759,7 @@ func closureReadyRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
 	// Conversation lanes: the model owns readiness. The caller-level
 	// gate in buildRejectionRecoveryNudge handles this, but this
 	// belt-and-suspenders check keeps the individual nudge safe.
-	if strings.EqualFold(strings.TrimSpace(in.brief.TaskFamily), "conversation") {
+	if LanePolicyForBrief(in.brief).ShouldSkipRecoveryNudge() {
 		return "", false
 	}
 	scope := postReadinessGapScope(

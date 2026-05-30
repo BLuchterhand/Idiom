@@ -156,7 +156,8 @@ func (m *Model) compactHistory(ctx context.Context, history []llama.ChatMessage,
 		result.Reason = "below_threshold"
 		return result
 	}
-	threshold, recentToKeep := compactionParams(m.compactionContextSize())
+	budget := NewContextBudget(m.compactionContextSize())
+	threshold, recentToKeep := budget.CompactionThreshold, budget.CompactionRecentKeep
 	// When MaxHistory is the binding constraint (more restrictive than the
 	// context-derived threshold), recentToKeep must scale down accordingly
 	// so keepFrom stays positive and compaction actually folds messages
@@ -219,10 +220,11 @@ func (m *Model) handleCompactHistoryDone(msg compactHistoryDoneMsg) (tea.Cmd, bo
 
 func (m *Model) compactionThreshold() int {
 	if m == nil {
-		ctxThreshold, _ := compactionParams(65536)
-		return ctxThreshold
+		budget := NewContextBudget(65536)
+		return budget.CompactionThreshold
 	}
-	ctxThreshold, _ := compactionParams(m.compactionContextSize())
+	budget := NewContextBudget(m.compactionContextSize())
+	ctxThreshold := budget.CompactionThreshold
 	// If MaxHistory is set and is more restrictive than the context-derived
 	// threshold, use it so compaction fires before hard truncation.
 	if limit := m.cfg.Chat.MaxHistory; limit > 0 && limit < ctxThreshold {

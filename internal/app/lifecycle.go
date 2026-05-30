@@ -864,7 +864,8 @@ func (m *Model) runAgentTurn(ctx context.Context, prompt string, history []llama
 	// but the default 40-message limit compacts every ~13 tool calls,
 	// destroying working memory before the model can synthesize.
 	if plan.route.Family == "conversation" || plan.route.Contract == "direct_answer" {
-		maxMsgs, maxChars := runnerContextLimitsForConversation(m.compactionContextSize())
+		budget := NewContextBudget(m.compactionContextSize())
+		maxMsgs, maxChars := budget.ConvMaxMessages, budget.ConvMaxChars
 		policy.MaxContextMessages = maxMsgs
 		policy.MaxContextChars = maxChars
 	}

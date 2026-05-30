@@ -449,9 +449,7 @@ func (d *DiscoveryRedirect) considerConversationRedirect(req workspace.ToolReque
 		return RedirectDecision{}
 	}
 	// Only for conversation and read-only lanes
-	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") &&
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "grounded_evidence_summary") {
+	if !conversationDiscoveryRedirectApplies(brief) {
 		return RedirectDecision{}
 	}
 	tool := strings.TrimSpace(req.Tool)
@@ -512,9 +510,7 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	if d == nil {
 		return RedirectDecision{}
 	}
-	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") &&
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "grounded_evidence_summary") {
+	if !conversationDiscoveryRedirectApplies(brief) {
 		return RedirectDecision{}
 	}
 	if !strings.EqualFold(strings.TrimSpace(req.Tool), "read_file") {
@@ -552,3 +548,15 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	}
 }
 
+
+// conversationDiscoveryRedirectApplies returns true when conversation-lane
+// discovery redirects should fire for this brief. Matches conversation
+// TaskFamily plus direct_answer and grounded_evidence_summary contracts.
+func conversationDiscoveryRedirectApplies(brief workerruntime.WorkerRuntimeBrief) bool {
+	tf := strings.TrimSpace(brief.TaskFamily)
+	contract := strings.TrimSpace(brief.Contract)
+	if strings.EqualFold(tf, "conversation") {
+		return true
+	}
+	return strings.EqualFold(contract, "direct_answer") || strings.EqualFold(contract, "grounded_evidence_summary")
+}
