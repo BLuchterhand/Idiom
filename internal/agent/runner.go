@@ -16550,6 +16550,9 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 			return "required_edit_paths_remaining", "required_edit_paths_remaining"
 		}
 	}
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		return "user_visible_blocker", "user_visible_blocker"
+	}
 	if looksLikeNonAnswerProse(answer) {
 		return "non_answer_prose", "non_answer_prose"
 	}
@@ -16558,9 +16561,6 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 		if len(missing) > 0 {
 			return "required_evidence_unmet", "required_evidence_unmet"
 		}
-	}
-	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
-		return "user_visible_blocker", "user_visible_blocker"
 	}
 	return "", ""
 }

@@ -16989,3 +16989,230 @@ func TestMsgCharCount(t *testing.T) {
 		t.Errorf("msgCharCount with reasoning = %d, want %d", got2, want2)
 	}
 }
+
+
+// TestFinalAnswerBlockerKindQUESTIONComesBeforeEvidence verifies that
+// the <<QUESTION>> escape hatch fires BEFORE non_answer_prose and
+// required_evidence_unmet checks. If <<QUESTION>> came after, the
+// model would be trapped: its escape-hatch blocker would itself be
+// blocked by evidence requirements. Regression for 08:55 evidence log.
+func TestFinalAnswerBlockerKindQUESTIONComesBeforeEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			PermissionProfile: "read_only_workspace",
+			RequiredEvidence:  []string{"inspected_paths", "architecture_boundary_evidence", "confidence"},
+		},
+	}
+	// Answer is <<QUESTION>> blocker with no file paths — would fail
+	// required_evidence_unmet if checked before the escape hatch.
+	answer := "<<QUESTION>>: Completion gate rejected the final answer repeatedly. Missing completion evidence: gate retry 3/3."
+	results := []workspace.ToolResult{}
+
+	kind, _ := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "user_visible_blocker" {
+		t.Fatalf("<<QUESTION>> escape hatch NOT honored: got blocker_kind=%q, want user_visible_blocker", kind)
+	}
+}
+
+// TestFinalAnswerBlockerKindNonAnswerProseBlocks verifies that
+// textual tool-call markup in answer prose is blocked.
+// Regression for 05:23 evidence log.
+func TestFinalAnswerBlockerKindCatchesToolCallInProse(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := `[Calling tool: search_content({"tool":"search_content","pattern":"Evidence"})]`
+	results := []workspace.ToolResult{}
+
+	kind, _ := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "non_answer_prose" {
+		t.Fatalf("tool-call in prose NOT blocked: got blocker_kind=%q, want non_answer_prose", kind)
+	}
+}
+
+// TestFinalAnswerBlockerKindCatchesEchoedQuestion verifies that
+// an answer that merely echoes the user's question is blocked.
+// Regression for 07:29 evidence log.
+func TestFinalAnswerBlockerKindCatchesEchoedQuestion(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "Question: Can you investigate the strange spacing issues?"
+	results := []workspace.ToolResult{}
+
+	kind, _ := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "non_answer_prose" {
+		t.Fatalf("echoed question NOT blocked: got blocker_kind=%q, want non_answer_prose", kind)
+	}
+}
+
+// TestFinalAnswerBlockerKindCatchesCommandFailed verifies that
+// tool-failure language (command failed, exit status) is blocked.
+// Regression for 08:28 evidence log.
+func TestFinalAnswerBlockerKindCatchesCommandFailed(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+		},
+	}
+	answers := []string{
+		"Changed paths: none\n\nVerification: not run or not detected.\n\nBlocker:\n- Content search failed: command failed: exit status 2",
+		"Changed paths: none\n\nVerification: not run.\n\nBlocker:\n- File search rejected: pattern is required",
+	}
+	for i, answer := range answers {
+		kind, _ := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{})
+		if kind != "non_answer_prose" {
+			t.Errorf("variant %d command-failure NOT blocked: got blocker_kind=%q, want non_answer_prose", i, kind)
+		}
+	}
+}
+
+// TestFinalAnswerBlockerKindAllowsBlockersWithQUESTION verifies that
+// <<QUESTION>>-prefixed answers bypass non_answer_prose and
+// required_evidence_unmet checks even when they contain tool-failure
+// language or lack structural evidence.
+func TestFinalAnswerBlockerKindAllowsBlockersWithQUESTION(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "investigate_then_implement",
+			Contract:          "implementation_result",
+			PermissionProfile: "analysis_read_only_then_guarded_writes",
+			RequiredEvidence:  []string{"target_location", "changed_paths", "verification_status"},
+		},
+	}
+	answers := []string{
+		"<<QUESTION>>: File search rejected: pattern is required. Cannot locate target.",
+		"<<QUESTION>>: Content search failed: command failed: exit status 2.",
+	}
+	for i, answer := range answers {
+		kind, _ := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{})
+		if kind != "user_visible_blocker" {
+			t.Errorf("variant %d <<QUESTION>> blocker NOT allowed: got blocker_kind=%q, want user_visible_blocker", i, kind)
+		}
+	}
+}
+
+// TestMissingRequiredEvidenceEnforcesTargetLocation verifies that
+// the target_location evidence label is structurally enforced.
+func TestMissingRequiredEvidenceEnforcesTargetLocation(t *testing.T) {
+	// Answer with no file paths, no changed paths in results
+	missing := missingRequiredEvidence(
+		[]string{"target_location"},
+		"no paths here",
+		[]workspace.ToolResult{},
+	)
+	if len(missing) != 1 || missing[0] != "target_location" {
+		t.Fatalf("expected missing=[target_location], got %v", missing)
+	}
+
+	// Answer with a file path — satisfied
+	missing = missingRequiredEvidence(
+		[]string{"target_location"},
+		"the code is in internal/agent/runner.go",
+		[]workspace.ToolResult{},
+	)
+	if len(missing) != 0 {
+		t.Fatalf("expected satisfied, got missing=%v", missing)
+	}
+}
+
+// TestMissingRequiredEvidenceSkipsSemanticLabels verifies that
+// non-deterministic labels (answer_addresses_user_request) are
+// never enforced — they are model guidance only.
+func TestMissingRequiredEvidenceSkipsSemanticLabels(t *testing.T) {
+	missing := missingRequiredEvidence(
+		[]string{"answer_addresses_user_request"},
+		"completely irrelevant answer about something else",
+		[]workspace.ToolResult{},
+	)
+	if len(missing) != 0 {
+		t.Fatalf("semantic label should never be enforced: got missing=%v", missing)
+	}
+}
+
+// TestConversationLaneWithoutSemanticEval verifies correct
+// identification of conversation/direct_answer lanes for
+// confidence demotion.
+func TestConversationLaneWithoutSemanticEval(t *testing.T) {
+	cases := []struct {
+		family   string
+		contract string
+		want     bool
+	}{
+		{"conversation", "direct_answer", true},
+		{"conversation", "implementation_result", false},
+		{"architecture", "direct_answer", false},
+		{"architecture", "architecture_assessment", false},
+		{"investigate_then_implement", "implementation_result", false},
+	}
+	for _, c := range cases {
+		brief := workerruntime.WorkerRuntimeBrief{
+			TaskFamily: c.family,
+			Contract:   c.contract,
+		}
+		got := conversationLaneWithoutSemanticEval(brief)
+		if got != c.want {
+			t.Errorf("conversationLaneWithoutSemanticEval(%q, %q) = %v, want %v",
+				c.family, c.contract, got, c.want)
+		}
+	}
+}
+
+// TestlooksLikeNonAnswerProseRejectsLiveFailures verifies that all
+// five failure patterns from today's conversation logs are caught.
+func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
+	cases := []struct {
+		name   string
+		answer string
+		want   bool
+	}{
+		{
+			"05:23 - unexecuted tool call in prose",
+			`[Calling tool: search_content({"tool":"search_content","pattern":"Evidence"})]`,
+			true,
+		},
+		{
+			"07:29 - echoed user question",
+			"Question: Can you investigate the strange spacing issues?",
+			true,
+		},
+		{
+			"08:09 - file search rejected",
+			"Changed paths: none\n\nVerification: not run.\n\nBlocker:\n- File search rejected: pattern is required",
+			true,
+		},
+		{
+			"08:28 - command failed exit status",
+			"Changed paths: none\n\nVerification: not run.\n\nBlocker:\n- Content search failed: command failed: exit status 2",
+			true,
+		},
+		{
+			"legitimate answer (should NOT be blocked)",
+			"Evidence in Idiom is composed of source paths, tool results, and verification status. The harness uses these across all lanes to enforce contracts.",
+			false,
+		},
+		{
+			"legitimate <<QUESTION>> blocker (let through by escape hatch, not by nonAnswerProse)",
+			"<<QUESTION>>: Cannot locate the target file. The path does not exist.",
+			true, // looksLikeNonAnswerProse blocks it, but <<QUESTION>> escape hatch fires first
+		},
+	}
+	for _, c := range cases {
+		got := looksLikeNonAnswerProse(c.answer)
+		if got != c.want {
+			t.Errorf("%s: looksLikeNonAnswerProse = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
