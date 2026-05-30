@@ -20075,12 +20075,20 @@ func looksLikeNonAnswerProse(answer string) bool {
 		return true
 	}
 	// Short answer dominated by tool-failure language: "rejected",
-	// "pattern is required", "does not exist", "failed to resolve".
+	// "command failed", "exit status", "does not exist", etc.
 	// A genuine answer is never just a tool-error dump.
-	if len(strings.TrimSpace(answer)) < 300 &&
-		(strings.Contains(lower, "rejected") || strings.Contains(lower, "does not exist") || strings.Contains(lower, "failed to resolve")) &&
-		(strings.Contains(lower, "pattern is required") || strings.Contains(lower, "no such file") || strings.Contains(lower, "cannot exist")) {
-		return true
+	if len(strings.TrimSpace(answer)) < 300 {
+		toolFailure := strings.Contains(lower, "rejected") ||
+			strings.Contains(lower, "does not exist") ||
+			strings.Contains(lower, "cannot exist") ||
+			strings.Contains(lower, "failed to resolve") ||
+			strings.Contains(lower, "command failed") ||
+			strings.Contains(lower, "exit status")
+		blockerReport := strings.Contains(lower, "\nblocker:") ||
+			strings.HasPrefix(lower, "blocker:")
+		if toolFailure || blockerReport {
+			return true
+		}
 	}
 	return false
 }
