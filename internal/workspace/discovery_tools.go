@@ -427,6 +427,18 @@ func nearestAncestorWithFile(start string, name string, root string) string {
 	}
 }
 
+// looksLikeGlob reports whether s contains glob wildcard characters
+// (*, ?, [...]) that suggest the caller meant a glob pattern rather
+// than a literal path or filename.
+func looksLikeGlob(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	return strings.ContainsAny(s, "*?[")
+}
+
+
 func fileExists(path string) bool {
 	info, err := os.Stat(path)
 	return err == nil && !info.IsDir()

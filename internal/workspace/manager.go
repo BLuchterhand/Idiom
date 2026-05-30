@@ -3716,7 +3716,14 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return ToolResult{Tool: "search_files", Summary: "File search rejected", Error: "pattern is required"}
+		err := "pattern is required"
+		// Detect when the model may have put a glob in the path field
+		// instead of the pattern field — common confusion with **/*.go.
+		if looksLikeGlob(strings.TrimSpace(req.Path)) ||
+			looksLikeGlob(strings.TrimSpace(req.Glob)) {
+			err = "pattern is required — the pattern field expects a filename substring, not a glob. If you meant to match file extensions, use e.g. pattern: '.go' instead of a glob path."
+		}
+		return ToolResult{Tool: "search_files", Summary: "File search rejected", Error: err}
 	}
 
 	maxDepth := req.MaxDepth
@@ -5094,11 +5101,15 @@ func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolNam
 	stdout, stderr, err := m.runCommandDetailed(parent, workdir, backend.bin, args...)
 	if err != nil && !isNoMatchExit(err) {
 		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
+		errMsg := err.Error()
+		if trimmed := strings.TrimSpace(stderr); trimmed != "" {
+			errMsg = fmt.Sprintf("%s: %s", errMsg, trimmed)
+		}
 		return ToolResult{
 			Tool:    toolName,
 			Summary: "Content search failed",
 			Output:  strings.TrimSpace(output),
-			Error:   err.Error(),
+			Error:   errMsg,
 		}
 	}
 	if isNoMatchExit(err) || strings.TrimSpace(stdout) == "" {
