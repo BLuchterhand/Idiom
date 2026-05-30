@@ -29,6 +29,11 @@ const (
 	sourceEvidenceNewFile           sourceEvidenceLevel = planThenExecuteEvidenceNewFileContract
 )
 
+// maxObligationResolutionAttempts is the number of failed code_navigate
+// attempts on a single path before we treat an obligation as unresolvable
+// and drop it from the write-gating set.
+const maxObligationResolutionAttempts = 3
+
 func sourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
 	path = normalizeRunnerPath(path)
 	if path == "" {
@@ -127,14 +132,15 @@ func sourceEvidencePendingRedirectsForBrief(brief workerruntime.WorkerRuntimeBri
 	if !implementationTargetSourceEvidenceReady(brief, results) {
 		return pending
 	}
-	if !implementationTargetSourceHasScopeHints(brief) {
-		return pending
-	}
 	var filtered []sourceEvidenceObligation
 	for _, obligation := range pending {
-		if sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief, obligation.Path) {
-			filtered = append(filtered, obligation)
+		if !sourceEvidencePendingRedirectRelevantAfterBodyEvidence(brief, obligation.Path) {
+			continue
 		}
+		if sourceEvidenceObligationResolutionAttempts(obligation.Path, results) >= maxObligationResolutionAttempts {
+			continue
+		}
+		filtered = append(filtered, obligation)
 	}
 	return filtered
 }
@@ -177,6 +183,34 @@ func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
 		}
 	}
 	return false
+}
+
+// sourceEvidenceObligationResolutionAttempts counts failed code_navigate
+// attempts on a path. When attempts reach maxObligationResolutionAttempts
+// the obligation is treated as unresolvable.
+func sourceEvidenceObligationResolutionAttempts(path string, results []workspace.ToolResult) int {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return 0
+	}
+	attempts := 0
+	for _, result := range results {
+		if !sourceEvidenceToolResultMentionsPath(result, path) {
+			continue
+		}
+		tool := strings.TrimSpace(result.Tool)
+		if tool != "code_navigate" && tool != "read_only_capability" {
+			continue
+		}
+		if strings.TrimSpace(result.Error) != "" ||
+			strings.Contains(strings.ToLower(result.Summary), "no generic") ||
+			strings.Contains(strings.ToLower(result.Summary), "zero-hit") ||
+			strings.Contains(strings.ToLower(result.Summary), "repeated dead-end") ||
+			strings.Contains(strings.ToLower(result.Summary), "needs route") {
+			attempts++
+		}
+	}
+	return attempts
 }
 
 func reverseSourceEvidenceObligations(values []sourceEvidenceObligation) {

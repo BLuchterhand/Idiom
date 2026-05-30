@@ -14319,9 +14319,6 @@ func (r *Runner) consumeRecoveryReadAllowance(req workspace.ToolRequest, used ma
 	if r == nil || used == nil {
 		return false
 	}
-	if strings.TrimSpace(req.Tool) != "read_file" {
-		return false
-	}
 	path := normalizeRunnerPath(req.Path)
 	if path == "" {
 		return false
@@ -14329,12 +14326,29 @@ func (r *Runner) consumeRecoveryReadAllowance(req workspace.ToolRequest, used ma
 	if used[path] {
 		return false
 	}
-	remaining := r.remainingRequiredEditPaths(results)
-	if !requestPathInRequiredEditPaths(req.Path, remaining) {
+	tool := strings.TrimSpace(req.Tool)
+	// Allow read_file on remaining required edit paths (existing behavior).
+	if tool == "read_file" {
+		remaining := r.remainingRequiredEditPaths(results)
+		if requestPathInRequiredEditPaths(req.Path, remaining) {
+			used[path] = true
+			return true
+		}
 		return false
 	}
-	used[path] = true
-	return true
+	// Allow code_navigate on pending obligation paths so write-only recovery
+	// does not trap the model with an obligation that only code_navigate can
+	// resolve.
+	if tool == "code_navigate" {
+		pending := sourceEvidencePendingRedirectsForBrief(r.RuntimeBrief, results)
+		for _, ob := range pending {
+			if normalizeRunnerPath(ob.Path) == path {
+				used[path] = true
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (r *Runner) exactAnchorHiddenToolBlockerAnswer(req workspace.ToolRequest, results []workspace.ToolResult) (string, bool) {
