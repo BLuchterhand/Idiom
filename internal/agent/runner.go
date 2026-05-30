@@ -1941,6 +1941,20 @@ func (r *Runner) Run(
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				requestBudget.postReadinessNoGapRejections++
+				// After 3 consecutive rejections, break the loop by
+				// forcing the model to answer from gathered evidence.
+				// Without this escape hatch, the model can be trapped
+				// in an inescapable rejection loop when child-packet
+				// evidence points to the wrong files — every read-class
+				// tool gets the same "evidence already sufficient"
+				// rejection and the model can never recover.
+				if postChildPacketActive && requestBudget.postReadinessNoGapRejections >= 3 {
+					answer, err := controller.completeWithoutMoreToolsWithReason(
+						"The child packet already provided evidence. Further reads were rejected because " +
+							"the gathered evidence is sufficient to answer. Tools are now disabled. " +
+							forceAnswerTailGatheredEvidence)
+					return finish(answer, err, "post_child_rejection_exhausted", true)
+				}
 				// Nudge the model: name the gap or answer. Do not force-answer.
 				// The completion gate and budget gate handle real closures.
 				summary, errorText := missingPostReadinessGapMessage(scope)
