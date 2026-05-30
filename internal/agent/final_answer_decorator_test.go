@@ -322,6 +322,73 @@ func TestPresentableNoToolsFallbackUsesSearchEvidenceBody(t *testing.T) {
 	}
 }
 
+func TestPresentableNoToolsFallbackRejectsEchoedQuestion(t *testing.T) {
+	// Regression: the non-mutation guard must not return echoed user questions
+	// as substantive answers. An answer that starts with "Question:" followed by
+	// user text is not genuinely substantive and should fall through to
+	// source-body composition.
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{}
+	answer := "Question: Can you investigate the strange spacing issues that seem to show? " +
+		"It seems like we see hardcoded newlines that may be based on the initial size of the session, " +
+		"but as the side panel opens, this causes output to have strange line breaks. " +
+		"The history pane also has some weird forced newlines. Can we ensure that text wrapping is properly dynamic in all containers?\n\n" +
+		"Source: delegated read-only evidence packet."
+
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
+	if ok {
+		t.Fatalf("expected fallback to reject echoed user question; got ok=true with:\n%s", got)
+	}
+}
+
+func TestPresentableNoToolsFallbackPreservesSubstantiveAnswerAfterStrippingAppendix(t *testing.T) {
+	// Regression: the non-mutation guard must still return genuinely substantive
+	// answers after stripping internal appendix markers. The guard exists to
+	// prefer the model's own prose over source-body extraction for conversation
+	// questions. An answer with internal markers but genuine substantive content
+	// should be cleaned and returned.
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{}
+	answer := "The implementation lives in internal/app/history.go. " +
+		"The key function is RenderHistory which handles display layout " +
+		"and wraps content based on available terminal width. " +
+		"There are also helper functions in internal/app/layout.go that " +
+		"control resizing behavior. The history pane uses a flex layout " +
+		"where newlines are inserted at hard boundaries.\n\n" +
+		"Key findings:\n- history.go is the primary rendering path\n- layout.go handles resizing\n\n" +
+		"Confidence: high"
+
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
+	if !ok {
+		t.Fatal("expected fallback to preserve substantive answer")
+	}
+	if !strings.Contains(got, "internal/app/history.go") {
+		t.Fatalf("fallback dropped content from substantive answer:\n%s", got)
+	}
+}
+
+func TestStripInternalEvidenceAppendixStripsSourceLine(t *testing.T) {
+	answer := "The implementation lives in internal/app/history.go.\n\nThe key function is RenderHistory.\n\n" +
+		"Source: delegated read-only evidence packet."
+
+	stripped := stripInternalEvidenceAppendix(answer)
+	if strings.Contains(stripped, "Source:") {
+		t.Fatalf("stripInternalEvidenceAppendix should strip lines starting with Source:\ngot: %s", stripped)
+	}
+	if !strings.Contains(stripped, "internal/app/history.go") {
+		t.Fatalf("stripInternalEvidenceAppendix dropped substantive content:\ngot: %s", stripped)
+	}
+}
+
+
 func TestStripBlockerSectionPreservesEverythingBeforeBlocker(t *testing.T) {
 	answer := "Header line.\n\n" +
 		"Changed paths:\n- foo.go\n\n" +

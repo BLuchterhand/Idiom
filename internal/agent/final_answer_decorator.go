@@ -177,7 +177,7 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 			!strings.Contains(lower, "budget was reached") &&
 			!strings.Contains(lower, "post-readiness") {
 			substantive := stripInternalEvidenceAppendix(internalAnswer)
-			if len(strings.TrimSpace(substantive)) >= 120 {
+			if !finalAnswerNeedsDecoration(substantive) && len(strings.TrimSpace(substantive)) >= 120 {
 				return substantive, true
 			}
 		}
@@ -848,6 +848,8 @@ func stripInternalEvidenceAppendix(answer string) string {
 		"\nKey findings:",
 		"\n\nConfidence:",
 		"\nConfidence:",
+		"\n\nSource: ",
+		"\nSource: ",
 	} {
 		if idx := strings.Index(answer, marker); idx >= 0 && idx < cut {
 			cut = idx

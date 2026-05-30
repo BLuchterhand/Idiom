@@ -1838,10 +1838,20 @@ func (r *Runner) Run(
 			// Conversation lanes: repeated reads on the same file are
 			// legitimate investigation, not loops. The model is probing
 			// different symbols, line ranges, or patterns — not stuck.
-			// Skip the doom-loop gate for read-class tools in conversation.
+			// Skip the doom-loop gate for read-class tools in conversation,
+			// but still track same-path fixations with a coarser fingerprint.
 			if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
 				isReadClassTool(req) {
 				requestBudget.fingerprint.identicalRun = 0
+				// Track same-tool + same-path (ignoring query parameters)
+				// to detect fixation on one file despite varied arguments.
+				if samePathN := requestBudget.noteFingerprint(samePathFingerprint(req)); samePathN >= 5 {
+					p := cleanToolRequestPathDisplay(req.Path)
+					r.emitEvent(RunEvent{Role: "fingerprint_nudge", Content: fmt.Sprintf(
+						"You have called %s on %s %d times this turn (not consecutively). "+
+							"Summarize what you learned and pick a materially different file "+
+							"or answer with the evidence you already have.", req.Tool, p, samePathN)})
+				}
 			} else if r.DoomLoopGate != nil {
 				r.emitEvent(RunEvent{Role: "doom_loop_guard", Content: fmt.Sprintf("model repeated %s %d times — approval required", req.Tool, identicalCallRun)})
 				if r.DoomLoopGate(req, identicalCallRun) {
@@ -16349,7 +16359,14 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	}
 	confidence := "medium"
 	if len(evidencePaths) >= 2 && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(answer)), "partial findings from this turn") {
-		confidence = "high"
+		// Conversation lanes have no semantic relevance evaluation; the
+		// harness can verify answer form but not answer quality. Confidence
+		// must not claim "high" when relevance is unevaluated.
+		if conversationLaneWithoutSemanticEval(r.RuntimeBrief) {
+			confidence = "medium"
+		} else {
+			confidence = "high"
+		}
 	}
 	readiness := map[string]any{
 		"lane":           lane,
@@ -16484,6 +16501,14 @@ func (r *Runner) finalAnswerBlockerErrorText(reason string, answer string, resul
 		return "the final answer was a <<QUESTION>>: blocker; surface the path-specific blocker reason for each unfinished required edit path."
 	case "unexecuted_tool_request_final_answer":
 		return "the final answer was an unexecuted workspace-tool request payload. Issue the lookup as a parser-readable tool call with the `tool` field, or answer in normal prose from the available evidence."
+	case "non_answer_prose":
+		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
+	case "required_evidence_unmet":
+		if r != nil {
+			missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
+			return "the answer does not satisfy the required evidence contract. Missing: " + strings.Join(missing, ", ") + ". Address each missing obligation in your answer, or use <<QUESTION>>: to state a concrete blocker."
+		}
+		return "the answer does not satisfy the required evidence contract. Address each missing obligation, or use <<QUESTION>>: to state a concrete blocker."
 	default:
 		return "the final answer did not satisfy the active blocker check; continue with concrete writes or a per-path blocker reason."
 	}
@@ -16509,6 +16534,15 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
 		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
 			return "required_edit_paths_remaining", "required_edit_paths_remaining"
+		}
+	}
+	if looksLikeNonAnswerProse(answer) {
+		return "non_answer_prose", "non_answer_prose"
+	}
+	if r != nil {
+		missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
+		if len(missing) > 0 {
+			return "required_evidence_unmet", "required_evidence_unmet"
 		}
 	}
 	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
@@ -18342,7 +18376,8 @@ func looksLikeTextualToolCall(text string) bool {
 		strings.Contains(lower, "</n_invoke") ||
 		strings.Contains(lower, "<n_parameter") ||
 		strings.Contains(lower, "</n_parameter") ||
-		strings.Contains(lower, "dsml") {
+		strings.Contains(lower, "dsml") ||
+		strings.Contains(lower, "[calling tool:") {
 		return true
 	}
 	return looksLikeLineOrientedToolRequest(lower)
@@ -19301,10 +19336,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 	}
 	retryMessages = append(retryMessages, llama.ChatMessage{
 		Role: "system",
-		Content: "Your previous response was empty. Tools are disabled now — do NOT emit a tool block. " +
-			"Reply with a direct, non-empty answer based on the evidence already gathered. Keep it short " +
-			"(a few sentences or a brief list). No preamble like \"Based on...\" or \"Here is...\" — just the answer. " +
-			"If one exact claim remains unsupported, state that uncertainty after the supported answer in one sentence.",
+		Content: emptyAnswerRetryPrompt(r.RuntimeBrief),
 	})
 
 	if metrics != nil {
@@ -19968,6 +20000,204 @@ func sanitizeFallbackResultOutput(result workspace.ToolResult) string {
 // artifact file, not the answer. Generic across artifact JSON — any
 // brace-delimited object whose first content line starts with a quoted
 // key is treated as a metadata dump and dropped.
+
+// conversationLaneWithoutSemanticEval reports true when the lane contract
+// has no mechanism to evaluate answer relevance (conversation/direct_answer
+// lanes with no mutation obligations). The harness can verify structural
+// completeness but not whether the answer addresses the user's question.
+func conversationLaneWithoutSemanticEval(brief workerruntime.WorkerRuntimeBrief) bool {
+	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+		return true
+	}
+	return false
+}
+
+// emptyAnswerRetryPrompt builds the retry system message when the model
+// produces an empty answer. The prompt re-anchors to the user's original
+// objective so the model reorients rather than repeating its mistake.
+func emptyAnswerRetryPrompt(brief workerruntime.WorkerRuntimeBrief) string {
+	base := "Your previous response was empty. Tools are disabled now — do NOT emit a tool block. "
+	if obj := strings.TrimSpace(brief.Objective); obj != "" {
+		base += fmt.Sprintf("The user asked: %q. ", obj)
+	}
+	base += "Reply with a direct, non-empty answer based on the evidence already gathered. Keep it short " +
+		"(a few sentences or a brief list). No preamble like \"Based on...\" or \"Here is...\" — just the answer. " +
+		"If one exact claim remains unsupported, state that uncertainty after the supported answer in one sentence."
+	return base
+}
+
+// samePathFingerprint returns a coarser fingerprint key that collapses
+// different query parameters into a same-tool + same-path identifier,
+// catching model fixation on one file even with varied arguments.
+func samePathFingerprint(req workspace.ToolRequest) string {
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		return ""
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	return req.Tool + "|path:" + path
+}
+
+// cleanToolRequestPathDisplay returns a short display value for a tool
+// request path suitable for progress nudges and event logs.
+func cleanToolRequestPathDisplay(path string) string {
+	p := strings.TrimSpace(path)
+	if p == "" {
+		return "."
+	}
+	return p
+}
+
+// looksLikeNonAnswerProse checks whether the answer text is clearly a
+// non-answer (tool-call markup, echoed user question, tool-failure
+// language without substantive findings) rather than an actual answer.
+// These patterns indicate the model emitted transport-level noise
+// instead of addressing the user's request.
+func looksLikeNonAnswerProse(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" {
+		return false
+	}
+	// Textual tool-call markup like [Calling tool: ...] in answer prose.
+	if looksLikeTextualToolCall(answer) {
+		return true
+	}
+	// Echoed user question: the answer starts with "Question:" followed
+	// by the user's own words rather than an actual investigation result.
+	if strings.HasPrefix(lower, "question:") {
+		return true
+	}
+	// Raw tool-result transcript with no user-facing prose.
+	if looksLikeRawToolResultTranscript(answer) {
+		return true
+	}
+	// Short answer dominated by tool-failure language: "rejected",
+	// "pattern is required", "does not exist", "failed to resolve".
+	// A genuine answer is never just a tool-error dump.
+	if len(strings.TrimSpace(answer)) < 300 &&
+		(strings.Contains(lower, "rejected") || strings.Contains(lower, "does not exist") || strings.Contains(lower, "failed to resolve")) &&
+		(strings.Contains(lower, "pattern is required") || strings.Contains(lower, "no such file") || strings.Contains(lower, "cannot exist")) {
+		return true
+	}
+	return false
+}
+
+// requiredEvidenceCheck maps structurally-verifiable evidence labels to
+// a check that returns true when the obligation is met. Labels that
+// require semantic evaluation (e.g. answer_addresses_user_request) are
+// excluded — the harness cannot evaluate answer quality.
+var requiredEvidenceCheck = map[string]func(answer string, results []workspace.ToolResult) bool{
+	"target_location": func(answer string, results []workspace.ToolResult) bool {
+		if len(pathparse.MentionedWorkspacePaths(answer)) > 0 {
+			return true
+		}
+		return len(changedPathsFromToolResults(results)) > 0
+	},
+	"changed_paths": func(answer string, results []workspace.ToolResult) bool {
+		return len(changedPathsFromToolResults(results)) > 0
+	},
+	"changed_paths_or_noop_reason": func(answer string, results []workspace.ToolResult) bool {
+		if len(changedPathsFromToolResults(results)) > 0 {
+			return true
+		}
+		lower := strings.ToLower(answer)
+		return strings.Contains(lower, "no files were changed") ||
+			strings.Contains(lower, "changed paths: none") ||
+			strings.Contains(lower, "no changes") ||
+			strings.Contains(lower, "noop")
+	},
+	"verification_status": func(answer string, results []workspace.ToolResult) bool {
+		lower := strings.ToLower(answer)
+		if strings.Contains(lower, "verification:") ||
+			strings.Contains(lower, "tests passed") ||
+			strings.Contains(lower, "tests failed") ||
+			strings.Contains(lower, "not run") ||
+			strings.Contains(lower, "not detected") {
+			return true
+		}
+		for _, r := range results {
+			if isVerificationToolResult(r) {
+				return true
+			}
+		}
+		return false
+	},
+	"verification_command": func(answer string, results []workspace.ToolResult) bool {
+		for _, r := range results {
+			if isVerificationToolResult(r) {
+				return true
+			}
+		}
+		return false
+	},
+	"pass_fail_status": func(answer string, results []workspace.ToolResult) bool {
+		lower := strings.ToLower(answer)
+		return strings.Contains(lower, "pass") || strings.Contains(lower, "fail") ||
+			strings.Contains(lower, "error") || strings.Contains(lower, "exit code")
+	},
+	"plan_submitted_or_source_satisfied_or_blocker": func(answer string, results []workspace.ToolResult) bool {
+		return successfulSubmitPlanResultCount(results) > 0 ||
+			strings.Contains(strings.ToLower(answer), "source-satisfied") ||
+			strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>")
+	},
+	"inspected_paths": func(answer string, results []workspace.ToolResult) bool {
+		if len(pathparse.MentionedWorkspacePaths(answer)) > 0 {
+			return true
+		}
+		for _, r := range results {
+			for _, rel := range r.Relationships {
+				if strings.TrimSpace(rel.TargetPath) != "" || strings.TrimSpace(rel.SourcePath) != "" {
+					return true
+				}
+			}
+		}
+		return false
+	},
+	"exact_workspace_path": func(answer string, results []workspace.ToolResult) bool {
+		return len(pathparse.MentionedWorkspacePaths(answer)) > 0
+	},
+	"artifact_body_or_typed_blocker": func(answer string, results []workspace.ToolResult) bool {
+		trimmed := strings.TrimSpace(answer)
+		return len(trimmed) > 40 || strings.HasPrefix(trimmed, "<<QUESTION>>")
+	},
+}
+
+// missingRequiredEvidence returns required_evidence labels that are
+// structurally verifiable and not satisfied by the answer or results.
+// Semantic labels (answer_addresses_user_request, confidence, etc.) are
+// skipped — the harness cannot evaluate answer quality deterministically.
+func missingRequiredEvidence(evidence []string, answer string, results []workspace.ToolResult) []string {
+	var missing []string
+	for _, label := range evidence {
+		check, ok := requiredEvidenceCheck[label]
+		if !ok {
+			// Non-deterministic label — skip (model guidance only)
+			continue
+		}
+		if !check(answer, results) {
+			missing = append(missing, label)
+		}
+	}
+	return missing
+}
+
+// isVerificationToolResult reports whether a tool result came from a
+// verification-oriented tool (source_sanity, shell with test invocation).
+func isVerificationToolResult(result workspace.ToolResult) bool {
+	tool := strings.TrimSpace(strings.ToLower(result.Tool))
+	if tool == "source_sanity" {
+		return true
+	}
+	if tool == "shell" && strings.TrimSpace(result.Error) == "" {
+		return true
+	}
+	return false
+}
+
+
 func stripFallbackJSONArtifacts(output string) string {
 	if !strings.Contains(output, "{") {
 		return output
