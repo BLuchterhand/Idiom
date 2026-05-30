@@ -1978,7 +1978,7 @@ func (r *Runner) Run(
 		// (file:line from at least one inspected source location).
 		// The conversation lane has its own evidence-aligned nudge.
 		!strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") {
-			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls).apply(budgetDecisionContext{
+			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
 				return finish(res.answer, res.err, res.reason, true)

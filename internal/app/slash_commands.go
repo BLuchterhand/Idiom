@@ -58,6 +58,8 @@ func (m *Model) slashHelp(_ string, _ []string) bool {
 
 func (m *Model) slashClear(_ string, _ []string) bool {
 	m.messages = nil
+	m.history.entries = nil
+	m.history.selected = 0
 	m.status = "Cleared chat."
 	return false
 }

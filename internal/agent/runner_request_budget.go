@@ -375,12 +375,16 @@ func runnerExplorationParentIsMutation(r *Runner) bool {
 	return runnerBriefRequiresMutation(r.RuntimeBrief)
 }
 
-func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls int) runnerRequestBudgetDecision {
+func (s *runnerRequestBudgetState) synthesisDecision(policy RunPolicy, toolCalls int, mutation bool) runnerRequestBudgetDecision {
 	if policy.SynthesisNudgeAt > 0 && toolCalls >= policy.SynthesisNudgeAt && !s.synthesisNudgeFired {
 		s.synthesisNudgeFired = true
+		nudgeText := fmt.Sprintf("You have used %d tool calls this turn. Before more tool calls, pause: summarize what you've learned so far, state the specific question that remains, and commit to the minimal next step. If the remaining gap is small, answer now with what you have.", toolCalls)
+		if mutation {
+			nudgeText = fmt.Sprintf("You have used %d tool calls this turn. Pause: name the exact edit target you've identified (file and line range), and commit to the smallest necessary edit. If you know the target and the change, write it now — do not keep reading. If you're uncertain, state the exact blocker.", toolCalls)
+		}
 		return runnerRequestBudgetDecision{
 			Handled:   true,
-			Nudge:     fmt.Sprintf("You have used %d tool calls this turn. Before more tool calls, pause: summarize what you've learned so far, state the specific question that remains, and commit to the minimal next step. If the remaining gap is small, answer now with what you have.", toolCalls),
+			Nudge:     nudgeText,
 			EventRole: "synthesis_nudge",
 		}
 	}
