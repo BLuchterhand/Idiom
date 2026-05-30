@@ -1259,6 +1259,19 @@ func withDeterministicDiscoveryExamples(brief WorkerRuntimeBrief) WorkerRuntimeB
 			`For graph-shaped questions (what calls X? what tests cover Y? what depends on Z?), use context_query — it answers structured questions without dumping raw files. Prefer context_query over search_content for codebase questions.`,
 		))
 	}
+
+	// Universal tool-ordering hierarchy: structured tools before text search.
+	// The ordering text adapts to which tools the lane actually has.
+	if toolAllowedInBrief(brief.AllowedTools, "context_pack") {
+		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+			`For workspace investigation prefer this order: context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded reads, search_content as last resort for literal text.`,
+		))
+	} else if toolAllowedInBrief(brief.AllowedTools, "context_query") {
+		brief.DiscoveryExamples = uniqueNonEmpty(append(brief.DiscoveryExamples,
+			`For workspace investigation prefer this order: context_query for graph and symbol questions, code_navigate for symbol bodies, read_file for bounded reads, search_content as last resort for literal text.`,
+		))
+	}
+
 	return brief
 }
 

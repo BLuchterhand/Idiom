@@ -117,7 +117,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			PermissionProfile:    "read_only_workspace",
 			ToolProfile:          CapabilityLocateOnly,
 			RequiredEvidence:     []string{"exact_workspace_path", "line_or_snippet", "target_match_reason"},
-			SearchPolicy:         []string{"literal_search_first", "prefer_symbol_or_handle_before_raw_file_read", "fallback_pattern_search", "stop_when_exact_target_is_supported"},
+			SearchPolicy:         []string{"prefer_code_navigate_or_context_query_for_symbol_location", "use_search_content_as_fallback_for_literal_matches", "stop_when_exact_target_is_supported"},
 			VerificationContract: "not_required_for_read_only_lane",
 			StopConditions:       []string{"required_evidence_satisfied", "blocked_by_missing_information"},
 		}
