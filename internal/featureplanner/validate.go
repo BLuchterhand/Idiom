@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
-	"os"
-	"path/filepath")
+	"path/filepath"
+)
 
 type ParsedPlannerOutput struct {
 	Kind     string
@@ -169,6 +170,107 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 	return errors.Join(errs...)
 }
 
+func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) error {
+	var errs []error
+	if !brief.CoverageGatePassed {
+		errs = append(errs, errors.New("feature plan submitted while product workflow coverage gate is blocked"))
+	}
+	if len(brief.Blockers) > 0 {
+		errs = append(errs, fmt.Errorf("product workflow brief has blockers: %s", strings.Join(brief.Blockers, "; ")))
+	}
+	if len(brief.CoverageBlockers) > 0 {
+		errs = append(errs, fmt.Errorf("product workflow coverage blockers: %s", strings.Join(brief.CoverageBlockers, "; ")))
+	}
+
+	prdIDs := stringSetFromPRDRequirements(brief.PRDRequirements)
+	adrIDs := stringSet(brief.AcceptedADRIDs)
+	tddIDs := stringSetFromTDDObligations(brief.TDDObligations)
+
+	if len(prdIDs) > 0 {
+		if len(plan.SDDContract.PRDRequirementRefs) == 0 {
+			errs = append(errs, errors.New("feature plan missing product sdd_contract.prd_requirement_refs"))
+		}
+		for i, ref := range plan.SDDContract.PRDRequirementRefs {
+			if ref = strings.TrimSpace(ref); ref != "" && !prdIDs[ref] {
+				errs = append(errs, fmt.Errorf("sdd_contract.prd_requirement_refs[%d] references unknown PRD requirement %q", i, ref))
+			}
+		}
+	}
+	if len(adrIDs) > 0 {
+		if len(plan.SDDContract.ADRRefs) == 0 {
+			errs = append(errs, errors.New("feature plan missing product sdd_contract.adr_refs"))
+		}
+		for i, ref := range plan.SDDContract.ADRRefs {
+			if ref = strings.TrimSpace(ref); ref != "" && !adrIDs[ref] {
+				errs = append(errs, fmt.Errorf("sdd_contract.adr_refs[%d] references unknown ADR %q", i, ref))
+			}
+		}
+	}
+	if len(tddIDs) > 0 {
+		for i, obligation := range plan.TDDContract.Obligations {
+			id := strings.TrimSpace(obligation.ID)
+			if id != "" && !tddIDs[id] {
+				errs = append(errs, fmt.Errorf("tdd_contract.obligations[%d] references unknown product TDD obligation %q", i, id))
+			}
+		}
+	}
+	for i, atom := range plan.Atoms {
+		for j, ref := range atom.SDDRefs {
+			ref = strings.TrimSpace(ref)
+			if ref == "" {
+				continue
+			}
+			if len(prdIDs) > 0 || len(adrIDs) > 0 {
+				if !prdIDs[ref] && !adrIDs[ref] {
+					errs = append(errs, fmt.Errorf("atom %d sdd_refs[%d] references unknown product artifact %q", i, j, ref))
+				}
+			}
+		}
+		for j, ref := range atom.TDDObligations {
+			ref = strings.TrimSpace(ref)
+			if ref != "" && len(tddIDs) > 0 && !tddIDs[ref] {
+				errs = append(errs, fmt.Errorf("atom %d tdd_obligations[%d] references unknown product TDD obligation %q", i, j, ref))
+			}
+		}
+		for j, ref := range atom.TestFirst.ObligationRefs {
+			ref = strings.TrimSpace(ref)
+			if ref != "" && len(tddIDs) > 0 && !tddIDs[ref] {
+				errs = append(errs, fmt.Errorf("atom %d test_first.obligation_refs[%d] references unknown product TDD obligation %q", i, j, ref))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func stringSet(values []string) map[string]bool {
+	out := map[string]bool{}
+	for _, value := range values {
+		if value = strings.TrimSpace(value); value != "" {
+			out[value] = true
+		}
+	}
+	return out
+}
+
+func stringSetFromPRDRequirements(requirements []PRDRequirementBrief) map[string]bool {
+	out := map[string]bool{}
+	for _, requirement := range requirements {
+		if id := strings.TrimSpace(requirement.ID); id != "" {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+func stringSetFromTDDObligations(obligations []TDDObligationBrief) map[string]bool {
+	out := map[string]bool{}
+	for _, obligation := range obligations {
+		if id := strings.TrimSpace(obligation.ID); id != "" {
+			out[id] = true
+		}
+	}
+	return out
+}
 
 // ValidatePlanSDDRefs checks that SDD ref strings point to real files
 // within the artifact root. It strips :line suffixes and verifies
@@ -213,7 +315,6 @@ func validateSDDRef(ref string, absRoot string, label string) []error {
 	}
 	return nil
 }
-
 
 // ValidatePlanTDDObligations checks that every TDD obligation ID in the plan
 // references a known obligation from the product workflow ledger.

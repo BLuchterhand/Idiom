@@ -6,19 +6,24 @@ import (
 	"idiom/internal/workspace"
 )
 
+const (
+	requiredEvidenceGitHistoryRationale = "git_history_rationale_for_intended_logic"
+	requiredToolGitHistoryLookup        = "history_range_or_history_symbol"
+)
+
 type ToolCapabilityProfile string
 
 const (
-	CapabilityConversationReadOnly  ToolCapabilityProfile = "conversation_read_only"
-	CapabilityReadOnlyDiscovery     ToolCapabilityProfile = "read_only_discovery"
-	CapabilityDebugLogInvestigator  ToolCapabilityProfile = "debug_log_investigator"
-	CapabilityVerificationOnly      ToolCapabilityProfile = "verification_only"
-	CapabilityLocateOnly            ToolCapabilityProfile = "locate_only"
-	CapabilityPlanSubmissionPlanner ToolCapabilityProfile = "plan_submission_planner"
-	CapabilityPlanSubmissionReview  ToolCapabilityProfile = "plan_submission_review"
-	CapabilityArtifactDistiller     ToolCapabilityProfile = "artifact_distiller"
-	CapabilityGuardedWrite          ToolCapabilityProfile = "guarded_write"
-	CapabilityIsolatedWrite         ToolCapabilityProfile = "isolated_write"
+	CapabilityConversationReadOnly     ToolCapabilityProfile = "conversation_read_only"
+	CapabilityReadOnlyDiscovery        ToolCapabilityProfile = "read_only_discovery"
+	CapabilityDebugLogInvestigator     ToolCapabilityProfile = "debug_log_investigator"
+	CapabilityVerificationOnly         ToolCapabilityProfile = "verification_only"
+	CapabilityLocateOnly               ToolCapabilityProfile = "locate_only"
+	CapabilityPlanSubmissionPlanner    ToolCapabilityProfile = "plan_submission_planner"
+	CapabilityPlanSubmissionReview     ToolCapabilityProfile = "plan_submission_review"
+	CapabilityArtifactDistiller        ToolCapabilityProfile = "artifact_distiller"
+	CapabilityGuardedWrite             ToolCapabilityProfile = "guarded_write"
+	CapabilityIsolatedWrite            ToolCapabilityProfile = "isolated_write"
 	CapabilityImplementationScopedEdit ToolCapabilityProfile = "implementation_scoped_edit"
 )
 
@@ -127,10 +132,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             "implementation_result",
 			PermissionProfile:    "analysis_read_only_then_guarded_writes",
 			ToolProfile:          CapabilityGuardedWrite,
-			RequiredEvidence:     []string{"target_location", "changed_paths", "verification_status"},
-			RequiredTools:        []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
+			RequiredEvidence:     []string{"target_location", requiredEvidenceGitHistoryRationale, "changed_paths", "verification_status"},
+			RequiredTools:        []string{requiredToolGitHistoryLookup, "edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
 			ReadinessGate:        []string{"target_location_confirmed", "changed_paths_reported", "verification_status_reported"},
-			SearchPolicy:         []string{"delegate_broad_discovery_when_needed", "locate_target_before_edit", "verify_changed_surface"},
+			SearchPolicy:         []string{"delegate_broad_discovery_when_needed", "locate_target_before_edit", "history_required_before_writes", "read_commit_descriptions_for_intended_logic_before_write", "verify_changed_surface"},
 			VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 			StopConditions:       []string{"change_verified", "blocked_with_failed_verification_or_scope"},
 			FinalCritic:          []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
@@ -182,10 +187,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             "implementation_result",
 			PermissionProfile:    "guarded_workspace_write",
 			ToolProfile:          CapabilityPlanSubmissionPlanner,
-			RequiredEvidence:     []string{"plan_submitted_or_source_satisfied_or_blocker"},
-			RequiredTools:        []string{"submit_plan"},
+			RequiredEvidence:     []string{requiredEvidenceGitHistoryRationale, "plan_submitted_or_source_satisfied_or_blocker"},
+			RequiredTools:        []string{requiredToolGitHistoryLookup, "submit_plan"},
 			ReadinessGate:        []string{"submit_plan_or_source_satisfied_or_blocker_reported"},
-			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "submit_plan_requires_executable_final_edits", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "history_required_before_submit_plan", "read_commit_descriptions_for_intended_logic_before_submit_plan", "submit_plan_when_edit_set_is_supported", "submit_plan_requires_executable_final_edits", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"},
 			VerificationContract: "not_required_for_text_mutations",
 			StopConditions:       []string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"},
 			FinalCritic:          []string{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"},
@@ -230,10 +235,10 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			Contract:             "implementation_result",
 			PermissionProfile:    "guarded_workspace_write",
 			ToolProfile:          CapabilityGuardedWrite,
-			RequiredEvidence:     []string{"changed_paths_or_noop_reason", "verification_status"},
-			RequiredTools:        []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
+			RequiredEvidence:     []string{requiredEvidenceGitHistoryRationale, "changed_paths_or_noop_reason", "verification_status"},
+			RequiredTools:        []string{requiredToolGitHistoryLookup, "edit_file_or_apply_patch", "source_sanity_or_verification_shell"},
 			ReadinessGate:        []string{"changed_paths_reported", "verification_contract_resolved"},
-			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported", "prefer_small_bounded_edits", "verify_changed_surface"},
+			SearchPolicy:         []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "history_required_before_writes", "read_commit_descriptions_for_intended_logic_before_write", "write_once_edit_location_is_supported", "prefer_small_bounded_edits", "verify_changed_surface"},
 			VerificationContract: verificationContract,
 			StopConditions:       []string{"implementation_verified_or_failure_reported", "blocked_by_missing_permission_or_information"},
 			FinalCritic:          []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"},
@@ -402,6 +407,9 @@ func planSubmissionReviewToolNames() []string {
 		"context_impact",
 		"discovery_query",
 		"structural_search",
+		"history_range",
+		"history_symbol",
+		"blame_range",
 		"submit_plan",
 	}
 }
@@ -425,6 +433,9 @@ func planSubmissionPlannerToolNames() []string {
 		"context_impact",
 		"discovery_query",
 		"structural_search",
+		"history_range",
+		"history_symbol",
+		"blame_range",
 		"submit_plan",
 	}
 }
@@ -449,6 +460,9 @@ func guardedWriteToolNames() []string {
 		"structural_search",
 		"git_status",
 		"git_diff",
+		"history_range",
+		"history_symbol",
+		"blame_range",
 		"shell",
 		"mkdir",
 		"edit_file",
@@ -476,6 +490,9 @@ func implementationScopedEditToolNames() []string {
 		"structural_search",
 		"dependency_graph",
 		"ctags_symbols",
+		"history_range",
+		"history_symbol",
+		"blame_range",
 		"source_sanity",
 	)
 	return names

@@ -308,6 +308,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		ProductWorkflowBrief:  pwBrief,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
+			emitPlanExecuteGitHistoryRequirement(req, prompt, stdout)
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
 		}
 		return runFeaturePlannerModelTurn(req, prompt, taskFamily, stdout)
@@ -431,6 +432,15 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		return "", err
 	}
 	return string(body), nil
+}
+
+func emitPlanExecuteGitHistoryRequirement(req featurePlannerRequest, prompt string, stdout io.Writer) {
+	if !req.JSONEvents || stdout == nil || !featureplanner.PlanExecuteGitHistoryRequirementPresent(prompt) {
+		return
+	}
+	fields := featureplanner.PlanExecuteGitHistoryRequirementFields()
+	fields["session_id"] = req.SessionID
+	emitFeaturePlannerInternalJSONEvent(stdout, featureplanner.EventPlanExecuteGitHistoryRequirement, fields)
 }
 
 func featurePlannerPlanExecuteProgressPath(output string) string {

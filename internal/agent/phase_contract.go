@@ -482,8 +482,8 @@ func applyImplementationTargetSource(contract *TurnPhaseContract, baseTools []st
 	contract.Phase = "target_source_pending"
 	contract.DerivationReason = "guarded_mutation_target_source_pending"
 	contract.AllowedTools = implementationTargetSourceAllowedTools(baseTools)
-	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, make one parser-readable write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence"}
-	contract.InvalidNext = []string{"final answer before a successful write, no-op, or blocker", "write before exact source-body evidence and replacement shape", "verification before a successful write", "generic probe without a named missing target or edit-safety fact"}
+	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence and git history/commit-description evidence for established logic, make one parser-readable write only after exact source-body evidence, history rationale, and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence"}
+	contract.InvalidNext = []string{"final answer before a successful write, no-op, or blocker", "write before exact source-body evidence, git history rationale, and replacement shape", "verification before a successful write", "generic probe without a named missing target or edit-safety fact"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker},
@@ -504,8 +504,8 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
 	contract.AllowedTools = implementationTargetWriteReadyAllowedToolsForBrief(baseTools, brief, results)
-	contract.RequiredNext = []string{"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
-	contract.InvalidNext = []string{"additional read/search after source-body evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
+	contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+	contract.InvalidNext = []string{"additional read/search after source-body and git history evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   []string{actionPerEditWrite, actionBlocker},
@@ -517,8 +517,8 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
 	if sourceRefresh {
-		contract.RequiredNext = []string{"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
-		contract.InvalidNext = []string{"broad read/search after source-body evidence", "read/search for already-sourced paths unless the request adds a bounded missing range or exact named_gap", "verification before a successful write", "generic probe", "prose-only final answer"}
+		contract.RequiredNext = []string{"git history lookup for the intended established logic if not already observed, parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.InvalidNext = []string{"broad read/search after source-body and git history evidence", "read/search for already-sourced paths unless the request adds a bounded missing range, exact named_gap, or required history lookup", "verification before a successful write", "generic probe", "prose-only final answer"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
 		contract.ActionPolicy.CallableToolNames = contract.AllowedTools
@@ -547,8 +547,8 @@ func applyImplementationWriteReady(contract *TurnPhaseContract, baseTools []stri
 	contract.Phase = "write_ready"
 	contract.DerivationReason = "implementation_required_paths_remaining"
 	contract.AllowedTools = implementationScopedEditAllowedToolsWithRegistry(baseTools, nil)
-	contract.RequiredNext = []string{"scoped required-path edit or <<QUESTION>> with the exact edit blocker"}
-	contract.InvalidNext = []string{"broad search", "unrelated per-edit write", "generic probe"}
+	contract.RequiredNext = []string{"git history lookup for intended established logic if missing, scoped required-path edit, or <<QUESTION>> with the exact edit blocker"}
+	contract.InvalidNext = []string{"broad search", "unrelated per-edit write", "write before git history rationale for existing logic", "generic probe"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   []string{actionPerEditWrite, actionBlocker},
@@ -789,7 +789,9 @@ func implementationTargetSourcePending(brief workerruntime.WorkerRuntimeBrief, r
 }
 
 func implementationTargetWriteReadyAllowedTools(baseTools []string) []string {
-	return filterPhaseTools(baseTools, "edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit")
+	allowed := []string{"edit_file", "write_file", "append_file", "apply_patch", "mkdir", "go_move_declarations", "delegate_edit"}
+	allowed = append(allowed, gitHistoryLookupToolNames()...)
+	return filterPhaseTools(baseTools, allowed...)
 }
 
 func implementationTargetWriteReadyAllowedToolsForBrief(baseTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
@@ -1033,6 +1035,7 @@ func implementationTargetSourceAllowedTools(baseTools []string) []string {
 		"list_files", "search_files", "search_content", "rg",
 		"context_pack", "context_query", "context_zoom", "discovery_query",
 		"read_file", "code_navigate", "read_only_capability",
+		"history_range", "history_symbol", "blame_range",
 	)
 	return uniquePhaseStrings(append(writes, reads...))
 }

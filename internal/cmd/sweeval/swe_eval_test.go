@@ -1,4 +1,5 @@
 package sweeval
+
 import (
 	"bytes"
 	"os"
@@ -1120,6 +1121,7 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 		"idiom.feature_planner.tdd_pre_execution_checked",
 		"idiom.feature_planner.plan_accepted",
 		"idiom.feature_planner.atom_dispatched",
+		"idiom.feature_planner.plan_execute_git_history_requirement",
 		"internal_idiom.plan_execute.completed",
 		"idiom.feature_planner.atom_completed",
 		"idiom.feature_planner.complete",
@@ -1137,6 +1139,32 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 	}
 	if task.Scenario.RequireVerification != "none" || !task.Oracle.RequireCleanRollback || task.Oracle.RequireNoChangedFiles {
 		t.Fatalf("redis clone task must be a rollback-scored TUI mutation regression, scenario=%#v oracle=%#v", task.Scenario, task.Oracle)
+	}
+}
+
+func TestScriptedContractFeaturePlannerGitHistoryEvidenceTasksPinned(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "..", "testdata", "scripted-contracts", "suite.json")
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := map[string]eval.SWETask{}
+	for _, task := range suite.Tasks {
+		taskByID[task.ID] = task
+	}
+
+	for _, id := range []string{
+		"scripted-feature-planner-tui-plan-execute-delivery",
+		"scripted-feature-planner-tui-redis-clone-mget",
+		"scripted-feature-planner-tui-product-workflow-e2e",
+	} {
+		task, ok := taskByID[id]
+		if !ok {
+			t.Fatalf("%s task missing", id)
+		}
+		assertTaskHasTags(t, task, "feature-planner", "tui")
+		assertTaskHasRunEvents(t, task, "idiom.feature_planner.plan_execute_git_history_requirement")
 	}
 }
 

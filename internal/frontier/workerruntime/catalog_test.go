@@ -80,10 +80,19 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		if len(spec.ReadinessGate) == 0 || len(spec.FinalCritic) == 0 {
 			t.Fatalf("expected implementation contract to keep readiness/final critic, got %#v", spec)
 		}
+		if !slices.Contains(spec.RequiredEvidence, requiredEvidenceGitHistoryRationale) {
+			t.Fatalf("implementation must require git history rationale before writes, got %#v", spec.RequiredEvidence)
+		}
+		if !slices.Contains(spec.RequiredTools, requiredToolGitHistoryLookup) {
+			t.Fatalf("implementation must require history lookup before writes, got %#v", spec.RequiredTools)
+		}
 		for _, want := range []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported"} {
 			if !slices.Contains(spec.SearchPolicy, want) {
 				t.Fatalf("expected implementation search policy to include %q, got %#v", want, spec.SearchPolicy)
 			}
+		}
+		if !slices.Contains(spec.SearchPolicy, "history_required_before_writes") {
+			t.Fatalf("expected implementation search policy to require history before writes, got %#v", spec.SearchPolicy)
 		}
 	})
 
@@ -120,7 +129,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
-	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "read_only_capability", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "edit_file", "write_file"}
+	available := []string{"task", "pwd", "list_files", "search_files", "search_content", "read_file", "read_only_capability", "context_query", "context_trace_pack", "go_workspace_symbol", "shell", "git_status", "git_diff", "history_range", "history_symbol", "blame_range", "edit_file", "write_file"}
 
 	artifact := RuntimeBriefForTaskFamily(ArtifactFinalAnswerTaskFamily, "main", available)
 	if artifact.Contract != "artifact_final_answer" || artifact.PermissionProfile != "conversation_only" {
@@ -168,6 +177,13 @@ func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {
 	for _, expected := range []string{"shell", "read_file", "search_files", "search_content"} {
 		if !slices.Contains(verify.AllowedTools, expected) {
 			t.Fatalf("verification_only missing %q in %#v", expected, verify.AllowedTools)
+		}
+	}
+
+	impl := RuntimeBriefForTaskFamily("implementation", "main", available)
+	for _, expected := range []string{"history_range", "history_symbol", "blame_range", "edit_file", "write_file"} {
+		if !slices.Contains(impl.AllowedTools, expected) {
+			t.Fatalf("implementation missing %q in %#v", expected, impl.AllowedTools)
 		}
 	}
 

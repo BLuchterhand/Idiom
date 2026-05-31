@@ -3355,6 +3355,7 @@
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
+          "idiom.feature_planner.plan_execute_git_history_requirement",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
@@ -3419,6 +3420,7 @@
           "idiom.feature_planner.tdd_pre_execution_checked",
           "idiom.feature_planner.plan_accepted",
           "idiom.feature_planner.atom_dispatched",
+          "idiom.feature_planner.plan_execute_git_history_requirement",
           "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
@@ -3856,6 +3858,7 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
+          "idiom.feature_planner.plan_execute_git_history_requirement",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
           "idiom.live_contract.rollback"

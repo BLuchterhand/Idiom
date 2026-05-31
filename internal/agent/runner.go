@@ -1634,6 +1634,13 @@ func (r *Runner) Run(
 			}
 			continue
 		}
+		if summary, errorText, reject := r.writeBeforeGitHistoryEvidenceRejection(req, collectedResults); reject {
+			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+			if done {
+				return finish(answer, err, "write_before_git_history_rejected", true)
+			}
+			continue
+		}
 		if redirected, redirectedRaw, ok := r.planThenExecuteCandidateRangeLessReadRedirect(req, collectedResults); ok {
 			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 				"agent":          r.agentName(),
@@ -2633,6 +2640,12 @@ func (r *Runner) Run(
 				Content: guard.Reason,
 			})
 		} else if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(req, collectedResults); guard.Intercepted {
+			result = guard.Result
+			r.emitEvent(RunEvent{
+				Role:    "plan_then_execute_plan_guard",
+				Content: guard.Reason,
+			})
+		} else if guard := r.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, collectedResults); guard.Intercepted {
 			result = guard.Result
 			r.emitEvent(RunEvent{
 				Role:    "plan_then_execute_plan_guard",

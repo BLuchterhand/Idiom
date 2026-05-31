@@ -25,6 +25,24 @@ type RunResult struct {
 	Events []Event
 }
 
+const EventPlanExecuteGitHistoryRequirement = "idiom.feature_planner.plan_execute_git_history_requirement"
+
+func PlanExecuteGitHistoryRequirementPresent(prompt string) bool {
+	return strings.Contains(prompt, "Git history evidence required before writes:") &&
+		strings.Contains(prompt, "history_range") &&
+		strings.Contains(prompt, "history_symbol") &&
+		strings.Contains(prompt, "commit descriptions")
+}
+
+func PlanExecuteGitHistoryRequirementFields() map[string]any {
+	return map[string]any{
+		"tool":                         "git_history_requirement",
+		"lane_family":                  "plan-execute",
+		"evidence_tools":               []string{"history_range", "history_symbol"},
+		"commit_descriptions_required": true,
+	}
+}
+
 func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, error) {
 	if runner == nil {
 		return RunResult{State: state}, fmt.Errorf("feature planner prompt runner is nil")
@@ -78,6 +96,17 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			Events: []Event{{Type: "idiom.feature_planner.malformed_structured_output", SessionID: state.SessionID, Message: err.Error()}},
 		}, nil
 	}
+	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief != nil {
+		if err := ValidatePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief); err != nil {
+			state.Status = FeatureStatePlanningRepair
+			state.PlanningLoop.State = FeatureStatePlanningRepair
+			state.Blockers = append(state.Blockers, err.Error())
+			return RunResult{
+				State:  state,
+				Events: []Event{{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
+			}, nil
+		}
+	}
 	events = append(events, ApplyPlannerOutput(&state, parsed, opts.Now)...)
 	if state.Status != FeatureStateDispatching {
 		return RunResult{State: state, Events: events}, nil
@@ -112,10 +141,25 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		if len(brief.AcceptedADRIDs) > 0 {
 			fmt.Fprintf(&b, "Accepted ADRs: %s\n", strings.Join(brief.AcceptedADRIDs, ", "))
 		}
+		if len(brief.AcceptedADRPaths) > 0 {
+			fmt.Fprintf(&b, "Accepted ADR paths: %s\n", strings.Join(brief.AcceptedADRPaths, ", "))
+		}
 		if len(brief.TDDObligations) > 0 {
 			b.WriteString("TDD Obligations:\n")
 			for _, obl := range brief.TDDObligations {
 				fmt.Fprintf(&b, "  - %s: %s (command: %s, status: %s)\n", obl.ID, obl.Behavior, obl.Command, obl.Status)
+			}
+		}
+		if len(brief.RequiredBehavior) > 0 {
+			fmt.Fprintf(&b, "Required behavior: %s\n", strings.Join(brief.RequiredBehavior, "; "))
+		}
+		if len(brief.Acceptance) > 0 {
+			fmt.Fprintf(&b, "Acceptance: %s\n", strings.Join(brief.Acceptance, "; "))
+		}
+		if len(brief.Decisions) > 0 {
+			b.WriteString("Accepted decisions:\n")
+			for _, decision := range brief.Decisions {
+				fmt.Fprintf(&b, "  - %s\n", decision)
 			}
 		}
 		if len(brief.FilesToModify) > 0 {
@@ -129,6 +173,9 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		}
 		if len(brief.Blockers) > 0 {
 			fmt.Fprintf(&b, "Blockers: %s\n", strings.Join(brief.Blockers, "; "))
+		}
+		if len(brief.CoverageBlockers) > 0 {
+			fmt.Fprintf(&b, "Coverage blockers: %s\n", strings.Join(brief.CoverageBlockers, "; "))
 		}
 
 		if brief.CoverageGatePassed {
@@ -271,6 +318,16 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	fmt.Fprintf(&b, "Implement one feature atom from feature plan %q.\n", plan.Summary)
 	b.WriteString("You may answer with JSON {\"tool\":\"question_for_planner\",...} when blocked, or with Decision: source-satisfied when no edit is required.\n")
 	b.WriteString("Do not claim files were edited or tests were run unless those effects were produced by tool-backed execution visible to the harness; unsupported edit/test claims are rejected as recovery-open.\n")
+	b.WriteString("Git history evidence required before writes:\n")
+	b.WriteString("- Before changing existing logic in required_edit_paths or allowed_edit_paths, call `history_range` or `history_symbol` on the intended logic and read the commit descriptions to understand why and when the current behavior was introduced.\n")
+	fmt.Fprintf(&b, "- Make the proposed change only when that history supports it; otherwise answer with JSON {\"tool\":%q,...} naming the path-specific blocker.\n", ToolQuestionForPlanner)
+	b.WriteString("- Genuinely new files do not require git history evidence; identify them as new-file edits before writing.\n")
+	if paths := featureAtomWriteScopePaths(atom); len(paths) > 0 {
+		b.WriteString("Paths whose existing logic needs history evidence before mutation:\n")
+		for _, path := range paths {
+			fmt.Fprintf(&b, "- %s\n", path)
+		}
+	}
 	b.WriteString("TDD baseline commands that must exist before execution:\n")
 	for _, command := range atom.TestFirst.Commands {
 		fmt.Fprintf(&b, "- %s\n", command)
@@ -294,6 +351,23 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	b.Write(body)
 	b.WriteString("\n")
 	return b.String()
+}
+
+func featureAtomWriteScopePaths(atom FeatureAtomState) []string {
+	seen := map[string]struct{}{}
+	paths := make([]string, 0, len(atom.RequiredEditPaths)+len(atom.AllowedEditPaths))
+	for _, path := range append(append([]string(nil), atom.RequiredEditPaths...), atom.AllowedEditPaths...) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return paths
 }
 
 func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw string) []Event {
@@ -359,6 +433,13 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			}}
 		}
 	}
+	if strings.HasPrefix(trimmed, "<<QUESTION>>:") {
+		question := PlannerQuestion{
+			QuestionSummary: strings.TrimSpace(strings.TrimPrefix(trimmed, "<<QUESTION>>:")),
+			BlockingClaim:   "implementor could not complete the atom contract",
+		}
+		return openImplementorPlannerQuestion(state, atom, question)
+	}
 	if strings.Contains(strings.ToLower(trimmed), "decision: source-satisfied") {
 		atomFrom := atom.State
 		atom.State = AtomStateSourceSatisfied
@@ -414,6 +495,40 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			BeforeState:   "running",
 			AfterState:    AtomStateComplete,
 		}},
+	}}
+}
+
+func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState, question PlannerQuestion) []Event {
+	if strings.TrimSpace(question.QuestionSummary) == "" {
+		question.QuestionSummary = "implementor requested planner clarification"
+	}
+	question = normalizePlannerQuestion(question, fmt.Sprintf("q-%03d", len(state.OpenQuestions)+1), atom.ID, time.Now().UTC())
+	if err := ValidatePlannerQuestion(question); err != nil {
+		atom.Blockers = append(atom.Blockers, err.Error())
+		state.Status = FeatureStatePlanningRepair
+		return []Event{{Type: "idiom.feature_planner.planner_question_rejected", SessionID: state.SessionID, AtomID: atom.ID, Message: err.Error()}}
+	}
+	atomFrom := atom.State
+	atom.State = AtomStateQuestionForPlanner
+	atom.LastQuestion = question.QuestionSummary
+	foldActiveRun(state, atom.ID, atom.LastRunID)
+	state.OpenQuestions = append(state.OpenQuestions, question)
+	state.Status = FeatureStatePlanningQuestion
+	return []Event{{
+		Type:       "idiom.feature_planner.implementor_question_opened",
+		SessionID:  state.SessionID,
+		AtomID:     atom.ID,
+		AtomFrom:   atomFrom,
+		AtomTo:     AtomStateQuestionForPlanner,
+		AtomDeltas: []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateQuestionForPlanner}},
+		ActiveRunDeltas: []ActiveRunDelta{{
+			Op:            "fold_terminal",
+			AtomID:        atom.ID,
+			LaneSessionID: atom.LastRunID,
+			BeforeState:   "running",
+			AfterState:    AtomStateQuestionForPlanner,
+		}},
+		Message: question.QuestionSummary,
 	}}
 }
 

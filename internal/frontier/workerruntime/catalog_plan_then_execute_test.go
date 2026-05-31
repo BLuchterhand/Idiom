@@ -21,8 +21,17 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 	if !planThenExecuteToolListContains(spec.RequiredTools, "submit_plan") {
 		t.Fatalf("planner phase must require submit_plan in RequiredTools, got %v", spec.RequiredTools)
 	}
+	if !planThenExecuteToolListContains(spec.RequiredTools, requiredToolGitHistoryLookup) {
+		t.Fatalf("planner phase must require git history lookup before submit_plan, got %v", spec.RequiredTools)
+	}
+	if !planThenExecuteToolListContains(spec.RequiredEvidence, requiredEvidenceGitHistoryRationale) {
+		t.Fatalf("planner phase must require git history rationale evidence, got %v", spec.RequiredEvidence)
+	}
 	if !planThenExecuteToolListContains(spec.SearchPolicy, "required_existing_paths_need_source_body_before_submit_plan") {
 		t.Fatalf("planner phase search policy must name source-body-before-submit_plan, got %v", spec.SearchPolicy)
+	}
+	if !planThenExecuteToolListContains(spec.SearchPolicy, "history_required_before_submit_plan") {
+		t.Fatalf("planner phase search policy must name history-before-submit_plan, got %v", spec.SearchPolicy)
 	}
 	if !planThenExecuteToolListContains(spec.SearchPolicy, "submit_plan_requires_executable_final_edits") {
 		t.Fatalf("planner phase search policy must name executable submit_plan quality bar, got %v", spec.SearchPolicy)
@@ -35,6 +44,7 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *testing.T) {
 	available := []string{
 		"read_file", "search_content", "code_navigate", "shell", "git_diff",
+		"history_range", "history_symbol", "blame_range",
 		"submit_plan", "edit_file", "apply_patch",
 		"task", "task_ledger",
 		"recovery_inspect", "recovery_status", "recovery_decompose",
@@ -47,6 +57,11 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 	}
 	if !planThenExecuteToolListContains(brief.AllowedTools, "read_file") {
 		t.Fatalf("planner brief must surface read_file for evidence gathering, got %v", brief.AllowedTools)
+	}
+	for _, expected := range []string{"history_range", "history_symbol", "blame_range"} {
+		if !planThenExecuteToolListContains(brief.AllowedTools, expected) {
+			t.Fatalf("planner brief must surface %s for pre-submit history evidence, got %v", expected, brief.AllowedTools)
+		}
 	}
 	if !planThenExecuteToolListContains(brief.AllowedTools, "gdscript_trace") {
 		t.Fatalf("planner brief should preserve project discovery externals, got %v", brief.AllowedTools)

@@ -1,4 +1,5 @@
 package featureplanner
+
 import (
 	"bytes"
 	"context"
@@ -143,6 +144,16 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 		if !strings.Contains(prompt, "Implement one feature atom") || !strings.Contains(prompt, "docs/feature-planner-plan-execute.txt") {
 			t.Fatalf("plan-execute prompt missing atom contract: %s", prompt)
 		}
+		for _, want := range []string{
+			"Git history evidence required before writes:",
+			"`history_range` or `history_symbol`",
+			"read the commit descriptions",
+			"Paths whose existing logic needs history evidence before mutation:",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("plan-execute prompt missing git history evidence requirement %q: %s", want, prompt)
+			}
+		}
 		body, _ := json.Marshal(map[string]any{
 			"tool":        featureplanner.ToolPlanExecuteComplete,
 			"lane_family": "plan-execute",
@@ -172,6 +183,15 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 	}
 	if !strings.Contains(stdout.String(), `"lane_family":"plan-execute"`) {
 		t.Fatalf("feature planner event should record plan-execute lane: %s", stdout.String())
+	}
+	for _, want := range []string{
+		`"type":"idiom.feature_planner.plan_execute_git_history_requirement"`,
+		`"evidence_tools":["history_range","history_symbol"]`,
+		`"commit_descriptions_required":true`,
+	} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("stdout missing git history requirement event field %q: %s", want, stdout.String())
+		}
 	}
 }
 
@@ -273,7 +293,6 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 	return path
 }
 
-
 func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 	// Verify that ProductWorkflowBrief can be constructed from fixture data
 	// and that BuildPlannerPrompt injects real artifact IDs.
@@ -295,7 +314,10 @@ func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 		CoverageTier:       "behavior_standard",
 		CoverageGatePassed: true,
 		FilesToModify:      []string{"internal/example/thing.go"},
+		RequiredBehavior:   []string{"REQ-001: Add a thing that works"},
 		Tests:              []string{"go test ./internal/example/..."},
+		Acceptance:         []string{"go test ./internal/example/... passes before implementation dispatch"},
+		Decisions:          []string{"ADR-001 (adrs/001-test.md): Keep the thing simple."},
 		ArtifactRootPath:   "testdata/feature-planner-pw-integration/effort",
 	}
 
@@ -314,6 +336,15 @@ func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Product Workflow Context") {
 		t.Error("prompt missing Product Workflow Context section")
+	}
+	if !strings.Contains(prompt, "Required behavior: REQ-001: Add a thing that works") {
+		t.Error("prompt missing required behavior from product workflow brief")
+	}
+	if !strings.Contains(prompt, "Accepted decisions:") || !strings.Contains(prompt, "Keep the thing simple") {
+		t.Error("prompt missing accepted ADR decisions")
+	}
+	if !strings.Contains(prompt, "Acceptance: go test ./internal/example/... passes before implementation dispatch") {
+		t.Error("prompt missing acceptance from product workflow brief")
 	}
 	if !strings.Contains(prompt, "idiom.feature_plan.v2") {
 		t.Error("prompt should reference v2 schema")

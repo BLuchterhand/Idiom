@@ -18,6 +18,68 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 	}
 }
 
+func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
+	plan := validPlan()
+	plan.SDDContract.PRDRequirementRefs = []string{"REQ-404"}
+	plan.SDDContract.ADRRefs = []string{"ADR-001"}
+	plan.SDDContract.Refs = nil
+	plan.Atoms[0].SDDRefs = []string{"REQ-404"}
+	plan.TDDContract.Obligations[0].ID = "TDD-404"
+	plan.Atoms[0].TDDObligations = []string{"TDD-404"}
+	plan.Atoms[0].TestFirst.ObligationRefs = []string{"TDD-404"}
+	brief := ProductWorkflowBrief{
+		CoverageGatePassed: true,
+		PRDRequirements:    []PRDRequirementBrief{{ID: "REQ-001"}},
+		AcceptedADRIDs:     []string{"ADR-001"},
+		TDDObligations:     []TDDObligationBrief{{ID: "TDD-001"}},
+	}
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected product context validation error")
+	}
+	for _, want := range []string{"REQ-404", "TDD-404"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	plan := validPlan()
+	plan.SDDContract.PRDRequirementRefs = []string{"REQ-999"}
+	plan.SDDContract.ADRRefs = []string{"ADR-001"}
+	plan.Atoms[0].SDDRefs = []string{"REQ-999"}
+	plan.TDDContract.Obligations[0].ID = "TDD-001"
+	plan.Atoms[0].TDDObligations = []string{"TDD-001"}
+	plan.Atoms[0].TestFirst.ObligationRefs = []string{"TDD-001"}
+	plan.Atoms[0].TestFirst.PreExecutionEventIDs = []string{"evt-tdd-1"}
+	plan.Atoms[0].PlannedTDDSnapshot.ObligationIDs = []string{"TDD-001"}
+	brief := &ProductWorkflowBrief{
+		CoverageGatePassed: true,
+		PRDRequirements:    []PRDRequirementBrief{{ID: "REQ-001"}},
+		AcceptedADRIDs:     []string{"ADR-001"},
+		TDDObligations:     []TDDObligationBrief{{ID: "TDD-001"}},
+	}
+
+	result, err := Run(state, RunOptions{Prompt: "build feature", ProductWorkflowBrief: brief}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != "feature_planner_planner" {
+			t.Fatalf("implementor must not run after product context rejection")
+		}
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.product_context_blocked" {
+		t.Fatalf("unexpected events: %+v", result.Events)
+	}
+}
+
 func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), nil)
 
@@ -46,6 +108,11 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 		`Decision: source-satisfied`,
 		`Do not claim files were edited or tests were run`,
 		`unsupported edit/test claims are rejected as recovery-open`,
+		`Git history evidence required before writes:`,
+		"`history_range` or `history_symbol`",
+		`read the commit descriptions`,
+		`Paths whose existing logic needs history evidence before mutation:`,
+		`internal/labels/labels.go`,
 		`Requested verification commands for executor phase:`,
 		"Required verification command: run `go test ./...` after edits.",
 		`Atom implementation brief:`,
@@ -54,6 +121,9 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("implementor prompt missing %q:\n%s", want, prompt)
 		}
+	}
+	if !PlanExecuteGitHistoryRequirementPresent(prompt) {
+		t.Fatalf("implementor prompt should be live-loggable as carrying git history evidence requirements:\n%s", prompt)
 	}
 }
 
@@ -133,6 +203,51 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	complete := events[1]
 	if got := fmt.Sprint(complete.Fields["lane_family"]); got != "plan-execute" {
 		t.Fatalf("completion lane family = %q, want plan-execute; event=%+v", got, complete)
+	}
+}
+
+func TestDispatchDoesNotCompletePlanExecuteQuestion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+
+	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != "feature_planner_implementor" {
+			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
+		}
+		return `{"tool":"question_for_planner","lane_family":"plan-execute","question_summary":"Plan-execute could not produce a plan artifact.","blocking_claim":"plan-execute did not complete the atom implementation contract"}`, nil
+	})
+
+	if state.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question-open; events=%+v", state.Status, events)
+	}
+	if len(state.OpenQuestions) != 1 {
+		t.Fatalf("open questions = %+v", state.OpenQuestions)
+	}
+	if state.Atoms[0].State != AtomStateQuestionForPlanner {
+		t.Fatalf("atom state = %q, want question-for-planner", state.Atoms[0].State)
+	}
+	for _, event := range events {
+		if event.Type == "idiom.feature_planner.atom_completed" {
+			t.Fatalf("blocked plan-execute output must not complete atom: %+v", events)
+		}
+	}
+}
+
+func TestApplyImplementorOutputQuestionPrefixOpensPlannerQuestion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	state.ActiveRuns = []ActiveRun{{RunID: "atom-1-run-1", AtomID: atom.ID, State: "running"}}
+
+	events := ApplyImplementorOutput(&state, atom, "<<QUESTION>>: Plan-execute could not produce a plan artifact.")
+
+	if state.Status != FeatureStatePlanningQuestion || atom.State != AtomStateQuestionForPlanner {
+		t.Fatalf("question prefix should open planner question, state=%q atom=%q events=%+v", state.Status, atom.State, events)
+	}
+	if len(state.OpenQuestions) != 1 || !strings.Contains(state.OpenQuestions[0].QuestionSummary, "Plan-execute") {
+		t.Fatalf("unexpected open questions: %+v", state.OpenQuestions)
 	}
 }
 

@@ -79,6 +79,11 @@ func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, tas
 }
 
 func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt string) (string, error) {
+	if featureplanner.PlanExecuteGitHistoryRequirementPresent(prompt) {
+		if body, err := json.Marshal(featureplanner.PlanExecuteGitHistoryRequirementFields()); err == nil {
+			m.logMessage(featureplanner.EventPlanExecuteGitHistoryRequirement, string(body))
+		}
+	}
 	priorSuppressTranscript := m.suppressPromptTranscript
 	m.suppressPromptTranscript = true
 	defer func() { m.suppressPromptTranscript = priorSuppressTranscript }()
@@ -87,6 +92,16 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 	if err != nil {
 		return "", err
 	}
+	if planExecuteAnswerIsBlocked(answer) {
+		body, _ := json.Marshal(map[string]any{
+			"tool":             featureplanner.ToolQuestionForPlanner,
+			"lane_family":      "plan-execute",
+			"question_summary": strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(answer), "<<QUESTION>>:")),
+			"blocking_claim":   "plan-execute did not complete the atom implementation contract",
+		})
+		m.logMessage("idiom.plan_execute.blocked", string(body))
+		return string(body), nil
+	}
 	if body, err := json.Marshal(map[string]any{
 		"tool":        featureplanner.ToolPlanExecuteComplete,
 		"lane_family": "plan-execute",
@@ -94,6 +109,30 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 		m.logMessage("idiom.plan_execute.completed", string(body))
 	}
 	return encodeFeaturePlannerPlanExecuteCompletion(answer)
+}
+
+func planExecuteAnswerIsBlocked(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return true
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.HasPrefix(trimmed, "<<QUESTION>>:") {
+		return true
+	}
+	for _, marker := range []string{
+		"plan-execute: recovery-open",
+		"plan-execute: failed",
+		"feature-planner: recovery-open",
+		"contract blocked",
+		"could not produce a plan artifact",
+		"required_edit_paths_remaining",
+	} {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
@@ -161,8 +200,12 @@ func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath 
 		}
 		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
 	}
-	if len(state.Plan.SDDContract.Refs) > 0 {
-		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(state.Plan.SDDContract.Refs, ", "))
+	sddRefs := append([]string{}, state.Plan.SDDContract.Refs...)
+	sddRefs = append(sddRefs, state.Plan.SDDContract.PRDRequirementRefs...)
+	sddRefs = append(sddRefs, state.Plan.SDDContract.ADRRefs...)
+	sddRefs = appendUniqueBriefStrings(nil, sddRefs...)
+	if len(sddRefs) > 0 {
+		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(sddRefs, ", "))
 	}
 	if len(state.Plan.TDDContract.Obligations) > 0 {
 		var tddIDs []string
