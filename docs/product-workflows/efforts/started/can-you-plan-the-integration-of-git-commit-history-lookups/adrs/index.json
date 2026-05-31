@@ -1,0 +1,50 @@
+{
+  "schema_version": "idiom.adr_index.v1",
+  "effort_id": "can-you-plan-the-integration-of-git-commit-history-lookups",
+  "adrs": [
+    {
+      "adr_id": "ADR-001",
+      "title": "ADR-001",
+      "status": "draft",
+      "path": "ADR-001.md",
+      "coverage_tier": "unit",
+      "prd_refs": [
+        "REQ-001"
+      ],
+      "created_at": "2026-05-31T08:55:17Z"
+    },
+    {
+      "adr_id": "ADR-002",
+      "title": "ADR-002",
+      "status": "draft",
+      "path": "ADR-002.md",
+      "coverage_tier": "unit",
+      "prd_refs": [
+        "REQ-002"
+      ],
+      "created_at": "2026-05-31T08:55:17Z"
+    },
+    {
+      "adr_id": "ADR-003",
+      "title": "ADR-003",
+      "status": "draft",
+      "path": "ADR-003.md",
+      "coverage_tier": "unit",
+      "prd_refs": [
+        "REQ-003"
+      ],
+      "created_at": "2026-05-31T08:55:17Z"
+    },
+    {
+      "adr_id": "ADR-004",
+      "title": "ADR-004",
+      "status": "draft",
+      "path": "ADR-004.md",
+      "coverage_tier": "unit",
+      "prd_refs": [
+        "REQ-004"
+      ],
+      "created_at": "2026-05-31T08:55:17Z"
+    }
+  ]
+}
