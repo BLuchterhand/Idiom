@@ -15550,6 +15550,23 @@ func runnerAllowsTool(tools []string, tool string) bool {
 
 func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	taskFamily := strings.TrimSpace(brief.TaskFamily)
+	if taskFamily == PlanThenExecutePlannerTaskFamily && planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
+		allowed := filterPhaseTools(
+			uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...)),
+			"context_pack",
+			"context_query",
+			"context_zoom",
+			"discovery_query",
+			"search_content",
+			"read_file",
+			"code_navigate",
+			"submit_plan",
+		)
+		if len(allowed) > 0 {
+			return allowed
+		}
+		return []string{"context_pack", "context_query", "context_zoom", "discovery_query", "search_content", "read_file", "code_navigate", "submit_plan"}
+	}
 	if taskFamily == PlanThenExecutePlannerTaskFamily &&
 		planThenExecuteCandidateSourceReadyRejectionSeen(results) &&
 		!planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
