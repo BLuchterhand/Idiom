@@ -4,13 +4,14 @@ import (
 	"strings"
 
 	"idiom/internal/llama"
+	"idiom/internal/workspace"
 )
 
 // salvageAnswerFromReasoning extracts answer prose from the thinking block
 // when the model produced empty visible content but substantial reasoning.
 // This happens with Qwen in thinking-enabled mode when the model puts its
 // entire response into the reasoning block and leaves Content empty.
-func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage) (string, bool) {
+func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage, results []workspace.ToolResult) (string, bool) {
 	if r == nil || strings.TrimSpace(reply.Content) != "" {
 		return "", false
 	}
@@ -29,6 +30,9 @@ func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage) (string, bo
 	}
 	answer := extractAnswerProseFromReasoning(reasoning)
 	if len(strings.TrimSpace(answer)) < 40 {
+		return "", false
+	}
+	if blockerKind, _ := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
 		return "", false
 	}
 	return answer, true

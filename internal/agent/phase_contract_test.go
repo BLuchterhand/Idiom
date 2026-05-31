@@ -1125,8 +1125,8 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 }
 
-func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceReadyDoesNotAdvertiseTools(t *testing.T) {
-	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsReadTools(t *testing.T) {
+	input := TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
 			Contract:          "direct_answer",
@@ -1137,20 +1137,35 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceReadyDoesNotAdvertis
 			{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5"},
 			{Tool: "code_navigate", Summary: "Code navigation routed references via go_references"},
 		},
-	})
+	}
+	contract := deriveTurnPhaseContract(input)
 
-	if contract.Phase != "read_only_evidence_ready" {
-		t.Fatalf("Phase = %q, want read_only_evidence_ready", contract.Phase)
+	if contract.Phase != "read_only_evidence_available" {
+		t.Fatalf("Phase = %q, want read_only_evidence_available", contract.Phase)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
-	if len(contract.AllowedTools) != 0 {
-		t.Fatalf("read-only answer-ready phase must not advertise tools, got %#v", contract.AllowedTools)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
+	assertContains(t, contract.ActionPolicy.CallableToolNames, "read_file")
+	assertContains(t, contract.ActionPolicy.CallableToolNames, "search_content")
+
+	input.TextualToolParser = true
+	input.ToolTransportMode = "textual"
+	textual := deriveTurnPhaseContract(input)
+	if textual.Phase != "read_only_evidence_available" {
+		t.Fatalf("textual Phase = %q, want read_only_evidence_available", textual.Phase)
 	}
-	if len(contract.ActionPolicy.CallableToolNames) != 0 {
-		t.Fatalf("read-only answer-ready policy must not advertise callable tools, got %#v", contract.ActionPolicy.CallableToolNames)
-	}
+	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertNotContains(t, textual.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, textual.AllowedTools, "read_file")
+	assertContains(t, textual.AllowedTools, "search_content")
+	assertContains(t, textual.ActionPolicy.CallableToolNames, "read_file")
+	assertContains(t, textual.ActionPolicy.CallableToolNames, "search_content")
 }
 
 func TestDeriveTurnPhaseContractReadOnlyConversationKeepsToolsForUnreadNamedPath(t *testing.T) {

@@ -267,7 +267,7 @@ func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []P
 		if !isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
 			continue
 		}
-		text := firstNonEmptyBriefClaimText(adr.Doc.BodyMarkdown, adr.RawMarkdown)
+		text := adrImplementationClaimText(adr)
 		if !implementationAffectingClaim(text) {
 			continue
 		}
@@ -279,7 +279,7 @@ func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []P
 		if path == "" {
 			path = "adrs"
 		}
-		if adrOpenQuestionsHasSubstance(text) {
+		if adrOpenQuestionsHasSubstance(firstNonEmptyBriefClaimText(adr.Doc.BodyMarkdown, adr.RawMarkdown)) {
 			findings = append(findings, ProfileFinding{
 				Kind:     "ungrounded_implementation_claim",
 				File:     path,
@@ -308,6 +308,14 @@ func firstNonEmptyBriefClaimText(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func adrImplementationClaimText(adr ParsedADR) string {
+	decision := markdownSectionExcerpt(adr.Doc.BodyMarkdown, "Decision")
+	if strings.TrimSpace(decision) == "" {
+		decision = markdownSectionExcerpt(adr.RawMarkdown, "Decision")
+	}
+	return firstNonEmptyBriefClaimText(decision, adr.Doc.BodyMarkdown, adr.RawMarkdown)
 }
 
 func implementationAffectingClaim(text string) bool {
@@ -401,7 +409,7 @@ func ImplementationAffectingClaimEvidenceFindings(prd PRDDocument, adrs []Parsed
 		if !isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
 			continue
 		}
-		text := firstNonEmptyBriefClaimText(adr.Doc.BodyMarkdown, adr.RawMarkdown)
+		text := adrImplementationClaimText(adr)
 		if !implementationAffectingClaim(text) {
 			continue
 		}

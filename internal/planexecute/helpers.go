@@ -169,7 +169,7 @@ func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string,
 		"Visible response protocol — choose exactly one action per turn:",
 		"1. If a required_edit_path does not exist on disk, it is a new file — do not attempt to read or search for it. Its source-body obligation is satisfied immediately. Proceed directly to a terminal outcome: submit_plan using replace_all:true and new_text, Decision: source-satisfied, or <<QUESTION>>:.",
 		"2. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
-		"3. Once every existing required_edit_path has satisfied its source-body obligation, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
+		"3. Once every existing required_edit_path has satisfied its source-body obligation, call `history_range` or `history_symbol` for existing logic only when the active runtime contract requires git history evidence; after any required history evidence is present, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
 		"4. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path.",
 		"5. If the plan cannot be produced from available evidence, answer `<<QUESTION>>:` with the exact path-specific blocker.",
 		"",
@@ -183,7 +183,7 @@ func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string,
 		"7. Exact anchors, current-state anchors, full new-file bodies, explicit replacement edit shapes, unified patches, and ranked packet evidence can identify the intended edit, but required existing paths still need source-body obligations satisfied before submit_plan unless the run short-circuits as source-satisfied or exact-plan-ready before planner execution.",
 		"8. Use source-read capability only for a new named edit-safety fact on a required or candidate path. Do not re-read for confidence; if the brief names a missing required source/test path but gives only behavior or helper-shape requirements with no substantial body/anchor, stop with `<<QUESTION>>:` and name the missing body evidence.",
 		"9. Test/source edit coverage requirements are enforced only by typed `Requested edit-set obligations` attached below. Without that section, choose the complete plan, source-satisfied closeout, or exact blocker from required/candidate paths and gathered evidence; do not infer hidden edit-set obligations from objective wording.",
-		"10. Submit as soon as you have anchors for every required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. Rejected `submit_plan` calls are invalid attempts, not successful plan artifacts. No post-plan verification reads.",
+		"10. Submit as soon as you have source anchors and any runtime-required git history evidence for every existing required path, or for the needed candidate paths when no required path list is present. If current source already contains the requested final state, answer `Decision: source-satisfied` and name every relevant path plus evidence instead of submitting stale edits. After `submit_plan` returns OK, finalize with a one-paragraph summary and stop. Rejected `submit_plan` calls are invalid attempts, not successful plan artifacts. No post-plan verification reads.",
 		"",
 		"Canonical `submit_plan` shape (real values, never placeholders): emit one visible JSON object with top-level `\"tool\":\"submit_plan\"`, a one-sentence `rationale`, and an `edits` array. Each edit object must use a real required or selected path from gathered evidence, plus exactly one executable edit shape such as `insert_after_line` with inline content, `start_line`/`end_line` with complete replacement `content`, exact `old_text`/`new_text`, or whole/new-file `replace_all:true` with full `new_text`.",
 	}
@@ -271,7 +271,7 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
-	b.WriteString("After every existing required path has satisfied its source-body obligation (new files satisfy this automatically — do not read them), your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	b.WriteString("After every existing required path has satisfied its source-body obligation and any runtime-required git history evidence has been read for existing logic (new files satisfy this automatically — do not read them), your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -290,23 +290,6 @@ func planExecuteAllowedPathChecklist(allowedEditPaths []string) string {
 	b.WriteString("These paths are an allowlist, not coverage obligations. Submit edits only for the paths needed by the objective, and do not submit outside paths.")
 	return strings.TrimSpace(b.String())
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 func planExecuteAllPathsMissing(workspaceRoot string, paths []string) bool {
 	workspaceRoot = strings.TrimSpace(workspaceRoot)

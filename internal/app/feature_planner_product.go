@@ -34,6 +34,7 @@ func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
 	if m.featurePlannerPhase == "" {
 		m.featurePlannerPhase = productworkflow.PhasePRDDrafting
 	}
+	m.logMessage("idiom.feature_planner.start", objective)
 	m.status = fmt.Sprintf("PRD drafting phase started (%s)", m.displayPath(effortRoot))
 
 	m.streaming = true
@@ -155,9 +156,12 @@ func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string,
 	opts.MaxTokens = 8192
 
 	// PRD generation with parse-repair loop.
-	answer, prd, err := m.generatePRDWithRepair(ctx, prompt, opts, effortRoot, hasExisting)
+	answer, prd, directPlan, err := m.generatePRDWithRepair(ctx, prompt, opts, effortRoot, hasExisting)
 	if err != nil {
 		return "", fmt.Errorf("PRD generation: %w", err)
+	}
+	if directPlan {
+		return m.runDirectFeaturePlannerPlanFromDraft(ctx, answer, effortRoot, hasExisting)
 	}
 	if len(prd.Requirements) == 0 {
 		// Parse-repair exhausted; answer is the user-visible message.
@@ -180,15 +184,18 @@ func (m *Model) runPRDDraftingTurn(ctx context.Context, message string) (string,
 // If parsing fails, it saves the raw output, asks the model to fix formatting,
 // and retries up to maxParseRepairRetries times. Returns the parsed PRD and
 // the raw answer text on success, or an error after exhausting retries.
-func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts llama.ChatOptions, effortRoot string, hasExisting bool) (string, productworkflow.PRDDocument, error) {
+func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts llama.ChatOptions, effortRoot string, hasExisting bool) (string, productworkflow.PRDDocument, bool, error) {
 	answer, err := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
 	if err != nil {
-		return "", productworkflow.PRDDocument{}, fmt.Errorf("PRD model call: %w", err)
+		return "", productworkflow.PRDDocument{}, false, fmt.Errorf("PRD model call: %w", err)
 	}
 
 	prd, repaired, parseErr := productworkflow.TryParsePRDMarkdown(answer)
 	if parseErr == nil {
-		return answer, prd, nil
+		return answer, prd, false, nil
+	}
+	if featurePlannerAnswerIsDirectPlan(answer) {
+		return answer, productworkflow.PRDDocument{}, true, nil
 	}
 
 	// Parse failed — enter repair loop.
@@ -204,14 +211,17 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 		if repErr != nil {
 			// Model call itself failed — not a format issue.
 			saveRawParseFailure(effortRoot, "prd_parse_failure_final.md", answer)
-			return answer, productworkflow.PRDDocument{}, fmt.Errorf("PRD repair call failed (attempt %d/%d): %w", attempt+1, maxParseRepairRetries, repErr)
+			return answer, productworkflow.PRDDocument{}, false, fmt.Errorf("PRD repair call failed (attempt %d/%d): %w", attempt+1, maxParseRepairRetries, repErr)
 		}
 
 		answer = repairAnswer
 		prd, repaired, parseErr = productworkflow.TryParsePRDMarkdown(answer)
 		if parseErr == nil {
 			_ = repaired // successfully repaired text is written below
-			return answer, prd, nil
+			return answer, prd, false, nil
+		}
+		if featurePlannerAnswerIsDirectPlan(answer) {
+			return answer, productworkflow.PRDDocument{}, true, nil
 		}
 	}
 
@@ -225,7 +235,59 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 		filepath.Join(effortRoot, "prd_parse_failure_final.md"),
 		parseErr,
 	)
-	return msg, productworkflow.PRDDocument{}, nil
+	return msg, productworkflow.PRDDocument{}, false, nil
+}
+
+func featurePlannerAnswerIsDirectPlan(answer string) bool {
+	parsed, err := featureplanner.ParsePlannerOutput(answer)
+	return err == nil && parsed.Kind == featureplanner.ToolSubmitFeaturePlan
+}
+
+func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPlan string, effortRoot string, hasExisting bool) (string, error) {
+	parsed, err := featureplanner.ParsePlannerOutput(rawPlan)
+	if err != nil {
+		return "", err
+	}
+	sessionID := m.featurePlannerSessionID()
+	state := featureplanner.NewState(sessionID, "Implement direct feature plan emitted during PRD drafting", "", 3, time.Now().UTC())
+	events := featureplanner.ApplyPlannerOutput(&state, parsed, time.Now().UTC())
+	implementorBlocked := false
+	if state.Status == featureplanner.FeatureStateDispatching {
+		events = append(events, featureplanner.DispatchReadyAtoms(&state, 0, func(prompt string, taskFamily string) (string, error) {
+			if taskFamily == "feature_planner_implementor" {
+				if implementorBlocked {
+					return encodeFeaturePlannerSiblingDispatchPaused(), nil
+				}
+				answer, runErr := m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+				if runErr != nil || featurePlannerPlanExecuteOutputBlocks(answer) {
+					implementorBlocked = true
+				}
+				return answer, runErr
+			}
+			return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
+		})...)
+	}
+	for _, event := range events {
+		m.logFeaturePlannerEvent(event)
+	}
+	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), state.SessionID, events)
+	if err != nil {
+		return "", err
+	}
+	state.EventsPath = eventsPath
+	statePath, err := featureplanner.SaveState(m.projectRoot(), &state)
+	if err != nil {
+		return "", err
+	}
+	if state.Status == featureplanner.FeatureStateComplete {
+		m.featurePlannerPhase = ""
+	}
+	if !hasExisting && strings.TrimSpace(effortRoot) != "" {
+		_ = os.RemoveAll(effortRoot)
+	}
+	answer := formatFeaturePlannerTUIAnswer(state, statePath)
+	m.logMessage(featurePlannerTUITerminalRole(state.Status), answer)
+	return answer, nil
 }
 
 // buildPRDFormatRepairPrompt creates a prompt asking the model to fix

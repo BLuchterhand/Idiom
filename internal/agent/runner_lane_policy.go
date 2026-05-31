@@ -133,13 +133,9 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		}
 	}
 
-	if summary, errorText, prompt, force := r.conversationRepeatedBroadDiscoveryAfterGate(decision.Request, input.Results); force {
+	if summary, errorText, reject := r.conversationRepeatedBroadDiscoveryAfterGate(decision.Request, input.Results); reject {
 		decision.RejectSummary = summary
 		decision.RejectError = errorText
-		decision.ForceAnswer = &runnerForcedAnswer{
-			Reason: "conversation_broad_discovery_sufficient",
-			Prompt: prompt,
-		}
 		return decision
 	}
 	if summary, errorText, reject := prematureTargetReadRejection(decision.Request, input.Results, r.RuntimeBrief); reject {
@@ -186,20 +182,19 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 	return decision
 }
 
-func (r *Runner) conversationRepeatedBroadDiscoveryAfterGate(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, prompt string, force bool) {
+func (r *Runner) conversationRepeatedBroadDiscoveryAfterGate(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, reject bool) {
 	if r == nil || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
 		!strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") ||
 		runnerBriefRequiresMutation(r.RuntimeBrief) ||
 		runnerVerificationRequired(r.RuntimeBrief) {
-		return "", "", "", false
+		return "", "", false
 	}
 	if !conversationBroadLocalizationAfterCompletionGate(results) || !conversationBroadDiscoveryRequest(req) {
-		return "", "", "", false
+		return "", "", false
 	}
 	summary = "Conversation contract rejected repeated broad discovery after bounded evidence"
-	errorText = "the conversation lane already spent its recovery probe on broad localization after a completion-gate miss. Answer from the gathered evidence now, or state one exact uncertainty; use a narrow source read only when a concrete missing claim requires it."
-	prompt = "The conversation lane already has bounded localization evidence after a completion-gate recovery. Tools are now disabled. Answer the user's actual follow-up directly from the gathered evidence and prior conversation context. Explain the mechanism in normal prose; do not return a path inventory, raw tool summary, budget note, or internal fallback text. If one exact claim remains unsupported, state that uncertainty at the end with the smallest useful next action."
-	return summary, errorText, prompt, true
+	errorText = "the conversation lane already spent its recovery probe on broad localization after a completion-gate miss. Answer from the gathered evidence, or take one narrow read/search that names the concrete missing claim; do not repeat broad discovery."
+	return summary, errorText, true
 }
 
 func conversationBroadLocalizationAfterCompletionGate(results []workspace.ToolResult) bool {
@@ -233,6 +228,9 @@ func conversationBroadDiscoveryToolResult(result workspace.ToolResult) bool {
 }
 
 func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
+	if conversationTargetedGraphQueryWithGap(req) {
+		return false
+	}
 	switch strings.TrimSpace(req.Tool) {
 	case "context_pack", "context_query", "context_zoom", "context_impact", "discovery_query", "search_files", "structural_search":
 		return true
@@ -244,7 +242,17 @@ func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
 	}
 }
 
-func conversationBroadDiscoveryForceAnswerRecorded(results []workspace.ToolResult) bool {
+func conversationTargetedGraphQueryWithGap(req workspace.ToolRequest) bool {
+	if postReadinessGap(req) == "" {
+		return false
+	}
+	if strings.TrimSpace(req.Tool) != "context_query" {
+		return false
+	}
+	return strings.TrimSpace(req.Query) != "" && strings.TrimSpace(req.Resolution) != ""
+}
+
+func conversationBroadDiscoveryRejectionRecorded(results []workspace.ToolResult) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) == "" {
 			continue
@@ -363,7 +371,7 @@ func conversationMilestones(ctxSize int) (firstMilestone int, nudgeInterval int)
 	return firstMilestone, nudgeInterval
 }
 
-func (r *Runner) conversationEvidenceSatisfiedForceAnswerReady(results []workspace.ToolResult) bool {
+func (r *Runner) conversationEvidenceAvailableForObjective(results []workspace.ToolResult) bool {
 	if r == nil || !conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, results) ||
 		runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return false

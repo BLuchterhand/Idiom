@@ -3,6 +3,7 @@ package featureplanner
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -806,6 +807,32 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 	}
 	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/session/state.json" {
 		t.Fatalf("progress_path = %q, want delegated plan-execute path", got)
+	}
+}
+
+func TestApplyImplementorOutputAcceptsObservedPlanExecuteSourceSatisfiedCompletion(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	state.ActiveRuns = []ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        atom.ID,
+		LaneSessionID: "atom-1-run-1",
+		LaneFamily:    "plan-execute",
+		State:         "running",
+	}}
+
+	summary := `{"type":"session_summary","failed":0}` + "\n" +
+		`{"type":"idiom.plan_execute.source_satisfied","source_satisfied_evidence_paths":["internal/labels/labels.go"]}`
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":`+strconv.Quote(summary)+`}`)
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; blockers=%+v", atom.State, atom.Blockers)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+		t.Fatalf("unexpected events: %+v", events)
 	}
 }
 

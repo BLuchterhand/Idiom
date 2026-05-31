@@ -1,4 +1,5 @@
 package planexecute
+
 import (
 	"context"
 	"crypto/rand"
@@ -20,8 +21,8 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/app"
-	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/backends"
+	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/cmdruntime"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
@@ -293,6 +294,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		if len(autoExact.PendingPaths) > 0 {
 			executorRequiredEditPaths = autoExact.PendingPaths
 		}
+		emitPlanExecuteSyntheticTurnSummary(stdout, opts.JSONEvents, "auto_exact_plan_submitted")
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_submitted", map[string]any{
 			"edits":         autoExact.EditCount,
 			"applied":       autoExact.AppliedCount,
@@ -1187,7 +1189,7 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
-	b.WriteString("After every existing required path has satisfied its source-body obligation, your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	b.WriteString("After every existing required path has satisfied its source-body obligation and any runtime-required git history evidence has been read for existing logic, your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -2243,6 +2245,21 @@ func runReviewRepairPhase(
 		"edit_set_obligation_count": len(editSetObligations),
 		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
 	})
+	if planExecuteDeterministicCleanReviewEnabled() {
+		reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
+		if reason == "" {
+			reason = editSetObligations.RejectionReason(changedPaths)
+		}
+		if reason == "" && len(evidence.PhaseEvidence.OpenObligations) == 0 {
+			emitPlanExecuteSyntheticTurnSummary(stdout, opts.JSONEvents, "review_repair_deterministic_pass")
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
+				"status":        "pass",
+				"repairs":       0,
+				"deterministic": true,
+			})
+			return reviewRepairPhaseReport{Status: "pass (deterministic evidence)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
+		}
+	}
 	prompt := planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
 	reviewMaxTokens := opts.MaxTokens
 	if reviewMaxTokens <= 0 {
@@ -3640,6 +3657,40 @@ func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType strin
 		return
 	}
 	fmt.Fprintln(stdout, string(body))
+}
+
+func emitPlanExecuteSyntheticTurnSummary(stdout io.Writer, jsonEvents bool, stopReason string) {
+	if !jsonEvents {
+		return
+	}
+	payload := map[string]any{
+		"type":                       "turn_summary",
+		"ts":                         time.Now().UTC().Format(time.RFC3339Nano),
+		"lane":                       "plan-execute",
+		"used_model_calls":           0,
+		"max_model_calls":            0,
+		"used_tool_results":          0,
+		"max_tool_steps":             0,
+		"prompt_tokens":              0,
+		"completion_tokens":          0,
+		"total_tokens":               0,
+		"progress_turns":             0,
+		"rejected_actions":           0,
+		"completion_gate_rejections": 0,
+		"context_compactions":        0,
+		"duration_ms":                0,
+		"stop_reason":                strings.TrimSpace(stopReason),
+		"budget_exhausted":           false,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(stdout, string(body))
+}
+
+func planExecuteDeterministicCleanReviewEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW")), "true")
 }
 
 func buildCLIWriterRouteDecision(cfg config.Config, opts cliWriterRouteOptions) writerroute.Decision {

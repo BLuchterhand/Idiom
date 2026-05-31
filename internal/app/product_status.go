@@ -91,7 +91,8 @@ func (m *Model) slashProductStatus(_ string, fields []string) bool {
 	return false
 }
 
-func (m *Model) slashProductApprove(_ string, fields []string) bool {
+func (m *Model) slashProductApprove(raw string, fields []string) bool {
+	m.logMessage("user", raw)
 	// If in a product creation phase, run the creation-specific approval gate.
 	if m.featurePlannerPhase == productworkflow.PhasePRDDrafting || m.featurePlannerPhase == productworkflow.PhaseADRDrafting {
 		if m.streaming {

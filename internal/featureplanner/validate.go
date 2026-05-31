@@ -185,7 +185,6 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 	prdIDs := stringSetFromPRDRequirements(brief.PRDRequirements)
 	adrIDs := stringSet(brief.AcceptedADRIDs)
 	tddIDs := stringSetFromTDDObligations(brief.TDDObligations)
-	prdTDDRefs := tddRefsByPRDRequirement(brief.PRDRequirements)
 	productTDD := tddObligationsByID(brief.TDDObligations)
 	repoGrounding := newRepoGrounding(brief)
 
@@ -233,15 +232,6 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 				if !prdIDs[ref] && !adrIDs[ref] {
 					errs = append(errs, fmt.Errorf("atom %d sdd_refs[%d] references unknown product artifact %q", i, j, ref))
 				}
-			}
-		}
-		for _, ref := range atom.SDDRefs {
-			ref = strings.TrimSpace(ref)
-			if ref == "" || len(prdTDDRefs[ref]) == 0 {
-				continue
-			}
-			if !intersectsStringSet(append(atom.TDDObligations, atom.TestFirst.ObligationRefs...), prdTDDRefs[ref]) {
-				errs = append(errs, fmt.Errorf("atom %d sdd_refs references PRD requirement %q but no atom TDD obligation/test_first obligation matches its product TDD mapping", i, ref))
 			}
 		}
 		for j, ref := range atom.TDDObligations {

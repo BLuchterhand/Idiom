@@ -2635,6 +2635,12 @@ func TestCompletionGateRejectsShouldCallToolNarration(t *testing.T) {
 	}
 }
 
+func TestCompletionGateAllowsBenignLetMeTryExplanation(t *testing.T) {
+	if result, rejected := unresolvedProcessIntentCompletionRejection("Let me try to explain the failure from the evidence we already have."); rejected {
+		t.Fatalf("benign explanatory prose should not be rejected: %#v", result)
+	}
+}
+
 func TestReadOnlyCompletionGateRejectsSearchHitInventory(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
@@ -4214,6 +4220,9 @@ func (r *Runner) runChildTask() string {
 	if err := writeTestFile(root, "internal/agent/runner_child_tasks.go", source); err != nil {
 		t.Fatalf("write seed file: %v", err)
 	}
+	if err := writeTestFile(root, "go.mod", "module idiomtest\n\ngo 1.22\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
 
 	replies := []string{
 		`{"tool":"go_read_symbol","path":"internal/agent/runner_child_tasks.go","pattern":"Runner.runChildTask"}`,
@@ -4436,11 +4445,11 @@ func TestApplyLanePreflightForcesAnswerAfterConversationEvidence(t *testing.T) {
 		t.Fatalf("expected tool to pass through preflight (no reject), got %#v", decision)
 	}
 	if decision.ForceAnswer != nil {
-		t.Fatalf("expected no force-answer on preflight (nudge fires post-result instead), got %#v", decision.ForceAnswer)
+		t.Fatalf("expected no force answer on preflight (nudge fires post-result instead), got %#v", decision.ForceAnswer)
 	}
 }
 
-func TestConversationEvidenceSatisfiedForceAnswerReadyUsesGatheredSource(t *testing.T) {
+func TestConversationEvidenceAvailableForObjectiveUsesGatheredSource(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -4453,12 +4462,12 @@ func TestConversationEvidenceSatisfiedForceAnswerReadyUsesGatheredSource(t *test
 			Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
 		},
 	}
-	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
-		t.Fatal("expected forced final-answer readiness after bounded conversation evidence")
+	if !runner.conversationEvidenceAvailableForObjective(results) {
+		t.Fatal("expected evidence availability after bounded conversation evidence")
 	}
 }
 
-func TestConversationEvidenceSatisfiedForceAnswerWaitsForNamedSourcePaths(t *testing.T) {
+func TestConversationEvidenceAvailableForObjectiveWaitsForNamedSourcePaths(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -4472,8 +4481,8 @@ func TestConversationEvidenceSatisfiedForceAnswerWaitsForNamedSourcePaths(t *tes
 			Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
 		},
 	}
-	if runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
-		t.Fatal("force-answer fired before all named source paths had concrete source evidence")
+	if runner.conversationEvidenceAvailableForObjective(results) {
+		t.Fatal("evidence availability fired before all named source paths had concrete source evidence")
 	}
 
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
@@ -4489,12 +4498,12 @@ func TestConversationEvidenceSatisfiedForceAnswerWaitsForNamedSourcePaths(t *tes
 		Summary: "Read f2 internal/labels/labels_test.go lines 1-9 (total lines: 9)",
 		Output:  "1:package labels\n3:func TestShortLabel(t *testing.T) {\n4:\tif got := ShortLabel(); got != \"Save\" {\n",
 	})
-	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
-		t.Fatal("expected force-answer after all named source paths had concrete source evidence")
+	if !runner.conversationEvidenceAvailableForObjective(results) {
+		t.Fatal("expected evidence availability after all named source paths had concrete source evidence")
 	}
 }
 
-func TestConversationPreflightForcesAnswerAfterRepeatedBroadDiscoveryRecovery(t *testing.T) {
+func TestConversationPreflightRejectsRepeatedBroadDiscoveryWithoutForcingAnswer(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -4518,14 +4527,17 @@ func TestConversationPreflightForcesAnswerAfterRepeatedBroadDiscoveryRecovery(t 
 		Request: workspace.ToolRequest{Tool: "context_query", Query: "bounded read scoping", Resolution: "symbol"},
 		Results: results,
 	})
-	if decision.ForceAnswer == nil {
-		t.Fatalf("expected repeated broad discovery to force final synthesis, got %#v", decision)
+	if decision.RejectSummary != "Conversation contract rejected repeated broad discovery after bounded evidence" {
+		t.Fatalf("expected repeated broad discovery rejection, got %#v", decision)
 	}
-	if decision.ForceAnswer.Reason != "conversation_broad_discovery_sufficient" {
-		t.Fatalf("unexpected force-answer reason: %#v", decision.ForceAnswer)
+	if decision.ForceAnswer != nil {
+		t.Fatalf("repeated broad discovery must not force final synthesis, got %#v", decision.ForceAnswer)
 	}
 	if !strings.Contains(decision.RejectError, "recovery probe") {
 		t.Fatalf("expected recovery-probe explanation, got %q", decision.RejectError)
+	}
+	if !strings.Contains(decision.RejectError, "narrow read/search") {
+		t.Fatalf("expected narrow follow-up to remain available, got %q", decision.RejectError)
 	}
 
 	decision = runner.applyLanePreflight(runnerLanePreflightInput{
@@ -4536,7 +4548,34 @@ func TestConversationPreflightForcesAnswerAfterRepeatedBroadDiscoveryRecovery(t 
 		t.Fatalf("expected narrow read to pass preflight (nudge fires post-result), got %#v", decision)
 	}
 	if decision.ForceAnswer != nil {
-		t.Fatalf("expected no force-answer on preflight for conversation evidence (nudge replaces force), got %#v", decision.ForceAnswer)
+		t.Fatalf("expected no force answer on preflight for conversation evidence (nudge replaces force), got %#v", decision.ForceAnswer)
+	}
+
+	decision = runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{
+			Tool:            "context_query",
+			Query:           "callers of Runner.runChildTask",
+			Resolution:      "symbol",
+			NamedGap:        "which caller triggers child task orchestration",
+			WhyNotAnswering: "without caller evidence the control flow is inferred",
+		},
+		Results: results,
+	})
+	if decision.RejectSummary != "" || decision.ForceAnswer != nil {
+		t.Fatalf("targeted context_query with a named gap should remain available, got %#v", decision)
+	}
+
+	decision = runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{
+			Tool:            "context_pack",
+			Query:           "restart broad localization",
+			NamedGap:        "need more context",
+			WhyNotAnswering: "more context could help",
+		},
+		Results: results,
+	})
+	if decision.RejectSummary != "Conversation contract rejected repeated broad discovery after bounded evidence" {
+		t.Fatalf("named_gap must not reopen broad context_pack discovery, got %#v", decision)
 	}
 }
 
@@ -4602,7 +4641,7 @@ func TestConversationFollowupDoesNotCollapseAfterRecoveryBroadSearch(t *testing.
 		t.Fatalf("Run: %v", err)
 	}
 	if requests != 4 {
-		t.Fatalf("expected forced synthesis on the fourth model request, got %d request(s)", requests)
+		t.Fatalf("expected answer on the fourth model request after broad-search rejection, got %d request(s)", requests)
 	}
 	if !strings.Contains(answer, "approving an initial candidate read set") || !strings.Contains(answer, "out-of-scope reads") {
 		t.Fatalf("answer did not explain bounded read scoping:\n%s", answer)
@@ -4639,8 +4678,8 @@ func TestConversationEvidenceSatisfiedContextPackAloneFiresGate(t *testing.T) {
 	if conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
 		t.Fatal("context_pack alone should not fire evidence-satisfied gate — wait for at least one source-body read")
 	}
-	if runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
-		t.Fatal("context_pack alone should not trigger force-answer readiness")
+	if runner.conversationEvidenceAvailableForObjective(results) {
+		t.Fatal("context_pack alone should not trigger evidence availability")
 	}
 
 	// Add a source-body read — now evidence should be satisfied.
@@ -4652,8 +4691,8 @@ func TestConversationEvidenceSatisfiedContextPackAloneFiresGate(t *testing.T) {
 	if !conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
 		t.Fatal("context_pack + source-body read should fire evidence-satisfied gate")
 	}
-	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
-		t.Fatal("context_pack + source-body read should trigger force-answer readiness")
+	if !runner.conversationEvidenceAvailableForObjective(results) {
+		t.Fatal("context_pack + source-body read should trigger evidence availability")
 	}
 }
 
@@ -4678,8 +4717,8 @@ func TestConversationEvidenceSatisfiedFileOutlineFindSymbolProbesFireGate(t *tes
 	if !conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
 		t.Fatal("expected file_outline + find_symbol probes to fire evidence-satisfied gate for conversation/direct_answer")
 	}
-	if !runner.conversationEvidenceSatisfiedForceAnswerReady(results) {
-		t.Fatal("expected force-answer readiness after file_outline + find_symbol evidence")
+	if !runner.conversationEvidenceAvailableForObjective(results) {
+		t.Fatal("expected evidence availability after file_outline + find_symbol evidence")
 	}
 }
 
@@ -8778,6 +8817,38 @@ func TestImplementationDeferredWriteReplayRequiresAnchorCoverage(t *testing.T) {
 	}
 }
 
+func TestImplementationDeferredWriteReplayRequiresHistoryWhenMarked(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        "internal/labels/labels.go",
+		OldText:     `return "Save changes"`,
+		NewText:     `return "Save"`,
+		Description: "shorten label",
+	}
+	deferred := newImplementationDeferredSourceEvidenceWrite(req, "", "internal/labels/labels.go")
+	if deferred == nil {
+		t.Fatal("expected deferred write")
+	}
+	deferred.RequiresHistory = true
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-20 (total lines: 20)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+	verifyReq := workspace.ToolRequest{Tool: "source_sanity", Path: "internal/labels/labels.go"}
+	if replayReq, raw, replay := deferred.replayAfterEvidence(verifyReq, results, []string{"source_sanity", "edit_file"}); replay {
+		t.Fatalf("must not replay before history evidence, got req=%#v raw=%q", replayReq, raw)
+	}
+	results = append(results, workspace.ToolResult{
+		Tool:    "history_range",
+		Summary: "Read git history for internal/labels/labels.go lines 1-5",
+		Output:  "commit abc123\n\n    Preserve current label behavior",
+	})
+	if replayReq, _, replay := deferred.replayAfterEvidence(verifyReq, results, []string{"source_sanity", "edit_file"}); !replay || replayReq.Tool != "edit_file" {
+		t.Fatalf("expected replay after source and history evidence, replay=%v req=%#v", replay, replayReq)
+	}
+}
+
 func TestImplementationDeferredAppendReplayRequiresFullFileEvidence(t *testing.T) {
 	req := workspace.ToolRequest{
 		Tool:        "append_file",
@@ -10008,6 +10079,9 @@ func TestUnexecutedToolJSONDetectionDoesNotRejectGenericJSON(t *testing.T) {
 		`{"items":["one","two"]}`,
 		`{"command":"make build"}`,
 		`{"prompt":"Summarize this file"}`,
+		"Here is an explanatory JSON example for documentation:\n\n```json\n" +
+			`{"tool":"search_files","pattern":"*.jsonl","max_depth":2}` + "\n```\n\n" +
+			"That example is not a tool call being requested now.",
 	} {
 		if looksLikeUnexecutedToolRequestAnswer(reply) {
 			t.Fatalf("generic JSON should not be treated as an unexecuted tool request: %s", reply)
@@ -10015,6 +10089,18 @@ func TestUnexecutedToolJSONDetectionDoesNotRejectGenericJSON(t *testing.T) {
 	}
 	if !looksLikeUnexecutedToolRequestAnswer(`{"task":"implement docs/writer-route-decision-report-only-plan.md","mode":"plan","limit":12}`) {
 		t.Fatalf("context_pack-shaped JSON should still be rejected as an unexecuted tool request")
+	}
+}
+
+func TestUnexecutedToolJSONDetectionRejectsLongProcessProse(t *testing.T) {
+	reply := "The search returned no results, which is unexpected given the previous tool result showed 400 log files. Let me try a different approach to find the latest conversation logs.\n\n" +
+		`{"tool":"search_files","pattern":"*.jsonl","max_depth":2}`
+	if !looksLikeUnexecutedToolRequestAnswer(reply) {
+		t.Fatal("expected long process prose with embedded tool JSON to be rejected")
+	}
+	result, rejected := (&Runner{}).unexecutedToolRequestCompletionRejection(reply)
+	if !rejected || result.Tool != "completion_gate" || !strings.Contains(result.Summary, "Unexecuted tool request") {
+		t.Fatalf("unexpected completion rejection: rejected=%v result=%#v", rejected, result)
 	}
 }
 
@@ -14246,7 +14332,7 @@ func TestPostChildDiminishingReturnsNudgeEncouragesExactProbe(t *testing.T) {
 	}
 }
 
-func TestClosureSynthesisAfterIgnoredNudgeForPostChildRead(t *testing.T) {
+func TestClosureSynthesisAfterIgnoredNudgeDoesNotForcePostChildRead(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:   "task",
 		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go`\n",
@@ -14265,13 +14351,8 @@ func TestClosureSynthesisAfterIgnoredNudgeForPostChildRead(t *testing.T) {
 		0,
 		1,
 	)
-	if !ok {
-		t.Fatal("expected post-child read after diminishing nudge to force synthesis")
-	}
-	for _, want := range []string{"Closure evidence is already sufficient", "Tools are now disabled", "internal/agent/runner.go"} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("expected synthesis prompt to contain %q, got:\n%s", want, prompt)
-		}
+	if ok || prompt != "" {
+		t.Fatalf("post-child read after a soft nudge must remain model-owned, got ok=%v prompt=%q", ok, prompt)
 	}
 	if !shouldPreferModelBudgetSynthesis("main", brief, results) {
 		t.Fatal("expected parent post-child closure to prefer model synthesis over partial fallback")
@@ -14287,7 +14368,7 @@ func TestClosureSynthesisSkipsWhenGapDeclared(t *testing.T) {
 		PermissionProfile: "read_only_workspace",
 		Objective:         "Explain how this harness uses subagents.",
 	}
-	// Same scenario as TestClosureSynthesisAfterIgnoredNudgeForPostChildRead
+	// Same scenario as TestClosureSynthesisAfterIgnoredNudgeDoesNotForcePostChildRead
 	// (post-child packet, diminishing nudge already fired, model is making
 	// another read), but this time the request carries a tool-shaped gap —
 	// the contract the readiness nudge said to satisfy. Force-closing here
@@ -15424,7 +15505,7 @@ func TestMutationRepeatedFullReadStillAllowsWriteInsteadOfForcedAnswer(t *testin
 		t.Fatalf("repeated full reads should not use rejected-retry recovery, got %d events; events=%v", got, eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
-		t.Fatalf("mutation no-write retry must not force-answer through rejection_retry_blocked, got %d; events=%v", got, eventRolesFor(events))
+		t.Fatalf("mutation no-write retry must not force answer through rejection_retry_blocked, got %d; events=%v", got, eventRolesFor(events))
 	}
 	data, err := os.ReadFile(filepath.Join(root, "internal/labels/labels.go"))
 	if err != nil {
@@ -16426,7 +16507,7 @@ func TestTargetWriteReadyStagedNudgeFallsBackWhenBasePromptEmpty(t *testing.T) {
 func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testing.T) {
 	// Build a turnMessages slice ending with a dangling tool_calls assistant
 	// message. Verify that completeWithoutMoreToolsWithReason injects a tool
-	// result before the force-answer system message.
+	// result before the force answer system message.
 	messages := []llama.ChatMessage{
 		{Role: "user", Content: "test"},
 		{Role: "assistant", ToolCalls: []llama.ToolCall{{
@@ -16449,7 +16530,7 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 
 	// Call completeWithoutMoreToolsWithReason directly.
 	// The function should inject a tool result for the dangling tool_call
-	// before appending the force-answer system message.
+	// before appending the force answer system message.
 	// This test won't reach the API call because the mock client will fail,
 	// but we can verify the messages were injected correctly.
 	_ = ctx
@@ -17328,6 +17409,259 @@ func TestFinalAnswerBlockerKindAllowsBlockersWithQUESTION(t *testing.T) {
 		if kind != "user_visible_blocker" {
 			t.Errorf("variant %d <<QUESTION>> blocker NOT allowed: got blocker_kind=%q, want user_visible_blocker", i, kind)
 		}
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsNonexistentSourceCitation(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `internal/app/conversation_view.go` lines 417-433: `recalculateVisibleLines` resets `scrollY`."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("nonexistent source citation got blocker_kind=%q, want source_grounding_unmet", kind)
+	}
+	if !strings.Contains(reason, "internal/app/conversation_view.go") {
+		t.Fatalf("blocker reason should name missing path, got %q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsMissingGuardInNonexistentSourceCitation(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The missing scroll guard is in `internal/app/conversation_view.go` lines 417-433."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("missing/absent prose must not mark nonexistent source historical: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsLineClaimWithoutSourceBody(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "app", "lifecycle.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package app\n\nfunc Update() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `internal/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
+	results := []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/app/lifecycle.go"},
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("ungrounded source line claim got blocker_kind=%q, want source_grounding_unmet", kind)
+	}
+	if !strings.Contains(reason, "source-body read") {
+		t.Fatalf("blocker reason should ask for source-body read, got %q", reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsTopLevelLineClaimWithoutSourceBody(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "main.go")
+	if err := os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `main.go:3`, where `main` starts the process."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "main.go"},
+	})
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("top-level line claim without source body got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsCandidateLineClaimWithoutSourceBody(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "app", "lifecycle.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package app\n\nfunc Update() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The candidate root cause is in `internal/app/lifecycle.go` lines 418-424 where `WindowSizeMsg` is handled."
+	results := []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/app/lifecycle.go"},
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("candidate line claim without source body got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsEvidencePathListWithoutSourceBody(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "agent", "runner.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package agent\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "Evidence paths: `internal/agent/runner.go`. The available evidence is not enough to name an exact function."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, []workspace.ToolResult{
+		{Tool: "context_pack", Summary: "Context pack wrote packet", Output: "internal/agent/runner.go"},
+	})
+	if kind != "" || reason != "" {
+		t.Fatalf("plain evidence path list should not require source body: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsMissingCanonicalRootFile(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `go.mod`, which pins the wrong dependency."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("missing canonical root file got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsMissingCanonicalRootLineCitation(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `go.mod:4`, which pins the wrong dependency."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("missing canonical root line citation got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsMissingTopLevelLineCitation(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `main.go:42`, where startup resets the viewport."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("missing top-level line citation got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsMissingTopLevelSourceDetailCitation(t *testing.T) {
+	root := t.TempDir()
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The root cause is in `main.go`, where startup resets the viewport."
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, nil)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("missing top-level source-detail citation got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsLineClaimWithSourceBody(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "app", "lifecycle.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package app\n\nfunc Update() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The resize path is in `internal/app/lifecycle.go` lines 1-3 where `Update` handles messages."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/lifecycle.go lines 1-3 (total lines: 3)",
+			Output:  "1:package app\n2:\n3:func Update() {}",
+		},
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("source-body-backed answer blocked: kind=%q reason=%q", kind, reason)
 	}
 }
 

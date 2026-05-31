@@ -32,8 +32,8 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"real required or selected path",
 		"never placeholders",
 		"Required `submit_plan` coverage for this run: 2 required path(s)",
-		"After every existing required path has satisfied its source-body obligation (new files satisfy this automatically",
-		"Do not treat a source read as plan coverage",
+		"After every existing required path has satisfied its source-body obligation and any runtime-required git history evidence has been read for existing logic",
+		"Do not treat a source read or history read as plan coverage",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("planner addendum missing %q:\n%s", want, got)

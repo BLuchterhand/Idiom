@@ -215,7 +215,8 @@ func (m *Model) handleFeaturePlannerCommand(raw string) bool {
 		m.status = "A response is already in progress."
 		return true
 	}
-	m.appendHistoryMessage("user", objective, nil)
+	m.appendHistoryMessage("user", raw, nil)
+	m.logMessage("user", raw)
 	m.sendFeaturePlannerCommandAsync(objective)
 	m.status = "Dispatching to feature-planner..."
 	return true

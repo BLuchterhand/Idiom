@@ -3773,14 +3773,14 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 
 		match := searchFileMatch{
 			path:    path,
-			display: m.handleDisplay(path),
+			display: m.displayPath(path),
 		}
 		if info, err := d.Info(); err == nil {
 			match.modTime = info.ModTime()
 			match.size = info.Size()
 		}
 		matches = append(matches, match)
-		if len(matches) >= m.cfg.MaxDirectoryEntries {
+		if !includeLogDirs && len(matches) >= m.cfg.MaxDirectoryEntries {
 			return filepath.SkipAll
 		}
 		return nil
@@ -3858,10 +3858,10 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	output := make([]string, 0, displayLimit+1)
 	for _, match := range matches[:displayLimit] {
 		if includeLogDirs && !match.modTime.IsZero() {
-			output = append(output, fmt.Sprintf("%s (modified %s; size %s)", match.display, match.modTime.Format(time.RFC3339), formatBytes(match.size)))
+			output = append(output, fmt.Sprintf("%s (modified %s; size %s)", m.handleDisplay(match.path), match.modTime.Format(time.RFC3339), formatBytes(match.size)))
 			continue
 		}
-		output = append(output, match.display)
+		output = append(output, m.handleDisplay(match.path))
 	}
 	summary := fmt.Sprintf("Found %d matching file(s).", len(matches))
 	if includeLogDirs {

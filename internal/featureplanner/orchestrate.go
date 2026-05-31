@@ -553,6 +553,11 @@ func validatePlanExecuteCompletionEnvelope(summary string, progressPath string) 
 		return errors.New("plan-execute completion missing progress_path; child terminal status is not auditable")
 	}
 	lower := strings.ToLower(summary)
+	if strings.Contains(lower, `"type":"idiom.plan_execute.source_satisfied"`) ||
+		strings.Contains(lower, `"type": "idiom.plan_execute.source_satisfied"`) ||
+		strings.Contains(lower, "decision: source-satisfied") {
+		return nil
+	}
 	cleanedFailureSummary := strings.ToLower(summary)
 	for _, marker := range []string{", 0 failed", ": 0 failed", "\n0 failed", " 0 failed"} {
 		cleanedFailureSummary = strings.ReplaceAll(cleanedFailureSummary, marker, "")

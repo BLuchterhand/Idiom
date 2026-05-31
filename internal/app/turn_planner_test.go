@@ -3012,13 +3012,41 @@ func TestRouteClassifierChatClientFallsBackToPlannerWhenClassifierUnreachable(t 
 	}
 }
 
-func TestCorrectTurnRoutePlanDoesNotOverrideDebugLogClassifierRoute(t *testing.T) {
+func TestCorrectTurnRoutePlanDemotesConceptualDebugLogQuestion(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", agent.BuildMode())
-	if plan.Family != "debug_logs" {
-		t.Fatalf("family = %q, want debug_logs", plan.Family)
+	if plan.Family != "architecture" {
+		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
-	if plan.InitialLane != "explore" || plan.Contract != "grounded_explanation" {
+	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestCorrectTurnRoutePlanKeepsExplicitLogArtifactRequestsOnStandardReadLane(t *testing.T) {
+	prompts := []string{
+		"Check our most recent logs and explain why it failed.",
+		"Read logs/conversations/20260531-124928.794.jsonl and explain the failure.",
+		"Search the telemetry logs for the latest panic.",
+	}
+	for _, prompt := range prompts {
+		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, agent.BuildMode())
+		if plan.Family != "conversation" {
+			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
+		}
+		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
+		}
+	}
+}
+
+func TestCorrectTurnRoutePlanKeepsSourceDebugPromptOnStandardReadLane(t *testing.T) {
+	prompt := "you are a debugging assistant to another agent. you are tasked with finding the cause of terminal resizing causing conversation window to become unscrollable. Please provide your proof with evidence, files, symbols, and line numbers."
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, prompt, agent.BuildMode())
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
+	}
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("source-debug prompt should use standard read lane, got %#v", plan)
 	}
 }
 
@@ -3060,12 +3088,43 @@ func TestCorrectTurnRoutePlanKeepsQuestionShapedUILayoutConversation(t *testing.
 	}
 }
 
+func TestCorrectTurnRoutePlanKeepsSourceDiagnosisOnStandardReadLane(t *testing.T) {
+	prompt := "you are a research assistant for another agentic process; please provide structured evidence in the form of files, line numbers, and relevant symbols. We are trying to debug an issue where resizing the TUI mid-answer caused the conversation to become non-scrollable. Please debug and present your findings."
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{
+		Family:             "debug_logs",
+		InitialLane:        "explore",
+		Contract:           "grounded_explanation",
+		RequestedOutcome:   "diagnose",
+		WriteIntent:        "no",
+		ReadOnlyConstraint: true,
+	}, prompt, agent.BuildMode())
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
+	}
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
+func TestNormalizeTurnRoutePlanDiagnoseDefaultsToConversation(t *testing.T) {
+	plan := normalizeTurnRoutePlan(turnRoutePlan{
+		RequestedOutcome: "diagnose",
+		WriteIntent:      "no",
+	}, agent.BuildMode())
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
+	}
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("unexpected plan: %#v", plan)
+	}
+}
+
 func TestCorrectTurnRoutePlanDoesNotUsePromptFallbackHeuristics(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "Run the tests and report failures.", agent.BuildMode())
-	if plan.Family != "debug_logs" {
-		t.Fatalf("family = %q, want debug_logs", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "explore" || plan.Contract != "grounded_explanation" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -6365,22 +6424,17 @@ func TestTurnRoutePlanRuntimeBriefForVerificationOnly(t *testing.T) {
 	}
 }
 
-func TestTurnRoutePlanRuntimeBriefForDebugLogsOmitsPwd(t *testing.T) {
+func TestTurnRoutePlanRuntimeBriefForDebugLogsUsesStandardReadLane(t *testing.T) {
 	available := []string{"pwd", "read_file", "search_files", "search_content", "edit_file"}
 	brief := turnRoutePlanRuntimeBrief(turnRoutePlan{Family: "debug_logs"}, agent.BuildMode(), available)
 	if brief.PermissionProfile != "read_only_workspace" {
 		t.Fatalf("permission = %q, want read_only_workspace", brief.PermissionProfile)
 	}
-	for _, tool := range brief.AllowedTools {
-		if tool == "pwd" || tool == "edit_file" {
-			t.Fatalf("unexpected tool %q in debug_logs allowed tools %#v", tool, brief.AllowedTools)
-		}
+	if brief.TaskFamily != "conversation" || brief.Lane != "main" || brief.Contract != "direct_answer" {
+		t.Fatalf("debug_logs route should collapse to standard read lane, got %#v", brief)
 	}
 	if !strings.Contains(strings.Join(brief.AllowedTools, ","), "search_files") {
 		t.Fatalf("expected search_files in allowed tools, got %#v", brief.AllowedTools)
-	}
-	if len(brief.ReadinessGate) == 0 || len(brief.FinalCritic) == 0 {
-		t.Fatalf("expected debug logs to keep operational gates, got %#v", brief)
 	}
 }
 

@@ -529,6 +529,8 @@ func (r *Runner) Run(
 	implementationTargetWriteReadyNonWriteRejections := 0
 	implementationWriteOnlyNonWriteRejects := 0
 	var deferredSourceEvidenceWrite *implementationDeferredSourceEvidenceWrite
+	var deferredGitHistorySubmitPlan *workspace.ToolRequest
+	var deferredGitHistorySubmitPlanRaw string
 	controller := runnerTurnController{
 		runner:                     r,
 		ctx:                        ctx,
@@ -685,6 +687,7 @@ func (r *Runner) Run(
 			ok                                   bool
 			parseErr                             error
 			deterministicPlanExecuteEvidenceRead bool
+			replayedOverVerificationRequest      *workspace.ToolRequest
 		)
 		normalization := normalizeToolRequestSyntax(assistantMessage)
 		req, raw, ok, parseErr = normalization.Request, normalization.Raw, normalization.OK, normalization.ParseErr
@@ -706,7 +709,7 @@ func (r *Runner) Run(
 				req, raw, ok = salvagedReq, salvagedRaw, true
 				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "reasoning_salvage", req, nil, "")
 				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
-			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage); salvaged {
+			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage, collectedResults); salvaged {
 				r.emitEvent(RunEvent{Role: "reasoning_answer_salvage", Content: fmt.Sprintf("model emitted answer prose in hidden reasoning while visible content was empty; extracted %d chars", len(answerText))})
 				emitAcceptedAnswerSignalsOnce(answerText)
 				return finish(answerText, nil, "reasoning_answer_salvage", false)
@@ -811,6 +814,15 @@ func (r *Runner) Run(
 			continue
 		}
 		if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterEvidence(req, collectedResults, currentAllowedTools); replay {
+			originalReq := req
+			if strings.TrimSpace(originalReq.Tool) == "source_sanity" || strings.TrimSpace(originalReq.Tool) == "shell" {
+				reqCopy := originalReq
+				replayedOverVerificationRequest = &reqCopy
+			} else if deferredSourceEvidenceWrite != nil && deferredSourceEvidenceWrite.RequiresHistory {
+				if verifyReq, ok := deferredSourceEvidenceWrite.fallbackVerificationRequest(); ok {
+					replayedOverVerificationRequest = &verifyReq
+				}
+			}
 			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 				"agent":          r.agentName(),
 				"original_tool":  strings.TrimSpace(req.Tool),
@@ -856,6 +868,15 @@ func (r *Runner) Run(
 				answerContent = answerArgs.Content
 			}
 			if answerContent != "" {
+				if blockerKind, reason := r.finalAnswerBlockerKind(answerContent, collectedResults); blockerKind != "" {
+					blockerResult := workspace.ToolResult{
+						Tool:    "completion_gate",
+						Summary: "Answer tool rejected by blocker check",
+						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, collectedResults),
+					}
+					emitCompletionStatus("blocked", reason, blockerKind, collectedResults, true)
+					return finish(r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults), nil, blockerKind, true)
+				}
 				emitAcceptedAnswerSignalsOnce(answerContent)
 				return finish(answerContent, nil, "model_answer_tool", false)
 			}
@@ -898,8 +919,10 @@ func (r *Runner) Run(
 			if requiredPathCompletionRecoveryActive {
 				result, rejected = r.requiredPathCompletionRecoveryRejection(reply, collectedResults)
 			}
+			gateReply := reply
 			if !rejected {
-				result, rejected = r.completionGateRejection(reply, collectedResults, stepNumber, taskLedger, declarationMovesForbidden)
+				gateReply = r.decoratedReadOnlyReplyForCompletionGate(reply, collectedResults)
+				result, rejected = r.completionGateRejection(gateReply, collectedResults, stepNumber, taskLedger, declarationMovesForbidden)
 			}
 			if rejected {
 				priorGateRejections := completionGateRejections
@@ -976,6 +999,9 @@ func (r *Runner) Run(
 				continue
 			}
 			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, opts, collectedResults, &metrics)
+			if strings.TrimSpace(gateReply) != "" && strings.TrimSpace(gateReply) != strings.TrimSpace(reply) && strings.TrimSpace(answer) == strings.TrimSpace(reply) {
+				answer = gateReply
+			}
 			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
 				// The retry answer is a hedge or meta-response about evidence
 				// sufficiency rather than a substantive answer — reject and block.
@@ -995,7 +1021,7 @@ func (r *Runner) Run(
 					blockerResult := workspace.ToolResult{
 						Tool:    "completion_gate",
 						Summary: "Final answer rejected by blocker check",
-						Error:   r.finalAnswerBlockerErrorText(reason, answer, collectedResults),
+						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answer, collectedResults),
 					}
 					overridden := r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
 					emitCompletionStatus("blocked", reason, blockerKind, collectedResults, true)
@@ -1209,6 +1235,7 @@ func (r *Runner) Run(
 			requestBudget.writeReadyNudgeActive = true
 			nudgeMsg := targetWriteReadyStagedNudge(prompt, req, implementationTargetWriteReadyNonWriteRejections)
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudgeMsg})
+			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_recovery", Content: nudgeMsg})
 			r.emitEvent(RunEvent{Role: "implementation_target_write_ready_nudge", Content: nudgeMsg})
 		}
 		scopedHiddenNonWrite := implementationScopedHiddenTools[strings.TrimSpace(req.Tool)] && !workspace.IsWorkspaceWriteTool(req.Tool)
@@ -1533,9 +1560,30 @@ func (r *Runner) Run(
 			continue
 		}
 		surfaceAllowedTools := runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools, r.RuntimeBrief, collectedResults, req)
+		historyRedirectAllowedTools := append(append([]string(nil), surfaceAllowedTools...), "history_range", "history_symbol")
 		if summary, errorText, reject := currentToolSurfaceRejection(req, surfaceAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
 			redirected := false
-			if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
+			if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
+				submitReq := req
+				deferredGitHistorySubmitPlan = &submitReq
+				deferredGitHistorySubmitPlanRaw = raw
+				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+					"agent":          r.agentName(),
+					"original_tool":  strings.TrimSpace(req.Tool),
+					"rewritten_tool": strings.TrimSpace(redirectedReq.Tool),
+					"original_raw":   strings.TrimSpace(raw),
+					"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+					"reason":         "plan_execute_submit_plan_before_history",
+				}))
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: rewriteVisibilityNote(req.Tool, redirectedReq.Tool),
+				})
+				req = redirectedReq
+				raw = redirectedRaw
+				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+				redirected = true
+			} else if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
 				redirectedRaw := marshalToolRequestRaw(redirectedReq)
 				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
 					"agent":          r.agentName(),
@@ -1586,6 +1634,26 @@ func (r *Runner) Run(
 				continue
 			}
 		}
+		if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
+			submitReq := req
+			deferredGitHistorySubmitPlan = &submitReq
+			deferredGitHistorySubmitPlanRaw = raw
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirectedReq.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         "plan_execute_submit_plan_before_history",
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirectedReq.Tool),
+			})
+			req = redirectedReq
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
 
 		if redirected, redirectedRaw, ok := r.implementationTargetSourceWriteBeforeEvidenceRedirect(req, collectedResults, currentAllowedTools); ok {
 			originalReq := req
@@ -1613,6 +1681,30 @@ func (r *Runner) Run(
 				return finish(answer, err, "implementation_target_source_write_rejected", true)
 			}
 			continue
+		}
+		implementationHistoryRedirectAllowedTools := append(append([]string(nil), currentAllowedTools...), "history_range", "history_symbol")
+		if redirected, redirectedRaw, ok := r.writeBeforeGitHistoryEvidenceRedirect(req, collectedResults, implementationHistoryRedirectAllowedTools); ok {
+			originalReq := req
+			originalRaw := raw
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirected.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         "write_before_git_history_bounded_history",
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			deferredSourceEvidenceWrite = newImplementationDeferredSourceEvidenceWrite(originalReq, originalRaw, redirected.Path)
+			if deferredSourceEvidenceWrite != nil {
+				deferredSourceEvidenceWrite.RequiresHistory = true
+			}
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 		if summary, errorText, reject := r.writeBeforeGitHistoryEvidenceRejection(req, collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -1953,20 +2045,6 @@ func (r *Runner) Run(
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				requestBudget.postReadinessNoGapRejections++
-				// After 3 consecutive rejections, break the loop by
-				// forcing the model to answer from gathered evidence.
-				// Without this escape hatch, the model can be trapped
-				// in an inescapable rejection loop when child-packet
-				// evidence points to the wrong files — every read-class
-				// tool gets the same "evidence already sufficient"
-				// rejection and the model can never recover.
-				if postChildPacketActive && requestBudget.postReadinessNoGapRejections >= 3 {
-					answer, err := controller.completeWithoutMoreToolsWithReason(
-						"The child packet already provided evidence. Further reads were rejected because " +
-							"the gathered evidence is sufficient to answer. Tools are now disabled. " +
-							forceAnswerTailGatheredEvidence)
-					return finish(answer, err, "post_child_rejection_exhausted", true)
-				}
 				// Nudge the model: name the gap or answer. Do not force-answer.
 				// The completion gate and budget gate handle real closures.
 				summary, errorText := missingPostReadinessGapMessage(scope)
@@ -2688,6 +2766,134 @@ func (r *Runner) Run(
 		if autonomyRecorder != nil && workspaceWriteResultCompleted(req, result) {
 			autonomyRecorder.emitWriteGate(req, autonomy.PolicyAllow, "write_result_completed", mapKeys(changedPathsFromToolResults([]workspace.ToolResult{result})))
 		}
+		if deferredGitHistorySubmitPlan != nil && gitHistoryEvidenceTool(req.Tool) {
+			submitReq := *deferredGitHistorySubmitPlan
+			if len(r.submitPlanPathsMissingGitHistory(submitReq, collectedResults)) == 0 {
+				submitRaw := deferredGitHistorySubmitPlanRaw
+				if strings.TrimSpace(submitRaw) == "" {
+					submitRaw = marshalToolRequestRaw(submitReq)
+				}
+				metrics.ToolCalls++
+				if onToolRequest != nil {
+					profile := workspace.DiscoveryProfileForRequest(submitReq)
+					onToolRequest(ToolRequestEvent{
+						Step:           stepNumber,
+						Agent:          r.agentName(),
+						Raw:            submitRaw,
+						Request:        submitReq,
+						Mode:           r.Workspace.Mode(),
+						Broad:          workspace.IsBroadInspectionRequest(submitReq),
+						Narrowing:      workspace.IsNarrowingRequest(submitReq),
+						Action:         toolActionClass(submitReq),
+						DiscoveryClass: profile.Class,
+						DiscoveryScope: profile.Scope,
+						DiscoveryCost:  profile.Cost,
+					})
+				}
+				var submitResult workspace.ToolResult
+				if guard := r.preflightPlanThenExecuteSubmitPlanGroundingGuard(submitReq, collectedResults); guard.Intercepted {
+					submitResult = guard.Result
+					r.emitEvent(RunEvent{Role: "plan_then_execute_plan_guard", Content: guard.Reason})
+				} else if guard := r.preflightPlanThenExecuteSubmitPlanHistoryGuard(submitReq, collectedResults); guard.Intercepted {
+					submitResult = guard.Result
+					r.emitEvent(RunEvent{Role: "plan_then_execute_plan_guard", Content: guard.Reason})
+				} else if guard := r.preflightPlanThenExecuteSubmitPlanCoverageGuard(submitReq); guard.Intercepted {
+					submitResult = guard.Result
+					r.emitEvent(RunEvent{Role: "plan_then_execute_plan_guard", Content: guard.Reason})
+				} else {
+					submitResult = r.Workspace.Execute(ctx, submitReq)
+				}
+				recorder.activeToolCall = nil
+				recorder.recordWithOptions(stepNumber, submitReq, submitResult, "deferred_git_history_submit_plan", runnerRecordOptions{
+					TrackProgress:  true,
+					ResetRejected:  true,
+					SetLastToolKey: true,
+				})
+				req = submitReq
+				result = submitResult
+				update = executionState.applyResult(submitReq, submitResult, toolRequestKey(submitReq), r.Workspace, &requestBudget)
+				deferredGitHistorySubmitPlan = nil
+				deferredGitHistorySubmitPlanRaw = ""
+			}
+		}
+		if deferredSourceEvidenceWrite != nil && gitHistoryEvidenceTool(req.Tool) {
+			if replayReq, replayRaw, replay := deferredSourceEvidenceWrite.replayAfterHistoryEvidence(collectedResults); replay {
+				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+					"agent":          r.agentName(),
+					"original_tool":  strings.TrimSpace(req.Tool),
+					"rewritten_tool": strings.TrimSpace(replayReq.Tool),
+					"original_raw":   marshalToolRequestRaw(req),
+					"rewritten_raw":  strings.TrimSpace(replayRaw),
+					"reason":         "implementation_write_after_history_evidence_replay",
+				}))
+				metrics.ToolCalls++
+				if onToolRequest != nil {
+					profile := workspace.DiscoveryProfileForRequest(replayReq)
+					onToolRequest(ToolRequestEvent{
+						Step:           stepNumber,
+						Agent:          r.agentName(),
+						Raw:            replayRaw,
+						Request:        replayReq,
+						Mode:           r.Workspace.Mode(),
+						Broad:          workspace.IsBroadInspectionRequest(replayReq),
+						Narrowing:      workspace.IsNarrowingRequest(replayReq),
+						Action:         toolActionClass(replayReq),
+						DiscoveryClass: profile.Class,
+						DiscoveryScope: profile.Scope,
+						DiscoveryCost:  profile.Cost,
+					})
+				}
+				replayResult := r.Workspace.Execute(ctx, replayReq)
+				recorder.activeToolCall = nil
+				recorder.recordWithOptions(stepNumber, replayReq, replayResult, "deferred_git_history_write", runnerRecordOptions{
+					TrackProgress:  true,
+					ResetRejected:  true,
+					SetLastToolKey: true,
+				})
+				r.markConcreteSourceEvidenceObserved(replayResult)
+				req = replayReq
+				result = replayResult
+				update = executionState.applyResult(replayReq, replayResult, toolRequestKey(replayReq), r.Workspace, &requestBudget)
+				deferredSourceEvidenceWrite = nil
+			}
+		}
+		if replayedOverVerificationRequest != nil && workspaceWriteResultCompleted(req, result) {
+			verifyReq := *replayedOverVerificationRequest
+			verifyRaw := marshalToolRequestRaw(verifyReq)
+			if hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) ||
+				sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults) {
+				prompt := postWriteVerificationRequiredPrompt(collectedResults, plannerOwnsVerification(r.RuntimeBrief))
+				r.emitEvent(RunEvent{Role: "post_write_verification_required", Content: prompt})
+			}
+			metrics.ToolCalls++
+			if onToolRequest != nil {
+				profile := workspace.DiscoveryProfileForRequest(verifyReq)
+				onToolRequest(ToolRequestEvent{
+					Step:           stepNumber,
+					Agent:          r.agentName(),
+					Raw:            verifyRaw,
+					Request:        verifyReq,
+					Mode:           r.Workspace.Mode(),
+					Broad:          workspace.IsBroadInspectionRequest(verifyReq),
+					Narrowing:      workspace.IsNarrowingRequest(verifyReq),
+					Action:         toolActionClass(verifyReq),
+					DiscoveryClass: profile.Class,
+					DiscoveryScope: profile.Scope,
+					DiscoveryCost:  profile.Cost,
+				})
+			}
+			verifyResult := r.Workspace.Execute(ctx, verifyReq)
+			recorder.activeToolCall = nil
+			recorder.recordWithOptions(stepNumber, verifyReq, verifyResult, "deferred_post_write_verification", runnerRecordOptions{
+				TrackProgress:  true,
+				ResetRejected:  true,
+				SetLastToolKey: true,
+			})
+			r.markConcreteSourceEvidenceObserved(verifyResult)
+			req = verifyReq
+			result = verifyResult
+			update = executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
+		}
 		if update.ResetVerificationGuards {
 			clearVerificationGateFingerprints(requestBudget.fingerprint.rejected)
 			clearRunnerStringIntMap(rejectedActions)
@@ -2943,7 +3149,7 @@ func (r *Runner) Run(
 		// evidence but does NOT declare the model ready to answer.
 		// Per north star: the model owns the decision of when
 		// evidence is sufficient.
-		if r.conversationEvidenceSatisfiedForceAnswerReady(collectedResults) && !conversationEvidenceNudged {
+		if r.conversationEvidenceAvailableForObjective(collectedResults) && !conversationEvidenceNudged {
 			conversationEvidenceNudged = true
 			inspected := conversationInspectedPathSummary(collectedResults)
 			if inspected != "" {
@@ -5067,45 +5273,10 @@ func runnerClosureGuidanceActive(agent string, brief workerruntime.WorkerRuntime
 }
 
 func closureSynthesisAfterIgnoredNudgePrompt(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, delegatedDiminishingNudges int, postChildDiminishingNudges int) (string, bool) {
-	if !isReadClassTool(req) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
-		return "", false
-	}
-	// North-star contract: after readiness, the model is allowed "answer
-	// now or one exact probe with a named gap." If the model has declared
-	// a gap, it is satisfying the contract — let the upstream gap-shape
-	// validator and loop guards do their work. Force-closing here
-	// short-circuits the contract on a request that just complied with
-	// it, which is exactly the failure mode flagged in the in-flight log
-	// (a declared-gap go_read_symbol probe was force-completed before the
-	// tool ran).
-	if postReadinessGap(req) != "" {
-		return "", false
-	}
-	closureReady := false
-	nudgeAlreadyFired := false
-	if strings.HasPrefix(strings.TrimSpace(agent), "child:") {
-		closureReady = delegatedReadOnlyAnswerReady || delegatedReadOnlyClosureReady(agent, brief, results)
-		nudgeAlreadyFired = delegatedDiminishingNudges > 0
-	} else {
-		closureReady = postChildPacketActive || postChildPacketClosureReadyWithBrief(brief, results)
-		nudgeAlreadyFired = postChildDiminishingNudges > 0
-	}
-	if !closureReady || !nudgeAlreadyFired {
-		return "", false
-	}
-	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
-	if !strings.HasPrefix(strings.TrimSpace(agent), "child:") {
-		paths = postChildClosureEvidencePaths(brief.Objective, results, 4)
-	}
-	var b strings.Builder
-	b.WriteString("Closure evidence is already sufficient and a closure nudge has already been followed by another read/search request. Tools are now disabled. Synthesize a direct answer from the retained evidence.")
-	if len(paths) > 0 {
-		b.WriteString("\nCarry forward the relevant inspected paths: ")
-		b.WriteString(summarizePostChildEvidencePaths(paths, 4))
-		b.WriteString(".")
-	}
-	b.WriteString("\nIf one detail remains uncertain, state that uncertainty in prose; do not request more tools or return a partial-findings template.")
-	return b.String(), true
+	// Read-only closure nudges are advisory. The harness may reject repeated
+	// identical or broad probes, but it must not convert its readiness estimate
+	// into a no-tools final-answer requirement.
+	return "", false
 }
 
 func truncateRunnerStateText(value string, max int) string {
@@ -6885,9 +7056,15 @@ func looksLikeUnexecutedToolRequestAnswer(reply string) bool {
 	if !ok {
 		return false
 	}
+	if markdownFenceOpenBefore(trimmed, start) {
+		return false
+	}
 	outside := strings.TrimSpace(trimmed[:start] + "\n" + trimmed[end:])
 	outside = strings.Trim(outside, "` \t\r\n:")
 	if outside == "" {
+		return true
+	}
+	if toolRequestJSONObjectAppearsAsStandaloneBlock(trimmed, start, end) {
 		return true
 	}
 	fields := strings.Fields(outside)
@@ -6915,6 +7092,31 @@ func looksLikeUnexecutedToolRequestAnswer(reply string) bool {
 	return false
 }
 
+func toolRequestJSONObjectAppearsAsStandaloneBlock(text string, start int, end int) bool {
+	if markdownFenceOpenBefore(text, start) {
+		return false
+	}
+	lineStart := strings.LastIndexByte(text[:start], '\n') + 1
+	if strings.TrimSpace(text[lineStart:start]) != "" {
+		return false
+	}
+	lineEnd := len(text)
+	if nextNewline := strings.IndexByte(text[end:], '\n'); nextNewline >= 0 {
+		lineEnd = end + nextNewline
+	}
+	return strings.TrimSpace(text[end:lineEnd]) == ""
+}
+
+func markdownFenceOpenBefore(text string, pos int) bool {
+	open := false
+	for _, line := range strings.Split(text[:pos], "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			open = !open
+		}
+	}
+	return open
+}
+
 func firstToolRequestShapedJSONObjectSpan(text string) (int, int, bool) {
 	for searchFrom := 0; searchFrom < len(text); {
 		relativeStart := strings.IndexByte(text[searchFrom:], '{')
@@ -6925,6 +7127,10 @@ func firstToolRequestShapedJSONObjectSpan(text string) (int, int, bool) {
 		object, end, ok := extractJSONObjectAt(text, start)
 		if !ok {
 			return 0, 0, false
+		}
+		if markdownFenceOpenBefore(text, start) {
+			searchFrom = end
+			continue
 		}
 		var fields map[string]json.RawMessage
 		if err := json.Unmarshal([]byte(object), &fields); err == nil && toolRequestShapedJSONFields(fields) {
@@ -7852,7 +8058,238 @@ func (r *Runner) readOnlyExplanationCompletionRejection(reply string, results []
 			Error:   "the answer names additional implementation detail " + quotedRunnerStrings(unsupported) + " without an exact inspected probe or explicit uncertainty. Either anchor that detail with one exact read, or qualify it as unverified.",
 		}, true
 	}
+	if reason := r.sourceGroundingRejectionReason(reply, results); reason != "" {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Read-only explanation gate rejected ungrounded source citation",
+			Error:   reason,
+		}, true
+	}
 	return workspace.ToolResult{}, false
+}
+
+func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspace.ToolResult) string {
+	if r == nil {
+		return ""
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return ""
+	}
+	if !sourceGroundingGateApplies(brief) {
+		return ""
+	}
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		return ""
+	}
+	paths := sourceGroundingMentionedPaths(answer)
+	if len(paths) == 0 {
+		return ""
+	}
+	var missing []string
+	var unsupported []string
+	for _, rawPath := range paths {
+		path := normalizeRunnerPath(rawPath)
+		if path == "" {
+			continue
+		}
+		if !sourceCitationExists(r, path) {
+			if !strings.Contains(path, "/") &&
+				!sourceCitationLooksLikeRootPath(path) &&
+				!sourceCitationHasLineSuffix(answer, path) &&
+				!sourceCitationClaimsSourceDetail(answer, path) {
+				continue
+			}
+			if !sourceCitationExplicitlyNonCurrent(answer, path) {
+				missing = append(missing, path)
+			}
+			continue
+		}
+		if !sourceGroundingPathRequiresBody(path) {
+			continue
+		}
+		if !sourceCitationClaimsSourceDetail(answer, path) {
+			continue
+		}
+		if sourceEvidenceBodyReadForPath(path, results) {
+			continue
+		}
+		if sourceCitationExplicitlyNonCurrent(answer, path) || sourceCitationExplicitlyUnverified(answer, path) {
+			continue
+		}
+		unsupported = append(unsupported, path)
+	}
+	if len(missing) > 0 {
+		return "the answer cites current-workspace path(s) that do not exist: " + quotedRunnerStrings(uniqueSortedRunnerPaths(missing)) + ". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
+	}
+	if len(unsupported) > 0 {
+		return "the answer cites source path/line/symbol detail not backed by a source-body read: " + quotedRunnerStrings(uniqueSortedRunnerPaths(unsupported)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
+	}
+	return ""
+}
+
+func sourceGroundingMentionedPaths(answer string) []string {
+	paths := append([]string(nil), pathparse.MentionedWorkspaceFiles(answer)...)
+	lineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])([a-z0-9_.-]+\\.(?:go|py|ts|tsx|js|jsx|rs|java|c|cc|cpp|h|hpp|sh|zsh|gd)):\\d+")
+	for _, match := range lineRE.FindAllStringSubmatch(answer, -1) {
+		if len(match) > 1 {
+			paths = append(paths, match[1])
+		}
+	}
+	rootLineRE := regexp.MustCompile("(?i)(?:^|[\\s`'\"(])((?:go\\.mod|go\\.sum|makefile|dockerfile|readme\\.md|agents\\.md|package\\.json|package-lock\\.json|pnpm-lock\\.yaml|yarn\\.lock|pyproject\\.toml|poetry\\.lock|cargo\\.toml|cargo\\.lock)):\\d+")
+	for _, match := range rootLineRE.FindAllStringSubmatch(answer, -1) {
+		if len(match) > 1 {
+			paths = append(paths, match[1])
+		}
+	}
+	return uniqueSortedRunnerPaths(paths)
+}
+
+func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return false
+	}
+	family := strings.TrimSpace(brief.TaskFamily)
+	contract := strings.TrimSpace(brief.Contract)
+	if strings.EqualFold(family, "conversation") && strings.EqualFold(contract, "direct_answer") {
+		return true
+	}
+	lowerObjective := strings.ToLower(strings.Join(strings.Fields(brief.Objective), " "))
+	if strings.Contains(lowerObjective, "root cause") ||
+		strings.Contains(lowerObjective, "debug") ||
+		strings.Contains(lowerObjective, "failure") {
+		return true
+	}
+	return false
+}
+
+func sourceCitationExists(r *Runner, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || strings.HasPrefix(path, "../") || path == ".." || filepath.IsAbs(path) {
+		return false
+	}
+	root := "."
+	if r != nil && r.Workspace != nil && strings.TrimSpace(r.Workspace.Root()) != "" {
+		root = r.Workspace.Root()
+	}
+	info, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
+	return err == nil && !info.IsDir()
+}
+
+func sourceGroundingPathRequiresBody(path string) bool {
+	switch strings.ToLower(filepath.Ext(filepath.ToSlash(path))) {
+	case ".go", ".c", ".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp", ".hxx",
+		".py", ".pyi", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java",
+		".kt", ".kts", ".sh", ".bash", ".zsh", ".fish", ".ps1", ".gd":
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceCitationLooksLikeRootPath(path string) bool {
+	base := strings.ToLower(strings.TrimSpace(filepath.ToSlash(path)))
+	switch base {
+	case "go.mod", "go.sum", "makefile", "dockerfile", "readme.md", "agents.md",
+		"package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock",
+		"pyproject.toml", "poetry.lock", "cargo.toml", "cargo.lock":
+		return true
+	default:
+		return false
+	}
+}
+
+func sourceCitationHasLineSuffix(answer string, path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	return regexp.MustCompile(regexp.QuoteMeta(path) + `:\d+`).MatchString(answer)
+}
+
+func sourceCitationClaimsSourceDetail(answer string, path string) bool {
+	window := sourceCitationWindow(answer, path)
+	lower := strings.ToLower(window)
+	if strings.Contains(lower, "line ") || strings.Contains(lower, "lines ") ||
+		strings.Contains(lower, "symbol") || strings.Contains(lower, "function") ||
+		strings.Contains(lower, "method") || strings.Contains(lower, "handler") ||
+		strings.Contains(lower, "root cause") {
+		return true
+	}
+	if regexp.MustCompile(regexp.QuoteMeta(path) + `:\d+`).MatchString(answer) {
+		return true
+	}
+	for _, token := range backtickedCodeLikeTokens(window) {
+		if sourceGroundingTokenLooksLikeSymbol(token) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceCitationExplicitlyNonCurrent(answer string, path string) bool {
+	lower := strings.ToLower(sourceCitationWindow(answer, path))
+	for _, phrase := range []string{
+		"does not exist", "do not exist", "doesn't exist",
+		"not in the current checkout", "not current",
+		"historical", "log-only", "from the log", "in the log",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceCitationExplicitlyUnverified(answer string, path string) bool {
+	lower := strings.ToLower(sourceCitationWindow(answer, path))
+	for _, phrase := range []string{
+		"unverified", "not yet read", "not source-read", "not source read", "not backed",
+		"not enough evidence", "not enough to name", "not enough to identify",
+	} {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func sourceCitationWindow(answer string, path string) string {
+	if strings.TrimSpace(answer) == "" || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	idx := strings.Index(answer, path)
+	if idx < 0 {
+		return answer
+	}
+	start := idx - 180
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(path) + 180
+	if end > len(answer) {
+		end = len(answer)
+	}
+	return answer[start:end]
+}
+
+func backtickedCodeLikeTokens(text string) []string {
+	matches := backtickedTokenPattern.FindAllStringSubmatch(text, -1)
+	out := make([]string, 0, len(matches))
+	for _, match := range matches {
+		if len(match) > 1 {
+			out = append(out, strings.TrimSpace(match[1]))
+		}
+	}
+	return out
+}
+
+func sourceGroundingTokenLooksLikeSymbol(token string) bool {
+	if token == "" || strings.Contains(token, "/") || strings.Contains(token, " ") {
+		return false
+	}
+	return codeShapedTokenPattern.MatchString(token) ||
+		codeShapedSnakeCasePattern.MatchString(token) ||
+		qualifiedIdentifierPattern.MatchString(token)
 }
 
 func planThenExecuteAnswerDeclaresTypedBlocker(answer string) bool {
@@ -12544,6 +12981,7 @@ func readOnlyExplanationHasMechanismVerb(lower string) bool {
 	for _, phrase := range []string{
 		" uses ", " use ", " used ", " delegates ", " delegate ", " delegated ",
 		" creates ", " create ", " created ", " calls ", " call ", " called ",
+		" contains ", " contain ", " contained ",
 		" invokes ", " invoke ", " invoked ", " routes ", " route ", " routed ",
 		" runs ", " run ", " ran ", " returns ", " return ", " returned ",
 		" passes ", " pass ", " passed ", " enforces ", " enforce ", " enforced ",
@@ -15115,6 +15553,15 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 	if taskFamily == PlanThenExecutePlannerTaskFamily &&
 		planThenExecuteCandidateSourceReadyRejectionSeen(results) &&
 		!planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
+		state := PlanExecutePlanningState{EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results))}
+		selected := planThenExecuteSelectedEditPaths(brief, results, state)
+		if len(planThenExecuteHistoryPendingPaths(brief, results, selected)) > 0 {
+			allowed := filterPhaseTools(currentAllowedTools, "history_range", "history_symbol", "submit_plan")
+			if runnerAllowsTool(allowed, "history_range") || runnerAllowsTool(allowed, "history_symbol") {
+				return allowed
+			}
+			return []string{"history_range", "history_symbol", "submit_plan"}
+		}
 		return []string{"submit_plan"}
 	}
 	if taskFamily == PlanThenExecuteReviewRepairTaskFamily {
@@ -15209,9 +15656,10 @@ func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req works
 }
 
 type implementationDeferredSourceEvidenceWrite struct {
-	Request      workspace.ToolRequest
-	Raw          string
-	EvidencePath string
+	Request         workspace.ToolRequest
+	Raw             string
+	EvidencePath    string
+	RequiresHistory bool
 }
 
 func newImplementationDeferredSourceEvidenceWrite(req workspace.ToolRequest, raw string, evidencePath string) *implementationDeferredSourceEvidenceWrite {
@@ -15239,13 +15687,13 @@ func (d *implementationDeferredSourceEvidenceWrite) replayAfterEvidence(req work
 	if d == nil || strings.TrimSpace(d.EvidencePath) == "" {
 		return workspace.ToolRequest{}, "", false
 	}
-	if !runnerAllowsTool(currentAllowedTools, d.Request.Tool) {
-		return workspace.ToolRequest{}, "", false
-	}
 	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) {
 		return workspace.ToolRequest{}, "", false
 	}
-	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results) {
+	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results, d.RequiresHistory) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if d.RequiresHistory && !implementationDeferredWriteHasHistoryEvidence(d.Request, results) {
 		return workspace.ToolRequest{}, "", false
 	}
 	if !d.replayAllowedForRequest(req) {
@@ -15258,13 +15706,54 @@ func (d *implementationDeferredSourceEvidenceWrite) replayAfterEvidence(req work
 	return d.Request, raw, true
 }
 
+func (d *implementationDeferredSourceEvidenceWrite) replayAfterHistoryEvidence(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if d == nil || !d.RequiresHistory || strings.TrimSpace(d.EvidencePath) == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !implementationTargetSourceWriteTargetsHaveEvidence(d.Request, results) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !implementationDeferredWriteCoveredBySourceEvidence(d.Request, d.EvidencePath, results, true) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !implementationDeferredWriteHasHistoryEvidence(d.Request, results) {
+		return workspace.ToolRequest{}, "", false
+	}
+	raw := d.Raw
+	if strings.TrimSpace(raw) == "" {
+		raw = marshalToolRequestRaw(d.Request)
+	}
+	return d.Request, raw, true
+}
+
+func (d *implementationDeferredSourceEvidenceWrite) fallbackVerificationRequest() (workspace.ToolRequest, bool) {
+	if d == nil {
+		return workspace.ToolRequest{}, false
+	}
+	paths := writeRequestPaths(d.Request)
+	if len(paths) != 1 {
+		return workspace.ToolRequest{}, false
+	}
+	path := normalizeRunnerPath(paths[0])
+	if path == "" {
+		return workspace.ToolRequest{}, false
+	}
+	return workspace.ToolRequest{
+		Tool: "source_sanity",
+		Path: path,
+	}, true
+}
+
 func (d *implementationDeferredSourceEvidenceWrite) replayAllowedForRequest(req workspace.ToolRequest) bool {
 	tool := strings.TrimSpace(req.Tool)
 	if tool == "" || workspace.IsWorkspaceWriteTool(tool) {
 		return false
 	}
+	if d.RequiresHistory && tool == "shell" {
+		return true
+	}
 	switch tool {
-	case "read_file", "code_navigate", "read_only_capability":
+	case "read_file", "code_navigate", "read_only_capability", "source_sanity", "history_range", "history_symbol":
 	default:
 		return false
 	}
@@ -15275,7 +15764,20 @@ func (d *implementationDeferredSourceEvidenceWrite) replayAllowedForRequest(req 
 	return target == d.EvidencePath
 }
 
-func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolRequest, path string, results []workspace.ToolResult) bool {
+func implementationDeferredWriteHasHistoryEvidence(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	paths := writeRequestPaths(req)
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if !successfulGitHistoryResultForPath(path, results) {
+			return false
+		}
+	}
+	return true
+}
+
+func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolRequest, path string, results []workspace.ToolResult, allowAnchorMismatch bool) bool {
 	path = normalizeRunnerPath(path)
 	if path == "" {
 		return false
@@ -15285,6 +15787,9 @@ func implementationDeferredWriteCoveredBySourceEvidence(req workspace.ToolReques
 		oldText := strings.TrimSpace(req.OldText)
 		if oldText == "" {
 			return false
+		}
+		if allowAnchorMismatch {
+			return concreteSourceEvidenceReadForPath(path, results)
 		}
 		return implementationSourceEvidenceTextContains(path, results, oldText)
 	case "write_file":
@@ -16430,8 +16935,8 @@ func (r *Runner) requiredEditPathsProgressMessage(req workspace.ToolRequest, res
 // model gets the same shape of guidance it would have seen via a
 // rejected-completion retry, plus an explicit note that its claimed
 // changed-paths summary did not match reality.
-func (r *Runner) finalAnswerBlockerErrorText(reason string, answer string, results []workspace.ToolResult) string {
-	switch reason {
+func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer string, results []workspace.ToolResult) string {
+	switch kind {
 	case "required_edit_paths_remaining":
 		missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results))
 		if r.planThenExecutePlannerPhase() {
@@ -16461,6 +16966,8 @@ func (r *Runner) finalAnswerBlockerErrorText(reason string, answer string, resul
 		return "the final answer was an unexecuted workspace-tool request payload. Issue the lookup as a parser-readable tool call with the `tool` field, or answer in normal prose from the available evidence."
 	case "non_answer_prose":
 		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
+	case "source_grounding_unmet":
+		return reason
 	case "required_evidence_unmet":
 		if r != nil {
 			missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
@@ -16501,12 +17008,43 @@ func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolR
 		return "non_answer_prose", "non_answer_prose"
 	}
 	if r != nil {
+		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
+			return "source_grounding_unmet", reason
+		}
+	}
+	if r != nil {
 		missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
 		if len(missing) > 0 {
 			return "required_evidence_unmet", "required_evidence_unmet"
 		}
 	}
 	return "", ""
+}
+
+func (r *Runner) decoratedReadOnlyReplyForCompletionGate(reply string, results []workspace.ToolResult) string {
+	if r == nil || !r.userFacingFinalAnswer() || runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return reply
+	}
+	if !finalAnswerNeedsDecoration(reply) ||
+		looksLikeRawToolResultTranscript(reply) ||
+		looksLikeTextualToolCall(reply) ||
+		looksLikeUnexecutedToolRequestAnswer(reply) {
+		return reply
+	}
+	decorated := r.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     reply,
+		StopReason: "model_final",
+		Brief:      r.RuntimeBrief,
+		Results:    results,
+		UserFacing: true,
+	})
+	if strings.TrimSpace(decorated) == "" || strings.TrimSpace(decorated) == strings.TrimSpace(reply) {
+		return reply
+	}
+	if finalAnswerNeedsDecoration(decorated) {
+		return reply
+	}
+	return decorated
 }
 
 func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) []string {

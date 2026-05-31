@@ -167,6 +167,45 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, RenderRecoveryCard(card))
 }
 
+func TestRecoveryCardForTextualReadOnlyEvidenceAvailableKeepsReadTools(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content", "code_navigate"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5"},
+			{Tool: "code_navigate", Summary: "Code navigation routed references via go_references"},
+		},
+		BaseAllowedTools:  []string{"read_file", "search_content", "code_navigate"},
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	card := BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"read_file", "search_content", "code_navigate"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "code_navigate",
+			Summary: "Repeated dead-end action rejected",
+			Error:   "this action class already failed earlier in the turn",
+		},
+	})
+	got := RenderRecoveryCard(card)
+	assertRecoveryCardContains(t, got,
+		"currently callable tools: read_file, search_content, code_navigate",
+		"currently callable action classes:",
+		"read",
+		"search",
+	)
+	if strings.Contains(got, "currently callable tools: none") {
+		t.Fatalf("read-only evidence recovery card must not close the textual tool surface:\n%s", got)
+	}
+	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
+}
+
 func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

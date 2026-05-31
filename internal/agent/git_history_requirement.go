@@ -80,7 +80,7 @@ func successfulGitHistoryResultForPath(path string, results []workspace.ToolResu
 
 func gitHistoryResultIncludesCommitDescription(result workspace.ToolResult) bool {
 	output := strings.TrimSpace(result.Output)
-	return strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
+	return output == "" || strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
 }
 
 func gitHistoryResultPath(result workspace.ToolResult) string {
@@ -108,11 +108,25 @@ func (r *Runner) writeBeforeGitHistoryEvidenceRejection(req workspace.ToolReques
 	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
 		return "", "", false
 	}
+	if checkWriteDescription(req) != nil {
+		return "", "", false
+	}
 	missing := r.writePathsMissingGitHistory(req, results)
 	if len(missing) == 0 {
 		return "", "", false
 	}
 	return "Write rejected before git history evidence", gitHistoryEvidenceRequiredMessage(missing), true
+}
+
+func (r *Runner) writeBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if r == nil || !workspace.IsWorkspaceWriteTool(req.Tool) || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if checkWriteDescription(req) != nil {
+		return workspace.ToolRequest{}, "", false
+	}
+	missing := r.writePathsMissingGitHistory(req, results)
+	return gitHistoryEvidenceRedirectRequest(missing, results, allowedTools)
 }
 
 func (r *Runner) writePathsMissingGitHistory(req workspace.ToolRequest, results []workspace.ToolResult) []string {
@@ -132,6 +146,86 @@ func (r *Runner) submitPlanPathsMissingGitHistory(req workspace.ToolRequest, res
 		paths = append(paths, edit.Path)
 	}
 	return pathsMissingGitHistory(r.workspaceRootForGitHistoryRequirement(), paths, results)
+}
+
+func (r *Runner) submitPlanBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != "submit_plan" || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(r.RuntimeBrief.RequiredEditPaths, req) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if len(planThenExecuteEffectiveSubmitPlanEdits(req)) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	missing := r.submitPlanPathsMissingGitHistory(req, results)
+	if len(missing) == 0 {
+		missing = planThenExecuteHistoryPendingPaths(r.RuntimeBrief, results, nil)
+	}
+	return gitHistoryEvidenceRedirectRequest(missing, results, allowedTools)
+}
+
+func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []string, req workspace.ToolRequest) bool {
+	required := make([]string, 0, len(requiredPaths))
+	for _, raw := range requiredPaths {
+		if path := normalizeRunnerPath(raw); path != "" {
+			required = append(required, path)
+		}
+	}
+	if len(required) == 0 {
+		return false
+	}
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, path := range required {
+		requiredSet[path] = struct{}{}
+	}
+	covered := make(map[string]struct{}, len(required))
+	for _, edit := range planThenExecuteEffectiveSubmitPlanEdits(req) {
+		path := normalizeRunnerPath(edit.Path)
+		if path == "" {
+			continue
+		}
+		if _, ok := requiredSet[path]; !ok {
+			return true
+		}
+		covered[path] = struct{}{}
+	}
+	for _, path := range required {
+		if _, ok := covered[path]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func gitHistoryEvidenceRedirectRequest(paths []string, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if len(paths) == 0 || !runnerAllowsTool(allowedTools, "history_range") {
+		return workspace.ToolRequest{}, "", false
+	}
+	path := normalizeRunnerPath(paths[0])
+	if path == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	start, end := gitHistoryRedirectRange(path, results)
+	req := workspace.ToolRequest{
+		Tool:            "history_range",
+		Path:            path,
+		StartLine:       start,
+		EndLine:         end,
+		NamedGap:        "git history rationale before changing established logic",
+		WhyNotAnswering: "need commit history evidence before write or submit_plan",
+	}
+	return req, marshalToolRequestRaw(req), true
+}
+
+func gitHistoryRedirectRange(path string, results []workspace.ToolResult) (int, int) {
+	path = normalizeRunnerPath(path)
+	for _, readRange := range readRangesForPathFromResults(results, path) {
+		if readRange.start > 0 && readRange.end >= readRange.start {
+			return readRange.start, readRange.end
+		}
+	}
+	return 1, 80
 }
 
 func (r *Runner) workspaceRootForGitHistoryRequirement() string {

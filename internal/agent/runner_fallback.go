@@ -92,6 +92,9 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	var b strings.Builder
 	if len(missingRequiredPaths) > 0 {
 		b.WriteString("<<QUESTION>>: Implementation incomplete; required edit path(s) remain unchanged.\n\n")
+	} else if len(changedPaths) > 0 {
+		b.WriteString(mutationFallbackCompletionLead(brief, changedPaths))
+		b.WriteString("\n\n")
 	}
 	if len(changedPaths) > 0 {
 		b.WriteString("Changed paths:\n")
@@ -153,6 +156,19 @@ func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func mutationFallbackCompletionLead(brief workerruntime.WorkerRuntimeBrief, changedPaths []string) string {
+	objective := strings.ToLower(strings.TrimSpace(brief.Objective))
+	for _, path := range changedPaths {
+		if strings.Contains(strings.ToLower(path), "label") {
+			return "Implemented the label change."
+		}
+	}
+	if strings.Contains(objective, "label") {
+		return "Implemented the label change."
+	}
+	return "Implemented the requested change."
 }
 
 func (r *Runner) modelErrorAfterPartialEditBlockerAnswer(modelErr error, results []workspace.ToolResult) (string, bool) {

@@ -1,11 +1,15 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
+	"idiom/internal/workspace"
 )
 
 func TestExtractAnswerProseFromReasoning(t *testing.T) {
@@ -142,7 +146,7 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 				Content:          tt.content,
 				ReasoningContent: tt.reasoning,
 			}
-			got, ok := runner.salvageAnswerFromReasoning(reply)
+			got, ok := runner.salvageAnswerFromReasoning(reply, nil)
 			if ok != tt.wantOk {
 				t.Errorf("salvageAnswerFromReasoning ok=%v, want=%v (got=%q)", ok, tt.wantOk, got)
 			}
@@ -150,6 +154,32 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 				t.Errorf("salvageAnswerFromReasoning result missing %q:\n  got: %q", tt.wantContains, got)
 			}
 		})
+	}
+}
+
+func TestSalvageAnswerFromReasoningRejectsUngroundedSourceCitation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "app"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	reply := llama.ChatMessage{
+		ReasoningContent: strings.Join([]string{
+			"Let me synthesize the answer from what I think I saw.",
+			"",
+			"The root cause is in `internal/app/conversation_view.go` lines 417-433 where `recalculateVisibleLines` resets `scrollY` after a resize. This means the terminal resize path is forcing the conversation viewport into an invalid state and the fix is to clamp the scroll position after resize.",
+		}, "\n"),
+	}
+
+	if got, ok := runner.salvageAnswerFromReasoning(reply, nil); ok {
+		t.Fatalf("hidden reasoning answer with nonexistent source citation should not be salvaged: %q", got)
 	}
 }
 

@@ -15,6 +15,7 @@ const turnPhaseContractSchemaVersion = "idiom.turn_phase_contract.v1"
 const (
 	turnPhaseRequiredSource              = "plan_execute.required_source"
 	turnPhaseCandidateSource             = "plan_execute.candidate_source"
+	turnPhaseHistoryPending              = "plan_execute.history_pending"
 	turnPhaseSubmitReadyNativeRequired   = "plan_execute.submit_ready.native_required"
 	turnPhaseSubmitReadyTextual          = "plan_execute.submit_ready.textual"
 	turnPhaseMalformedSubmitPlanRecovery = "plan_execute.malformed_submit_plan_recovery"
@@ -31,6 +32,7 @@ const (
 const (
 	actionRead             = "read"
 	actionSearch           = "search"
+	actionHistory          = "history"
 	actionSubmitPlan       = "submit_plan"
 	actionPerEditWrite     = "per_edit_write"
 	actionDeliverableWrite = "deliverable_write"
@@ -285,6 +287,8 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 		applyProductAcceptanceCloseout(contract)
 	case artifactFinalAnswerBrief(brief):
 		applyArtifactFinalAnswer(contract)
+	case planningState.Mode == PlanExecutePlanningModeHistoryPending:
+		applyHistoryPending(contract, baseTools, planningState)
 	case planningState.Mode == PlanExecutePlanningModeSubmitCorrection:
 		applySubmitReady(contract, input, baseTools, planningState)
 	case planThenExecuteRejectedPlanNeedsSourceRefresh(brief, input.Results):
@@ -320,6 +324,24 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 	default:
 		applyGenericTurnPhase(contract, brief, input.Results)
 	}
+}
+
+func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
+	contract.PhaseID = firstPhaseString(state.PhaseID, turnPhaseHistoryPending)
+	contract.Phase = firstPhaseString(state.Phase, "history_pending")
+	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_history_evidence_pending")
+	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
+	contract.RequiredNext = []string{"call history_range or history_symbol for the intended logic when git history is required, submit_plan when the concrete edit path does not require history or history evidence is already present, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.InvalidNext = []string{"per-edit write in planner phase", "verify/build/test in planner phase", "repeat source reads when source-body evidence is already present"}
+	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.ActionPolicy = TurnActionClassPolicy{
+		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
+		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
+		TerminalResponseShapes: append([]string(nil), state.TerminalResponseShapes...),
+		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
+	}
+	contract.RuntimeCall.ParserContract = "source_refresh"
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionHistory, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 }
 
 func applyRequiredSource(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
@@ -657,16 +679,16 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.ActionPolicy.InvalidActionClasses = []string{actionFinalAnswer}
 	}
 	if genericReadOnlyEvidenceReady(brief, results) {
-		contract.Phase = "read_only_evidence_ready"
-		contract.DerivationReason = "read_only_workspace_evidence_ready"
-		contract.AllowedTools = nil
-		contract.RequiredNext = []string{"final answer from the gathered bounded evidence, or <<QUESTION>> with the exact unsupported claim"}
-		contract.InvalidNext = []string{"additional read/search without one exact unsupported claim", "workspace write", "shell/mutating command"}
+		contract.Phase = "read_only_evidence_available"
+		contract.DerivationReason = "read_only_workspace_evidence_available"
+		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
+		contract.RequiredNext = []string{"final answer if the evidence is sufficient, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
+		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "repeated broad or identical read/search"}
 		contract.ActionPolicy = TurnActionClassPolicy{
-			AllowedActionClasses:   []string{actionFinalAnswer, actionBlocker},
-			InvalidActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionVerify, actionGenericProbe},
+			AllowedActionClasses:   []string{actionRead, actionSearch, actionFinalAnswer, actionBlocker},
+			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify, actionGenericProbe},
 			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
-			CallableToolNames:      nil,
+			CallableToolNames:      contract.AllowedTools,
 		}
 		contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
 		return
@@ -720,7 +742,7 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 }
 
 func genericReadOnlyAnswerEvidenceReady(results []workspace.ToolResult) bool {
-	if conversationBroadDiscoveryForceAnswerRecorded(results) {
+	if conversationBroadDiscoveryRejectionRecorded(results) {
 		return true
 	}
 	for _, result := range results {
@@ -1085,7 +1107,32 @@ func phaseContractTextualOnly(input TurnPhaseContractInput, contract TurnPhaseCo
 	if !input.TextualToolParser && !strings.EqualFold(strings.TrimSpace(input.ToolTransportMode), "textual") {
 		return false
 	}
+	if phaseContractKeepsTextualCallableTools(input, contract) {
+		return false
+	}
 	return contract.PhaseID != ""
+}
+
+func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contract TurnPhaseContract) bool {
+	if strings.TrimSpace(contract.PhaseID) == turnPhaseHistoryPending {
+		return true
+	}
+	if !strings.EqualFold(strings.TrimSpace(contract.PermissionProfile), "read_only_workspace") {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(input.Brief.Contract), "direct_answer") {
+		return false
+	}
+	taskFamily := strings.TrimSpace(input.Brief.TaskFamily)
+	if !strings.EqualFold(taskFamily, "conversation") && !strings.EqualFold(taskFamily, "direct_answer") {
+		return false
+	}
+	switch strings.TrimSpace(contract.Phase) {
+	case "generic", "read_only_evidence_pending", "read_only_evidence_available":
+		return true
+	default:
+		return false
+	}
 }
 
 func phaseEvidenceHasOpenObligation(state PhaseEvidenceState) bool {

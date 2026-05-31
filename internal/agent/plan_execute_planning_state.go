@@ -16,6 +16,7 @@ const (
 	PlanExecutePlanningModeRequiredSource   PlanExecutePlanningMode = "required_source"
 	PlanExecutePlanningModeOpenCandidate    PlanExecutePlanningMode = "open_candidate"
 	PlanExecutePlanningModeAllowedCandidate PlanExecutePlanningMode = "allowed_candidate"
+	PlanExecutePlanningModeHistoryPending   PlanExecutePlanningMode = "history_pending"
 	PlanExecutePlanningModeSubmitReady      PlanExecutePlanningMode = "submit_ready"
 	PlanExecutePlanningModeSubmitCorrection PlanExecutePlanningMode = "submit_correction"
 	PlanExecutePlanningModeReviewRepair     PlanExecutePlanningMode = "review_repair"
@@ -135,9 +136,13 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 
 	state.SelectedEditPaths = planThenExecuteSelectedEditPaths(brief, results, state)
+	if pending := planThenExecuteHistoryPendingPaths(brief, results, state.SelectedEditPaths); len(pending) > 0 {
+		state.Mode = PlanExecutePlanningModeHistoryPending
+		state.SelectedEditPaths = pending
+	}
 	if state.Mode == PlanExecutePlanningModeSubmitReady ||
 		state.Mode == PlanExecutePlanningModeSubmitCorrection ||
-		len(state.SelectedEditPaths) > 0 {
+		(state.Mode != PlanExecutePlanningModeHistoryPending && len(state.SelectedEditPaths) > 0) {
 		state.TerminalOptions = append(state.TerminalOptions, "submit_plan")
 	}
 	state.TerminalOptions = uniquePhaseStrings(state.TerminalOptions)
@@ -180,6 +185,15 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 			state.InvalidActionClasses = []string{actionPerEditWrite, actionVerify, actionGenericProbe}
 			state.TerminalResponseShapes = append(state.TerminalResponseShapes, "submit_plan")
 		}
+	case PlanExecutePlanningModeHistoryPending:
+		state.PhaseID = turnPhaseHistoryPending
+		state.Phase = "history_pending"
+		state.DerivationReason = "plan_execute_history_evidence_pending"
+		state.ParserVisibleTools = []string{"history_range", "history_symbol", "submit_plan"}
+		state.CallableTools = []string{"history_range", "history_symbol", "submit_plan"}
+		state.AllowedActionClasses = []string{actionHistory, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+		state.InvalidActionClasses = []string{actionRead, actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
+		state.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
 		state.PhaseID = turnPhaseSubmitReadyTextual
 		state.Phase = "submit_ready_textual"
@@ -218,6 +232,27 @@ func planExecuteTransportMode(transport PlanExecutePlanningTransport) PlanExecut
 		return PlanExecuteTransportModeTextualJSON
 	}
 	return PlanExecuteTransportModeTextual
+}
+
+func planThenExecuteHistoryPendingPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, selected []string) []string {
+	if !mutationHistoryEvidenceRequired(brief) {
+		return nil
+	}
+	paths := uniqueSortedRunnerPaths(selected)
+	if len(paths) == 0 {
+		paths = planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
+	}
+	var pending []string
+	for _, path := range paths {
+		if !concreteSourceEvidenceReadForPath(path, results) {
+			continue
+		}
+		if successfulGitHistoryResultForPath(path, results) {
+			continue
+		}
+		pending = append(pending, path)
+	}
+	return uniqueSortedRunnerPaths(pending)
 }
 
 func planThenExecuteSelectedEditPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, state PlanExecutePlanningState) []string {

@@ -216,6 +216,9 @@ func planThenExecutePlannerManifestToolNames() []string {
 		"context_impact",
 		"discovery_query",
 		"structural_search",
+		"history_range",
+		"history_symbol",
+		"blame_range",
 		"submit_plan",
 	}
 }

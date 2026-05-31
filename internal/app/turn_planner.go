@@ -73,7 +73,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"continuation_target enum: prior_change, current_prompt_only, none. A post-completion defect report like 'that did not fix it' or 'it still fails' targets prior_change.",
 				"Explicit read-only constraints such as 'do not edit', 'just explain', 'without changing files', or 'diagnose only' set read_only_constraint=true and keep the route read-only even if the topic mentions a possible change.",
 				"Prefer conversation by default for questions, status requests, how-to requests, and lightweight repo questions. Conversation may use efficient read-only workspace tools when the answer depends on code or logs.",
-				"Prefer debug_logs for requests about recent logs or explaining a failure from logs.",
+				"Use conversation for read-only diagnosis and log inspection. Do not route normal user prompts to debug_logs; it is a legacy internal contract and the standard read lane can inspect logs when useful.",
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
 				"Prefer implementation-like families when the user gives a directive to perform file changes, tests, docs, config, scripts, prompts, or repairs.",
@@ -175,7 +175,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 				"Choose family from: conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
 				"Use contracts from: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
 				"Use lanes from: main, explore, verification, locate, review, architecture, implement.",
-				"Include requested_outcome, write_intent, read_only_constraint, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. continuation_target enum: prior_change, current_prompt_only, none.",
+				"Include requested_outcome, write_intent, read_only_constraint, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. continuation_target enum: prior_change, current_prompt_only, none. Use conversation for read-only diagnosis and log inspection; do not route normal user prompts to debug_logs.",
 			}, "\n"),
 		},
 		{
@@ -381,10 +381,11 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.Contract = "direct_answer"
 		plan.Reason = util.FirstNonEmpty(plan.Reason, "conversation")
 	case "debug_logs":
-		plan.InitialLane = "explore"
+		plan.Family = "conversation"
+		plan.InitialLane = "main"
 		plan.FollowupLane = ""
-		plan.Contract = "grounded_explanation"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "logs_failure_analysis")
+		plan.Contract = "direct_answer"
+		plan.Reason = util.FirstNonEmpty(plan.Reason, "legacy_debug_logs_collapsed_to_conversation")
 	case "verification_only":
 		plan.InitialLane = "main"
 		plan.FollowupLane = ""
@@ -540,7 +541,7 @@ func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (t
 func readOnlyRouteForOutcome(plan turnRoutePlan, mode agent.Mode, reasonCode string) turnRoutePlan {
 	switch plan.RequestedOutcome {
 	case "diagnose":
-		plan.Family = "debug_logs"
+		plan.Family = "conversation"
 	case "verify":
 		plan.Family = "verification_only"
 	case "locate":
@@ -668,7 +669,7 @@ func familyForRouteOutcome(outcome, writeIntent string) string {
 	case "answer":
 		return "conversation"
 	case "diagnose":
-		return "debug_logs"
+		return "conversation"
 	case "change_workspace":
 		return "implementation"
 	case "diagnose_then_change":

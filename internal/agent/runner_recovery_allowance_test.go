@@ -595,7 +595,7 @@ func TestFinalAnswerBlockerErrorTextNamesMissingPaths(t *testing.T) {
 	}
 	results := []workspace.ToolResult{{Tool: "edit_file", Summary: "Edited a.txt"}}
 	answer := "Implementation Complete. Changed paths: a.txt, b.txt, c.txt."
-	text := runner.finalAnswerBlockerErrorText("required_edit_paths_remaining", answer, results)
+	text := runner.finalAnswerBlockerErrorText("required_edit_paths_remaining", "required_edit_paths_remaining", answer, results)
 	if !strings.Contains(text, "b.txt") || !strings.Contains(text, "c.txt") {
 		t.Fatalf("error text must name missing required paths, got %q", text)
 	}

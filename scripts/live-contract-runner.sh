@@ -47,7 +47,6 @@ save_dir="$run_dir/transcripts"
 stdout_path="$run_dir/stdout.txt"
 stderr_path="$run_dir/stderr.txt"
 extra_records="$run_dir/extra-records.jsonl"
-stdout_copied_marker="$run_dir/stdout-copied"
 run_id="live-contract.$(date +%s).$$.${RANDOM:-0}"
 log_owner_path="$log_path.owner"
 queue_socket="$run_dir/missing-queue.sock"
@@ -122,13 +121,13 @@ copy_latest_log() {
   if ! owns_log_path; then
     return 0
   fi
-  if [[ ! -s "$log_path" ]]; then
-    find "$debug_log_dir" -maxdepth 1 -type f -name '*.jsonl' -print 2>/dev/null | sort | while IFS= read -r debug_log; do
-      cat "$debug_log"
-    done >"$log_path"
-  fi
-  if [[ -s "$stdout_path" && ! -e "$stdout_copied_marker" ]]; then
-    python3 - "$log_path" "$stdout_path" <<'PY'
+  local rebuilt_log="$run_dir/rebuilt-log.jsonl"
+  : >"$rebuilt_log"
+  find "$debug_log_dir" -maxdepth 1 -type f -name '*.jsonl' -print 2>/dev/null | sort | while IFS= read -r debug_log; do
+    cat "$debug_log"
+  done >>"$rebuilt_log"
+  if [[ -s "$stdout_path" ]]; then
+    python3 - "$rebuilt_log" "$stdout_path" <<'PY'
 import json
 import pathlib
 import sys
@@ -148,11 +147,12 @@ with stdout.open("r", encoding="utf-8", errors="replace") as src, out.open("a", 
         dst.write(text)
         dst.write("\n")
 PY
-    : >"$stdout_copied_marker"
   fi
-  if [[ -s "$log_path" ]]; then
+  if [[ -s "$rebuilt_log" ]]; then
+    mv "$rebuilt_log" "$log_path"
     return 0
   fi
+  rm -f "$rebuilt_log"
   python3 - "$log_path" "$stdout_path" "$stderr_path" "$worker_exit" <<'PY'
 import json
 import pathlib
@@ -177,6 +177,67 @@ record = {
 with open(log_path, "w", encoding="utf-8") as f:
     json.dump(record, f, sort_keys=True)
     f.write("\n")
+PY
+}
+
+log_has_session_summary() {
+  [[ -s "$log_path" ]] || return 1
+  python3 - "$log_path" <<'PY'
+import json
+import sys
+
+for line in open(sys.argv[1], encoding="utf-8", errors="replace"):
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    if record.get("type") == "session_summary":
+        raise SystemExit(0)
+raise SystemExit(1)
+PY
+}
+
+log_has_completion_marker() {
+  [[ -s "$log_path" ]] || return 1
+  python3 - "$log_path" "$runner_mode" "${IDIOM_SWE_FAMILY:-}" "$turn_count" <<'PY'
+import json
+import sys
+
+log_path, runner_mode, family, turn_count_raw = sys.argv[1:]
+plan_execute = runner_mode == "plan-execute" or family.startswith("plan_then_execute") or family.startswith("plan_execute")
+try:
+    turn_count = int(turn_count_raw)
+except ValueError:
+    turn_count = 1
+seen_session_summary = False
+seen_turn_summary = False
+user_messages = 0
+for line in open(log_path, encoding="utf-8", errors="replace"):
+    try:
+        record = json.loads(line)
+    except json.JSONDecodeError:
+        continue
+    typ = record.get("type")
+    if typ == "message" and record.get("role") == "user":
+        user_messages += 1
+    if plan_execute and typ == "idiom.plan_execute.source_satisfied":
+        raise SystemExit(0)
+    if plan_execute and typ == "idiom.plan_execute.review_repair_complete":
+        raise SystemExit(0)
+    if plan_execute and typ == "idiom.plan_execute.executor_complete":
+        source_sanity = str(record.get("source_sanity_status") or "").strip().lower()
+        verification = str(record.get("verification_status") or "").strip().lower()
+        if source_sanity not in {"failed", "blocked"} and verification not in {"failed", "blocked"}:
+            raise SystemExit(0)
+    if typ == "session_summary":
+        seen_session_summary = True
+    if typ == "turn_summary":
+        seen_turn_summary = True
+    if not plan_execute and user_messages >= turn_count and seen_turn_summary and (typ == "final" or (typ == "message" and record.get("role") == "assistant")):
+        raise SystemExit(0)
+if plan_execute:
+    raise SystemExit(1)
+raise SystemExit(0 if seen_session_summary else 1)
 PY
 }
 
@@ -706,7 +767,7 @@ PY
     fi
   elif [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
     require_single_turn_lane_entrypoint "plan-execute"
-    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
+    IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW=true "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
   elif [[ "$runner_mode" == "implement" ]]; then
     require_single_turn_lane_entrypoint "implement"
     IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
@@ -719,10 +780,19 @@ PY
 ) >"$stdout_path" 2>"$stderr_path" &
 worker_pid=$!
 (
-  sleep "$task_timeout" &
-  sleep_pid=$!
-  trap 'kill "$sleep_pid" 2>/dev/null; exit 0' TERM INT
-  wait "$sleep_pid" 2>/dev/null
+  trap 'exit 0' TERM INT
+  for _ in $(seq 1 "$task_timeout"); do
+    sleep 1
+    if ! kill -0 "$worker_pid" 2>/dev/null; then
+      exit 0
+    fi
+    copy_latest_log || true
+    if log_has_completion_marker; then
+      echo "live-contract watchdog: completion marker observed; stopping lingering worker" >&2
+      terminate_tree TERM "$worker_pid"
+      exit 0
+    fi
+  done
   if kill -0 "$worker_pid" 2>/dev/null; then
     echo "live-contract watchdog: task exceeded ${task_timeout}s, sending SIGTERM" >&2
     terminate_tree TERM "$worker_pid"
@@ -735,6 +805,12 @@ wait "$worker_pid" 2>/dev/null || worker_exit=$?
 kill -TERM "$watchdog_pid" 2>/dev/null || true
 terminate_tree TERM "$watchdog_pid"
 wait "$watchdog_pid" 2>/dev/null || true
+
+copy_latest_log || true
+if { [[ $worker_exit -eq 143 ]] || [[ $worker_exit -eq 137 ]]; } && log_has_completion_marker; then
+  echo "live-contract: task process was terminated after writing a completion marker; treating run as complete" >&2
+  worker_exit=0
+fi
 
 if [[ $worker_exit -eq 143 ]] || [[ $worker_exit -eq 137 ]]; then
   append_record "idiom.live_contract.timeout" "$(python3 - "$task_timeout" "$worker_exit" <<'PY'

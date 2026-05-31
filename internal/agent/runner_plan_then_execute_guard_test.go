@@ -4475,6 +4475,42 @@ func TestPlanExecuteTextualAllowedToolsTerminalAfterCandidateReadyRejection(t *t
 	}
 }
 
+func TestPlanExecuteTextualAllowedToolsKeepsHistoryWhenCandidateReadyNeedsHistory(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{"pkg/feature.go"},
+		RequiredEvidence: []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:     []string{"history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)",
+			Output:  "1:package pkg\n",
+		},
+		{
+			Tool:    "read_file",
+			Code:    planThenExecuteResultCandidateSourceReady,
+			Summary: "arbitrary candidate terminal nudge",
+			Error:   "candidate/allowed scope already has anchor-ready source evidence. Submit one parser-readable submit_plan.",
+		},
+	}
+
+	allowed := runnerPlanExecuteTextualAllowedTools([]string{"history_range", "history_symbol", "submit_plan"}, brief, results)
+	for _, want := range []string{"history_range", "history_symbol", "submit_plan"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("candidate-ready history-pending surface missing %s: %#v", want, allowed)
+		}
+	}
+
+	narrowed := runnerPlanExecuteTextualAllowedTools([]string{"submit_plan"}, brief, results)
+	for _, want := range []string{"history_range", "history_symbol", "submit_plan"} {
+		if !slices.Contains(narrowed, want) {
+			t.Fatalf("candidate-ready history-pending surface should restore %s after submit-only narrowing: %#v", want, narrowed)
+		}
+	}
+}
+
 func TestPlanExecuteCandidateReadyResultUsesTypedCodeBeforeSummary(t *testing.T) {
 	result := workspace.ToolResult{
 		Code:    planThenExecuteResultCandidateSourceReady,
@@ -9943,6 +9979,162 @@ func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.
 	}
 	if !state.RuntimePolicy.ResponseFormatJSON || state.RuntimePolicy.EffectiveMaxTokens != 4096 || state.RuntimePolicy.TimeoutMillis != 300000 {
 		t.Fatalf("runtime policy not preserved: %#v", state.RuntimePolicy)
+	}
+}
+
+func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeHistoryPending {
+		t.Fatalf("mode = %q, want history_pending", state.Mode)
+	}
+	if !slices.Contains(state.ParserVisibleTools, "submit_plan") {
+		t.Fatalf("history-pending phase should keep submit_plan visible for the runtime history guard: %#v", state.ParserVisibleTools)
+	}
+	for _, want := range []string{"history_range", "history_symbol"} {
+		if !slices.Contains(state.ParserVisibleTools, want) {
+			t.Fatalf("history-pending phase missing %s: %#v", want, state.ParserVisibleTools)
+		}
+	}
+
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:            brief,
+		Results:          results,
+		BaseAllowedTools: brief.AllowedTools,
+	})
+	if contract.PhaseID != turnPhaseHistoryPending {
+		t.Fatalf("phase = %q, want %q", contract.PhaseID, turnPhaseHistoryPending)
+	}
+	if !slices.Contains(contract.AllowedTools, "submit_plan") {
+		t.Fatalf("history-pending contract should keep submit_plan visible for the runtime history guard: %#v", contract.AllowedTools)
+	}
+	for _, want := range []string{"history_range", "history_symbol"} {
+		if !slices.Contains(contract.AllowedTools, want) {
+			t.Fatalf("history-pending contract missing %s: %#v", want, contract.AllowedTools)
+		}
+	}
+	if !slices.Contains(contract.TerminalOutcomes, "submit_plan") {
+		t.Fatalf("history-pending contract should list submit_plan as a terminal outcome: %#v", contract.TerminalOutcomes)
+	}
+	textualContract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	for _, want := range []string{"history_range", "history_symbol", "submit_plan"} {
+		if !slices.Contains(textualContract.AllowedTools, want) {
+			t.Fatalf("textual history-pending contract missing %s: %#v", want, textualContract.AllowedTools)
+		}
+	}
+
+	withHistory := append(results, workspace.ToolResult{
+		Tool:    "history_range",
+		Summary: "Read git history for a.go lines 1-10",
+		Output:  "commit abc123\n\n    explain current behavior",
+	})
+	state = DerivePlanExecutePlanningState(brief, withHistory, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("mode after history = %q, want submit_ready", state.Mode)
+	}
+	if !slices.Contains(state.ParserVisibleTools, "submit_plan") {
+		t.Fatalf("submit_ready phase should expose submit_plan after history: %#v", state.ParserVisibleTools)
+	}
+}
+
+func TestPlanExecutePostReadinessAllowsRequiredHistoryRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+	req := workspace.ToolRequest{
+		Tool:      "history_range",
+		Path:      "a.go",
+		StartLine: 1,
+		EndLine:   10,
+	}
+
+	if summary, errText, reject := planThenExecutePostReadinessDiscoveryRejection(req, brief, results); reject {
+		t.Fatalf("history read after source evidence should remain allowed, got %q: %s", summary, errText)
+	}
+}
+
+func TestPlanExecuteSubmitBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.go"},
+			RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.go",
+			OldText: "old",
+			NewText: "new",
+			Purpose: "update",
+		}},
+	}
+
+	redirected, _, ok := runner.submitPlanBeforeGitHistoryEvidenceRedirect(req, results, []string{"history_range", "history_symbol"})
+	if !ok {
+		t.Fatal("expected submit_plan-before-history redirect")
+	}
+	if redirected.Tool != "history_range" || redirected.Path != "a.go" || redirected.StartLine != 1 || redirected.EndLine != 10 {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestImplementationWriteBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:       "implementation",
+			RequiredEvidence: []string{requiredEvidenceGitHistoryRationale},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+	req := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        "a.go",
+		OldText:     "old",
+		NewText:     "new",
+		Description: "update value after checking history",
+	}
+
+	redirected, _, ok := runner.writeBeforeGitHistoryEvidenceRedirect(req, results, []string{"history_range", "history_symbol"})
+	if !ok {
+		t.Fatal("expected write-before-history redirect")
+	}
+	if redirected.Tool != "history_range" || redirected.Path != "a.go" || redirected.StartLine != 1 || redirected.EndLine != 10 {
+		t.Fatalf("unexpected redirect: %#v", redirected)
 	}
 }
 

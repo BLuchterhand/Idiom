@@ -934,6 +934,9 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
 		return "", "", false
 	}
+	if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
+		return "", "", false
+	}
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
 		missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
@@ -964,6 +967,22 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 	return "Plan submission required",
 		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
 		true
+}
+
+func planThenExecutePostSourceHistoryRequestAllowed(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !gitHistoryEvidenceTool(req.Tool) {
+		return false
+	}
+	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
+	if target == "" {
+		return false
+	}
+	for _, pending := range planThenExecuteHistoryPendingPaths(brief, results, nil) {
+		if normalizeRunnerPath(pending) == target {
+			return true
+		}
+	}
+	return false
 }
 
 func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) string {
@@ -2806,9 +2825,11 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 			state := PlanExecutePlanningState{
 				EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results)),
 			}
-			return len(planThenExecuteSelectedEditPaths(brief, results, state)) > 0
+			selected := planThenExecuteSelectedEditPaths(brief, results, state)
+			return len(selected) > 0 && len(planThenExecuteHistoryPendingPaths(brief, results, selected)) == 0
 		}
-		return len(planThenExecuteAnchorReadyPaths(brief, results)) > 0
+		ready := sortedRunnerPathKeys(planThenExecuteAnchorReadyPaths(brief, results))
+		return len(ready) > 0 && len(planThenExecuteHistoryPendingPaths(brief, results, ready)) == 0
 	}
 	for _, path := range required {
 		state := planThenExecuteRequiredPathState(brief, results, path)
@@ -2818,6 +2839,9 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 		default:
 			return false
 		}
+	}
+	if len(planThenExecuteHistoryPendingPaths(brief, results, required)) > 0 {
+		return false
 	}
 	return true
 }
@@ -2900,6 +2924,9 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 	if target != "" {
 		if summary, errorText, reject := planThenExecutePostGateOutOfScopeCandidateReadRejection(target, brief, results); reject {
 			return summary, errorText, true
+		}
+		if gitHistoryEvidenceTool(req.Tool) && len(planThenExecuteHistoryPendingPaths(brief, results, []string{target})) > 0 {
+			return "", "", false
 		}
 		if planThenExecuteCandidateSymbolReadAllowed(req, results, target) {
 			return "", "", false

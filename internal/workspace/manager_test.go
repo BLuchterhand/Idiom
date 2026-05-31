@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"idiom/internal/config"
 	"idiom/internal/semantic"
@@ -1585,6 +1586,46 @@ func TestSearchFilesCapsLargeLogListings(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "omitted 6 older log-like match(es)") {
 		t.Fatalf("expected omitted-count marker, got output:\n%s", result.Output)
+	}
+}
+
+func TestSearchFilesLogIntentSortsNewestBeforeDisplayCap(t *testing.T) {
+	dir := t.TempDir()
+	oldTime := time.Date(2026, 5, 18, 14, 15, 0, 0, time.UTC)
+	newTime := time.Date(2026, 5, 31, 12, 26, 0, 0, time.UTC)
+	for i := 0; i < 30; i++ {
+		path := filepath.Join(dir, "logs", "conversations", fmt.Sprintf("a-old-%02d.jsonl", i))
+		writeTestFile(t, path, "{\"event\":\"old\"}\n")
+		if err := os.Chtimes(path, oldTime, oldTime); err != nil {
+			t.Fatalf("Chtimes(%q): %v", path, err)
+		}
+	}
+	newPath := filepath.Join(dir, "logs", "conversations", "z-new.jsonl")
+	writeTestFile(t, newPath, "{\"event\":\"new\"}\n")
+	if err := os.Chtimes(newPath, newTime, newTime); err != nil {
+		t.Fatalf("Chtimes(%q): %v", newPath, err)
+	}
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 3,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "logs/**/*",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files failed: %#v", result)
+	}
+	firstLine := strings.Split(strings.TrimSpace(result.Output), "\n")[0]
+	if !strings.Contains(firstLine, "logs/conversations/z-new.jsonl") {
+		t.Fatalf("expected globally newest log first despite low directory cap, got first line %q from output:\n%s", firstLine, result.Output)
+	}
+	if !strings.Contains(result.Summary, "Found 31 matching log-like file(s)") ||
+		!strings.Contains(result.Output, "omitted 7 older log-like match(es)") {
+		t.Fatalf("expected truthful total and display cap after global log sort, summary=%q output=\n%s", result.Summary, result.Output)
 	}
 }
 
