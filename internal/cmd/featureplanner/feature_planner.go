@@ -1,4 +1,5 @@
 package featureplanner
+
 import (
 	"bytes"
 	"context"
@@ -10,15 +11,15 @@ import (
 	"io"
 	"maps"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
 	"idiom/internal/llama"
-	"idiom/internal/telemetry"
 	"idiom/internal/productworkflow"
-	"path/filepath"
+	"idiom/internal/telemetry"
 )
 
 type featurePlannerOptions struct {
@@ -222,9 +223,14 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 	if matrixErr == nil {
 		traceability, _ = productworkflow.ParseTraceabilityMatrixJSON(matrixData)
 	}
+	var implementationRecords []productworkflow.ImplementationLedgerRecord
+	if data, ledgerErr := os.ReadFile(filepath.Join(root, "implementation_ledger.jsonl")); ledgerErr == nil {
+		implementationRecords, _ = productworkflow.ParseImplementationLedgerJSONL(data)
+	}
 
 	// Evaluate coverage gate
-	coverage := productworkflow.EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability)
+	knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(tdd, implementationRecords, prd.FrontMatter.TaskID)
+	coverage := productworkflow.EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability, knownTDDIDs)
 
 	// Build the brief
 	brief := &featureplanner.ProductWorkflowBrief{
@@ -249,6 +255,15 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 			Metric:      strings.TrimSpace(req.Metric),
 			Obligations: append([]string{}, req.TDDObligations...),
 		})
+		if strings.TrimSpace(req.Statement) != "" {
+			brief.RequiredBehavior = appendUniqueFeaturePlannerStrings(brief.RequiredBehavior, fmt.Sprintf("%s: %s", id, strings.TrimSpace(req.Statement)))
+		}
+		if strings.TrimSpace(req.Testability) != "" {
+			brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, fmt.Sprintf("%s testability: %s", id, strings.TrimSpace(req.Testability)))
+		}
+		if strings.TrimSpace(req.Metric) != "" {
+			brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, fmt.Sprintf("%s metric: %s", id, strings.TrimSpace(req.Metric)))
+		}
 	}
 
 	for _, entry := range adrIndex.ADRs {
@@ -271,13 +286,97 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 			RequiredBefore: strings.TrimSpace(obl.RequiredBefore),
 			Status:         strings.TrimSpace(obl.Status),
 		})
+		if strings.TrimSpace(obl.Behavior) != "" {
+			brief.RequiredBehavior = appendUniqueFeaturePlannerStrings(brief.RequiredBehavior, fmt.Sprintf("%s: %s", id, strings.TrimSpace(obl.Behavior)))
+		}
+		if strings.TrimSpace(obl.Command) != "" {
+			brief.Tests = appendUniqueFeaturePlannerStrings(brief.Tests, strings.TrimSpace(obl.Command))
+			brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, fmt.Sprintf("%s passes before implementation dispatch", strings.TrimSpace(obl.Command)))
+		}
 	}
 
 	for _, b := range coverage.Blockers {
 		brief.CoverageBlockers = append(brief.CoverageBlockers, b.Message)
 	}
+	for _, adr := range parsedADRs {
+		adrID := strings.TrimSpace(adr.Doc.FrontMatter.ADRID)
+		if adrID == "" {
+			continue
+		}
+		if decision := productWorkflowSectionExcerpt(adr.Doc.BodyMarkdown, "Decision"); decision != "" {
+			brief.Decisions = appendUniqueFeaturePlannerStrings(brief.Decisions, fmt.Sprintf("%s (%s): %s", adrID, adr.RelPath, decision))
+		}
+	}
+	brief.Constraints = appendUniqueFeaturePlannerStrings(brief.Constraints,
+		"Preserve accepted PRD requirements and ADR decisions unless a new accepted ADR supersedes them.",
+		"Do not mutate product workflow artifacts while implementing the feature atom.",
+	)
+	if len(implementationRecords) > 0 {
+		gen := productworkflow.GenerateImplementationBrief(productworkflow.BriefGenerationInput{
+			EffortRoot:            root,
+			ArtifactRootPath:      root,
+			WorkflowState:         workflowState,
+			PRD:                   prd,
+			ADRIndex:              adrIndex,
+			ADRs:                  parsedADRs,
+			TDD:                   tdd,
+			Traceability:          traceability,
+			ImplementationRecords: implementationRecords,
+			CoverageEvaluation:    coverage,
+		})
+		brief.FilesToModify = appendUniqueFeaturePlannerStrings(brief.FilesToModify, gen.FilesToModify...)
+		brief.RequiredBehavior = appendUniqueFeaturePlannerStrings(brief.RequiredBehavior, gen.RequiredBehavior...)
+		brief.Tests = appendUniqueFeaturePlannerStrings(brief.Tests, gen.Tests...)
+		brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, gen.Acceptance...)
+		brief.Constraints = appendUniqueFeaturePlannerStrings(brief.Constraints, gen.Constraints...)
+		brief.Decisions = appendUniqueFeaturePlannerStrings(brief.Decisions, gen.Decisions...)
+		brief.Blockers = appendUniqueFeaturePlannerStrings(brief.Blockers, gen.Blockers...)
+	}
 
 	return brief, nil
+}
+
+func appendUniqueFeaturePlannerStrings(dst []string, values ...string) []string {
+	seen := map[string]bool{}
+	out := make([]string, 0, len(dst)+len(values))
+	for _, value := range append(dst, values...) {
+		value = strings.TrimSpace(value)
+		if value == "" || seen[value] {
+			continue
+		}
+		seen[value] = true
+		out = append(out, value)
+	}
+	return out
+}
+
+func productWorkflowSectionExcerpt(markdown string, section string) string {
+	markdown = strings.TrimSpace(markdown)
+	section = strings.TrimSpace(section)
+	if markdown == "" || section == "" {
+		return ""
+	}
+	lines := strings.Split(markdown, "\n")
+	inSection := false
+	var parts []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			if inSection {
+				break
+			}
+			inSection = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), section)
+			continue
+		}
+		if inSection && trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	joined := strings.Join(parts, " ")
+	if len(joined) <= 220 {
+		return joined
+	}
+	return strings.TrimSpace(joined[:220]) + "..."
 }
 
 func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {
@@ -289,7 +388,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	if strings.TrimSpace(req.Resume) != "" && hasOpenFeaturePlannerQuestion(state) {
 		resumeAnswer = req.Prompt
 	}
-		effortRoot := ""
+	effortRoot := ""
 	if strings.TrimSpace(req.EffortRoot) != "" {
 		effortRoot = req.EffortRoot
 	}

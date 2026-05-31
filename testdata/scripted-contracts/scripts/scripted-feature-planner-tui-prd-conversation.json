@@ -1,0 +1,8 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "---\nschema_version: idiom.prd.v1\nprd_id: add-greeting-package\nstatus: draft\ntask_id: add-greeting-package\ncreated_at: 2026-05-31T00:00:00Z\n---\n\n- **id**: REQ-001\n- **priority**: P1\n- **statement**: Add a new internal/greeting package with a Hello function that returns a greeting string\n- **evidence_refs**: [inference]\n- **tdd_obligations**: [TDD-REQ-001]\n- **owner_alignment**: Developers need a shared greeting utility for future features\n- **testability**: Verify Hello() returns expected greeting string via Go test\n- **metric**: Package compiles and passes go test ./internal/greeting\n- **open_questions**: []\n\n- **id**: REQ-002\n- **priority**: P2\n- **statement**: The Hello function should accept a name parameter and return a personalized greeting\n- **evidence_refs**: [inference]\n- **tdd_obligations**: [TDD-REQ-002]\n- **owner_alignment**: End users expect personalized output\n- **testability**: Verify Hello(\"World\") returns \"Hello, World!\" via Go test\n- **metric**: Test coverage reaches 100% for greeting package\n- **open_questions**: []\n"
+    }
+  ]
+}

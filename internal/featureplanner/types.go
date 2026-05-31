@@ -137,16 +137,16 @@ type Continuation struct {
 }
 
 type FeaturePlan struct {
-	SchemaVersion string            `json:"schema_version,omitempty"`
-	FeatureID     string            `json:"feature_id,omitempty"`
-	Tool          string            `json:"tool,omitempty"`
-	SourceTask    SourceTask        `json:"source_task,omitempty"`
-	Context       PlanContext       `json:"context,omitempty"`
-	Summary       string            `json:"summary"`
-	TopLevelScope TopLevelScope     `json:"top_level_scope"`
-	SDDContract   SDDContract       `json:"sdd_contract"`
-	TDDContract   TDDContract       `json:"tdd_contract"`
-	Atoms         []FeatureAtomPlan `json:"atoms"`
+	SchemaVersion      string              `json:"schema_version,omitempty"`
+	FeatureID          string              `json:"feature_id,omitempty"`
+	Tool               string              `json:"tool,omitempty"`
+	SourceTask         SourceTask          `json:"source_task,omitempty"`
+	Context            PlanContext         `json:"context,omitempty"`
+	Summary            string              `json:"summary"`
+	TopLevelScope      TopLevelScope       `json:"top_level_scope"`
+	SDDContract        SDDContract         `json:"sdd_contract"`
+	TDDContract        TDDContract         `json:"tdd_contract"`
+	Atoms              []FeatureAtomPlan   `json:"atoms"`
 	CoverageGateResult *CoverageGateResult `json:"coverage_gate_result,omitempty"`
 }
 
@@ -170,17 +170,17 @@ type TopLevelScope struct {
 }
 
 type SDDContract struct {
-	Refs                 []string `json:"refs,omitempty"`                    // legacy — treated as acceptance criteria in v2
-	Acceptance           []string `json:"acceptance,omitempty"`              // acceptance criteria strings
-	PRDRequirementRefs   []string `json:"prd_requirement_refs,omitempty"`   // PRD requirement IDs
-	ADRRefs              []string `json:"adr_refs,omitempty"`                // ADR IDs
+	Refs               []string `json:"refs,omitempty"`                 // legacy — treated as acceptance criteria in v2
+	Acceptance         []string `json:"acceptance,omitempty"`           // acceptance criteria strings
+	PRDRequirementRefs []string `json:"prd_requirement_refs,omitempty"` // PRD requirement IDs
+	ADRRefs            []string `json:"adr_refs,omitempty"`             // ADR IDs
 }
 
 type TDDContract struct {
 	CoverageTier                 string          `json:"coverage_tier"`
 	RequiredBeforeImplementation bool            `json:"required_before_implementation"`
 	Obligations                  []TDDObligation `json:"obligations"`
-	CoverageGateEventID string `json:"coverage_gate_event_id,omitempty"` // plan-level binding to upstream coverage gate
+	CoverageGateEventID          string          `json:"coverage_gate_event_id,omitempty"` // plan-level binding to upstream coverage gate
 }
 
 type TDDObligation struct {

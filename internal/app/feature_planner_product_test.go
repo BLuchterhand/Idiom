@@ -329,6 +329,38 @@ Second.
 	})
 }
 
+func TestPlanExecuteAnswerIsBlocked(t *testing.T) {
+	for _, input := range []string{
+		"",
+		"<<QUESTION>>: Plan-execute could not produce a plan artifact.",
+		"plan-execute: recovery-open\nblockers: required_edit_paths_remaining",
+	} {
+		if !planExecuteAnswerIsBlocked(input) {
+			t.Fatalf("expected blocked plan-execute answer for %q", input)
+		}
+	}
+	if planExecuteAnswerIsBlocked("Decision: source-satisfied\n- internal/example/example.go: already satisfied") {
+		t.Fatal("source-satisfied answer should remain eligible for completion wrapper")
+	}
+}
+
+func TestInferProductWorkflowFilesToModifyFromADRBody(t *testing.T) {
+	body := "## Consequences\n- New package internal/greeting with greeting.go and greeting_test.go\n"
+	got := inferProductWorkflowFilesToModify(body)
+	for _, want := range []string{"internal/greeting/greeting.go", "internal/greeting/greeting_test.go"} {
+		found := false
+		for _, path := range got {
+			if path == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("missing inferred path %q from %#v", want, got)
+		}
+	}
+}
+
 func TestMergeADRIndex(t *testing.T) {
 	makeDoc := func(id string) productworkflow.ADRDocument {
 		return productworkflow.ADRDocument{

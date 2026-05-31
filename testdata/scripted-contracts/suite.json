@@ -3814,6 +3814,161 @@
       }
     },
     {
+      "id": "scripted-feature-planner-tui-prd-conversation",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Add an internal/greeting package with Hello function",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "slash-command",
+        "product-workflow",
+        "prd",
+        "conversation",
+        "rollback"
+      ],
+      "turns": [
+        "/feature-planner Add greeting package"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "env": {
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"docs/product-workflows/efforts/started/add-greeting-package/prd.md\"]",
+        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"PRD draft generated.\",\"Saved: prd.md\",\"All intake checks passed.\"]"
+      },
+      "scenario": {
+        "name": "scripted-feature-planner-tui-prd-conversation",
+        "prompt_history_contains": [
+          "/feature-planner",
+          "greeting package"
+        ],
+        "final_assistant_contains": [
+          "PRD draft generated.",
+          "Saved: prd.md",
+          "What I captured:",
+          "REQ-001 [P1]: Add a new internal/greeting package",
+          "All intake checks passed."
+        ],
+        "forbid_final_assistant_contains": [
+          "schema_version: idiom.prd.v1"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false,
+        "require_assistant_for_each_user": true
+      },
+      "oracle": {
+        "min_user_turns": 1,
+        "require_file_content": [
+          {
+            "path": "docs/product-workflows/efforts/started/add-greeting-package/prd.md",
+            "contains": [
+              "schema_version: idiom.prd.v1",
+              "REQ-001",
+              "REQ-002"
+            ]
+          }
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-feature-planner-tui-adr-body-persistence",
+      "family": "feature_planner",
+      "runner_mode": "tui",
+      "prompt": "/feature-planner Add greeting package",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "feature-planner",
+        "tui",
+        "slash-command",
+        "product-workflow",
+        "prd",
+        "adr",
+        "multi-turn",
+        "rollback"
+      ],
+      "turns": [
+        "/feature-planner Add greeting package",
+        "/product-approve"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "env": {
+        "IDIOM_LIVE_SNAPSHOT_PATHS_JSON": "[\"docs/product-workflows/efforts/started/add-greeting-package/adrs/ADR-001.md\",\"docs/product-workflows/efforts/started/add-greeting-package/adrs/ADR-002.md\"]",
+        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"ADR drafts generated.\",\"Saved: adrs/index.json and ADR markdown files.\",\"Decisions to review:\",\"Decision: Create internal/greeting package\"]"
+      },
+      "scenario": {
+        "name": "scripted-feature-planner-tui-adr-body-persistence",
+        "prompt_history_contains": [
+          "/feature-planner",
+          "greeting package"
+        ],
+        "final_assistant_contains": [
+          "ADR drafts generated",
+          "Saved: adrs/index.json and ADR markdown files.",
+          "Decisions to review:",
+          "Decision: Create internal/greeting package with a single Hello function.",
+          "Decision: Hello(name string) string returns"
+        ],
+        "forbid_final_assistant_contains": [
+          "schema_version: idiom.adr.v1"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.file_snapshot",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false,
+        "require_assistant_for_each_user": true
+      },
+      "oracle": {
+        "min_user_turns": 2,
+        "require_file_content": [
+          {
+            "path": "docs/product-workflows/efforts/started/add-greeting-package/adrs/ADR-001.md",
+            "contains": [
+              "Create internal/greeting package with a single Hello function.",
+              "Option A: Add greeting to existing labels package."
+            ],
+            "forbid_contains": [
+              "## Decision\n\n\n\n"
+            ]
+          },
+          {
+            "path": "docs/product-workflows/efforts/started/add-greeting-package/adrs/ADR-002.md",
+            "contains": [
+              "Hello(name string) string returns",
+              "Option A: Variadic parameter."
+            ],
+            "forbid_contains": [
+              "## Decision\n\n\n\n"
+            ]
+          }
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
       "id": "scripted-feature-planner-tui-product-workflow-e2e",
       "family": "feature_planner",
       "runner_mode": "tui",
@@ -3841,7 +3996,7 @@
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
         "name": "scripted-feature-planner-tui-product-workflow-e2e",
-        "prompt_contains": [
+        "prompt_history_contains": [
           "/feature-planner",
           "greeting package"
         ],
@@ -3864,9 +4019,11 @@
           "idiom.live_contract.rollback"
         ],
         "require_verification": "none",
-        "require_approval": false
+        "require_approval": false,
+        "require_assistant_for_each_user": true
       },
       "oracle": {
+        "min_user_turns": 3,
         "require_changed_files": [
           "internal/greeting/greeting.go",
           "internal/greeting/greeting_test.go"

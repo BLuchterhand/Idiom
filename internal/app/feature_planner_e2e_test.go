@@ -40,7 +40,7 @@ func (c *scriptedLLMClient) ListModels(_ context.Context) ([]llama.ModelInfo, er
 	return []llama.ModelInfo{{ID: "mock-model"}}, nil
 }
 
-func (c *scriptedLLMClient) Backend() string          { return "mock" }
+func (c *scriptedLLMClient) Backend() string           { return "mock" }
 func (c *scriptedLLMClient) SupportsNativeTools() bool { return false }
 
 func setupE2EModel(t *testing.T, responses []string) (*Model, string) {
@@ -337,7 +337,8 @@ func TestADRRepairSuccess(t *testing.T) {
 	t.Logf("PASS: ADR repair succeeded, %d ADRs, %d calls", len(adrDocs), m.client.(*scriptedLLMClient).callCount)
 }
 
-// TestADRRepairExhaustion verifies ADR repair exhaustion → non-fatal.
+// TestADRRepairExhaustion verifies ADR repair exhaustion fails closed instead
+// of writing an empty successful ADR index.
 func TestADRRepairExhaustion(t *testing.T) {
 	m, effortRoot := setupE2EModel(t, []string{validPRD()})
 	ctx := context.Background()
@@ -351,8 +352,11 @@ func TestADRRepairExhaustion(t *testing.T) {
 	m.client = &scriptedLLMClient{responses: []string{garbage, garbage, garbage}}
 
 	adrDocs, _, err := m.generateADRs(ctx, effortRoot)
-	if err != nil {
-		t.Fatalf("ADR repair exhaustion should return nil error: %v", err)
+	if err == nil {
+		t.Fatal("ADR repair exhaustion should return an error")
+	}
+	if !strings.Contains(err.Error(), "ADR parsing failed after") {
+		t.Fatalf("unexpected exhaustion error: %v", err)
 	}
 	if len(adrDocs) != 0 {
 		t.Errorf("expected 0 ADRs after exhaustion, got %d", len(adrDocs))
@@ -363,7 +367,7 @@ func TestADRRepairExhaustion(t *testing.T) {
 	if m.client.(*scriptedLLMClient).callCount != 3 {
 		t.Errorf("expected 3 model calls, got %d", m.client.(*scriptedLLMClient).callCount)
 	}
-	t.Logf("PASS: ADR repair exhaustion → non-fatal, %d calls", m.client.(*scriptedLLMClient).callCount)
+	t.Logf("PASS: ADR repair exhaustion fails closed, %d calls", m.client.(*scriptedLLMClient).callCount)
 }
 
 // TestADRPartialSuccess verifies some ADR chunks parse, some fail.
@@ -603,6 +607,10 @@ Token rotation?
 	if strings.Contains(string(adr1Data), "Refined OAuth") {
 		t.Log("ADR-001 content updated by refinement")
 	}
+	adr2Data, _ := os.ReadFile(filepath.Join(adrDir, "ADR-002.md"))
+	if !strings.Contains(string(adr2Data), "Time-limited reset link via email.") {
+		t.Fatalf("ADR-002 body should be preserved when refinement returns only ADR-001, got:\n%s", string(adr2Data))
+	}
 	t.Logf("PASS: merge preserved %d ADRs", len(idx.ADRs))
 }
 
@@ -642,7 +650,123 @@ func TestADRRepairDirectParse(t *testing.T) {
 	t.Logf("PASS: ADR repair direct parse — %d model calls, %d ADRs", m.client.(*scriptedLLMClient).callCount, len(adrDocs))
 }
 
-// TestADRRepairExhaustionDirectParse verifies exhaustion → non-fatal with direct parse.
+func TestProductWorkflowADRDraftingPreservesAndRendersADRDecision(t *testing.T) {
+	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs()})
+	ctx := context.Background()
+	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
+		t.Fatalf("PRD: %v", err)
+	}
+	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+
+	answer, err := m.approvePRDAndAdvance(effortRoot)
+	if err != nil {
+		t.Fatalf("approve PRD: %v", err)
+	}
+	if !strings.Contains(answer, "Decision: Use authorization code flow with PKCE.") {
+		t.Fatalf("ADR creation response should render a useful decision summary, got:\n%s", answer)
+	}
+	adrData, err := os.ReadFile(filepath.Join(effortRoot, "adrs", "ADR-001.md"))
+	if err != nil {
+		t.Fatalf("read generated ADR: %v", err)
+	}
+	adrText := string(adrData)
+	if !strings.Contains(adrText, "Use authorization code flow with PKCE.") {
+		t.Fatalf("generated ADR should preserve the model-authored decision body, got:\n%s", adrText)
+	}
+	if strings.Contains(adrText, "## Decision\n\n\n\n") {
+		t.Fatalf("generated ADR body was replaced with the empty template:\n%s", adrText)
+	}
+}
+
+func TestProductWorkflowPRDDraftingReturnsConversationalSummary(t *testing.T) {
+	m, effortRoot := setupE2EModel(t, []string{validPRD()})
+	ctx := context.Background()
+
+	answer, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0")
+	if err != nil {
+		t.Fatalf("PRD: %v", err)
+	}
+	for _, want := range []string{
+		"PRD draft generated.",
+		"Saved: prd.md",
+		"What I captured:",
+		"REQ-001 [P1]: The system shall support OAuth 2.0 login.",
+		"All intake checks passed.",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("PRD response missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "schema_version: idiom.prd.v1") {
+		t.Fatalf("PRD response should not echo raw persisted markdown:\n%s", answer)
+	}
+	if _, err := os.Stat(filepath.Join(effortRoot, "prd.md")); err != nil {
+		t.Fatalf("expected prd.md to be saved: %v", err)
+	}
+}
+
+func TestProductWorkflowPRDRefinementReportsRequirementChanges(t *testing.T) {
+	updatedPRD := strings.Replace(validPRD(), "The system shall support OAuth 2.0 login.", "The system shall support OAuth 2.0 login with PKCE.", 1)
+	m, _ := setupE2EModel(t, []string{validPRD(), updatedPRD})
+	ctx := context.Background()
+	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
+		t.Fatalf("initial PRD: %v", err)
+	}
+
+	answer, err := m.runPRDDraftingTurn(ctx, "Require PKCE")
+	if err != nil {
+		t.Fatalf("refine PRD: %v", err)
+	}
+	for _, want := range []string{
+		"PRD updated from your feedback.",
+		"Change summary:",
+		"Updated requirements: REQ-001",
+		"The system shall support OAuth 2.0 login with PKCE.",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("PRD refinement response missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "schema_version: idiom.prd.v1") {
+		t.Fatalf("PRD refinement response should not echo raw persisted markdown:\n%s", answer)
+	}
+}
+
+func TestProductWorkflowADRRefinementReturnsConversationalSummary(t *testing.T) {
+	updatedADRs := strings.Replace(validADRs(), "Use authorization code flow with PKCE.", "Use authorization code flow with PKCE and documented redirect URI handling.", 1)
+	m, effortRoot := setupE2EModel(t, []string{validPRD(), validADRs(), updatedADRs})
+	ctx := context.Background()
+	if _, err := m.runPRDDraftingTurn(ctx, "Add OAuth 2.0"); err != nil {
+		t.Fatalf("PRD: %v", err)
+	}
+	writeWorkflowState(t, effortRoot, productworkflow.PhasePRDReview, "human_verification")
+	if _, err := m.approvePRDAndAdvance(effortRoot); err != nil {
+		t.Fatalf("approve PRD: %v", err)
+	}
+	m.featurePlannerPhase = productworkflow.PhaseADRDrafting
+	writeWorkflowState(t, effortRoot, productworkflow.PhaseADRDrafting, "planned")
+
+	answer, err := m.runADRDraftingTurn(ctx, "Capture redirect URI handling")
+	if err != nil {
+		t.Fatalf("refine ADR: %v", err)
+	}
+	for _, want := range []string{
+		"ADR drafts updated from your feedback.",
+		"Saved: adrs/index.json and ADR markdown files.",
+		"Change summary:",
+		"Updated ADRs: ADR-001",
+		"Decision: Use authorization code flow with PKCE and documented redirect URI handling.",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("ADR refinement response missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "schema_version: idiom.adr.v1") {
+		t.Fatalf("ADR refinement response should not echo raw persisted markdown:\n%s", answer)
+	}
+}
+
+// TestADRRepairExhaustionDirectParse verifies exhaustion fails closed with direct parse.
 func TestADRRepairExhaustionDirectParse(t *testing.T) {
 	m, effortRoot := setupE2EModel(t, []string{validPRD()})
 	ctx := context.Background()
@@ -656,8 +780,11 @@ func TestADRRepairExhaustionDirectParse(t *testing.T) {
 	m.client = &scriptedLLMClient{responses: []string{garbage, garbage, garbage}}
 
 	adrDocs, _, err := m.generateADRs(ctx, effortRoot)
-	if err != nil {
-		t.Fatalf("ADR repair exhaustion should return nil error: %v", err)
+	if err == nil {
+		t.Fatal("ADR repair exhaustion should return an error")
+	}
+	if !strings.Contains(err.Error(), "ADR parsing failed after") {
+		t.Fatalf("unexpected exhaustion error: %v", err)
 	}
 	if len(adrDocs) != 0 {
 		t.Errorf("expected 0 ADRs after exhaustion, got %d", len(adrDocs))
@@ -665,5 +792,5 @@ func TestADRRepairExhaustionDirectParse(t *testing.T) {
 	if m.client.(*scriptedLLMClient).callCount != 3 {
 		t.Errorf("expected 3 model calls, got %d", m.client.(*scriptedLLMClient).callCount)
 	}
-	t.Logf("PASS: ADR repair exhaustion direct parse → non-fatal, %d model calls", m.client.(*scriptedLLMClient).callCount)
+	t.Logf("PASS: ADR repair exhaustion direct parse fails closed, %d model calls", m.client.(*scriptedLLMClient).callCount)
 }
