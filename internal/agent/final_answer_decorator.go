@@ -1107,9 +1107,9 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 	} else {
 		b.WriteString(formatInlinePathList(inspectedPaths, 4))
 	}
-	b.WriteString(" but was unable to synthesize a complete answer before the turn budget was exhausted. ")
-	b.WriteString("The key findings are available in the evidence gathered above. ")
-	b.WriteString("You can ask a follow-up question targeting a specific file or concept for a more focused answer.")
+	b.WriteString(" but the final synthesis did not produce a reliable user-facing answer from that evidence. ")
+	b.WriteString("I did not change any files. ")
+	b.WriteString("A narrower follow-up targeting one exact file, symbol, or claim will be easier to answer from the retained evidence.")
 
 	return strings.TrimSpace(b.String())
 }

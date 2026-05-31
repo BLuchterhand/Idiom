@@ -463,6 +463,40 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	if strings.Contains(got, "No files were changed") {
 		t.Errorf("fallback should not contain source-body extraction garbage: %q", got)
 	}
+	if strings.Contains(strings.ToLower(got), "budget") {
+		t.Errorf("fallback must not claim budget exhaustion without a budget-exhausted stop reason: %q", got)
+	}
+	if !strings.Contains(got, "final synthesis") {
+		t.Errorf("fallback should identify the actual failure class: %q", got)
+	}
+}
+
+func TestDecorateFinalAnswerConversationFallbackDoesNotInventBudgetExhaustion(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- read_file internal/architect/packet.go",
+		StopReason: "model_final",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read file: internal/architect/packet.go", Output: "type Evidence struct {...}"},
+			{Tool: "context_query", Summary: "Context query returned 12 nodes"},
+		},
+		UserFacing: true,
+	})
+
+	lower := strings.ToLower(got)
+	for _, forbidden := range []string{"budget was exhausted", "turn budget", "budget was reached"} {
+		if strings.Contains(lower, forbidden) {
+			t.Fatalf("model_final fallback must not invent budget exhaustion phrase %q:\n%s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "internal/architect/packet.go") {
+		t.Fatalf("fallback should retain inspected path context, got:\n%s", got)
+	}
 }
 
 func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *testing.T) {
