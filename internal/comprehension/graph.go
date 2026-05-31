@@ -3027,15 +3027,13 @@ func queryTerms(opts QueryOptions) []string {
 		for _, field := range strings.FieldsFunc(strings.ToLower(value), func(r rune) bool {
 			return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '_' || r == '/' || r == '.')
 		}) {
-			field = strings.TrimSpace(field)
+			field = strings.Trim(strings.TrimSpace(field), ".,;:!?\"'()[]{}<>`")
 			if isQueryStopword(field) {
 				continue
 			}
 			if field != "" {
 				terms = append(terms, field)
-				if singular := singularQueryTerm(field); singular != "" && singular != field {
-					terms = append(terms, singular)
-				}
+				terms = append(terms, queryTermVariants(field)...)
 			}
 		}
 	}
@@ -3044,7 +3042,7 @@ func queryTerms(opts QueryOptions) []string {
 
 func isQueryStopword(value string) bool {
 	switch value {
-	case "", "a", "an", "and", "are", "for", "from", "in", "index", "indexed", "is", "of", "show", "that", "the", "this", "to", "what", "where", "which":
+	case "", "a", "agentic", "an", "and", "another", "answer", "are", "as", "assistant", "be", "by", "can", "cause", "caused", "causes", "conversation", "debug", "do", "does", "evidence", "file", "files", "finding", "findings", "for", "form", "from", "get", "how", "i", "in", "index", "indexed", "is", "issue", "it", "line", "lines", "me", "mid", "non", "number", "numbers", "of", "on", "or", "our", "please", "present", "process", "provide", "relevant", "research", "show", "structured", "symbol", "symbols", "that", "the", "this", "to", "try", "trying", "we", "what", "where", "which", "with", "you", "your":
 		return true
 	default:
 		return false
@@ -3062,6 +3060,26 @@ func singularQueryTerm(value string) string {
 		return strings.TrimSuffix(value, "s")
 	}
 	return value
+}
+
+func queryTermVariants(value string) []string {
+	var terms []string
+	if singular := singularQueryTerm(value); singular != "" && singular != value {
+		terms = append(terms, singular)
+	}
+	if strings.HasSuffix(value, "ing") && len(value) > 5 {
+		stem := strings.TrimSuffix(value, "ing")
+		if len(stem) >= 2 && stem[len(stem)-1] == stem[len(stem)-2] {
+			stem = stem[:len(stem)-1]
+		}
+		if stem != "" && stem != value {
+			terms = append(terms, stem)
+		}
+		if withE := stem + "e"; withE != value {
+			terms = append(terms, withE)
+		}
+	}
+	return terms
 }
 
 func matchNodes(nodes []Node, terms []string, path string, resolution string, limit int) []Node {
@@ -3091,9 +3109,137 @@ func matchNodes(nodes []Node, terms []string, path string, resolution string, li
 		return matches[i].ID < matches[j].ID
 	})
 	if limit > 0 && len(matches) > limit {
-		matches = matches[:limit]
+		matches = diversifyNodeMatchesByQueryTerms(matches, terms, limit)
 	}
 	return matches
+}
+
+type nodeTermCoverage struct {
+	term  string
+	count int
+}
+
+func diversifyNodeMatchesByQueryTerms(matches []Node, terms []string, limit int) []Node {
+	if limit <= 0 || len(matches) <= limit {
+		return matches
+	}
+	coverage := nodeTermCoverageList(matches, terms)
+	if len(coverage) == 0 {
+		return matches[:limit]
+	}
+	sort.Slice(coverage, func(i, j int) bool {
+		if coverage[i].count != coverage[j].count {
+			return coverage[i].count < coverage[j].count
+		}
+		return coverage[i].term < coverage[j].term
+	})
+	coverageSlots := limit / 4
+	if coverageSlots < 4 {
+		coverageSlots = 4
+	}
+	if coverageSlots > limit {
+		coverageSlots = limit
+	}
+	if coverageSlots > len(coverage) {
+		coverageSlots = len(coverage)
+	}
+	selected := make(map[string]struct{}, limit)
+	selectedPaths := make(map[string]struct{}, limit)
+	out := make([]Node, 0, limit)
+	for _, candidate := range coverage[:coverageSlots] {
+		node, ok := bestNodeForQueryTerm(matches, candidate.term, selected, selectedPaths)
+		if !ok {
+			continue
+		}
+		selected[node.ID] = struct{}{}
+		if node.Path != "" {
+			selectedPaths[node.Path] = struct{}{}
+		}
+		out = append(out, node)
+	}
+	for _, node := range matches {
+		if len(out) >= limit {
+			break
+		}
+		if _, ok := selected[node.ID]; ok {
+			continue
+		}
+		selected[node.ID] = struct{}{}
+		out = append(out, node)
+	}
+	return out
+}
+
+func nodeTermCoverageList(matches []Node, terms []string) []nodeTermCoverage {
+	var coverage []nodeTermCoverage
+	for _, term := range terms {
+		if len(term) < 3 || term == "." {
+			continue
+		}
+		count := 0
+		for _, node := range matches {
+			if nodeTermMatchScore(node, term) > 0 {
+				count++
+			}
+		}
+		if count > 0 {
+			coverage = append(coverage, nodeTermCoverage{term: term, count: count})
+		}
+	}
+	return coverage
+}
+
+func bestNodeForQueryTerm(matches []Node, term string, selected map[string]struct{}, selectedPaths map[string]struct{}) (Node, bool) {
+	var best Node
+	bestScore := -1
+	bestTotal := -1
+	bestKind := -1
+	bestHasNewPath := false
+	for _, node := range matches {
+		if _, ok := selected[node.ID]; ok {
+			continue
+		}
+		score := nodeTermMatchScore(node, term)
+		if score <= 0 {
+			continue
+		}
+		total, _ := node.Properties["match_score"].(int)
+		kindScore := queryMatchKindScore(node.Kind)
+		hasNewPath := node.Path == ""
+		if node.Path != "" {
+			_, alreadyCovered := selectedPaths[node.Path]
+			hasNewPath = !alreadyCovered
+		}
+		if bestScore < 0 ||
+			(hasNewPath && !bestHasNewPath) ||
+			(hasNewPath == bestHasNewPath && score > bestScore) ||
+			(hasNewPath == bestHasNewPath && score == bestScore && kindScore > bestKind) ||
+			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total > bestTotal) ||
+			(hasNewPath == bestHasNewPath && score == bestScore && kindScore == bestKind && total == bestTotal && node.ID < best.ID) {
+			best = node
+			bestScore = score
+			bestTotal = total
+			bestKind = kindScore
+			bestHasNewPath = hasNewPath
+		}
+	}
+	return best, bestScore >= 0
+}
+
+func queryMatchKindScore(kind string) int {
+	if isSymbolKind(kind) {
+		return 4
+	}
+	switch kind {
+	case "file":
+		return 3
+	case "package", "module":
+		return 2
+	case "summary":
+		return 1
+	default:
+		return 0
+	}
 }
 
 func nodeMatchesResolution(node Node, resolution string) bool {
@@ -3129,24 +3275,32 @@ func nodeMatchScore(node Node, terms []string) int {
 		return 0
 	}
 	score := 0
+	for _, term := range terms {
+		score += nodeTermMatchScore(node, term)
+	}
+	return score
+}
+
+func nodeTermMatchScore(node Node, term string) int {
+	if term == "" {
+		return 0
+	}
+	score := 0
 	path := strings.ToLower(node.Path)
 	name := strings.ToLower(node.QualifiedName)
 	kind := strings.ToLower(node.Kind)
-	for _, term := range terms {
-		switch {
-		case term == "":
-		case name == term:
-			score += 80
-		case strings.Contains(name, term):
-			score += 40
-		case strings.Contains(path, term):
-			score += 24
-		case strings.Contains(kind, term):
-			score += 10
-		}
-		if value, ok := node.Properties["name"].(string); ok && strings.Contains(strings.ToLower(value), term) {
-			score += 30
-		}
+	switch {
+	case name == term:
+		score += 80
+	case strings.Contains(name, term):
+		score += 40
+	case strings.Contains(path, term):
+		score += 24
+	case strings.Contains(kind, term):
+		score += 10
+	}
+	if value, ok := node.Properties["name"].(string); ok && strings.Contains(strings.ToLower(value), term) {
+		score += 30
 	}
 	return score
 }

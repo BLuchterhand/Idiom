@@ -57,6 +57,28 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 	}
 }
 
+func TestSourceEvidenceIgnoresCandidateAnchorMiss(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "go_read_symbol",
+		Summary: `Go symbol read path-filter miss; found 1 candidate anchor(s) for "Model.Update"`,
+		Output: strings.Join([]string{
+			"requested_symbol: Model.Update",
+			"requested_path: internal/app/model_state.go",
+			"path_filter_status: no source-body match in requested path",
+			"candidate_anchor_status: anchors only; read one candidate path to inspect source body",
+			"candidate_anchors:",
+			"- internal/app/lifecycle.go:409 method Model.Update",
+		}, "\n"),
+	}}
+
+	if sourceEvidenceBodyReadForPath("internal/app/lifecycle.go", results) {
+		t.Fatal("candidate anchor must not count as source-body evidence for the candidate path")
+	}
+	if paths := sourceEvidenceBodyPaths(results); len(paths) != 0 {
+		t.Fatalf("candidate anchor produced source-body paths: %#v", paths)
+	}
+}
+
 func TestSourceEvidencePendingRedirectProgressAllowsOneOutlineBeforeBody(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily: "implementation",

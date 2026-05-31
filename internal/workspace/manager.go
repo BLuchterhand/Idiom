@@ -4446,8 +4446,15 @@ func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read unavailable", Error: err.Error()}
 	}
 
-	matches := filterSymbolMatches(index.FindSymbols(pattern, 4), m.goPathFilter(req.Path))
+	pathFilter, err := m.goPathFilterForRequest(req)
+	if err != nil {
+		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read rejected", Error: err.Error()}
+	}
+	matches := filterSymbolMatches(index.FindSymbols(pattern, 4), pathFilter)
 	if len(matches) == 0 {
+		if result, ok := m.goReadSymbolPathMiss(req, pattern, pathFilter, index); ok {
+			return result
+		}
 		return ToolResult{Tool: "go_read_symbol", Summary: fmt.Sprintf("No Go symbols matched %q", pattern)}
 	}
 

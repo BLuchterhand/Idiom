@@ -318,6 +318,9 @@ func (m *Manager) javaReadSymbol(req ToolRequest) ToolResult {
 	}
 	match, err := m.selectJavaSymbolMatch(req)
 	if err != nil {
+		if result, ok := m.javaReadSymbolPathMiss(req); ok {
+			return result
+		}
 		return ToolResult{Tool: "java_read_symbol", Summary: "Java symbol read rejected", Error: err.Error()}
 	}
 	abs, err := m.resolvePath(match.Path, "")

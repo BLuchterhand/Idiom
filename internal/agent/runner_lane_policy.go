@@ -228,7 +228,7 @@ func conversationBroadDiscoveryToolResult(result workspace.ToolResult) bool {
 }
 
 func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
-	if conversationTargetedGraphQueryWithGap(req) {
+	if conversationTargetedGraphQueryWithGap(req) || conversationTargetedContextZoom(req) || conversationTargetedFileNameSearchWithGap(req) {
 		return false
 	}
 	switch strings.TrimSpace(req.Tool) {
@@ -240,6 +240,28 @@ func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
 	default:
 		return false
 	}
+}
+
+func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "context_zoom" {
+		return false
+	}
+	if strings.TrimSpace(req.Handle) == "" && strings.TrimSpace(req.ID) == "" && strings.TrimSpace(req.Path) == "" {
+		return false
+	}
+	return strings.TrimSpace(req.Resolution) != "" || req.IncludeSource || postReadinessGap(req) != ""
+}
+
+func conversationTargetedFileNameSearchWithGap(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "search_files" || postReadinessGap(req) == "" {
+		return false
+	}
+	pattern := util.FirstNonEmpty(req.Pattern, req.Glob, req.Query)
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return false
+	}
+	return strings.Contains(pattern, "/") || pathparse.HasWorkspaceFileExtension(pattern)
 }
 
 func conversationTargetedGraphQueryWithGap(req workspace.ToolRequest) bool {
@@ -1144,6 +1166,9 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
+		if candidateAnchorOnlyResult(result) {
+			continue
+		}
 		switch strings.TrimSpace(result.Tool) {
 		case "read_file":
 			if span := toolResultReadSpan(result); span > 0 && span <= 120 {
@@ -1198,6 +1223,9 @@ func delegatedReadOnlyInspectedImplementationPaths(results []workspace.ToolResul
 	paths := make([]string, 0, 4)
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+		if candidateAnchorOnlyResult(result) {
 			continue
 		}
 		switch strings.TrimSpace(result.Tool) {

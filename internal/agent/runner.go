@@ -2276,6 +2276,19 @@ func (r *Runner) Run(
 			}
 			continue
 		}
+		if executionState.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, r.RuntimeBrief) {
+			answer, err, done := controller.rejectTool(
+				stepNumber,
+				activeToolCall,
+				req,
+				"Discovery consumption required before more broad discovery",
+				executionState.discoveryConsumptionError(),
+			)
+			if done {
+				return finish(answer, err, "discovery_consumption_budget_exhausted", true)
+			}
+			continue
+		}
 		if executionState.shouldConsumeSearchHitBeforeMoreSearch(req) {
 			answer, err, done := controller.rejectTool(
 				stepNumber,
@@ -9440,6 +9453,19 @@ func concreteRecoveryEvidencePaths(results []workspace.ToolResult, max int) []st
 	return promptEvidencePathsFromToolResults(filtered, max)
 }
 
+func discoveryConsumptionCandidatesFromResult(result workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	if strings.TrimSpace(result.Error) != "" {
+		return nil
+	}
+	if strings.TrimSpace(result.Tool) == "context_pack" {
+		return contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, max)
+	}
+	return promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, max)
+}
+
 func recoveryEvidencePathsForObjective(objective string, results []workspace.ToolResult, max int) []string {
 	if max <= 0 {
 		max = 4
@@ -12013,10 +12039,15 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 	if strings.TrimSpace(result.Error) != "" {
 		return false
 	}
+	if candidateAnchorOnlyResult(result) {
+		return false
+	}
 	tool := strings.TrimSpace(result.Tool)
 	switch {
 	case tool == "read_file":
 		return readFileResultHasConcreteSourceBody(result)
+	case tool == "context_zoom":
+		return contextZoomResultHasConcreteSourceBody(result)
 	case tool == "code_navigate" || tool == "read_only_capability":
 		return routedSourceReadOutputHasBody(result.Output) && len(readPathsFromToolResult(result)) > 0
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):
@@ -12024,6 +12055,21 @@ func concreteSourceEvidenceResult(result workspace.ToolResult) bool {
 	default:
 		return false
 	}
+}
+
+func contextZoomResultHasConcreteSourceBody(result workspace.ToolResult) bool {
+	text := strings.Join([]string{result.Summary, result.Output}, "\n")
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	if len(pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(text))) == 0 {
+		return false
+	}
+	lower := strings.ToLower(text)
+	return routedSourceReadOutputHasBody(result.Output) ||
+		strings.Contains(lower, `"source"`) ||
+		strings.Contains(lower, "source body") ||
+		strings.Contains(lower, "include_source")
 }
 
 func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {

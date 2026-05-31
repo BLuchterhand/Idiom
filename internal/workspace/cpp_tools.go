@@ -147,6 +147,9 @@ func (m *Manager) cppReadSymbol(req ToolRequest) ToolResult {
 	}
 	match, err := m.selectCppSymbolMatch(req)
 	if err != nil {
+		if result, ok := m.cppReadSymbolPathMiss(req); ok {
+			return result
+		}
 		return ToolResult{Tool: "cpp_read_symbol", Summary: "C++ symbol read rejected", Error: err.Error()}
 	}
 	abs, err := m.resolvePath(match.Path, "")

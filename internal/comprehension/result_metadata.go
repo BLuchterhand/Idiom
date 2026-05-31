@@ -204,6 +204,7 @@ func graphViewInvalidationSemantics(key ViewKey, cacheState string) GraphViewInv
 			"forbidden_paths",
 			"intent",
 			"include_stale_runtime",
+			"algorithm_version",
 			"workspace_state_fingerprint",
 			"ranker_weights_fingerprint",
 			"runtime_traces_fingerprint",

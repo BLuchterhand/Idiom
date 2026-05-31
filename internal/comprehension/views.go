@@ -31,6 +31,7 @@ type ViewQueryInputs struct {
 	ForbiddenPaths      []string `json:"forbidden_paths,omitempty"`
 	Intent              string   `json:"intent,omitempty"`
 	IncludeStaleRuntime bool     `json:"include_stale_runtime,omitempty"`
+	AlgorithmVersion    string   `json:"algorithm_version,omitempty"`
 	// WorkspaceStateFingerprint is the composite cache key for
 	// workspace-side state that affects Pack output but is not part of
 	// the request inputs. Component fingerprints keep invalidation

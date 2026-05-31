@@ -3295,6 +3295,9 @@ func readPathsFromResults(results []workspace.ToolResult) map[string]struct{} {
 }
 
 func readPathsFromToolResult(r workspace.ToolResult) []string {
+	if candidateAnchorOnlyResult(r) {
+		return nil
+	}
 	tool := strings.TrimSpace(r.Tool)
 	if (tool == "code_navigate" || tool == "read_only_capability") && !routedSourceReadOutputHasBody(r.Output) {
 		return nil
@@ -3361,6 +3364,9 @@ func routedSourceReadOutputHasBody(output string) bool {
 	if output == "" {
 		return false
 	}
+	if candidateAnchorOnlyText(output) {
+		return false
+	}
 	if !strings.Contains(output, "route_summary:") {
 		return true
 	}
@@ -3380,6 +3386,16 @@ func routedSourceReadOutputHasBody(output string) bool {
 		return true
 	}
 	return false
+}
+
+func candidateAnchorOnlyResult(result workspace.ToolResult) bool {
+	return candidateAnchorOnlyText(strings.Join([]string{result.Summary, result.Output}, "\n"))
+}
+
+func candidateAnchorOnlyText(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "path-filter miss") &&
+		strings.Contains(lower, "candidate_anchor_status: anchors only")
 }
 
 func routedSourceReadOutputHeaderLine(line string) bool {

@@ -291,6 +291,16 @@ ask whether the issue is really one of these simpler contract gaps:
   sufficient
 - telemetry cannot show the failure shape clearly enough for the next audit
 
+Repeated tool intent is not automatically stubbornness or weak reasoning. Treat
+it as a signal that the model is trying to satisfy a missing information need.
+Before nudging the model away from the repeated request, ask whether the command
+returned the evidence shape it implied: exact anchors, source bodies, handles,
+candidate quality, confidence, or a clear blocker. If the model keeps asking for
+the same class of evidence, either the tool is not returning what it should, or
+the model-visible contract promised a capability the tool cannot satisfy. The
+north-star repair is to make the evidence path work or correct the advertised
+expectation, not to steer the model into a premature answer.
+
 Verification must match artifact risk. Patch-hygiene checks such as
 `git diff --check` can satisfy prose/config formatting checks, but they are not
 source-aware verification for code edits. Source edits require language

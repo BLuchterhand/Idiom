@@ -491,6 +491,9 @@ func bestPresentableExactProbeAnchor(results []workspace.ToolResult) (presentabl
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
 		}
+		if candidateAnchorOnlyResult(result) {
+			continue
+		}
 		switch strings.TrimSpace(result.Tool) {
 		case "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
 			path, symbol := extractExactProbeAnchor(result)
@@ -1091,6 +1094,7 @@ func isDeterministicFallbackAnswer(answer string) bool {
 func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	// Collect inspected paths for context.
 	var inspectedPaths []string
+	var anchors []string
 	for _, r := range results {
 		paths := readPathsFromToolResult(r)
 		for _, p := range paths {
@@ -1098,18 +1102,67 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 				inspectedPaths = append(inspectedPaths, p)
 			}
 		}
+		if anchor := conversationFallbackEvidenceAnchor(r); anchor != "" && !slices.Contains(anchors, anchor) {
+			anchors = append(anchors, anchor)
+		}
 	}
 
 	var b strings.Builder
-	b.WriteString("I inspected ")
+	b.WriteString("I did not change any files. The run ended before a full narrative answer, but it did collect grounded evidence.")
 	if len(inspectedPaths) == 0 {
-		b.WriteString("the relevant source files")
+		b.WriteString("\n\ninspected paths:\n- relevant source files")
 	} else {
-		b.WriteString(formatInlinePathList(inspectedPaths, 4))
+		b.WriteString("\n\ninspected paths:\n")
+		for _, path := range limitStrings(inspectedPaths, 6) {
+			b.WriteString("- `")
+			b.WriteString(path)
+			b.WriteString("`\n")
+		}
 	}
-	b.WriteString(" but the final synthesis did not produce a reliable user-facing answer from that evidence. ")
-	b.WriteString("I did not change any files. ")
-	b.WriteString("A narrower follow-up targeting one exact file, symbol, or claim will be easier to answer from the retained evidence.")
+	if len(anchors) > 0 {
+		b.WriteString("\nSource anchors:\n")
+		for _, anchor := range limitStrings(anchors, 6) {
+			b.WriteString("- ")
+			b.WriteString(anchor)
+			b.WriteString("\n")
+		}
+	}
 
 	return strings.TrimSpace(b.String())
+}
+
+func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {
+	if strings.TrimSpace(result.Error) != "" {
+		return ""
+	}
+	if routeSummary := routeSummaryFromToolOutput(result.Output); routeSummary != "" {
+		return routeSummary
+	}
+	summary := strings.TrimSpace(result.Summary)
+	if summary == "" || isHarnessRejectionSummary(summary) {
+		return ""
+	}
+	switch strings.TrimSpace(result.Tool) {
+	case "context_pack", "context_query", "context_zoom", "code_navigate", "read_file", "search_content", "search_files":
+		return summary
+	default:
+		return ""
+	}
+}
+
+func routeSummaryFromToolOutput(output string) string {
+	for _, line := range strings.Split(output, "\n") {
+		line = strings.TrimSpace(line)
+		if value, ok := strings.CutPrefix(line, "route_summary:"); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func limitStrings(values []string, limit int) []string {
+	if limit <= 0 || len(values) <= limit {
+		return values
+	}
+	return values[:limit]
 }

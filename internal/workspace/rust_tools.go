@@ -215,6 +215,9 @@ func (m *Manager) rustReadSymbol(req ToolRequest) ToolResult {
 	}
 	match, err := m.selectRustSymbolMatch(req)
 	if err != nil {
+		if result, ok := m.rustReadSymbolPathMiss(req); ok {
+			return result
+		}
 		return ToolResult{Tool: "rust_read_symbol", Summary: "Rust symbol read rejected", Error: err.Error()}
 	}
 	abs, err := m.resolvePath(match.Path, "")

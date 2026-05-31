@@ -3,11 +3,11 @@ package comprehension
 import (
 	"encoding/json"
 	"fmt"
+	"idiom/internal/util"
 	"os"
 	"path/filepath"
 	"slices"
 	"sort"
-	"idiom/internal/util"
 	"strings"
 	"time"
 )
@@ -17,6 +17,7 @@ const (
 	maxPackFileHandles     = 12
 	maxPackRelationships   = 32
 	relationshipsPerTarget = 4
+	packAlgorithmVersion   = "query-term-coverage-v1"
 )
 
 type PackOptions struct {
@@ -827,6 +828,7 @@ func viewKeyFromOptions(opts PackOptions, indexID, mode string, intent Intent, w
 			ForbiddenPaths:            opts.ForbiddenPaths,
 			Intent:                    string(intent),
 			IncludeStaleRuntime:       opts.IncludeStaleRuntime,
+			AlgorithmVersion:          packAlgorithmVersion,
 			WorkspaceStateFingerprint: workspaceStateFingerprints.WorkspaceStateFingerprint,
 			RankerWeightsFingerprint:  workspaceStateFingerprints.RankerWeightsFingerprint,
 			RuntimeTracesFingerprint:  workspaceStateFingerprints.RuntimeTracesFingerprint,

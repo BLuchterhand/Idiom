@@ -174,6 +174,9 @@ func (m *Manager) tsReadSymbol(req ToolRequest) ToolResult {
 	}
 	match, err := m.selectTsSymbolMatch(req)
 	if err != nil {
+		if result, ok := m.tsReadSymbolPathMiss(req); ok {
+			return result
+		}
 		return ToolResult{Tool: "ts_read_symbol", Summary: "TypeScript symbol read rejected", Error: err.Error()}
 	}
 	abs, err := m.resolvePath(match.Path, "")

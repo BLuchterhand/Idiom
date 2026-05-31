@@ -89,6 +89,9 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 		if looksLikeMetadataBlock(p) {
 			continue
 		}
+		if looksLikeUnfinishedReasoningPlan(p) {
+			continue
+		}
 		score := answerParagraphScore(p)
 		if score > bestScore {
 			bestScore = score
@@ -246,6 +249,9 @@ func looksLikeMetadataBlock(p string) bool {
 	if p == "" {
 		return true
 	}
+	if looksLikeStructuredInternalState(p) {
+		return true
+	}
 	if !strings.Contains(p, " ") && len(p) < 20 {
 		return true
 	}
@@ -259,6 +265,78 @@ func looksLikeMetadataBlock(p string) bool {
 		}
 	}
 	if alpha < 3 && len(p) > 2 {
+		return true
+	}
+	return false
+}
+
+func looksLikeUnfinishedReasoningPlan(p string) bool {
+	lower := strings.ToLower(strings.TrimSpace(p))
+	if lower == "" {
+		return true
+	}
+	taskFramingPrefixes := []string{
+		"the user wants me",
+		"the user asked me",
+		"user wants me",
+		"user asked me",
+	}
+	for _, prefix := range taskFramingPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return containsAny(lower,
+				" i need to ",
+				" i should ",
+				" i have to ",
+				" need to ",
+				" should ",
+				" find ",
+				" inspect ",
+				" check ",
+				" debug ",
+				" understand ",
+				" gather ",
+			)
+		}
+	}
+	if strings.Contains(lower, " i need to ") || strings.Contains(lower, " i should ") {
+		return !looksLikeGroundedAnswer(lower)
+	}
+	return false
+}
+
+func looksLikeGroundedAnswer(lower string) bool {
+	return strings.Contains(lower, "root cause") ||
+		strings.Contains(lower, "because") ||
+		strings.Contains(lower, "evidence") ||
+		strings.Contains(lower, ".go:") ||
+		strings.Contains(lower, ".py:") ||
+		strings.Contains(lower, ".ts:") ||
+		strings.Contains(lower, ".rs:") ||
+		strings.Contains(lower, ".java:") ||
+		strings.Contains(lower, ".cpp:") ||
+		strings.Contains(lower, ".h:")
+}
+
+func looksLikeStructuredInternalState(p string) bool {
+	trimmed := strings.TrimSpace(p)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	for _, prefix := range []string{"current_state:", "tool_manifest:", "allowed_tools:", "forbidden_tools:"} {
+		if strings.HasPrefix(lower, prefix) {
+			return true
+		}
+	}
+	first := trimmed[0]
+	if first != '{' && first != '[' {
+		return false
+	}
+	hasInternalStateMarker := strings.Contains(lower, `"current_state"`) ||
+		strings.Contains(lower, `"tool_manifest"`) ||
+		strings.Contains(lower, `"allowed_tools"`) ||
+		strings.Contains(lower, `"forbidden_tools"`)
+	if hasInternalStateMarker {
 		return true
 	}
 	return false

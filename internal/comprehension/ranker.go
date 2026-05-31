@@ -1,8 +1,8 @@
 package comprehension
 
 import (
-	"path"
 	"idiom/internal/util"
+	"path"
 	"regexp"
 	"sort"
 	"strings"
@@ -35,6 +35,7 @@ type RankerWeights struct {
 	RequiredEditPath  float64 // additive bonus for caller-declared edit paths
 	MatchBoost        float64 // additive bonus for files that matched task terms; keeps matches above their pure neighbors
 	PathMatch         float64
+	SpecificTermMatch float64
 	Hop1Boost         float64
 	Hop2Boost         float64
 	HubDemotion       float64 // multiplier applied to detected hub files (<1.0)
@@ -58,6 +59,7 @@ func DefaultRankerWeights() RankerWeights {
 		RequiredEditPath:  4.0,
 		MatchBoost:        1.2,
 		PathMatch:         0.8,
+		SpecificTermMatch: 0.8,
 		Hop1Boost:         0.4,
 		Hop2Boost:         0.15,
 		HubDemotion:       0.6,
@@ -338,6 +340,50 @@ func hop2Neighbor(file string, fg FileGraph, matchedFiles map[string]struct{}) b
 	return false
 }
 
+// SpecificQueryTermScores rewards files that satisfy comparatively rare query
+// terms. Broad terms still count, but their contribution is diluted by the
+// number of files they match, so generic words cannot drown out concrete
+// implementation vocabulary from the same request.
+func SpecificQueryTermScores(files []PackFile, tokens []string) map[string]float64 {
+	out := make(map[string]float64)
+	if len(files) == 0 || len(tokens) == 0 {
+		return out
+	}
+	for _, token := range tokens {
+		term := strings.TrimSpace(strings.ToLower(token))
+		if len(term) < 3 || term == "." {
+			continue
+		}
+		matchedFiles := make(map[string]struct{})
+		for _, file := range files {
+			if file.Path == "" {
+				continue
+			}
+			if strings.Contains(packFileQueryText(file), term) {
+				matchedFiles[file.Path] = struct{}{}
+			}
+		}
+		if len(matchedFiles) == 0 {
+			continue
+		}
+		contribution := 1 / float64(len(matchedFiles))
+		for file := range matchedFiles {
+			out[file] += contribution
+		}
+	}
+	return out
+}
+
+func packFileQueryText(file PackFile) string {
+	var b strings.Builder
+	b.WriteString(strings.ToLower(file.Path))
+	for _, handle := range file.Handles {
+		b.WriteByte(' ')
+		b.WriteString(strings.ToLower(handle))
+	}
+	return b.String()
+}
+
 // RankInputs aggregates everything the ranker needs to score a candidate
 // file. The caller is responsible for tokenising the query and resolving
 // matched node IDs to file paths.
@@ -359,6 +405,7 @@ func RankPackFiles(in RankInputs) []PackFile {
 	weights := WeightsForIntent(in.Intent)
 	fg := BuildFileGraph(in.Graph)
 	matchedFiles := MatchedFilePaths(in.Graph, in.MatchedIDs)
+	specificTerms := SpecificQueryTermScores(in.Files, in.QueryTokens)
 	fanoutHubs := FanoutHubs(fg, weights.HubFanoutFraction)
 
 	scored := make([]PackFile, len(in.Files))
@@ -386,6 +433,15 @@ func RankPackFiles(in RankInputs) []PackFile {
 		if pathMatchTokens(file.Path, in.QueryTokens) {
 			bonus += weights.PathMatch
 			reasons = append(reasons, RankerReason{Reason: "path_token_match", State: "matched", ScoreDelta: roundScore(weights.PathMatch)})
+		}
+		if specificity := specificTerms[file.Path]; specificity > 0 {
+			delta := specificity * weights.SpecificTermMatch
+			maxDelta := weights.SpecificTermMatch * 3
+			if delta > maxDelta {
+				delta = maxDelta
+			}
+			bonus += delta
+			reasons = append(reasons, RankerReason{Reason: "specific_query_terms", State: "matched", ScoreDelta: roundScore(delta)})
 		}
 		hopBoost := HopBoost(file.Path, fg, matchedFiles, weights)
 		if hopBoost > 0 {

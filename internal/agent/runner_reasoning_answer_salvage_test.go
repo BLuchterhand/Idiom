@@ -128,6 +128,39 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 			mutation:  true,
 			wantOk:    false,
 		},
+		{
+			name:      "internal current state json skipped",
+			content:   "",
+			reasoning: `{"current_state":{"lane":"main","task_family":"conversation","contract":"direct_answer","allowed_tools":["context_pack","code_navigate"],"tool_manifest":[{"tool":"read_file"}]},"next_action_state":{"phase":"evidence","evidence_paths":["internal/app/model_state.go"]}}`,
+			mutation:  false,
+			wantOk:    false,
+		},
+		{
+			name:    "adjacent internal json blocks skipped",
+			content: "",
+			reasoning: `{"current_state":{"lane":"main","task_family":"conversation"}}
+{"tool_manifest":[{"tool":"read_file"}],"allowed_tools":["context_pack"]}`,
+			mutation: false,
+			wantOk:   false,
+		},
+		{
+			name:      "labeled internal state block skipped",
+			content:   "",
+			reasoning: `current_state: {"lane":"main","task_family":"conversation","allowed_tools":["context_pack"]}`,
+			mutation:  false,
+			wantOk:    false,
+		},
+		{
+			name:    "unfinished task-framing monologue skipped",
+			content: "",
+			reasoning: strings.Join([]string{
+				"The user wants me to debug the TUI resize issue and provide structured evidence.",
+				"",
+				"I need to find the Update method and inspect how resize messages are handled before answering. I should call code_navigate on Model.Update and then compare it with the render path so I can identify the root cause accurately.",
+			}, "\n"),
+			mutation: false,
+			wantOk:   false,
+		},
 	}
 
 	for _, tt := range tests {

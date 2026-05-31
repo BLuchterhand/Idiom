@@ -4579,6 +4579,187 @@ func TestConversationPreflightRejectsRepeatedBroadDiscoveryWithoutForcingAnswer(
 	}
 }
 
+func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterContextPack(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_pack", Query: "debug scroll regression"},
+		workspace.ToolResult{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view with 2 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/app/model.go"},{"path":"internal/app/view.go"}]}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}, brief) {
+		t.Fatal("expected broad search to be rejected until a discovery candidate is consumed")
+	}
+	errorText := state.discoveryConsumptionError()
+	for _, want := range []string{"source-body evidence", "internal/app/model.go", "answer from the evidence", "exact blocker"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("discovery consumption error missing %q:\n%s", want, errorText)
+		}
+	}
+	if strings.Contains(strings.ToLower(errorText), "resize") || strings.Contains(strings.ToLower(errorText), "tui") {
+		t.Fatalf("generic discovery guard must not hardcode the live incident shape:\n%s", errorText)
+	}
+
+	targeted := workspace.ToolRequest{
+		Tool:            "context_query",
+		Query:           "callers of app model viewport update",
+		Resolution:      "symbol",
+		NamedGap:        "which caller mutates viewport height after terminal resize",
+		WhyNotAnswering: "need a caller relationship before choosing a source read",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(targeted, brief) {
+		t.Fatalf("targeted graph query with a concrete named gap should remain available")
+	}
+	zoom := workspace.ToolRequest{
+		Tool:          "context_zoom",
+		Handle:        "symbol://internal/app/model.go#Update",
+		Resolution:    "symbol",
+		IncludeSource: true,
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(zoom, brief) {
+		t.Fatalf("targeted context_zoom on a concrete handle should consume discovery, not be rejected as broad discovery")
+	}
+
+	state.applyResult(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/model.go", StartLine: 1, EndLine: 80},
+		workspace.ToolResult{Tool: "read_file", Summary: "Read internal/app/model.go lines 1-80", Output: "package app\n"},
+		"",
+		nil,
+		nil,
+	)
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}, brief) {
+		t.Fatal("successful source-body read should clear pending discovery consumption")
+	}
+}
+
+func TestContextZoomSourceBodyClearsPendingDiscoveryConsumption(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_pack", Query: "debug source evidence"},
+		workspace.ToolResult{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view with 1 candidate file(s)",
+			Output:  `{"candidate_files":[{"path":"internal/app/model.go","handles":["symbol://internal/app/model.go#Update"]}]}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_zoom", Handle: "symbol://internal/app/model.go#Update", Resolution: "symbol", IncludeSource: true},
+		workspace.ToolResult{
+			Tool:    "context_zoom",
+			Summary: "Context zoom returned source body for internal/app/model.go#Update",
+			Output:  `{"path":"internal/app/model.go","source":"func Update() {}"}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}, brief) {
+		t.Fatal("context_zoom with source body should clear pending discovery consumption")
+	}
+}
+
+func TestCandidateAnchorMissDoesNotCountAsSourceBodyEvidence(t *testing.T) {
+	direct := workspace.ToolResult{
+		Tool:    "go_read_symbol",
+		Summary: `Go symbol read path-filter miss; found 1 candidate anchor(s) for "Model.Update"`,
+		Output: strings.Join([]string{
+			"requested_symbol: Model.Update",
+			"requested_path: internal/app/model_state.go",
+			"path_filter_status: no source-body match in requested path",
+			"candidate_anchor_status: anchors only; read one candidate path to inspect source body",
+			"candidate_anchors:",
+			"- internal/app/lifecycle.go:409 method Model.Update",
+			"candidate_requests:",
+			`- {"tool":"code_navigate","capability":"read_symbol","path":"internal/app/lifecycle.go","pattern":"Model.Update"}`,
+		}, "\n"),
+	}
+	routed := workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			`route_summary: Go symbol read path-filter miss; found 1 candidate anchor(s) for "Model.Update"`,
+			"",
+			direct.Output,
+		}, "\n"),
+	}
+
+	for _, result := range []workspace.ToolResult{direct, routed} {
+		if concreteSourceEvidenceResult(result) {
+			t.Fatalf("%s candidate-anchor miss counted as concrete source evidence", result.Tool)
+		}
+		if paths := readPathsFromToolResult(result); len(paths) != 0 {
+			t.Fatalf("%s candidate-anchor miss returned read paths: %#v", result.Tool, paths)
+		}
+	}
+	if got := readOnlyAnalysisExactProbeCount([]workspace.ToolResult{direct, routed}); got != 0 {
+		t.Fatalf("candidate-anchor miss counted as exact probe: %d", got)
+	}
+}
+
+func TestSearchConsumptionSurvivesFailedGuessedRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "search_files", Pattern: "view"},
+		workspace.ToolResult{
+			Tool:    "search_files",
+			Summary: "Found 2 matching file(s).",
+			Output:  "internal/app/model.go\ninternal/app/view.go",
+		},
+		"",
+		nil,
+		nil,
+	)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/tui.go", StartLine: 1, EndLine: 80},
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Failed to resolve file target",
+			Error:   "file not found: internal/app/tui.go",
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	req := workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}
+	if !state.shouldConsumeSearchHitBeforeMoreSearch(req) {
+		t.Fatal("failed guessed read must not clear pending search-hit consumption")
+	}
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
+		t.Fatal("failed guessed read must not clear pending discovery consumption")
+	}
+	if got := state.discoveryConsumptionError(); !strings.Contains(got, "internal/app/model.go") {
+		t.Fatalf("expected recovery to preserve returned candidates, got:\n%s", got)
+	}
+}
+
 func TestConversationFollowupDoesNotCollapseAfterRecoveryBroadSearch(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "notes.md"), []byte("bounded scope approval works by approving a candidate read set and requiring explicit approval when a later read falls outside that set.\n"), 0o644); err != nil {

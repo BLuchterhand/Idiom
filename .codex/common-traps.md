@@ -147,6 +147,14 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Tool results that prescribe strategy**: evidence tools should report facts,
   paths, symbols, counts, uncertainty, and provenance. Strategy guidance belongs
   in the runtime contract or a deterministic rejection message.
+- **Looping as disobedience instead of unmet need**: when the model repeatedly
+  asks for the same kind of evidence, assume the request is meaningful until
+  logs prove otherwise. First check whether the tool result failed to return the
+  shape, anchors, source body, handles, or confidence the model reasonably
+  expected, or whether the prompt/tool schema promised an affordance the command
+  does not actually satisfy. Fix the command, packet, schema, or expectation
+  before adding another nudge that pushes the model away from what it is trying
+  to inspect.
 
 ## Audit, Logs, And Feedback Traps
 

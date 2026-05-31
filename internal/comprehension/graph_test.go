@@ -3,6 +3,7 @@ package comprehension
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1060,6 +1061,48 @@ func Noisy() string {
 	}
 	if !slicesContainsRankerReason(pack.CandidateFiles[0].RankerReasons, "required_edit_path") {
 		t.Fatalf("expected required_edit_path ranker reason, got %#v", pack.CandidateFiles[0].RankerReasons)
+	}
+}
+
+func TestPackIncludesSpecificTermMatchesWhenGenericTermsAreNoisy(t *testing.T) {
+	root := t.TempDir()
+	writeFile(t, filepath.Join(root, "go.mod"), "module example.com/specificterms\n\ngo 1.22\n")
+	for i := 0; i < 14; i++ {
+		writeFile(t, filepath.Join(root, "internal", "agent", fmt.Sprintf("conversation_answer_%02d.go", i)), fmt.Sprintf(`package agent
+
+func ConversationAnswerDebug%02d() string {
+	return "conversation answer debug"
+}
+`, i))
+	}
+	writeFile(t, filepath.Join(root, "internal", "app", "rendering.go"), `package app
+
+type Model struct{}
+
+func (m Model) Resize() {}
+
+func (m Model) UpdateViewport() {}
+
+func ScrollableViewportKey() string {
+	return "viewport"
+}
+`)
+
+	if _, err := Build(context.Background(), BuildOptions{Root: root, Language: "go"}); err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	pack, err := Pack(PackOptions{
+		Root:  root,
+		Task:  "you are a research assistant for another agentic process; please provide structured evidence in the form of files, line numbers, and relevant symbols. We are trying to debug an issue where resizing the TUI mid-answer caused the conversation to become non-scrollable. Please debug and present your findings.",
+		Mode:  "plan",
+		Limit: 3,
+		Now:   testTime(),
+	})
+	if err != nil {
+		t.Fatalf("Pack: %v", err)
+	}
+	if !hasPackFile(pack.CandidateFiles, "internal/app/rendering.go", "editable") {
+		t.Fatalf("expected specific resize/viewport candidate despite noisy answer/conversation matches, got %#v", pack.CandidateFiles)
 	}
 }
 

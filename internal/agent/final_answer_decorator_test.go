@@ -454,11 +454,18 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	}
 	results := []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read file: internal/architect/packet.go", Output: "type Evidence struct {..."},
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "capability: read_symbol\nroute_summary: Read Model.resize in internal/app/model_state.go lines 774-820\n774:func (m *Model) resize() {"},
 		{Tool: "context_query", Summary: "Context query returned 12 nodes"},
 	}
 	got := synthesizeBriefConversationFallback(brief, results)
 	if !strings.Contains(got, "inspected") {
 		t.Errorf("fallback should mention inspected paths: %q", got)
+	}
+	if !strings.Contains(got, "Read Model.resize in internal/app/model_state.go lines 774-820") {
+		t.Errorf("fallback should retain source anchors without dumping source body: %q", got)
+	}
+	if strings.Contains(got, "func (m *Model) resize") {
+		t.Errorf("fallback should not dump source body: %q", got)
 	}
 	if strings.Contains(got, "No files were changed") {
 		t.Errorf("fallback should not contain source-body extraction garbage: %q", got)
@@ -466,7 +473,7 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "budget") {
 		t.Errorf("fallback must not claim budget exhaustion without a budget-exhausted stop reason: %q", got)
 	}
-	if !strings.Contains(got, "final synthesis") {
+	if !strings.Contains(got, "full narrative answer") {
 		t.Errorf("fallback should identify the actual failure class: %q", got)
 	}
 }

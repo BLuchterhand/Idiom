@@ -1047,6 +1047,40 @@ func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterSymb
 	assertContains(t, contract.AllowedTools, "code_navigate")
 }
 
+func TestDeriveTurnPhaseContractUnscopedImplementationStaysTargetSourceAfterCandidateAnchorMiss(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "edit_file", "apply_patch"},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"language: go",
+				"routed_tool: go_read_symbol",
+				`route_summary: Go symbol read path-filter miss; found 1 candidate anchor(s) for "Model.Update"`,
+				"",
+				"requested_symbol: Model.Update",
+				"requested_path: internal/app/model_state.go",
+				"path_filter_status: no source-body match in requested path",
+				"candidate_anchor_status: anchors only; read one candidate path to inspect source body",
+				"candidate_anchors:",
+				"- internal/app/lifecycle.go:409 method Model.Update",
+			}, "\n"),
+		}},
+	})
+
+	if contract.PhaseID != turnPhaseImplementationTargetSource {
+		t.Fatalf("PhaseID = %q, want target_source after candidate-anchor miss; contract=%#v", contract.PhaseID, contract)
+	}
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "code_navigate")
+}
+
 func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

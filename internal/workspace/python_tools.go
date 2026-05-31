@@ -164,6 +164,9 @@ func (m *Manager) pythonReadSymbol(req ToolRequest) ToolResult {
 	}
 	match, err := m.selectPythonSymbolMatch(req)
 	if err != nil {
+		if result, ok := m.pythonReadSymbolPathMiss(req); ok {
+			return result
+		}
 		return ToolResult{Tool: "python_read_symbol", Summary: "Python symbol read rejected", Error: err.Error()}
 	}
 	abs, err := m.resolvePath(match.Path, "")
