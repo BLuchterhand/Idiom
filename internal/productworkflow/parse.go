@@ -333,7 +333,7 @@ func ParseADRMarkdown(data []byte) (ADRDocument, error) {
 		HasRollback:                  strings.Contains(body, "## Rollback"),
 		HasOpenQuestions:             strings.Contains(body, "## Open Questions"),
 	}
-	doc := ADRDocument{FrontMatter: fm, Sections: sections}
+	doc := ADRDocument{FrontMatter: fm, Sections: sections, BodyMarkdown: strings.TrimSpace(body)}
 	if err := validateADR(doc); err != nil {
 		return ADRDocument{}, err
 	}

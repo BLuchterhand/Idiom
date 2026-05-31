@@ -522,6 +522,68 @@ func TestRenderADRMarkdownValidFrontMatter(t *testing.T) {
 	}
 }
 
+func TestWriteADRMarkdownPreservesParsedBodyContent(t *testing.T) {
+	root := t.TempDir()
+	raw := `---
+schema_version: idiom.adr.v1
+adr_id: ADR-001
+status: draft
+prd_refs:
+  - REQ-001
+evidence_refs:
+  - inference
+tdd_obligations:
+  - TDD-ADR-001
+coverage_tier: unit
+---
+
+## Context
+The development workflow currently lacks mandatory history evidence.
+
+## Decision
+Require git history lookup evidence before modifying any identified file.
+
+## Alternatives Considered
+Prompt-only guidance was rejected because it is not auditable.
+
+## Evidence
+REQ-001 requires mandatory lookup before implementation.
+
+## Consequences
+Write gates can block missing history evidence.
+
+## Compatibility and Migration
+Existing lanes can adopt the same evidence contract incrementally.
+
+## TDD Obligations
+Add a regression for history evidence before write dispatch.
+
+## Rollback
+Disable the gate and retain advisory prompt guidance.
+
+## Open Questions
+- Which low-risk generated files are exempt?
+`
+	doc, err := ParseADRMarkdown([]byte(raw))
+	if err != nil {
+		t.Fatalf("ParseADRMarkdown: %v", err)
+	}
+	if err := WriteADRMarkdown(root, "ADR-001.md", doc); err != nil {
+		t.Fatalf("WriteADRMarkdown: %v", err)
+	}
+	written, err := os.ReadFile(filepath.Join(root, "adrs", "ADR-001.md"))
+	if err != nil {
+		t.Fatalf("read written ADR: %v", err)
+	}
+	text := string(written)
+	if !strContains(text, "Require git history lookup evidence before modifying any identified file.") {
+		t.Fatalf("expected decision body to be preserved, got:\n%s", text)
+	}
+	if strContains(text, "## Decision\n\n\n\n") {
+		t.Fatalf("ADR body was replaced with empty template:\n%s", text)
+	}
+}
+
 func strContains(s, substr string) bool {
 	for i := 0; i <= len(s)-len(substr); i++ {
 		if s[i:i+len(substr)] == substr {

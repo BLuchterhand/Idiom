@@ -474,10 +474,9 @@ func RenderPRDMarkdown(doc PRDDocument) string {
 }
 
 // RenderADRMarkdown produces a valid ADR markdown document with all required
-// sections. It emits every section header unconditionally — this is a template
-// generator, not a serializer. Section content from doc.Sections is not
-// consulted; callers that need content-preserving round-trips should use a
-// different path.
+// sections. Parsed ADRs preserve BodyMarkdown so workflow round-trips keep the
+// model's substantive decision text while still allowing metadata-only tests and
+// template creation to fall back to the canonical empty section scaffold.
 func RenderADRMarkdown(doc ADRDocument) string {
 	var b strings.Builder
 	b.WriteString("---\n")
@@ -522,6 +521,14 @@ func RenderADRMarkdown(doc ADRDocument) string {
 		b.WriteString("acceptance_profile: " + fm.AcceptanceProfile + "\n")
 	}
 	b.WriteString("---\n\n")
+
+	if body := strings.TrimSpace(doc.BodyMarkdown); body != "" {
+		b.WriteString(body)
+		if !strings.HasSuffix(body, "\n") {
+			b.WriteByte('\n')
+		}
+		return b.String()
+	}
 
 	b.WriteString("## Context\n\n\n\n")
 	b.WriteString("## Decision\n\n\n\n")

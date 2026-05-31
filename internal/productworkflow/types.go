@@ -252,11 +252,6 @@ type ReportPaths struct {
 	Investigation  string `json:"investigation,omitempty"`
 }
 
-
-
-
-
-
 type PRDDocument struct {
 	FrontMatter  PRDFrontMatter
 	Requirements []PRDRequirement
@@ -454,26 +449,6 @@ type TDDObligationPlanFinding struct {
 	Severity string `json:"severity"`
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 type ADREvidenceCardSummary struct {
 	CardID      string `json:"card_id"`
 	Kind        string `json:"kind"`
@@ -494,8 +469,9 @@ type ADRPRDRequirementSummary struct {
 }
 
 type ADRDocument struct {
-	FrontMatter ADRFrontMatter
-	Sections    ADRSections
+	FrontMatter  ADRFrontMatter
+	Sections     ADRSections
+	BodyMarkdown string
 }
 
 type ADRSections struct {
@@ -524,4 +500,3 @@ type ADRFrontMatter struct {
 	Supersedes        []string
 	SupersededBy      []string
 }
-
