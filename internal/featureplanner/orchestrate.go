@@ -2,6 +2,7 @@ package featureplanner
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -164,6 +165,14 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		}
 		if len(brief.FilesToModify) > 0 {
 			fmt.Fprintf(&b, "Files to modify: %s\n", strings.Join(brief.FilesToModify, ", "))
+		} else {
+			b.WriteString("Files to modify: none supplied by product workflow localization.\n")
+		}
+		if len(brief.ContextEvidencePaths) > 0 {
+			fmt.Fprintf(&b, "Source/context evidence paths: %s\n", strings.Join(brief.ContextEvidencePaths, ", "))
+		}
+		if len(brief.AuthorizedNewPackageRoots) > 0 {
+			fmt.Fprintf(&b, "Authorized new package roots: %s\n", strings.Join(brief.AuthorizedNewPackageRoots, ", "))
 		}
 		if len(brief.Tests) > 0 {
 			fmt.Fprintf(&b, "Tests: %s\n", strings.Join(brief.Tests, ", "))
@@ -178,13 +187,20 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			fmt.Fprintf(&b, "Coverage blockers: %s\n", strings.Join(brief.CoverageBlockers, "; "))
 		}
 
-		if brief.CoverageGatePassed {
+		if brief.CoverageGatePassed && len(brief.Blockers) == 0 && len(brief.CoverageBlockers) == 0 {
 			b.WriteString("\nRequired submit_feature_plan shape:\n")
-			fmt.Fprintf(&b, "{\"tool\":\"submit_feature_plan\",\"schema_version\":\"idiom.feature_plan.v2\",\"feature_id\":\"feature-id\",\"source_task\":{\"kind\":\"operator_prompt\",\"summary\":\"...\"},\"summary\":\"...\",\"top_level_scope\":{\"objective\":\"...\",\"success_criteria\":[\"...\"]},\"sdd_contract\":{\"prd_requirement_refs\":[\"REQ-001\"],\"adr_refs\":[\"ADR-001\"],\"acceptance\":[\"...\"]},\"tdd_contract\":{\"coverage_tier\":\"%s\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-1\",\"behavior\":\"...\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}],\"coverage_gate_event_id\":\"evt-cov-1\"},\"atoms\":[{\"schema_version\":\"idiom.feature_atom.v1\",\"id\":\"atom-1\",\"title\":\"...\",\"summary\":\"...\",\"required_edit_paths\":[\"internal/example/source.go\"],\"allowed_edit_paths\":[\"internal/example/source.go\",\"internal/example/source_test.go\"],\"sdd_refs\":[\"REQ-001\"],\"tdd_obligations\":[\"TDD-1\"],\"required_tests\":[\"go test ./...\"],\"test_first\":{\"obligation_refs\":[\"TDD-1\"],\"commands\":[\"go test ./...\"],\"baseline_required\":true,\"test_artifact_paths\":[\"path_test.go\"],\"pre_execution_event_ids\":[\"evt-tdd-1\"],\"expected_pre_execution_result\":\"red-confirmed\",\"coverage_gate_event_id\":\"evt-tdd-1\"},\"planned_tdd_snapshot\":{\"snapshot_id\":\"snap-tdd-1\",\"snapshot_digest\":\"sha256:...\",\"obligation_ids\":[\"TDD-1\"],\"test_commands\":[\"go test ./...\"],\"test_artifact_paths\":[\"path_test.go\"],\"expected_pre_execution_results\":[\"red-confirmed\"],\"created_before_dispatch_event_id\":\"evt-tdd-1\"},\"prompt\":\"...\"}]}\n", brief.CoverageTier)
+			fmt.Fprintf(&b, "{\"tool\":\"submit_feature_plan\",\"schema_version\":\"idiom.feature_plan.v2\",\"feature_id\":\"feature-id\",\"source_task\":{\"kind\":\"operator_prompt\",\"summary\":\"...\"},\"summary\":\"...\",\"top_level_scope\":{\"objective\":\"...\",\"success_criteria\":[\"...\"]},\"sdd_contract\":{\"prd_requirement_refs\":[\"REQ-001\"],\"adr_refs\":[\"ADR-001\"],\"acceptance\":[\"...\"]},\"tdd_contract\":{\"coverage_tier\":\"%s\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-1\",\"behavior\":\"...\",\"command\":\"go test ./...\",\"required_before\":\"implementation\"}],\"coverage_gate_event_id\":\"evt-cov-1\"},\"atoms\":[{\"schema_version\":\"idiom.feature_atom.v1\",\"id\":\"atom-1\",\"title\":\"...\",\"summary\":\"...\",\"required_edit_paths\":[\"use-only-product-grounded-paths\"],\"allowed_edit_paths\":[\"use-only-product-grounded-paths-or-sibling-tests\"],\"sdd_refs\":[\"REQ-001\"],\"tdd_obligations\":[\"TDD-1\"],\"required_tests\":[\"go test ./...\"],\"test_first\":{\"obligation_refs\":[\"TDD-1\"],\"commands\":[\"go test ./...\"],\"baseline_required\":true,\"test_artifact_paths\":[\"path_test.go\"],\"pre_execution_event_ids\":[\"evt-tdd-1\"],\"expected_pre_execution_result\":\"red-confirmed\",\"coverage_gate_event_id\":\"evt-tdd-1\"},\"planned_tdd_snapshot\":{\"snapshot_id\":\"snap-tdd-1\",\"snapshot_digest\":\"sha256:...\",\"obligation_ids\":[\"TDD-1\"],\"test_commands\":[\"go test ./...\"],\"test_artifact_paths\":[\"path_test.go\"],\"expected_pre_execution_results\":[\"red-confirmed\"],\"created_before_dispatch_event_id\":\"evt-tdd-1\"},\"prompt\":\"...\"}]}\n", brief.CoverageTier)
 			b.WriteString("Your FeaturePlan SDD refs MUST reference only PRD requirement IDs and ADR IDs from the context above.\n")
 			b.WriteString("Your TDD obligations MUST reference only the obligation IDs listed above.\n")
-		} else {
+			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, source/context evidence paths, sibling files inside those existing package roots, or authorized new package roots.\n")
+			b.WriteString("The schema example path placeholders are not authority. Do not copy or invent paths from examples.\n")
+			if len(brief.FilesToModify) == 0 && len(brief.ContextEvidencePaths) == 0 && len(brief.AuthorizedNewPackageRoots) == 0 {
+				b.WriteString("No Files to modify, source/context evidence paths, or authorized new package roots are present. Use ask_planner_question for localization repair instead of concrete required_edit_paths or allowed_edit_paths.\n")
+			}
+		} else if !brief.CoverageGatePassed {
 			b.WriteString("\nThe coverage gate has NOT passed. Do not produce a feature plan; instead, use ask_planner_question to report the blocked gate.\n")
+		} else {
+			b.WriteString("\nThe product workflow has unresolved blockers. Do not produce a feature plan; instead, use ask_planner_question to report the blockers.\n")
 		}
 	} else {
 		b.WriteString("\nRequired submit_feature_plan shape:\n")
@@ -244,7 +260,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 				AtomDeltas:  []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateBlockedMissingTDD}},
 				Fields:      map[string]any{"missing": missing},
 			})
-			continue
+			break
 		}
 		dispatched++
 		atom.Attempt++
@@ -304,12 +320,35 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 				}},
 				Message: err.Error(),
 			})
-			continue
+			break
 		}
+		beforeStatus := state.Status
+		beforeAtomState := atom.State
 		events = append(events, ApplyImplementorOutput(state, atom, answer)...)
+		if featurePlannerDispatchShouldStopAfterAtom(beforeStatus, beforeAtomState, state.Status, atom.State) {
+			break
+		}
 	}
 	refreshContinuation(state)
 	return events
+}
+
+func featurePlannerDispatchShouldStopAfterAtom(beforeStatus string, beforeAtomState string, afterStatus string, afterAtomState string) bool {
+	if beforeStatus != afterStatus {
+		switch strings.TrimSpace(afterStatus) {
+		case FeatureStatePlanningQuestion, FeatureStatePlanningRepair, FeatureStateRecoveryOpen, FeatureStateBlocked, FeatureStateFailed:
+			return true
+		}
+	}
+	if beforeAtomState == afterAtomState {
+		return false
+	}
+	switch strings.TrimSpace(afterAtomState) {
+	case AtomStateQuestionForPlanner, AtomStateQuestionForOperator, AtomStateRecoveryOpen, AtomStateBlocked, AtomStateFailed, AtomStateBlockedMissingTDD:
+		return true
+	default:
+		return false
+	}
 }
 
 func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
@@ -384,14 +423,23 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			QuestionSummary string `json:"question_summary"`
 			BlockingClaim   string `json:"blocking_claim"`
 		}
-		_ = json.Unmarshal([]byte(trimmed), &envelope)
-		if strings.TrimSpace(envelope.Tool) == ToolPlanExecuteComplete {
+		if err := json.Unmarshal([]byte(trimmed), &envelope); err != nil {
+			return rejectUnverifiedCompletion(state, atom, "implementor returned malformed JSON completion envelope: "+err.Error())
+		}
+		tool := strings.TrimSpace(envelope.Tool)
+		if tool == ToolPlanExecuteComplete {
+			if err := validatePlanExecuteCompletionEnvelope(envelope.Summary, envelope.ProgressPath); err != nil {
+				return rejectUnverifiedCompletion(state, atom, err.Error())
+			}
 			return completeAtomFromPlanExecute(state, atom, envelope.Summary, envelope.LaneFamily, envelope.ProgressPath)
 		}
-		questionShaped := strings.TrimSpace(envelope.Tool) == ToolQuestionForPlanner ||
-			(strings.TrimSpace(envelope.Tool) == "" &&
-				strings.TrimSpace(envelope.QuestionSummary) != "" &&
-				strings.TrimSpace(envelope.BlockingClaim) != "")
+		if tool != "" && tool != ToolQuestionForPlanner {
+			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned unsupported completion tool %q; expected %q with progress_path or %q for blockers", tool, ToolPlanExecuteComplete, ToolQuestionForPlanner))
+		}
+		if tool == "" {
+			return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned JSON without a supported tool; expected %q with progress_path or %q for blockers", ToolPlanExecuteComplete, ToolQuestionForPlanner))
+		}
+		questionShaped := tool == ToolQuestionForPlanner
 		var question PlannerQuestion
 		if questionShaped {
 			err := json.Unmarshal([]byte(trimmed), &question)
@@ -496,6 +544,28 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 			AfterState:    AtomStateComplete,
 		}},
 	}}
+}
+
+func validatePlanExecuteCompletionEnvelope(summary string, progressPath string) error {
+	summary = strings.TrimSpace(summary)
+	progressPath = strings.TrimSpace(progressPath)
+	if progressPath == "" {
+		return errors.New("plan-execute completion missing progress_path; child terminal status is not auditable")
+	}
+	lower := strings.ToLower(summary)
+	cleanedFailureSummary := strings.ToLower(summary)
+	for _, marker := range []string{", 0 failed", ": 0 failed", "\n0 failed", " 0 failed"} {
+		cleanedFailureSummary = strings.ReplaceAll(cleanedFailureSummary, marker, "")
+	}
+	if summary == "" ||
+		strings.Contains(lower, "recovery_open") ||
+		strings.Contains(lower, "recovery-open") ||
+		strings.Contains(cleanedFailureSummary, "failed") ||
+		strings.Contains(lower, "blocked") ||
+		strings.Contains(lower, "<<question>>") {
+		return errors.New("plan-execute completion summary is not a clean terminal completion")
+	}
+	return nil
 }
 
 func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState, question PlannerQuestion) []Event {

@@ -69,6 +69,12 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		}
 		out.RequiredBehavior = append(out.RequiredBehavior, fmt.Sprintf("%s: %s", reqID, strings.TrimSpace(req.Statement)))
 	}
+	for _, finding := range ImplementationAffectingClaimFindings(input.PRD, input.ADRs) {
+		out.Blockers = append(out.Blockers, finding.Message)
+	}
+	for _, finding := range ImplementationAffectingClaimEvidenceFindings(input.PRD, input.ADRs, TraceabilityEvidenceIDs(input.Traceability)) {
+		out.Blockers = append(out.Blockers, finding.Message)
+	}
 	if len(out.RequiredBehavior) == 0 {
 		out.Blockers = append(out.Blockers, "prd.md has no requirements to dispatch")
 	}
@@ -227,6 +233,215 @@ func briefLooksLikeCommand(line string) bool {
 		}
 	}
 	return false
+}
+
+func ImplementationAffectingClaimFindings(prd PRDDocument, adrs []ParsedADR) []ProfileFinding {
+	var findings []ProfileFinding
+	for _, req := range prd.Requirements {
+		if !implementationAffectingClaim(req.Statement) {
+			continue
+		}
+		id := strings.TrimSpace(req.ID)
+		if id == "" {
+			id = "unknown requirement"
+		}
+		if len(req.OpenQuestions) > 0 {
+			findings = append(findings, ProfileFinding{
+				Kind:     "ungrounded_implementation_claim",
+				File:     "prd.md",
+				Severity: "error",
+				Message:  fmt.Sprintf("implementation-affecting claim in PRD requirement %s is classified as open_question/advisory and cannot authorize dispatch", id),
+			})
+			continue
+		}
+		if len(req.EvidenceRefs) == 0 {
+			findings = append(findings, ProfileFinding{
+				Kind:     "ungrounded_implementation_claim",
+				File:     "prd.md",
+				Severity: "error",
+				Message:  fmt.Sprintf("implementation-affecting claim in PRD requirement %s lacks evidence_refs and cannot authorize dispatch", id),
+			})
+		}
+	}
+	for _, adr := range adrs {
+		if !isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
+			continue
+		}
+		text := firstNonEmptyBriefClaimText(adr.Doc.BodyMarkdown, adr.RawMarkdown)
+		if !implementationAffectingClaim(text) {
+			continue
+		}
+		id := strings.TrimSpace(adr.Doc.FrontMatter.ADRID)
+		if id == "" {
+			id = "unknown ADR"
+		}
+		path := strings.TrimSpace(adr.RelPath)
+		if path == "" {
+			path = "adrs"
+		}
+		if adrOpenQuestionsHasSubstance(text) {
+			findings = append(findings, ProfileFinding{
+				Kind:     "ungrounded_implementation_claim",
+				File:     path,
+				Severity: "error",
+				Message:  fmt.Sprintf("implementation-affecting claim in accepted ADR %s is classified as open_question/advisory and cannot authorize dispatch", id),
+			})
+			continue
+		}
+		if len(adr.Doc.FrontMatter.EvidenceRefs) > 0 {
+			continue
+		}
+		findings = append(findings, ProfileFinding{
+			Kind:     "ungrounded_implementation_claim",
+			File:     path,
+			Severity: "error",
+			Message:  fmt.Sprintf("implementation-affecting claim in accepted ADR %s lacks evidence_refs and cannot authorize dispatch", id),
+		})
+	}
+	return findings
+}
+
+func firstNonEmptyBriefClaimText(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func implementationAffectingClaim(text string) bool {
+	lower := strings.ToLower(text)
+	if strings.TrimSpace(lower) == "" {
+		return false
+	}
+	actionTerms := []string{"use ", "build with ", "implement with ", "adopt ", "depend on ", "require ", "run on ", "integrate "}
+	subjectTerms := []string{"platform", "framework", "runtime", "tooling", "toolchain", "sdk", "library", "dependency", "database", "queue", "broker", "api", "service"}
+	hasAction := false
+	for _, term := range actionTerms {
+		if strings.Contains(lower, term) {
+			hasAction = true
+			break
+		}
+	}
+	if !hasAction {
+		return false
+	}
+	for _, term := range subjectTerms {
+		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func adrOpenQuestionsHasSubstance(markdown string) bool {
+	section := strings.ToLower(markdownSectionExcerpt(markdown, "Open Questions"))
+	section = strings.TrimSpace(section)
+	if section == "" {
+		return false
+	}
+	switch section {
+	case "none.", "none", "n/a", "no open questions.", "no open questions":
+		return false
+	default:
+		return true
+	}
+}
+
+func markdownSectionExcerpt(markdown string, section string) string {
+	markdown = strings.TrimSpace(markdown)
+	section = strings.TrimSpace(section)
+	if markdown == "" || section == "" {
+		return ""
+	}
+	lines := strings.Split(markdown, "\n")
+	inSection := false
+	var parts []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## ") {
+			if inSection {
+				break
+			}
+			inSection = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), section)
+			continue
+		}
+		if inSection && trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return strings.Join(parts, " ")
+}
+
+func ImplementationAffectingClaimEvidenceFindings(prd PRDDocument, adrs []ParsedADR, evidenceIDs map[string]bool) []ProfileFinding {
+	var findings []ProfileFinding
+	for _, req := range prd.Requirements {
+		if !implementationAffectingClaim(req.Statement) {
+			continue
+		}
+		id := strings.TrimSpace(req.ID)
+		if id == "" {
+			id = "unknown requirement"
+		}
+		for _, ref := range req.EvidenceRefs {
+			ref = strings.TrimSpace(ref)
+			if ref == "" || evidenceIDs[ref] {
+				continue
+			}
+			findings = append(findings, ProfileFinding{
+				Kind:     "ungrounded_implementation_claim",
+				File:     "prd.md",
+				Severity: "error",
+				Message:  fmt.Sprintf("implementation-affecting claim in PRD requirement %s references unresolved evidence %q and cannot authorize dispatch", id, ref),
+			})
+		}
+	}
+	for _, adr := range adrs {
+		if !isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
+			continue
+		}
+		text := firstNonEmptyBriefClaimText(adr.Doc.BodyMarkdown, adr.RawMarkdown)
+		if !implementationAffectingClaim(text) {
+			continue
+		}
+		for _, ref := range adr.Doc.FrontMatter.EvidenceRefs {
+			ref = strings.TrimSpace(ref)
+			if ref == "" || evidenceIDs[ref] {
+				continue
+			}
+			id := strings.TrimSpace(adr.Doc.FrontMatter.ADRID)
+			if id == "" {
+				id = "unknown ADR"
+			}
+			path := strings.TrimSpace(adr.RelPath)
+			if path == "" {
+				path = "adrs"
+			}
+			findings = append(findings, ProfileFinding{
+				Kind:     "ungrounded_implementation_claim",
+				File:     path,
+				Severity: "error",
+				Message:  fmt.Sprintf("implementation-affecting claim in accepted ADR %s references unresolved evidence %q and cannot authorize dispatch", id, ref),
+			})
+		}
+	}
+	return findings
+}
+
+func unresolvedImplementationClaimEvidenceFindings(adrs []ParsedADR, evidenceIDs map[string]bool) []ProfileFinding {
+	return ImplementationAffectingClaimEvidenceFindings(PRDDocument{}, adrs, evidenceIDs)
+}
+
+func TraceabilityEvidenceIDs(matrix TraceabilityMatrix) map[string]bool {
+	ids := make(map[string]bool)
+	for _, row := range matrix.Matrix {
+		ref := strings.TrimSpace(row.EvidenceCard)
+		if ref != "" {
+			ids[ref] = true
+		}
+	}
+	return ids
 }
 
 func briefArtifactPath(artifactRoot, relPath string) string {

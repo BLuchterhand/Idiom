@@ -32,6 +32,7 @@ func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
 		PRDRequirements:    []PRDRequirementBrief{{ID: "REQ-001"}},
 		AcceptedADRIDs:     []string{"ADR-001"},
 		TDDObligations:     []TDDObligationBrief{{ID: "TDD-001"}},
+		FilesToModify:      []string{"internal/labels/labels.go"},
 	}
 
 	err := ValidatePlanProductWorkflowContext(plan, brief)
@@ -61,6 +62,7 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 		PRDRequirements:    []PRDRequirementBrief{{ID: "REQ-001"}},
 		AcceptedADRIDs:     []string{"ADR-001"},
 		TDDObligations:     []TDDObligationBrief{{ID: "TDD-001"}},
+		FilesToModify:      []string{"internal/labels/labels.go"},
 	}
 
 	result, err := Run(state, RunOptions{Prompt: "build feature", ProductWorkflowBrief: brief}, func(_ string, taskFamily string) (string, error) {
@@ -77,6 +79,130 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	}
 	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.product_context_blocked" {
 		t.Fatalf("unexpected events: %+v", result.Events)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsUngroundedEditScope(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/invented/thing.go"}
+	plan.Atoms[0].AllowedEditPaths = []string{"internal/invented/thing.go"}
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = nil
+	brief.ContextEvidencePaths = nil
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected ungrounded edit scope error")
+	}
+	for _, want := range []string{"ungrounded", "internal/invented/thing.go", "ask_planner_question"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsInvalidEditPaths(t *testing.T) {
+	for _, path := range []string{"/tmp/x.go", "../x.go", "internal/auth/../auth/login.go", "."} {
+		t.Run(path, func(t *testing.T) {
+			plan := validProductContextPlan()
+			plan.Atoms[0].RequiredEditPaths = []string{path}
+			brief := validProductWorkflowBrief()
+			brief.FilesToModify = []string{"internal/featureplanner/validate.go"}
+
+			err := ValidatePlanProductWorkflowContext(plan, brief)
+			if err == nil {
+				t.Fatalf("expected invalid path %q to be rejected", path)
+			}
+			if !strings.Contains(err.Error(), "valid repo-relative workspace path") {
+				t.Fatalf("expected invalid path blocker, got %v", err)
+			}
+		})
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsAtomEvidenceSelfGrounding(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/invented/thing.go"}
+	plan.Atoms[0].EvidencePaths = []string{"internal/invented/sibling.go"}
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = nil
+	brief.ContextEvidencePaths = nil
+	brief.AuthorizedNewPackageRoots = nil
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected atom-authored evidence path not to self-authorize edit scope")
+	}
+	if !strings.Contains(err.Error(), "product workflow localization") {
+		t.Fatalf("expected product localization blocker, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsContextSiblingOutsidePackageRoot(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"docs/next-plan.md"}
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = nil
+	brief.ContextEvidencePaths = []string{"docs/design.md"}
+	brief.AuthorizedNewPackageRoots = nil
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected same-directory docs sibling to be rejected without package root or explicit path")
+	}
+	if !strings.Contains(err.Error(), "ungrounded") {
+		t.Fatalf("expected grounding blocker, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsExistingPathWithoutLocalization(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/featureplanner/validate.go"}
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = nil
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected existing path to be rejected without product localization")
+	}
+	if !strings.Contains(err.Error(), "product workflow localization") {
+		t.Fatalf("expected localization blocker, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextAllowsGroundedPackageSibling(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/featureplanner/validate.go"}
+	plan.Atoms[0].AllowedEditPaths = []string{"internal/featureplanner/product_context_test.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"internal/featureplanner/product_context_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"internal/featureplanner/product_context_test.go"}
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = []string{"internal/featureplanner/validate.go"}
+
+	if err := ValidatePlanProductWorkflowContext(plan, brief); err != nil {
+		t.Fatalf("expected grounded package sibling to pass, got %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextBlocksGenericRequiredBeforeTDD(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.TDDContract.Obligations[0].Command = "run the tests"
+	plan.Atoms[0].TestFirst.Commands = []string{"run the tests"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = nil
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"run the tests"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = nil
+	brief := validProductWorkflowBrief()
+	brief.TDDObligations[0].Command = ""
+	brief.TDDObligations[0].Status = "planned"
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected generic TDD readiness blocker")
+	}
+	for _, want := range []string{"TDD-1", "executable command", "test artifact path"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
 	}
 }
 
@@ -179,6 +305,29 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 	}
 }
 
+func TestBuildPlannerPromptHidesSubmitShapeWhenProductBriefHasBlockers(t *testing.T) {
+	brief := validProductWorkflowBrief()
+	brief.Blockers = []string{"implementation-affecting claim lacks resolved evidence"}
+
+	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), &brief)
+
+	if strings.Contains(prompt, `Required submit_feature_plan shape`) || strings.Contains(prompt, `"tool":"submit_feature_plan"`) {
+		t.Fatalf("prompt must not advertise submit_feature_plan while product blockers are open:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "unresolved blockers") || !strings.Contains(prompt, "ask_planner_question") {
+		t.Fatalf("prompt should direct blocker repair through planner question:\n%s", prompt)
+	}
+}
+
+func TestValidatePlanExecuteCompletionEnvelopeAllowsZeroFailedSuccessSummary(t *testing.T) {
+	if err := validatePlanExecuteCompletionEnvelope("executor: 2 edits, 2 succeeded, 0 failed", ".idiom/plan-execute/session/state.json"); err != nil {
+		t.Fatalf("0 failed success summary should be accepted: %v", err)
+	}
+	if err := validatePlanExecuteCompletionEnvelope("executor: 2 edits, 1 succeeded, 1 failed", ".idiom/plan-execute/session/state.json"); err == nil {
+		t.Fatal("nonzero failed summary should be rejected")
+	}
+}
+
 func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
@@ -187,7 +336,7 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 		if taskFamily != "feature_planner_implementor" {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
-		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","summary":"go test ./internal/featureplanner passed"}`, nil
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":"go test ./internal/featureplanner passed"}`, nil
 	})
 
 	if len(events) != 2 {
@@ -203,6 +352,187 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	complete := events[1]
 	if got := fmt.Sprint(complete.Fields["lane_family"]); got != "plan-execute" {
 		t.Fatalf("completion lane family = %q, want plan-execute; event=%+v", got, complete)
+	}
+}
+
+func TestDispatchRejectsPlanExecuteCompletionWithoutProgressPath(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+
+	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != "feature_planner_implementor" {
+			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
+		}
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","summary":"go test ./internal/featureplanner passed"}`, nil
+	})
+
+	if state.Status != FeatureStateRecoveryOpen {
+		t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
+	}
+	if state.Atoms[0].State != AtomStateRecoveryOpen {
+		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
+	}
+	if !containsString(state.Atoms[0].Blockers, "plan-execute completion missing progress_path; child terminal status is not auditable") {
+		t.Fatalf("missing progress_path blocker: %+v", state.Atoms[0].Blockers)
+	}
+}
+
+func TestDispatchRejectsUnsupportedImplementorJSONTool(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+
+	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != "feature_planner_implementor" {
+			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
+		}
+		return `{"tool":"plan_execute_complete","summary":"atom implemented"}`, nil
+	})
+
+	if state.Status != FeatureStateRecoveryOpen {
+		t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
+	}
+	if state.Atoms[0].State != AtomStateRecoveryOpen {
+		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
+	}
+	if len(state.Atoms[0].Blockers) == 0 || !strings.Contains(state.Atoms[0].Blockers[0], "unsupported completion tool") {
+		t.Fatalf("missing unsupported-tool blocker: %+v", state.Atoms[0].Blockers)
+	}
+}
+
+func TestDispatchRejectsMalformedOrEmptyImplementorJSON(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "malformed",
+			raw:  `{"summary":`,
+			want: "malformed JSON completion envelope",
+		},
+		{
+			name: "empty tool",
+			raw:  `{"summary":"implemented"}`,
+			want: "JSON without a supported tool",
+		},
+		{
+			name: "incomplete question summary",
+			raw:  `{"question_summary":"blocked"}`,
+			want: "JSON without a supported tool",
+		},
+		{
+			name: "incomplete blocking claim",
+			raw:  `{"blocking_claim":"needs decision"}`,
+			want: "JSON without a supported tool",
+		},
+		{
+			name: "empty tool question-shaped",
+			raw:  `{"question_summary":"blocked","blocking_claim":"needs decision"}`,
+			want: "JSON without a supported tool",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+			ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+
+			events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
+				if taskFamily != "feature_planner_implementor" {
+					t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
+				}
+				return tt.raw, nil
+			})
+
+			if state.Status != FeatureStateRecoveryOpen {
+				t.Fatalf("state.Status = %q, want recovery-open; events=%+v", state.Status, events)
+			}
+			if state.Atoms[0].State != AtomStateRecoveryOpen {
+				t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
+			}
+			if len(state.Atoms[0].Blockers) == 0 || !strings.Contains(state.Atoms[0].Blockers[0], tt.want) {
+				t.Fatalf("missing blocker %q: %+v", tt.want, state.Atoms[0].Blockers)
+			}
+		})
+	}
+}
+
+func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) {
+	plan := validPlan()
+	second := plan.Atoms[0]
+	second.ID = "atom-2"
+	second.AtomID = "atom-2"
+	second.RequiredEditPaths = []string{"internal/labels/labels2.go"}
+	second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
+	second.TestFirst.CoverageGateEventID = "evt-tdd-2"
+	second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"
+	second.PlannedTDDSnapshot.SnapshotDigest = "sha256:test2"
+	second.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-2"
+	plan.Atoms = append(plan.Atoms, second)
+
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+
+	var implementorCalls int
+	events := DispatchReadyAtoms(&state, 5, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != "feature_planner_implementor" {
+			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
+		}
+		implementorCalls++
+		return `{"tool":"question_for_planner","question_summary":"first atom blocked","blocking_claim":"needs product decision"}`, nil
+	})
+
+	if implementorCalls != 1 {
+		t.Fatalf("expected dispatch to stop after first blocked child, got %d calls", implementorCalls)
+	}
+	if state.Atoms[0].State != AtomStateQuestionForPlanner {
+		t.Fatalf("first atom state = %q, want question-for-planner", state.Atoms[0].State)
+	}
+	if state.Atoms[1].State != AtomStateQueued {
+		t.Fatalf("sibling atom should remain queued, got %q", state.Atoms[1].State)
+	}
+	for _, event := range events {
+		if event.AtomID == "atom-2" && event.Type == "idiom.feature_planner.atom_dispatched" {
+			t.Fatalf("sibling atom must not be synthetically dispatched after blocker: %+v", events)
+		}
+	}
+}
+
+func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
+	plan := validPlan()
+	second := plan.Atoms[0]
+	second.ID = "atom-2"
+	second.AtomID = "atom-2"
+	second.RequiredEditPaths = []string{"internal/labels/labels2.go"}
+	second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
+	second.TestFirst.CoverageGateEventID = "evt-tdd-2"
+	second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"
+	second.PlannedTDDSnapshot.SnapshotDigest = "sha256:test2"
+	second.PlannedTDDSnapshot.CreatedBeforeDispatchEventID = "evt-tdd-2"
+	plan.Atoms = append(plan.Atoms, second)
+
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	state.TDDPreExecutionEvidence = nil
+
+	var implementorCalls int
+	events := DispatchReadyAtoms(&state, 5, func(_ string, _ string) (string, error) {
+		implementorCalls++
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":"go test ./internal/featureplanner passed"}`, nil
+	})
+
+	if implementorCalls != 0 {
+		t.Fatalf("implementor must not run after pre-dispatch TDD blocker, got %d call(s)", implementorCalls)
+	}
+	if state.Atoms[0].State != AtomStateBlockedMissingTDD {
+		t.Fatalf("first atom state = %q, want blocked-missing-tdd", state.Atoms[0].State)
+	}
+	if state.Atoms[1].State != AtomStateQueued {
+		t.Fatalf("sibling atom should remain queued, got %q", state.Atoms[1].State)
+	}
+	for _, event := range events {
+		if event.AtomID == "atom-2" && event.Type == "idiom.feature_planner.atom_dispatched" {
+			t.Fatalf("sibling atom must not dispatch after pre-dispatch blocker: %+v", events)
+		}
 	}
 }
 
@@ -624,6 +954,34 @@ func validPlan() FeaturePlan {
 				CreatedBeforeDispatchEventID: "evt-tdd-1",
 			},
 		}},
+	}
+}
+
+func validProductContextPlan() FeaturePlan {
+	plan := validPlan()
+	plan.SDDContract.Refs = nil
+	plan.SDDContract.PRDRequirementRefs = []string{"REQ-1"}
+	plan.SDDContract.ADRRefs = []string{"ADR-1"}
+	plan.Atoms[0].SDDRefs = []string{"REQ-1", "ADR-1"}
+	return plan
+}
+
+func validProductWorkflowBrief() ProductWorkflowBrief {
+	return ProductWorkflowBrief{
+		CoverageGatePassed: true,
+		PRDRequirements: []PRDRequirementBrief{{
+			ID:          "REQ-1",
+			Obligations: []string{"TDD-1"},
+		}},
+		AcceptedADRIDs: []string{"ADR-1"},
+		TDDObligations: []TDDObligationBrief{{
+			ID:             "TDD-1",
+			Behavior:       "Short label changes",
+			Command:        "go test ./...",
+			RequiredBefore: "implementation",
+			Status:         "open",
+		}},
+		FilesToModify: []string{"internal/labels/labels.go"},
 	}
 }
 

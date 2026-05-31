@@ -774,9 +774,13 @@ func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
 	// ADRs approved.
 	_, _ = productworkflow.AdvanceCreatePhase(effortRoot, productworkflow.PhaseTDDSynthesis)
 
-	planResult, planErr := m.synthesizeTDDAndRunPlanner(effortRoot)
+	planResult, plannerState, statePath, planErr := m.synthesizeTDDAndRunPlanner(effortRoot)
 	if planErr != nil {
 		return "", fmt.Errorf("feature planning: %w", planErr)
+	}
+	if recoveryMessage, blocked := formatProductWorkflowFeaturePlannerRecovery(plannerState, statePath); blocked {
+		m.logMessage("idiom.feature_planner.recovery_open", recoveryMessage)
+		return strings.TrimSpace(planResult + "\n\n" + recoveryMessage), nil
 	}
 
 	// Only mark complete and clear phase on success.
@@ -789,23 +793,23 @@ func (m *Model) approveADRAndPlan(effortRoot string) (string, error) {
 
 // synthesizeTDDAndRunPlanner builds TDD obligations from PRD+ADRs, loads
 // product workflow context, and runs the feature planner with it.
-func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, error) {
+func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featureplanner.FeatureState, string, error) {
 	prdData, err := os.ReadFile(filepath.Join(effortRoot, "prd.md"))
 	if err != nil {
-		return "", fmt.Errorf("read prd.md: %w", err)
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("read prd.md: %w", err)
 	}
 	prd, err := productworkflow.ParsePRDMarkdown(prdData)
 	if err != nil {
-		return "", fmt.Errorf("parse prd.md: %w", err)
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("parse prd.md: %w", err)
 	}
 
 	idxData, err := os.ReadFile(filepath.Join(effortRoot, "adrs", "index.json"))
 	if err != nil {
-		return "", fmt.Errorf("read adrs/index.json: %w", err)
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("read adrs/index.json: %w", err)
 	}
 	adrIdx, err := productworkflow.ParseADRIndexJSON(idxData)
 	if err != nil {
-		return "", fmt.Errorf("parse adrs/index.json: %w", err)
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("parse adrs/index.json: %w", err)
 	}
 
 	var parsedADRs []productworkflow.ParsedADR
@@ -864,15 +868,16 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, error) {
 
 	tddJSON, _ := json.MarshalIndent(ledger, "", "  ")
 	if writeErr := os.WriteFile(filepath.Join(effortRoot, "tdd.json"), append(tddJSON, '\n'), 0o644); writeErr != nil {
-		return "", fmt.Errorf("write tdd.json: %w", writeErr)
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("write tdd.json: %w", writeErr)
 	}
 
-	brief := buildProductWorkflowBrief(effortRoot, prd, adrIdx, parsedADRs, ledger)
+	traceability := loadProductWorkflowTraceability(effortRoot)
+	brief := buildProductWorkflowBrief(effortRoot, ws, prd, adrIdx, parsedADRs, ledger, traceability)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if err := m.ensureServerReady(ctx); err != nil {
-		return "", fmt.Errorf("server not ready: %w", err)
+		return "", featureplanner.FeatureState{}, "", fmt.Errorf("server not ready: %w", err)
 	}
 
 	sessionID := m.featurePlannerSessionID()
@@ -880,6 +885,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, error) {
 
 	m.logMessage("idiom.feature_planner.start", "Planning from product workflow artifacts")
 
+	implementorBlocked := false
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                "Implement the feature described by the product workflow context.",
 		MaxPlanningIterations: 3,
@@ -887,12 +893,19 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, error) {
 		ProductWorkflowBrief:  brief,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
-			return m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+			if implementorBlocked {
+				return encodeFeaturePlannerSiblingDispatchPaused(), nil
+			}
+			answer, runErr := m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+			if runErr != nil || featurePlannerPlanExecuteOutputBlocks(answer) {
+				implementorBlocked = true
+			}
+			return answer, runErr
 		}
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
 	if err != nil {
-		return "", fmt.Errorf("feature planner run: %w", err)
+		return "", result.State, "", fmt.Errorf("feature planner run: %w", err)
 	}
 
 	for _, event := range result.Events {
@@ -916,11 +929,11 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, error) {
 	output.WriteString(formatFeaturePlannerTUIAnswer(result.State, statePath))
 	answer := output.String()
 	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
-	return answer, nil
+	return answer, result.State, statePath, nil
 }
 
 // buildProductWorkflowBrief constructs a ProductWorkflowBrief from effort artifacts.
-func buildProductWorkflowBrief(effortRoot string, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger) *featureplanner.ProductWorkflowBrief {
+func buildProductWorkflowBrief(effortRoot string, workflowState productworkflow.WorkflowState, prd productworkflow.PRDDocument, adrIdx productworkflow.ADRIndex, parsedADRs []productworkflow.ParsedADR, ledger productworkflow.TDDLedger, traceability productworkflow.TraceabilityMatrix) *featureplanner.ProductWorkflowBrief {
 	brief := &featureplanner.ProductWorkflowBrief{
 		EffortID:           ledger.EffortID,
 		TaskID:             ledger.TaskID,
@@ -928,6 +941,13 @@ func buildProductWorkflowBrief(effortRoot string, prd productworkflow.PRDDocumen
 		CoverageTier:       ledger.CoverageTier,
 		CoverageGatePassed: true,
 		ArtifactRootPath:   effortRoot,
+	}
+	brief.ContextEvidencePaths = appendUniqueBriefStrings(brief.ContextEvidencePaths, workflowState.Context.ReferencedPaths...)
+	for _, finding := range productworkflow.ImplementationAffectingClaimFindings(prd, parsedADRs) {
+		brief.Blockers = appendUniqueBriefStrings(brief.Blockers, finding.Message)
+	}
+	for _, finding := range productworkflow.ImplementationAffectingClaimEvidenceFindings(prd, parsedADRs, productworkflow.TraceabilityEvidenceIDs(traceability)) {
+		brief.Blockers = appendUniqueBriefStrings(brief.Blockers, finding.Message)
 	}
 
 	for _, req := range prd.Requirements {
@@ -990,6 +1010,105 @@ func buildProductWorkflowBrief(effortRoot string, prd productworkflow.PRDDocumen
 	return brief
 }
 
+func loadProductWorkflowTraceability(effortRoot string) productworkflow.TraceabilityMatrix {
+	data, err := os.ReadFile(filepath.Join(effortRoot, "evidence", "traceability_matrix.json"))
+	if err != nil {
+		return productworkflow.TraceabilityMatrix{}
+	}
+	matrix, err := productworkflow.ParseTraceabilityMatrixJSON(data)
+	if err != nil {
+		return productworkflow.TraceabilityMatrix{}
+	}
+	return matrix
+}
+
+func formatProductWorkflowFeaturePlannerRecovery(state featureplanner.FeatureState, statePath string) (string, bool) {
+	var blockers []string
+	for _, run := range state.ActiveRuns {
+		sessionID := firstNonEmpty(strings.TrimSpace(run.LaneSessionID), strings.TrimSpace(run.RunID))
+		blockers = append(blockers, fmt.Sprintf("active_run atom=%s session=%s state=%s", strings.TrimSpace(run.AtomID), sessionID, strings.TrimSpace(run.State)))
+	}
+	for _, atom := range state.Atoms {
+		if !productWorkflowAtomBlocksCompletion(atom) {
+			continue
+		}
+		sessionID := strings.TrimSpace(atom.LastRunID)
+		requiredPaths := appendUniqueBriefStrings(nil, atom.RequiredEditPaths...)
+		if len(requiredPaths) == 0 {
+			requiredPaths = appendUniqueBriefStrings(nil, atom.AllowedEditPaths...)
+		}
+		line := fmt.Sprintf("atom=%s state=%s session=%s", strings.TrimSpace(atom.ID), strings.TrimSpace(atom.State), sessionID)
+		if len(requiredPaths) > 0 {
+			line += " required_paths=" + strings.Join(requiredPaths, ",")
+		}
+		if len(atom.Blockers) > 0 {
+			line += " blockers=" + strings.Join(atom.Blockers, "; ")
+		}
+		if question := productWorkflowAtomQuestionDetail(state, atom); question != "" {
+			line += " question=" + question
+		}
+		blockers = append(blockers, line)
+	}
+	if state.Status == featureplanner.FeatureStateComplete && len(blockers) == 0 {
+		return "", false
+	}
+
+	var b strings.Builder
+	b.WriteString("feature-planner: recovery_open\n")
+	fmt.Fprintf(&b, "session_id: %s\n", strings.TrimSpace(state.SessionID))
+	fmt.Fprintf(&b, "state: %s\n", strings.TrimSpace(state.Status))
+	if strings.TrimSpace(statePath) != "" {
+		fmt.Fprintf(&b, "state_path: %s\n", strings.TrimSpace(statePath))
+	}
+	if len(blockers) > 0 {
+		b.WriteString("blocked_children:\n")
+		for _, blocker := range blockers {
+			fmt.Fprintf(&b, "  - %s\n", blocker)
+		}
+	} else {
+		b.WriteString("blocked_children:\n")
+		fmt.Fprintf(&b, "  - feature_state=%s is not complete\n", strings.TrimSpace(state.Status))
+	}
+	if len(state.DerivedNextValidActions) > 0 {
+		fmt.Fprintf(&b, "next: %s\n", strings.Join(state.DerivedNextValidActions, ", "))
+	} else {
+		b.WriteString("next: inspect feature-planner state and resolve the blocked child session before product completion\n")
+	}
+	return strings.TrimSpace(b.String()), true
+}
+
+func productWorkflowAtomQuestionDetail(state featureplanner.FeatureState, atom featureplanner.FeatureAtomState) string {
+	atomID := strings.TrimSpace(atom.ID)
+	for _, question := range state.OpenQuestions {
+		if strings.TrimSpace(question.AtomID) != "" && strings.TrimSpace(question.AtomID) != atomID {
+			continue
+		}
+		parts := []string{}
+		if summary := strings.TrimSpace(question.QuestionSummary); summary != "" {
+			parts = append(parts, summary)
+		}
+		if claim := strings.TrimSpace(question.BlockingClaim); claim != "" && claim != strings.TrimSpace(question.QuestionSummary) {
+			parts = append(parts, claim)
+		}
+		if refs := appendUniqueBriefStrings(nil, question.EvidenceRefs...); len(refs) > 0 {
+			parts = append(parts, "evidence_refs="+strings.Join(refs, ","))
+		}
+		if len(parts) > 0 {
+			return strings.Join(parts, "; ")
+		}
+	}
+	return strings.TrimSpace(atom.LastQuestion)
+}
+
+func productWorkflowAtomBlocksCompletion(atom featureplanner.FeatureAtomState) bool {
+	switch strings.TrimSpace(atom.State) {
+	case featureplanner.AtomStateComplete, featureplanner.AtomStateSourceSatisfied, featureplanner.AtomStateSkipped:
+		return false
+	default:
+		return true
+	}
+}
+
 var productWorkflowPathPattern = regexp.MustCompile(`\b(?:cmd|internal|pkg|docs|test|tests)/[A-Za-z0-9_./-]+(?:\.[A-Za-z0-9_]+)?\b`)
 var productWorkflowGoFilePattern = regexp.MustCompile(`\b[A-Za-z0-9_-]+(?:_test)?\.go\b`)
 var productWorkflowPackagePattern = regexp.MustCompile(`\binternal/[A-Za-z0-9_/-]+\b`)
@@ -1033,7 +1152,7 @@ func formatPRDStatus(prd productworkflow.PRDDocument, intake productworkflow.Int
 	} else {
 		b.WriteString("PRD draft generated.\n")
 	}
-	b.WriteString("Saved: prd.md\n\n")
+	b.WriteString("Saved: prd.md (artifact path: prd.md)\n\n")
 
 	if wasRefinement && previous != nil {
 		writePRDChangeSummary(&b, *previous, prd)
@@ -1159,7 +1278,19 @@ func formatADRStatus(entries []productworkflow.ADRIndexEntry, docs []productwork
 	} else {
 		b.WriteString("ADR drafts generated.\n")
 	}
-	b.WriteString("Saved: adrs/index.json and ADR markdown files.\n\n")
+	var artifactPaths []string
+	artifactPaths = append(artifactPaths, "adrs/index.json")
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.Path) != "" {
+			artifactPaths = append(artifactPaths, filepath.ToSlash(filepath.Join("adrs", entry.Path)))
+		}
+	}
+	b.WriteString("Saved: adrs/index.json and ADR markdown files.")
+	if len(artifactPaths) > 0 {
+		b.WriteString(" Artifact paths: ")
+		b.WriteString(strings.Join(artifactPaths, ", "))
+	}
+	b.WriteString("\n\n")
 	fmt.Fprintf(&b, "ADRs: %d\n", len(entries))
 	if len(entries) == 0 || len(docs) == 0 {
 		b.WriteString("\nADR generation did not produce any parseable ADRs. Continue chatting to regenerate ADRs before approval.")

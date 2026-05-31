@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/config"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
@@ -6587,6 +6588,109 @@ func TestDecorateFinalAnswerPreservesConcreteMissingPathBlocker(t *testing.T) {
 	})
 	if answer != blocker {
 		t.Fatalf("expected concrete blocker to be preserved, got %q", answer)
+	}
+}
+
+func TestPlannerCompletionGateKeepsWorkspaceWriteObligationsPendingAfterSubmitPlan(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	runner := &Runner{
+		RuntimeBrief: brief,
+		OnEvent:      func(RunEvent) {},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+	if recorder == nil {
+		t.Fatal("expected autonomy recorder")
+	}
+	recorder.emitContractStarted(brief)
+	refs := recorder.obligationIDsForGate(autonomy.GateCompletion)
+	resolved, open := recorder.completionGateResolvedAndOpenObligations(runnerAutonomyGateDecision{
+		Gate:         autonomy.GateCompletion,
+		Decision:     autonomy.PolicyAllow,
+		ReasonCode:   "plan_submitted_short_circuit",
+		ChangedPaths: nil,
+	}, refs)
+
+	for _, path := range brief.RequiredEditPaths {
+		id := runnerAutonomyObligationID(autonomy.ObligationWrite, path)
+		if slices.Contains(resolved, id) {
+			t.Fatalf("planner submit_plan must not resolve workspace write obligation %s; resolved=%#v open=%#v", id, resolved, open)
+		}
+		if !slices.Contains(open, id) {
+			t.Fatalf("workspace write obligation %s should remain open while changed_path_count=0; resolved=%#v open=%#v", id, resolved, open)
+		}
+	}
+	if !slices.Contains(resolved, "obl-final-answer") {
+		t.Fatalf("planner short-circuit should still resolve final-answer/plan artifact closeout, resolved=%#v", resolved)
+	}
+}
+
+func TestPlannerCompletionGateResolvesSourceSatisfiedRequiredPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	runner := &Runner{
+		RuntimeBrief: brief,
+		OnEvent:      func(RunEvent) {},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+	if recorder == nil {
+		t.Fatal("expected autonomy recorder")
+	}
+	recorder.emitContractStarted(brief)
+	refs := recorder.obligationIDsForGate(autonomy.GateCompletion)
+	resolved, open := recorder.completionGateResolvedAndOpenObligations(runnerAutonomyGateDecision{
+		Gate:       autonomy.GateCompletion,
+		Decision:   autonomy.PolicyAllow,
+		ReasonCode: "plan_source_satisfied_short_circuit",
+		TargetRefs: []string{"a.txt:pending", "b.txt:pending"},
+	}, refs)
+
+	for _, path := range brief.RequiredEditPaths {
+		id := runnerAutonomyObligationID(autonomy.ObligationWrite, path)
+		if !slices.Contains(resolved, id) {
+			t.Fatalf("source-satisfied closeout should resolve workspace write obligation %s; resolved=%#v open=%#v", id, resolved, open)
+		}
+		if slices.Contains(open, id) {
+			t.Fatalf("source-satisfied closeout should not leave workspace write obligation %s open; resolved=%#v open=%#v", id, resolved, open)
+		}
+	}
+}
+
+func TestPlannerCompletionGateResolvesUnscopedSourceSatisfiedWriteObligation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+	runner := &Runner{
+		RuntimeBrief: brief,
+		OnEvent:      func(RunEvent) {},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+	if recorder == nil {
+		t.Fatal("expected autonomy recorder")
+	}
+	recorder.emitContractStarted(brief)
+	refs := recorder.obligationIDsForGate(autonomy.GateCompletion)
+	resolved, open := recorder.completionGateResolvedAndOpenObligations(runnerAutonomyGateDecision{
+		Gate:       autonomy.GateCompletion,
+		Decision:   autonomy.PolicyAllow,
+		ReasonCode: "plan_source_satisfied_short_circuit",
+	}, refs)
+
+	if !slices.Contains(resolved, "obl-write-workspace-change") {
+		t.Fatalf("unscoped source-satisfied closeout should resolve generic write obligation; resolved=%#v open=%#v", resolved, open)
+	}
+	if slices.Contains(open, "obl-write-workspace-change") {
+		t.Fatalf("unscoped source-satisfied closeout should not leave generic write obligation open; resolved=%#v open=%#v", resolved, open)
 	}
 }
 

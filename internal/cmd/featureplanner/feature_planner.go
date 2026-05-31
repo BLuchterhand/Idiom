@@ -234,12 +234,19 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 
 	// Build the brief
 	brief := &featureplanner.ProductWorkflowBrief{
-		EffortID:           workflowState.EffortID,
-		TaskID:             workflowState.TaskID,
-		EffortRoot:         effortRoot,
-		CoverageTier:       tdd.CoverageTier,
-		CoverageGatePassed: coverage.Status == "pass",
-		ArtifactRootPath:   effortRoot,
+		EffortID:             workflowState.EffortID,
+		TaskID:               workflowState.TaskID,
+		EffortRoot:           effortRoot,
+		CoverageTier:         tdd.CoverageTier,
+		CoverageGatePassed:   coverage.Status == "pass",
+		ArtifactRootPath:     effortRoot,
+		ContextEvidencePaths: append([]string{}, workflowState.Context.ReferencedPaths...),
+	}
+	for _, finding := range productworkflow.ImplementationAffectingClaimFindings(prd, parsedADRs) {
+		brief.Blockers = appendUniqueFeaturePlannerStrings(brief.Blockers, finding.Message)
+	}
+	for _, finding := range productworkflow.ImplementationAffectingClaimEvidenceFindings(prd, parsedADRs, productworkflow.TraceabilityEvidenceIDs(traceability)) {
+		brief.Blockers = appendUniqueFeaturePlannerStrings(brief.Blockers, finding.Message)
 	}
 
 	for _, req := range prd.Requirements {

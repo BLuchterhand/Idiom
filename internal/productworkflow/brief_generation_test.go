@@ -235,3 +235,106 @@ func TestBriefGenerationBlocksNewFileDispatchWithoutADRCodeBlocks(t *testing.T) 
 		t.Fatalf("expected implementation-shape blocker, got %#v", out.Blockers)
 	}
 }
+
+func TestBriefGenerationBlocksUngroundedImplementationAffectingClaims(t *testing.T) {
+	out := GenerateImplementationBrief(BriefGenerationInput{
+		WorkflowState: WorkflowState{TaskID: "impl-1"},
+		PRD: PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Statement: "Add the admin workflow"},
+			},
+		},
+		ADRs: []ParsedADR{
+			{
+				Doc: ADRDocument{
+					FrontMatter:  ADRFrontMatter{ADRID: "ADR-1", Status: "accepted"},
+					BodyMarkdown: "## Decision\n\nUse the ExampleCloud platform and ExampleSDK tooling for the implementation.\n\n## Open Questions\n\nNone.",
+				},
+				RelPath:     "adrs/ADR-1.md",
+				RawMarkdown: "## Decision\n\nUse the ExampleCloud platform and ExampleSDK tooling for the implementation.\n\n## Open Questions\n\nNone.",
+			},
+		},
+		TDD: TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Owner: "admin_test.go", Command: "go test ./internal/admin"}}},
+		ImplementationRecords: []ImplementationLedgerRecord{
+			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"internal/admin/admin.go"}}},
+		},
+		CoverageEvaluation: CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
+	})
+
+	if out.Status != "blocked" {
+		t.Fatalf("expected ungrounded implementation-affecting claim to block dispatch, got %q", out.Status)
+	}
+	found := false
+	for _, blocker := range out.Blockers {
+		if strings.Contains(blocker, "implementation-affecting claim") && strings.Contains(blocker, "ADR-1") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected implementation-affecting claim blocker, got %#v", out.Blockers)
+	}
+}
+
+func TestImplementationAffectingClaimsWithOpenQuestionsBlockDispatch(t *testing.T) {
+	findings := ImplementationAffectingClaimFindings(PRDDocument{
+		Requirements: []PRDRequirement{{
+			ID:            "REQ-OPEN",
+			Statement:     "Use the ExampleCloud platform for implementation.",
+			OpenQuestions: []string{"Confirm this platform is available in the TUI runtime."},
+		}},
+	}, []ParsedADR{{
+		RelPath: "adrs/ADR-OPEN.md",
+		Doc: ADRDocument{
+			FrontMatter:  ADRFrontMatter{ADRID: "ADR-OPEN", Status: "accepted"},
+			BodyMarkdown: "## Decision\n\nUse the ExampleSDK tooling.\n\n## Open Questions\n\nConfirm local runtime support.",
+		},
+	}})
+
+	joined := strings.Join(profileFindingMessages(findings), "\n")
+	for _, want := range []string{
+		"PRD requirement REQ-OPEN is classified as open_question/advisory",
+		"accepted ADR ADR-OPEN is classified as open_question/advisory",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected blocker %q, got %#v", want, findings)
+		}
+	}
+}
+
+func TestImplementationAffectingClaimsRequireResolvedEvidence(t *testing.T) {
+	prd := PRDDocument{Requirements: []PRDRequirement{{
+		ID:           "REQ-EVIDENCE",
+		Statement:    "Use the ExampleCloud platform for implementation.",
+		EvidenceRefs: []string{"EV-1", "EV-MISSING"},
+	}}}
+	adrs := []ParsedADR{{
+		RelPath: "adrs/ADR-EVIDENCE.md",
+		Doc: ADRDocument{
+			FrontMatter:  ADRFrontMatter{ADRID: "ADR-EVIDENCE", Status: "accepted", EvidenceRefs: []string{"EV-1", "EV-MISSING"}},
+			BodyMarkdown: "## Decision\n\nUse the ExampleSDK tooling.\n\n## Open Questions\n\nNone.",
+		},
+	}}
+
+	findings := ImplementationAffectingClaimEvidenceFindings(prd, adrs, map[string]bool{"EV-1": true})
+	joined := strings.Join(profileFindingMessages(findings), "\n")
+	for _, want := range []string{
+		`PRD requirement REQ-EVIDENCE references unresolved evidence "EV-MISSING"`,
+		`accepted ADR ADR-EVIDENCE references unresolved evidence "EV-MISSING"`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected unresolved evidence blocker %q, got %#v", want, findings)
+		}
+	}
+	if strings.Contains(joined, "EV-1") {
+		t.Fatalf("resolved evidence should not block dispatch, got %#v", findings)
+	}
+}
+
+func profileFindingMessages(findings []ProfileFinding) []string {
+	out := make([]string, 0, len(findings))
+	for _, finding := range findings {
+		out = append(out, finding.Message)
+	}
+	return out
+}

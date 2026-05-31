@@ -1459,6 +1459,34 @@ Required Behavior:
 	}
 }
 
+func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
+	model := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},
+		agentModeName: "build",
+	}
+	model.SetPlanExecuteScopeContract(planexecute.NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil))
+	prompt := `
+# Atom
+
+## Files To Modify
+
+- pkg/a.go
+
+## Verified Current State
+
+- Host current-state anchors captured before dispatch:
+  - ` + "`pkg/a.go:3`: `const A = \"old\"`" + `
+`
+
+	brief := model.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, agent.BuildMode(), prompt)
+	if !slices.Contains(brief.EvidencePaths, "pkg/a.go") {
+		t.Fatalf("expected host anchor path in EvidencePaths, got %#v", brief.EvidencePaths)
+	}
+	if !slices.Contains(brief.TargetPacket, "prompt_context:verified_current_state") {
+		t.Fatalf("expected verified-current-state marker, got %#v", brief.TargetPacket)
+	}
+}
+
 func TestPromptContainsExactEditAnchorRecognizesStructuredJSONFields(t *testing.T) {
 	prompt := `Apply this exact edit:
 {

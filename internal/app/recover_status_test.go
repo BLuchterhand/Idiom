@@ -10,6 +10,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/productworkflow"
 	"idiom/internal/recoverstatus"
 	"idiom/internal/recovery"
 	"idiom/internal/workspace"
@@ -150,6 +151,30 @@ func TestSlashHelpDocumentsRecoverStatusBarePacketPath(t *testing.T) {
 	}
 	if !strings.Contains(model.status, "/feature-planner <objective>") {
 		t.Fatalf("help must document typed feature-planner command, got %q", model.status)
+	}
+	if len(model.messages) != 1 || model.messages[0].Role != "operator" || !strings.Contains(model.messages[0].Content, "/product-approve") {
+		t.Fatalf("help must be durable as an operator message, got %#v", model.messages)
+	}
+}
+
+func TestSlashHelpIncludesActiveProductPhase(t *testing.T) {
+	model := &Model{
+		featurePlannerPhase:      productworkflow.PhaseADRDrafting,
+		featurePlannerEffortRoot: "/tmp/idiom-effort",
+	}
+
+	model.slashHelp("/help", []string{"/help"})
+
+	if len(model.messages) != 1 {
+		t.Fatalf("expected durable help operator message, got %#v", model.messages)
+	}
+	for _, want := range []string{
+		"Product workflow: phase=" + productworkflow.PhaseADRDrafting,
+		"next=/product-approve or continue chatting to refine",
+	} {
+		if !strings.Contains(model.messages[0].Content, want) {
+			t.Fatalf("active product help missing %q:\n%s", want, model.messages[0].Content)
+		}
 	}
 }
 

@@ -55,6 +55,7 @@ type PlanExecutePlanningState struct {
 	Phase                  string
 	DerivationReason       string
 	RequiredCoveragePaths  []string
+	RequiredPathStates     []string
 	AllowedCandidatePaths  []string
 	EvidencePaths          []string
 	SelectedEditPaths      []string
@@ -104,6 +105,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 
 	state.RequiredCoveragePaths = planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
+	state.RequiredPathStates = planThenExecuteRequiredPathStateSummaries(brief, results)
 	state.AllowedCandidatePaths = planThenExecuteCandidateScopePaths(brief, results, 16)
 	state.EvidencePaths = sortedRunnerPathKeys(readPathsFromResults(results))
 	state.LastInvalidPaths = planThenExecuteLastInvalidSubmitPlanPaths(results)
@@ -149,7 +151,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.PhaseID = turnPhaseRequiredSource
 		state.Phase = "needs_source_body"
 		state.DerivationReason = "plan_execute_required_source_pending"
-		state.ParserVisibleTools = []string{"read_file", "code_navigate", "submit_plan"}
+		state.ParserVisibleTools = []string{"read_file", "code_navigate"}
 		state.CallableTools = []string{"read_file", "code_navigate"}
 		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionSubmitPlan, actionPerEditWrite, actionSearch}
@@ -162,7 +164,6 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 			"context_pack", "context_query", "context_zoom", "discovery_query",
 			"search_files", "search_content", "read_file", "code_navigate",
 			"product_efforts", "product_status", "recovery_inspect", "recovery_status",
-			"submit_plan",
 		}
 		state.CallableTools = []string{
 			"context_pack", "context_query", "context_zoom", "discovery_query",
@@ -173,6 +174,7 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.InvalidActionClasses = []string{actionSubmitPlan, actionPerEditWrite, actionVerify, actionGenericProbe}
 		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
 		if slices.Contains(state.TerminalOptions, "submit_plan") {
+			state.ParserVisibleTools = append(state.ParserVisibleTools, "submit_plan")
 			state.CallableTools = append(state.CallableTools, "submit_plan")
 			state.AllowedActionClasses = append(state.AllowedActionClasses, actionSubmitPlan)
 			state.InvalidActionClasses = []string{actionPerEditWrite, actionVerify, actionGenericProbe}

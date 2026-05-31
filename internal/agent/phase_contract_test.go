@@ -47,7 +47,7 @@ func TestPlanExecutePlanningStateRequiredSourceProjectionSplitsParserVisibleSubm
 	if state.Mode != PlanExecutePlanningModeRequiredSource {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeRequiredSource)
 	}
-	assertContains(t, state.ParserVisibleTools, "submit_plan")
+	assertNotContains(t, state.ParserVisibleTools, "submit_plan")
 	assertNotContains(t, state.CallableTools, "submit_plan")
 	assertNotContains(t, state.AllowedActionClasses, actionSubmitPlan)
 	assertContains(t, state.InvalidActionClasses, actionSubmitPlan)
@@ -83,7 +83,7 @@ func TestPlanExecutePlanningStateCandidateProjectionRequiresSelectedPathForSubmi
 	if state.Mode != PlanExecutePlanningModeAllowedCandidate {
 		t.Fatalf("Mode = %q, want %q", state.Mode, PlanExecutePlanningModeAllowedCandidate)
 	}
-	assertContains(t, state.ParserVisibleTools, "submit_plan")
+	assertNotContains(t, state.ParserVisibleTools, "submit_plan")
 	assertNotContains(t, state.CallableTools, "submit_plan")
 	assertNotContains(t, state.AllowedActionClasses, actionSubmitPlan)
 	assertContains(t, state.InvalidActionClasses, actionSubmitPlan)

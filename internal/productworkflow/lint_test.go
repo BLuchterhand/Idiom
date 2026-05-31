@@ -54,6 +54,17 @@ func TestLintEffortFolderDetectsADRIndexFrontMatterDivergence(t *testing.T) {
 	}
 }
 
+func TestLintEffortFolderFlagsUngroundedImplementationAffectingClaims(t *testing.T) {
+	root := t.TempDir()
+	writeLintFixtureFile(t, root, "adrs/index.json", `{"schema_version":"v1","effort_id":"test-effort","adrs":[{"adr_id":"ADR-001","title":"Test ADR","status":"accepted","path":"ADR-001-test.md","coverage_tier":"unit","prd_refs":["REQ-TEST-001"]}]}`)
+	writeLintFixtureFile(t, root, "adrs/ADR-001-test.md", strings.Replace(validLintADRMarkdown(), "Test decision.", "Use the ExampleCloud platform for implementation.", 1))
+
+	result := LintEffortFolder(root)
+	if !lintSummaryHasFinding(result, "ungrounded_implementation_claim", "adrs/ADR-001-test.md") {
+		t.Fatalf("expected ungrounded_implementation_claim finding, got %#v", result.Findings)
+	}
+}
+
 func lintSummaryHasFinding(result LintSummaryResult, code, path string) bool {
 	for _, finding := range result.Findings {
 		if finding.Code == code && finding.Path == path {

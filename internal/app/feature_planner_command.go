@@ -30,13 +30,21 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
 	m.logMessage("idiom.feature_planner.start", objective)
 
+	implementorBlocked := false
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                objective,
 		MaxPlanningIterations: 3,
 		Now:                   time.Now().UTC(),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
-			return m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+			if implementorBlocked {
+				return encodeFeaturePlannerSiblingDispatchPaused(), nil
+			}
+			answer, runErr := m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+			if runErr != nil || featurePlannerPlanExecuteOutputBlocks(answer) {
+				implementorBlocked = true
+			}
+			return answer, runErr
 		}
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
@@ -90,25 +98,66 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 
 	answer, err := m.runPlanExecuteCommandOnce(ctx, prompt)
 	if err != nil {
+		if isRetryableModelTransportFailure(err) {
+			body, _ := json.Marshal(map[string]any{
+				"tool":             featureplanner.ToolQuestionForPlanner,
+				"lane_family":      "plan-execute",
+				"question_summary": "retryable model transport failure; previous product artifacts are preserved and the same atom can be retried",
+				"blocking_claim":   err.Error(),
+			})
+			m.logMessage("idiom.plan_execute.blocked", string(body))
+			return string(body), nil
+		}
 		return "", err
 	}
 	if planExecuteAnswerIsBlocked(answer) {
+		summary := planExecuteBlockedQuestionSummary(answer)
 		body, _ := json.Marshal(map[string]any{
 			"tool":             featureplanner.ToolQuestionForPlanner,
 			"lane_family":      "plan-execute",
-			"question_summary": strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(answer), "<<QUESTION>>:")),
+			"question_summary": summary,
 			"blocking_claim":   "plan-execute did not complete the atom implementation contract",
 		})
 		m.logMessage("idiom.plan_execute.blocked", string(body))
 		return string(body), nil
 	}
 	if body, err := json.Marshal(map[string]any{
-		"tool":        featureplanner.ToolPlanExecuteComplete,
-		"lane_family": "plan-execute",
+		"tool":          featureplanner.ToolPlanExecuteComplete,
+		"lane_family":   "plan-execute",
+		"progress_path": planExecuteProgressStatePath(answer),
+		"summary":       planExecuteCompletionSummary(answer),
 	}); err == nil {
 		m.logMessage("idiom.plan_execute.completed", string(body))
+		return string(body), nil
 	}
 	return encodeFeaturePlannerPlanExecuteCompletion(answer)
+}
+
+func planExecuteBlockedQuestionSummary(answer string) string {
+	trimmed := strings.TrimSpace(answer)
+	if strings.HasPrefix(trimmed, "<<QUESTION>>:") {
+		return strings.TrimSpace(strings.TrimPrefix(trimmed, "<<QUESTION>>:"))
+	}
+	var fields []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "session_id:") ||
+			strings.HasPrefix(lower, "progress_state:") ||
+			strings.HasPrefix(lower, "failure_kind:") ||
+			strings.HasPrefix(lower, "required_edit_paths:") ||
+			strings.HasPrefix(lower, "reason:") ||
+			strings.HasPrefix(lower, "plan-execute:") {
+			fields = append(fields, line)
+		}
+	}
+	if len(fields) > 0 {
+		return strings.Join(fields, "; ")
+	}
+	return trimmed
 }
 
 func planExecuteAnswerIsBlocked(answer string) bool {
@@ -122,6 +171,7 @@ func planExecuteAnswerIsBlocked(answer string) bool {
 	}
 	for _, marker := range []string{
 		"plan-execute: recovery-open",
+		"plan-execute: recovery_open",
 		"plan-execute: failed",
 		"feature-planner: recovery-open",
 		"contract blocked",
@@ -135,6 +185,46 @@ func planExecuteAnswerIsBlocked(answer string) bool {
 	return false
 }
 
+func planExecuteCompletionSummary(answer string) string {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return "plan-execute completed"
+	}
+	var lines []string
+	for _, line := range strings.Split(trimmed, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "progress_state:") ||
+			strings.HasPrefix(lower, "session_id:") {
+			continue
+		}
+		lines = append(lines, line)
+		if len(lines) >= 3 {
+			break
+		}
+	}
+	if len(lines) == 0 {
+		return "plan-execute completed"
+	}
+	return strings.Join(lines, " ")
+}
+
+func planExecuteProgressStatePath(answer string) string {
+	for _, line := range strings.Split(answer, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(strings.ToLower(line), "progress_state:") {
+			parts := strings.SplitN(line, ":", 2)
+			if len(parts) == 2 {
+				return strings.TrimSpace(parts[1])
+			}
+		}
+	}
+	return ""
+}
+
 func encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
 	body, err := json.Marshal(map[string]any{
 		"tool":        featureplanner.ToolPlanExecuteComplete,
@@ -145,6 +235,26 @@ func encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func encodeFeaturePlannerSiblingDispatchPaused() string {
+	body, _ := json.Marshal(map[string]any{
+		"tool":             featureplanner.ToolQuestionForPlanner,
+		"lane_family":      "plan-execute",
+		"question_summary": "sibling atom dispatch paused because an earlier implementor child opened a blocker in this feature-planner run",
+		"blocking_claim":   "resolve the first blocked child session before dispatching additional sibling atoms",
+	})
+	return string(body)
+}
+
+func featurePlannerPlanExecuteOutputBlocks(answer string) bool {
+	var envelope struct {
+		Tool string `json:"tool"`
+	}
+	if err := json.Unmarshal([]byte(strings.TrimSpace(answer)), &envelope); err == nil && strings.TrimSpace(envelope.Tool) == featureplanner.ToolQuestionForPlanner {
+		return true
+	}
+	return planExecuteAnswerIsBlocked(answer)
 }
 
 func (m *Model) featurePlannerSessionID() string {

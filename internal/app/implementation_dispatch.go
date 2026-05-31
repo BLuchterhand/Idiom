@@ -3599,6 +3599,9 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		result.ExitCode, result.SessionID, result.ResumeStatePath, outBuf.Len(), errBuf.Len()))
 
 	if result.ExitCode != 0 {
+		if msg, ok := humanPlanExecuteExecutionRecoveryOpenMessage(m.cfg.Workspace.Root, result, requiredPaths); ok {
+			return msg, nil
+		}
 		if implementationDispatchPlanExecuteFailureCanUseRecovery(result) {
 			answer, handled, err := m.handlePlanExecutePlannerBlocked(ctx, implementationDispatchPlanExecuteFailure{
 				Prompt:        prompt,
@@ -3618,7 +3621,56 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 		return "", fmt.Errorf("plan-execute exited %d (session=%s state=%s): %s", result.ExitCode, result.SessionID, result.ResumeStatePath, strings.TrimSpace(errBuf.String()))
 	}
 
-	return strings.TrimSpace(outBuf.String()), nil
+	answer := strings.TrimSpace(outBuf.String())
+	if strings.TrimSpace(result.ResumeStatePath) != "" && !strings.Contains(strings.ToLower(answer), "progress_state:") {
+		answer = strings.TrimSpace(answer + "\nprogress_state: " + strings.TrimSpace(result.ResumeStatePath))
+	}
+	return answer, nil
+}
+
+func humanPlanExecuteExecutionRecoveryOpenMessage(root string, result planexecute.RunResult, fallbackRequiredPaths []string) (string, bool) {
+	switch strings.TrimSpace(result.FailureKind) {
+	case planexecute.RunFailureSourceSanityFailed, planexecute.RunFailureVerificationRequired:
+	default:
+		return "", false
+	}
+	state, _, found, _ := planexecute.TryLoadProgressState(root, result.SessionID)
+	requiredPaths := appendUniqueBriefStrings(nil, fallbackRequiredPaths...)
+	if found && len(state.RequiredEditPaths) > 0 {
+		requiredPaths = appendUniqueBriefStrings(nil, state.RequiredEditPaths...)
+	}
+	var b strings.Builder
+	b.WriteString("plan-execute: recovery_open\n")
+	fmt.Fprintf(&b, "session_id: %s\n", strings.TrimSpace(result.SessionID))
+	if strings.TrimSpace(result.ResumeStatePath) != "" {
+		fmt.Fprintf(&b, "progress_state: %s\n", strings.TrimSpace(result.ResumeStatePath))
+	}
+	fmt.Fprintf(&b, "failure_kind: %s\n", strings.TrimSpace(result.FailureKind))
+	if reason := strings.TrimSpace(result.FailureReason); reason != "" {
+		fmt.Fprintf(&b, "reason: %s\n", reason)
+	}
+	if len(requiredPaths) > 0 {
+		b.WriteString("required_edit_paths:\n")
+		for _, path := range requiredPaths {
+			fmt.Fprintf(&b, "- %s\n", path)
+		}
+	}
+	if found {
+		if len(state.Executor.SourceSanity) > 0 {
+			b.WriteString("source_sanity:\n")
+			for _, check := range state.Executor.SourceSanity {
+				fmt.Fprintf(&b, "- %s %s %s\n", strings.TrimSpace(check.Path), strings.TrimSpace(check.Status), strings.TrimSpace(firstNonEmpty(check.Error, check.Summary)))
+			}
+		}
+		if len(state.Executor.Verification) > 0 {
+			b.WriteString("verification:\n")
+			for _, check := range state.Executor.Verification {
+				fmt.Fprintf(&b, "- %s %s %s\n", strings.TrimSpace(check.Command), strings.TrimSpace(check.Status), strings.TrimSpace(firstNonEmpty(check.Error, check.Summary)))
+			}
+		}
+	}
+	b.WriteString("next: inspect the progress state and recover the generated source before dispatching sibling atoms\n")
+	return strings.TrimSpace(b.String()), true
 }
 
 func implementationDispatchPlanExecuteMaxTokens(root string, prompt string, requiredPaths []string, allowedPaths []string, planDocuments []implementationDispatchPlanDocument) int {
@@ -3769,15 +3821,15 @@ func implementationDispatchPlanExecuteFailureCanUseRecovery(result planexecute.R
 }
 
 type implementationDispatchPlanExecuteFailure struct {
-	Prompt        string
-	Plan          promptExecutionPlan
-	Brief         string
-	Options       planexecute.Options
-	RequiredPaths []string
-	AllowedPaths  []string
-	Result        planexecute.RunResult
-	Stdout        string
-	Stderr        string
+	Prompt                   string
+	Plan                     promptExecutionPlan
+	Brief                    string
+	Options                  planexecute.Options
+	RequiredPaths            []string
+	AllowedPaths             []string
+	Result                   planexecute.RunResult
+	Stdout                   string
+	Stderr                   string
 	PlannerBlockedChainDepth int
 }
 

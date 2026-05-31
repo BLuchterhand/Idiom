@@ -260,7 +260,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 				fmt.Fprintln(stderr, saveErr)
 			}
 			fmt.Fprintln(stderr, err)
-			return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
+			return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: "planner_failed", FailureReason: sanitizeProgressReason(err.Error())}
 		}
 	}
 
@@ -466,11 +466,17 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		runErr = err
 	}
 	if sourceSanityRepairRequired {
+		if emitPhase != nil {
+			emitPhase("reviewing", "Source sanity failed; recovery evidence is being prepared...")
+		}
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "executor_verification_repair_required", map[string]any{
 			"failure_kind": RunFailureSourceSanityFailed,
 			"reason":       sanitizeProgressReason(runErr.Error()),
 		})
 	} else if verificationRepairRequired {
+		if emitPhase != nil {
+			emitPhase("reviewing", "Verification failed; recovery evidence is being prepared...")
+		}
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "executor_verification_repair_required", map[string]any{
 			"failure_kind":          RunFailureVerificationRequired,
 			"reason":                sanitizeProgressReason(runErr.Error()),

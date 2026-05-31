@@ -4,24 +4,26 @@ package featureplanner
 // needs to produce a grounded feature plan. The CLI layer populates it
 // from the product workflow effort artifacts and passes it through RunOptions.
 type ProductWorkflowBrief struct {
-	EffortID           string                `json:"effort_id"`
-	TaskID             string                `json:"task_id"`
-	EffortRoot         string                `json:"effort_root"`
-	PRDRequirements    []PRDRequirementBrief `json:"prd_requirements"`
-	AcceptedADRIDs     []string              `json:"accepted_adr_ids"`
-	AcceptedADRPaths   []string              `json:"accepted_adr_paths"`
-	TDDObligations     []TDDObligationBrief  `json:"tdd_obligations"`
-	CoverageTier       string                `json:"coverage_tier"`
-	CoverageGatePassed bool                  `json:"coverage_gate_passed"`
-	CoverageBlockers   []string              `json:"coverage_blockers"`
-	FilesToModify      []string              `json:"files_to_modify"`
-	RequiredBehavior   []string              `json:"required_behavior"`
-	Tests              []string              `json:"tests"`
-	Acceptance         []string              `json:"acceptance"`
-	Constraints        []string              `json:"constraints"`
-	Decisions          []string              `json:"decisions"`
-	Blockers           []string              `json:"blockers"`
-	ArtifactRootPath   string                `json:"artifact_root_path"`
+	EffortID                  string                `json:"effort_id"`
+	TaskID                    string                `json:"task_id"`
+	EffortRoot                string                `json:"effort_root"`
+	PRDRequirements           []PRDRequirementBrief `json:"prd_requirements"`
+	AcceptedADRIDs            []string              `json:"accepted_adr_ids"`
+	AcceptedADRPaths          []string              `json:"accepted_adr_paths"`
+	TDDObligations            []TDDObligationBrief  `json:"tdd_obligations"`
+	CoverageTier              string                `json:"coverage_tier"`
+	CoverageGatePassed        bool                  `json:"coverage_gate_passed"`
+	CoverageBlockers          []string              `json:"coverage_blockers"`
+	FilesToModify             []string              `json:"files_to_modify"`
+	ContextEvidencePaths      []string              `json:"context_evidence_paths,omitempty"`
+	AuthorizedNewPackageRoots []string              `json:"authorized_new_package_roots,omitempty"`
+	RequiredBehavior          []string              `json:"required_behavior"`
+	Tests                     []string              `json:"tests"`
+	Acceptance                []string              `json:"acceptance"`
+	Constraints               []string              `json:"constraints"`
+	Decisions                 []string              `json:"decisions"`
+	Blockers                  []string              `json:"blockers"`
+	ArtifactRootPath          string                `json:"artifact_root_path"`
 }
 
 type PRDRequirementBrief struct {
@@ -40,4 +42,3 @@ type TDDObligationBrief struct {
 	RequiredBefore string `json:"required_before"`
 	Status         string `json:"status"`
 }
-

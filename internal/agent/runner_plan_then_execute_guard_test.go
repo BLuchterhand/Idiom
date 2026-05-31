@@ -6486,6 +6486,50 @@ func TestPlanThenExecuteRequiredPathHintsDoNotReadTerminalMissingPath(t *testing
 	}
 }
 
+func TestPlanThenExecuteMissingNewFilePathsBecomeSubmitReadyWithoutMoreReads(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{
+			"internal/viewer/doc1.go",
+			"internal/viewer/doc2.go",
+			"internal/viewer/doc3.go",
+			"internal/viewer/doc4.go",
+			"internal/viewer/doc5.go",
+		},
+	}
+	var results []workspace.ToolResult
+	for _, path := range brief.RequiredEditPaths {
+		results = append(results, workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "read_file failed for " + path,
+			Error:   `path "` + path + `" is in your required_edit_paths but does not exist on disk yet - this is a NEW FILE you must create.`,
+		})
+	}
+
+	if unread := planThenExecuteUnreadRequiredPaths(brief, results); len(unread) != 0 {
+		t.Fatalf("missing required new files should not remain source-body reads after first missing-file proof, got %#v", unread)
+	}
+	if !planThenExecuteSubmitPlanOnlyReady(brief, results) {
+		t.Fatal("all missing required new files should transition to submit-ready/blocker contract")
+	}
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); !strings.Contains(got, "PLANNER READINESS REACHED") {
+		t.Fatalf("missing required new files should get terminal submit-ready nudge, got:\n%s", got)
+	}
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("Mode = %q, want submit_ready; states=%#v", state.Mode, state.RequiredPathStates)
+	}
+	for _, got := range state.RequiredPathStates {
+		if !strings.HasSuffix(got, ":"+string(planThenExecuteRequiredPathNewFileBodyRequired)) {
+			t.Fatalf("required path state = %q, want new_file_body_required", got)
+		}
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	if req, raw, ok := runner.deterministicPlanExecuteRequiredSourceRead(results); ok {
+		t.Fatalf("missing new-file paths should not schedule another source-body read, got req=%#v raw=%s", req, raw)
+	}
+}
+
 func TestPlanThenExecuteMissingSubmitPlanGateNamesSubmitPlan(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

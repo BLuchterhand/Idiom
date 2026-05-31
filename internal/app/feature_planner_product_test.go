@@ -1,9 +1,13 @@
 package app
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"idiom/internal/featureplanner"
+	"idiom/internal/planexecute"
 	"idiom/internal/productworkflow"
 )
 
@@ -341,6 +345,204 @@ func TestPlanExecuteAnswerIsBlocked(t *testing.T) {
 	}
 	if planExecuteAnswerIsBlocked("Decision: source-satisfied\n- internal/example/example.go: already satisfied") {
 		t.Fatal("source-satisfied answer should remain eligible for completion wrapper")
+	}
+}
+
+func TestProductWorkflowFeaturePlannerRecoveryBlocksCompletion(t *testing.T) {
+	state := featureplanner.NewState("feature-session", "prompt", "", 3, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+	state.Status = featureplanner.FeatureStateDispatching
+	state.Atoms = []featureplanner.FeatureAtomState{{
+		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
+			ID:                "atom-1",
+			RequiredEditPaths: []string{"internal/app/product_status.go"},
+		},
+		State:     featureplanner.AtomStateRecoveryOpen,
+		LastRunID: "plan-execute-session-1",
+		Blockers:  []string{"source sanity failed"},
+	}}
+
+	msg, blocked := formatProductWorkflowFeaturePlannerRecovery(state, ".idiom/feature-planner/feature-session/state.json")
+	if !blocked {
+		t.Fatal("recovery-open child must block product completion")
+	}
+	for _, want := range []string{
+		"feature-planner: recovery_open",
+		"session_id: feature-session",
+		"state_path: .idiom/feature-planner/feature-session/state.json",
+		"atom=atom-1 state=recovery-open session=plan-execute-session-1 required_paths=internal/app/product_status.go",
+		"blockers=source sanity failed",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("recovery message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestProductWorkflowFeaturePlannerRecoverySurfacesOpenQuestionDetails(t *testing.T) {
+	state := featureplanner.NewState("feature-session", "prompt", "", 3, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.Atoms = []featureplanner.FeatureAtomState{{
+		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
+			ID:                "atom-1",
+			RequiredEditPaths: []string{"internal/app/product_status.go"},
+		},
+		State:        featureplanner.AtomStateQuestionForPlanner,
+		LastRunID:    "plan-execute-session-1",
+		LastQuestion: "Plan-execute could not produce a plan artifact.",
+	}}
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		AtomID:          "atom-1",
+		QuestionSummary: "progress_state: .idiom/plan-execute/pe-session/state.json; failure_kind: source_sanity_failed",
+		BlockingClaim:   "source_sanity: internal/app/product_status.go failed compile failed",
+		EvidenceRefs:    []string{".idiom/plan-execute/pe-session/state.json"},
+		Status:          "open",
+	}}
+
+	msg, blocked := formatProductWorkflowFeaturePlannerRecovery(state, ".idiom/feature-planner/feature-session/state.json")
+	if !blocked {
+		t.Fatal("open child question must block product completion")
+	}
+	for _, want := range []string{
+		"progress_state: .idiom/plan-execute/pe-session/state.json",
+		"source_sanity: internal/app/product_status.go failed compile failed",
+		"evidence_refs=.idiom/plan-execute/pe-session/state.json",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("recovery message missing question detail %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestProductWorkflowFeaturePlannerRecoveryAllowsCompleteState(t *testing.T) {
+	state := featureplanner.NewState("feature-session", "prompt", "", 3, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+	state.Status = featureplanner.FeatureStateComplete
+	state.Atoms = []featureplanner.FeatureAtomState{{
+		FeatureAtomPlan: featureplanner.FeatureAtomPlan{ID: "atom-1"},
+		State:           featureplanner.AtomStateComplete,
+	}}
+
+	if msg, blocked := formatProductWorkflowFeaturePlannerRecovery(state, ""); blocked {
+		t.Fatalf("complete children should not block product completion: %s", msg)
+	}
+}
+
+func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("pe-session", "prompt", "", []string{"internal/app/product_status.go"}, nil, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))
+	state.Phase = planexecute.ProgressPhaseReviewRepair
+	state.Status = planexecute.ProgressStatusFailed
+	state.FailureKind = planexecute.RunFailureSourceSanityFailed
+	state.FailureReason = "source_sanity failed for generated source"
+	state.Executor.SourceSanity = []planexecute.PhaseEvidenceCheck{{
+		Kind:   "source_sanity",
+		Path:   "internal/app/product_status.go",
+		Status: "failed",
+		Error:  "compile failed",
+	}}
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+
+	msg, ok := humanPlanExecuteExecutionRecoveryOpenMessage(root, planexecute.RunResult{
+		ExitCode:        1,
+		SessionID:       "pe-session",
+		ResumeStatePath: statePath,
+		FailureKind:     planexecute.RunFailureSourceSanityFailed,
+		FailureReason:   "source_sanity failed for generated source",
+	}, nil)
+	if !ok {
+		t.Fatal("expected source-sanity failure to surface as recovery-open")
+	}
+	for _, want := range []string{
+		"plan-execute: recovery_open",
+		"session_id: pe-session",
+		"failure_kind: source_sanity_failed",
+		"required_edit_paths:\n- internal/app/product_status.go",
+		"source_sanity:\n- internal/app/product_status.go failed compile failed",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("source-sanity recovery message missing %q:\n%s", want, msg)
+		}
+	}
+}
+
+func TestBuildProductWorkflowBriefIncludesWorkflowReferencedPaths(t *testing.T) {
+	brief := buildProductWorkflowBrief(
+		"docs/product-workflows/efforts/example",
+		productworkflow.WorkflowState{
+			Context: productworkflow.WorkflowContext{
+				ReferencedPaths: []string{"internal/app/product_status.go"},
+			},
+		},
+		productworkflow.PRDDocument{},
+		productworkflow.ADRIndex{},
+		nil,
+		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
+		productworkflow.TraceabilityMatrix{},
+	)
+
+	if !slices.Contains(brief.ContextEvidencePaths, "internal/app/product_status.go") {
+		t.Fatalf("expected workflow referenced path in ContextEvidencePaths, got %#v", brief.ContextEvidencePaths)
+	}
+}
+
+func TestBuildProductWorkflowBriefBlocksUngroundedImplementationClaims(t *testing.T) {
+	brief := buildProductWorkflowBrief(
+		"docs/product-workflows/efforts/example",
+		productworkflow.WorkflowState{},
+		productworkflow.PRDDocument{Requirements: []productworkflow.PRDRequirement{{
+			ID:        "REQ-1",
+			Statement: "Use the ExampleCloud platform for the live TUI document viewer.",
+		}}},
+		productworkflow.ADRIndex{},
+		[]productworkflow.ParsedADR{{
+			RelPath: "adrs/ADR-001.md",
+			Doc: productworkflow.ADRDocument{
+				FrontMatter:  productworkflow.ADRFrontMatter{ADRID: "ADR-001", Status: "accepted"},
+				BodyMarkdown: "## Decision\nUse the ExampleSDK tooling for the document viewer implementation.",
+			},
+		}},
+		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
+		productworkflow.TraceabilityMatrix{},
+	)
+
+	joined := strings.Join(brief.Blockers, "\n")
+	for _, want := range []string{
+		"implementation-affecting claim in PRD requirement REQ-1 lacks evidence_refs",
+		"implementation-affecting claim in accepted ADR ADR-001 lacks evidence_refs",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected blocker %q, got %#v", want, brief.Blockers)
+		}
+	}
+}
+
+func TestBuildProductWorkflowBriefAllowsResolvedImplementationEvidence(t *testing.T) {
+	brief := buildProductWorkflowBrief(
+		"docs/product-workflows/efforts/example",
+		productworkflow.WorkflowState{},
+		productworkflow.PRDDocument{Requirements: []productworkflow.PRDRequirement{{
+			ID:           "REQ-1",
+			Statement:    "Use the ExampleCloud platform for the live TUI document viewer.",
+			EvidenceRefs: []string{"EV-1"},
+		}}},
+		productworkflow.ADRIndex{},
+		[]productworkflow.ParsedADR{{
+			RelPath: "adrs/ADR-001.md",
+			Doc: productworkflow.ADRDocument{
+				FrontMatter:  productworkflow.ADRFrontMatter{ADRID: "ADR-001", Status: "accepted", EvidenceRefs: []string{"EV-1"}},
+				BodyMarkdown: "## Decision\nUse the ExampleSDK tooling for the document viewer implementation.\n\n## Open Questions\nNone.",
+			},
+		}},
+		productworkflow.TDDLedger{EffortID: "effort-1", TaskID: "task-1"},
+		productworkflow.TraceabilityMatrix{
+			Matrix: []productworkflow.TraceabilityRow{{EvidenceCard: "EV-1"}},
+		},
+	)
+
+	if len(brief.Blockers) != 0 {
+		t.Fatalf("resolved implementation evidence should not block TUI brief dispatch, got %#v", brief.Blockers)
 	}
 }
 

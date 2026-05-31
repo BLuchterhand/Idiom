@@ -114,8 +114,9 @@ func LintEffortFolder(root string) LintSummaryResult {
 					return adrErr
 				}
 				parsedADRs = append(parsedADRs, ParsedADR{
-					Doc:     adrDoc,
-					RelPath: adrRelPath,
+					Doc:         adrDoc,
+					RelPath:     adrRelPath,
+					RawMarkdown: string(adrData),
 				})
 				return nil
 			})
@@ -284,6 +285,23 @@ func LintEffortFolder(root string) LintSummaryResult {
 				addFinding(ce.Code, ce.Path, ce.Message)
 			}
 		}
+	}
+	var prdForClaimLint PRDDocument
+	if parsedPRD != nil {
+		prdForClaimLint = *parsedPRD
+	}
+	for _, finding := range ImplementationAffectingClaimFindings(prdForClaimLint, parsedADRs) {
+		addFinding(finding.Kind, finding.File, finding.Message)
+	}
+	var evidenceIDs map[string]bool
+	if parsedCards != nil {
+		evidenceIDs = make(map[string]bool)
+		for _, card := range parsedCards {
+			evidenceIDs[card.CardID] = true
+		}
+	}
+	for _, finding := range ImplementationAffectingClaimEvidenceFindings(prdForClaimLint, parsedADRs, evidenceIDs) {
+		addFinding(finding.Kind, finding.File, finding.Message)
 	}
 
 	if parsedPRD != nil {

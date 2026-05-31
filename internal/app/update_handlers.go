@@ -292,7 +292,7 @@ func (m *Model) handleStreamDone(msg streamDoneMsg) (tea.Cmd, bool) {
 	m.currentTurnBusyStatus = ""
 	if msg.err != nil {
 		m.failAgentHistoryTurn(msg.err)
-		m.setRuntimeError("Chat failed: " + msg.err.Error())
+		m.setRuntimeError(formatModelFailureStatus(msg.err))
 	} else {
 		m.clearRuntimeError()
 		m.status = "Response complete."

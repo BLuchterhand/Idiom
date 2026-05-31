@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/featureplanner"
+	"idiom/internal/productworkflow"
 )
 
 func TestRunFeaturePlannerMainReadsPromptFileAndHonorsJSON(t *testing.T) {
@@ -291,6 +292,96 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func TestLoadProductWorkflowBriefCarriesClaimBlockersWithoutImplementationRecords(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "adrs"), 0o755); err != nil {
+		t.Fatalf("mkdir adrs: %v", err)
+	}
+	workflowState := productworkflow.WorkflowState{
+		SchemaVersion:        "idiom.product_workflow_state.v0.fixture",
+		EffortID:             "effort-headless",
+		TaskID:               "task-headless",
+		Title:                "Headless claim blocker",
+		StatusBucket:         "started",
+		CurrentPhase:         "phase-4",
+		CurrentState:         "planning",
+		ArtifactPaths:        map[string]string{"events": "events.jsonl"},
+		Context:              productworkflow.WorkflowContext{ContextPackID: "pack", FreshnessState: "current", RefreshPolicy: "on_demand"},
+		Coverage:             productworkflow.CoverageState{CoverageTier: "unit"},
+		Privacy:              productworkflow.PrivacyState{RedactionStatus: "applied"},
+		FolderPath:           root,
+		NextValidActions:     []string{"feature-planner"},
+		DurabilityLevel:      "source_controlled",
+		WorkspaceFingerprint: "test",
+	}
+	writeJSONFile(t, filepath.Join(root, "workflow_state.json"), workflowState)
+	prd := productworkflow.PRDDocument{
+		FrontMatter: productworkflow.PRDFrontMatter{
+			SchemaVersion:     "idiom.prd.v1",
+			PRDID:             "PRD-HEADLESS",
+			Status:            "accepted",
+			TaskID:            "task-headless",
+			CreatedAt:         "2026-05-31T00:00:00Z",
+			AcceptedAt:        "2026-05-31T00:01:00Z",
+			AcceptedBy:        "test",
+			AcceptanceProfile: "human-review",
+		},
+		Requirements: []productworkflow.PRDRequirement{{
+			ID:                   "REQ-HEADLESS",
+			Priority:             "must",
+			Statement:            "Use the ExampleCloud platform for implementation.",
+			EvidenceRefs:         []string{"EV-MISSING"},
+			TDDObligations:       []string{"TDD-HEADLESS"},
+			OwnerAlignment:       "operator-approved",
+			Testability:          "go test",
+			Metric:               "claim is backed before dispatch",
+			OpenQuestionsPresent: true,
+		}},
+	}
+	if err := os.WriteFile(filepath.Join(root, "prd.md"), []byte(productworkflow.RenderPRDMarkdown(prd)), 0o644); err != nil {
+		t.Fatalf("write prd: %v", err)
+	}
+	tdd := productworkflow.TDDLedger{
+		SchemaVersion: "idiom.tdd_ledger.v1",
+		EffortID:      "effort-headless",
+		TaskID:        "task-headless",
+		CoverageTier:  "unit",
+		Coverage:      productworkflow.TDDCoverage{MutationMinScore: 1},
+		Obligations: []productworkflow.TDDObligation{{
+			ID:             "TDD-HEADLESS",
+			Type:           "regression",
+			Behavior:       "Claim is validated",
+			Owner:          "internal/cmd/featureplanner/feature_planner_test.go",
+			Command:        "go test ./internal/cmd/featureplanner",
+			RequiredBefore: "implementation",
+			Status:         "planned",
+		}},
+	}
+	writeJSONFile(t, filepath.Join(root, "tdd.json"), tdd)
+
+	brief, err := loadProductWorkflowBrief(root)
+	if err != nil {
+		t.Fatalf("loadProductWorkflowBrief: %v", err)
+	}
+	if brief == nil {
+		t.Fatal("expected product workflow brief")
+	}
+	if !strings.Contains(strings.Join(brief.Blockers, "\n"), `implementation-affecting claim in PRD requirement REQ-HEADLESS references unresolved evidence "EV-MISSING"`) {
+		t.Fatalf("expected implementation claim blocker without implementation records, got %#v", brief.Blockers)
+	}
+}
+
+func writeJSONFile(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }
 
 func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {

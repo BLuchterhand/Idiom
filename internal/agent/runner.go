@@ -422,7 +422,11 @@ func (r *Runner) Run(
 				return
 			}
 		} else if autonomyRecorder != nil {
-			autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, "final_answer_accepted", collectedResults, completionGateRejections)
+			reasonCode := "final_answer_accepted"
+			if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedAnswerIntent(answer) {
+				reasonCode = "plan_source_satisfied_short_circuit"
+			}
+			autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, reasonCode, collectedResults, completionGateRejections)
 		}
 		r.emitAcceptedAnswerSignals(answer, collectedResults)
 		acceptedAnswerSignalsEmitted = true

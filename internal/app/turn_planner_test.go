@@ -3888,6 +3888,7 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 
 	var plannerPromptRequests atomic.Int64
 	var sawAtomPrompt atomic.Bool
+	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -3915,6 +3916,22 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 					t.Fatalf("planner request did not receive refined atom brief with required scope:\n%s", requestText)
 				}
 				sawAtomPrompt.Store(true)
+				readPaths := []string{}
+				switch {
+				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
+					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
+					readPaths = []string{"pkg/a.go"}
+				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/b.go\\n") ||
+					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/b.go\n"):
+					readPaths = []string{"pkg/b.go"}
+				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/c.go\\n") ||
+					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/c.go\n"):
+					readPaths = []string{"pkg/c.go"}
+				}
+				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, readPaths...); ok {
+					reply = readReply
+					break
+				}
 				switch {
 				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
 					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
@@ -4022,8 +4039,8 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 	if !sawAtomPrompt.Load() {
 		t.Fatalf("expected planner to receive atom prompt")
 	}
-	if plannerPromptRequests.Load() != 3 {
-		t.Fatalf("expected one planner request per atom, got %d", plannerPromptRequests.Load())
+	if plannerPromptRequests.Load() != 6 {
+		t.Fatalf("expected source-read and submit request per atom, got %d", plannerPromptRequests.Load())
 	}
 }
 
@@ -4962,6 +4979,35 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanSurfaceThroughRecoveryDecision
 	}
 }
 
+func planExecuteSourceReadFixtureReply(requestText string, seen map[string]bool, paths ...string) (string, bool) {
+	lower := strings.ToLower(requestText)
+	if !strings.Contains(lower, "source-body") &&
+		!strings.Contains(lower, "source body") &&
+		!strings.Contains(lower, "required source read pending") &&
+		!strings.Contains(lower, "candidate_source_pending") {
+		return "", false
+	}
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" || !strings.Contains(requestText, path) {
+			continue
+		}
+		if seen != nil && seen[path] {
+			continue
+		}
+		if strings.Contains(requestText, "Read f1 "+path) ||
+			strings.Contains(requestText, "read_file failed for "+path) ||
+			strings.Contains(requestText, "path \""+path+"\" is in your required_edit_paths but does not exist") {
+			continue
+		}
+		if seen != nil {
+			seen[path] = true
+		}
+		return "<tool_call>\n" + fmt.Sprintf(`{"tool":"read_file","path":%q,"start_line":1,"end_line":80}`, path), true
+	}
+	return "", false
+}
+
 func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
@@ -4989,6 +5035,7 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 	var sawRecoveryDecision atomic.Bool
 	var sawRetryPrompt atomic.Bool
 	var firstPlannerReplies atomic.Int64
+	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -5012,8 +5059,12 @@ func TestRunPromptOncePlanExecutePlannerBlockedCanRetryAfterRecoveryDecision(t *
 				reply = `{"decision":"retry","reason":"the brief has enough exact target scope and the previous attempt failed before tool use","retry_addendum":"Respond with a submit_plan tool call only; do not narrate completion."}`
 			case strings.Contains(requestText, "Previous Planner Blocker Recovery"):
 				sawRetryPrompt.Store(true)
-				reply = "<tool_call>\n" +
-					`{"tool":"submit_plan","rationale":"Update target.txt after recovery retry.","edits":[{"path":"target.txt","old_text":"old\n","new_text":"new\n","purpose":"replace target text"}]}`
+				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "target.txt"); ok {
+					reply = readReply
+				} else {
+					reply = "<tool_call>\n" +
+						`{"tool":"submit_plan","rationale":"Update target.txt after recovery retry.","edits":[{"path":"target.txt","old_text":"old\n","new_text":"new\n","purpose":"replace target text"}]}`
+				}
 			case strings.Contains(requestText, "The completion gate rejected a final answer before the plan-submission contract"):
 				reply = "Still no plan."
 			default:
@@ -5109,6 +5160,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 
 	var sawMissingTestRetry atomic.Bool
 	var plannerRequests atomic.Int64
+	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -5136,8 +5188,12 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestRetry(t *testin
 					`{"tool":"submit_plan","rationale":"Retry with the required regression test edit included.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"},{"path":"pkg/feature_test.go","old_text":"const RegressionCovered = false","new_text":"const RegressionCovered = true","purpose":"cover the hardening regression"}]}`
 			default:
 				plannerRequests.Add(1)
-				reply = "<tool_call>\n" +
-					`{"tool":"submit_plan","rationale":"Production-only hardening plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"}]}`
+				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "pkg/feature.go", "pkg/feature_test.go"); ok {
+					reply = readReply
+				} else {
+					reply = "<tool_call>\n" +
+						`{"tool":"submit_plan","rationale":"Production-only hardening plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","purpose":"harden feature behavior"}]}`
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
@@ -5234,6 +5290,7 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 
 	var sawMissingTestRetry atomic.Bool
 	var retryTurns atomic.Int64
+	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -5274,8 +5331,12 @@ func TestRunPromptOncePlanExecuteDoesNotInferMissingRequestedTestSourceSatisfied
 					}, "\n")
 				}
 			default:
-				reply = "<tool_call>\n" +
-					`{"tool":"submit_plan","rationale":"Production-only stale plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return true","new_text":"return false","purpose":"stale production-only edit"}]}`
+				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "pkg/feature.go", "pkg/feature_test.go"); ok {
+					reply = readReply
+				} else {
+					reply = "<tool_call>\n" +
+						`{"tool":"submit_plan","rationale":"Production-only stale plan that should be rejected before writes.","edits":[{"path":"pkg/feature.go","old_text":"return true","new_text":"return false","purpose":"stale production-only edit"}]}`
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{
@@ -5436,6 +5497,7 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 	})
 
 	var plannerRequests atomic.Int64
+	sourceReadReplies := map[string]bool{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/models":
@@ -5465,8 +5527,12 @@ func TestRunPromptOnceReferenceOnlyDesignDocDispatchesPlanExecuteWithoutRefine(t
 						t.Fatalf("planner prompt lost reference-only design-doc context %q:\n%s", want, requestText)
 					}
 				}
-				reply = "<tool_call>\n" +
-					`{"tool":"submit_plan","rationale":"Harden the migration temp policy requested by the referenced design document and add regression coverage.","edits":[{"path":"internal/productworkflow/migration_apply.go","old_text":"const TempPolicy = \"weak\"\n","new_text":"const TempPolicy = \"hardened\"\n","purpose":"harden migration temp path policy"},{"path":"internal/productworkflow/migration_apply_test.go","old_text":"const TempPolicyTested = false\n","new_text":"const TempPolicyTested = true\n","purpose":"cover migration temp path policy"}]}`
+				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, "internal/productworkflow/migration_apply.go", "internal/productworkflow/migration_apply_test.go"); ok {
+					reply = readReply
+				} else {
+					reply = "<tool_call>\n" +
+						`{"tool":"submit_plan","rationale":"Harden the migration temp policy requested by the referenced design document and add regression coverage.","edits":[{"path":"internal/productworkflow/migration_apply.go","old_text":"const TempPolicy = \"weak\"\n","new_text":"const TempPolicy = \"hardened\"\n","purpose":"harden migration temp path policy"},{"path":"internal/productworkflow/migration_apply_test.go","old_text":"const TempPolicyTested = false\n","new_text":"const TempPolicyTested = true\n","purpose":"cover migration temp path policy"}]}`
+				}
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []map[string]any{{

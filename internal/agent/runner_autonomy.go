@@ -827,12 +827,58 @@ func (a *runnerAutonomyRecorder) resolvedAndOpenObligationsForGate(input runnerA
 
 func (a *runnerAutonomyRecorder) completionGateResolvedAndOpenObligations(input runnerAutonomyGateDecision, refs []string) (resolved []string, open []string) {
 	a.ensureObligationState()
+	changed := make(map[string]struct{}, len(input.ChangedPaths))
+	for _, path := range input.ChangedPaths {
+		if normalized := normalizeRunnerPath(path); normalized != "" {
+			changed[normalized] = struct{}{}
+		}
+	}
+	sourceSatisfiedPaths := map[string]struct{}{}
+	sourceSatisfiedReason := strings.TrimSpace(input.ReasonCode) == "plan_source_satisfied_short_circuit" ||
+		strings.Contains(strings.ToLower(strings.TrimSpace(input.ReasonCode)), "source_satisfied")
+	if sourceSatisfiedReason {
+		for _, path := range input.TargetRefs {
+			path = strings.TrimSpace(path)
+			if idx := strings.LastIndex(path, ":"); idx > 0 {
+				path = path[:idx]
+			}
+			if normalized := normalizeRunnerPath(path); normalized != "" {
+				sourceSatisfiedPaths[normalized] = struct{}{}
+			}
+		}
+	}
 	for _, ref := range refs {
 		ref = strings.TrimSpace(ref)
 		if ref == "" {
 			continue
 		}
-		if _, ok := a.openObligations[ref]; !ok {
+		obligation, ok := a.openObligations[ref]
+		if !ok {
+			continue
+		}
+		if obligation.Kind == autonomy.ObligationWrite {
+			target := normalizeRunnerPath(obligation.TargetRef)
+			if target == "" {
+				if sourceSatisfiedReason {
+					resolved = append(resolved, ref)
+					continue
+				}
+				open = append(open, ref)
+				continue
+			}
+			if _, ok := changed[target]; ok {
+				resolved = append(resolved, ref)
+				continue
+			}
+			if _, ok := sourceSatisfiedPaths[target]; ok {
+				resolved = append(resolved, ref)
+				continue
+			}
+			if len(changed) == 0 {
+				open = append(open, ref)
+				continue
+			}
+			open = append(open, ref)
 			continue
 		}
 		if ref == "obl-verify-post-write" && !strings.EqualFold(strings.TrimSpace(input.VerificationStatus), "passed") {

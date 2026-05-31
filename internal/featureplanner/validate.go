@@ -185,6 +185,9 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 	prdIDs := stringSetFromPRDRequirements(brief.PRDRequirements)
 	adrIDs := stringSet(brief.AcceptedADRIDs)
 	tddIDs := stringSetFromTDDObligations(brief.TDDObligations)
+	prdTDDRefs := tddRefsByPRDRequirement(brief.PRDRequirements)
+	productTDD := tddObligationsByID(brief.TDDObligations)
+	repoGrounding := newRepoGrounding(brief)
 
 	if len(prdIDs) > 0 {
 		if len(plan.SDDContract.PRDRequirementRefs) == 0 {
@@ -215,6 +218,12 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 		}
 	}
 	for i, atom := range plan.Atoms {
+		for _, scopeErr := range repoGrounding.validateAtomEditScope(i, atom) {
+			errs = append(errs, scopeErr)
+		}
+		if readinessErrs := validateProductTDDReadiness(i, atom, productTDD); len(readinessErrs) > 0 {
+			errs = append(errs, readinessErrs...)
+		}
 		for j, ref := range atom.SDDRefs {
 			ref = strings.TrimSpace(ref)
 			if ref == "" {
@@ -224,6 +233,15 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 				if !prdIDs[ref] && !adrIDs[ref] {
 					errs = append(errs, fmt.Errorf("atom %d sdd_refs[%d] references unknown product artifact %q", i, j, ref))
 				}
+			}
+		}
+		for _, ref := range atom.SDDRefs {
+			ref = strings.TrimSpace(ref)
+			if ref == "" || len(prdTDDRefs[ref]) == 0 {
+				continue
+			}
+			if !intersectsStringSet(append(atom.TDDObligations, atom.TestFirst.ObligationRefs...), prdTDDRefs[ref]) {
+				errs = append(errs, fmt.Errorf("atom %d sdd_refs references PRD requirement %q but no atom TDD obligation/test_first obligation matches its product TDD mapping", i, ref))
 			}
 		}
 		for j, ref := range atom.TDDObligations {
@@ -240,6 +258,246 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 		}
 	}
 	return errors.Join(errs...)
+}
+
+type productRepoGrounding struct {
+	filesToModify             map[string]bool
+	contextEvidencePaths      map[string]bool
+	authorizedNewPackageRoots map[string]bool
+	packageRoots              map[string]bool
+	hasLocalization           bool
+}
+
+func newRepoGrounding(brief ProductWorkflowBrief) productRepoGrounding {
+	grounding := productRepoGrounding{
+		filesToModify:             normalizedStringSet(brief.FilesToModify),
+		contextEvidencePaths:      normalizedStringSet(brief.ContextEvidencePaths),
+		authorizedNewPackageRoots: normalizedStringSet(brief.AuthorizedNewPackageRoots),
+		packageRoots:              map[string]bool{},
+	}
+	grounding.hasLocalization = len(grounding.filesToModify) > 0 || len(grounding.contextEvidencePaths) > 0 || len(grounding.authorizedNewPackageRoots) > 0
+	for path := range grounding.filesToModify {
+		grounding.addExistingPackageRoot(path)
+	}
+	for path := range grounding.contextEvidencePaths {
+		grounding.addExistingPackageRoot(path)
+	}
+	return grounding
+}
+
+func (g *productRepoGrounding) addExistingPackageRoot(path string) {
+	dir := normalizedPathDir(path)
+	if dir == "" || dir == "." {
+		return
+	}
+	if existingPackageDir(dir) {
+		g.packageRoots[dir] = true
+	}
+}
+
+func (g productRepoGrounding) validateAtomEditScope(atomIndex int, atom FeatureAtomPlan) []error {
+	var errs []error
+	for _, scopedPath := range append(normalizedStringList(atom.RequiredEditPaths), normalizedStringList(atom.AllowedEditPaths)...) {
+		if normalizeWorkspacePath(scopedPath) == "" {
+			errs = append(errs, fmt.Errorf("atom %d edit path %q is not a valid repo-relative workspace path; use ask_planner_question for planning repair", atomIndex, scopedPath))
+			continue
+		}
+		if !g.hasLocalization {
+			errs = append(errs, fmt.Errorf("atom %d edit path %q is ungrounded by product workflow localization; use ask_planner_question for planning repair instead of inventing required_edit_paths or allowed_edit_paths", atomIndex, scopedPath))
+			continue
+		}
+		if g.pathGrounded(scopedPath) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("atom %d edit path %q is ungrounded by files_to_modify, context/source evidence, existing grounded package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
+	}
+	return errs
+}
+
+func (g productRepoGrounding) pathGrounded(path string) bool {
+	path = normalizeWorkspacePath(path)
+	if path == "" {
+		return false
+	}
+	if g.filesToModify[path] || g.contextEvidencePaths[path] {
+		return true
+	}
+	if pathWithinAnyRoot(path, g.authorizedNewPackageRoots) {
+		return true
+	}
+	if pathWithinAnyRoot(path, g.packageRoots) {
+		return true
+	}
+	return false
+}
+
+func validateProductTDDReadiness(atomIndex int, atom FeatureAtomPlan, productTDD map[string]TDDObligationBrief) []error {
+	var errs []error
+	refs := normalizedStringList(append(atom.TDDObligations, atom.TestFirst.ObligationRefs...))
+	for _, ref := range refs {
+		obligation, ok := productTDD[ref]
+		if !ok || !requiredBeforeImplementation(obligation.RequiredBefore) {
+			continue
+		}
+		if !looksExecutableCommand(obligation.Command) {
+			errs = append(errs, fmt.Errorf("atom %d product TDD obligation %q is required before implementation but lacks an executable command", atomIndex, ref))
+		}
+		if len(atom.TestFirst.TestArtifactPaths) == 0 {
+			errs = append(errs, fmt.Errorf("atom %d product TDD obligation %q is required before implementation but atom test_first lacks a test artifact path", atomIndex, ref))
+		}
+	}
+	for _, command := range atom.TestFirst.Commands {
+		if !looksExecutableCommand(command) {
+			errs = append(errs, fmt.Errorf("atom %d test_first command %q is not an executable command artifact", atomIndex, command))
+		}
+	}
+	return errs
+}
+
+func requiredBeforeImplementation(value string) bool {
+	value = strings.TrimSpace(strings.ToLower(value))
+	return value == "" || value == "implementation"
+}
+
+func looksExecutableCommand(command string) bool {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return false
+	}
+	lower := strings.ToLower(command)
+	generic := []string{"run tests", "run the tests", "test", "tests", "tbd", "planned", "todo", "n/a", "none"}
+	for _, value := range generic {
+		if lower == value {
+			return false
+		}
+	}
+	for _, prefix := range []string{"go ", "make ", "npm ", "yarn ", "pnpm ", "node ", "python ", "python3 ", "pytest", "cargo ", "mvn ", "gradle ", "./", "sh ", "bash "} {
+		if strings.HasPrefix(command, prefix) {
+			return true
+		}
+	}
+	return strings.Contains(command, " ")
+}
+
+func tddRefsByPRDRequirement(requirements []PRDRequirementBrief) map[string]map[string]bool {
+	out := map[string]map[string]bool{}
+	for _, requirement := range requirements {
+		id := strings.TrimSpace(requirement.ID)
+		if id == "" {
+			continue
+		}
+		out[id] = normalizedStringSet(requirement.Obligations)
+	}
+	return out
+}
+
+func tddObligationsByID(obligations []TDDObligationBrief) map[string]TDDObligationBrief {
+	out := map[string]TDDObligationBrief{}
+	for _, obligation := range obligations {
+		if id := strings.TrimSpace(obligation.ID); id != "" {
+			out[id] = obligation
+		}
+	}
+	return out
+}
+
+func intersectsStringSet(values []string, set map[string]bool) bool {
+	for _, value := range values {
+		if set[strings.TrimSpace(value)] {
+			return true
+		}
+	}
+	return false
+}
+
+func existingPackageDir(dir string) bool {
+	entries, err := os.ReadDir(repoRelativePath(dir))
+	if err != nil {
+		return false
+	}
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if strings.HasSuffix(name, ".go") || name == "package.json" || name == "pyproject.toml" || name == "Cargo.toml" || name == "go.mod" {
+			return true
+		}
+	}
+	return false
+}
+
+func repoRelativePath(path string) string {
+	path = filepath.FromSlash(path)
+	dir, err := os.Getwd()
+	if err != nil {
+		return path
+	}
+	for {
+		if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); statErr == nil {
+			return filepath.Join(dir, path)
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return path
+		}
+		dir = parent
+	}
+}
+
+func normalizedPathDir(path string) string {
+	path = normalizeWorkspacePath(path)
+	if path == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Dir(filepath.FromSlash(path)))
+}
+
+func normalizeWorkspacePath(path string) string {
+	path = strings.TrimSpace(filepath.ToSlash(path))
+	if path == "" || filepath.IsAbs(path) {
+		return ""
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == ".." {
+			return ""
+		}
+	}
+	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
+		return ""
+	}
+	return clean
+}
+
+func pathWithinAnyRoot(path string, roots map[string]bool) bool {
+	path = normalizeWorkspacePath(path)
+	if path == "" {
+		return false
+	}
+	for root := range roots {
+		root = strings.TrimRight(normalizeWorkspacePath(root), "/")
+		if root == "" {
+			continue
+		}
+		if path == root || strings.HasPrefix(path, root+"/") {
+			return true
+		}
+	}
+	return false
+}
+
+func sameDirAsAny(path string, paths map[string]bool) bool {
+	dir := normalizedPathDir(path)
+	if dir == "" {
+		return false
+	}
+	for other := range paths {
+		if normalizedPathDir(other) == dir {
+			return true
+		}
+	}
+	return false
 }
 
 func stringSet(values []string) map[string]bool {
