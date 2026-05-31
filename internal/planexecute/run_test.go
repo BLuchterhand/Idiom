@@ -672,8 +672,8 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "pkg"), 0o755); err != nil {
 		t.Fatalf("mkdir pkg: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.go"), []byte("package pkg\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
-		t.Fatalf("seed feature.go: %v", err)
+	if err := os.WriteFile(filepath.Join(root, "pkg", "feature.gd"), []byte("func value():\n\treturn 1\n"), 0o644); err != nil {
+		t.Fatalf("seed feature.gd: %v", err)
 	}
 	cfg := config.Default()
 	cfg.Workspace.Root = root
@@ -690,12 +690,12 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 		case agent.PlanThenExecutePlannerTaskFamily:
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{
-					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
-					OldText: "return 1",
-					NewText: "return missingSymbol",
-					Purpose: "update Value with a compile defect",
+					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.gd")),
+					OldText: "\treturn 1",
+					NewText: "# removed body",
+					Purpose: "update Value with a source sanity defect",
 				},
-			}, "update Value with a compile defect")
+			}, "update Value with a source sanity defect")
 			return "submitted plan", nil
 		case agent.PlanThenExecuteReviewRepairTaskFamily:
 			return "", errors.New("review model unavailable")

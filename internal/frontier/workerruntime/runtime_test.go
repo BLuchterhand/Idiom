@@ -913,6 +913,7 @@ func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T)
 		ForbiddenTools:       []string{"mutating_shell"},
 		RequiredEvidence:     []string{"changed_files_or_noop_reason", "verification_result"},
 		ReadinessGate:        []string{"verification_contract_resolved"},
+		StopConditions:       []string{"task_complete_or_blocked"},
 		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
 		VerificationPlan:     []string{"go test ./internal/app"},
 		TargetPacket:         []string{"[implementation target packet]", "primary paths: internal/app/prompt_routing.go"},
@@ -922,6 +923,7 @@ func TestRenderInitialRuntimeBriefIncludesPolicyManifestAndTargets(t *testing.T)
 		"[frontier step instruction]",
 		`"objective":"Update routing"`,
 		`"allowed_tools":["read_file","edit_file","shell"]`,
+		`"evidence_contract":["required evidence before contract fulfillment: changed_files_or_noop_reason, verification_result","readiness gates to close or explicitly block: verification_contract_resolved","terminal stop conditions: task_complete_or_blocked"]`,
 		`"tool":"edit_file"`,
 		"internal/app/prompt_routing.go",
 		"go test ./internal/app",
@@ -1179,6 +1181,47 @@ func TestBuildInitialStepInstructionConversationNamesDefaultReadOnlyAnswerLane(t
 		!strings.Contains(step.Directive, "context_pack to localize") ||
 		!strings.Contains(step.Directive, "Do not return raw tool summaries") {
 		t.Fatalf("conversation initial directive should explain the default read-only answer contract:\n%s", step.Directive)
+	}
+	for _, want := range []string{
+		"Evidence contract / exit criteria are summarized in current_state.evidence_contract",
+		"localization/context packets scope candidates but do not complete evidence by themselves",
+		"source, symbol, narrow line-range, read_symbol/extract_body, or routed source-body evidence",
+		"answer once inspected evidence resolves the question",
+		"one exact unresolved claim and one bounded probe",
+	} {
+		if !strings.Contains(step.Directive+"\n"+strings.Join(step.CurrentState.EvidenceContract, "\n"), want) {
+			t.Fatalf("conversation initial evidence contract should include %q:\ndirective=%s\ncontract=%#v", want, step.Directive, step.CurrentState.EvidenceContract)
+		}
+	}
+	if strings.Contains(step.Directive, "The readiness state says answering is supported") {
+		t.Fatalf("conversation initial directive must not reintroduce premature readiness wording:\n%s", step.Directive)
+	}
+}
+
+func TestRenderInitialRuntimeBriefConversationRendersEvidenceContractBeforeFirstAction(t *testing.T) {
+	rendered := RenderInitialRuntimeBrief(WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		Objective:         "Does internal/agent/runner.go allow answering after evidence?",
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"context_pack", "code_navigate", "read_file"},
+	})
+
+	for _, want := range []string{
+		`"evidence_contract"`,
+		"localization/context packets scope candidates but do not complete evidence by themselves",
+		"source, symbol, narrow line-range",
+		"read_symbol/extract_body",
+		"routed source-body evidence",
+		"answer once inspected evidence resolves the question",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered initial conversation brief should include %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "The readiness state says answering is supported") {
+		t.Fatalf("rendered initial conversation brief must not claim answer readiness:\n%s", rendered)
 	}
 }
 

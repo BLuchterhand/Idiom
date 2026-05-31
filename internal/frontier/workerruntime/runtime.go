@@ -119,6 +119,7 @@ type RunState struct {
 	RequiredEvidence     []string            `json:"required_evidence,omitempty"`
 	RequiredTools        []string            `json:"required_tools,omitempty"`
 	ReadinessGate        []string            `json:"readiness_gate,omitempty"`
+	EvidenceContract     []string            `json:"evidence_contract,omitempty"`
 	SearchPolicy         []string            `json:"search_policy,omitempty"`
 	DiscoveryExamples    []string            `json:"discovery_examples,omitempty"`
 	VerificationContract string              `json:"verification_contract,omitempty"`
@@ -800,6 +801,7 @@ func BuildStepInstruction(state RunState) StepInstruction {
 	state.RequiredEvidence = uniqueNonEmpty(state.RequiredEvidence)
 	state.RequiredTools = uniqueNonEmpty(state.RequiredTools)
 	state.ReadinessGate = uniqueNonEmpty(state.ReadinessGate)
+	state.EvidenceContract = uniqueNonEmpty(state.EvidenceContract)
 	state.SearchPolicy = uniqueNonEmpty(state.SearchPolicy)
 	state.VerificationPlan = uniqueNonEmpty(state.VerificationPlan)
 	state.StopConditions = uniqueNonEmpty(state.StopConditions)
@@ -835,9 +837,13 @@ func BuildStepInstruction(state RunState) StepInstruction {
 
 func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	state := MergeRuntimeBriefIntoState(brief, RunState{Phase: "start", Step: 1})
+	state.EvidenceContract = initialEvidenceContract(state)
 	directive := "Use this session-state packet when choosing the next action. The system prompt already lists the available tools and how to call them. Treat the search policy and examples as guidance, not a fixed script."
 	if len(state.EvidenceCapabilities) > 0 {
 		directive += " Available evidence capabilities are summarized in current_state.available_evidence_capabilities; exact parser-readable tool names remain in current_state.tool_manifest."
+	}
+	if len(state.EvidenceContract) > 0 {
+		directive += " Evidence contract / exit criteria are summarized in current_state.evidence_contract; use them before contract fulfillment while you judge whether inspected evidence directly resolves the user's request."
 	}
 	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") && strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
 		directive += " Conversation lane: every response must either (a) contain tool calls that investigate the codebase, or (b) deliver a final prose answer to the user. Answer the user's actual specific question — do not begin new investigation on neighboring topics once you have the evidence to answer. For factual or yes/no questions, answer directly from the evidence gathered; for explanatory questions, investigate until you can support the answer with file:line evidence from at least one inspected source location. Prefer answering after 5-15 targeted tool calls over exhaustive exploration. Use context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded source reads, search_content for literal text. Use the note tool to capture key findings (file paths, function names, mechanism descriptions) as you discover them — notes persist across context compactions and help you build your answer scaffold. When ready, name the evidence paths and file:line citations you inspected. Do not return raw tool summaries, function signatures, or JSON envelopes."
@@ -877,6 +883,33 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		CurrentState: state,
 		Directive:    directive,
 	}
+}
+
+func initialEvidenceContract(state RunState) []string {
+	var contract []string
+	if len(state.RequiredEvidence) > 0 {
+		contract = append(contract, "required evidence before contract fulfillment: "+strings.Join(uniqueNonEmpty(state.RequiredEvidence), ", "))
+	}
+	if len(state.ReadinessGate) > 0 {
+		contract = append(contract, "readiness gates to close or explicitly block: "+strings.Join(uniqueNonEmpty(state.ReadinessGate), ", "))
+	}
+	if conversationDirectAnswerReadOnlyState(state) {
+		contract = append(contract,
+			"for repo-specific answers, localization/context packets scope candidates but do not complete evidence by themselves",
+			"minimum inspected evidence before answering: source, symbol, narrow line-range, read_symbol/extract_body, or routed source-body evidence that directly resolves the user's question",
+			"terminal condition: answer once inspected evidence resolves the question; continue only for one exact unresolved claim and one bounded probe",
+		)
+	}
+	if len(state.StopConditions) > 0 {
+		contract = append(contract, "terminal stop conditions: "+strings.Join(uniqueNonEmpty(state.StopConditions), ", "))
+	}
+	return uniqueNonEmpty(contract)
+}
+
+func conversationDirectAnswerReadOnlyState(state RunState) bool {
+	return strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") &&
+		strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") &&
+		strings.EqualFold(strings.TrimSpace(state.Permission), "read_only_workspace")
 }
 
 func planThenExecutePlannerState(state RunState) bool {
