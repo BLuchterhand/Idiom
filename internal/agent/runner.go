@@ -106,7 +106,6 @@ func (r *Runner) supportsNativeTools() bool {
 	return r == nil || r.Client == nil || r.Client.SupportsNativeTools()
 }
 
-
 // lanePolicy returns the lane-specific behavioral policy, falling back
 // to LanePolicyForBrief when the Runner.LanePolicy field is nil.
 func (r *Runner) lanePolicy() LanePolicy {
@@ -229,9 +228,6 @@ func (r *Runner) Run(
 		}
 		setCurrentAllowedTools(currentAllowedTools)
 	}
-		// Sync currentAllowedTools from opts.Tools so synthetic
-		// tools (note) added by this closure are recognized.
-		syncCurrentAllowedToolsFromOptions()
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -310,44 +306,19 @@ func (r *Runner) Run(
 			}
 			allowed = filtered
 		}
-		currentAllowedTools = append(currentAllowedTools[:0], allowed...)
-		setCurrentAllowedTools(currentAllowedTools)
 		var tools []llama.Tool
 		if len(allowed) > 0 || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
 			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
-		// Conversation and read-only lanes: expose a "note" tool that
-		// lets the model capture intermediate findings while investigating.
-		// Without a synthesis scaffold, the model accumulates raw evidence
-		// but has nowhere to put what it learned — forcing every answer to
-		// be composed in a single step from raw context.
-		// Skip the note tool for direct_answer contracts: the model is only
-		// allowed blocker or final_answer actions, and a visible tool in the
-		// prompt causes some backends (e.g. Qwen via MLX textual transport)
-		// to emit tool-call-like prose that the parser misinterprets.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
-			// bypass note injection — direct_answer contract with
-			// textual transport (e.g. Qwen/MLX) misparses the note
-			// tool schema as tool-call prose.
-		} else if r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
-			tools = append(tools, llama.Tool{
-				Type: "function",
-				Function: llama.ToolFunction{
-					Name:        "note",
-					Description: "Record an intermediate finding while investigating. Use this to build an answer scaffold: capture key facts, file paths, function names, and relationships as you discover them. Notes are saved to .idiom/notes/ and can be referenced when synthesizing your final answer.",
-					Parameters:  json.RawMessage(`{"type":"object","properties":{"key":{"type":"string","description":"A short identifier for this finding (e.g. 'implement-lane-gate', 'source-sanity-call-chain')"},"content":{"type":"string","description":"What you learned. Include file paths, function names, line numbers, and a brief description of the mechanism or relationship."}},"required":["key","content"]}`),
-				},
-			})
-			// Also inject note into the RuntimeBrief's AllowedTools so it
-			// appears in control_rails / visibleRuntimeBrief. opts.Tools
-			// (LLM schema) and currentAllowedTools (runner tracking) get
-			// the note tool, but visibleRuntimeBrief reads from a separate
-			// source — the RuntimeBrief's AllowedTools field.
-			// Append note to RuntimeBrief.AllowedTools if not already present.
-			if !slices.Contains(r.RuntimeBrief.AllowedTools, "note") {
-				r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, "note")
+			// Conversation and read-only lanes may expose a harness-owned note
+			// tool. It writes only scratch metadata under .idiom/notes and is
+			// synchronized from the final schema into currentAllowedTools below.
+			if !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") &&
+				r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
+				tools = append(tools, noteToolDefinition())
+				if !slices.Contains(r.RuntimeBrief.AllowedTools, noteToolName) {
+					r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, noteToolName)
+				}
 			}
-		}
-
 		}
 		// Schema-level enforcement of closure-biased contracts: once the
 		// lane has reached answer readiness, received a child packet, or
@@ -363,6 +334,7 @@ func (r *Runner) Run(
 			tools = applyPostReadinessSchemaRequirements(tools)
 		}
 		opts.Tools = tools
+		syncCurrentAllowedToolsFromOptions()
 		if len(opts.Tools) == 0 {
 			opts.ToolChoice = ""
 		} else if strings.TrimSpace(opts.ToolChoice) == "" {
@@ -730,6 +702,10 @@ func (r *Runner) Run(
 				req, raw, ok = salvagedReq, salvagedRaw, true
 				r.emitToolRequestNormalizerEvent("missing_tool_inferred", "reasoning_salvage", req, nil, "")
 				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
+			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage); salvaged {
+				r.emitEvent(RunEvent{Role: "reasoning_answer_salvage", Content: fmt.Sprintf("model emitted answer prose in hidden reasoning while visible content was empty; extracted %d chars", len(answerText))})
+				emitAcceptedAnswerSignalsOnce(answerText)
+				return finish(answerText, nil, "reasoning_answer_salvage", false)
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRejectedRequiredSourceRead(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_required_source_recovery", req, nil, "")
@@ -2028,12 +2004,12 @@ func (r *Runner) Run(
 		} else if res.shouldContinue {
 			continue
 		}
-			if !r.planThenExecutePlannerPhase() &&
-		// The synthesis nudge uses generic "answer now" language that
-		// contradicts the conversation lane's evidence requirement
-		// (file:line from at least one inspected source location).
-		// The conversation lane has its own evidence-aligned nudge.
-		!r.lanePolicy().SkipSynthesisNudge() {
+		if !r.planThenExecutePlannerPhase() &&
+			// The synthesis nudge uses generic "answer now" language that
+			// contradicts the conversation lane's evidence requirement
+			// (file:line from at least one inspected source location).
+			// The conversation lane has its own evidence-aligned nudge.
+			!r.lanePolicy().SkipSynthesisNudge() {
 			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
@@ -2067,38 +2043,12 @@ func (r *Runner) Run(
 				continue
 			}
 		}
-		// Note tool: intercept before workspace execution.
-		// Writes structured observations to .idiom/notes/<key>.md.
-		// Gives the model a synthesis scaffold so it can build an
-		// answer incrementally rather than composing from raw context.
-		if ok && strings.TrimSpace(req.Tool) == "note" {
-			var noteArgs struct {
-				Key     string `json:"key"`
-				Content string `json:"content"`
-			}
-			noteResult := workspace.ToolResult{Tool: "note"}
-			if err := json.Unmarshal([]byte(raw), &noteArgs); err != nil || noteArgs.Key == "" {
-				noteResult.Error = "note requires a non-empty key and content"
-				noteResult.Summary = "Note rejected: missing key or content"
-			} else {
-				noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
-				if err := os.MkdirAll(noteDir, 0755); err != nil {
-					noteResult.Error = fmt.Sprintf("cannot create notes directory: %v", err)
-					noteResult.Summary = "Note failed: directory error"
-				} else {
-					notePath := filepath.Join(noteDir, noteArgs.Key+".md")
-					if err := os.WriteFile(notePath, []byte(noteArgs.Content+"\n"), 0644); err != nil {
-						noteResult.Error = fmt.Sprintf("cannot write note: %v", err)
-						noteResult.Summary = "Note failed: write error"
-					} else {
-						noteResult.Summary = fmt.Sprintf("Note saved: %s", noteArgs.Key)
-						noteResult.Output = fmt.Sprintf("Recorded finding %q (%d chars)", noteArgs.Key, len(noteArgs.Content))
-					}
-				}
-			}
+		// Note tool: harness-owned scratch metadata, not a workspace mutation.
+		if ok && strings.TrimSpace(req.Tool) == noteToolName {
+			noteResult := runNoteTool(r.Workspace.Root(), raw)
 			recorder.activeToolCall = activeToolCall
 			recorder.record(stepNumber, req, noteResult, "note_tool", false, false)
-			r.emitEvent(RunEvent{Role: "note_tool", Content: fmt.Sprintf("note %s: %s", noteArgs.Key, noteResult.Summary)})
+			r.emitEvent(RunEvent{Role: "note_tool", Content: noteResult.Summary})
 			continue
 		}
 		discoveryRedirect.SetAllowedTools(currentAllowedTools)
@@ -3004,23 +2954,13 @@ func (r *Runner) Run(
 		// milestone so discoveries survive context compactions.
 		if r.lanePolicy().AutoCaptureFindings() &&
 			metrics.ToolCalls == convFirstMilestone && strings.TrimSpace(result.Error) == "" && r.Workspace != nil {
-			noteDir := filepath.Join(r.Workspace.Root(), ".idiom", "notes")
-			if err := os.MkdirAll(noteDir, 0755); err == nil {
-				var b strings.Builder
-				b.WriteString("# Auto-captured findings\n\n")
-				b.WriteString(fmt.Sprintf("Question: %s\n\n", r.RuntimeBrief.Objective))
-				b.WriteString("## Inspected paths\n\n")
-				for _, r := range collectedResults {
-					if strings.TrimSpace(r.Error) == "" && strings.TrimSpace(r.Summary) != "" {
-						b.WriteString(fmt.Sprintf("- %s\n", r.Summary))
-					}
-				}
-				notePath := filepath.Join(noteDir, "auto-findings.md")
-				os.WriteFile(notePath, []byte(b.String()), 0644)
+			if _, err := writeAutoFindingsNote(r.Workspace.Root(), r.RuntimeBrief, collectedResults); err == nil {
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
 					Content: "The harness has captured your findings so far to .idiom/notes/auto-findings.md. This note persists across context compactions — review it if your working memory is refreshed. Continue investigating, or answer if you have enough evidence.",
 				})
+			} else {
+				r.emitEvent(RunEvent{Role: "note_tool", Content: "Auto findings note rejected: " + err.Error()})
 			}
 		}
 		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
@@ -3554,7 +3494,6 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 	}
 	r.OnEvent(RunEvent{Role: "thinking_trace", Content: string(data)})
 }
-
 
 // stripOrphanedToolCalls returns a copy of messages with any assistant
 // messages removed that have tool_calls but no matching role:"tool"
@@ -5701,7 +5640,6 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 	return score
 }
 
-
 func tailToolResults(results []workspace.ToolResult, max int) []workspace.ToolResult {
 	if max <= 0 || len(results) <= max {
 		return results
@@ -6723,48 +6661,7 @@ func closurePromptInvalidActions(scope string) []string {
 }
 
 func (r *Runner) completionGateRejection(reply string, results []workspace.ToolResult, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) (workspace.ToolResult, bool) {
-	if looksLikeTextualToolCall(reply) {
-		msg := "the reply contains textual tool-call markup instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose."
-		if looksLikeXMLToolCall(reply) {
-			msg = "the reply contains XML tool-call markup (e.g. <n_tool_calls>, <invoke>, <janus_tool>) instead of prose. Emit a tool call through the normal tool-call mechanism, or answer in plain prose. Do not emit XML or HTML markup."
-		}
-		return workspace.ToolResult{
-			Tool:    "completion_gate",
-			Summary: "Textual tool-call markup rejected as final answer",
-			Error:   msg,
-		}, true
-	}
-	if result, rejected := r.unexecutedToolRequestCompletionRejection(reply); rejected {
-		return result, true
-	}
-	if result, rejected := rawToolResultTranscriptCompletionRejection(reply); rejected {
-		return result, true
-	}
-	if result, rejected := unresolvedProcessIntentCompletionRejection(reply); rejected {
-		return result, true
-	}
-	ledgerOwnedByMutationContract := r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) && len(r.RuntimeBrief.RequiredEditPaths) > 0
-	if !ledgerOwnedByMutationContract && taskLedger != nil {
-		if result, rejected := taskLedger.completionRejection(reply); rejected {
-			return result, true
-		}
-	}
-	if result, rejected := r.readOnlyEvidenceCompletionRejection(reply, results); rejected {
-		return result, true
-	}
-	if result, rejected := r.readOnlyNonSubstantiveCompletionRejection(reply, results); rejected {
-		return result, true
-	}
-	if result, rejected := r.readOnlySearchHitInventoryCompletionRejection(reply, results); rejected {
-		return result, true
-	}
-	if result, rejected := r.mutationCompletionRejection(reply, results); rejected {
-		return result, true
-	}
-	if result, rejected := r.planThenExecuteReviewRepairCompletionRejection(reply, results); rejected {
-		return result, true
-	}
-	if result, rejected := r.readOnlyExplanationCompletionRejection(reply, results); rejected {
+	if result, rejected := r.completionGatePipeline(step, taskLedger, declarationMovesForbidden).Evaluate(reply, results); rejected {
 		return result, true
 	}
 	if r.CompletionGate == nil {
@@ -6912,7 +6809,6 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		Error:   "the reply describes an intended future search/read/inspection instead of completing the answer. Issue the needed tool call now, answer from gathered evidence, or state a concrete blocker.",
 	}, true
 }
-
 
 // looksLikeToolResultTranscript returns true when the reply looks like
 // a raw tool result transcript (e.g. "The inspected source in X contains
@@ -12314,6 +12210,9 @@ func planThenExecuteTerminalSubmitPlanAllowed(brief workerruntime.WorkerRuntimeB
 	if planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
 		return false
 	}
+	if planThenExecuteSubmitPlanHistoryMissing(brief, results) {
+		return false
+	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TerminalOnly: true})
 	if !slices.Contains(state.TerminalOptions, "submit_plan") {
 		return false
@@ -12951,6 +12850,9 @@ func (r *Runner) implementationTargetWriteReadySourceReadAllowed(req workspace.T
 	}
 	if implementationTargetWriteReadyHasPendingSourceRedirect(r.RuntimeBrief, results) {
 		return false
+	}
+	if r.implementationTargetWriteReadyHistoryReadAllowed(req, results) {
+		return true
 	}
 	if implementationTargetWriteReadyTargetedDiscoveryAllowed(req, results, refreshes) {
 		return true
@@ -19387,7 +19289,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 		}, opts))
 	}
 	retryMessages = append(retryMessages, llama.ChatMessage{
-		Role: "system",
+		Role:    "system",
 		Content: emptyAnswerRetryPrompt(r.RuntimeBrief),
 	})
 
@@ -20203,6 +20105,9 @@ var requiredEvidenceCheck = map[string]func(answer string, results []workspace.T
 			strings.Contains(strings.ToLower(answer), "source-satisfied") ||
 			strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>")
 	},
+	requiredEvidenceGitHistoryRationale: func(answer string, results []workspace.ToolResult) bool {
+		return successfulGitHistoryEvidenceSeen(results) || answerHasGitHistoryNoopOrBlocker(answer)
+	},
 	"inspected_paths": func(answer string, results []workspace.ToolResult) bool {
 		if len(pathparse.MentionedWorkspacePaths(answer)) > 0 {
 			return true
@@ -20256,7 +20161,6 @@ func isVerificationToolResult(result workspace.ToolResult) bool {
 	}
 	return false
 }
-
 
 func stripFallbackJSONArtifacts(output string) string {
 	if !strings.Contains(output, "{") {

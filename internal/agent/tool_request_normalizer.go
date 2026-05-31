@@ -620,7 +620,14 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 
 func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
+	if trimmed == "" {
+		// Empty content is not a function call attempt -- it is a model producing no
+		// visible output (often because everything went into the thinking block).
+		// Classifying empty strings as "unsafe" causes the harness to skip
+		// reasoning-content salvage paths that could recover the answer.
+		return workspace.ToolRequest{}, false, false
+	}
+	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
 		return workspace.ToolRequest{}, false, true
 	}
 	if strings.Contains(trimmed, "\n") {
@@ -762,83 +769,24 @@ func toolRequestSyntaxIdentifier(value string) bool {
 
 func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
+	if trimmed == "" {
+		return workspace.ToolRequest{}, false, false
+	}
+	parsed := ParseToolRequestFromTokenizer(keyValueToolRequestTokenizer{}, trimmed)
+	if parsed.Unsafe {
 		return workspace.ToolRequest{}, false, true
 	}
-	// Scan for the first tool: line, skipping leading prose.
-	// Models sometimes emit conversational text before a tool call.
-	lines := strings.Split(trimmed, "\n")
-	toolLineIdx := -1
-	proseLines := 0
-	for i, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		key, _, ok := strings.Cut(line, ":")
-		if ok && strings.EqualFold(strings.TrimSpace(key), "tool") {
-			toolLineIdx = i
-			break
-		}
-		// Allow at most 5 prose lines before giving up.
-		proseLines++
-		if proseLines > 5 {
-			return workspace.ToolRequest{}, false, true
-		}
+	if !parsed.OK {
+		return workspace.ToolRequest{}, false, false
 	}
-	if toolLineIdx < 0 {
-		return workspace.ToolRequest{}, false, true
-	}
-	// Parse from the tool: line onward.
-	values := map[string]string{}
-	sawKeyValue := false
-	for _, line := range lines[toolLineIdx:] {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			if sawKeyValue && strings.TrimSpace(values["tool"]) != "" {
-				break
-			}
-			continue
-		}
-		key, value, ok := strings.Cut(line, ":")
-		if !ok {
-			if sawKeyValue {
-				continue
-			}
-			return workspace.ToolRequest{}, false, true
-		}
-		sawKeyValue = true
-		key = strings.ToLower(strings.TrimSpace(key))
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if key == "" || value == "" {
-			return workspace.ToolRequest{}, false, true
-		}
-		if key == "tool" && strings.TrimSpace(values["tool"]) != "" {
-			break
-		}
-		if !keyValueToolRequestFieldAllowed(key) {
-			return workspace.ToolRequest{}, false, true
-		}
-		values[key] = value
-	}
-	if !sawKeyValue {
-		return workspace.ToolRequest{}, false, true
-	}
-	tool := strings.TrimSpace(values["tool"])
-	if tool == "" {
-		return workspace.ToolRequest{}, false, true
-	}
-	req, ok := toolRequestFromSyntaxValues(tool, values)
-	if !ok {
-		return workspace.ToolRequest{}, false, true
-	}
-	return req, true, false
+	return parsed.Request, true, false
 }
 
 func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspace.ToolRequest, bool) {
 	req := workspace.ToolRequest{
 		Tool:            tool,
 		ID:              values["id"],
+		Key:             values["key"],
 		Path:            values["path"],
 		Pattern:         values["pattern"],
 		Query:           values["query"],
@@ -965,7 +913,7 @@ func syntaxToolRequestUsesCapabilityAlias(tool string) bool {
 
 func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
-	case "tool", "id", "path", "file", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
+	case "tool", "id", "key", "path", "file", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
 		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
 		"include_evidence", "include_source", "include_files", "refresh", "lines",
 		"purpose", "command", "description", "content", "prompt", "agent", "workdir", "handle", "root", "destination", "status",

@@ -337,7 +337,6 @@ func conversationInspectedPathSummary(results []workspace.ToolResult) string {
 	return strings.Join(inspected, "; ")
 }
 
-
 // conversationMilestones derives context-window-aware timing for
 // conversation-lane auto-findings capture and call-count awareness nudges.
 // Returns (firstMilestone, nudgeInterval) in tool calls.
@@ -1090,6 +1089,13 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 	switch {
 	case tool == "discovery_query":
 		if !delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
+			return false
+		}
+		// A composite discovery packet provides a codebase map but not
+		// source content. Require at least one source body read before
+		// declaring readiness, otherwise the model is blocked from
+		// reading the files the discovery query surfaced.
+		if len(delegatedReadOnlyInspectedImplementationPaths(results)) < 1 {
 			return false
 		}
 	case isReadClassTool(workspace.ToolRequest{Tool: tool}):

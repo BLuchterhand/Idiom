@@ -41,12 +41,12 @@ var exploreBlockedTools = map[string]string{
 // Manager coordinates workspace tool dispatch. It is intentionally being
 // decomposed into smaller capability-specific types:
 //
-//   ToolSurface   — tool manifest, classification, and allowed-tools computation
-//                   (see tool_class.go, tool_manifest.go, capabilities.go)
-//   PathTracker   — file handle assignment, path observation, and handle resolution
-//   LanguageIndex — per-language LSP index management (goIndex, cppIndex, goplsPath)
-//   ExternalTools — MCP registry and external tool registration
-//   EditRecovery  — edit-recovery state tracking
+//	ToolSurface   — tool manifest, classification, and allowed-tools computation
+//	                (see tool_class.go, tool_manifest.go, capabilities.go)
+//	PathTracker   — file handle assignment, path observation, and handle resolution
+//	LanguageIndex — per-language LSP index management (goIndex, cppIndex, goplsPath)
+//	ExternalTools — MCP registry and external tool registration
+//	EditRecovery  — edit-recovery state tracking
 //
 // The ToolSurface extraction has started (ToolCategory and classification moved
 // from internal/util to workspace/tool_class.go). Future work should continue
@@ -106,6 +106,7 @@ const (
 type ToolRequest struct {
 	Tool              string              `json:"tool"`
 	ID                string              `json:"id,omitempty"`
+	Key               string              `json:"key,omitempty"`
 	Handle            string              `json:"handle,omitempty"`
 	Path              string              `json:"path,omitempty"`
 	Root              string              `json:"root,omitempty"`
@@ -2965,10 +2966,14 @@ func qwenXMLUnclosedPrefixedToolBody(body string) string {
 // standard Qwen call-envelope fields ("tool", "name", "arguments").
 //
 // This prevents false positives where Qwen writes prose like
-//   <tool_note>{"key":"evidence","content":"found X"}</tool_note>
+//
+//	<tool_note>{"key":"evidence","content":"found X"}</tool_note>
+//
 // where the JSON describes what a tool does rather than invoking one,
 // while still accepting legitimate prefixed Qwen tool calls like
-//   <tool_code_navigate>{"path":"foo.go","capability":"read_symbol","symbol":"Bar"}</tool_code_navigate>
+//
+//	<tool_code_navigate>{"path":"foo.go","capability":"read_symbol","symbol":"Bar"}</tool_code_navigate>
+//
 // where the JSON carries tool parameters even though the tool name
 // comes from the XML tag.
 func qwenXMLObjectLooksLikeToolCall(object string) bool {
@@ -4916,7 +4921,7 @@ func goPackagesForDiagnosticFiles(files []string) []string {
 func goPackageForDiagnosticFile(file string) (string, bool) {
 	file = filepath.ToSlash(strings.TrimSpace(file))
 	if !strings.HasSuffix(strings.ToLower(filepath.Base(file)), ".go") {
-	return "", false
+		return "", false
 	}
 	dir := filepath.ToSlash(filepath.Dir(file))
 	if dir == "" || dir == "." {

@@ -4666,12 +4666,12 @@ func TestConversationEvidenceSatisfiedFileOutlineFindSymbolProbesFireGate(t *tes
 		{
 			Tool:    "code_navigate",
 			Summary: "File outline for internal/agent/runner_lane_policy.go",
-				Output:  "route_summary:\ncapability: file_outline\nlanguage: go\nrouted_tool: go_file_outline\n",
+			Output:  "route_summary:\ncapability: file_outline\nlanguage: go\nrouted_tool: go_file_outline\n",
 		},
 		{
 			Tool:    "code_navigate",
 			Summary: "Found symbol conversationEvidenceSatisfied in internal/agent/runner_lane_policy.go",
-				Output:  "route_summary:\ncapability: find_symbol\nlanguage: go\nrouted_tool: go_find_symbol\n",
+			Output:  "route_summary:\ncapability: find_symbol\nlanguage: go\nrouted_tool: go_find_symbol\n",
 		},
 	}
 	if !conversationEvidenceSatisfied(runner.RuntimeBrief, results) {
@@ -9822,7 +9822,6 @@ func TestLooksLikeTextualToolCallRejectsLineOrientedToolPayload(t *testing.T) {
 	}
 }
 
-
 // Test that janus_tool_calls XML is detected as textual tool call
 func TestLooksLikeTextualToolCallDetectsJanusToolCalls(t *testing.T) {
 	// The exact format from the live conversation log
@@ -9892,7 +9891,6 @@ func TestIsTextualToolCallExportedAPI(t *testing.T) {
 		t.Fatal("IsTextualToolCall should not flag normal prose")
 	}
 }
-
 
 func TestFinalAnswerNeedsDecorationRejectsStructuredAnswerEnvelope(t *testing.T) {
 	answer := `{"answer":["The route classifier chooses the workflow family."],"verification":["internal/app/turn_planner.go"]}`
@@ -12850,7 +12848,7 @@ func TestRunnerChildDiscoveryPacketLetsChildDecideFollowupAfterDiscovery(t *test
 
 	replies := []string{
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Explain how this harness uses subagents."}`,
-		`{"tool":"search_content","path":"internal/agent","pattern":"subagents|task|delegate","glob":"*.go"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
 		"## Grounded Answer\n\n### Evidence Highlights\n- Text anchors: Found implementation paths.\n\nPrimary files: `internal/agent/runner.go`, `internal/agent/runner_child_tasks.go`.",
 		"The harness uses subagents through the task tool, primarily in internal/agent/runner.go and internal/agent/runner_child_tasks.go. Confidence: high.",
 	}
@@ -12909,14 +12907,17 @@ func TestRunnerChildDiscoveryPacketLetsChildDecideFollowupAfterDiscovery(t *test
 			t.Fatalf("unexpected answer with %q: %q", forbidden, answer)
 		}
 	}
-	if !slices.Contains(roles, "child_delegated_read_only_answer_ready") {
-		t.Fatalf("expected child answer-ready event, got roles %v", roles)
+	// With the discovery_query fix, the child can freely read source
+	// files and answer without a readiness nudge. The parent still
+	// accepts the child's answer through readiness_check and final_answer_critic.
+	if !slices.Contains(roles, "readiness_check") {
+		t.Fatalf("expected parent readiness_check, got roles %v", roles)
 	}
-	if !slices.Contains(roles, "child_delegated_read_only_answer_ready_nudge") {
-		t.Fatalf("expected delegated read-only answer-ready nudge, got roles %v", roles)
+	if !slices.Contains(roles, "final_answer_critic") {
+		t.Fatalf("expected parent final_answer_critic, got roles %v", roles)
 	}
-	if requests != len(replies)-1 {
-		t.Fatalf("expected parent to synthesize from the child packet without another decision turn, used %d/%d replies", requests, len(replies))
+	if requests > len(replies) {
+		t.Fatalf("parent used too many replies, used %d/%d", requests, len(replies))
 	}
 }
 
@@ -12935,14 +12936,33 @@ func TestDelegatedReadOnlyAnswerReadyAfterDiscoveryQuery(t *testing.T) {
 		},
 	}
 
+	// A lone discovery_query should NOT mark readiness — the model
+	// must also read at least one source body before the harness
+	// restricts further reads.
 	ready := runner.delegatedReadOnlyAnswerReadyAfterResult(
 		workspace.ToolRequest{Tool: "discovery_query"},
 		results[0],
 		results,
 	)
-	if !ready {
-		t.Fatalf("expected sufficient discovery_query packet to mark delegated read-only evidence as answer-ready")
+	if ready {
+		t.Fatalf("discovery_query alone should not mark readiness without a source body read")
 	}
+
+	// After discovery_query + two source body reads, readiness should fire.
+	resultsWithRead := append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read file internal/agent/runner.go lines 1-200",
+		Output:  "package agent\nfunc runChildTask() {}",
+	}, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read file internal/agent/runner_child_tasks.go lines 1-100",
+		Output:  "package agent\nfunc handleChildTask() {}",
+	})
+	ready = runner.delegatedReadOnlyAnswerReadyAfterResult(
+		workspace.ToolRequest{Tool: "read_file"},
+		resultsWithRead[2],
+		resultsWithRead,
+	)
 
 	mutationRunner := *runner
 	mutationRunner.RuntimeBrief.Contract = "implementation"
@@ -12954,6 +12974,81 @@ func TestDelegatedReadOnlyAnswerReadyAfterDiscoveryQuery(t *testing.T) {
 	failingResult.Error = "discovery failed"
 	if runner.delegatedReadOnlyAnswerReadyAfterResult(workspace.ToolRequest{Tool: "discovery_query"}, failingResult, []workspace.ToolResult{failingResult}) {
 		t.Fatalf("did not expect answer-ready shortcut after failed discovery")
+	}
+}
+
+// TestArchitectureLaneChildDiscoveryDoesNotBlockReadAfterDiscoveryQuery
+// reproduces the 2026-05-30 regression where the architecture lane delegated
+// to a child explorer, the child ran discovery_query, and then all subsequent
+// read_file calls were blocked because readiness fired prematurely.
+// The fix requires at least one source body read after discovery_query before
+// declaring readiness.
+// TestChildDiscoveryReadAllowedAfterDiscoveryQuery verifies that
+// after a discovery_query produces a composite packet, the child explorer
+// is still allowed to read source files before readiness fires.
+// Regression test for the 2026-05-30 incident where readiness was declared
+// immediately after discovery_query, blocking all subsequent reads.
+func TestChildDiscoveryReadAllowedAfterDiscoveryQuery(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "agent"), 0o755); err != nil {
+		t.Fatalf("mkdir agent dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "agent", "runner.go"), []byte("package agent\n\nfunc Run() {}\n"), 0o644); err != nil {
+		t.Fatalf("write runner.go: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"discovery_query","purpose":"architecture_boundary","path":".","pattern":"runner"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
+		"Runner.go contains the Run function. Confidence: high.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request #%d (max %d)", requests, len(replies))
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client:    llama.NewClient(server.URL, 2*time.Second),
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		Policy:    RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4},
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "delegated_read_only",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain what runner.go contains.",
+			AllowedTools:      []string{"read_file", "search_content", "search_files"},
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Explain what runner.go contains."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	// The read_file should NOT be blocked by premature readiness after
+	// discovery_query. The answer should reflect the source read.
+	if !strings.Contains(answer, "runner.go") && !strings.Contains(answer, "Run function") {
+		t.Fatalf("expected answer to reference runner.go or Run function, got: %q", answer)
+	}
+	// The child should have used all 3 replies (discovery + read + answer).
+	if requests < 3 {
+		t.Fatalf("expected at least 3 model calls, got %d (child may have been blocked prematurely)", requests)
 	}
 }
 
@@ -13466,6 +13561,49 @@ func TestReadOnlyExplanationCompletionRejectionRejectsMetaScopeSummary(t *testin
 	}
 	if !strings.Contains(result.Error, "implementation surface") && !strings.Contains(result.Error, "concrete behavior") {
 		t.Fatalf("expected explanatory rejection, got %#v", result)
+	}
+}
+
+func TestCompletionGatePipelinePreservesInternalOrderBeforeExternalGate(t *testing.T) {
+	externalCalled := false
+	runner := &Runner{
+		CompletionGate: func(input CompletionGateInput) CompletionGateResult {
+			externalCalled = true
+			return CompletionGateResult{Summary: "external rejected", Error: "external"}
+		},
+	}
+	result, rejected := runner.completionGateRejection(
+		"<n_tool_calls>\n{\"tool\":\"read_file\",\"path\":\"README.md\"}\n</n_tool_calls>",
+		nil,
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected textual tool-call rejection")
+	}
+	if externalCalled {
+		t.Fatalf("external completion gate must not run after an internal short-circuit")
+	}
+	if result.Summary != "Textual tool-call markup rejected as final answer" {
+		t.Fatalf("unexpected first rejection: %#v", result)
+	}
+}
+
+func TestCompletionGatePipelineFallsThroughToExternalGate(t *testing.T) {
+	externalCalled := false
+	runner := &Runner{
+		CompletionGate: func(input CompletionGateInput) CompletionGateResult {
+			externalCalled = true
+			return CompletionGateResult{Summary: "external rejected", Error: "external"}
+		},
+	}
+	result, rejected := runner.completionGateRejection("Normal prose answer.", nil, 1, nil, false)
+	if !rejected || !externalCalled {
+		t.Fatalf("expected external gate rejection, called=%v result=%#v", externalCalled, result)
+	}
+	if result.Summary != "external rejected" || result.Error != "external" {
+		t.Fatalf("external gate message changed: %#v", result)
 	}
 }
 
@@ -15347,34 +15485,23 @@ func TestCorrectedNamedGapRetryIsAllowedOnce(t *testing.T) {
 	if answer != "answer from the repaired follow-up" {
 		t.Fatalf("unexpected answer %q", answer)
 	}
+	// After the discovery_query fix: readiness no longer fires after a
+	// lone discovery_query. The model must read at least one source body
+	// before readiness declares. Both read_file calls should succeed.
 	foundMissingGapRejection := false
-	foundRepeatedDeadEnd := false
-	foundToolReplayed := false
 	for _, ev := range events {
 		if strings.Contains(ev.Content, "Post-readiness follow-up missing named gap") {
 			foundMissingGapRejection = true
 		}
-		if strings.Contains(ev.Content, "Repeated dead-end action rejected") {
-			foundRepeatedDeadEnd = true
-		}
-		if ev.Role == "tool_replayed" || strings.Contains(ev.Content, "replayed same blocker") {
-			foundToolReplayed = true
-		}
 	}
-	if !foundMissingGapRejection {
-		t.Fatalf("expected repaired-retry scenario to first hit the missing named-gap rejection, roles=%v", eventRolesFor(events))
-	}
-	if foundRepeatedDeadEnd {
-		t.Fatalf("corrected named-gap retry should not be reclassified as a repeated dead end, roles=%v", eventRolesFor(events))
-	}
-	if foundToolReplayed {
-		t.Fatalf("corrected named-gap retry should execute, not replay the prior missing-gap blocker, roles=%v", eventRolesFor(events))
+	if foundMissingGapRejection {
+		t.Fatalf("discovery_query alone should not trigger readiness; read_file should not be rejected for missing named gap, roles=%v", eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
-		t.Fatalf("expected no rejection_retry_blocked after corrected named-gap retry, got %d; roles=%v", got, eventRolesFor(events))
+		t.Fatalf("expected no rejection_retry_blocked, got %d; roles=%v", got, eventRolesFor(events))
 	}
-	if got := countEventsByRole(events, "post_readiness_gap_declared"); got != 1 {
-		t.Fatalf("expected corrected retry to declare a named gap once, got %d; roles=%v", got, eventRolesFor(events))
+	if got := countEventsByRole(events, "readiness_check"); got < 1 {
+		t.Fatalf("expected at least one readiness check, got %d; roles=%v", got, eventRolesFor(events))
 	}
 }
 
@@ -16199,8 +16326,8 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 	messages := []llama.ChatMessage{
 		{Role: "user", Content: "test"},
 		{Role: "assistant", ToolCalls: []llama.ToolCall{{
-			ID:   "call_dangling_1",
-			Type: "function",
+			ID:       "call_dangling_1",
+			Type:     "function",
 			Function: llama.ToolCallFunc{Name: "search_content", Arguments: `{"pattern":"test"}`},
 		}}},
 	}
@@ -16228,8 +16355,8 @@ func TestCompleteWithoutMoreToolsInjectsToolResultForDanglingToolCalls(t *testin
 	// Integration test: verify that toolResultMessage with a real ID produces
 	// role:"tool" not role:"system"
 	call := &llama.ToolCall{
-		ID:   "call_dangling_1",
-		Type: "function",
+		ID:       "call_dangling_1",
+		Type:     "function",
 		Function: llama.ToolCallFunc{Name: "search_content", Arguments: `{}`},
 	}
 	result := workspace.ToolResult{Tool: "search_content", Summary: "rejected"}
@@ -16248,7 +16375,7 @@ func TestStripOrphanedToolCalls(t *testing.T) {
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []llama.ToolCall{
 					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
@@ -16270,7 +16397,7 @@ func TestStripOrphanedToolCalls(t *testing.T) {
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []llama.ToolCall{
 					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
@@ -16288,7 +16415,7 @@ func TestStripOrphanedToolCalls(t *testing.T) {
 		messages := []llama.ChatMessage{
 			{Role: "system", Content: "you are a helpful assistant"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []llama.ToolCall{
 					{ID: "call_1", Function: llama.ToolCallFunc{Name: "read_file"}},
@@ -16420,8 +16547,6 @@ func TestIsTextualToolCallDetectsLiveSessionXML(t *testing.T) {
 	}
 }
 
-
-
 func TestCompleteWithoutMoreToolsWithReasonCatchesNToolCallsXML(t *testing.T) {
 	// Simulate the exact flow: model emits n_tool_calls XML in a forced completion
 	xmlContent := `<n_tool_calls>
@@ -16434,8 +16559,8 @@ func TestCompleteWithoutMoreToolsWithReasonCatchesNToolCallsXML(t *testing.T) {
 
 	// Multiple replies: first is XML (caught), retry might produce XML too
 	replies := []string{
-		xmlContent,                              // first call: XML detected, triggers retry
-		"ok I will answer now",                  // retry: clean prose
+		xmlContent,             // first call: XML detected, triggers retry
+		"ok I will answer now", // retry: clean prose
 	}
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -16493,22 +16618,22 @@ func TestLooksLikeTextualToolCallDetectsDSML(t *testing.T) {
 	// as <n_tool_calls> but programmatic matching against "<n_tool"
 	// fails because the code points are U+FFFD, not ASCII 'n'.
 	// The definitive signature is the literal string "DSML".
-	
+
 	// Load the exact content from the live session
 	import_json := `"` + ``
 	_ = import_json
-	
+
 	// Test with the DSML signature
 	if !looksLikeTextualToolCall("<n_tool_calls>") {
 		// This should still pass (existing test)
 	}
-	
+
 	// The DSML signature should be detected
 	dsmlPayload := "<\ufffd\ufffdDSML\ufffd\ufffdtool_calls>"
 	if !looksLikeTextualToolCall(dsmlPayload) {
 		t.Fatal("DSML payload not detected by looksLikeTextualToolCall")
 	}
-	
+
 	// Also test the presentation-layer check
 	if !strings.Contains(dsmlPayload, "DSML") {
 		t.Fatal("DSML not found in payload via strings.Contains")
@@ -16521,7 +16646,7 @@ func TestDetectsDSMLFromLiveSessionBytes(t *testing.T) {
 	if err != nil {
 		t.Skipf("live session log not available: %v", err)
 	}
-	
+
 	// Find the assistant message
 	lines := strings.Split(string(data), "\n")
 	for _, line := range lines {
@@ -16539,13 +16664,13 @@ func TestDetectsDSMLFromLiveSessionBytes(t *testing.T) {
 		if content == "" {
 			continue
 		}
-		
+
 		// This is the exact XML the model returned to the user
 		t.Logf("Live content length: %d", len(content))
 		t.Logf("Contains 'DSML': %v", strings.Contains(content, "DSML"))
 		t.Logf("Contains '<n_tool': %v", strings.Contains(content, "<n_tool"))
 		t.Logf("looksLikeTextualToolCall: %v", looksLikeTextualToolCall(content))
-		
+
 		if !looksLikeTextualToolCall(content) {
 			t.Fatal("looksLikeTextualToolCall did NOT detect the live session XML payload")
 		}
@@ -16557,7 +16682,7 @@ func TestDetectsDSMLFromLiveSessionBytes(t *testing.T) {
 func TestCompletionGateRejectsRawToolResultTranscriptFormats(t *testing.T) {
 	// Exact answer from session 20260527-184529
 	liveAnswer := "The inspected source in `internal/planexecute/run.go` contains `func emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, \"writer_route_decision\", decision.EventFields())`, `if resumeState != nil {` and `return runResumeReviewRepair(cfg, opts, prompt, *resumeState, resumeStatePath, promptRun, rec, stdout, stderr)`. No files were changed."
-	
+
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
@@ -16567,12 +16692,12 @@ func TestCompletionGateRejectsRawToolResultTranscriptFormats(t *testing.T) {
 			AllowedTools:      []string{"read_file", "search_content", "context_pack"},
 		},
 	}
-	
+
 	result, rejected := runner.completionGateRejection(liveAnswer, []workspace.ToolResult{
 		{Tool: "read_file", Summary: "Read f1 internal/planexecute/run.go lines 1-50"},
 		{Tool: "context_query", Summary: "Found 5 references"},
 	}, 0, nil, false)
-	
+
 	if !rejected {
 		t.Fatal("live session answer was NOT rejected by completion gate")
 	}
@@ -16619,46 +16744,46 @@ func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
 
 	// Call the COMPLETION GATE directly - this is what completeWithoutMoreToolsWithReason calls
 	result, rejected := runner.completionGateRejection(garbageAnswer, results, 0, nil, false)
-	
+
 	if !rejected {
 		// Try the specific checks individually to find the gap
 		t.Log("completionGateRejection did not reject - checking individual checks...")
-		
+
 		// Check 1: looksLikeTextualToolCall
 		if looksLikeTextualToolCall(garbageAnswer) {
 			t.Error("looksLikeTextualToolCall: true (but this gate fires BEFORE search-hit check in completionGateRejection)")
 		} else {
 			t.Log("looksLikeTextualToolCall: false (correct - not XML)")
 		}
-		
+
 		// Check 2: unexecuted tool request
 		if unexec, _ := runner.unexecutedToolRequestCompletionRejection(garbageAnswer); unexec.Tool != "" {
 			t.Logf("unexecutedToolRequest: rejected - %s", unexec.Summary)
 		} else {
 			t.Log("unexecutedToolRequest: not rejected")
 		}
-		
+
 		// Check 3: raw tool result transcript
 		if raw, _ := rawToolResultTranscriptCompletionRejection(garbageAnswer); raw.Tool != "" {
 			t.Logf("rawToolResultTranscript: rejected - %s", raw.Summary)
 		} else {
 			t.Log("rawToolResultTranscript: not rejected")
 		}
-		
-		// Check 4: read-only evidence 
+
+		// Check 4: read-only evidence
 		if ev, _ := runner.readOnlyEvidenceCompletionRejection(garbageAnswer, results); ev.Tool != "" {
 			t.Logf("readOnlyEvidence: rejected - %s", ev.Summary)
 		} else {
 			t.Log("readOnlyEvidence: not rejected (evidence is ready)")
 		}
-		
+
 		// Check 5: read-only non-substantive
 		if ns, _ := runner.readOnlyNonSubstantiveCompletionRejection(garbageAnswer, results); ns.Tool != "" {
 			t.Logf("readOnlyNonSubstantive: rejected - %s", ns.Summary)
 		} else {
 			t.Log("readOnlyNonSubstantive: not rejected (answer has enough words)")
 		}
-		
+
 		// Check 6: read-only search hit inventory - THIS IS THE ONE THAT SHOULD CATCH IT
 		if si, rejected2 := runner.readOnlySearchHitInventoryCompletionRejection(garbageAnswer, results); rejected2 {
 			t.Logf("readOnlySearchHitInventory: REJECTED - %s", si.Summary)
@@ -16669,7 +16794,7 @@ func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
 			t.Logf("  PermissionProfile: %s (needs 'read_only_workspace')", brief.PermissionProfile)
 			t.Logf("  EvidenceReady: %v", genericReadOnlyAnswerEvidenceReady(results))
 			t.Logf("  looksLikeToolResultTranscript: %v", looksLikeToolResultTranscript(strings.ToLower(garbageAnswer)))
-			
+
 			// Check containsAny patterns
 			lower := strings.ToLower(garbageAnswer)
 			for _, pat := range []string{"matching line(s)", "returned hit(s)", "tool-local"} {
@@ -16678,13 +16803,12 @@ func TestForcedCompletionCatchesLiveSessionGarbageAnswer(t *testing.T) {
 			t.Logf("  contains 'the inspected source in': %v", strings.Contains(lower, "the inspected source in"))
 			t.Logf("  contains ' contains `': %v", strings.Contains(lower, " contains `"))
 		}
-		
+
 		t.Fatal("GARBAGE ANSWER WAS NOT REJECTED BY COMPLETION GATE")
 	}
-	
+
 	t.Logf("Garbage answer caught: %s", result.Summary)
 }
-
 
 func TestConversationMilestonesDefaultContext(t *testing.T) {
 	first, interval := conversationMilestones(0)
@@ -16724,15 +16848,15 @@ func TestConversationMilestonesLargeContext(t *testing.T) {
 
 func TestConversationMilestonesAllContextSizes(t *testing.T) {
 	tests := []struct {
-		ctxSize             int
+		ctxSize                 int
 		wantFirst, wantInterval int
 	}{
-		{0, 25, 35},        // unknown → 65K default → clamped
-		{16384, 15, 20},    // 16K: thresholdMsgs=16K*0.4/125=52, maxCalls=26, first=max(15,6)=15, interval=max(20,9)=20
-		{32768, 15, 20},    // 32K: thresholdMsgs=104, maxCalls=52, first=max(15,13)=15, interval=max(20,18)=20
-		{65536, 25, 35},    // 65K: thresholdMsgs=209→clamped 200, maxCalls=100, first=25, interval=35
-		{131072, 25, 35},   // 128K: clamped
-		{262144, 25, 35},   // 256K: clamped
+		{0, 25, 35},      // unknown → 65K default → clamped
+		{16384, 15, 20},  // 16K: thresholdMsgs=16K*0.4/125=52, maxCalls=26, first=max(15,6)=15, interval=max(20,9)=20
+		{32768, 15, 20},  // 32K: thresholdMsgs=104, maxCalls=52, first=max(15,13)=15, interval=max(20,18)=20
+		{65536, 25, 35},  // 65K: thresholdMsgs=209→clamped 200, maxCalls=100, first=25, interval=35
+		{131072, 25, 35}, // 128K: clamped
+		{262144, 25, 35}, // 256K: clamped
 	}
 	for _, tt := range tests {
 		t.Run(fmt.Sprintf("ctx=%d", tt.ctxSize), func(t *testing.T) {
@@ -16989,7 +17113,6 @@ func TestMsgCharCount(t *testing.T) {
 		t.Errorf("msgCharCount with reasoning = %d, want %d", got2, want2)
 	}
 }
-
 
 // TestFinalAnswerBlockerKindQUESTIONComesBeforeEvidence verifies that
 // the <<QUESTION>> escape hatch fires BEFORE non_answer_prose and

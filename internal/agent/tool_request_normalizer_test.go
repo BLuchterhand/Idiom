@@ -665,3 +665,33 @@ func TestRepairToolRequestSyntaxNestedArgumentsRejectsMixedWrapper(t *testing.T)
 		t.Fatalf("mixed wrapper must not be repaired through nested arguments: %#v", result.Request)
 	}
 }
+
+func TestParseFunctionCallToolRequestSyntaxEmptyString(t *testing.T) {
+	// Fix: empty content must not be classified as "unsafe_to_infer".
+	// An empty string is a model producing no visible output, not a
+	// failed function-call attempt. Classifying it as unsafe skips
+	// the reasoning-content salvage paths that could recover the answer.
+	req, ok, unsafe := parseFunctionCallToolRequestSyntax("")
+	if ok {
+		t.Fatalf("empty string must not parse as a valid tool request")
+	}
+	if unsafe {
+		t.Fatalf("empty string must not be classified as unsafe: got unsafe=true, want unsafe=false")
+	}
+	if req.Tool != "" {
+		t.Fatalf("empty string must produce zero-value ToolRequest, got tool=%q", req.Tool)
+	}
+}
+
+func TestParseFunctionCallToolRequestSyntaxWhitespaceOnly(t *testing.T) {
+	req, ok, unsafe := parseFunctionCallToolRequestSyntax("   \n  \t  ")
+	if ok {
+		t.Fatalf("whitespace-only must not parse as a valid tool request")
+	}
+	if unsafe {
+		t.Fatalf("whitespace-only must not be classified as unsafe: got unsafe=true, want unsafe=false")
+	}
+	if req.Tool != "" {
+		t.Fatalf("whitespace-only must produce zero-value ToolRequest, got tool=%q", req.Tool)
+	}
+}

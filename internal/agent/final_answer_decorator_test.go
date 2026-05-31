@@ -388,7 +388,6 @@ func TestStripInternalEvidenceAppendixStripsSourceLine(t *testing.T) {
 	}
 }
 
-
 func TestStripBlockerSectionPreservesEverythingBeforeBlocker(t *testing.T) {
 	answer := "Header line.\n\n" +
 		"Changed paths:\n- foo.go\n\n" +
@@ -424,5 +423,69 @@ func TestWriteFailureTargetPathExtractsApplyPatchTarget(t *testing.T) {
 	})
 	if got != "native/src/foo.cpp" {
 		t.Fatalf("apply_patch target: want native/src/foo.cpp, got %q", got)
+	}
+}
+
+func TestIsDeterministicFallbackAnswer(t *testing.T) {
+	tests := []struct {
+		name   string
+		answer string
+		want   bool
+	}{
+		{"exact fallback prefix", "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- read_file test.txt", true},
+		{"lowercase", "partial findings from this turn (explore lane reached its budget before synthesizing):", true},
+		{"substantive answer", "The evidence struct in internal/architect/packet.go tracks tool usage and context.", false},
+		{"empty", "", false},
+		{"unrelated prefix", "Based on my analysis, the evidence system supports...", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := isDeterministicFallbackAnswer(tt.answer)
+			if got != tt.want {
+				t.Errorf("isDeterministicFallbackAnswer(%q) = %v, want %v", tt.answer, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestSynthesizeBriefConversationFallback(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "conversation",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read file: internal/architect/packet.go", Output: "type Evidence struct {..."},
+		{Tool: "context_query", Summary: "Context query returned 12 nodes"},
+	}
+	got := synthesizeBriefConversationFallback(brief, results)
+	if !strings.Contains(got, "inspected") {
+		t.Errorf("fallback should mention inspected paths: %q", got)
+	}
+	if strings.Contains(got, "No files were changed") {
+		t.Errorf("fallback should not contain source-body extraction garbage: %q", got)
+	}
+}
+
+func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *testing.T) {
+	// When the internal answer is a deterministic fallback and we're in a
+	// read-only conversation lane, source-body extraction must not produce
+	// garbage like "The inspected source contains `type Evidence struct {`..."
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read file: internal/architect/packet.go", Output: "type Evidence struct {\n\tKind  string `json:\"kind\"`\n\tLabel string `json:\"label,omitempty\"`\n}"},
+	}
+	internalAnswer := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- read_file internal/architect/packet.go"
+
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, internalAnswer, "")
+	if !ok {
+		t.Fatalf("expected fallback to return ok=true")
+	}
+	if strings.Contains(got, "No files were changed") {
+		t.Errorf("source-body extraction garbage leaked into conversation fallback: %q", got)
+	}
+	if !strings.Contains(got, "inspected") {
+		t.Errorf("fallback should provide useful context: %q", got)
 	}
 }

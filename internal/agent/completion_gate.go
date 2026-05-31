@@ -1,8 +1,5 @@
-// Package agent: CompletionGatePipeline replaces the 10+ sequential
-// rejection checks in completionGateRejection with a composable
-// pipeline. Each check is a CompletionGateCheck function; lane-specific
-// checks are registered by the LanePolicy rather than being hard-wired
-// in runner.go.
+// Package agent: CompletionGatePipeline keeps completion checks registered in
+// one ordered pipeline instead of open-coded as a long chain in Runner.
 //
 // When adding a new gate check, create a function matching the
 // CompletionGateCheck signature and register it. Do not splice a new
@@ -51,16 +48,57 @@ func (p *CompletionGatePipeline) Evaluate(reply string, results []workspace.Tool
 	return workspace.ToolResult{}, false
 }
 
-// CompletionGateChecks returns the standard gate checks in the order
-// they historically executed. Lane-specific checks (read-only evidence,
-// mutation, review repair, read-only explanation) should be registered
-// by the LanePolicy.
-func CompletionGateChecks(r *Runner) []CompletionGateCheck {
+// CompletionGateChecks returns the runner's gate checks in the order they
+// historically executed.
+func CompletionGateChecks(r *Runner, step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) []CompletionGateCheck {
+	if r != nil {
+		return r.completionGateChecks(step, taskLedger, declarationMovesForbidden)
+	}
 	return []CompletionGateCheck{
 		textualToolCallGateCheck,
 		unexecutedToolRequestGateCheck,
 		rawToolResultTranscriptGateCheck,
 		unresolvedProcessIntentGateCheck,
+	}
+}
+
+func (r *Runner) completionGatePipeline(step int, taskLedger *taskLedgerState, declarationMovesForbidden bool) *CompletionGatePipeline {
+	return NewCompletionGatePipeline(CompletionGateChecks(r, step, taskLedger, declarationMovesForbidden)...)
+}
+
+func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool) []CompletionGateCheck {
+	return []CompletionGateCheck{
+		textualToolCallGateCheck,
+		func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.unexecutedToolRequestCompletionRejection(reply)
+		},
+		rawToolResultTranscriptGateCheck,
+		unresolvedProcessIntentGateCheck,
+		func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+			ledgerOwnedByMutationContract := r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) && len(r.RuntimeBrief.RequiredEditPaths) > 0
+			if ledgerOwnedByMutationContract || taskLedger == nil {
+				return workspace.ToolResult{}, false
+			}
+			return taskLedger.completionRejection(reply)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.readOnlyEvidenceCompletionRejection(reply, results)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.readOnlyNonSubstantiveCompletionRejection(reply, results)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.readOnlySearchHitInventoryCompletionRejection(reply, results)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.mutationCompletionRejection(reply, results)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.planThenExecuteReviewRepairCompletionRejection(reply, results)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.readOnlyExplanationCompletionRejection(reply, results)
+		},
 	}
 }
 

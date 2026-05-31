@@ -185,6 +185,16 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	if exact, ok := presentableExactProbeAnswer(brief, results); ok {
 		return exact, true
 	}
+	// When the internal answer is a deterministic fallback ("Partial findings
+	// from this turn...") and we are in a read-only conversation lane, skip
+	// source-body extraction. It produces nonsense like "The inspected source
+	// contains `type Evidence struct {`..." that does not answer the question.
+	// Only block for direct user-facing conversation lanes, not for delegated
+	// read-only investigation lanes that benefit from source-body composition.
+	if isDeterministicFallbackAnswer(internalAnswer) && isConversationLikeLane(brief) {
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
+
 	if sourceBody, ok := presentableReadFileSourceAnswer(brief, results, workspaceRoot); ok {
 		return sourceBody, true
 	}
@@ -1025,4 +1035,56 @@ func (r *Runner) emitFinalAnswerDecorationEvent(stopReason string, before string
 	if data, err := json.Marshal(payload); err == nil {
 		r.OnEvent(RunEvent{Role: "answer_decorated", Content: string(data)})
 	}
+}
+
+// isConversationLikeLane returns true when the task family is a direct
+// user-facing conversation lane where source-body extraction would produce
+// incomprehensible code-fragment answers rather than useful findings.
+func isConversationLikeLane(brief workerruntime.WorkerRuntimeBrief) bool {
+	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
+	switch family {
+	case "conversation", "direct_question", "information_request", "coding_help", "general_chat":
+		return true
+	default:
+		return false
+	}
+}
+
+// isDeterministicFallbackAnswer returns true when the internal answer is
+// the deterministic fallback produced by synthesizeFallbackAnswer — the
+// "Partial findings from this turn..." text that the harness generates when
+// the model fails to produce a substantive answer.
+func isDeterministicFallbackAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return strings.HasPrefix(lower, "partial findings from this turn")
+}
+
+// synthesizeBriefConversationFallback produces a short fallback for
+// conversation lanes when the model failed but the deterministic fallback
+// answer is available. It avoids the source-body extraction path that
+// produces misleading code-fragment answers.
+func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
+	// Collect inspected paths for context.
+	var inspectedPaths []string
+	for _, r := range results {
+		paths := readPathsFromToolResult(r)
+		for _, p := range paths {
+			if p != "" && !slices.Contains(inspectedPaths, p) {
+				inspectedPaths = append(inspectedPaths, p)
+			}
+		}
+	}
+
+	var b strings.Builder
+	b.WriteString("I inspected ")
+	if len(inspectedPaths) == 0 {
+		b.WriteString("the relevant source files")
+	} else {
+		b.WriteString(formatInlinePathList(inspectedPaths, 4))
+	}
+	b.WriteString(" but was unable to synthesize a complete answer before the turn budget was exhausted. ")
+	b.WriteString("The key findings are available in the evidence gathered above. ")
+	b.WriteString("You can ask a follow-up question targeting a specific file or concept for a more focused answer.")
+
+	return strings.TrimSpace(b.String())
 }

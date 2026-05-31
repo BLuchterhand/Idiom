@@ -86,9 +86,8 @@ func TestQwenKeyValuePurposeField(t *testing.T) {
 }
 
 // TestQwenKeyValuePromptWithColon verifies that a prompt value
-// containing a colon (e.g. "Evidence": ...) is handled gracefully.
-// Unparseable continuation lines after the first colon are skipped
-// rather than causing unsafe_to_infer.
+// containing a colon (e.g. "Evidence": ...) preserves bounded
+// continuation lines for known long-text fields.
 func TestQwenKeyValuePromptWithColon(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: strings.Join([]string{
@@ -111,5 +110,94 @@ func TestQwenKeyValuePromptWithColon(t *testing.T) {
 	}
 	if !strings.Contains(result.Request.Prompt, `Inspect the idiom harness to define "Evidence"`) {
 		t.Fatalf("prompt not captured correctly: %q", result.Request.Prompt)
+	}
+	if !strings.Contains(result.Request.Prompt, "and how it is consumed") {
+		t.Fatalf("prompt continuation not captured correctly: %q", result.Request.Prompt)
+	}
+}
+
+func TestQwenKeyValueScalarContinuationIsIgnored(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: read_file",
+			"path: internal/comprehension/pack.go",
+			"this line must not be appended to the path",
+			"start_line: 1",
+			"end_line: 10",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key-value tool request to normalize")
+	}
+	if result.Request.Path != "internal/comprehension/pack.go" {
+		t.Fatalf("scalar continuation changed path: %q", result.Request.Path)
+	}
+	if result.Request.StartLine != 1 || result.Request.EndLine != 10 {
+		t.Fatalf("line range not parsed: start=%d end=%d", result.Request.StartLine, result.Request.EndLine)
+	}
+}
+
+func TestQwenKeyValueNotePreservesKeyAndMultilineContent(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: note",
+			"key: source-finding",
+			"content: First source fact.",
+			"Second source fact.",
+			"internal/agent/runner.go:2039 shows note handling.",
+			"Evidence: note content can contain colon-bearing labels.",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected note key-value request to normalize")
+	}
+	if result.Request.Tool != "note" || result.Request.Key != "source-finding" {
+		t.Fatalf("unexpected note request: %#v", result.Request)
+	}
+	if !strings.Contains(result.Raw, `"key":"source-finding"`) {
+		t.Fatalf("raw request dropped note key: %s", result.Raw)
+	}
+	if !strings.Contains(result.Request.Content, "Second source fact.") {
+		t.Fatalf("note content continuation missing: %q", result.Request.Content)
+	}
+	if !strings.Contains(result.Request.Content, "internal/agent/runner.go:2039") {
+		t.Fatalf("file:line continuation missing: %q", result.Request.Content)
+	}
+	if !strings.Contains(result.Request.Content, "Evidence: note content") {
+		t.Fatalf("colon label continuation missing: %q", result.Request.Content)
+	}
+}
+
+func TestQwenKeyValuePromptPreservesUnknownColonContinuation(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: task",
+			"agent: explorer",
+			"mode: read_only",
+			"prompt: Inspect the completion gate.",
+			"Evidence: include the current rejection order.",
+			"internal/agent/runner.go:6658 is the call site.",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected task key-value request to normalize")
+	}
+	if !strings.Contains(result.Request.Prompt, "Evidence: include") {
+		t.Fatalf("prompt dropped evidence label continuation: %q", result.Request.Prompt)
+	}
+	if !strings.Contains(result.Request.Prompt, "internal/agent/runner.go:6658") {
+		t.Fatalf("prompt dropped file:line continuation: %q", result.Request.Prompt)
 	}
 }
