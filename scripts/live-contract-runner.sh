@@ -213,6 +213,59 @@ print(json.dumps(sorted(set(paths))))
 PY
 }
 
+snapshot_requested_files() {
+  local raw="${IDIOM_LIVE_SNAPSHOT_PATHS_JSON:-}"
+  if [[ -z "$raw" ]]; then
+    return 0
+  fi
+  python3 - "$extra_records" "$workspace_root" "$raw" <<'PY'
+import json
+import pathlib
+import sys
+from datetime import datetime, timezone
+
+out_path = pathlib.Path(sys.argv[1])
+root = pathlib.Path(sys.argv[2]).resolve()
+try:
+    requested = json.loads(sys.argv[3])
+except json.JSONDecodeError as exc:
+    raise SystemExit(f"IDIOM_LIVE_SNAPSHOT_PATHS_JSON is invalid JSON: {exc}") from exc
+if not isinstance(requested, list):
+    raise SystemExit("IDIOM_LIVE_SNAPSHOT_PATHS_JSON must be a JSON array")
+records = []
+for raw_path in requested:
+    rel = str(raw_path or "").strip()
+    if not rel or rel.startswith("/") or "\x00" in rel:
+        raise SystemExit(f"snapshot path must be workspace-relative: {rel!r}")
+    path = (root / rel).resolve()
+    if path != root and root not in path.parents:
+        raise SystemExit(f"snapshot path escapes workspace root: {rel}")
+    exists = path.is_file()
+    content = ""
+    size = 0
+    truncated = False
+    if exists:
+        data = path.read_bytes()
+        size = len(data)
+        limit = 65536
+        truncated = size > limit
+        content = data[:limit].decode("utf-8", errors="replace")
+    records.append({
+        "type": "idiom.live_contract.file_snapshot",
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "path": rel,
+        "exists": exists,
+        "size_bytes": size,
+        "truncated": truncated,
+        "content": content,
+    })
+with out_path.open("a", encoding="utf-8") as f:
+    for record in records:
+        json.dump(record, f, sort_keys=True)
+        f.write("\n")
+PY
+}
+
 finish() {
   local exit_code=$?
   trap - EXIT
@@ -224,6 +277,7 @@ finish() {
   local rollback_status="not_initialized"
   if [[ -d "$workspace_root/.git" ]]; then
     changed_before="$(workspace_status_json)"
+    snapshot_requested_files || true
     git -C "$workspace_root" reset --hard -q HEAD >/dev/null 2>&1 || rollback_status="reset_failed"
     git -C "$workspace_root" clean -fdx -q >/dev/null 2>&1 || rollback_status="clean_failed"
     changed_after="$(workspace_status_json)"
@@ -530,7 +584,18 @@ def debug_log_completed():
         "idiom.feature_planner.failed",
         "idiom.feature_planner.terminal",
     )
-    return any(role in text for role in terminal_roles)
+    if any(role in text for role in terminal_roles):
+        return True
+    raw_done_markers = os.environ.get("IDIOM_LIVE_TUI_DONE_CONTAINS", "").strip()
+    if raw_done_markers:
+        try:
+            parsed = json.loads(raw_done_markers)
+            markers = [str(item) for item in parsed] if isinstance(parsed, list) else [raw_done_markers]
+        except json.JSONDecodeError:
+            markers = [raw_done_markers]
+        if all(marker and marker in text for marker in markers):
+            return True
+    return False
 
 def should_send_next_turn():
     global turn_index, turn_sent_at

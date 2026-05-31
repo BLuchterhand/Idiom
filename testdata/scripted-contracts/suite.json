@@ -4035,6 +4035,79 @@
         "max_errors": 0,
         "max_duration_millis": 180000
       }
+    },
+    {
+      "id": "scripted-conversation-empty-content-fallback",
+      "family": "conversation",
+      "runner_mode": "tui",
+      "prompt": "how is evidence used in this repo?",
+      "env": {
+        "IDIOM_LIVE_TUI_DONE_CONTAINS": "[\"You can ask a follow-up question\"]"
+      },
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "rollback",
+        "empty-content",
+        "fallback-guard",
+        "tui",
+        "multi-turn",
+        "conversation"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-conversation-empty-content-tui-fallback",
+        "prompt_contains": [
+          "evidence",
+          "git operations"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "forbid_final_assistant_contains": [
+          "No files were changed",
+          "type ",
+          "func "
+        ],
+        "require_verification": "none",
+        "require_approval": false,
+        "require_assistant_for_each_user": true
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000,
+        "min_user_turns": 2,
+        "min_assistant_turns": 2
+      },
+      "turns": [
+        "how is evidence used in this repo?",
+        "is it a good idea to include some git operations into evidence? like to reduce churn we could enforce a check into locations for intended changes?"
+      ]
     }
   ]
 }

@@ -585,6 +585,40 @@ func TestEvaluateSWETaskAppliesFileContentOracle(t *testing.T) {
 	}
 }
 
+func TestEvaluateSWETaskFileContentOracleUsesLiveSnapshot(t *testing.T) {
+	root := t.TempDir()
+	task := SWETask{
+		ID:     "generated-adr",
+		Family: "feature_planner",
+		Prompt: "/feature-planner Add greeting package",
+		Scenario: Scenario{
+			Name:           "generated-adr",
+			PromptContains: []string{"greeting package"},
+		},
+		Oracle: SWEOracle{
+			RequireFileContent: []SWEFileContentExpectation{{
+				Path:           "docs/product-workflows/efforts/started/add-greeting-package/adrs/ADR-001.md",
+				Contains:       []string{"Create internal/greeting package"},
+				ForbidContains: []string{"## Decision\n\n\n\n"},
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "session_start", Data: map[string]any{"workspace_root": root}},
+		{Type: "message", Data: map[string]any{"role": "user", "content": "/feature-planner Add greeting package"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "ADR drafts generated."}},
+		{Type: "idiom.live_contract.file_snapshot", Data: map[string]any{
+			"path":    "docs/product-workflows/efforts/started/add-greeting-package/adrs/ADR-001.md",
+			"exists":  true,
+			"content": "## Decision\nCreate internal/greeting package with a single Hello function.\n",
+		}},
+	}
+	report := EvaluateSWETask("generated-adr.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected snapshot-backed file content oracle to pass, got %#v", report.Findings)
+	}
+}
+
 func TestEvaluateSWETaskReportsOracleFailures(t *testing.T) {
 	maxTools := 0
 	maxDurationMillis := int64(1)

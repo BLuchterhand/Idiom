@@ -879,7 +879,7 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 		}
 	}
 	for _, expected := range oracle.RequireFileContent {
-		for _, finding := range evaluateFileContentOracle(report.Metrics.WorkspaceRoot, expected) {
+		for _, finding := range evaluateFileContentOracle(report.Metrics.WorkspaceRoot, expected, report.Metrics.LiveContractFileSnapshots) {
 			addFinding("%s", finding)
 		}
 	}
@@ -1082,7 +1082,7 @@ func applyEvalLearnedWeights(workspaceRoot string, oracle SWEGroundednessOracle,
 	return rec
 }
 
-func evaluateFileContentOracle(workspaceRoot string, expected SWEFileContentExpectation) []string {
+func evaluateFileContentOracle(workspaceRoot string, expected SWEFileContentExpectation, snapshots []LiveContractFileSnapshot) []string {
 	findings := make([]string, 0)
 	root := strings.TrimSpace(workspaceRoot)
 	if root == "" {
@@ -1107,24 +1107,40 @@ func evaluateFileContentOracle(workspaceRoot string, expected SWEFileContentExpe
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return []string{fmt.Sprintf("file content oracle path %q escapes workspace root", expected.Path)}
 	}
-	data, err := os.ReadFile(fullPath)
+	content, source, err := fileContentOracleContent(fullPath, path, snapshots)
 	if err != nil {
-		return []string{fmt.Sprintf("file content oracle could not read %q: %v", path, err)}
+		return []string{err.Error()}
 	}
-	content := string(data)
 	for _, required := range expected.Contains {
-		required = strings.TrimSpace(required)
-		if required != "" && !strings.Contains(content, required) {
-			findings = append(findings, fmt.Sprintf("file %q does not contain required text %q", path, required))
+		if strings.TrimSpace(required) != "" && !strings.Contains(content, required) {
+			findings = append(findings, fmt.Sprintf("%s %q does not contain required text %q", source, path, required))
 		}
 	}
 	for _, forbidden := range expected.ForbidContains {
-		forbidden = strings.TrimSpace(forbidden)
-		if forbidden != "" && strings.Contains(content, forbidden) {
-			findings = append(findings, fmt.Sprintf("file %q unexpectedly contains %q", path, forbidden))
+		if strings.TrimSpace(forbidden) != "" && strings.Contains(content, forbidden) {
+			findings = append(findings, fmt.Sprintf("%s %q unexpectedly contains %q", source, path, forbidden))
 		}
 	}
 	return findings
+}
+
+func fileContentOracleContent(fullPath string, relPath string, snapshots []LiveContractFileSnapshot) (string, string, error) {
+	if data, err := os.ReadFile(fullPath); err == nil {
+		return string(data), "file", nil
+	}
+	for _, snapshot := range snapshots {
+		if normalizedFixturePath(snapshot.Path) != normalizedFixturePath(relPath) {
+			continue
+		}
+		if !snapshot.Exists {
+			return "", "snapshot", fmt.Errorf("file content oracle snapshot %q reports file missing", relPath)
+		}
+		return snapshot.Content, "snapshot", nil
+	}
+	if _, err := os.Stat(fullPath); err != nil {
+		return "", "file", fmt.Errorf("file content oracle could not read %q: %v", relPath, err)
+	}
+	return "", "file", fmt.Errorf("file content oracle could not read %q", relPath)
 }
 
 func EvaluateSWESuite(suite SWESuite, recordsByTask map[string][]Record, logPaths map[string]string) SWESuiteReport {

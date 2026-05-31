@@ -603,6 +603,7 @@ type Metrics struct {
 	ChangedFiles              []string                        `json:"changed_files,omitempty"`
 	EvidencePaths             []string                        `json:"evidence_paths,omitempty"`
 	LiveContractRollbacks     []LiveContractRollbackSnapshot  `json:"live_contract_rollbacks,omitempty"`
+	LiveContractFileSnapshots []LiveContractFileSnapshot      `json:"live_contract_file_snapshots,omitempty"`
 	LanguageCapabilities      []LanguageCapabilitySnapshot    `json:"language_capabilities,omitempty"`
 	MessageRoles              map[string]int                  `json:"message_roles,omitempty"`
 	RecordTypes               map[string]int                  `json:"record_types,omitempty"`
@@ -616,6 +617,14 @@ type LiveContractRollbackSnapshot struct {
 	PostResetTree      string   `json:"post_reset_tree,omitempty"`
 	ChangedBeforeReset []string `json:"changed_before_reset,omitempty"`
 	ChangedAfterReset  []string `json:"changed_after_reset,omitempty"`
+}
+
+type LiveContractFileSnapshot struct {
+	Path      string `json:"path,omitempty"`
+	Exists    bool   `json:"exists,omitempty"`
+	SizeBytes int    `json:"size_bytes,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
+	Content   string `json:"content,omitempty"`
 }
 
 type Report struct {

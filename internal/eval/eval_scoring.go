@@ -431,6 +431,14 @@ func Analyze(records []Record) Metrics {
 			metrics.LiveContractRollbacks = append(metrics.LiveContractRollbacks, rollback)
 			rollbackEvidenceSeen = true
 			rollbackChangedFiles = append(rollbackChangedFiles, rollback.ChangedBeforeReset...)
+		case "idiom.live_contract.file_snapshot":
+			metrics.LiveContractFileSnapshots = append(metrics.LiveContractFileSnapshots, LiveContractFileSnapshot{
+				Path:      strings.TrimSpace(stringField(record.Data, "path")),
+				Exists:    boolField(record.Data, "exists"),
+				SizeBytes: intField(record.Data, "size_bytes"),
+				Truncated: boolField(record.Data, "truncated"),
+				Content:   stringField(record.Data, "content"),
+			})
 		}
 
 		if strings.Contains(strings.ToLower(stringField(record.Data, "summary")), "write approval required") ||

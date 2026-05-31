@@ -18139,8 +18139,14 @@ func deterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRunt
 	if !ok {
 		return "", false
 	}
+	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(answer) {
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
 		return cleaned, true
+	}
+	if conversationFallbackShouldAvoidSourceBody(brief) && strings.Contains(strings.ToLower(answer), "source: delegated read-only evidence packet") {
+		return synthesizeBriefConversationFallback(brief, results), true
 	}
 	if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer, ""); ok {
 		return presentable, true

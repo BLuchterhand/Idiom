@@ -1,0 +1,23 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"check evidence-related label code\",\"why_not_answering\":\"need source evidence for the question\"}"
+    },
+    {
+      "content": "Evidence-sensitive behavior in this fixture is represented through label code in internal/labels/labels.go. I did not edit files."
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"named_gap\":\"re-check label code for git-history discussion\",\"why_not_answering\":\"need source evidence for design question\"}"
+    },
+    {
+      "content": "{\"tool\":\"search_content\",\"pattern\":\"git\",\"named_gap\":\"check for existing git operations\",\"why_not_answering\":\"need evidence of existing git patterns\"}"
+    },
+    {
+      "content": ""
+    },
+    {
+      "content": ""
+    }
+  ]
+}

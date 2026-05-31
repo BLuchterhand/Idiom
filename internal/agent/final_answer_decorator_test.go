@@ -489,3 +489,49 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *tes
 		t.Errorf("fallback should provide useful context: %q", got)
 	}
 }
+
+func TestPresentableNoToolsFallbackSkipsSourceBodyAnswerForConversation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read file: internal/labels/labels.go", Output: "func ShortLabel() string {\n\treturn \"Save changes\"\n}"},
+	}
+	internalAnswer := "The inspected source in `internal/labels/labels.go` contains `func ShortLabel() string {` and `return \"Save changes\"`. No files were changed."
+
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, internalAnswer, "")
+	if !ok {
+		t.Fatalf("expected fallback to return ok=true")
+	}
+	for _, forbidden := range []string{"No files were changed", "func ShortLabel"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("source-body fallback leaked %q into conversation answer: %q", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "internal/labels/labels.go") {
+		t.Errorf("fallback should retain inspected path context: %q", got)
+	}
+}
+
+func TestDeterministicNoToolsAnswerSkipsSourceBodyForReadOnlyConversation(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read file: internal/labels/labels.go", Output: "func ShortLabel() string {\n\treturn \"Save changes\"\n}"},
+	}
+	got, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic answer")
+	}
+	for _, forbidden := range []string{"No files were changed", "func ShortLabel"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("deterministic answer leaked %q into conversation answer: %q", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "internal/labels/labels.go") {
+		t.Errorf("fallback should retain inspected path context: %q", got)
+	}
+}

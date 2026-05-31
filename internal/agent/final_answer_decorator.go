@@ -162,6 +162,12 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	if !finalAnswerNeedsDecoration(internalAnswer) && !looksLikeGenericEvidenceComposerAnswer(internalAnswer) {
 		return "", false
 	}
+	if conversationFallbackShouldAvoidSourceBody(brief) && isDeterministicFallbackAnswer(internalAnswer) {
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
+	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(internalAnswer) {
+		return synthesizeBriefConversationFallback(brief, results), true
+	}
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(internalAnswer); ok {
 		return cleaned, true
 	}
@@ -191,7 +197,7 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	// contains `type Evidence struct {`..." that does not answer the question.
 	// Only block for direct user-facing conversation lanes, not for delegated
 	// read-only investigation lanes that benefit from source-body composition.
-	if isDeterministicFallbackAnswer(internalAnswer) && isConversationLikeLane(brief) {
+	if isDeterministicFallbackAnswer(internalAnswer) && conversationFallbackShouldAvoidSourceBody(brief) {
 		return synthesizeBriefConversationFallback(brief, results), true
 	}
 
@@ -810,7 +816,14 @@ func looksLikeGenericEvidenceComposerAnswer(answer string) bool {
 	return strings.Contains(lower, "the strongest implementation evidence is in") ||
 		strings.Contains(lower, "use those findings as the source of truth") ||
 		strings.Contains(lower, "what this establishes:") ||
-		strings.Contains(lower, "the retained source context identifies")
+		strings.Contains(lower, "the retained source context identifies") ||
+		looksLikeSourceBodyFallbackAnswer(answer)
+}
+
+func looksLikeSourceBodyFallbackAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	return strings.Contains(lower, "the inspected source in") &&
+		strings.Contains(lower, "no files were changed")
 }
 
 func finalAnswerStopReasonPrefersDecoration(stopReason string) bool {
@@ -1048,6 +1061,18 @@ func isConversationLikeLane(brief workerruntime.WorkerRuntimeBrief) bool {
 	default:
 		return false
 	}
+}
+
+func conversationFallbackShouldAvoidSourceBody(brief workerruntime.WorkerRuntimeBrief) bool {
+	if !isConversationLikeLane(brief) {
+		return false
+	}
+	lower := strings.ToLower(strings.TrimSpace(brief.Objective))
+	if containsAny(lower, "shorten", "rename", "change", "update") &&
+		containsAny(lower, ".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", "label", "function", "source") {
+		return false
+	}
+	return true
 }
 
 // isDeterministicFallbackAnswer returns true when the internal answer is
