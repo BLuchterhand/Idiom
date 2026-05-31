@@ -116,7 +116,10 @@ func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
 }
 
 func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
-	manifest := BuildToolManifest([]string{"code_navigate", "go_definition", "read_file", "source_sanity", "context_trace_pack", "apply_patch", "harness_audit"})
+	manifest := BuildToolManifest([]string{
+		"code_navigate", "go_definition", "read_file", "source_sanity", "context_trace_pack",
+		"apply_patch", "harness_audit", "history_range", "semgrep_scan", "ctags_symbols",
+	})
 	byTool := make(map[string]ToolManifestEntry, len(manifest))
 	for _, entry := range manifest {
 		byTool[entry.Tool] = entry
@@ -133,6 +136,9 @@ func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
 		{tool: "context_trace_pack", capability: "verify_edit", classification: CapabilityClassDeferred},
 		{tool: "apply_patch", capability: "", classification: CapabilityClassWriteSideEffect},
 		{tool: "harness_audit", capability: "audit_behavior", classification: CapabilityClassRouted},
+		{tool: "history_range", capability: "history_context", classification: CapabilityClassFallback},
+		{tool: "semgrep_scan", capability: "security_scan", classification: CapabilityClassFallback},
+		{tool: "ctags_symbols", capability: "inspect_symbol", classification: CapabilityClassFallback},
 	}
 	for _, tc := range cases {
 		entry := byTool[tc.tool]
@@ -147,7 +153,7 @@ func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
 		}
 	}
 
-	export, err := BuildToolSchemaExport([]string{"code_navigate", "go_definition", "source_sanity"})
+	export, err := BuildToolSchemaExport([]string{"code_navigate", "go_definition", "source_sanity", "history_symbol", "joern_scan", "ctags_symbols"})
 	if err != nil {
 		t.Fatalf("BuildToolSchemaExport returned error: %v", err)
 	}
@@ -164,6 +170,50 @@ func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
 	if exported["source_sanity"].CapabilityClassification != CapabilityClassDeferred ||
 		!slices.Contains(exported["source_sanity"].EvidenceCapabilities, "verify_edit") {
 		t.Fatalf("source_sanity export metadata = %#v", exported["source_sanity"])
+	}
+	if exported["history_symbol"].CapabilityClassification != CapabilityClassFallback ||
+		!slices.Contains(exported["history_symbol"].EvidenceCapabilities, "history_context") {
+		t.Fatalf("history_symbol export metadata = %#v", exported["history_symbol"])
+	}
+	if exported["joern_scan"].CapabilityClassification != CapabilityClassFallback ||
+		!slices.Contains(exported["joern_scan"].EvidenceCapabilities, "security_scan") {
+		t.Fatalf("joern_scan export metadata = %#v", exported["joern_scan"])
+	}
+	if exported["ctags_symbols"].CapabilityClassification != CapabilityClassFallback ||
+		!slices.Contains(exported["ctags_symbols"].EvidenceCapabilities, "find_references") ||
+		!slices.Contains(exported["ctags_symbols"].EvidenceCapabilities, "inspect_symbol") {
+		t.Fatalf("ctags_symbols export metadata = %#v", exported["ctags_symbols"])
+	}
+}
+
+func TestDiscoveryManifestToolsHaveEvidenceCapabilitiesOrExplicitExclusion(t *testing.T) {
+	excluded := map[string]string{
+		"context_index": "refreshes local context artifacts; freshness and index state are reported through context_status",
+	}
+	for tool, reason := range excluded {
+		if strings.TrimSpace(reason) == "" {
+			t.Fatalf("discovery evidence capability exclusion for %s must name the reason", tool)
+		}
+	}
+
+	seenExclusions := make(map[string]bool, len(excluded))
+	for _, entry := range BuildToolManifest(nil) {
+		if ClassifyTool(entry.Tool) != CategoryDiscovery {
+			continue
+		}
+		if len(EvidenceCapabilitiesForTool(entry.Tool)) > 0 {
+			continue
+		}
+		if _, ok := excluded[entry.Tool]; ok {
+			seenExclusions[entry.Tool] = true
+			continue
+		}
+		t.Fatalf("discovery tool %s has no evidence capabilities and no explicit exclusion", entry.Tool)
+	}
+	for tool := range excluded {
+		if !seenExclusions[tool] {
+			t.Fatalf("discovery evidence capability exclusion for %s no longer matches a manifest discovery tool", tool)
+		}
 	}
 }
 

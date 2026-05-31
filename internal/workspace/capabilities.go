@@ -323,10 +323,16 @@ func EvidenceCapabilitiesForTool(tool string) []string {
 		return []string{"localize_change", "query_context"}
 	case "read_file":
 		return []string{"inspect_file"}
-	case "search_files", "search_content", "ctags_symbols", "structural_search":
+	case "search_files", "search_content", "structural_search":
 		return []string{"find_references"}
+	case "ctags_symbols":
+		return []string{"find_references", "inspect_symbol"}
 	case "dependency_graph":
 		return []string{"related_files"}
+	case "history_range", "history_symbol", "blame_range":
+		return []string{"history_context"}
+	case "semgrep_scan", "joern_scan":
+		return []string{"security_scan"}
 	case "source_sanity":
 		return []string{"source_diagnostics", "verify_edit"}
 	case "context_trace_pack":
@@ -353,7 +359,10 @@ func CapabilityClassificationForTool(tool string) string {
 		return CapabilityClassRouted
 	case len(languageToolEvidenceCapabilities(tool)) > 0:
 		return CapabilityClassCompatibilityAdapter
-	case slices.Contains([]string{"read_file", "search_files", "search_content", "ctags_symbols", "structural_search", "dependency_graph"}, tool):
+	case slices.Contains([]string{
+		"read_file", "search_files", "search_content", "ctags_symbols", "structural_search", "dependency_graph",
+		"history_range", "history_symbol", "blame_range", "semgrep_scan", "joern_scan",
+	}, tool):
 		return CapabilityClassFallback
 	case tool == "harness_audit":
 		return CapabilityClassRouted

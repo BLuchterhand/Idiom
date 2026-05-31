@@ -3017,7 +3017,7 @@ func auditObservedCapabilityForToolCapability(tool, capability string) string {
 	switch strings.ReplaceAll(strings.ToLower(capability), "-", "_") {
 	case "inspect_file", "inspect_symbol", "find_definition", "find_references",
 		"calls_from", "calls_into", "related_files", "query_context",
-		"source_diagnostics", "verify_edit":
+		"source_diagnostics", "verify_edit", "history_context", "security_scan":
 		return strings.ReplaceAll(strings.ToLower(capability), "-", "_")
 	}
 	return ""
