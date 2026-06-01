@@ -4511,6 +4511,35 @@ func TestPlanExecuteTextualAllowedToolsKeepsHistoryWhenCandidateReadyNeedsHistor
 	}
 }
 
+func TestPlanExecuteTextualAllowedToolsKeepsReadToolsWhenHistoryPending(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"pkg/feature.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)",
+			Output:  "1:package pkg\n",
+		},
+		{
+			Tool:    "read_file",
+			Code:    planThenExecuteResultCandidateSourceReady,
+			Summary: "required path has source evidence",
+			Error:   "candidate/allowed scope already has anchor-ready source evidence. Submit one parser-readable submit_plan.",
+		},
+	}
+
+	allowed := runnerPlanExecuteTextualAllowedTools([]string{"history_range", "history_symbol", "submit_plan"}, brief, results)
+	for _, want := range []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"} {
+		if !slices.Contains(allowed, want) {
+			t.Fatalf("history-pending surface should preserve %s for exact missing edit-safety evidence: %#v", want, allowed)
+		}
+	}
+}
+
 func TestPlanExecuteCandidateReadyResultUsesTypedCodeBeforeSummary(t *testing.T) {
 	result := workspace.ToolResult{
 		Code:    planThenExecuteResultCandidateSourceReady,
@@ -10071,7 +10100,7 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	if !slices.Contains(state.ParserVisibleTools, "submit_plan") {
 		t.Fatalf("history-pending phase should keep submit_plan visible for the runtime history guard: %#v", state.ParserVisibleTools)
 	}
-	for _, want := range []string{"history_range", "history_symbol"} {
+	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
 		if !slices.Contains(state.ParserVisibleTools, want) {
 			t.Fatalf("history-pending phase missing %s: %#v", want, state.ParserVisibleTools)
 		}
@@ -10097,7 +10126,7 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	if !slices.Contains(contract.AllowedTools, "submit_plan") {
 		t.Fatalf("history-pending contract should keep submit_plan visible for the runtime history guard: %#v", contract.AllowedTools)
 	}
-	for _, want := range []string{"history_range", "history_symbol"} {
+	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
 		if !slices.Contains(contract.AllowedTools, want) {
 			t.Fatalf("history-pending contract missing %s: %#v", want, contract.AllowedTools)
 		}
@@ -10121,7 +10150,7 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
-	for _, want := range []string{"history_range", "history_symbol", "submit_plan"} {
+	for _, want := range []string{"read_file", "history_range", "history_symbol", "submit_plan"} {
 		if !slices.Contains(textualContract.AllowedTools, want) {
 			t.Fatalf("textual history-pending contract missing %s: %#v", want, textualContract.AllowedTools)
 		}

@@ -16065,7 +16065,17 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 		state := PlanExecutePlanningState{EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results))}
 		selected := planThenExecuteSelectedEditPaths(brief, results, state)
 		if len(planThenExecuteHistoryPendingPaths(brief, results, selected)) > 0 {
-			allowed := filterPhaseTools(currentAllowedTools, "history_range", "history_symbol", "submit_plan")
+			allowed := filterPhaseTools(
+				uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...)),
+				"read_file",
+				"code_navigate",
+				"context_status",
+				"context_query",
+				"context_zoom",
+				"history_range",
+				"history_symbol",
+				"submit_plan",
+			)
 			if runnerAllowsTool(allowed, "history_range") || runnerAllowsTool(allowed, "history_symbol") {
 				return allowed
 			}

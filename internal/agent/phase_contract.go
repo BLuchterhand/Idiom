@@ -330,8 +330,8 @@ func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state 
 	contract.Phase = firstPhaseString(state.Phase, "history_pending")
 	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_history_evidence_pending")
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
-	contract.RequiredNext = []string{"call history_range or history_symbol for the intended logic when git history is required, submit_plan when the concrete edit path does not require history or history evidence is already present, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
-	contract.InvalidNext = []string{"per-edit write in planner phase", "verify/build/test in planner phase", "repeat source reads when source-body evidence is already present"}
+	contract.RequiredNext = []string{"call history_range or history_symbol for the intended logic when git history is required, make one exact source read when a named edit-safety fact is still missing, submit_plan when the concrete edit is supported, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.InvalidNext = []string{"per-edit write in planner phase", "verify/build/test in planner phase", "redundant source reads that do not target a named edit-safety fact"}
 	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),

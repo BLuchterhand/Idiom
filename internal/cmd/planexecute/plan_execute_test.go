@@ -1,4 +1,5 @@
 package planexecute
+
 import (
 	"bytes"
 	"encoding/json"
@@ -3147,6 +3148,44 @@ func TestRunExecutorPhaseRunsSourceSanityAfterSourceEdits(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"source_sanity_status":"failed"`) {
 		t.Fatalf("expected failed source_sanity status in executor_complete, got %s", stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseRunsInferredTouchedGoPackageTests(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/inferred\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	pkgDir := filepath.Join(root, "pkg", "feature")
+	if err := os.MkdirAll(pkgDir, 0o755); err != nil {
+		t.Fatalf("mkdir package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "feature.go"), []byte("package feature\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("seed feature.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(pkgDir, "feature_test.go"), []byte("package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"unexpected value\")\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatalf("seed feature_test.go: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/feature/feature.go", OldText: "return 1", NewText: "return 2", Purpose: "introduce a failing touched-package test"},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	report, err := runExecutorPhaseScopedWithVerification(cfg, plan, nil, nil, nil, true, &stdout)
+	if err == nil {
+		t.Fatalf("expected inferred touched-package verification failure")
+	}
+	if len(report.Verification) != 1 || report.Verification[0].Command != "go test ./pkg/feature" || report.Verification[0].Status != "failed" {
+		t.Fatalf("expected failed inferred verification evidence, got %#v", report.Verification)
+	}
+	if !strings.Contains(err.Error(), "verification failed for \"go test ./pkg/feature\"") {
+		t.Fatalf("expected explicit verification failure, got %v", err)
+	}
+	if !strings.Contains(stdout.String(), `"command":"go test ./pkg/feature"`) {
+		t.Fatalf("expected verification event for inferred command, got %s", stdout.String())
 	}
 }
 

@@ -217,6 +217,10 @@ func planExecuteEditSetObligationChecklist(obligations EditSetObligations) strin
 	return strings.Join(lines, "\n")
 }
 
+func AppendPlanExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
+	return appendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
+}
+
 func appendPlanExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
 	section := planExecuteScopeSection(requiredEditPaths, allowedEditPaths)
 	if section == "" {
@@ -1803,6 +1807,7 @@ func RunExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 
 func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
+	verificationCommands = VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, planChangedPaths(plan))
 	report := ExecutorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")

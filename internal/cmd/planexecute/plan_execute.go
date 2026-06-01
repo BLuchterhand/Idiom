@@ -480,6 +480,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	changedPaths := planChangedPaths(plan)
+	verificationCommands = planexecute.VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, changedPaths)
 	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
 		message := planexecute.EditSetObligationFailureMessage(reason)
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
@@ -2888,6 +2889,7 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 
 func runExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
+	verificationCommands = planexecute.VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, planChangedPaths(plan))
 	report := executorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")

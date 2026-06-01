@@ -1,6 +1,11 @@
 package planexecute
 
-import "strings"
+import (
+	"os"
+	"path"
+	"path/filepath"
+	"strings"
+)
 
 type EditSetObligationKind string
 
@@ -55,6 +60,10 @@ func planExecuteLineRequestsVerificationCommand(line string) bool {
 		return false
 	}
 	return containsAnyVerificationRequestPhrase(lower,
+		"after editing, run",
+		"after edits, run",
+		"after implementation, run",
+		"after the changes, run",
 		"make this pass",
 		"make it pass",
 		"must pass",
@@ -65,6 +74,7 @@ func planExecuteLineRequestsVerificationCommand(line string) bool {
 		"requested test command",
 		"run this verification",
 		"run this test",
+		"run:",
 		"run `go test",
 		"run go test",
 		"verify with",
@@ -209,6 +219,65 @@ func planExecuteVerificationCommands(commands []string) []string {
 
 func VerificationCommands(commands []string) []string {
 	return planExecuteVerificationCommands(commands)
+}
+
+func VerificationCommandsForChangedPaths(commands []string, changedPaths []string) []string {
+	combined := append([]string(nil), commands...)
+	combined = append(combined, InferredTouchedVerificationCommands(changedPaths)...)
+	return planExecuteVerificationCommands(combined)
+}
+
+func VerificationCommandsForChangedPathsInRoot(root string, commands []string, changedPaths []string) []string {
+	if !goModuleRootAvailable(root) {
+		return planExecuteVerificationCommands(commands)
+	}
+	return VerificationCommandsForChangedPaths(commands, changedPaths)
+}
+
+func InferredTouchedVerificationCommands(paths []string) []string {
+	seen := map[string]struct{}{}
+	var commands []string
+	for _, rawPath := range paths {
+		packagePath, ok := goTestPackageForChangedPath(rawPath)
+		if !ok {
+			continue
+		}
+		command := "go test " + packagePath
+		if _, exists := seen[command]; exists {
+			continue
+		}
+		seen[command] = struct{}{}
+		commands = append(commands, command)
+	}
+	return commands
+}
+
+func goTestPackageForChangedPath(rawPath string) (string, bool) {
+	rawPath = strings.TrimSpace(rawPath)
+	if rawPath == "" {
+		return "", false
+	}
+	cleaned := filepath.ToSlash(filepath.Clean(rawPath))
+	if filepath.IsAbs(rawPath) || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
+		return "", false
+	}
+	if !strings.HasSuffix(cleaned, ".go") {
+		return "", false
+	}
+	dir := path.Dir(cleaned)
+	if dir == "." || dir == "/" {
+		return ".", true
+	}
+	return "./" + strings.TrimPrefix(dir, "./"), true
+}
+
+func goModuleRootAvailable(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		root = "."
+	}
+	info, err := os.Stat(filepath.Join(root, "go.mod"))
+	return err == nil && !info.IsDir()
 }
 
 func planExecuteVerificationCommandAllowed(command string) bool {

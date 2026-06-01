@@ -402,6 +402,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	changedPaths := planChangedPaths(plan)
+	verificationCommands = VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, changedPaths)
 	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
 		message := EditSetObligationFailureMessage(reason)
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{

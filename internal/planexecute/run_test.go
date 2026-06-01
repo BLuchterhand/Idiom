@@ -1290,6 +1290,26 @@ func TestExtractRequestedVerificationCommandsHandlesRunAfterExecutorPhrase(t *te
 	}
 }
 
+func TestExtractRequestedVerificationCommandsHandlesAfterEditingRunColon(t *testing.T) {
+	prompt := "After editing, run: go test ./internal/answergrounding"
+	got := ExtractRequestedVerificationCommands(prompt)
+	if len(got) != 1 || got[0] != "go test ./internal/answergrounding" {
+		t.Fatalf("verification commands = %#v, want %#v", got, []string{"go test ./internal/answergrounding"})
+	}
+}
+
+func TestInferredTouchedVerificationCommandsUsesChangedGoPackages(t *testing.T) {
+	got := InferredTouchedVerificationCommands([]string{
+		"internal/answergrounding/grounding.go",
+		"internal/answergrounding/grounding_test.go",
+		"docs/design-final-answer-grounding.md",
+	})
+	want := []string{"go test ./internal/answergrounding"}
+	if len(got) != len(want) || got[0] != want[0] {
+		t.Fatalf("inferred verification commands = %#v, want %#v", got, want)
+	}
+}
+
 func TestExtractRequestedVerificationCommandsIgnoresSuggestedTests(t *testing.T) {
 	prompt := strings.Join([]string{
 		"# Plan",
