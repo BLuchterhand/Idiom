@@ -9982,6 +9982,75 @@ func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.
 	}
 }
 
+func TestPlanExecutePlanningStateKeepsRequiredSourceBeforeHistoryUntilAllRequiredPathsRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeRequiredSource {
+		t.Fatalf("mode = %q, want required_source while b.go is unread", state.Mode)
+	}
+	for _, want := range []string{"read_file", "code_navigate"} {
+		if !slices.Contains(state.ParserVisibleTools, want) {
+			t.Fatalf("required-source phase missing %s: %#v", want, state.ParserVisibleTools)
+		}
+	}
+	for _, hidden := range []string{"history_range", "history_symbol", "submit_plan"} {
+		if slices.Contains(state.ParserVisibleTools, hidden) {
+			t.Fatalf("required-source phase should not expose %s before all required paths are read: %#v", hidden, state.ParserVisibleTools)
+		}
+	}
+
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:            brief,
+		Results:          results,
+		BaseAllowedTools: brief.AllowedTools,
+	})
+	if contract.PhaseID != turnPhaseRequiredSource {
+		t.Fatalf("phase = %q, want %q", contract.PhaseID, turnPhaseRequiredSource)
+	}
+	for _, want := range []string{"read_file", "code_navigate"} {
+		if !slices.Contains(contract.AllowedTools, want) {
+			t.Fatalf("required-source contract missing %s: %#v", want, contract.AllowedTools)
+		}
+	}
+	for _, hidden := range []string{"history_range", "history_symbol", "submit_plan"} {
+		if slices.Contains(contract.AllowedTools, hidden) {
+			t.Fatalf("required-source contract should not expose %s before all required paths are read: %#v", hidden, contract.AllowedTools)
+		}
+	}
+	if !slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) {
+		t.Fatalf("required-source contract should keep read allowed: %#v", contract.ActionPolicy.AllowedActionClasses)
+	}
+	if slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan) {
+		t.Fatalf("required-source contract should not allow submit_plan action class: %#v", contract.ActionPolicy.AllowedActionClasses)
+	}
+
+	withAllSource := append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f2 b.go lines 1-10 (total lines: 10)",
+		Output:  "1:package b\n",
+	})
+	state = DerivePlanExecutePlanningState(brief, withAllSource, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeHistoryPending {
+		t.Fatalf("mode after all required source reads = %q, want history_pending", state.Mode)
+	}
+	for _, want := range []string{"a.go", "b.go"} {
+		if !slices.Contains(state.SelectedEditPaths, want) {
+			t.Fatalf("history-pending selected paths missing %s: %#v", want, state.SelectedEditPaths)
+		}
+	}
+}
+
 func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -10007,6 +10076,15 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 			t.Fatalf("history-pending phase missing %s: %#v", want, state.ParserVisibleTools)
 		}
 	}
+	if !slices.Contains(state.AllowedActionClasses, actionRead) {
+		t.Fatalf("history-pending phase should expose history tools as read actions: %#v", state.AllowedActionClasses)
+	}
+	if slices.Contains(state.AllowedActionClasses, "history") {
+		t.Fatalf("history-pending phase should not advertise non-canonical history action class: %#v", state.AllowedActionClasses)
+	}
+	if slices.Contains(state.InvalidActionClasses, actionRead) {
+		t.Fatalf("history-pending phase should not invalidate read action class for history tools: %#v", state.InvalidActionClasses)
+	}
 
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:            brief,
@@ -10026,6 +10104,15 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	}
 	if !slices.Contains(contract.TerminalOutcomes, "submit_plan") {
 		t.Fatalf("history-pending contract should list submit_plan as a terminal outcome: %#v", contract.TerminalOutcomes)
+	}
+	if !slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) {
+		t.Fatalf("history-pending contract should expose history tools as read actions: %#v", contract.ActionPolicy.AllowedActionClasses)
+	}
+	if slices.Contains(contract.ActionPolicy.AllowedActionClasses, "history") {
+		t.Fatalf("history-pending contract should not advertise non-canonical history action class: %#v", contract.ActionPolicy.AllowedActionClasses)
+	}
+	if slices.Contains(contract.RuntimeCall.ExpressibleActionClasses, "history") {
+		t.Fatalf("history-pending runtime contract should only use canonical action classes: %#v", contract.RuntimeCall.ExpressibleActionClasses)
 	}
 	textualContract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief:             brief,
@@ -10106,6 +10193,32 @@ func TestPlanExecuteSubmitBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
 	}
 	if redirected.Tool != "history_range" || redirected.Path != "a.go" || redirected.StartLine != 1 || redirected.EndLine != 10 {
 		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestPlanExecuteSubmitBeforeHistoryDoesNotBypassUnreadRequiredSource(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.go", "b.go"},
+			RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{
+			{Path: "a.go", OldText: "old a", NewText: "new a", Purpose: "update a"},
+			{Path: "b.go", OldText: "old b", NewText: "new b", Purpose: "update b"},
+		},
+	}
+
+	if redirected, _, ok := runner.submitPlanBeforeGitHistoryEvidenceRedirect(req, results, []string{"history_range", "history_symbol"}); ok {
+		t.Fatalf("submit_plan must not redirect to history while a required path is unread: %#v", redirected)
 	}
 }
 

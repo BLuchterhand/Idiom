@@ -18,9 +18,9 @@ const (
 type routeMutationAuthority string
 
 const (
-	routeMutationAuthorityNone            routeMutationAuthority = "none"
-	routeMutationAuthorityExplicit        routeMutationAuthority = "explicit"
-	routeMutationAuthorityClassifierOwned routeMutationAuthority = "classifier_owned"
+	routeMutationAuthorityNone                 routeMutationAuthority = "none"
+	routeMutationAuthorityExplicit             routeMutationAuthority = "explicit"
+	routeMutationAuthorityConfirmationRequired routeMutationAuthority = "confirmation_required"
 )
 
 type routeContractProjection struct {
@@ -45,7 +45,7 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 		case routeSourceTypedCommand:
 			authority = routeMutationAuthorityExplicit
 		case routeSourceClassifier:
-			authority = routeMutationAuthorityClassifierOwned
+			authority = routeMutationAuthorityConfirmationRequired
 		}
 	}
 	return routeContractProjection{
@@ -54,12 +54,17 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 		Lane:               strings.TrimSpace(plan.InitialLane),
 		Contract:           strings.TrimSpace(plan.Contract),
 		MutationAuthority:  authority,
-		MutationCapable:    authority != routeMutationAuthorityNone,
+		MutationCapable:    authority == routeMutationAuthorityExplicit,
 		RequestedOutcome:   strings.TrimSpace(plan.RequestedOutcome),
 		WriteIntent:        strings.TrimSpace(plan.WriteIntent),
 		ReadOnlyConstraint: plan.ReadOnlyConstraint,
 		ContinuationTarget: strings.TrimSpace(plan.ContinuationTarget),
 	}
+}
+
+func routeRequiresMutationConfirmation(plan promptExecutionPlan) bool {
+	contract := projectRouteContract(plan.route, plan.mode)
+	return contract.MutationAuthority == routeMutationAuthorityConfirmationRequired
 }
 
 func normalizeRouteSource(source routeSource) routeSource {

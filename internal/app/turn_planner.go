@@ -470,6 +470,17 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	normalized := normalizeTurnRoutePlan(plan, mode)
+	if promptRequestsReadOnlyEvidenceReport(prompt) {
+		normalized.RequestedOutcome = "diagnose"
+		normalized.WriteIntent = "no"
+		normalized.ReadOnlyConstraint = true
+		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "route_prompt_requests_evidence_report")
+		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_evidence_report")
+		if isImplementationLikeFamily(normalized.Family) {
+			return readOnlyRouteForOutcome(normalized, mode, "route_prompt_requests_evidence_report")
+		}
+		normalized = normalizeTurnRoutePlan(normalized, mode)
+	}
 	if corrected, ok := routePlanCorrectedByOutcomeContract(normalized, mode); ok {
 		normalized = corrected
 	}
@@ -576,15 +587,188 @@ func shouldUpgradeConversationRouteToArchitecture(plan turnRoutePlan, prompt str
 	) {
 		return false
 	}
-	if plannerWordsContainAny(words,
-		"implement", "fix", "update", "edit", "modify", "remove", "rename", "refactor",
-	) && !plannerWordsContainAny(words, "what can we add", "can we add", "could we add", "should we add") {
+	if plannerPromptHasExplicitMutationIntent(words) &&
+		!plannerWordsContainAny(words, "what can we add", "can we add", "could we add", "should we add") {
 		return false
 	}
 	return plannerWordsContainAny(words,
 		"how", "what", "why", "explain", "tell me", "can you tell", "what does",
 		"what can we add", "increase", "usefulness", "improve", "improvements",
 	)
+}
+
+func promptRequestsReadOnlyEvidenceReport(prompt string) bool {
+	words := plannerWordText(prompt)
+	if words == " " {
+		return false
+	}
+	if plannerPromptHasExplicitMutationIntent(words) {
+		return false
+	}
+	hasDiagnosisVerb := plannerWordsContainAny(words,
+		"debug", "diagnose", "investigate", "research", "look into", "root cause",
+	)
+	hasReportContract := plannerWordsContainAny(words,
+		"present findings",
+		"provide findings",
+		"report findings",
+		"structured evidence",
+		"provide evidence",
+		"files line numbers",
+		"line numbers",
+		"relevant symbols",
+		"root cause analysis",
+		"research assistant",
+	)
+	return hasDiagnosisVerb && hasReportContract
+}
+
+func plannerPromptHasExplicitMutationIntent(words string) bool {
+	if plannerWordsContainAnyWholePhrase(words,
+		"apply patch", "apply patches",
+		"apply change", "apply changes",
+		"apply edit", "apply edits",
+		"apply fix", "apply fixes",
+		"add test", "add tests",
+		"add doc", "add docs",
+		"add config", "add configs",
+		"add file", "add files",
+		"make change", "make changes", "make the change", "make the changes",
+		"make code change", "make code changes",
+	) {
+		return true
+	}
+	if plannerWordsContainVerbObjectWithin(words, "add", 5,
+		"test", "tests",
+		"doc", "docs",
+		"config", "configs",
+		"file", "files",
+	) {
+		return true
+	}
+	if plannerWordsContainVerbObjectWithin(words, "write", 5,
+		"test", "tests",
+		"doc", "docs",
+		"config", "configs",
+		"file", "files",
+		"code",
+		"patch", "patches",
+	) {
+		return true
+	}
+	if plannerWordsContainDirectiveVerb(words,
+		"fix", "fixing",
+		"repair", "repairing",
+		"implement", "implementing",
+		"change", "changing",
+		"edit", "editing",
+		"modify", "modifying",
+		"update", "updating",
+		"patch", "patching",
+		"commit", "committing",
+		"refactor", "refactoring",
+		"remove", "removing",
+		"rename", "renaming",
+		"delete", "deleting",
+		"create", "creating",
+		"apply", "applying",
+		"add", "adding",
+	) {
+		return true
+	}
+	return false
+}
+
+func plannerWordsContainDirectiveVerb(words string, verbs ...string) bool {
+	if len(verbs) == 0 {
+		return false
+	}
+	verbSet := make(map[string]struct{}, len(verbs))
+	for _, verb := range verbs {
+		verb = strings.TrimSpace(plannerWordText(verb))
+		if verb != "" {
+			verbSet[verb] = struct{}{}
+		}
+	}
+	fields := strings.Fields(plannerWordText(words))
+	for i, field := range fields {
+		if _, ok := verbSet[field]; !ok {
+			continue
+		}
+		if plannerWordAtDirectiveBoundary(fields, i) {
+			return true
+		}
+	}
+	return false
+}
+
+func plannerWordAtDirectiveBoundary(fields []string, idx int) bool {
+	if idx == 0 {
+		return true
+	}
+	switch fields[idx-1] {
+	case "please", "pls", "then", "also", "now", "start", "begin":
+		return true
+	}
+	if idx >= 2 && fields[idx-1] == "and" {
+		switch fields[idx-2] {
+		case "debug", "diagnose", "investigate", "research", "find", "locate", "identify", "inspect":
+			return true
+		}
+	}
+	if idx >= 3 && fields[idx-2] == "you" && fields[idx-1] == "to" {
+		switch fields[idx-3] {
+		case "need", "want", "ask":
+			return true
+		}
+	}
+	if idx >= 2 && fields[idx-1] == "you" {
+		switch fields[idx-2] {
+		case "can", "could", "would", "will":
+			return true
+		}
+	}
+	return false
+}
+
+func plannerWordsContainVerbObjectWithin(words, verb string, maxDistance int, objects ...string) bool {
+	if strings.TrimSpace(verb) == "" || maxDistance < 1 || len(objects) == 0 {
+		return false
+	}
+	objectSet := make(map[string]struct{}, len(objects))
+	for _, object := range objects {
+		object = strings.TrimSpace(plannerWordText(object))
+		if object != "" {
+			objectSet[object] = struct{}{}
+		}
+	}
+	if len(objectSet) == 0 {
+		return false
+	}
+	fields := strings.Fields(plannerWordText(words))
+	verb = strings.TrimSpace(plannerWordText(verb))
+	for i, field := range fields {
+		if field != verb {
+			continue
+		}
+		limit := min(len(fields), i+maxDistance+1)
+		for _, candidate := range fields[i+1 : limit] {
+			if _, ok := objectSet[candidate]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func plannerWordsContainAnyWholePhrase(words string, phrases ...string) bool {
+	words = plannerWordText(words)
+	for _, phrase := range phrases {
+		if strings.Contains(words, plannerWordText(phrase)) {
+			return true
+		}
+	}
+	return false
 }
 
 func plannerWordsContainAny(words string, phrases ...string) bool {

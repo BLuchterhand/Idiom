@@ -1,0 +1,17 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":4,\"named_gap\":\"inspect ShortLabel source\",\"why_not_answering\":\"need source evidence before answering\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":5,\"end_line\":8}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":9,\"end_line\":12}"
+    },
+    {
+      "content": "BAD_FALLBACK_NOT_USED: the model was asked for another answer after repeated no-gap reads."
+    }
+  ]
+}

@@ -184,10 +184,6 @@ func (m *Manager) genericCodeNavigationFallback(req ToolRequest, spec codeNaviga
 	if strings.TrimSpace(req.Pattern) == "" {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: fmt.Sprintf("pattern is required for generic %s fallback", spec.Name)}
 	}
-	if strings.TrimSpace(req.Path) == "" {
-		return ToolResult{Tool: "code_navigate", Summary: "Code navigation needs route context", Error: fmt.Sprintf("%s; pass a path so generic fallback stays bounded", util.FirstNonEmpty(reason, "no language route matched"))}
-	}
-
 	matches, truncated, err := m.genericCodeNavigationMatches(req)
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation generic fallback failed", Error: err.Error()}

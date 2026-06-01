@@ -1,0 +1,17 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":4,\"named_gap\":\"inspect ShortLabel source\",\"why_not_answering\":\"need source evidence before answering\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":180,\"named_gap\":\"refresh the same ShortLabel source broadly\",\"why_not_answering\":\"need a broad source refresh\"}"
+    },
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":180,\"named_gap\":\"refresh the same ShortLabel source broadly\",\"why_not_answering\":\"need a broad source refresh\"}"
+    },
+    {
+      "content": "BAD_FALLBACK_NOT_USED: the model was asked for another answer after repeated invalid post-readiness reads."
+    }
+  ]
+}

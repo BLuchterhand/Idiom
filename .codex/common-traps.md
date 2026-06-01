@@ -198,6 +198,21 @@ failure patterns that have cost time in real Idiom/Colony runs.
 
 ## Process Traps
 
+- **Bypassing idiom after an idiom-shaped failure**: when the failure is in
+  idiom behavior, route, tools, TUI, or plan-execute, do the research and fix
+  through idiom first. Only fall back externally when idiom itself cannot run,
+  cannot produce the required plan/tool call, or would corrupt scoped dirty
+  work. Record the idiom session/failure id and the exact blocker before using
+  the fallback.
+- **Manual implementation before idiom synthesis**: the default loop is idiom
+  researches/debugs and returns evidence, the operator synthesizes and verifies
+  the intended approach, then idiom implements through `plan-execute`. Skipping
+  straight to external edits loses the audit trail the harness is supposed to
+  provide.
+- **Over-polling live idiom runs**: slow down CLI/TUI polling. Prefer
+  conversation JSONL, telemetry JSONL, progress state, and recovery records over
+  raw terminal panes; when terminal state matters, read tiny bounded snippets
+  rather than dumping full alternate-screen redraws into context.
 - **Rationale-free commits**: a commit subject that says what changed but not
   why is weak repo memory. For non-trivial changes, include the failure,
   requirement, or design pressure that made the change necessary; the chosen

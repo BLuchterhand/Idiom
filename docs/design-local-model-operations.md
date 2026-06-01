@@ -92,8 +92,8 @@ Verified from the current repo docs and code:
 - `internal/config.Config` models those as `LlamaServer`, optional
   `Implementer`, and `RouteClassifier`.
 - `.idiom/backends.json` declares role-aware backend profiles. The current
-  self-hosted profile uses a Qwen 35B/27B planner-classifier plus
-  `qwen3-coder-30b` executor, with a proxy on port `47680`.
+  self-hosted `qwen-pair` profile uses a Qwen 35B planner-classifier plus a
+  Qwen3.6-27B executor, with a proxy on port `47680`.
 - `internal/backends` owns `.idiom/backends.json`, role alias resolution,
   backend launch/stop/status, and an alias-routing proxy.
 - `cmd/idiom/backend.go` exposes `idiom backend start|stop|status|list|proxy`.
@@ -155,10 +155,10 @@ operational truth: context, concurrency, and KV cache are scarce resources.
 - Qwen3.6-35B-A3B's model card shows 262,144-token serving examples and
   separate tool-call parser guidance for SGLang/vLLM. See
   <https://huggingface.co/Qwen/Qwen3.6-35B-A3B>.
-- Qwen3-Coder-30B-A3B-Instruct is a 30.5B total / 3.3B active MoE coding model
-  with native 262,144-token context and a model-card warning to reduce context
-  to 32,768 when OOM occurs. See
-  <https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct>.
+- Qwen3.6-27B is a 27B language model with native 262,144-token context,
+  built-in MTP weights, and model-card guidance to keep at least 128k context
+  for complex tasks when memory allows. See
+  <https://huggingface.co/Qwen/Qwen3.6-27B>.
 - "Lost in the Middle" shows that long-context models do not robustly use all
   positions in large prompts; relevant information in the middle can be used
   worse than information at the beginning or end. See
@@ -316,20 +316,32 @@ roles. Each model entry should remain small and inspectable:
 
 ```json
 {
-  "alias": "qwen3-coder-30b",
+  "alias": "qwen3.6-27b",
   "kind": "mlx",
-  "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
-  "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
+  "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
+  "model_path": "/Users/ben/models/qwen3.6-27b-mlx-6bit",
   "host": "127.0.0.1",
-  "port": 47781,
+  "port": 47783,
   "cache_size": 4,
   "cache_bytes": 12884901888,
   "max_tokens": 8192,
+  "extra_args": [
+    "--temp", "0.6",
+    "--top-p", "0.95",
+    "--top-k", "20",
+    "--chat-template-args", "{\"enable_thinking\":true,\"preserve_thinking\":true}",
+    "--prefill-step-size", "1024",
+    "--max-prompt-tokens", "131072",
+    "--use-paged-cache",
+    "--enable-disk-cache",
+    "--enable-pld",
+    "--enable-jit"
+  ],
   "roles": ["executor"],
   "queue_pool": "qwen-coder",
   "context_tokens": 262144,
-  "recommended_context_tokens": 65536,
-  "quantization": "mlx-4bit-dwq",
+  "recommended_context_tokens": 131072,
+  "quantization": "mlx-6bit",
   "health": {
     "startup_timeout_seconds": 120,
     "request_timeout_seconds": 900
@@ -349,10 +361,26 @@ using the existing fields first, but doctor/readiness should eventually report:
 - configured working context
 - output token cap
 - prompt/KV cache budget
+- acceleration settings: paged/prefix cache, PLD speculative acceleration,
+  JIT, and whether explicit KV quantization is absent so vMLX can use its
+  TurboQuant auto mode where compatible
 - quantization family
 - queue pool
 - readiness probe outcome
 - last known error or degraded mode
+
+`qwen-pair` currently runs both local models through the vMLX wrapper. The
+wrapper translates the common `mlx_lm.server` flags from `.idiom/backends.json`
+to vMLX flags and appends Qwen reasoning/tool parser auto-detection. The profile
+enables paged cache, disk cache, PLD speculative acceleration, JIT, 128k prompt
+admission, and a smaller 1024-token prefill step to reduce Metal peak-memory
+spikes on long prompts. It intentionally does not pass an explicit
+`--kv-cache-quantization` value: vMLX's documented default is TurboQuant KV for
+compatible models plus q4 stored-prefix fallback, while an explicit value opts
+out of that calibrated auto path. MTP is present in the Qwen3.6 artifacts, but
+the current MLX/vMLX server surface does not expose a Qwen3.6 MTP decoding flag;
+enabling it would require a serving backend with Qwen's MTP speculative
+configuration rather than a harmless config-file toggle.
 
 ### Backend Kind Adapter
 
@@ -812,13 +840,13 @@ Language/workspace readiness:
     "plan-execute": {
       "status": "pass",
       "planner": "qwen3.6-35b",
-      "executor": "qwen3-coder-30b",
+      "executor": "qwen3.6-27b",
       "queue": "gated",
       "classifier": "degraded"
     },
     "implement": {
       "status": "pass",
-      "executor": "qwen3-coder-30b",
+      "executor": "qwen3.6-27b",
       "queue": "gated"
     },
     "audit": {

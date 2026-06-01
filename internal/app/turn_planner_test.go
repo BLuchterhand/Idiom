@@ -880,7 +880,7 @@ func TestPlanExecuteSlashCommandExecutionPlanUsesPlannerMetadata(t *testing.T) {
 	}
 }
 
-func TestClassifierSelectedPlanExecuteFamilyUsesPlannerMetadata(t *testing.T) {
+func TestClassifierSelectedPlanExecuteFamilyRequiresConfirmation(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
 	m := &Model{cfg: cfg}
@@ -898,6 +898,7 @@ func TestClassifierSelectedPlanExecuteFamilyUsesPlannerMetadata(t *testing.T) {
 				InitialLane: "plan-execute",
 				Reason:      "classifier_atom_dispatch",
 				Contract:    "implementation_result",
+				RouteSource: routeSourceClassifier,
 			}, agent.BuildMode())
 			plan := promptExecutionPlan{
 				mode:  agent.BuildMode(),
@@ -915,11 +916,11 @@ func TestClassifierSelectedPlanExecuteFamilyUsesPlannerMetadata(t *testing.T) {
 			if route.InitialLane != "implement" || route.Contract != "implementation_result" {
 				t.Fatalf("normalized route lost planner execution contract: %#v", route)
 			}
-			if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
-				t.Fatalf("classifier-selected planner family should report plan-execute writer metadata, got %#v", decision)
+			if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
+				t.Fatalf("classifier-selected planner family should wait for confirmation, got %#v", decision)
 			}
-			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
-				t.Fatalf("classifier-selected planner route missing metadata, got %#v", decision)
+			if decision.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
+				t.Fatalf("classifier-selected planner route missing confirmation metadata, got %#v", decision)
 			}
 		})
 	}
@@ -958,11 +959,11 @@ func TestBuildPromptExecutionPlanPreservesClassifierSelectedPlanExecuteFamily(t 
 	if plan.runtimeBrief.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
 		t.Fatalf("runtime brief task family = %q, want %s", plan.runtimeBrief.TaskFamily, agent.PlanThenExecutePlannerTaskFamily)
 	}
-	if decision.WriterMode != string(writerroute.ModePlanSubmission) || decision.Lane != "plan-execute" {
-		t.Fatalf("classifier-selected planner should flow through buildPromptExecutionPlan to plan-execute metadata, got %#v", decision)
+	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
+		t.Fatalf("classifier-selected planner should wait for confirmation, got %#v", decision)
 	}
-	if !slices.Contains(decision.ReasonCodes, "route.plan_execute_planner") {
-		t.Fatalf("planner reason missing: %#v", decision.ReasonCodes)
+	if !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
+		t.Fatalf("confirmation reason missing: %#v", decision.ReasonCodes)
 	}
 }
 
@@ -1788,6 +1789,26 @@ func TestWriterRouteDecisionForPromptReportsDirectImplementation(t *testing.T) {
 	}
 }
 
+func TestWriterRouteDecisionForClassifierImplementationRequiresConfirmation(t *testing.T) {
+	cfg := config.Default()
+	cfg.Workspace.EnableWrites = true
+	cfg.Chat.ImplementationDispatch = ""
+	m := &Model{cfg: cfg}
+	plan := promptExecutionPlan{
+		mode:  agent.BuildMode(),
+		route: turnRoutePlan{Family: "implementation", RouteSource: routeSourceClassifier},
+	}
+
+	decision := m.writerRouteDecisionForPrompt("update target.txt", plan)
+
+	if decision.WriterMode != string(writerroute.ModeReadOnly) || decision.Lane != "main" {
+		t.Fatalf("classifier implementation should wait for confirmation, got %#v", decision)
+	}
+	if !slices.Contains(decision.ReasonCodes, "route.mutation_confirmation_required") {
+		t.Fatalf("confirmation reason missing: %#v", decision.ReasonCodes)
+	}
+}
+
 func TestWriterRouteDecisionForPromptReportsReadOnlyRoute(t *testing.T) {
 	cfg := config.Default()
 	cfg.Workspace.EnableWrites = true
@@ -2085,7 +2106,7 @@ func TestRunPromptOnceSemanticRequiredPathsUsesDirectImplementWhenDispatchConfig
 	}
 }
 
-func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *testing.T) {
+func TestRunPromptOnceNaturalLanguageTDDFeatureAsksBeforeClassifierImplementLane(t *testing.T) {
 	root := t.TempDir()
 	disableQueueDaemonForTurnPlannerTest(t, root)
 	for _, dir := range []string{".idiom", "docs", "pkg"} {
@@ -2142,64 +2163,18 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *te
 
 	var executorChatRequests atomic.Int64
 	executorServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		writeToolCall := func(id, name, arguments string) {
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"choices": []map[string]any{{
-					"message": map[string]any{
-						"role": "assistant",
-						"tool_calls": []map[string]any{{
-							"id":   id,
-							"type": "function",
-							"function": map[string]any{
-								"name":      name,
-								"arguments": arguments,
-							},
-						}},
-					},
-					"finish_reason": "tool_calls",
-				}},
-			})
-		}
 		switch r.URL.Path {
 		case "/v1/models":
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"data": []map[string]any{{"id": "executor-model"}},
 			})
 		case "/v1/chat/completions":
+			executorChatRequests.Add(1)
 			body, err := io.ReadAll(r.Body)
 			if err != nil {
 				t.Fatalf("read executor request: %v", err)
 			}
-			requestText := string(body)
-			if !strings.Contains(requestText, `"model":"executor-model"`) {
-				t.Fatalf("natural-language implementation should use executor model, got request:\n%s", requestText)
-			}
-			if strings.Contains(requestText, "Plan-then-execute (planner phase)") {
-				t.Fatalf("natural-language implementation should not include plan-execute planner prompt:\n%s", requestText)
-			}
-			if !strings.Contains(requestText, "Can you implement this feature: docs/tdd-feature.md") {
-				t.Fatalf("executor prompt lost natural-language objective:\n%s", requestText)
-			}
-			switch executorChatRequests.Add(1) {
-			case 1:
-				writeToolCall("call_read_tdd", "read_file", `{"path":"docs/tdd-feature.md"}`)
-				return
-			case 2:
-				writeToolCall("call_read_feature_source", "read_file", `{"path":"pkg/feature.go"}`)
-				return
-			case 3:
-				writeToolCall("call_edit_feature_source", "edit_file", `{"path":"pkg/feature.go","old_text":"return false","new_text":"return true","description":"enable feature behavior"}`)
-				return
-			case 4:
-				writeToolCall("call_source_sanity", "source_sanity", `{"path":"pkg/feature.go"}`)
-				return
-			default:
-				_ = json.NewEncoder(w).Encode(map[string]any{
-					"choices": []map[string]any{{
-						"message": map[string]string{"content": "Implemented docs/tdd-feature.md."},
-					}},
-				})
-			}
+			t.Fatalf("natural-language detected implementation should ask for confirmation before executor chat:\n%s", string(body))
 		default:
 			http.NotFound(w, r)
 		}
@@ -2245,15 +2220,18 @@ func TestRunPromptOnceNaturalLanguageTDDFeatureUsesClassifierImplementLane(t *te
 	if unexpectedPlannerRequests.Load() != 0 {
 		t.Fatalf("unexpected planner requests: %d", unexpectedPlannerRequests.Load())
 	}
-	if executorChatRequests.Load() == 0 {
-		t.Fatalf("expected guarded implementation executor chat")
+	if executorChatRequests.Load() != 0 {
+		t.Fatalf("unexpected executor chat before confirmation: %d", executorChatRequests.Load())
+	}
+	if !strings.Contains(answer, "Do you want me to switch") || !strings.Contains(answer, "/implement") {
+		t.Fatalf("answer should ask for explicit implementation confirmation, got %q", answer)
 	}
 	gotSource, err := os.ReadFile(filepath.Join(root, "pkg", "feature.go"))
 	if err != nil {
 		t.Fatalf("read source: %v", err)
 	}
-	if !strings.Contains(string(gotSource), "return true") {
-		t.Fatalf("source was not updated after %d executor request(s), answer=%q events=%s:\n%s", executorChatRequests.Load(), answer, eventBuf.String(), string(gotSource))
+	if !strings.Contains(string(gotSource), "return false") {
+		t.Fatalf("source should stay unchanged before confirmation, answer=%q events=%s:\n%s", answer, eventBuf.String(), string(gotSource))
 	}
 }
 

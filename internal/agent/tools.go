@@ -96,10 +96,11 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 }
 
 // stripPostReadinessBroadTools removes tools that are inappropriate after
-// answer readiness is declared. Broad discovery (search_content, search_files,
-// list_files) encourages the model to keep exploring instead of answering or
-// making one exact targeted read. These are stripped from the native transport
-// array — the model literally cannot call them.
+// answer readiness is declared. Broad file discovery (search_files, list_files)
+// encourages the model to keep orienting instead of answering or making one
+// exact targeted read. Keep search_content visible: the phase contract still
+// allows search, and invalidPostReadinessSearchProbe rejects broad content
+// patterns while permitting exact evidence-grounded probes.
 func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
 	if len(tools) == 0 {
 		return tools
@@ -107,7 +108,7 @@ func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
 	out := make([]llama.Tool, 0, len(tools))
 	for _, t := range tools {
 		name := strings.TrimSpace(t.Function.Name)
-		if name == "search_content" || name == "search_files" || name == "list_files" {
+		if name == "search_files" || name == "list_files" {
 			continue
 		}
 		out = append(out, t)

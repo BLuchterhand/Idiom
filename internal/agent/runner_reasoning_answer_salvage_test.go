@@ -161,6 +161,13 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 			mutation: false,
 			wantOk:   false,
 		},
+		{
+			name:      "live meta-intent restatement skipped",
+			content:   "",
+			reasoning: `The user is asking me to investigate why a prompt asking "which files and sections should be changed" might be routed as investigate_then_implement with write_intent=yes. I need to find the specific route-planner files/tests responsible and the smallest generic fix shape.`,
+			mutation:  false,
+			wantOk:    false,
+		},
 	}
 
 	for _, tt := range tests {

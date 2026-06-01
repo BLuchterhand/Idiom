@@ -1137,6 +1137,27 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceRequiresEvidenceBeforeAnswer(t 
 	assertNotContains(t, contract.AllowedTools, "shell")
 }
 
+func TestDeriveTurnPhaseContractReadOnlyConversationWithoutReadinessRequiresEvidence(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file", "edit_file"},
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertContains(t, contract.AllowedTools, "search_content")
+	assertNotContains(t, contract.AllowedTools, "edit_file")
+}
+
 func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

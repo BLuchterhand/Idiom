@@ -42,14 +42,15 @@ type runnerRequestBudgetState struct {
 	// of force-answering on the first rejection retry.
 	writeReadyNudgeActive bool
 
-	broadEvidenceDelegationRequired  bool
-	broadEvidenceDelegationSatisfied bool
-	readOnlyChildTaskSatisfied       bool
-	synthesisNudgeFired              bool
-	readCallCount                    int
-	readCallsSinceWrite              int
-	postReadinessNoGapRejections     int
-	scopedReadRejections             map[string]int
+	broadEvidenceDelegationRequired   bool
+	broadEvidenceDelegationSatisfied  bool
+	readOnlyChildTaskSatisfied        bool
+	synthesisNudgeFired               bool
+	readCallCount                     int
+	readCallsSinceWrite               int
+	postReadinessNoGapRejections      int
+	postReadinessInvalidGapRejections int
+	scopedReadRejections              map[string]int
 }
 
 func (s runnerRequestBudgetState) postChildActive() bool {
@@ -219,8 +220,8 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 		s.fingerprint.rejectedRetries[currentFingerprint] = retries
 		if retries == 1 {
 			return runnerRequestBudgetDecision{
-				Handled:   true,
-				EventRole: "rejection_retry_nudge",
+				Handled:      true,
+				EventRole:    "rejection_retry_nudge",
 				EventContent: fmt.Sprintf("model retried a previously rejected %s call (%s) — nudging", req.Tool, priorSummary),
 				Nudge: fmt.Sprintf(
 					"You retried a %s request that was already rejected this turn (%q). The rejection reason still applies — repeating the same call will not change the outcome. Either take a materially different approach, or answer with the evidence you already have.",

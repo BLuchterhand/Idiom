@@ -270,6 +270,47 @@ func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testing.T) {
+	runner := &Runner{}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	if phase.PhaseID != turnPhaseHistoryPending {
+		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseHistoryPending)
+	}
+	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("expected history-pending model protocol projection to compile")
+	}
+	if !slices.Contains(protocol.CallableActionClasses, actionRead) {
+		t.Fatalf("history-pending protocol should expose history tools as read actions: %#v", protocol.CallableActionClasses)
+	}
+	if slices.Contains(protocol.CallableActionClasses, "history") {
+		t.Fatalf("history-pending protocol should not expose non-canonical history action class: %#v", protocol.CallableActionClasses)
+	}
+	if slices.Contains(protocol.InvalidActionClasses, actionRead) {
+		t.Fatalf("history-pending protocol should not invalidate read action class: %#v", protocol.InvalidActionClasses)
+	}
+}
+
 func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.go", "package main\nfunc A() {}\n"); err != nil {

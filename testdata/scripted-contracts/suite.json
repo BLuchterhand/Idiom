@@ -2,7 +2,7 @@
   "name": "scripted-contracts",
   "version": 1,
   "coverage": {
-    "min_tasks": 61,
+    "min_tasks": 67,
     "required_families": [
       "general_chat",
       "direct_question",
@@ -350,6 +350,230 @@
           ]
         },
         "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-diagnostic-log-lines-alias-repeat-recovery",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Debug assist: inspect the most recent diagnostic conversation log and explain why the session looped. Use repository evidence and do not edit files.",
+      "env": {
+        "IDIOM_WORKSPACE_EXTRA_FILES_JSON": "[{\"path\":\"logs/conversations/debug-loop.jsonl\",\"content\":\"{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 001\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 002\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 003\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 004\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 005\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 006\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 007\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 008\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 009\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 010\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 011\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"user\\\",\\\"content\\\":\\\"debug assist: why did this fail instantly?\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 013\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 014\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 015\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 016\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 017\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 018\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 019\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 020\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 021\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 022\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 023\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 024\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 025\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 026\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 027\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 028\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 029\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 030\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 031\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 032\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 033\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 034\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"tool_rejected\\\",\\\"content\\\":\\\"read_file logs/conversations/debug-loop.jsonl lines 1-51 rejected after prior evidence\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 036\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 037\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 038\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 039\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 040\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 041\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 042\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 043\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 044\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 045\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 046\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 047\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 048\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 049\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 050\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 051\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"tool_request\\\",\\\"content\\\":\\\"read_file logs/conversations/debug-loop.jsonl lines 1-51 repeated\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 053\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 054\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 055\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 056\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 057\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 058\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 059\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"debug\\\",\\\"content\\\":\\\"diagnostic filler line 060\\\"}\\n{\\\"type\\\":\\\"message\\\",\\\"role\\\":\\\"completion_status\\\",\\\"content\\\":\\\"loop detected; answer from gathered evidence\\\"}\\n\"}]"
+      },
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "information",
+        "grounded-answer",
+        "json-normalization",
+        "repeated-rejection",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-diagnostic-log-lines-alias-repeat-recovery",
+        "prompt_contains": [
+          "Debug assist",
+          "diagnostic conversation log"
+        ],
+        "final_assistant_contains": [
+          "instant debug-assist failure",
+          "repeated reads",
+          "logs/conversations/debug-loop.jsonl",
+          "did not edit files"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_rejected_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "logs/conversations/debug-loop.jsonl"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "groundedness": {
+          "min_score": 0.35,
+          "context_fragments": [
+            "diagnostic log debug assist instant failure repeated reads same conversation window logs/conversations/debug-loop.jsonl"
+          ]
+        },
+        "max_errors": 1,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-direct-answer-post-readiness-no-gap-fallback",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "information",
+        "grounded-answer",
+        "repeated-rejection",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-direct-answer-post-readiness-no-gap-fallback",
+        "prompt_contains": [
+          "ShortLabel",
+          "source evidence"
+        ],
+        "final_assistant_contains": [
+          "delegated read-only evidence packet",
+          "Key findings",
+          "internal/labels/labels.go",
+          "Save changes"
+        ],
+        "forbid_final_assistant_contains": [
+          "BAD_FALLBACK_NOT_USED"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests",
+          "failure_feedback",
+          "turn_summary"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "groundedness": {
+          "min_score": 0.35,
+          "context_fragments": [
+            "internal/labels/labels.go package labels func ShortLabel string return Save changes"
+          ]
+        },
+        "max_errors": 2,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-direct-answer-post-readiness-invalid-gap-fallback",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "information",
+        "grounded-answer",
+        "repeated-rejection",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-direct-answer-post-readiness-invalid-gap-fallback",
+        "prompt_contains": [
+          "ShortLabel",
+          "source evidence"
+        ],
+        "final_assistant_contains": [
+          "delegated read-only evidence packet",
+          "Key findings",
+          "internal/labels/labels.go",
+          "Save changes"
+        ],
+        "forbid_final_assistant_contains": [
+          "BAD_FALLBACK_NOT_USED"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests",
+          "failure_feedback",
+          "turn_summary"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "groundedness": {
+          "min_score": 0.35,
+          "context_fragments": [
+            "internal/labels/labels.go package labels func ShortLabel string return Save changes"
+          ]
+        },
+        "max_errors": 2,
         "max_duration_millis": 120000
       }
     },
@@ -2093,7 +2317,7 @@
     },
     {
       "id": "scripted-classifier-natural-language-implement-short-label",
-      "family": "implementation",
+      "family": "direct_question",
       "runner_mode": "auto",
       "prompt": "Please implement the shorter save label in internal/labels/labels.go so ShortLabel returns \"Save\".",
       "tags": [
@@ -2101,7 +2325,8 @@
         "fake-model",
         "frozen-repo",
         "go",
-        "implement",
+        "read-only",
+        "edit-intent",
         "natural-language",
         "rollback",
         "classifier-routing"
@@ -2121,8 +2346,9 @@
           "reason": "classifier_directive",
           "contract": "implementation_result"
         },
-        "require_changed_files": [
-          "internal/labels/labels.go"
+        "final_assistant_contains": [
+          "Do you want me to switch",
+          "/implement <objective>"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -2130,22 +2356,20 @@
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_tools": [
-          "read_file",
+        "forbid_tools": [
           "edit_file",
+          "write_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
         "require_approval": false
       },
       "oracle": {
-        "require_changed_files": [
-          "internal/labels/labels.go"
-        ],
+        "require_no_changed_files": true,
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
+        "require_no_shell": true,
         "require_no_timeout": true,
+        "max_tool_requests": 0,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "max_errors": 0,
@@ -2157,19 +2381,18 @@
     },
     {
       "id": "scripted-classifier-tui-input-layout-tool-recovery",
-      "family": "implementation",
+      "family": "direct_question",
       "runner_mode": "auto",
       "prompt": "The user chat input shifts upwards on a new line, but it hides the top lines, only showing the most recent, bottom-most text in the prompt input. Fix the TUI input layout so wrapped prompts grow upward without clipping the earlier lines.",
       "tags": [
         "deterministic",
         "fake-model",
         "go",
-        "implement",
+        "read-only",
+        "edit-intent",
         "natural-language",
         "classifier-routing",
-        "parse-recovery",
-        "rollback",
-        "tool-call-recovery"
+        "rollback"
       ],
       "env": {
         "IDIOM_SCRIPTED_ENABLE_ROUTE_CLASSIFIER": "1"
@@ -2186,8 +2409,9 @@
           "reason": "classifier_directive",
           "contract": "implementation_result"
         },
-        "require_changed_files": [
-          "internal/app/model_state.go"
+        "final_assistant_contains": [
+          "Do you want me to switch",
+          "/implement <objective>"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -2195,23 +2419,20 @@
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_tools": [
-          "code_navigate",
-          "read_file",
+        "forbid_tools": [
           "edit_file",
+          "write_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
         "require_approval": false
       },
       "oracle": {
-        "require_changed_files": [
-          "internal/app/model_state.go"
-        ],
+        "require_no_changed_files": true,
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
+        "require_no_shell": true,
         "require_no_timeout": true,
+        "max_tool_requests": 0,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "max_errors": 0,
@@ -2240,12 +2461,11 @@
       "scenario": {
         "name": "scripted-classifier-slash-implement-short-label",
         "prompt_contains": [
-          "/implement",
           "ShortLabel returns \"Save\""
         ],
         "require_route_plan": {
           "initial_lane": "implement",
-          "reason": "classifier_directive",
+          "reason": "typed_implement_command",
           "contract": "implementation_result"
         },
         "require_changed_files": [
@@ -2253,7 +2473,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "route_classifier_decision",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
@@ -2271,11 +2490,10 @@
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
         "require_no_timeout": true,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
-        "max_errors": 0,
+        "max_errors": 1,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
@@ -2284,7 +2502,7 @@
     },
     {
       "id": "scripted-classifier-multi-turn-question-then-implement",
-      "family": "implementation",
+      "family": "direct_question",
       "runner_mode": "auto",
       "turns": [
         "Can we shorten the save label in internal/labels/labels.go?",
@@ -2295,7 +2513,8 @@
         "fake-model",
         "frozen-repo",
         "go",
-        "implement",
+        "read-only",
+        "edit-intent",
         "rollback",
         "classifier-routing",
         "ambiguous-question",
@@ -2317,8 +2536,9 @@
           "contract": "implementation_result"
         },
         "require_assistant_for_each_user": true,
-        "require_changed_files": [
-          "internal/labels/labels.go"
+        "final_assistant_contains": [
+          "Do you want me to switch",
+          "/implement <objective>"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -2326,24 +2546,22 @@
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
-        "require_tools": [
-          "read_file",
+        "forbid_tools": [
           "edit_file",
+          "write_file",
           "source_sanity"
         ],
-        "require_verification": "passed",
         "require_approval": false
       },
       "oracle": {
-        "require_changed_files": [
-          "internal/labels/labels.go"
-        ],
+        "require_no_changed_files": true,
         "min_user_turns": 2,
         "min_assistant_turns": 2,
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
+        "require_no_shell": true,
         "require_no_timeout": true,
+        "max_tool_requests": 1,
         "forbid_typed_blocker": true,
         "forbid_source_satisfied": true,
         "max_errors": 0,
@@ -2456,6 +2674,76 @@
       "oracle": {
         "require_changed_files": [
           "internal/labels/labels.go"
+        ],
+        "require_no_approval": true,
+        "require_clean_rollback": true,
+        "require_no_runner_rejections": true,
+        "require_executor_handoff": true,
+        "require_no_timeout": true,
+        "forbid_typed_blocker": true,
+        "forbid_source_satisfied": true,
+        "max_errors": 0,
+        "forbid_changed_files": [
+          "internal/labels/labels_test.go"
+        ],
+        "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-plan-execute-multi-required-source-before-history",
+      "family": "plan_then_execute_planner",
+      "runner_mode": "plan-execute",
+      "prompt": "Use plan-execute to update internal/labels/labels.go so ShortLabel returns \"Save\" and add one README sentence documenting the scripted regression fixture.\n\nrequired_edit_paths:\n- internal/labels/labels.go\n- README.md\n\nAfter the executor applies the plan, run `go test ./...`.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "go",
+        "plan-execute",
+        "recovery",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-plan-execute-multi-required-source-before-history",
+        "prompt_contains": [
+          "required_edit_paths:",
+          "internal/labels/labels.go",
+          "README.md"
+        ],
+        "require_changed_files": [
+          "internal/labels/labels.go",
+          "README.md"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.plan_execute.required_edit_paths_resolved",
+          "idiom.plan_execute.writer_route_decision",
+          "idiom.plan_execute.plan_artifact_loaded",
+          "idiom.plan_execute.executor_handoff_packet",
+          "idiom.plan_execute.preflight_ok",
+          "idiom.plan_execute.executor_complete",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests"
+        ],
+        "require_plan_execution": {
+          "require_handoff_id": true,
+          "require_no_drift": true,
+          "require_execution_permissions": [
+            "execute_all"
+          ]
+        },
+        "require_tools": [
+          "read_file",
+          "submit_plan"
+        ],
+        "require_verification": "passed",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "internal/labels/labels.go",
+          "README.md"
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,

@@ -1149,6 +1149,9 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return false
 	}
+	if r.conversationEvidenceAvailableForObjective(results) {
+		return true
+	}
 	if !readOnlyExplanationGateApplies(r.RuntimeBrief) {
 		return false
 	}
@@ -1171,6 +1174,9 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 		}
 		switch strings.TrimSpace(result.Tool) {
 		case "read_file":
+			if readFileResultOnlyMentionsDiagnosticLogArtifacts(result) {
+				continue
+			}
 			if span := toolResultReadSpan(result); span > 0 && span <= 120 {
 				count++
 			}

@@ -1,6 +1,8 @@
 package agent
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -38,6 +40,41 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 		return "", false
 	}
 	return synthesizeFallbackAnswer(agentName, results)
+}
+
+func (r *Runner) modelErrorAfterReadOnlyEvidenceAnswer(err error, results []workspace.ToolResult) (string, bool) {
+	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return "", false
+	}
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return "", false
+	}
+	if !modelErrorFallbackHasGroundedReadOnlyEvidence(results) {
+		return "", false
+	}
+	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
+}
+
+func modelErrorFallbackHasGroundedReadOnlyEvidence(results []workspace.ToolResult) bool {
+	if len(results) == 0 {
+		return false
+	}
+	if genericReadOnlyAnswerEvidenceReady(results) {
+		return true
+	}
+	useful := 0
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if concreteSourceEvidenceResult(result) || isResultUsefulForFallback(normalizeFallbackResult(result)) {
+			useful++
+		}
+		if useful >= 2 {
+			return true
+		}
+	}
+	return false
 }
 
 func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {

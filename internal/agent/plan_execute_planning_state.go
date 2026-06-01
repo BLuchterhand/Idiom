@@ -136,9 +136,11 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 
 	state.SelectedEditPaths = planThenExecuteSelectedEditPaths(brief, results, state)
-	if pending := planThenExecuteHistoryPendingPaths(brief, results, state.SelectedEditPaths); len(pending) > 0 {
-		state.Mode = PlanExecutePlanningModeHistoryPending
-		state.SelectedEditPaths = pending
+	if planThenExecuteHistoryPendingEligible(brief, results, state) {
+		if pending := planThenExecuteHistoryPendingPaths(brief, results, state.SelectedEditPaths); len(pending) > 0 {
+			state.Mode = PlanExecutePlanningModeHistoryPending
+			state.SelectedEditPaths = pending
+		}
 	}
 	if state.Mode == PlanExecutePlanningModeSubmitReady ||
 		state.Mode == PlanExecutePlanningModeSubmitCorrection ||
@@ -191,8 +193,8 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.DerivationReason = "plan_execute_history_evidence_pending"
 		state.ParserVisibleTools = []string{"history_range", "history_symbol", "submit_plan"}
 		state.CallableTools = []string{"history_range", "history_symbol", "submit_plan"}
-		state.AllowedActionClasses = []string{actionHistory, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
-		state.InvalidActionClasses = []string{actionRead, actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
+		state.AllowedActionClasses = []string{actionRead, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+		state.InvalidActionClasses = []string{actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
 		state.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
 		state.PhaseID = turnPhaseSubmitReadyTextual
@@ -253,6 +255,13 @@ func planThenExecuteHistoryPendingPaths(brief workerruntime.WorkerRuntimeBrief, 
 		pending = append(pending, path)
 	}
 	return uniqueSortedRunnerPaths(pending)
+}
+
+func planThenExecuteHistoryPendingEligible(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, state PlanExecutePlanningState) bool {
+	if len(state.RequiredCoveragePaths) == 0 {
+		return true
+	}
+	return len(planThenExecuteUnreadRequiredPaths(brief, results)) == 0
 }
 
 func planThenExecuteSelectedEditPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, state PlanExecutePlanningState) []string {

@@ -66,10 +66,10 @@ const smallFileRedirectThreshold = 400
 // NewDiscoveryRedirect returns a per-turn redirect state.
 func NewDiscoveryRedirect() *DiscoveryRedirect {
 	return &DiscoveryRedirect{
-		firedRedirects:      make(map[string]bool),
-		decisionTablesShown: make(map[string]bool),
-		kindFireCount:          make(map[string]int),
-		fingerprintFireCount:  make(map[string]int),
+		firedRedirects:       make(map[string]bool),
+		decisionTablesShown:  make(map[string]bool),
+		kindFireCount:        make(map[string]int),
+		fingerprintFireCount: make(map[string]int),
 	}
 }
 
@@ -435,7 +435,6 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 	return workspace.LanguageSupport{}, "", false
 }
 
-
 // considerConversationRedirect handles conversation-lane redirects from
 // generic text-search tools to structured discovery tools. The model
 // defaults to search_content (grep) because it is familiar; this redirect
@@ -502,10 +501,11 @@ func (d *DiscoveryRedirect) considerConversationRedirect(req workspace.ToolReque
 	}
 }
 
-// considerConversationReadFileRedirect redirects repeated read_file
-// calls on the same file to code_navigate read_symbol. The model
-// often reads a file in small chunks (50-line windows) when it could
-// use read_symbol to get the full symbol body in one call.
+// considerConversationReadFileRedirect redirects repeated source-file
+// read_file calls on the same file to code_navigate read_symbol. The model
+// often reads a source file in small chunks when it could use read_symbol to
+// get the full symbol body in one call. Diagnostic logs are deliberately
+// excluded: their useful evidence is temporal windows, not symbols.
 func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) RedirectDecision {
 	if d == nil {
 		return RedirectDecision{}
@@ -518,6 +518,9 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	}
 	path := normalizeRunnerPath(req.Path)
 	if path == "" {
+		return RedirectDecision{}
+	}
+	if isDiagnosticLogArtifactPath(path) {
 		return RedirectDecision{}
 	}
 	// Only redirect after the model has already read this file at
@@ -547,7 +550,6 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 		},
 	}
 }
-
 
 // conversationDiscoveryRedirectApplies returns true when conversation-lane
 // discovery redirects should fire for this brief. Matches conversation

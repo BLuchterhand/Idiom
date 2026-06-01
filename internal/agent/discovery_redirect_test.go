@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
 
@@ -577,6 +578,44 @@ func TestStructuredToolDetectionUsesLanguageRegistry(t *testing.T) {
 				t.Fatalf("%s should be classified as a structured language tool", tool)
 			}
 		})
+	}
+}
+
+func TestConversationReadFileRedirectSkipsDiagnosticLogs(t *testing.T) {
+	d := NewDiscoveryRedirect()
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "conversation",
+		Contract:   "direct_answer",
+	}
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "logs/conversations/20260531-180611.101.jsonl",
+	}
+	for i := 0; i < 5; i++ {
+		if decision := d.considerConversationReadFileRedirect(req, brief); decision.ShouldRedirect {
+			t.Fatalf("diagnostic log read %d should not redirect to symbol navigation: %+v", i+1, decision)
+		}
+	}
+}
+
+func TestConversationReadFileRedirectKeepsSourceRedirect(t *testing.T) {
+	d := NewDiscoveryRedirect()
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "conversation",
+		Contract:   "direct_answer",
+	}
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/agent/runner.go",
+	}
+	if decision := d.considerConversationReadFileRedirect(req, brief); decision.ShouldRedirect {
+		t.Fatalf("first source read should remain normal exploration: %+v", decision)
+	}
+	if decision := d.considerConversationReadFileRedirect(req, brief); decision.ShouldRedirect {
+		t.Fatalf("second source read should remain normal exploration: %+v", decision)
+	}
+	if decision := d.considerConversationReadFileRedirect(req, brief); !decision.ShouldRedirect {
+		t.Fatalf("third repeated source read should redirect to symbol navigation")
 	}
 }
 

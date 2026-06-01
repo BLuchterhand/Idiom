@@ -62,6 +62,46 @@ func TestNormalizeToolRequestSyntaxTextualJSON(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxReadFileLinesAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"read_file","path":"logs/conversations/recent.jsonl","lines":"1-51"}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected textual JSON tool request to normalize")
+	}
+	if result.Request.Tool != "read_file" || result.Request.Path != "logs/conversations/recent.jsonl" || result.Request.StartLine != 1 || result.Request.EndLine != 51 {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if !result.Repaired {
+		t.Fatal("expected lines alias repair to be marked repaired")
+	}
+	for _, want := range []string{`"start_line":1`, `"end_line":51`} {
+		if !strings.Contains(result.Raw, want) {
+			t.Fatalf("raw repair missing %q:\n%s", want, result.Raw)
+		}
+	}
+}
+
+func TestNormalizeToolRequestSyntaxReadFileLinesAliasPreservesExplicitRange(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"read_file","path":"logs/conversations/recent.jsonl","lines":"1-51","start_line":52,"end_line":131}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected textual JSON tool request to normalize")
+	}
+	if result.Request.StartLine != 52 || result.Request.EndLine != 131 {
+		t.Fatalf("explicit range should win, got %d-%d", result.Request.StartLine, result.Request.EndLine)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxTextualJSONEditFile(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"	return \"Save changes\"","new_text":"	return \"Save\"","description":"Update ShortLabel"}`,
@@ -148,6 +188,25 @@ func TestNormalizeToolRequestSyntaxKeyValue(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxKeyValueSearchScopeAlias(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: search_content\npattern: implementation detection\nscope: .",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatalf("expected key/value search request to normalize: %#v", result)
+	}
+	if result.Request.Tool != "search_content" || result.Request.Pattern != "implementation detection" || result.Request.Path != "." {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxKeyValueActionAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "tool: code_navigate\naction: read_symbol\npath: internal/productworkflow/coverage_gate.go\nsymbol: EvaluateCoverageGate",
@@ -164,6 +223,66 @@ func TestNormalizeToolRequestSyntaxKeyValueActionAlias(t *testing.T) {
 	}
 	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxKeyValueLinesAliasOnlyAppliesToReadFile(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: code_navigate\npath: internal/productworkflow/coverage_gate.go\nsymbol: EvaluateCoverageGate\nlines: 1-20",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key/value tool request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.Request.StartLine != 0 || result.Request.EndLine != 0 {
+		t.Fatalf("non-read_file lines alias should not set range, got %d-%d", result.Request.StartLine, result.Request.EndLine)
+	}
+
+	result = normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"old","new_text":"new","lines":"1-20","description":"negative alias test"}`,
+	})
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected edit request to normalize")
+	}
+	if result.Request.StartLine != 0 || result.Request.EndLine != 0 {
+		t.Fatalf("mutation request lines alias should not set range, got %d-%d", result.Request.StartLine, result.Request.EndLine)
+	}
+
+	result = normalizeToolRequestSyntax(llama.ChatMessage{
+		ToolCalls: []llama.ToolCall{{
+			Function: llama.ToolCallFunc{
+				Name:      "edit_file",
+				Arguments: `{"tool":"edit_file","path":"internal/labels/labels.go","old_text":"old","new_text":"new","lines":"1-20","description":"negative native alias test"}`,
+			},
+		}},
+	})
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected native edit request to normalize")
+	}
+	if result.Request.StartLine != 0 || result.Request.EndLine != 0 {
+		t.Fatalf("native mutation request lines alias should not set range, got %d-%d", result.Request.StartLine, result.Request.EndLine)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxKeyValueReadFileLinesAliasRejectsMalformedRange(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: read_file\npath: logs/conversations/recent.jsonl\nlines: 1-bad",
+	})
+
+	if result.OK {
+		t.Fatalf("malformed lines alias should not normalize: %#v", result.Request)
 	}
 }
 

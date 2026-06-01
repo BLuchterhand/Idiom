@@ -32,7 +32,6 @@ const (
 const (
 	actionRead             = "read"
 	actionSearch           = "search"
-	actionHistory          = "history"
 	actionSubmitPlan       = "submit_plan"
 	actionPerEditWrite     = "per_edit_write"
 	actionDeliverableWrite = "deliverable_write"
@@ -341,7 +340,7 @@ func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state 
 		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
 	}
 	contract.RuntimeCall.ParserContract = "source_refresh"
-	contract.RuntimeCall.ExpressibleActionClasses = []string{actionHistory, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 }
 
 func applyRequiredSource(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
@@ -727,11 +726,15 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
 		return false
 	}
-	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
+	isReadOnlyConversation := strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
+		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer")
+	if brief.Readiness == nil && !isReadOnlyConversation {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
+		return false
+	}
+	if isReadOnlyConversation {
 		if genericReadOnlyEvidenceReady(brief, results) {
 			return false
 		}

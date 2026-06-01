@@ -33,6 +33,12 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	if prompt == "" {
 		return "", fmt.Errorf("prompt is required")
 	}
+	if objective, ok := typedPromptCommandObjective(prompt, "/implement"); ok {
+		return m.runImplementCommandOnce(ctx, objective)
+	}
+	if objective, ok := typedPromptCommandObjective(prompt, "/plan-execute"); ok {
+		return m.runPlanExecuteCommandOnce(ctx, objective)
+	}
 	m.emitJSONStart(prompt)
 	if err := m.ensureServerReady(ctx); err != nil {
 		m.emitJSONError("server_not_ready", err.Error())
@@ -41,9 +47,22 @@ func (m *Model) RunPromptOnce(ctx context.Context, prompt string) (string, error
 	return m.runStandardPromptOnce(ctx, prompt)
 }
 
+func typedPromptCommandObjective(prompt string, command string) (string, bool) {
+	fields := strings.Fields(prompt)
+	if len(fields) == 0 || fields[0] != command {
+		return "", false
+	}
+	objective := strings.TrimSpace(strings.TrimPrefix(prompt, command))
+	return objective, objective != ""
+}
+
 func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (string, error) {
 	m.lastAssistantReasoningContent = ""
 	plan := m.buildPromptExecutionPlan(ctx, prompt)
+	if routeRequiresMutationConfirmation(plan) {
+		m.recordPromptRouteWithoutExecution(prompt, plan)
+		return m.finishPromptOnceReply(mutationRouteConfirmationQuestion(plan)), nil
+	}
 	plan = m.recoverDirectImplementationContext(prompt, plan)
 	restoreRoute := m.applyDirectImplementationPromptRoute(ctx, prompt, plan)
 	defer restoreRoute()
@@ -75,6 +94,32 @@ func (m *Model) runStandardPromptOnce(ctx context.Context, prompt string) (strin
 		return "", err
 	}
 	return m.finishPromptOnceReply(reply), nil
+}
+
+func (m *Model) recordPromptRouteWithoutExecution(prompt string, plan promptExecutionPlan) {
+	suppressTranscript := m.suppressPromptTranscript
+	if !suppressTranscript {
+		m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: prompt})
+		m.logMessage("user", prompt)
+	} else if m.debugLogger != nil {
+		_ = m.debugLogger.LogRunEvent("internal_prompt", fmt.Sprintf("suppressed confirmation prompt (%d chars)", len(prompt)))
+	}
+	if summary := strings.TrimSpace(renderTurnRoutePlan(plan.route)); summary != "" {
+		m.logMessage("route_plan", summary)
+		m.enqueueHistoryAuditEvent(historyAuditEvent{kind: "lane", label: "route selected", detail: summary, status: plan.route.InitialLane})
+	}
+	m.logMessage("route_confirmation", renderRouteContractProjection(projectRouteContract(plan.route, plan.mode)))
+	m.emitWriterRouteDecision(m.writerRouteDecisionForPrompt(prompt, plan))
+}
+
+func mutationRouteConfirmationQuestion(plan promptExecutionPlan) string {
+	command := "/implement"
+	lane := "implement"
+	if strings.TrimSpace(plan.route.Family) == agent.PlanThenExecutePlannerTaskFamily {
+		command = "/plan-execute"
+		lane = "plan-execute"
+	}
+	return fmt.Sprintf("This looks like a workspace-changing request. Do you want me to switch to the write-capable %s lane for it? Reply with `%s <objective>` to confirm, or tell me to keep this read-only.", lane, command)
 }
 
 func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt string, plan promptExecutionPlan) func() {

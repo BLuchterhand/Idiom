@@ -807,7 +807,69 @@ func TestTextOnlyChatOptionsUsesContractAwareCaps(t *testing.T) {
 			if len(got.Tools) != 0 || got.ToolChoice != "" {
 				t.Fatalf("text-only options should disable tools, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
 			}
+			if got.EnableThinking == nil || *got.EnableThinking {
+				t.Fatalf("text-only options should force visible output with thinking disabled, got %#v", got.EnableThinking)
+			}
+			if got.PreserveThinking {
+				t.Fatal("text-only options should not preserve hidden reasoning into final synthesis")
+			}
+			if !got.ChatTemplateKwargs {
+				t.Fatal("text-only options should send chat-template kwargs so thinking=false reaches local backends")
+			}
 		})
+	}
+}
+
+func TestReadOnlyEvidenceAvailableTerminalChatOptionsForceVisibleOutput(t *testing.T) {
+	thinkingOn := true
+	tool := llama.Tool{Type: "function", Function: llama.ToolFunction{Name: "read_file"}}
+	opts := llama.ChatOptions{
+		Tools:            []llama.Tool{tool},
+		ToolChoice:       "auto",
+		EnableThinking:   &thinkingOn,
+		PreserveThinking: true,
+		MaxTokens:        8192,
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What is in internal/agent/runner.go?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/agent/runner.go lines 1-20",
+		Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
+	}}
+
+	got := readOnlyEvidenceAvailableTerminalChatOptions(opts, brief, results)
+	if len(got.Tools) != 1 || got.ToolChoice != "auto" {
+		t.Fatalf("terminal visible-output mode should keep exact read/search tools available, got tools=%#v choice=%q", got.Tools, got.ToolChoice)
+	}
+	if got.EnableThinking == nil || *got.EnableThinking {
+		t.Fatalf("terminal visible-output mode should disable hidden thinking, got %#v", got.EnableThinking)
+	}
+	if got.PreserveThinking {
+		t.Fatal("terminal visible-output mode should not preserve hidden reasoning")
+	}
+	if !got.ChatTemplateKwargs {
+		t.Fatal("terminal visible-output mode should send chat-template kwargs")
+	}
+}
+
+func TestReadOnlyEvidencePendingTerminalChatOptionsPreserveThinking(t *testing.T) {
+	thinkingOn := true
+	opts := llama.ChatOptions{EnableThinking: &thinkingOn, PreserveThinking: true, MaxTokens: 8192}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What is in internal/agent/runner.go?",
+	}
+
+	got := readOnlyEvidenceAvailableTerminalChatOptions(opts, brief, nil)
+	if got.EnableThinking == nil || !*got.EnableThinking || !got.PreserveThinking {
+		t.Fatalf("evidence-pending calls should preserve current thinking behavior, got enable=%#v preserve=%v", got.EnableThinking, got.PreserveThinking)
 	}
 }
 
@@ -1298,10 +1360,14 @@ func TestRunnerDropsReasoningContentBetweenToolTurnsWhenNotPreserving(t *testing
 	}
 }
 
-func TestRunnerPreservesEmptyReplyReasoningForRetry(t *testing.T) {
+func TestRunnerForcesVisibleOutputForEmptyReplyRetry(t *testing.T) {
 	root := t.TempDir()
 	type requestPayload struct {
-		Messages []llama.ChatMessage `json:"messages"`
+		Messages           []llama.ChatMessage `json:"messages"`
+		ChatTemplateKwargs *struct {
+			EnableThinking *bool `json:"enable_thinking"`
+			Preserve       bool  `json:"preserve_thinking"`
+		} `json:"chat_template_kwargs,omitempty"`
 	}
 	var payloads []requestPayload
 	replies := []string{
@@ -1347,15 +1413,16 @@ func TestRunnerPreservesEmptyReplyReasoningForRetry(t *testing.T) {
 	if len(payloads) != 2 {
 		t.Fatalf("expected two model requests, got %d", len(payloads))
 	}
-	var foundPreserved bool
 	for _, message := range payloads[1].Messages {
-		if message.Role == "assistant" && message.ReasoningContent == "unfinished reasoning" {
-			foundPreserved = true
-			break
+		if message.ReasoningContent != "" {
+			t.Fatalf("expected empty-answer retry to strip prior reasoning_content, got %#v", payloads[1].Messages)
 		}
 	}
-	if !foundPreserved {
-		t.Fatalf("expected retry request to include empty reply reasoning_content, got %#v", payloads[1].Messages)
+	if payloads[1].ChatTemplateKwargs == nil ||
+		payloads[1].ChatTemplateKwargs.EnableThinking == nil ||
+		*payloads[1].ChatTemplateKwargs.EnableThinking ||
+		payloads[1].ChatTemplateKwargs.Preserve {
+		t.Fatalf("expected empty-answer retry to force visible output, got %#v", payloads[1].ChatTemplateKwargs)
 	}
 }
 
@@ -2615,6 +2682,21 @@ func TestCompletionGateRejectsUnresolvedProcessNarration(t *testing.T) {
 	}
 }
 
+func TestCompletionGateAllowsQuotedProcessNarrationEvidence(t *testing.T) {
+	answer := strings.Join([]string{
+		"Here is the diagnosis.",
+		"",
+		"The hidden reasoning salvage path accepted a non-answer as the final response. The extracted text was:",
+		"",
+		`> "The user is asking me to investigate why a prompt might be routed as write intent. I need to find the specific route-planner files/tests responsible."`,
+		"",
+		"The likely guard is `looksLikeNonAnswerProse` in `internal/agent/runner.go`, and the tests belong beside the live-failure cases in `internal/agent/runner_test.go`.",
+	}, "\n")
+	if result, rejected := unresolvedProcessIntentCompletionRejection(answer); rejected {
+		t.Fatalf("quoted evidence should not make a substantive answer look like process narration: %#v", result)
+	}
+}
+
 func TestCompletionGateRejectsFutureRefreshNarration(t *testing.T) {
 	result, rejected := unresolvedProcessIntentCompletionRejection("Both required edit paths are stale in the graph. I'll refresh them, then read the two files to verify the TUI smoke fixture.")
 	if !rejected {
@@ -3041,6 +3123,216 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected forced completion and invalid-answer retry, used %d/%d replies", requests, len(replies))
+	}
+}
+
+func TestForcedCompletionRequestForcesVisibleTextOnlyOutput(t *testing.T) {
+	thinkingOn := true
+	var sawRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tools              []any `json:"tools,omitempty"`
+			ToolChoice         any   `json:"tool_choice,omitempty"`
+			ChatTemplateKwargs *struct {
+				EnableThinking *bool `json:"enable_thinking"`
+				Preserve       bool  `json:"preserve_thinking"`
+			} `json:"chat_template_kwargs,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		sawRequest = true
+		if len(body.Tools) != 0 || body.ToolChoice != nil {
+			t.Fatalf("forced completion should be text-only, got tools=%#v tool_choice=%#v", body.Tools, body.ToolChoice)
+		}
+		if body.ChatTemplateKwargs == nil ||
+			body.ChatTemplateKwargs.EnableThinking == nil ||
+			*body.ChatTemplateKwargs.EnableThinking ||
+			body.ChatTemplateKwargs.Preserve {
+			t.Fatalf("forced completion should disable hidden thinking, got %#v", body.ChatTemplateKwargs)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "The evidence shows the answer."},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Answer from gathered evidence.",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Answer from gathered evidence."}},
+		llama.ChatOptions{
+			Tools:            []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "read_file"}}},
+			ToolChoice:       "auto",
+			EnableThinking:   &thinkingOn,
+			PreserveThinking: true,
+			MaxTokens:        8192,
+		},
+		nil,
+		"Tools are now disabled. Answer from gathered evidence.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	if !sawRequest {
+		t.Fatal("expected forced-completion model request")
+	}
+	if !strings.Contains(answer, "evidence") {
+		t.Fatalf("unexpected answer:\n%s", answer)
+	}
+}
+
+func TestReadOnlyEvidenceAvailableMainLoopForcesVisibleOutputButKeepsTools(t *testing.T) {
+	thinkingOn := true
+	var sawRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tools              []any `json:"tools,omitempty"`
+			ToolChoice         any   `json:"tool_choice,omitempty"`
+			ChatTemplateKwargs *struct {
+				EnableThinking *bool `json:"enable_thinking"`
+				Preserve       bool  `json:"preserve_thinking"`
+			} `json:"chat_template_kwargs,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		sawRequest = true
+		if len(body.Tools) == 0 {
+			t.Fatalf("evidence-available terminal mode should keep read/search tools available")
+		}
+		if body.ToolChoice == nil {
+			t.Fatalf("evidence-available terminal mode should keep tool choice available")
+		}
+		if body.ChatTemplateKwargs == nil ||
+			body.ChatTemplateKwargs.EnableThinking == nil ||
+			*body.ChatTemplateKwargs.EnableThinking ||
+			body.ChatTemplateKwargs.Preserve {
+			t.Fatalf("evidence-available terminal mode should force visible output, got %#v", body.ChatTemplateKwargs)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "runner.go contains package agent."},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What is in internal/agent/runner.go?",
+			AllowedTools:      []string{"read_file", "search_content"},
+		},
+		SeedResults: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/agent/runner.go lines 1-20",
+			Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
+		}},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "What is in internal/agent/runner.go?"}},
+		llama.ChatOptions{
+			Tools:            []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "read_file"}}},
+			ToolChoice:       "auto",
+			EnableThinking:   &thinkingOn,
+			PreserveThinking: true,
+			MaxTokens:        8192,
+		},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawRequest {
+		t.Fatal("expected main-loop model request")
+	}
+	if !strings.Contains(answer, "runner.go") {
+		t.Fatalf("unexpected answer:\n%s", answer)
+	}
+}
+
+func TestEmptyAnswerRetryForcesVisibleOutputAndStripsReasoning(t *testing.T) {
+	thinkingOn := true
+	var sawRequest bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct {
+				Role             string `json:"role"`
+				Content          string `json:"content"`
+				ReasoningContent string `json:"reasoning_content,omitempty"`
+			} `json:"messages"`
+			ChatTemplateKwargs *struct {
+				EnableThinking *bool `json:"enable_thinking"`
+				Preserve       bool  `json:"preserve_thinking"`
+			} `json:"chat_template_kwargs,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		sawRequest = true
+		if body.ChatTemplateKwargs == nil ||
+			body.ChatTemplateKwargs.EnableThinking == nil ||
+			*body.ChatTemplateKwargs.EnableThinking ||
+			body.ChatTemplateKwargs.Preserve {
+			t.Fatalf("empty-answer retry should disable hidden thinking, got %#v", body.ChatTemplateKwargs)
+		}
+		for _, message := range body.Messages {
+			if strings.Contains(message.ReasoningContent, "hidden scratchpad") ||
+				strings.Contains(message.Content, "hidden scratchpad") {
+				t.Fatalf("empty-answer retry leaked prior hidden reasoning in request: %#v", body.Messages)
+			}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": "Visible retry answer from evidence."},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Answer from gathered evidence.",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer, err := runner.ensureNonEmptyAnswer(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Answer from gathered evidence."}},
+		llama.ChatMessage{Role: "assistant", ReasoningContent: "hidden scratchpad that must not be resent"},
+		llama.ChatOptions{EnableThinking: &thinkingOn, PreserveThinking: true, MaxTokens: 8192},
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("ensureNonEmptyAnswer: %v", err)
+	}
+	if !sawRequest {
+		t.Fatal("expected empty-answer retry request")
+	}
+	if !strings.Contains(answer, "Visible retry answer") {
+		t.Fatalf("unexpected answer:\n%s", answer)
 	}
 }
 
@@ -4285,6 +4577,174 @@ func (r *Runner) runChildTask() string {
 	}
 }
 
+func TestRunnerForcesSynthesisAfterRepeatedPostReadinessNoGapFollowups(t *testing.T) {
+	root := t.TempDir()
+	source := strings.Join([]string{
+		"package agent",
+		"",
+		"type Runner struct{}",
+		"",
+		"func (r *Runner) Run() {}",
+		"",
+		"func (r *Runner) finish() {}",
+	}, "\n")
+	if err := writeTestFile(root, "internal/agent/runner.go", source); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":20}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":21,"end_line":40}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":41,"end_line":60}`,
+		"Final answer from gathered evidence.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejected int
+	var budgetStop bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Explain the harness control flow.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "budget_ledger" && strings.Contains(event.Content, `"rejected_actions":2`) {
+				rejected++
+			}
+			if event.Role == "budget_ledger" && strings.Contains(event.Content, "post_readiness_gap_required_budget_exhausted") {
+				budgetStop = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Explain the harness control flow."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "internal/agent/runner.go") {
+		t.Fatalf("answer = %q", answer)
+	}
+	if requests != len(replies)-1 {
+		t.Fatalf("expected second no-gap follow-up to synthesize deterministic fallback, used %d/%d replies", requests, len(replies))
+	}
+	if rejected != 1 {
+		t.Fatalf("expected budget ledger to record two rejected post-readiness actions, got %d matching ledgers", rejected)
+	}
+	if !budgetStop {
+		t.Fatal("expected budget ledger stop_reason post_readiness_gap_required_budget_exhausted")
+	}
+}
+
+func TestRunnerForcesSynthesisAfterRepeatedInvalidPostReadinessFollowups(t *testing.T) {
+	root := t.TempDir()
+	lines := make([]string, 220)
+	lines[0] = "package agent"
+	for i := 1; i < len(lines); i++ {
+		lines[i] = fmt.Sprintf("// line %d", i+1)
+	}
+	if err := writeTestFile(root, "internal/agent/runner.go", strings.Join(lines, "\n")); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":20}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":180,"named_gap":"Runner.Run branch in internal/agent/runner.go","why_not_answering":"need a broad source refresh"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":180,"named_gap":"Runner.Run branch in internal/agent/runner.go","why_not_answering":"need a broad source refresh"}`,
+		"Final answer after invalid probes.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var rejected int
+	var budgetStop bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Explain the harness control flow.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "budget_ledger" && strings.Contains(event.Content, `"rejected_actions":2`) {
+				rejected++
+			}
+			if event.Role == "budget_ledger" && strings.Contains(event.Content, "post_readiness_gap_invalid_budget_exhausted") {
+				budgetStop = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Explain the harness control flow."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "internal/agent/runner.go") {
+		t.Fatalf("answer = %q", answer)
+	}
+	if requests != len(replies)-1 {
+		t.Fatalf("expected second invalid post-readiness follow-up to synthesize deterministic fallback, used %d/%d replies", requests, len(replies))
+	}
+	if rejected != 1 {
+		t.Fatalf("expected budget ledger to record two rejected invalid post-readiness actions, got %d matching ledgers", rejected)
+	}
+	if !budgetStop {
+		t.Fatal("expected budget ledger stop_reason post_readiness_gap_invalid_budget_exhausted")
+	}
+}
+
 func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "one\ntwo\nthree\n"); err != nil {
@@ -4900,6 +5360,42 @@ func TestConversationEvidenceSatisfiedFileOutlineFindSymbolProbesFireGate(t *tes
 	}
 	if !runner.conversationEvidenceAvailableForObjective(results) {
 		t.Fatal("expected evidence availability after file_outline + find_symbol evidence")
+	}
+}
+
+func TestReadOnlyAnalysisAnswerReadyAfterConversationSourceEvidence(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain why the debug investigation failed.",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (file has 211 lines total)",
+			Output:  "132:{\"type\":\"message\"}\n",
+		},
+	}
+	if runner.readOnlyAnalysisAnswerReadyAfterResult(workspace.ToolRequest{Tool: "read_file"}, results[0], results) {
+		t.Fatal("diagnostic logs alone should not trigger conversation answer-readiness")
+	}
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 logs/conversations/recent.jsonl lines 52-131 (file has 211 lines total)",
+		Output:  "52:{\"type\":\"message\"}\n",
+	})
+	if runner.readOnlyAnalysisAnswerReadyAfterResult(workspace.ToolRequest{Tool: "read_file"}, results[1], results) {
+		t.Fatal("multiple diagnostic log windows alone should not trigger conversation answer-readiness")
+	}
+
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f2 internal/agent/runner.go lines 1-50 (total lines: 200)",
+		Output:  "1:package agent\n2:func (r *Runner) Run() {}\n",
+	})
+	if !runner.readOnlyAnalysisAnswerReadyAfterResult(workspace.ToolRequest{Tool: "read_file"}, results[2], results) {
+		t.Fatal("conversation source evidence should enter the generic post-readiness contract")
 	}
 }
 
@@ -13719,6 +14215,40 @@ func TestInvalidPostReadinessGapAllowsExactSearchAfterReadiness(t *testing.T) {
 	}
 }
 
+func TestInvalidPostReadinessGapAllowsAnchoredShortLiteralSearchAfterReadiness(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5",
+		Output:  "package labels\n",
+	}}
+	_, _, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Should we include git operations in evidence?", workspace.ToolRequest{
+		Tool:            "search_content",
+		Pattern:         "git",
+		NamedGap:        "check for existing git operations",
+		WhyNotAnswering: "need evidence of existing git patterns",
+	}, results)
+	if rejected {
+		t.Fatalf("did not expect anchored short literal post-readiness search to be rejected")
+	}
+}
+
+func TestInvalidPostReadinessGapRejectsUnanchoredShortNoiseSearchAfterReadiness(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5",
+		Output:  "package labels\n",
+	}}
+	_, _, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain label behavior.", workspace.ToolRequest{
+		Tool:            "search_content",
+		Pattern:         "the",
+		NamedGap:        "check broad wording",
+		WhyNotAnswering: "need more evidence",
+	}, results)
+	if !rejected {
+		t.Fatalf("expected unanchored short noise post-readiness search to be rejected")
+	}
+}
+
 func TestAugmentDelegatedReadOnlyPacketPreservesAdditionalPaths(t *testing.T) {
 	answer := "Question: Explain how subagents work.\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/agent/runner_child_tasks.go`\n"
 	results := []workspace.ToolResult{
@@ -14008,6 +14538,280 @@ func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T
 	}
 	if !strings.Contains(prompt, `"tool":"read_file"`) || !strings.Contains(prompt, "internal/labels/labels.go") {
 		t.Fatalf("expected recovery prompt to request the named source path, got:\n%s", prompt)
+	}
+}
+
+func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "locate_targets",
+			TaskFamily:        "locate",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
+			Objective:         "Read-only investigation: session logs/conversations/recent.jsonl ended with a bad final answer. Identify the likely guard file and tests.",
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 1-80",
+			Output:  "1:{\"type\":\"final\",\"content\":\"The user is asking me...\"}\n",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Read-only completion gate rejected final answer",
+			Error:   "read-only workspace answers require bounded codebase evidence before a final answer",
+		},
+	}
+	result, rejected := runner.readOnlyEvidenceCompletionRejection("The guard is probably in the runner.", results)
+	if !rejected {
+		t.Fatal("expected read-only evidence rejection before codebase evidence")
+	}
+	prompt := result.Error
+	for _, want := range []string{"should not be reread", "different concrete code path", "source search/read/navigation"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("rejection guidance missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestReadFileResultHasConcreteSourceBodyExcludesDiagnosticLogs(t *testing.T) {
+	if readFileResultHasConcreteSourceBody(workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 logs/conversations/recent.jsonl lines 1-80",
+		Output:  "1:{\"type\":\"final\",\"content\":\"The user is asking me...\"}\n",
+	}) {
+		t.Fatal("diagnostic conversation logs must not satisfy codebase source-body evidence")
+	}
+	if !readFileResultHasConcreteSourceBody(workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/agent/runner.go lines 1-80",
+		Output:  "1:package agent\n2:\n3:func example() {}\n",
+	}) {
+		t.Fatal("source file read should satisfy codebase source-body evidence")
+	}
+	if !readFileResultHasConcreteSourceBody(workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 testdata/events.jsonl lines 1-20",
+		Output:  "1:{\"event\":\"fixture\"}\n",
+	}) {
+		t.Fatal("checked-in jsonl fixtures outside diagnostic log directories should remain source-body evidence")
+	}
+	if !readFileResultHasConcreteSourceBody(workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/log/reader.go lines 1-20",
+		Output:  "1:package log\n2:func reader() {}\n",
+	}) {
+		t.Fatal("source files under internal/log must remain source-body evidence")
+	}
+	if !readFileResultHasConcreteSourceBody(workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/traces/reader.go lines 1-20",
+		Output:  "1:package traces\n2:func reader() {}\n",
+	}) {
+		t.Fatal("source files under internal/traces must remain source-body evidence")
+	}
+}
+
+func TestRepeatedDiagnosticLogReadFileBackfillsPreviousWindow(t *testing.T) {
+	rewritten, raw, ok := repeatedDiagnosticLogReadFileBackfill(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		[]workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (file has 211 lines total; defaulted to recent log tail; pass start_line/end_line for a different window)",
+			Output:  "132:{\"type\":\"message\"}\n",
+		}},
+	)
+	if !ok {
+		t.Fatal("expected repeated unbounded diagnostic log read to become previous bounded window")
+	}
+	if rewritten.StartLine != 52 || rewritten.EndLine != 131 {
+		t.Fatalf("window: want 52-131, got %d-%d", rewritten.StartLine, rewritten.EndLine)
+	}
+	for _, want := range []string{`"path":"logs/conversations/recent.jsonl"`, `"start_line":52`, `"end_line":131`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("raw rewrite missing %q:\n%s", want, raw)
+		}
+	}
+
+	rewritten, raw, ok = repeatedDiagnosticLogReadFileBackfill(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (total lines: 211)",
+				Output:  "132:{\"type\":\"message\"}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 52-131 (total lines: 211)",
+				Output:  "52:{\"type\":\"message\"}\n",
+			},
+		},
+	)
+	if !ok {
+		t.Fatal("expected repeated unbounded diagnostic log read to continue before earliest prior window")
+	}
+	if rewritten.StartLine != 1 || rewritten.EndLine != 51 {
+		t.Fatalf("window: want 1-51, got %d-%d", rewritten.StartLine, rewritten.EndLine)
+	}
+	for _, want := range []string{`"start_line":1`, `"end_line":51`} {
+		if !strings.Contains(raw, want) {
+			t.Fatalf("raw rewrite missing %q:\n%s", want, raw)
+		}
+	}
+
+	rewritten, _, ok = repeatedDiagnosticLogReadFileBackfill(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (file has 211 lines total)",
+				Output:  "132:{\"type\":\"message\"}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 1-51 (file has 211 lines total)",
+				Output:  "1:{\"type\":\"message\"}\n",
+			},
+		},
+	)
+	if !ok {
+		t.Fatal("expected middle gap before the tail to be backfilled")
+	}
+	if rewritten.StartLine != 52 || rewritten.EndLine != 131 {
+		t.Fatalf("window: want 52-131, got %d-%d", rewritten.StartLine, rewritten.EndLine)
+	}
+
+	if _, _, ok := repeatedDiagnosticLogReadFileBackfill(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl", StartLine: 1, EndLine: 51},
+		[]workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 logs/conversations/recent.jsonl lines 52-131 (file has 211 lines total)"}},
+	); ok {
+		t.Fatal("explicit bounded diagnostic log reads should execute as requested")
+	}
+}
+
+func TestDiagnosticLogUnboundedReadCoverageRejection(t *testing.T) {
+	summary, errorText, reject := diagnosticLogUnboundedReadCoverageRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (file has 211 lines total)",
+				Output:  "132:{\"type\":\"message\"}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 52-131 (file has 211 lines total)",
+				Output:  "52:{\"type\":\"message\"}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 1-51 (file has 211 lines total)",
+				Output:  "1:{\"type\":\"message\"}\n",
+			},
+		},
+	)
+	if !reject {
+		t.Fatal("expected unbounded diagnostic log read to be rejected after beginning and tail coverage")
+	}
+	for _, want := range []string{"already been read back to line 1", "current tail window", "Answer from the gathered log evidence"} {
+		if !strings.Contains(summary+" "+errorText, want) {
+			t.Fatalf("rejection guidance missing %q:\nsummary=%s\nerror=%s", want, summary, errorText)
+		}
+	}
+
+	if _, _, reject := diagnosticLogUnboundedReadCoverageRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		[]workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 1-51 (file has 211 lines total)",
+			Output:  "1:{\"type\":\"message\"}\n",
+		}},
+	); reject {
+		t.Fatal("beginning-only coverage should not block an unbounded read that can still gather the tail")
+	}
+
+	if _, _, reject := diagnosticLogUnboundedReadCoverageRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (file has 211 lines total)",
+				Output:  "132:{\"type\":\"message\"}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 1-51 (file has 211 lines total)",
+				Output:  "1:{\"type\":\"message\"}\n",
+			},
+		},
+	); reject {
+		t.Fatal("beginning plus tail with an unread middle gap should not be treated as exhausted coverage")
+	}
+}
+
+func TestRepeatedDiagnosticLogReadFilePreviouslyReadRejection(t *testing.T) {
+	summary, errorText, reject := repeatedDiagnosticLogReadFilePreviouslyReadRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl", StartLine: 52, EndLine: 131},
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211 (file has 211 lines total)",
+				Output:  "132:{\"type\":\"message\"}\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 logs/conversations/recent.jsonl lines 52-131 (file has 211 lines total)",
+				Output:  "52:{\"type\":\"message\"}\n",
+			},
+		},
+	)
+	if !reject {
+		t.Fatal("expected previously read diagnostic log window to be rejected")
+	}
+	for _, want := range []string{"bounded diagnostic log window already returned evidence", "different bounded window", "answer from the gathered evidence"} {
+		if !strings.Contains(summary+" "+errorText, want) {
+			t.Fatalf("rejection guidance missing %q:\nsummary=%s\nerror=%s", want, summary, errorText)
+		}
+	}
+
+	if _, _, reject := repeatedDiagnosticLogReadFilePreviouslyReadRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/log/reader.go", StartLine: 52, EndLine: 131},
+		[]workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/log/reader.go lines 52-131 (file has 211 lines total)",
+			Output:  "52:func reader() {}\n",
+		}},
+	); reject {
+		t.Fatal("source files under internal/log must not use diagnostic log repeated-window rejection")
+	}
+}
+
+func TestRepeatedDiagnosticLogReadFileExactRejection(t *testing.T) {
+	summary, errorText, reject := repeatedDiagnosticLogReadFileExactRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/recent.jsonl"},
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Read f1 logs/conversations/recent.jsonl lines 132-211",
+			Output:  "132:{\"type\":\"message\"}\n",
+		},
+	)
+	if !reject {
+		t.Fatal("expected exact repeated diagnostic log read to be rejected")
+	}
+	for _, want := range []string{"Repeated diagnostic log read rejected", "different bounded `start_line`/`end_line` window", "otherwise answer"} {
+		if !strings.Contains(summary+" "+errorText, want) {
+			t.Fatalf("rejection guidance missing %q:\nsummary=%s\nerror=%s", want, summary, errorText)
+		}
+	}
+
+	if _, _, reject := repeatedDiagnosticLogReadFileExactRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"},
+		workspace.ToolResult{Tool: "read_file", Summary: "Read f1 internal/agent/runner.go lines 1-80"},
+	); reject {
+		t.Fatal("source-file repeated reads should keep existing replay/redirect behavior")
 	}
 }
 
@@ -14748,6 +15552,32 @@ func TestApplyPostReadinessSchemaRequirementsIsIdempotent(t *testing.T) {
 	second := applyPostReadinessSchemaRequirements(first)
 	if string(first[0].Function.Parameters) != string(second[0].Function.Parameters) {
 		t.Fatalf("expected applyPostReadinessSchemaRequirements to be idempotent\nfirst=%s\nsecond=%s", first[0].Function.Parameters, second[0].Function.Parameters)
+	}
+}
+
+func TestStripPostReadinessBroadToolsKeepsExactContentSearch(t *testing.T) {
+	tools := []llama.Tool{
+		{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+		{Type: "function", Function: llama.ToolFunction{Name: "search_content"}},
+		{Type: "function", Function: llama.ToolFunction{Name: "search_files"}},
+		{Type: "function", Function: llama.ToolFunction{Name: "list_files"}},
+		{Type: "function", Function: llama.ToolFunction{Name: "context_query"}},
+	}
+
+	out := stripPostReadinessBroadTools(tools)
+	got := make([]string, 0, len(out))
+	for _, tool := range out {
+		got = append(got, tool.Function.Name)
+	}
+	for _, want := range []string{"read_file", "search_content", "context_query"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("expected post-readiness tools to keep %q, got %#v", want, got)
+		}
+	}
+	for _, stripped := range []string{"search_files", "list_files"} {
+		if slices.Contains(got, stripped) {
+			t.Fatalf("expected post-readiness tools to strip %q, got %#v", stripped, got)
+		}
 	}
 }
 
@@ -17846,6 +18676,77 @@ func TestFinalAnswerBlockerKindAllowsLineClaimWithSourceBody(t *testing.T) {
 	}
 }
 
+func TestFinalAnswerBlockerKindAllowsUniqueBasenameBackedBySourceBody(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "internal", "app", "model_state.go")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte("package app\n\nfunc (m *Model) resize() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The resize path is in `model_state.go` lines 1-3 where `Model.resize` handles viewport dimensions."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "capability: read_symbol\nroute_summary: Read Model.resize in internal/app/model_state.go lines 1-3\n1:package app\n2:\n3:func (m *Model) resize() {}",
+		},
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("unique basename backed by source-body evidence blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerBlockerKindRejectsAmbiguousBasenameSourceCitation(t *testing.T) {
+	root := t.TempDir()
+	for _, rel := range []string{"internal/app/model_state.go", "internal/other/model_state.go"} {
+		path := filepath.Join(root, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", rel, err)
+		}
+		if err := os.WriteFile(path, []byte("package app\n\nfunc Resize() {}\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", rel, err)
+		}
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The resize path is in `model_state.go` lines 1-3 where `Resize` handles viewport dimensions."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read Model.resize in internal/app/model_state.go lines 1-3\n1:package app\n3:func Resize() {}",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read Other.resize in internal/other/model_state.go lines 1-3\n1:package app\n3:func Resize() {}",
+		},
+	}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "source_grounding_unmet" {
+		t.Fatalf("ambiguous basename source citation got blocker_kind=%q reason=%q, want source_grounding_unmet", kind, reason)
+	}
+}
+
 // TestMissingRequiredEvidenceEnforcesTargetLocation verifies that
 // the target_location evidence label is structurally enforced.
 func TestMissingRequiredEvidenceEnforcesTargetLocation(t *testing.T) {
@@ -17941,8 +18842,28 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			true,
 		},
 		{
+			"18:06 - hidden reasoning meta-intent restatement",
+			`The user is asking me to investigate why a prompt asking "which files and sections should be changed" might be routed as investigate_then_implement with write_intent=yes. I need to find the specific route-planner files/tests responsible and the smallest generic fix shape.`,
+			true,
+		},
+		{
+			"18:10 - source echo only",
+			"The inspected source in `internal/agent/runner_test.go` contains `func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {`, `cases := []struct {` and `name   string`. No files were changed.",
+			true,
+		},
+		{
 			"legitimate answer (should NOT be blocked)",
 			"Evidence in Idiom is composed of source paths, tool results, and verification status. The harness uses these across all lanes to enforce contracts.",
+			false,
+		},
+		{
+			"legitimate answer with task framing (should NOT be blocked)",
+			"The user is asking me to explain the route choice. The answer is that `internal/app/turn_planner.go` classifies read-only evidence requests before mutation intent, so this should stay in a read-only lane.",
+			false,
+		},
+		{
+			"legitimate source-citing synthesis (should NOT be blocked)",
+			"The inspected source in `internal/agent/runner.go` contains `looksLikeNonAnswerProse`, which is the shared final-answer guard because `finalAnswerBlockerKind` calls it before accepting answer-tool content.",
 			false,
 		},
 		{
@@ -17955,6 +18876,20 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 		got := looksLikeNonAnswerProse(c.answer)
 		if got != c.want {
 			t.Errorf("%s: looksLikeNonAnswerProse = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestFinalAnswerBlockerRejectsLiveNonAnswerShapes(t *testing.T) {
+	runner := &Runner{}
+	cases := []string{
+		`The user is asking me to investigate why a prompt asking "which files and sections should be changed" might be routed as investigate_then_implement with write_intent=yes. I need to find the specific route-planner files/tests responsible and the smallest generic fix shape.`,
+		"The inspected source in `internal/agent/runner_test.go` contains `func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {`, `cases := []struct {` and `name   string`. No files were changed.",
+	}
+	for _, answer := range cases {
+		blocker, reason := runner.finalAnswerBlockerKind(answer, nil)
+		if blocker != "non_answer_prose" || reason != "non_answer_prose" {
+			t.Fatalf("finalAnswerBlockerKind(%q) = (%q, %q), want non_answer_prose", answer, blocker, reason)
 		}
 	}
 }

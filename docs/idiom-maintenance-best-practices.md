@@ -33,6 +33,28 @@ depends on synthesis, when prompts ask for one role while gates enforce
 another, or when the harness asks the model to serialize an unnatural artifact
 instead of using its normal editing capability.
 
+## Idiom-Offloaded Work Loop
+
+Use idiom as the default worker for idiom maintenance. The expected loop is:
+idiom researches and debugs through the real binary, CLI tools, conversation
+logs, telemetry, and context graph; the external operator synthesizes and
+verifies the approach from that evidence; then idiom applies actual repository
+changes through `plan-execute` unless the current bug prevents idiom from doing
+so. Prefer the TUI/live operator path when validating user-facing behavior, but
+observe it through conversation/telemetry logs first and poll slowly with small
+bounded reads.
+
+If a run exposes an idiom bug, keep investigating and resolving it inside idiom
+when possible. Treat the failed idiom run as primary evidence: preserve the
+session id, recovery/failure record, stop reason, and tool sequence. If the bug
+blocks idiom from producing or executing a plan, document that blocker and use
+the smallest external fallback; do not normalize bypassing idiom as the default
+path.
+
+Behavior fixes need scripted e2e regression coverage in addition to focused
+unit tests. The e2e should exercise the real CLI/TUI contract that failed and
+assert acceptable, grounded, non-garbage output.
+
 ## Deterministic Gates
 
 - Classify artifacts before dispatch: `dispatchable`, `source-satisfied`,

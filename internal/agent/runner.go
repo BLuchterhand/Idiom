@@ -23,23 +23,26 @@ import (
 )
 
 var (
-	stableHandlePathLinePattern     = regexp.MustCompile(`(?m)^f\d+\s+(.+)$`)
-	stableHandleInlinePattern       = regexp.MustCompile(`\bf\d+\s+((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+)\b`)
-	delegatedPacketPathLinePattern  = regexp.MustCompile(`((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv)):\d+(?:-\d+)?(?:[:][^\s` + "`" + `"'(),.;:]+)?`)
-	delegatedPacketPathQuotePattern = regexp.MustCompile("((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv))[`'\"]+")
-	closurePathLineSymbolPattern    = regexp.MustCompile(`(?m)(?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
-	closurePathScopedSymbolPattern  = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
-	closurePathCallPattern          = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?:[^\n]*?\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
-	callLikeIdentifierPattern       = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
-	qualifiedIdentifierPattern      = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{1,}\.[A-Za-z_][A-Za-z0-9_]{3,})\b`)
-	backtickedTokenPattern          = regexp.MustCompile("`([^`]+)`")
-	toolLocalSearchHandlePattern    = regexp.MustCompile(`\bf\d+\s+(?:[[:alnum:]_.-]+/)+[[:alnum:]_.-]+\.[[:alnum:]]+:\d+:`)
-	goFuncDeclPattern               = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
-	codeShapedTokenPattern          = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
-	codeShapedSnakeCasePattern      = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
-	codeShapedLineRangePattern      = regexp.MustCompile(`(?i)\blines?\s+\d+(?:\s*[-–]\s*\d+)?\b`)
-	fileOutlineDeclarationPattern   = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+(\d+)-(\d+)\b`)
-	fileOutlinePreviewPattern       = regexp.MustCompile(`preview declarations:\s*\[([^\]]*)\]`)
+	stableHandlePathLinePattern            = regexp.MustCompile(`(?m)^f\d+\s+(.+)$`)
+	stableHandleInlinePattern              = regexp.MustCompile(`\bf\d+\s+((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+)\b`)
+	delegatedPacketPathLinePattern         = regexp.MustCompile(`((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv)):\d+(?:-\d+)?(?:[:][^\s` + "`" + `"'(),.;:]+)?`)
+	delegatedPacketPathQuotePattern        = regexp.MustCompile("((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|tscn|tres|py|pyi|ts|tsx|js|jsx|mjs|cjs|rs|java|kt|kts|sh|bash|zsh|fish|ps1|md|mdx|json|jsonl|yaml|yml|toml|xml|ini|cfg|conf|env|txt|csv|tsv))[`'\"]+")
+	closurePathLineSymbolPattern           = regexp.MustCompile(`(?m)(?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	closurePathScopedSymbolPattern         = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?[: ]+([A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	closurePathCallPattern                 = regexp.MustCompile(`(?m)((?:[[:alnum:]_.-]+/)*[[:alnum:]_.-]+\.(?:go|c|cc|cpp|cxx|h|hh|hpp|hxx|ipp|inl|tpp|gd|py|pyi|ts|tsx|js|jsx|rs|java|kt|kts|sh|md|json|yaml|yml|toml|txt)):\d+(?::\d+)?:[^\n]*?\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
+	callLikeIdentifierPattern              = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{3,})\s*\(`)
+	qualifiedIdentifierPattern             = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]{1,}\.[A-Za-z_][A-Za-z0-9_]{3,})\b`)
+	backtickedTokenPattern                 = regexp.MustCompile("`([^`]+)`")
+	toolLocalSearchHandlePattern           = regexp.MustCompile(`\bf\d+\s+(?:[[:alnum:]_.-]+/)+[[:alnum:]_.-]+\.[[:alnum:]]+:\d+:`)
+	goFuncDeclPattern                      = regexp.MustCompile(`(?m)^func\s+(?:\([^)]+\)\s*)?([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
+	codeShapedTokenPattern                 = regexp.MustCompile(`\b[A-Za-z][a-z]+(?:[A-Z][a-z0-9]+){1,}\b`)
+	codeShapedSnakeCasePattern             = regexp.MustCompile(`\b[a-z][a-z0-9]*(?:_[a-z0-9]+){1,}\b`)
+	shortPostReadinessSearchLiteralPattern = regexp.MustCompile(`^[A-Za-z0-9_]{2,3}$`)
+	codeShapedLineRangePattern             = regexp.MustCompile(`(?i)\blines?\s+\d+(?:\s*[-–]\s*\d+)?\b`)
+	readFileSummaryLineWindowPattern       = regexp.MustCompile(`\blines\s+(\d+)-(\d+)\b`)
+	readFileSummaryTotalLinesPattern       = regexp.MustCompile(`\b(?:file has\s+(\d+)\s+lines\s+total|total\s+lines:\s+(\d+))\b`)
+	fileOutlineDeclarationPattern          = regexp.MustCompile(`(?m)^-\s+([A-Za-z_][A-Za-z0-9_\.]*)\s+lines\s+(\d+)-(\d+)\b`)
+	fileOutlinePreviewPattern              = regexp.MustCompile(`preview declarations:\s*\[([^\]]*)\]`)
 )
 
 // delegatedReadOnlyProbeBudget is the soft cap disclosed to post-readiness
@@ -451,6 +454,21 @@ func (r *Runner) Run(
 				}
 			}
 			value = decorated
+			if blockerKind, reason := r.finalAnswerBlockerKind(value, collectedResults); blockerKind == "non_answer_prose" &&
+				!strings.HasPrefix(strings.TrimSpace(value), "<<QUESTION>>") &&
+				(looksLikeMetaIntentRestatement(value) || finishShouldOverrideSourceEcho(value)) {
+				blockerResult := workspace.ToolResult{
+					Tool:    "completion_gate",
+					Summary: "Final answer rejected by blocker check",
+					Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, value, collectedResults),
+				}
+				value = r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
+				stopReason = blockerKind
+				r.emitEvent(RunEvent{
+					Role:    "final_answer_blocker_override",
+					Content: fmt.Sprintf("finish rejected a final answer that the %s blocker check marked non-user-facing; replaced model text with deterministic blocker narrative", blockerKind),
+				})
+			}
 			// Last-resort gate: no XML tool-call markup ever reaches
 			// the app layer as a final answer. Even if the upstream
 			// checks miss it, the finish function is the final gate.
@@ -606,6 +624,7 @@ func (r *Runner) Run(
 				return finish(answer, err, "model_call_budget_exhausted", true)
 			}
 		}
+		modelCallOpts := readOnlyEvidenceAvailableTerminalChatOptions(opts, r.RuntimeBrief, collectedResults)
 		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
 			metrics.Compactions++
 		}
@@ -635,7 +654,7 @@ func (r *Runner) Run(
 			Results:             collectedResults,
 			AllowedTools:        currentAllowedTools,
 			HiddenTools:         turnHiddenTools,
-			Options:             opts,
+			Options:             modelCallOpts,
 			SupportsNativeTools: terminalSubmitPlanNativeTools(),
 		})
 		modelProtocol, hasModelProtocol := r.compileModelProtocolProjection(r.RuntimeBrief, collectedResults, phaseContract, policy, terminalSubmitPlanNativeTools())
@@ -651,8 +670,8 @@ func (r *Runner) Run(
 				autonomyRecorder.markModelProtocolPresented(modelProtocol)
 			}
 		}
-		requestMessages = chatMessagesForOptions(requestMessages, opts)
-		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, opts)
+		requestMessages = chatMessagesForOptions(requestMessages, modelCallOpts)
+		assistantMessage, err := r.Client.CompleteChatMessage(ctx, requestMessages, modelCallOpts)
 		if err != nil {
 			if prompt, ok := r.planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(err, opts, collectedResults, planThenExecuteNativeSubmitPlanNoCallFallbacks); ok {
 				planThenExecuteNativeSubmitPlanNoCallFallbacks++
@@ -669,16 +688,20 @@ func (r *Runner) Run(
 				emitCompletionStatus("blocked", "model_error_after_partial_edit", "model_error_after_partial_edit", collectedResults, true)
 				return finish(answer, nil, "model_error_after_partial_edit", false)
 			}
+			if answer, ok := r.modelErrorAfterReadOnlyEvidenceAnswer(err, collectedResults); ok {
+				r.emitEvent(RunEvent{Role: "model_error_after_grounded_evidence", Content: "model transport failed after grounded read-only evidence was collected; returning deterministic evidence fallback"})
+				return finish(answer, nil, "model_error_after_grounded_evidence", false)
+			}
 			return finish("", err, "model_error", false)
 		}
 		metrics.addUsage(assistantMessage.Usage)
-		r.emitModelCallTraceWithOptions(stepNumber, "main_loop", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds(), opts, terminalSubmitPlanNativeTools(), collectedResults)
+		r.emitModelCallTraceWithOptions(stepNumber, "main_loop", requestMessages, assistantMessage, time.Since(modelStart).Milliseconds(), modelCallOpts, terminalSubmitPlanNativeTools(), collectedResults)
 		reply := assistantMessage.Content
 		// Capture the full message (including ReasoningContent) so the
 		// auto-salvage path can recover review prose that landed inside
 		// a runaway <think> block instead of visible content (#95).
 		r.LastAssistantMessage = assistantMessage
-		r.emitThinkingTrace(stepNumber, "model_reply", assistantMessage, opts, false)
+		r.emitThinkingTrace(stepNumber, "model_reply", assistantMessage, modelCallOpts, false)
 
 		activeToolCall = nil
 		var (
@@ -998,7 +1021,7 @@ func (r *Runner) Run(
 				}
 				continue
 			}
-			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, opts, collectedResults, &metrics)
+			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, modelCallOpts, collectedResults, &metrics)
 			if strings.TrimSpace(gateReply) != "" && strings.TrimSpace(gateReply) != strings.TrimSpace(reply) && strings.TrimSpace(answer) == strings.TrimSpace(reply) {
 				answer = gateReply
 			}
@@ -1039,16 +1062,16 @@ func (r *Runner) Run(
 		if activeToolCall != nil {
 			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, *activeToolCall)
 		} else if !r.supportsNativeTools() {
-			assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, req, raw, opts)
+			assistantToolTurn = textualToolRequestHistoryMessage(assistantMessage, req, raw, modelCallOpts)
 			activeToolCall = nil
 		} else {
 			call := syntheticLegacyToolCall(stepNumber, req, raw)
 			activeToolCall = &call
 			assistantToolTurn = legacyToolCallHistoryMessage(assistantMessage, call)
 		}
-		assistantToolTurn = assistantHistoryMessageForOptions(assistantToolTurn, opts)
+		assistantToolTurn = assistantHistoryMessageForOptions(assistantToolTurn, modelCallOpts)
 		turnMessages = append(turnMessages, assistantToolTurn)
-		r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
+		r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, modelCallOpts, true)
 		if r.shouldForceAnswerForPostCompletionVerification(req, collectedResults, &postCompletionVerificationCalls) {
 			emitCompletionStatus("completed", "post_completion_verification_cutoff", "", collectedResults, false)
 			r.emitEvent(RunEvent{
@@ -1083,6 +1106,36 @@ func (r *Runner) Run(
 				Role:    "system",
 				Content: rewriteVisibilityNote(preflight.OriginalRequest.Tool, preflight.Request.Tool),
 			})
+		}
+		if redirected, redirectedRaw, ok := repeatedDiagnosticLogReadFileBackfill(req, collectedResults); ok {
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirected.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         "repeated_diagnostic_log_read_previous_window",
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			req = redirected
+			raw = redirectedRaw
+		}
+		if summary, errorText, reject := diagnosticLogUnboundedReadCoverageRejection(req, collectedResults); reject {
+			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+			if done {
+				return finish(answer, err, "diagnostic_log_read_coverage_rejected", true)
+			}
+			continue
+		}
+		if summary, errorText, reject := repeatedDiagnosticLogReadFilePreviouslyReadRejection(req, collectedResults); reject {
+			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+			if done {
+				return finish(answer, err, "repeated_diagnostic_log_window_rejected", true)
+			}
+			continue
 		}
 		if redirected, redirectedRaw, ok := r.repeatedRangeLessReadFileRedirect(req, collectedResults, currentAllowedTools); ok {
 			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
@@ -2045,22 +2098,34 @@ func (r *Runner) Run(
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				requestBudget.postReadinessNoGapRejections++
-				// Nudge the model: name the gap or answer. Do not force-answer.
-				// The completion gate and budget gate handle real closures.
+				// First miss explains the contract; repeated misses close
+				// the loop by forcing an answer from gathered evidence.
 				summary, errorText := missingPostReadinessGapMessage(scope)
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
 					return finish(answer, err, "post_readiness_gap_required", true)
 				}
+				if requestBudget.postReadinessNoGapRejections >= 2 {
+					if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+						return finish(fallback, nil, "post_readiness_gap_required_budget_exhausted", true)
+					}
+					answer, err := controller.completeWithoutMoreToolsWithReason("Repeated post-readiness follow-up requests omitted `named_gap` and `why_not_answering`. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+					return finish(answer, err, "post_readiness_gap_required_budget_exhausted", true)
+				}
 				continue
 			}
 			if summary, errorText, rejected := invalidPostReadinessGap(scope, r.RuntimeBrief.Objective, req, collectedResults); rejected {
-				// Note: the per-rejection counter was removed (see
-				// runnerRequestBudgetState.readBudgetDecision). The invalid-
-				// gap rejection itself remains as a per-call schema nudge.
+				requestBudget.postReadinessInvalidGapRejections++
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
 					return finish(answer, err, "post_readiness_gap_invalid", true)
+				}
+				if requestBudget.postReadinessInvalidGapRejections >= 2 {
+					if fallback, ok := synthesizeNoToolsFallbackAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
+						return finish(fallback, nil, "post_readiness_gap_invalid_budget_exhausted", true)
+					}
+					answer, err := controller.completeWithoutMoreToolsWithReason("Repeated post-readiness follow-up requests failed the exact-probe contract. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+					return finish(answer, err, "post_readiness_gap_invalid_budget_exhausted", true)
 				}
 				continue
 			}
@@ -2315,6 +2380,13 @@ func (r *Runner) Run(
 				if allowRecoverablePostReadinessRepairExecution(req, *lastToolResult) {
 					delete(replayedToolRequests, toolKey)
 				} else {
+					if summary, errorText, reject := repeatedDiagnosticLogReadFileExactRejection(req, *lastToolResult); reject {
+						answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+						if done {
+							return finish(answer, err, "repeated_diagnostic_log_read_rejected", true)
+						}
+						continue
+					}
 					if replayedToolRequests[toolKey] > 0 {
 						answer, err, done := controller.rejectTool(
 							stepNumber,
@@ -3158,17 +3230,17 @@ func (r *Runner) Run(
 				rebuildTools()
 			}
 		}
-		// Conversation lane: the harness tracks inspected paths as
-		// evidence but does NOT declare the model ready to answer.
-		// Per north star: the model owns the decision of when
-		// evidence is sufficient.
-		if r.conversationEvidenceAvailableForObjective(collectedResults) && !conversationEvidenceNudged {
+		// Conversation lane: once source evidence is available, the
+		// generic post-readiness contract above owns further probes.
+		// Keep this inspected-path note only for lanes that have not
+		// entered answer readiness.
+		if r.conversationEvidenceAvailableForObjective(collectedResults) && !conversationEvidenceNudged && !delegatedReadOnlyAnswerReady {
 			conversationEvidenceNudged = true
 			inspected := conversationInspectedPathSummary(collectedResults)
 			if inspected != "" {
 				turnMessages = append(turnMessages, llama.ChatMessage{
 					Role:    "system",
-					Content: "Inspected paths so far: " + inspected + ". Use the note tool to capture your key findings now — notes persist across context compactions and will help you build your final answer. After capturing notes, consider whether you can answer the user's question.",
+					Content: "Inspected paths so far: " + inspected + ". Answer if the evidence supports the requested claim; otherwise continue only with one exact missing claim and one exact probe that would resolve it.",
 				})
 			}
 		}
@@ -3678,6 +3750,247 @@ func replayRepeatedToolRequest(req workspace.ToolRequest, source workspace.ToolR
 		Output:  source.Output,
 		Error:   source.Error,
 	}
+}
+
+func repeatedDiagnosticLogReadFileBackfill(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if strings.TrimSpace(req.Tool) != "read_file" || req.StartLine > 0 || req.EndLine > 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || !isDiagnosticLogArtifactPath(path) {
+		return workspace.ToolRequest{}, "", false
+	}
+	windows := diagnosticLogReadFileWindows(path, results)
+	nextStart, nextEnd, ok := diagnosticLogNextUnreadPreviousWindow(windows)
+	if !ok {
+		return workspace.ToolRequest{}, "", false
+	}
+	rewritten := req
+	rewritten.StartLine = nextStart
+	rewritten.EndLine = nextEnd
+	raw := marshalToolRequestRaw(rewritten)
+	if raw == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	return rewritten, raw, true
+}
+
+type diagnosticLogReadWindow struct {
+	start int
+	end   int
+	total int
+}
+
+func diagnosticLogReadFileWindows(path string, results []workspace.ToolResult) []diagnosticLogReadWindow {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return nil
+	}
+	var windows []diagnosticLogReadWindow
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if !runnerToolResultReadPathMatches(result, path) {
+			continue
+		}
+		start, end, total, ok := readFileSummaryLineWindow(result.Summary)
+		if !ok || start <= 0 || end < start || total <= 0 {
+			continue
+		}
+		windows = append(windows, diagnosticLogReadWindow{start: start, end: end, total: total})
+	}
+	return windows
+}
+
+func diagnosticLogUnboundedReadCoverageRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
+	if strings.TrimSpace(req.Tool) != "read_file" || req.StartLine > 0 || req.EndLine > 0 {
+		return "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || !isDiagnosticLogArtifactPath(path) {
+		return "", "", false
+	}
+	if !diagnosticLogWindowsCoverContiguousLog(diagnosticLogReadFileWindows(path, results)) {
+		return "", "", false
+	}
+	return "Diagnostic log read coverage exhausted",
+		"this diagnostic log has already been read back to line 1 and includes the current tail window. Do not replay the unbounded read. Answer from the gathered log evidence, or request one different bounded `start_line`/`end_line` window only if you can name the exact missing event range.",
+		true
+}
+
+func diagnosticLogNextUnreadPreviousWindow(windows []diagnosticLogReadWindow) (int, int, bool) {
+	merged, total := mergeDiagnosticLogReadWindows(windows)
+	if len(merged) == 0 || total <= 0 {
+		return 0, 0, false
+	}
+	tailIndex := -1
+	for i := len(merged) - 1; i >= 0; i-- {
+		if merged[i].end >= total {
+			tailIndex = i
+			break
+		}
+	}
+	if tailIndex < 0 {
+		return 0, 0, false
+	}
+	tail := merged[tailIndex]
+	gapEnd := tail.start - 1
+	if gapEnd < 1 {
+		return 0, 0, false
+	}
+	windowSize := tail.end - tail.start + 1
+	if windowSize <= 0 {
+		return 0, 0, false
+	}
+	lowerBound := 1
+	if tailIndex > 0 {
+		lowerBound = merged[tailIndex-1].end + 1
+	}
+	gapStart := gapEnd - windowSize + 1
+	if gapStart < lowerBound {
+		gapStart = lowerBound
+	}
+	if gapStart < 1 {
+		gapStart = 1
+	}
+	if gapStart > gapEnd {
+		return 0, 0, false
+	}
+	return gapStart, gapEnd, true
+}
+
+func diagnosticLogWindowsCoverContiguousLog(windows []diagnosticLogReadWindow) bool {
+	merged, total := mergeDiagnosticLogReadWindows(windows)
+	if total <= 0 {
+		return false
+	}
+	for _, window := range merged {
+		if window.start <= 1 && window.end >= total {
+			return true
+		}
+	}
+	return false
+}
+
+func mergeDiagnosticLogReadWindows(windows []diagnosticLogReadWindow) ([]diagnosticLogReadWindow, int) {
+	if len(windows) == 0 {
+		return nil, 0
+	}
+	total := 0
+	filtered := make([]diagnosticLogReadWindow, 0, len(windows))
+	for _, window := range windows {
+		if window.start <= 0 || window.end < window.start || window.total <= 0 {
+			continue
+		}
+		if window.total > total {
+			total = window.total
+		}
+		filtered = append(filtered, window)
+	}
+	if len(filtered) == 0 || total <= 0 {
+		return nil, total
+	}
+	sort.Slice(filtered, func(i, j int) bool {
+		if filtered[i].start == filtered[j].start {
+			return filtered[i].end < filtered[j].end
+		}
+		return filtered[i].start < filtered[j].start
+	})
+	merged := make([]diagnosticLogReadWindow, 0, len(filtered))
+	for _, window := range filtered {
+		if window.end > total {
+			window.end = total
+		}
+		if len(merged) == 0 || window.start > merged[len(merged)-1].end+1 {
+			merged = append(merged, diagnosticLogReadWindow{start: window.start, end: window.end, total: total})
+			continue
+		}
+		if window.end > merged[len(merged)-1].end {
+			merged[len(merged)-1].end = window.end
+		}
+		merged[len(merged)-1].total = total
+	}
+	return merged, total
+}
+
+func runnerToolResultReadPathMatches(result workspace.ToolResult, path string) bool {
+	for _, readPath := range readPathsFromToolResult(result) {
+		if normalizeRunnerPath(readPath) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func readFileSummaryLineWindow(summary string) (int, int, int, bool) {
+	match := readFileSummaryLineWindowPattern.FindStringSubmatch(summary)
+	if len(match) != 3 {
+		return 0, 0, 0, false
+	}
+	totalMatch := readFileSummaryTotalLinesPattern.FindStringSubmatch(summary)
+	if len(totalMatch) != 3 {
+		return 0, 0, 0, false
+	}
+	start, errStart := strconv.Atoi(match[1])
+	end, errEnd := strconv.Atoi(match[2])
+	totalText := totalMatch[1]
+	if totalText == "" {
+		totalText = totalMatch[2]
+	}
+	total, errTotal := strconv.Atoi(totalText)
+	if errStart != nil || errEnd != nil || errTotal != nil {
+		return 0, 0, 0, false
+	}
+	return start, end, total, true
+}
+
+func repeatedDiagnosticLogReadFileExactRejection(req workspace.ToolRequest, last workspace.ToolResult) (string, string, bool) {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || !isDiagnosticLogArtifactPath(path) {
+		return "", "", false
+	}
+	if strings.TrimSpace(last.Tool) != "read_file" || strings.TrimSpace(last.Error) != "" {
+		return "", "", false
+	}
+	for _, readPath := range readPathsFromToolResult(last) {
+		if normalizeRunnerPath(readPath) != path {
+			continue
+		}
+		return "Repeated diagnostic log read rejected",
+			"this exact diagnostic log read already returned evidence. Do not request the same log window again. If a missing fact remains, request a different bounded `start_line`/`end_line` window tied to that missing timestamp, event, or stop reason; inspect a named source path only if the log evidence points to it; otherwise answer from the gathered evidence.",
+			true
+	}
+	return "", "", false
+}
+
+func repeatedDiagnosticLogReadFilePreviouslyReadRejection(req workspace.ToolRequest, results []workspace.ToolResult) (string, string, bool) {
+	if strings.TrimSpace(req.Tool) != "read_file" || req.StartLine <= 0 || req.EndLine < req.StartLine {
+		return "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || !isDiagnosticLogArtifactPath(path) {
+		return "", "", false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "read_file" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if !runnerToolResultReadPathMatches(result, path) {
+			continue
+		}
+		start, end, _, ok := readFileSummaryLineWindow(result.Summary)
+		if !ok || start != req.StartLine || end != req.EndLine {
+			continue
+		}
+		return "Repeated diagnostic log window rejected",
+			"this bounded diagnostic log window already returned evidence earlier in the run. Do not request the same `start_line`/`end_line` window again. If a missing fact remains, request a different bounded window tied to the exact missing event, inspect a named source path pointed to by the log, or answer from the gathered evidence.",
+			true
+	}
+	return "", "", false
 }
 
 func allowRecoverablePostReadinessRepairExecution(req workspace.ToolRequest, lastToolResult workspace.ToolResult) bool {
@@ -6080,7 +6393,7 @@ func invalidPostReadinessGap(scope string, objective string, req workspace.ToolR
 				true
 		}
 	}
-	if summary, errorText, rejected := invalidPostReadinessProbeShape(scope, req, results, evidencePaths); rejected {
+	if summary, errorText, rejected := invalidPostReadinessProbeShape(scope, objective, req, results, evidencePaths); rejected {
 		return summary, errorText, true
 	}
 	return "", "", false
@@ -6097,11 +6410,11 @@ func closureEvidencePathsForScope(scope string, results []workspace.ToolResult) 
 	}
 }
 
-func invalidPostReadinessProbeShape(scope string, req workspace.ToolRequest, results []workspace.ToolResult, evidencePaths []string) (string, string, bool) {
+func invalidPostReadinessProbeShape(scope string, objective string, req workspace.ToolRequest, results []workspace.ToolResult, evidencePaths []string) (string, string, bool) {
 	if summary, errorText, rejected := invalidPostReadinessSemanticProbe(scope, req, results, evidencePaths); rejected {
 		return summary, errorText, true
 	}
-	if summary, errorText, rejected := invalidPostReadinessSearchProbe(scope, req, evidencePaths); rejected {
+	if summary, errorText, rejected := invalidPostReadinessSearchProbe(scope, objective, req, evidencePaths); rejected {
 		return summary, errorText, true
 	}
 	if strings.TrimSpace(req.Tool) != "read_file" {
@@ -6151,12 +6464,12 @@ func invalidPostReadinessProbeShape(scope string, req workspace.ToolRequest, res
 	return "Post-readiness follow-up is not an exact probe", strings.Join(lines, " "), true
 }
 
-func invalidPostReadinessSearchProbe(scope string, req workspace.ToolRequest, evidencePaths []string) (string, string, bool) {
+func invalidPostReadinessSearchProbe(scope string, objective string, req workspace.ToolRequest, evidencePaths []string) (string, string, bool) {
 	if strings.TrimSpace(req.Tool) != "search_content" {
 		return "", "", false
 	}
 	pattern := strings.TrimSpace(req.Pattern)
-	if !postReadinessSearchPatternLooksBroad(pattern) {
+	if !postReadinessSearchPatternLooksBroad(pattern, objective, req.NamedGap, req.WhyNotAnswering) {
 		return "", "", false
 	}
 	scopeLabel := "readiness"
@@ -6176,7 +6489,7 @@ func invalidPostReadinessSearchProbe(scope string, req workspace.ToolRequest, ev
 	return "Post-readiness search is broader than the current evidence requires", strings.Join(lines, " "), true
 }
 
-func postReadinessSearchPatternLooksBroad(pattern string) bool {
+func postReadinessSearchPatternLooksBroad(pattern string, anchors ...string) bool {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
 		return true
@@ -6184,7 +6497,42 @@ func postReadinessSearchPatternLooksBroad(pattern string) bool {
 	if strings.Contains(pattern, "|") || strings.Contains(pattern, ".*") || (strings.Contains(pattern, "[") && strings.Contains(pattern, "]")) {
 		return true
 	}
+	if postReadinessSearchPatternIsAnchoredShortLiteral(pattern, anchors...) {
+		return false
+	}
 	return len(postReadinessTokenSet(pattern)) == 0 && !codeShapedTokenPattern.MatchString(pattern) && !codeShapedSnakeCasePattern.MatchString(pattern)
+}
+
+func postReadinessSearchPatternIsAnchoredShortLiteral(pattern string, anchors ...string) bool {
+	literal := strings.Trim(strings.TrimSpace(pattern), "`'\"")
+	if len(literal) < 2 || len(literal) > 3 {
+		return false
+	}
+	if !shortPostReadinessSearchLiteralPattern.MatchString(literal) {
+		return false
+	}
+	switch strings.ToLower(literal) {
+	case "and", "are", "but", "can", "for", "how", "not", "the", "was", "why", "you":
+		return false
+	}
+	for _, anchor := range anchors {
+		if postReadinessTextContainsLiteral(anchor, literal) {
+			return true
+		}
+	}
+	return false
+}
+
+func postReadinessTextContainsLiteral(text string, literal string) bool {
+	lowerLiteral := strings.ToLower(literal)
+	for _, token := range strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	}) {
+		if token == lowerLiteral {
+			return true
+		}
+	}
+	return false
 }
 
 func invalidPostReadinessSemanticProbe(scope string, req workspace.ToolRequest, results []workspace.ToolResult, evidencePaths []string) (string, string, bool) {
@@ -6913,6 +7261,13 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 	if strings.HasPrefix(strings.TrimSpace(reply), "<<QUESTION>>") {
 		return workspace.ToolResult{}, false
 	}
+	if readPaths := sortedRunnerPathKeys(readPathsFromResults(results)); len(readPaths) > 0 {
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Read-only completion gate rejected final answer",
+			Error:   "read-only workspace answers require bounded codebase evidence before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ". Use one targeted source search/read/navigation request for a different concrete code path tied to the explicit question, or answer `<<QUESTION>>:` with the exact blocker.",
+		}, true
+	}
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Read-only completion gate rejected final answer",
@@ -6953,7 +7308,11 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 	if trimmed == "" {
 		return workspace.ToolResult{}, false
 	}
-	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
+	inspect := stripQuotedEvidenceForProcessIntent(trimmed)
+	if strings.TrimSpace(inspect) == "" {
+		return workspace.ToolResult{}, false
+	}
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(inspect), " ")) + " "
 	if containsAny(lower,
 		" blocked ",
 		" blocker ",
@@ -6996,6 +7355,26 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		Summary: "Completion gate rejected unresolved process narration",
 		Error:   "the reply describes an intended future search/read/inspection instead of completing the answer. Issue the needed tool call now, answer from gathered evidence, or state a concrete blocker.",
 	}, true
+}
+
+func stripQuotedEvidenceForProcessIntent(text string) string {
+	var out []string
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
+			inFence = !inFence
+			continue
+		}
+		if inFence {
+			continue
+		}
+		if strings.HasPrefix(trimmed, ">") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
 }
 
 // looksLikeToolResultTranscript returns true when the reply looks like
@@ -8106,7 +8485,11 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 		if path == "" {
 			continue
 		}
-		if !sourceCitationExists(r, path) {
+		citationPath := path
+		if resolved, ok := sourceCitationCanonicalPath(r, path, results); ok {
+			citationPath = resolved
+		}
+		if !sourceCitationExists(r, citationPath) {
 			if !strings.Contains(path, "/") &&
 				!sourceCitationLooksLikeRootPath(path) &&
 				!sourceCitationHasLineSuffix(answer, path) &&
@@ -8124,13 +8507,13 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 		if !sourceCitationClaimsSourceDetail(answer, path) {
 			continue
 		}
-		if sourceEvidenceBodyReadForPath(path, results) {
+		if sourceEvidenceBodyReadForPath(citationPath, results) {
 			continue
 		}
 		if sourceCitationExplicitlyNonCurrent(answer, path) || sourceCitationExplicitlyUnverified(answer, path) {
 			continue
 		}
-		unsupported = append(unsupported, path)
+		unsupported = append(unsupported, citationPath)
 	}
 	if len(missing) > 0 {
 		return "the answer cites current-workspace path(s) that do not exist: " + quotedRunnerStrings(uniqueSortedRunnerPaths(missing)) + ". Correct the citation, label it as historical/log-only evidence, or answer from inspected current source."
@@ -8139,6 +8522,39 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 		return "the answer cites source path/line/symbol detail not backed by a source-body read: " + quotedRunnerStrings(uniqueSortedRunnerPaths(unsupported)) + ". Use one exact read/code_navigate body probe for the claim, or qualify it as unverified."
 	}
 	return ""
+}
+
+func sourceCitationCanonicalPath(r *Runner, path string, results []workspace.ToolResult) (string, bool) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return "", false
+	}
+	if sourceCitationExists(r, path) {
+		return path, true
+	}
+	if strings.Contains(path, "/") || sourceCitationLooksLikeRootPath(path) {
+		return path, false
+	}
+	base := strings.ToLower(filepath.Base(path))
+	var matches []string
+	for _, candidate := range sourceEvidenceBodyPaths(results) {
+		candidate = normalizeRunnerPath(candidate)
+		if candidate == "" || strings.EqualFold(candidate, path) {
+			continue
+		}
+		if strings.ToLower(filepath.Base(candidate)) != base {
+			continue
+		}
+		if !sourceCitationExists(r, candidate) {
+			continue
+		}
+		matches = append(matches, candidate)
+	}
+	matches = uniqueSortedRunnerPaths(matches)
+	if len(matches) != 1 {
+		return path, false
+	}
+	return matches[0], true
 }
 
 func sourceGroundingMentionedPaths(answer string) []string {
@@ -9166,12 +9582,24 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 	if len(targets) == 0 {
 		targets = append(targets, brief.TargetRefs...)
 	}
+	readPaths := readPathsFromResults(results)
 	target := ""
-	if len(targets) > 0 {
-		target = normalizeRunnerPath(targets[0])
+	for _, rawTarget := range targets {
+		candidate := normalizeRunnerPath(rawTarget)
+		if candidate == "" {
+			continue
+		}
+		if _, alreadyRead := readPaths[candidate]; alreadyRead {
+			continue
+		}
+		target = candidate
+		break
 	}
 	if target != "" {
 		return fmt.Sprintf("The completion gate rejected a read-only final answer because no bounded workspace evidence has been gathered yet. The user named `%s`; make one parser-readable `read_file` request for that path now, then answer from the returned source. Do not edit files, run shell commands, or answer before the read result.\n\n```tool\n{\"tool\":\"read_file\",\"path\":\"%s\"}\n```", target, target)
+	}
+	if len(readPaths) > 0 {
+		return "The completion gate rejected a read-only final answer because the gathered evidence does not yet include the codebase source needed to answer the explicit question. The named path(s) already read should not be reread. Make one targeted source search/read/navigation request for a different concrete code path tied to the missing claim, then answer from that evidence. Do not edit files or run shell commands."
 	}
 	return "The completion gate rejected a read-only final answer because no bounded workspace evidence has been gathered yet. Make one targeted read/search/discovery request tied to the explicit question, then answer from the returned evidence. Do not edit files, run shell commands, or answer before evidence."
 }
@@ -12077,11 +12505,29 @@ func readFileResultHasConcreteSourceBody(result workspace.ToolResult) bool {
 	if strings.TrimSpace(result.Summary) == "" || !strings.Contains(text, "read ") {
 		return false
 	}
+	for _, path := range readPathsFromToolResult(result) {
+		if isDiagnosticLogArtifactPath(path) {
+			return false
+		}
+	}
 	if strings.Contains(text, "redirected") ||
 		strings.Contains(text, "file_outline") ||
 		strings.Contains(text, "capability: outline") ||
 		strings.Contains(text, "candidate_request") {
 		return false
+	}
+	return true
+}
+
+func readFileResultOnlyMentionsDiagnosticLogArtifacts(result workspace.ToolResult) bool {
+	paths := readPathsFromToolResult(result)
+	if len(paths) == 0 {
+		return false
+	}
+	for _, path := range paths {
+		if !isDiagnosticLogArtifactPath(path) {
+			return false
+		}
 	}
 	return true
 }
@@ -17951,6 +18397,25 @@ func isStrictDebugLogArtifactPath(path string) bool {
 	return mentionsConcreteDebugLogSelector(path)
 }
 
+func isDiagnosticLogArtifactPath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	lower = strings.TrimPrefix(lower, "./")
+	switch {
+	case lower == "logs" || strings.HasPrefix(lower, "logs/"):
+		return true
+	case lower == ".idiom/logs" || strings.HasPrefix(lower, ".idiom/logs/"):
+		return true
+	case lower == ".idiom/comprehension/traces" || strings.HasPrefix(lower, ".idiom/comprehension/traces/"):
+		return true
+	case lower == "traces" || strings.HasPrefix(lower, "traces/"):
+		return true
+	case strings.Contains(lower, "/.idiom/logs/") || strings.Contains(lower, "/.idiom/comprehension/traces/"):
+		return true
+	default:
+		return false
+	}
+}
+
 func latestDebugLogSearchHit(results []workspace.ToolResult) (debugLogSearchHit, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
@@ -18865,11 +19330,41 @@ func (r *Runner) advertisedAllowedTools(base []string) []string {
 func textOnlyChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief) llama.ChatOptions {
 	opts.Tools = nil
 	opts.ToolChoice = ""
+	thinkingOff := false
+	opts.EnableThinking = &thinkingOff
+	opts.ChatTemplateKwargs = true
+	opts.PreserveThinking = false
 	limit := textOnlyMaxTokensForBrief(brief)
 	if opts.MaxTokens <= 0 || opts.MaxTokens > limit {
 		opts.MaxTokens = limit
 	}
 	return opts
+}
+
+func readOnlyEvidenceAvailableTerminalChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	if !readOnlyEvidenceAvailableTerminalVisibleOutput(brief, results) {
+		return opts
+	}
+	thinkingOff := false
+	opts.EnableThinking = &thinkingOff
+	opts.ChatTemplateKwargs = true
+	opts.PreserveThinking = false
+	return opts
+}
+
+func readOnlyEvidenceAvailableTerminalVisibleOutput(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) || artifactFinalAnswerBrief(brief) {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return false
+	}
+	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") ||
+		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+		return false
+	}
+	return genericReadOnlyEvidenceReady(brief, results)
 }
 
 func textOnlyMaxTokensForBrief(brief workerruntime.WorkerRuntimeBrief) int {
@@ -20606,6 +21101,23 @@ func samePathFingerprint(req workspace.ToolRequest) string {
 	return req.Tool + "|path:" + path
 }
 
+func finishShouldOverrideSourceEcho(answer string) bool {
+	if !looksLikeSourceEchoOnlyAnswer(answer) {
+		return false
+	}
+	lower := strings.ToLower(answer)
+	if !strings.Contains(lower, "no files were changed") {
+		return false
+	}
+	for _, path := range pathparse.MentionedWorkspacePaths(answer) {
+		path = normalizeRunnerPath(path)
+		if strings.HasPrefix(path, "internal/") || strings.HasPrefix(path, "logs/") {
+			return true
+		}
+	}
+	return false
+}
+
 // cleanToolRequestPathDisplay returns a short display value for a tool
 // request path suitable for progress nudges and event logs.
 func cleanToolRequestPathDisplay(path string) string {
@@ -20622,8 +21134,9 @@ func cleanToolRequestPathDisplay(path string) string {
 // These patterns indicate the model emitted transport-level noise
 // instead of addressing the user's request.
 func looksLikeNonAnswerProse(answer string) bool {
-	lower := strings.ToLower(strings.TrimSpace(answer))
-	if lower == "" {
+	trimmed := strings.TrimSpace(answer)
+	lower := strings.ToLower(trimmed)
+	if trimmed == "" {
 		return false
 	}
 	// Textual tool-call markup like [Calling tool: ...] in answer prose.
@@ -20635,14 +21148,20 @@ func looksLikeNonAnswerProse(answer string) bool {
 	if strings.HasPrefix(lower, "question:") {
 		return true
 	}
+	if looksLikeMetaIntentRestatement(trimmed) {
+		return true
+	}
 	// Raw tool-result transcript with no user-facing prose.
 	if looksLikeRawToolResultTranscript(answer) {
+		return true
+	}
+	if looksLikeSourceEchoOnlyAnswer(trimmed) {
 		return true
 	}
 	// Short answer dominated by tool-failure language: "rejected",
 	// "command failed", "exit status", "does not exist", etc.
 	// A genuine answer is never just a tool-error dump.
-	if len(strings.TrimSpace(answer)) < 300 {
+	if len(trimmed) < 300 {
 		toolFailure := strings.Contains(lower, "rejected") ||
 			strings.Contains(lower, "does not exist") ||
 			strings.Contains(lower, "cannot exist") ||
@@ -20656,6 +21175,68 @@ func looksLikeNonAnswerProse(answer string) bool {
 		}
 	}
 	return false
+}
+
+func looksLikeMetaIntentRestatement(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" || len(trimmed) > 700 || strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return false
+	}
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
+	if !containsAny(lower,
+		" the user is asking me to ",
+		" the user asked me to ",
+		" the user wants me to ",
+		" the user requested me to ",
+	) {
+		return false
+	}
+	if containsAny(lower,
+		" the answer is ",
+		" the likely cause is ",
+		" the root cause is ",
+		" because ",
+		" this means ",
+	) {
+		return false
+	}
+	return containsAny(lower,
+		" i need to find ",
+		" i need to inspect ",
+		" i need to search ",
+		" i need to read ",
+		" i need to check ",
+		" i should find ",
+		" i should inspect ",
+		" i should search ",
+		" i should read ",
+		" i should check ",
+	)
+}
+
+func looksLikeSourceEchoOnlyAnswer(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" || len(trimmed) > 700 || strings.HasPrefix(trimmed, "<<QUESTION>>") {
+		return false
+	}
+	lower := " " + strings.ToLower(strings.Join(strings.Fields(trimmed), " ")) + " "
+	if !looksLikeToolResultTranscript(lower) {
+		return false
+	}
+	if containsAny(lower,
+		" the answer is ",
+		" the likely cause is ",
+		" the root cause is ",
+		" the smallest fix ",
+		" the fix is ",
+		" because ",
+		" this means ",
+		" should reject ",
+		" should change ",
+	) {
+		return false
+	}
+	return true
 }
 
 // requiredEvidenceCheck maps structurally-verifiable evidence labels to

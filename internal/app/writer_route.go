@@ -22,7 +22,10 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	taskFamily := strings.TrimSpace(plan.route.Family)
 	reasonCodes := []string{"route.read_only_question"}
 	verificationOwner := ""
-	if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
+	if routeRequiresMutationConfirmation(plan) {
+		lane = "main"
+		reasonCodes = []string{"route.mutation_confirmation_required"}
+	} else if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
 		mode = writerroute.ModePlanSubmission
 		lane = "plan-execute"
 		reasonCodes = []string{"route.plan_execute_planner"}

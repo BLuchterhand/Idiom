@@ -301,6 +301,13 @@ the model-visible contract promised a capability the tool cannot satisfy. The
 north-star repair is to make the evidence path work or correct the advertised
 expectation, not to steer the model into a premature answer.
 
+Do not count safer failure as material capability. A repair materially improves
+Idiom only when live logs, evals, or focused tests show the original task class
+now reaches a useful grounded answer or action. If the evidence only shows that
+garbage output became a typed blocker, fallback, or narrower failure, classify
+the change as partial hardening; keep only the generic invariant fixes and
+continue root-cause work before calling the incident solved.
+
 Verification must match artifact risk. Patch-hygiene checks such as
 `git diff --check` can satisfy prose/config formatting checks, but they are not
 source-aware verification for code edits. Source edits require language

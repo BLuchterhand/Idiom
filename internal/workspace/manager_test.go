@@ -85,6 +85,37 @@ func TestGoDefinitionNoMatchIsEmptyEvidence(t *testing.T) {
 	}
 }
 
+func TestCodeNavigateGenericFallbackAllowsNoPathWhenPatternIsBounded(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/fallback\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "internal", "agent", "runner.go")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(source, []byte("package agent\n\nfunc reasoning_answer_salvage() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "helper.py"), []byte("def unrelated():\n    pass\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root, CommandTimeoutSeconds: 30})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "find_references",
+		Pattern:    "reasoning_answer_salvage",
+	})
+
+	if result.Error != "" {
+		t.Fatalf("pathless bounded fallback should not error, got %q", result.Error)
+	}
+	if !strings.Contains(result.Output, "internal/agent/runner.go") {
+		t.Fatalf("expected bounded navigation match, got summary=%q output=%q", result.Summary, result.Output)
+	}
+}
+
 func TestSourceSanityRoutesKnownLanguagesThroughDiagnosticsTool(t *testing.T) {
 	if got := sourceSanityDiagnosticToolForPath("native/tests/test_energy.cpp"); got != "cpp_diagnostics" {
 		t.Fatalf("cpp source_sanity tool = %q, want cpp_diagnostics", got)

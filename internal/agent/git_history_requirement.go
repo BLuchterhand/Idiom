@@ -152,6 +152,10 @@ func (r *Runner) submitPlanBeforeGitHistoryEvidenceRedirect(req workspace.ToolRe
 	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != "submit_plan" || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
 		return workspace.ToolRequest{}, "", false
 	}
+	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) > 0 &&
+		len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, results)) > 0 {
+		return workspace.ToolRequest{}, "", false
+	}
 	if planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(r.RuntimeBrief.RequiredEditPaths, req) {
 		return workspace.ToolRequest{}, "", false
 	}

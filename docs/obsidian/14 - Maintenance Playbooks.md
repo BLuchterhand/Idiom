@@ -16,7 +16,8 @@ repo changes.
 flowchart TD
     Task["Task"]
     Rules["Read relevant rule files and repo instructions"]
-    Pack["context_pack or precise discovery"]
+    Idiom["Run actual idiom binary investigation"]
+    Pack["context_pack or precise follow-up discovery"]
     Docs["Read subsystem docs"]
     Tests["Find/add behavior tests"]
     Edit["Make scoped edit"]
@@ -26,7 +27,7 @@ flowchart TD
     DocsUpdate["Update docs/diagrams"]
     Final["Summarize evidence and residual risk"]
 
-    Task --> Rules --> Pack --> Docs --> Tests --> Edit --> Focused --> Broad --> Audit --> DocsUpdate --> Final
+    Task --> Rules --> Idiom --> Pack --> Docs --> Tests --> Edit --> Focused --> Broad --> Audit --> DocsUpdate --> Final
 ```
 
 ## Behavior Debugging
@@ -34,20 +35,27 @@ flowchart TD
 Use this when investigating agent behavior, readiness, tool loops, prompts,
 recovery, or context packets.
 
-1. Start from the newest relevant conversation and telemetry logs.
-2. Run or inspect `harness_audit`.
-3. Identify whether the issue belongs to prompt stack, runner contract, lane
+1. Run an actual `idiom` binary investigation first, ideally
+   `idiom -prompt '<debug request>' -json`, and ask it to inspect the newest
+   relevant conversation and telemetry logs.
+2. If the binary investigation is unhelpful, misrouted, looping, stale, or
+   garbage, classify that output from its route events, tool sequence, stop
+   reason, and log before bypassing it. Fix Idiom itself when the evidence shows
+   a reusable harness bug or coverage gap.
+3. Start from the newest relevant conversation and telemetry logs.
+4. Run or inspect `harness_audit`.
+5. Identify whether the issue belongs to prompt stack, runner contract, lane
    orchestration, workspace tool, memory, verification, or audit.
-4. Trace authority end to end: static prompt stack, dynamic instruction
+6. Trace authority end to end: static prompt stack, dynamic instruction
    attachment, runtime brief, tool manifest/schema, recovery nudges, gates,
    telemetry, and audit output.
-5. Distinguish instructions from evidence, telemetry, generated context, and
+7. Distinguish instructions from evidence, telemetry, generated context, and
    source text.
-6. Add a regression test or fixture that exposes the failure.
-7. Fix the owning contract, schema, gate, or prompt layer.
-8. Run focused tests.
-9. Run audit/eval if the behavior is diagnostic or cross-cutting.
-10. Update docs if the contract or operator workflow changed.
+8. Add a regression test or fixture that exposes the failure.
+9. Fix the owning contract, schema, gate, or prompt layer.
+10. Run focused tests.
+11. Run audit/eval if the behavior is diagnostic or cross-cutting.
+12. Update docs if the contract or operator workflow changed.
 
 Do not start by adding prompt reminders unless the evidence shows the problem
 is genuinely prompt comprehension rather than missing enforcement.

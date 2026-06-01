@@ -25,14 +25,51 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 ## Working Style In This Repo
 
 - Do not guess paths. Discover them first.
-- Prefer this repo's discovery surface before generic file search or ad hoc reads. Start with the most specific applicable discovery/semantic tool, then fall back to standard search/read tools only when the discovery path does not answer the question.
-- The preferred order is: language-aware symbol/navigation tools, `discovery_query`, other structured discovery tools such as `structural_search`, `dependency_graph`, `history_*`, `blame_range`, `ctags_symbols`, `semgrep_scan`, or `joern_scan`, and only then generic `search_content` / `read_file` style inspection.
+- Default to an idiom-offloaded work loop: use the actual `idiom` binary and
+  CLI/context tools to research, debug, and gather evidence; synthesize and
+  verify the proposed approach outside idiom; then route actual repository
+  changes back through `idiom plan-execute` or `idiom lane plan-execute` by
+  default. Prefer the TUI/live operator path when the behavior under test is
+  user-facing, and monitor long-running CLI/TUI work by polling slowly and
+  reading only small bounded log or telemetry chunks.
+- If the issue is in idiom itself, keep the research and fix inside idiom unless
+  that bug blocks idiom from proceeding. When idiom is blocked, record the
+  session/failure id and blocker, then use the smallest external fallback needed
+  to continue.
+- For behavior-debugging and broad harness investigations, run through the
+  actual `idiom` binary first, preferably headless CLI such as `idiom -prompt
+  '<investigation>' -json` or `idiom -turns-file <file> -json`. Treat the
+  binary's route, tool sequence, answer, and log as the first diagnostic
+  artifact before reaching for lower-level workspace tools or raw shell search.
+  For simple literal lookups or already-localized source review, use the
+  narrowest exact tool.
+- If an `idiom` binary investigation returns unhelpful, stale, misrouted, or
+  garbage output, first decide whether that is an Idiom bug, coverage gap, or
+  missing contract that should be fixed for future runs. Use the run's
+  conversation log, route events, tool results, and stop reason as evidence. If
+  the binary result is merely incomplete but not a harness bug, proceed with the
+  normal debugging path and record that distinction.
+- After the binary has localized the question or proved unhelpful, prefer this
+  repo's discovery surface before generic file search or ad hoc reads. Start
+  with the most specific applicable discovery/semantic tool, then fall back to
+  standard search/read tools only when the discovery path does not answer the
+  question.
+- The preferred post-binary order is: language-aware symbol/navigation tools,
+  `discovery_query`, other structured discovery tools such as
+  `structural_search`, `dependency_graph`, `history_*`, `blame_range`,
+  `ctags_symbols`, `semgrep_scan`, or `joern_scan`, and only then generic
+  `search_content` / `read_file` style inspection.
 - External agents (opencode, Codex, Claude, etc.) can invoke idiom's workspace tools directly via the CLI without starting an inference session. Use `idiom tool <tool-name> --input '<json>'` or pipe JSON on stdin. Run `idiom tool help` for usage and `idiom tool list` for all available tools.
 - Keep edits targeted. Preserve user changes and do not widen scope without cause.
 - Before changing or reverting established behavior, inspect relevant git history
   with `history_range`, `history_symbol`, `blame_range`, or focused `git log`
   when the prior rationale is not obvious. Treat commit messages as evidence of
   why a decision exists, not as unquestionable authority.
+- Before sending or committing a behavior fix, step back and state the deepest
+  generic root cause supported by the logs. Validate that hypothesis with the
+  debugging reviewer bench, then implement the smallest contract-level fix that
+  addresses that root cause. Do not land symptom patches or lane-specific
+  workarounds while a broader harness contract explains the failure.
 - For non-trivial write work, keep a short explicit plan/checklist so the intended edits and verification stay visible.
 - When committing, make the commit body useful future evidence: explain the
   problem or failure that forced the change, the chosen contract/design, any
@@ -45,9 +82,19 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
 
 For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or context packets:
 
+- Start with an actual `idiom` binary investigation whenever the binary can run:
+  ask it to inspect the newest relevant logs and produce the evidence trail. If
+  that investigation misroutes, loops, fabricates, or fails to use available
+  evidence, treat the failed investigation itself as behavior-debugging evidence
+  and consider whether the harness should be fixed before bypassing it.
 - Treat conversation logs, telemetry logs, and `harness_audit` as the source of truth for what happened. Start from the newest relevant `.idiom/logs/conversations/*.jsonl`, `logs/conversations/*.jsonl`, and `logs/telemetry/*.jsonl` records before changing prompts, rails, gates, or tests. Do not rely on memory, summaries, or the user's paraphrase of the run when logs are available.
 - Record the evidence trail in your diagnosis: exact session/log path(s), relevant stop reason(s), rejected tool/error counts, completion-gate or recovery events, and the tool sequence that proves the failure shape. If you cannot name those facts yet, keep inspecting logs instead of patching.
 - Compare the newest failure against prior similar logs before choosing a fix. A recurring behavior bug should be classified from log patterns across attempts, not from the single most recent transcript alone.
+- When an investigation starts to chase prompt wording, a lane name, a single
+  path, or a repeated tool call, pause and reclassify the failure at the deepest
+  contract boundary that explains the evidence. Prefer fixes to runtime
+  contracts, tool affordances, completion/readiness gates, or final-answer
+  transport over scenario-specific prompt nudges.
 - Treat `harness_audit` behavior output as local diagnostic evidence. Before storing, sharing, or committing audit artifacts, redact raw prompt, raw transcript, log excerpt, file-body, secret, and customer-identifying fields; keep aggregate counts, command IDs, paths, findings, and session IDs needed for reproduction.
 - Do not treat contract audit `all_clear` as sufficient by itself. Check `contract_coverage.gate_coverage.open_obligation_refs`, unresolved obligations, invalid-event warnings, and sidecar/tool correlation findings before using audit output as proof.
 - If the logs do not make the failure shape obvious, improve the structured logging or audit coverage as part of the fix. A harness behavior bug is not fully diagnosable until conversation/telemetry logs and audit output can surface the same class of failure without hand-reconstructing raw prose.
@@ -61,6 +108,10 @@ For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or 
   independent reviewer to check that analysis before applying or finalizing the
   fix; if reviewer feedback changes the diagnosis, narrow or redesign the patch
   before proceeding.
+- Do not send behavior-debugging work as complete until the final hypothesis has
+  been validated by reviewers after the last material design change. If a live
+  CLI run exposes a deeper generic cause, revise the hypothesis and repeat
+  review before finalizing.
 - Use the reviewer bench in [docs/debugging-reviewer-bench.md](docs/debugging-reviewer-bench.md)
   for behavior-debugging review. Default to Incident Root-Cause Reviewer plus one
   specialist; add a second specialist only when the evidence spans two concrete
@@ -124,13 +175,25 @@ When invoked via CLI, the tool result is printed as JSON with `Tool`, `Summary`,
 
 When investigating this codebase, the right order is:
 
-1. **`context_pack`** with the task string → ranked candidates, cached.
-2. **Language-aware tools** (`go_find_symbol`, `code_navigate`, `cpp_*`, `python_*`, etc.) for symbol-shaped questions covered by the active language backend.
-3. **`trace_code` / `lookup` / `api_access` / `struct_shape` / `fixture_inventory`** (under `discovery_query`) for graph-shaped or test-fixture questions.
-4. **`structural_search`** for AST-aware patterns.
-5. **`grep`/`rg`/`Read`** for literal strings, comments, doctest names, single-known-file scans, and anywhere the discovery surface doesn't cover the question.
+1. **Actual `idiom` binary for behavior debugging or broad harness
+   investigations** with the investigation prompt, preferably `idiom -prompt
+   '<question>' -json` or `idiom -turns-file <file> -json`. Inspect its route,
+   tools, answer, and log before using lower-level tools. For simple literal
+   lookups or already-localized source review, skip directly to the narrow exact
+   tool.
+2. **`context_pack`** with the same stable task string → ranked candidates,
+   cached, especially when the binary points at a broad code area or when you
+   need a direct CLI follow-up.
+3. **Language-aware tools** (`go_find_symbol`, `code_navigate`, `cpp_*`, `python_*`, etc.) for symbol-shaped questions covered by the active language backend.
+4. **`trace_code` / `lookup` / `api_access` / `struct_shape` / `fixture_inventory`** (under `discovery_query`) for graph-shaped or test-fixture questions.
+5. **`structural_search`** for AST-aware patterns.
+6. **`grep`/`rg`/`Read`** for literal strings, comments, doctest names, single-known-file scans, and anywhere the discovery surface doesn't cover the question.
 
-If you find yourself ten greps deep without having tried `context_pack` once, you're holding the tool wrong. Inversely, don't use `context_pack` for "find the literal string `===END===`" — that's grep territory.
+If you are debugging behavior or doing broad harness investigation and find
+yourself ten greps deep without having tried the actual `idiom` binary once,
+you're holding the tool wrong. Inversely, once the binary has localized a
+literal or single-known-file check, use the simplest exact follow-up instead of
+forcing another broad packet.
 
 ## Verification
 

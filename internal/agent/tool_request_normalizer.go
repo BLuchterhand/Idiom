@@ -572,6 +572,10 @@ func normalizeParsedToolRequestSyntax(result *toolRequestSyntaxNormalization) {
 		result.Raw = marshalToolRequestRaw(result.Request)
 		result.Repaired = true
 	}
+	if normalizeReadFileLinesAlias(result) {
+		result.Raw = marshalToolRequestRaw(result.Request)
+		result.Repaired = true
+	}
 	if normalizeCodeNavigateMissingCapability(&result.Request) {
 		result.Raw = marshalToolRequestRaw(result.Request)
 		result.Repaired = true
@@ -584,6 +588,68 @@ func normalizeReadToolAlias(req *workspace.ToolRequest) bool {
 	}
 	req.Tool = "read_file"
 	return true
+}
+
+func normalizeReadFileLinesAlias(result *toolRequestSyntaxNormalization) bool {
+	if result == nil || strings.TrimSpace(result.Request.Tool) != "read_file" || result.Request.StartLine > 0 || result.Request.EndLine > 0 {
+		return false
+	}
+	start, end, ok := readFileLinesAliasFromRaw(result.Raw)
+	if !ok {
+		return false
+	}
+	result.Request.StartLine = start
+	result.Request.EndLine = end
+	return true
+}
+
+func readFileLinesAliasFromRaw(raw string) (int, int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || !strings.HasPrefix(raw, "{") {
+		return 0, 0, false
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil {
+		return 0, 0, false
+	}
+	value, ok := fields["lines"]
+	if !ok {
+		return 0, 0, false
+	}
+	var text string
+	if err := json.Unmarshal(value, &text); err == nil {
+		return parseReadFileLinesAlias(text)
+	}
+	var number int
+	if err := json.Unmarshal(value, &number); err == nil {
+		if number <= 0 {
+			return 0, 0, false
+		}
+		return number, number, true
+	}
+	return 0, 0, false
+}
+
+func parseReadFileLinesAlias(raw string) (int, int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, 0, false
+	}
+	for _, sep := range []string{"-", ":"} {
+		if left, right, ok := strings.Cut(raw, sep); ok {
+			start, errStart := strconv.Atoi(strings.TrimSpace(left))
+			end, errEnd := strconv.Atoi(strings.TrimSpace(right))
+			if errStart != nil || errEnd != nil || start <= 0 || end < start {
+				return 0, 0, false
+			}
+			return start, end, true
+		}
+	}
+	line, err := strconv.Atoi(raw)
+	if err != nil || line <= 0 {
+		return 0, 0, false
+	}
+	return line, line, true
 }
 
 func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
@@ -838,6 +904,9 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Resolution) != "" && syntaxToolRequestUsesCapabilityAlias(req.Tool) {
 		req.Capability = req.Resolution
 	}
+	if strings.TrimSpace(req.Path) == "" && strings.TrimSpace(values["scope"]) != "" {
+		req.Path = values["scope"]
+	}
 	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Symbol) != "" {
 		req.Pattern = req.Symbol
 	}
@@ -845,20 +914,16 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		req.Pattern = req.Query
 	}
 
-	// Parse lines alias: "lines: N-M" becomes start_line=N, end_line=M;
-	// "lines: N" becomes start_line=N, end_line=N.
-	if raw := strings.TrimSpace(values["lines"]); raw != "" {
-		if dash := strings.Index(raw, "-"); dash >= 0 {
-			if s, err := strconv.Atoi(strings.TrimSpace(raw[:dash])); err == nil {
-				req.StartLine = s
-			}
-			if e, err := strconv.Atoi(strings.TrimSpace(raw[dash+1:])); err == nil {
-				req.EndLine = e
-			}
-		} else if v, err := strconv.Atoi(raw); err == nil {
-			req.StartLine = v
-			req.EndLine = v
+	// Parse read_file lines alias: "lines: N-M" becomes start_line=N,
+	// end_line=M; "lines: N" becomes start_line=N, end_line=N.
+	if raw := strings.TrimSpace(values["lines"]); strings.TrimSpace(req.Tool) == "read_file" &&
+		strings.TrimSpace(values["start_line"]) == "" && strings.TrimSpace(values["end_line"]) == "" && raw != "" {
+		start, end, ok := parseReadFileLinesAlias(raw)
+		if !ok {
+			return workspace.ToolRequest{}, false
 		}
+		req.StartLine = start
+		req.EndLine = end
 	}
 
 	for key, assign := range map[string]func(int){
@@ -913,7 +978,7 @@ func syntaxToolRequestUsesCapabilityAlias(tool string) bool {
 
 func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
-	case "tool", "id", "key", "path", "file", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
+	case "tool", "id", "key", "path", "file", "scope", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
 		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
 		"include_evidence", "include_source", "include_files", "refresh", "lines",
 		"purpose", "command", "description", "content", "prompt", "agent", "workdir", "handle", "root", "destination", "status",

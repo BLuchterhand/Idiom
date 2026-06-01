@@ -975,6 +975,59 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	if help.Family != "coding_help" || help.Scenario.RequireVerification != "none" || !help.Oracle.RequireNoShell || !help.Oracle.RequireNoChangedFiles {
 		t.Fatalf("coding-help task must stay read-only, family=%q scenario=%#v oracle=%#v", help.Family, help.Scenario, help.Oracle)
 	}
+
+	diagnostic, ok := taskByID["scripted-diagnostic-log-lines-alias-repeat-recovery"]
+	if !ok {
+		t.Fatalf("diagnostic log line-alias recovery task missing")
+	}
+	assertTaskHasTags(t, diagnostic, "information", "json-normalization", "repeated-rejection", "read-only", "rollback")
+	assertTaskHasRunEvents(t, diagnostic,
+		"idiom.live_contract.workspace_prepared",
+		"idiom.live_contract.resolved_config",
+		"idiom.live_contract.rollback",
+		"idiom.scripted_model.requests",
+	)
+	if diagnostic.Env["IDIOM_WORKSPACE_EXTRA_FILES_JSON"] == "" ||
+		!strings.Contains(diagnostic.Env["IDIOM_WORKSPACE_EXTRA_FILES_JSON"], "logs/conversations/debug-loop.jsonl") {
+		t.Fatalf("diagnostic task must seed a fixture diagnostic log, env=%#v", diagnostic.Env)
+	}
+	if !slices.Contains(diagnostic.Scenario.RequireTools, "read_file") ||
+		!slices.Contains(diagnostic.Scenario.RequireRejectedTools, "read_file") ||
+		!slices.Contains(diagnostic.Scenario.RequireEvidencePaths, "logs/conversations/debug-loop.jsonl") {
+		t.Fatalf("diagnostic task must pin successful and rejected diagnostic reads, scenario=%#v", diagnostic.Scenario)
+	}
+	if diagnostic.Oracle.Groundedness == nil || !diagnostic.Oracle.RequireNoChangedFiles || !diagnostic.Oracle.RequireCleanRollback {
+		t.Fatalf("diagnostic task must be grounded and rollback-scored, oracle=%#v", diagnostic.Oracle)
+	}
+
+	for _, id := range []string{
+		"scripted-direct-answer-post-readiness-no-gap-fallback",
+		"scripted-direct-answer-post-readiness-invalid-gap-fallback",
+	} {
+		task, ok := taskByID[id]
+		if !ok {
+			t.Fatalf("%s task missing", id)
+		}
+		assertTaskHasTags(t, task, "information", "grounded-answer", "repeated-rejection", "read-only", "rollback")
+		assertTaskHasRunEvents(t, task,
+			"idiom.live_contract.workspace_prepared",
+			"idiom.live_contract.resolved_config",
+			"idiom.live_contract.rollback",
+			"idiom.scripted_model.requests",
+			"failure_feedback",
+			"turn_summary",
+		)
+		if !slices.Contains(task.Scenario.RequireTools, "read_file") ||
+			!slices.Contains(task.Scenario.RequireEvidencePaths, "internal/labels/labels.go") {
+			t.Fatalf("%s must pin evidence read plus rejected post-readiness read, scenario=%#v", id, task.Scenario)
+		}
+		if !slices.Contains(task.Scenario.ForbidFinalAssistantContains, "BAD_FALLBACK_NOT_USED") ||
+			task.Oracle.Groundedness == nil ||
+			!task.Oracle.RequireNoChangedFiles ||
+			!task.Oracle.RequireCleanRollback {
+			t.Fatalf("%s must require deterministic fallback rather than another model answer, scenario=%#v oracle=%#v", id, task.Scenario, task.Oracle)
+		}
+	}
 }
 
 func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
