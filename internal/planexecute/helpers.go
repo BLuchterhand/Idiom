@@ -1807,7 +1807,20 @@ func RunExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 
 func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
-	verificationCommands = VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, planChangedPaths(plan))
+	verificationPlan := PlanVerification(VerificationPlannerInput{
+		WorkspaceRoot:    cfg.Workspace.Root,
+		ExplicitCommands: verificationCommands,
+		ChangedPaths:     planChangedPaths(plan),
+	})
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
+}
+
+func RunExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
+	plan = workspace.NormalizeLoadedPlanArtifact(plan)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
+}
+
+func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	report := ExecutorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")
@@ -1987,7 +2000,7 @@ func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 		})
 		return report, err
 	}
-	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, jsonEvents, stdout)
+	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, jsonEvents, stdout)
 	report.Verification = verificationEvidence
 	if verificationErr != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
@@ -2010,38 +2023,57 @@ func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 		"source_sanity_checked": sourceSanityChecked,
 		"source_sanity_status":  "passed",
 		"verification_checked":  verificationChecked,
-		"verification_status":   planExecuteVerificationStatus(verificationEvidence),
+		"verification_status":   VerificationStatus(verificationEvidence),
 		"duration_ms":           time.Since(executorStartedAt).Milliseconds(),
 	})
 	return report, nil
 }
 
-func runPlanExecuteVerificationCommands(root string, commands []string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
-	commands = planExecuteVerificationCommands(commands)
-	evidence := make([]PhaseEvidenceCheck, 0, len(commands))
-	for _, command := range commands {
+func RunVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
+	return runPlanExecuteVerificationPlan(root, plan, jsonEvents, stdout)
+}
+
+func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
+	evidence := make([]PhaseEvidenceCheck, 0, len(plan.Commands))
+	for _, command := range plan.Commands {
 		check := runPlanExecuteVerificationCommand(root, command)
 		evidence = append(evidence, check)
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", map[string]any{
-			"command": command,
+		event := map[string]any{
+			"command": command.Command,
 			"status":  check.Status,
 			"summary": check.Summary,
 			"error":   check.Error,
-		})
+		}
+		if check.WorkingDir != "" {
+			event["working_dir"] = check.WorkingDir
+		}
+		if command.Source != "" {
+			event["source"] = command.Source
+		}
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", event)
 		if !jsonEvents {
-			fmt.Fprintf(stdout, "  verification %s ... %s\n", command, check.Status)
+			location := ""
+			if check.WorkingDir != "" {
+				location = " (dir " + check.WorkingDir + ")"
+			}
+			fmt.Fprintf(stdout, "  verification %s%s ... %s\n", command.Command, location, check.Status)
 		}
 		if check.Status != "ok" && check.Status != "passed" {
-			return len(evidence), evidence, fmt.Errorf("verification failed for %q: %s", command, firstNonEmptyString(check.Error, check.Summary))
+			return len(evidence), evidence, fmt.Errorf("verification failed for %q: %s", command.Command, firstNonEmptyString(check.Error, check.Summary))
 		}
 	}
 	return len(evidence), evidence, nil
 }
 
-func runPlanExecuteVerificationCommand(root string, command string) PhaseEvidenceCheck {
-	command = strings.TrimSpace(command)
-	check := PhaseEvidenceCheck{Kind: "verification", Command: command, Status: "failed"}
-	args, ok := VerificationCommandArgs(command)
+func runPlanExecuteVerificationCommand(root string, command VerificationCommand) PhaseEvidenceCheck {
+	command.Command = strings.TrimSpace(command.Command)
+	check := PhaseEvidenceCheck{
+		Kind:       "verification",
+		Command:    command.Command,
+		WorkingDir: command.WorkingDir,
+		Status:     "failed",
+	}
+	args, ok := VerificationCommandArgs(command.Command)
 	if !ok {
 		check.Error = "unsupported verification command"
 		return check
@@ -2050,6 +2082,9 @@ func runPlanExecuteVerificationCommand(root string, command string) PhaseEvidenc
 	cmd.Dir = strings.TrimSpace(root)
 	if cmd.Dir == "" {
 		cmd.Dir = "."
+	}
+	if command.WorkingDir != "" {
+		cmd.Dir = filepath.Join(cmd.Dir, filepath.FromSlash(command.WorkingDir))
 	}
 	out, err := cmd.CombinedOutput()
 	output := truncatePlanExecuteText(strings.TrimSpace(string(out)), 12000)
@@ -2063,7 +2098,7 @@ func runPlanExecuteVerificationCommand(root string, command string) PhaseEvidenc
 	return check
 }
 
-func planExecuteVerificationStatus(evidence []PhaseEvidenceCheck) string {
+func VerificationStatus(evidence []PhaseEvidenceCheck) string {
 	if len(evidence) == 0 {
 		return "not_applicable"
 	}
@@ -2073,6 +2108,10 @@ func planExecuteVerificationStatus(evidence []PhaseEvidenceCheck) string {
 		}
 	}
 	return "passed"
+}
+
+func planExecuteVerificationStatus(evidence []PhaseEvidenceCheck) string {
+	return VerificationStatus(evidence)
 }
 
 func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, root string, paths []string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
@@ -3009,7 +3048,11 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 	if len(bundle.Verification) > 0 {
 		b.WriteString("verification:\n")
 		for _, check := range bundle.Verification {
-			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Command, check.Status, check.Summary, check.Error)
+			workingDir := ""
+			if strings.TrimSpace(check.WorkingDir) != "" {
+				workingDir = " working_dir=" + strings.TrimSpace(check.WorkingDir)
+			}
+			fmt.Fprintf(&b, "- `%s`%s status=%s summary=%s error=%s\n", check.Command, workingDir, check.Status, check.Summary, check.Error)
 		}
 	}
 	fmt.Fprintf(&b, "patch_hygiene: status=%s", bundle.PatchHygiene.Status)
@@ -3127,6 +3170,9 @@ func phaseEvidenceTelemetryChecks(checks []PhaseEvidenceCheck, limit int) []map[
 		}
 		if command := strings.TrimSpace(check.Command); command != "" {
 			entry["command"] = phaseEvidenceTruncate(command, 240)
+		}
+		if workingDir := strings.TrimSpace(check.WorkingDir); workingDir != "" {
+			entry["working_dir"] = phaseEvidenceTruncate(workingDir, 240)
 		}
 		if summary := strings.TrimSpace(check.Summary); summary != "" {
 			entry["summary"] = phaseEvidenceTruncate(summary, 240)

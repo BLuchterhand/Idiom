@@ -80,7 +80,11 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	requiredEditPaths := scopeContract.RequiredCoveragePaths
 	allowedEditPaths := scopeContract.AllowedCandidatePaths
 	editSetObligations := scopeContract.EditSetObligations
-	verificationCommands := planExecuteRequestedVerificationCommands(prompt)
+	verificationPlan := PlanVerification(VerificationPlannerInput{
+		WorkspaceRoot: cfg.Workspace.Root,
+		Prompt:        prompt,
+	})
+	verificationCommands := verificationPlan.CommandStrings()
 	opts.ScopeContract = scopeContract
 	opts.EditSetObligations = editSetObligations
 	promptRequiredEditPaths := RequiredEditPathsFromPrompt(prompt)
@@ -402,7 +406,12 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	changedPaths := planChangedPaths(plan)
-	verificationCommands = VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, changedPaths)
+	verificationPlan = PlanVerification(VerificationPlannerInput{
+		WorkspaceRoot: cfg.Workspace.Root,
+		Prompt:        prompt,
+		ChangedPaths:  changedPaths,
+	})
+	verificationCommands = verificationPlan.CommandStrings()
 	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
 		message := EditSetObligationFailureMessage(reason)
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
@@ -455,7 +464,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			opts.OnEditProgress(step, total, path, succeeded)
 		}
 	}
-	report, runErr := RunExecutorPhaseScopedWithVerification(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationCommands, opts.JSONEvents, stdout, progressCallback)
+	report, runErr := RunExecutorPhaseScopedWithVerificationPlan(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationPlan, opts.JSONEvents, stdout, progressCallback)
 	if runErr == nil && progressSaveErr != nil {
 		runErr = progressSaveErr
 	}
@@ -505,7 +514,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		if (sourceSanityRepairRequired || verificationRepairRequired) && reviewErr == nil {
 			if ReviewRepairResolvedVerificationFailure(reviewReport) {
 				if verificationRepairRequired {
-					_, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, opts.JSONEvents, stdout)
+					_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
 					report.Verification = verificationEvidence
 					progress.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
 					if verificationErr != nil {
@@ -611,8 +620,12 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	reviewReport, reviewErr := RunReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)
 	state.MarkReviewComplete(reviewReport, reviewErr)
 	if reviewErr == nil && ExecutorVerificationFailed(report, fmt.Errorf("verification failed")) && ReviewRepairResolvedVerificationFailure(reviewReport) {
-		verificationCommands := planExecuteRequestedVerificationCommands(prompt)
-		_, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, opts.JSONEvents, stdout)
+		verificationPlan := PlanVerification(VerificationPlannerInput{
+			WorkspaceRoot: cfg.Workspace.Root,
+			Prompt:        prompt,
+			ChangedPaths:  planChangedPaths(plan),
+		})
+		_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
 		state.Executor.Verification = append([]PhaseEvidenceCheck(nil), verificationEvidence...)
 		if verificationErr != nil {
 			reviewErr = verificationErr

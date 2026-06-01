@@ -259,10 +259,7 @@ PY
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
-	fixturePath, err := filepath.Abs(filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
-	if err != nil {
-		t.Fatalf("fixture path: %v", err)
-	}
+	fixturePath := copyTestFixtureDir(t, filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
 	fixtureLeak := filepath.Join(fixturePath, "logs", "telemetry", "cwd-leak.jsonl")
 	_ = os.Remove(fixtureLeak)
 	cmd := exec.Command("bash", scriptPath)
@@ -357,10 +354,7 @@ PY
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
-	fixturePath, err := filepath.Abs(filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
-	if err != nil {
-		t.Fatalf("fixture path: %v", err)
-	}
+	fixturePath := copyTestFixtureDir(t, filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
 	cmd := exec.Command("bash", scriptPath)
 	cmd.Dir = fixturePath
 	cmd.Env = append(os.Environ(),
@@ -501,6 +495,39 @@ func mustCommandOutput(t *testing.T, name string, args ...string) []byte {
 		t.Fatalf("%s %v failed: %v\n%s", name, args, err, output)
 	}
 	return output
+}
+
+func copyTestFixtureDir(t *testing.T, src string) string {
+	t.Helper()
+	absSrc, err := filepath.Abs(src)
+	if err != nil {
+		t.Fatalf("fixture path: %v", err)
+	}
+	dst := filepath.Join(t.TempDir(), filepath.Base(absSrc))
+	if err := filepath.Walk(absSrc, func(path string, info os.FileInfo, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		rel, err := filepath.Rel(absSrc, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	}); err != nil {
+		t.Fatalf("copy fixture %s: %v", absSrc, err)
+	}
+	return dst
 }
 
 func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {

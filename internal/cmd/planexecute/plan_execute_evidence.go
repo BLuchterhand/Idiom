@@ -1,4 +1,5 @@
 package planexecute
+
 import (
 	"encoding/json"
 	"fmt"
@@ -90,12 +91,13 @@ type phaseEvidenceTest struct {
 }
 
 type phaseEvidenceCheck struct {
-	Kind    string `json:"kind"`
-	Path    string `json:"path,omitempty"`
-	Command string `json:"command,omitempty"`
-	Status  string `json:"status"`
-	Summary string `json:"summary,omitempty"`
-	Error   string `json:"error,omitempty"`
+	Kind       string `json:"kind"`
+	Path       string `json:"path,omitempty"`
+	Command    string `json:"command,omitempty"`
+	WorkingDir string `json:"working_dir,omitempty"`
+	Status     string `json:"status"`
+	Summary    string `json:"summary,omitempty"`
+	Error      string `json:"error,omitempty"`
 }
 
 type phaseEvidenceSummary struct {
@@ -527,7 +529,11 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 	if len(bundle.Verification) > 0 {
 		b.WriteString("verification:\n")
 		for _, check := range bundle.Verification {
-			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Command, check.Status, check.Summary, check.Error)
+			workingDir := ""
+			if strings.TrimSpace(check.WorkingDir) != "" {
+				workingDir = " working_dir=" + strings.TrimSpace(check.WorkingDir)
+			}
+			fmt.Fprintf(&b, "- `%s`%s status=%s summary=%s error=%s\n", check.Command, workingDir, check.Status, check.Summary, check.Error)
 		}
 	}
 	fmt.Fprintf(&b, "patch_hygiene: status=%s", bundle.PatchHygiene.Status)
@@ -645,6 +651,9 @@ func phaseEvidenceTelemetryChecks(checks []phaseEvidenceCheck, limit int) []map[
 		}
 		if command := strings.TrimSpace(check.Command); command != "" {
 			entry["command"] = phaseEvidenceTruncate(command, 240)
+		}
+		if workingDir := strings.TrimSpace(check.WorkingDir); workingDir != "" {
+			entry["working_dir"] = phaseEvidenceTruncate(workingDir, 240)
 		}
 		if summary := strings.TrimSpace(check.Summary); summary != "" {
 			entry["summary"] = phaseEvidenceTruncate(summary, 240)

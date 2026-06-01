@@ -3436,6 +3436,9 @@ func TestHistoryAndBlameToolsUseGit(t *testing.T) {
 	if history.Error != "" {
 		t.Fatalf("history_range returned error: %v\n%s", history.Error, history.Output)
 	}
+	if history.Code != "" {
+		t.Fatalf("tracked history_range Code = %q, want empty; result=%#v", history.Code, history)
+	}
 	if !strings.Contains(history.Output, "change add") || !strings.Contains(history.Output, "initial") {
 		t.Fatalf("expected git log -L output to include both commits, got:\n%s", history.Output)
 	}
@@ -3443,6 +3446,9 @@ func TestHistoryAndBlameToolsUseGit(t *testing.T) {
 	symbolHistory := mgr.Execute(context.Background(), ToolRequest{Tool: "history_symbol", Path: "sample.go", Pattern: "add"})
 	if symbolHistory.Error != "" {
 		t.Fatalf("history_symbol returned error: %v\n%s", symbolHistory.Error, symbolHistory.Output)
+	}
+	if symbolHistory.Code != "" {
+		t.Fatalf("tracked history_symbol Code = %q, want empty; result=%#v", symbolHistory.Code, symbolHistory)
 	}
 	if !strings.Contains(symbolHistory.Output, "change add") || !strings.Contains(symbolHistory.Output, "initial") {
 		t.Fatalf("expected git log -L symbol output to include both commits, got:\n%s", symbolHistory.Output)
@@ -3454,6 +3460,159 @@ func TestHistoryAndBlameToolsUseGit(t *testing.T) {
 	}
 	if !strings.Contains(blame.Output, "return a - b") {
 		t.Fatalf("expected blame output for changed line, got:\n%s", blame.Output)
+	}
+}
+
+func TestHistoryRangeReportsNotApplicableForNonGitRoot(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
+
+	assertHistoryNotApplicable(t, result, "non_git_root", "sample.go")
+}
+
+func TestHistoryRangeReportsNotApplicableForGitRepoWithoutHead(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	runTestCommand(t, root, "git", "init")
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
+
+	assertHistoryNotApplicable(t, result, "no_head", "sample.go")
+}
+
+func TestHistoryRangeReportsNotApplicableForUntrackedGitPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	runTestCommand(t, root, "git", "init")
+	runTestCommand(t, root, "git", "config", "user.email", "test@example.com")
+	runTestCommand(t, root, "git", "config", "user.name", "Test User")
+	writeWorkspaceFile(t, filepath.Join(root, "README.md"), "baseline\n")
+	runTestCommand(t, root, "git", "add", "README.md")
+	runTestCommand(t, root, "git", "commit", "-m", "initial")
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
+
+	assertHistoryNotApplicable(t, result, "untracked_path", "sample.go")
+}
+
+func TestHistoryRangeReportsNotApplicableForTrackedPathWithoutCommittedHistory(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	runTestCommand(t, root, "git", "init")
+	runTestCommand(t, root, "git", "config", "user.email", "test@example.com")
+	runTestCommand(t, root, "git", "config", "user.name", "Test User")
+	writeWorkspaceFile(t, filepath.Join(root, "README.md"), "baseline\n")
+	runTestCommand(t, root, "git", "add", "README.md")
+	runTestCommand(t, root, "git", "commit", "-m", "initial")
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+	runTestCommand(t, root, "git", "add", "sample.go")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
+
+	assertHistoryNotApplicable(t, result, "path_no_committed_history", "sample.go")
+}
+
+func TestHistoryRangeMissingPathRemainsError(t *testing.T) {
+	root := t.TempDir()
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "missing.go", StartLine: 1, EndLine: 1})
+
+	if result.Error == "" {
+		t.Fatalf("missing path should remain an error, got %#v", result)
+	}
+	if result.Code == HistoryNotApplicableCode {
+		t.Fatalf("missing path must not be reported as not applicable: %#v", result)
+	}
+}
+
+func TestHistoryRangeMissingGitBinaryRemainsError(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+	t.Setenv("PATH", "")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
+
+	if result.Error == "" || !strings.Contains(result.Error, "git is not installed") {
+		t.Fatalf("missing git binary should remain an error, got %#v", result)
+	}
+	if result.Code == HistoryNotApplicableCode {
+		t.Fatalf("missing git binary must not be reported as not applicable: %#v", result)
+	}
+}
+
+func TestHistorySymbolMalformedPatternRemainsError(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	root := t.TempDir()
+	runTestCommand(t, root, "git", "init")
+	runTestCommand(t, root, "git", "config", "user.email", "test@example.com")
+	runTestCommand(t, root, "git", "config", "user.name", "Test User")
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n\nfunc add(a int, b int) int { return a + b }\n")
+	runTestCommand(t, root, "git", "add", "sample.go")
+	runTestCommand(t, root, "git", "commit", "-m", "initial")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_symbol", Path: "sample.go", Pattern: "[["})
+
+	if result.Error == "" {
+		t.Fatalf("malformed history_symbol pattern should remain an error, got %#v", result)
+	}
+	if result.Code == HistoryNotApplicableCode {
+		t.Fatalf("malformed history_symbol pattern must not be reported as not applicable: %#v", result)
+	}
+}
+
+func historyTestManager(root string) *Manager {
+	return NewManager(config.Workspace{
+		Root:                  root,
+		CWD:                   root,
+		CommandTimeoutSeconds: 30,
+		MaxOutputBytes:        65536,
+		MaxFileBytes:          65536,
+		EnableShell:           true,
+		EnableWrites:          true,
+	})
+}
+
+func assertHistoryNotApplicable(t *testing.T, result ToolResult, reason string, path string) {
+	t.Helper()
+	if result.Error != "" {
+		t.Fatalf("history result should be non-error not_applicable, got error=%q output=%s", result.Error, result.Output)
+	}
+	if result.Code != HistoryNotApplicableCode {
+		t.Fatalf("history result Code = %q, want %q; result=%#v", result.Code, HistoryNotApplicableCode, result)
+	}
+	var payload struct {
+		Status string `json:"status"`
+		Code   string `json:"code"`
+		Reason string `json:"reason"`
+		Path   string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &payload); err != nil {
+		t.Fatalf("history not-applicable output should be small JSON, got %q: %v", result.Output, err)
+	}
+	if payload.Status != "not_applicable" || payload.Code != HistoryNotApplicableCode || payload.Reason != reason || payload.Path != path {
+		t.Fatalf("unexpected history not-applicable payload: %#v", payload)
 	}
 }
 

@@ -16042,47 +16042,6 @@ func runnerAllowsTool(tools []string, tool string) bool {
 
 func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) []string {
 	taskFamily := strings.TrimSpace(brief.TaskFamily)
-	if taskFamily == PlanThenExecutePlannerTaskFamily && planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
-		allowed := filterPhaseTools(
-			uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...)),
-			"context_pack",
-			"context_query",
-			"context_zoom",
-			"discovery_query",
-			"search_content",
-			"read_file",
-			"code_navigate",
-			"submit_plan",
-		)
-		if len(allowed) > 0 {
-			return allowed
-		}
-		return []string{"context_pack", "context_query", "context_zoom", "discovery_query", "search_content", "read_file", "code_navigate", "submit_plan"}
-	}
-	if taskFamily == PlanThenExecutePlannerTaskFamily &&
-		planThenExecuteCandidateSourceReadyRejectionSeen(results) &&
-		!planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
-		state := PlanExecutePlanningState{EvidencePaths: sortedRunnerPathKeys(readPathsFromResults(results))}
-		selected := planThenExecuteSelectedEditPaths(brief, results, state)
-		if len(planThenExecuteHistoryPendingPaths(brief, results, selected)) > 0 {
-			allowed := filterPhaseTools(
-				uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...)),
-				"read_file",
-				"code_navigate",
-				"context_status",
-				"context_query",
-				"context_zoom",
-				"history_range",
-				"history_symbol",
-				"submit_plan",
-			)
-			if runnerAllowsTool(allowed, "history_range") || runnerAllowsTool(allowed, "history_symbol") {
-				return allowed
-			}
-			return []string{"history_range", "history_symbol", "submit_plan"}
-		}
-		return []string{"submit_plan"}
-	}
 	if taskFamily == PlanThenExecuteReviewRepairTaskFamily {
 		if !completionGateResultSeen(results) && len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) == 0 {
 			allowed := filterPhaseTools(brief.AllowedTools, "read_file", "code_navigate", "context_status", "context_query", "context_zoom", "submit_plan")
@@ -16108,18 +16067,14 @@ func runnerPlanExecuteTextualAllowedTools(currentAllowedTools []string, brief wo
 		}
 		return currentAllowedTools
 	}
-	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
-		Brief:            brief,
-		Results:          results,
-		BaseAllowedTools: brief.AllowedTools,
-	})
-	if len(contract.AllowedTools) > 0 {
-		return contract.AllowedTools
+	state, contract, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
+	if allowed := runnerPlanExecuteTextualAllowedToolsFromProjection(state, contract, baseTools); len(allowed) > 0 {
+		return allowed
 	}
 	if len(uniquePhaseStrings(currentAllowedTools)) > 0 {
 		return currentAllowedTools
 	}
-	if planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+	if slices.Contains(state.TerminalOptions, "submit_plan") || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
 		return []string{"submit_plan"}
 	}
 	return currentAllowedTools
@@ -16137,15 +16092,53 @@ func runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools []string
 	if tool == "" || runnerAllowsTool(allowed, tool) {
 		return allowed
 	}
-	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	state, _, baseTools := runnerPlanExecuteTextualPlanningProjection(currentAllowedTools, brief, results)
 	if !slices.Contains(state.ParserVisibleTools, tool) {
 		return allowed
 	}
-	baseTools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
 	if len(baseTools) > 0 && !runnerAllowsTool(baseTools, tool) {
 		return allowed
 	}
 	return uniquePhaseStrings(append(append([]string(nil), allowed...), tool))
+}
+
+func runnerPlanExecuteTextualPlanningProjection(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (PlanExecutePlanningState, TurnPhaseContract, []string) {
+	baseTools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), currentAllowedTools...))
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  baseTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	return state, contract, baseTools
+}
+
+func runnerPlanExecuteTextualAllowedToolsFromProjection(state PlanExecutePlanningState, contract TurnPhaseContract, baseTools []string) []string {
+	for _, tools := range [][]string{
+		contract.ActionPolicy.CallableToolNames,
+		contract.AllowedTools,
+		state.CallableTools,
+		state.ParserVisibleTools,
+	} {
+		allowed := runnerFilterPlanExecuteProjectionTools(baseTools, tools)
+		if len(allowed) > 0 {
+			return allowed
+		}
+	}
+	return nil
+}
+
+func runnerFilterPlanExecuteProjectionTools(baseTools []string, projectionTools []string) []string {
+	projectionTools = uniquePhaseStrings(projectionTools)
+	if len(projectionTools) == 0 {
+		return nil
+	}
+	if len(baseTools) == 0 {
+		return projectionTools
+	}
+	return filterPhaseTools(baseTools, projectionTools...)
 }
 
 func (r *Runner) implementationTargetSourceWriteBeforeEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, currentAllowedTools []string) (workspace.ToolRequest, string, bool) {

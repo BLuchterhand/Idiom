@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -13,7 +14,17 @@ import (
 	"idiom/internal/discovery"
 )
 
-const dependencyGraphFileLimit = 200
+const (
+	dependencyGraphFileLimit = 200
+	HistoryNotApplicableCode = "history_not_applicable"
+)
+
+type historyNotApplicableOutput struct {
+	Status string `json:"status"`
+	Code   string `json:"code"`
+	Reason string `json:"reason"`
+	Path   string `json:"path"`
+}
 
 var (
 	tsImportRe     = regexp.MustCompile(`(?m)(?:import|export)\s+(?:[^"'` + "`" + `]*?\s+from\s+)?["']([^"']+)["']|require\(\s*["']([^"']+)["']\s*\)`)
@@ -83,6 +94,9 @@ func (m *Manager) historyRange(ctx context.Context, req ToolRequest) ToolResult 
 	if req.StartLine <= 0 || req.EndLine <= 0 || req.StartLine > req.EndLine {
 		return ToolResult{Tool: "history_range", Summary: "History query rejected", Error: "start_line and end_line are required and start_line must be <= end_line"}
 	}
+	if result, handled := m.gitHistoryApplicability(ctx, "history_range", rel); handled {
+		return result
+	}
 	spec := fmt.Sprintf("%d,%d:%s", req.StartLine, req.EndLine, rel)
 	output, execErr := m.runCommand(ctx, m.cfg.Root, "git", "log", "--no-color", "--decorate=short", "-L", spec)
 	result := ToolResult{Tool: "history_range", Summary: fmt.Sprintf("Read git history for %s lines %d-%d", rel, req.StartLine, req.EndLine), Output: strings.TrimSpace(output)}
@@ -101,6 +115,9 @@ func (m *Manager) historySymbol(ctx context.Context, req ToolRequest) ToolResult
 	if symbol == "" {
 		return ToolResult{Tool: "history_symbol", Summary: "History query rejected", Error: "pattern is required"}
 	}
+	if result, handled := m.gitHistoryApplicability(ctx, "history_symbol", rel); handled {
+		return result
+	}
 	spec := fmt.Sprintf(":%s:%s", symbol, rel)
 	output, execErr := m.runCommand(ctx, m.cfg.Root, "git", "log", "--no-color", "--decorate=short", "-L", spec)
 	result := ToolResult{Tool: "history_symbol", Summary: fmt.Sprintf("Read git history for %s in %s", symbol, rel), Output: strings.TrimSpace(output)}
@@ -114,6 +131,9 @@ func (m *Manager) blameRange(ctx context.Context, req ToolRequest) ToolResult {
 	rel, err := m.gitRelPath(req.Path, req.Workdir)
 	if err != nil {
 		return ToolResult{Tool: "blame_range", Summary: "Failed to resolve path", Error: err.Error()}
+	}
+	if result, handled := m.gitHistoryApplicability(ctx, "blame_range", rel); handled {
+		return result
 	}
 	args := []string{"blame", "--date=short"}
 	if req.StartLine > 0 || req.EndLine > 0 {
@@ -138,6 +158,86 @@ func (m *Manager) blameRange(ctx context.Context, req ToolRequest) ToolResult {
 		result.Error = execErr.Error()
 	}
 	return result
+}
+
+func (m *Manager) gitHistoryApplicability(ctx context.Context, tool string, rel string) (ToolResult, bool) {
+	abs := filepath.Join(m.cfg.Root, filepath.FromSlash(rel))
+	info, err := os.Stat(abs)
+	if err != nil {
+		return ToolResult{Tool: tool, Summary: "Failed to stat path", Error: fmt.Sprintf("path %q does not exist in this workspace: %v", rel, err)}, true
+	}
+	if info.IsDir() {
+		return ToolResult{Tool: tool, Summary: "History query rejected", Error: fmt.Sprintf("path %q is a directory; history tools require a file path", rel)}, true
+	}
+	if firstAvailableBinary("git") == "" {
+		return ToolResult{Tool: tool, Summary: "Git history unavailable", Error: "git is not installed"}, true
+	}
+	if !hasGitMetadataAncestor(m.cfg.Root) {
+		return historyNotApplicableResult(tool, rel, "non_git_root"), true
+	}
+	if output, err := m.runCommand(ctx, m.cfg.Root, "git", "rev-parse", "--git-dir"); err != nil {
+		return gitHistoryFailureResult(tool, "Git history unavailable", output, err), true
+	}
+	if output, err := m.runCommand(ctx, m.cfg.Root, "git", "rev-parse", "--verify", "--quiet", "HEAD"); err != nil {
+		if strings.TrimSpace(output) == "" {
+			return historyNotApplicableResult(tool, rel, "no_head"), true
+		}
+		return gitHistoryFailureResult(tool, "Git history unavailable", output, err), true
+	}
+	trackedOutput, err := m.runCommand(ctx, m.cfg.Root, "git", "ls-files", "--", rel)
+	if err != nil {
+		return gitHistoryFailureResult(tool, "Git history unavailable", trackedOutput, err), true
+	}
+	if !gitOutputContainsPath(trackedOutput, rel) {
+		return historyNotApplicableResult(tool, rel, "untracked_path"), true
+	}
+	headOutput, err := m.runCommand(ctx, m.cfg.Root, "git", "ls-tree", "--name-only", "-r", "HEAD", "--", rel)
+	if err != nil {
+		return gitHistoryFailureResult(tool, "Git history unavailable", headOutput, err), true
+	}
+	if !gitOutputContainsPath(headOutput, rel) {
+		return historyNotApplicableResult(tool, rel, "path_no_committed_history"), true
+	}
+	return ToolResult{}, false
+}
+
+func historyNotApplicableResult(tool string, rel string, reason string) ToolResult {
+	payload := historyNotApplicableOutput{
+		Status: "not_applicable",
+		Code:   HistoryNotApplicableCode,
+		Reason: reason,
+		Path:   rel,
+	}
+	data, err := json.Marshal(payload)
+	output := ""
+	if err == nil {
+		output = string(data)
+	}
+	return ToolResult{
+		Tool:    tool,
+		Code:    HistoryNotApplicableCode,
+		Summary: fmt.Sprintf("Git history not applicable for %s", rel),
+		Output:  output,
+	}
+}
+
+func gitHistoryFailureResult(tool string, summary string, output string, err error) ToolResult {
+	return ToolResult{
+		Tool:    tool,
+		Summary: summary,
+		Output:  strings.TrimSpace(output),
+		Error:   err.Error(),
+	}
+}
+
+func gitOutputContainsPath(output string, rel string) bool {
+	rel = strings.TrimSpace(filepath.ToSlash(rel))
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSpace(filepath.ToSlash(line)) == rel {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult {
@@ -396,6 +496,28 @@ func (m *Manager) gitRelPath(path string, workdir string) (string, error) {
 	return filepath.ToSlash(rel), nil
 }
 
+func hasGitMetadataAncestor(root string) bool {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return false
+	}
+	dir, err := filepath.Abs(root)
+	if err != nil {
+		dir = root
+	}
+	for {
+		gitPath := filepath.Join(dir, ".git")
+		if info, err := os.Stat(gitPath); err == nil && (info.IsDir() || info.Mode().IsRegular()) {
+			return true
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false
+		}
+		dir = parent
+	}
+}
+
 func firstAvailableBinary(names ...string) string {
 	for _, name := range names {
 		if path, err := exec.LookPath(name); err == nil && path != "" {
@@ -437,7 +559,6 @@ func looksLikeGlob(s string) bool {
 	}
 	return strings.ContainsAny(s, "*?[")
 }
-
 
 func fileExists(path string) bool {
 	info, err := os.Stat(path)

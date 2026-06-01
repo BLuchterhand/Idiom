@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,12 @@ const (
 	requiredEvidenceGitHistoryRationale = "git_history_rationale_for_intended_logic"
 	requiredToolGitHistoryLookup        = "history_range_or_history_symbol"
 )
+
+type gitHistoryNotApplicableOutput struct {
+	Status string `json:"status"`
+	Code   string `json:"code"`
+	Path   string `json:"path"`
+}
 
 func gitHistoryLookupToolNames() []string {
 	return []string{"history_range", "history_symbol", "blame_range"}
@@ -68,6 +75,9 @@ func successfulGitHistoryResultForPath(path string, results []workspace.ToolResu
 		if strings.TrimSpace(result.Error) != "" || !gitHistoryEvidenceTool(result.Tool) {
 			continue
 		}
+		if gitHistoryNotApplicableForPath(path, result) {
+			return true
+		}
 		if !gitHistoryResultIncludesCommitDescription(result) {
 			continue
 		}
@@ -80,7 +90,27 @@ func successfulGitHistoryResultForPath(path string, results []workspace.ToolResu
 
 func gitHistoryResultIncludesCommitDescription(result workspace.ToolResult) bool {
 	output := strings.TrimSpace(result.Output)
-	return output == "" || strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
+	return strings.HasPrefix(output, "commit ") || strings.Contains(output, "\ncommit ")
+}
+
+func gitHistoryNotApplicableForPath(path string, result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Code) != workspace.HistoryNotApplicableCode {
+		return false
+	}
+	if strings.TrimSpace(result.Error) != "" || !gitHistoryEvidenceTool(result.Tool) {
+		return false
+	}
+	var output gitHistoryNotApplicableOutput
+	if err := json.Unmarshal([]byte(strings.TrimSpace(result.Output)), &output); err != nil {
+		return false
+	}
+	if strings.TrimSpace(output.Code) != "" && strings.TrimSpace(output.Code) != workspace.HistoryNotApplicableCode {
+		return false
+	}
+	if strings.TrimSpace(output.Status) != "" && strings.TrimSpace(output.Status) != "not_applicable" {
+		return false
+	}
+	return normalizeRunnerPath(output.Path) == normalizeRunnerPath(path)
 }
 
 func gitHistoryResultPath(result workspace.ToolResult) string {

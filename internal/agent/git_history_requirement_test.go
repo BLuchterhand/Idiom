@@ -55,6 +55,45 @@ func TestWriteBeforeGitHistoryEvidenceAcceptsHistoryRange(t *testing.T) {
 	}
 }
 
+func TestWriteBeforeGitHistoryEvidenceAcceptsPathScopedNotApplicable(t *testing.T) {
+	root := t.TempDir()
+	markGitHistoryRequirementWorkspace(t, root)
+	writeGitHistoryRequirementTestFile(t, root, "pkg/logic.go", "package pkg\n\nfunc Apply() string { return \"old\" }\n")
+
+	runner := gitHistoryRequirementRunner(root, "implementation")
+	req := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        "pkg/logic.go",
+		OldText:     "return \"old\"",
+		NewText:     "return \"new\"",
+		Description: "change existing logic",
+	}
+	results := []workspace.ToolResult{gitHistoryNotApplicableResult("pkg/logic.go")}
+	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, results); reject {
+		t.Fatalf("did not expect write rejection after path-scoped history_not_applicable evidence")
+	}
+}
+
+func TestWriteBeforeGitHistoryEvidenceDoesNotUseNotApplicableAcrossPaths(t *testing.T) {
+	root := t.TempDir()
+	markGitHistoryRequirementWorkspace(t, root)
+	writeGitHistoryRequirementTestFile(t, root, "pkg/logic.go", "package pkg\n\nfunc Apply() string { return \"old\" }\n")
+	writeGitHistoryRequirementTestFile(t, root, "pkg/other.go", "package pkg\n")
+
+	runner := gitHistoryRequirementRunner(root, "implementation")
+	req := workspace.ToolRequest{
+		Tool:        "edit_file",
+		Path:        "pkg/logic.go",
+		OldText:     "return \"old\"",
+		NewText:     "return \"new\"",
+		Description: "change existing logic",
+	}
+	results := []workspace.ToolResult{gitHistoryNotApplicableResult("pkg/other.go")}
+	if _, _, reject := runner.writeBeforeGitHistoryEvidenceRejection(req, results); !reject {
+		t.Fatalf("expected path-scoped history_not_applicable for another path not to satisfy pkg/logic.go")
+	}
+}
+
 func TestWriteBeforeGitHistoryEvidenceSkipsNewFile(t *testing.T) {
 	root := t.TempDir()
 	runner := gitHistoryRequirementRunner(root, "implementation")
@@ -150,6 +189,15 @@ func gitHistoryRangeResult(path string) workspace.ToolResult {
 		Tool:    "history_range",
 		Summary: "Read git history for " + path + " lines 1-20",
 		Output:  "commit 1234567\nAuthor: Example\n\n    Preserve established behavior for compatibility\n",
+	}
+}
+
+func gitHistoryNotApplicableResult(path string) workspace.ToolResult {
+	return workspace.ToolResult{
+		Tool:    "history_range",
+		Code:    workspace.HistoryNotApplicableCode,
+		Summary: "Git history not applicable for " + path,
+		Output:  `{"status":"not_applicable","code":"` + workspace.HistoryNotApplicableCode + `","reason":"untracked_path","path":"` + path + `"}`,
 	}
 }
 

@@ -10225,6 +10225,44 @@ func TestPlanExecuteSubmitBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSubmitBeforeHistoryDoesNotRedirectWhenNotApplicable(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.go"},
+			RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+			Output:  "1:package a\n",
+		},
+		gitHistoryNotApplicableResult("a.go"),
+	}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.go",
+			OldText: "old",
+			NewText: "new",
+			Purpose: "update",
+		}},
+	}
+
+	state := DerivePlanExecutePlanningState(runner.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("mode after path-scoped history_not_applicable = %q, want submit_ready", state.Mode)
+	}
+	if redirected, _, ok := runner.submitPlanBeforeGitHistoryEvidenceRedirect(req, results, []string{"history_range", "history_symbol"}); ok {
+		t.Fatalf("submit_plan must not redirect to history after path-scoped history_not_applicable: %#v", redirected)
+	}
+	if guard := runner.preflightPlanThenExecuteSubmitPlanHistoryGuard(req, results); guard.Intercepted {
+		t.Fatalf("submit_plan guard should accept path-scoped history_not_applicable: %#v", guard.Result)
+	}
+}
+
 func TestPlanExecuteSubmitBeforeHistoryDoesNotBypassUnreadRequiredSource(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

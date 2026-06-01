@@ -1,11 +1,6 @@
 package planexecute
 
-import (
-	"os"
-	"path"
-	"path/filepath"
-	"strings"
-)
+import "strings"
 
 type EditSetObligationKind string
 
@@ -33,7 +28,7 @@ func planExecuteEditSetObligations(opts Options, prompt string) EditSetObligatio
 }
 
 func ExtractRequestedVerificationCommands(prompt string) []string {
-	return planExecuteRequestedVerificationCommands(prompt)
+	return PlanVerification(VerificationPlannerInput{Prompt: prompt}).CommandStrings()
 }
 
 func planExecuteRequestedVerificationCommands(prompt string) []string {
@@ -201,83 +196,11 @@ func planExecuteTrimVerificationSentence(text string) string {
 }
 
 func planExecuteVerificationCommands(commands []string) []string {
-	out := make([]string, 0, len(commands))
-	seen := map[string]struct{}{}
-	for _, command := range commands {
-		command = strings.TrimSpace(command)
-		if !planExecuteVerificationCommandAllowed(command) {
-			continue
-		}
-		if _, ok := seen[command]; ok {
-			continue
-		}
-		seen[command] = struct{}{}
-		out = append(out, command)
-	}
-	return out
+	return PlanVerification(VerificationPlannerInput{ExplicitCommands: commands}).CommandStrings()
 }
 
 func VerificationCommands(commands []string) []string {
 	return planExecuteVerificationCommands(commands)
-}
-
-func VerificationCommandsForChangedPaths(commands []string, changedPaths []string) []string {
-	combined := append([]string(nil), commands...)
-	combined = append(combined, InferredTouchedVerificationCommands(changedPaths)...)
-	return planExecuteVerificationCommands(combined)
-}
-
-func VerificationCommandsForChangedPathsInRoot(root string, commands []string, changedPaths []string) []string {
-	if !goModuleRootAvailable(root) {
-		return planExecuteVerificationCommands(commands)
-	}
-	return VerificationCommandsForChangedPaths(commands, changedPaths)
-}
-
-func InferredTouchedVerificationCommands(paths []string) []string {
-	seen := map[string]struct{}{}
-	var commands []string
-	for _, rawPath := range paths {
-		packagePath, ok := goTestPackageForChangedPath(rawPath)
-		if !ok {
-			continue
-		}
-		command := "go test " + packagePath
-		if _, exists := seen[command]; exists {
-			continue
-		}
-		seen[command] = struct{}{}
-		commands = append(commands, command)
-	}
-	return commands
-}
-
-func goTestPackageForChangedPath(rawPath string) (string, bool) {
-	rawPath = strings.TrimSpace(rawPath)
-	if rawPath == "" {
-		return "", false
-	}
-	cleaned := filepath.ToSlash(filepath.Clean(rawPath))
-	if filepath.IsAbs(rawPath) || strings.HasPrefix(cleaned, "../") || cleaned == ".." {
-		return "", false
-	}
-	if !strings.HasSuffix(cleaned, ".go") {
-		return "", false
-	}
-	dir := path.Dir(cleaned)
-	if dir == "." || dir == "/" {
-		return ".", true
-	}
-	return "./" + strings.TrimPrefix(dir, "./"), true
-}
-
-func goModuleRootAvailable(root string) bool {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		root = "."
-	}
-	info, err := os.Stat(filepath.Join(root, "go.mod"))
-	return err == nil && !info.IsDir()
 }
 
 func planExecuteVerificationCommandAllowed(command string) bool {

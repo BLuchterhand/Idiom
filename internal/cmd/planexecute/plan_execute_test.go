@@ -3189,6 +3189,51 @@ func TestRunExecutorPhaseRunsInferredTouchedGoPackageTests(t *testing.T) {
 	}
 }
 
+func TestRunExecutorPhaseRunsInferredNestedModulePackageTests(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.work"), []byte("go 1.22\n\nuse ./nested\n"), 0o644); err != nil {
+		t.Fatalf("seed root go.work: %v", err)
+	}
+	moduleDir := filepath.Join(root, "nested")
+	if err := os.MkdirAll(filepath.Join(moduleDir, "pkg", "feature"), 0o755); err != nil {
+		t.Fatalf("mkdir nested package: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "go.mod"), []byte("module example.com/nested\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed nested go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "pkg", "feature", "feature.go"), []byte("package feature\n\nfunc Value() int { return 1 }\n"), 0o644); err != nil {
+		t.Fatalf("seed feature.go: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(moduleDir, "pkg", "feature", "feature_test.go"), []byte("package feature\n\nimport \"testing\"\n\nfunc TestValue(t *testing.T) {\n\tif Value() != 1 {\n\t\tt.Fatalf(\"nested module assertion ran: got %d\", Value())\n\t}\n}\n"), 0o644); err != nil {
+		t.Fatalf("seed feature_test.go: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "nested/pkg/feature/feature.go", OldText: "return 1", NewText: "return 2", Purpose: "introduce a failing nested touched-package test"},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	report, err := runExecutorPhaseScopedWithVerification(cfg, plan, nil, nil, nil, true, &stdout)
+	if err == nil {
+		t.Fatalf("expected inferred nested-module verification failure")
+	}
+	if len(report.Verification) != 1 {
+		t.Fatalf("expected one inferred verification check, got %#v report=%#v err=%v stdout=%s", report.Verification, report, err, stdout.String())
+	}
+	check := report.Verification[0]
+	if check.Command != "go test ./pkg/feature" || check.WorkingDir != "nested" || check.Status != "failed" {
+		t.Fatalf("expected failed nested-module verification evidence, got %#v", check)
+	}
+	if !strings.Contains(check.Error, "nested module assertion ran") {
+		t.Fatalf("expected nested module test output, got %#v", check)
+	}
+	if !strings.Contains(stdout.String(), `"working_dir":"nested"`) {
+		t.Fatalf("expected verification event to include working_dir, got %s", stdout.String())
+	}
+}
+
 func TestRunExecutorPhaseAbortsAtPreflightOnMissingFile(t *testing.T) {
 	// Pre-execute plan validator catches edit 2's missing file before
 	// any edit dispatches. This is by-design atomic-preflight: rather

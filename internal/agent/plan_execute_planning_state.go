@@ -111,8 +111,12 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	state.EvidencePaths = sortedRunnerPathKeys(readPathsFromResults(results))
 	state.LastInvalidPaths = planThenExecuteLastInvalidSubmitPlanPaths(results)
 	state.TerminalOptions = []string{"source_satisfied", "blocker"}
+	unscopedEmptySubmitRecovery := planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results)
+	candidateReadyRejection := planThenExecuteCandidateSourceReadyRejectionSeen(results) && !unscopedEmptySubmitRecovery
 
 	switch {
+	case candidateReadyRejection:
+		state.Mode = PlanExecutePlanningModeSubmitReady
 	case len(state.LastInvalidPaths) > 0 && planThenExecuteRejectedPlanCorrectionOnly(brief, results):
 		state.Mode = PlanExecutePlanningModeSubmitCorrection
 	case len(state.RequiredCoveragePaths) > 0:
@@ -128,7 +132,9 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 			state.Mode = PlanExecutePlanningModeAllowedCandidate
 		}
 	default:
-		if len(state.EvidencePaths) > 0 {
+		if planThenExecuteSubmitPlanOnlyReady(brief, results) {
+			state.Mode = PlanExecutePlanningModeSubmitReady
+		} else if len(state.EvidencePaths) > 0 {
 			state.Mode = PlanExecutePlanningModeOpenCandidate
 		} else {
 			state.Mode = PlanExecutePlanningModeAllowedCandidate
@@ -136,7 +142,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 
 	state.SelectedEditPaths = planThenExecuteSelectedEditPaths(brief, results, state)
-	if planThenExecuteHistoryPendingEligible(brief, results, state) {
+	if !unscopedEmptySubmitRecovery && planThenExecuteHistoryPendingEligible(brief, results, state) {
 		if pending := planThenExecuteHistoryPendingPaths(brief, results, state.SelectedEditPaths); len(pending) > 0 {
 			state.Mode = PlanExecutePlanningModeHistoryPending
 			state.SelectedEditPaths = pending
@@ -144,6 +150,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 	if state.Mode == PlanExecutePlanningModeSubmitReady ||
 		state.Mode == PlanExecutePlanningModeSubmitCorrection ||
+		unscopedEmptySubmitRecovery ||
 		(state.Mode != PlanExecutePlanningModeHistoryPending && len(state.SelectedEditPaths) > 0) {
 		state.TerminalOptions = append(state.TerminalOptions, "submit_plan")
 	}

@@ -255,6 +255,94 @@ func TestPlanExecutePlanningStateSubmitReadyProjectionMatchesTransport(t *testin
 	assertEqualSet(t, native.TerminalResponseShapes, []string{"submit_plan"})
 }
 
+func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
+	tests := []struct {
+		name        string
+		brief       workerruntime.WorkerRuntimeBrief
+		results     []workspace.ToolResult
+		wantMode    PlanExecutePlanningMode
+		wantPhaseID string
+		wantTools   []string
+	}{
+		{
+			name: "required-source",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        PlanThenExecutePlannerTaskFamily,
+				PermissionProfile: "guarded_workspace_write",
+				AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan", "edit_file"},
+				RequiredEditPaths: []string{"a.go", "b.go"},
+			},
+			results: []workspace.ToolResult{{
+				Tool:    "read_file",
+				Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+				Output:  "1:package a\n",
+			}},
+			wantMode:    PlanExecutePlanningModeRequiredSource,
+			wantPhaseID: turnPhaseRequiredSource,
+			wantTools:   []string{"read_file", "code_navigate"},
+		},
+		{
+			name: "history-pending exact source read",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        PlanThenExecutePlannerTaskFamily,
+				PermissionProfile: "guarded_workspace_write",
+				AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+				RequiredEditPaths: []string{"pkg/feature.go"},
+				RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+			},
+			results: []workspace.ToolResult{{
+				Tool:    "read_file",
+				Summary: "Read f1 pkg/feature.go lines 1-10 (total lines: 10)",
+				Output:  "1:package pkg\n2:func Feature() bool { return true }\n",
+			}},
+			wantMode:    PlanExecutePlanningModeHistoryPending,
+			wantPhaseID: turnPhaseHistoryPending,
+			wantTools:   []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+		},
+		{
+			name: "submit-ready",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        PlanThenExecutePlannerTaskFamily,
+				PermissionProfile: "guarded_workspace_write",
+				AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan", "edit_file"},
+				RequiredEditPaths: []string{"a.go"},
+			},
+			results: []workspace.ToolResult{{
+				Tool:    "read_file",
+				Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+				Output:  "1:package a\n",
+			}},
+			wantMode:    PlanExecutePlanningModeSubmitReady,
+			wantPhaseID: turnPhaseSubmitReadyTextual,
+			wantTools:   []string{"submit_plan"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			state := DerivePlanExecutePlanningState(tt.brief, tt.results, PlanExecutePlanningTransport{TextualToolParser: true})
+			if state.Mode != tt.wantMode {
+				t.Fatalf("planning state mode = %q, want %q", state.Mode, tt.wantMode)
+			}
+			assertEqualSet(t, state.CallableTools, tt.wantTools)
+
+			contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+				Brief:            tt.brief,
+				Results:          tt.results,
+				BaseAllowedTools: tt.brief.AllowedTools,
+			})
+			if contract.PhaseID != tt.wantPhaseID {
+				t.Fatalf("phase contract PhaseID = %q, want %q", contract.PhaseID, tt.wantPhaseID)
+			}
+			assertEqualSet(t, contract.AllowedTools, tt.wantTools)
+			assertEqualSet(t, contract.ActionPolicy.CallableToolNames, tt.wantTools)
+
+			textualAllowed := runnerPlanExecuteTextualAllowedTools(nil, tt.brief, tt.results)
+			assertEqualSet(t, textualAllowed, tt.wantTools)
+		})
+	}
+}
+
 func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

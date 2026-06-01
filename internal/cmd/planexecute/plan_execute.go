@@ -2,7 +2,6 @@ package planexecute
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -20,7 +19,6 @@ import (
 	"time"
 
 	"idiom/internal/agent"
-	"idiom/internal/app"
 	"idiom/internal/backends"
 	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/cmdruntime"
@@ -169,7 +167,11 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 	requiredEditPaths := scopeContract.RequiredCoveragePaths
 	allowedEditPaths := scopeContract.AllowedCandidatePaths
 	editSetObligations := scopeContract.EditSetObligations
-	verificationCommands := planexecute.ExtractRequestedVerificationCommands(prompt)
+	verificationPlan := planexecute.PlanVerification(planexecute.VerificationPlannerInput{
+		WorkspaceRoot: cfg.Workspace.Root,
+		Prompt:        prompt,
+	})
+	verificationCommands := verificationPlan.CommandStrings()
 	opts.ScopeContract = scopeContract
 	opts.EditSetObligations = editSetObligations
 	promptRequiredEditPaths := planexecute.RequiredEditPathsFromPrompt(prompt)
@@ -480,7 +482,12 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		"pack_id": strings.TrimSpace(plan.PackID),
 	})
 	changedPaths := planChangedPaths(plan)
-	verificationCommands = planexecute.VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, changedPaths)
+	verificationPlan = planexecute.PlanVerification(planexecute.VerificationPlannerInput{
+		WorkspaceRoot: cfg.Workspace.Root,
+		Prompt:        prompt,
+		ChangedPaths:  changedPaths,
+	})
+	verificationCommands = verificationPlan.CommandStrings()
 	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
 		message := planexecute.EditSetObligationFailureMessage(reason)
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
@@ -513,7 +520,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 			progressSaveErr = err
 		}
 	}
-	report, runErr := runExecutorPhaseScopedWithVerification(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationCommands, opts.JSONEvents, stdout, progressCallback)
+	report, runErr := runExecutorPhaseScopedWithVerificationPlan(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationPlan, opts.JSONEvents, stdout, progressCallback)
 	if runErr == nil && progressSaveErr != nil {
 		runErr = progressSaveErr
 	}
@@ -554,7 +561,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		if (sourceSanityRepairRequired || verificationRepairRequired) && reviewErr == nil {
 			if planexecute.ReviewRepairResolvedVerificationFailure(toSharedReviewRepairPhaseReport(reviewReport)) {
 				if verificationRepairRequired {
-					_, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, opts.JSONEvents, stdout)
+					_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
 					report.Verification = verificationEvidence
 					progress.Executor.Verification = toSharedPhaseEvidenceChecks(verificationEvidence)
 					if verificationErr != nil {
@@ -664,8 +671,12 @@ func runPlanExecuteResumeReviewRepair(
 	reviewReport, reviewErr := runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, executorReport, reviewOpts, stdout, promptRun, rec)
 	state.MarkReviewComplete(toSharedReviewRepairPhaseReport(reviewReport), reviewErr)
 	if reviewErr == nil && planexecute.ExecutorVerificationFailed(state.ExecutorPhaseReport(), fmt.Errorf("verification failed")) && planexecute.ReviewRepairResolvedVerificationFailure(toSharedReviewRepairPhaseReport(reviewReport)) {
-		verificationCommands := planexecute.ExtractRequestedVerificationCommands(prompt)
-		_, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, opts.JSONEvents, stdout)
+		verificationPlan := planexecute.PlanVerification(planexecute.VerificationPlannerInput{
+			WorkspaceRoot: cfg.Workspace.Root,
+			Prompt:        prompt,
+			ChangedPaths:  planChangedPaths(plan),
+		})
+		_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
 		state.Executor.Verification = toSharedPhaseEvidenceChecks(verificationEvidence)
 		if verificationErr != nil {
 			reviewErr = verificationErr
@@ -785,12 +796,13 @@ func toSharedPhaseEvidenceChecks(checks []phaseEvidenceCheck) []planexecute.Phas
 	out := make([]planexecute.PhaseEvidenceCheck, 0, len(checks))
 	for _, check := range checks {
 		out = append(out, planexecute.PhaseEvidenceCheck{
-			Kind:    check.Kind,
-			Path:    check.Path,
-			Command: check.Command,
-			Status:  check.Status,
-			Summary: check.Summary,
-			Error:   check.Error,
+			Kind:       check.Kind,
+			Path:       check.Path,
+			Command:    check.Command,
+			WorkingDir: check.WorkingDir,
+			Status:     check.Status,
+			Summary:    check.Summary,
+			Error:      check.Error,
 		})
 	}
 	return out
@@ -800,12 +812,13 @@ func fromSharedPhaseEvidenceChecks(checks []planexecute.PhaseEvidenceCheck) []ph
 	out := make([]phaseEvidenceCheck, 0, len(checks))
 	for _, check := range checks {
 		out = append(out, phaseEvidenceCheck{
-			Kind:    check.Kind,
-			Path:    check.Path,
-			Command: check.Command,
-			Status:  check.Status,
-			Summary: check.Summary,
-			Error:   check.Error,
+			Kind:       check.Kind,
+			Path:       check.Path,
+			Command:    check.Command,
+			WorkingDir: check.WorkingDir,
+			Status:     check.Status,
+			Summary:    check.Summary,
+			Error:      check.Error,
 		})
 	}
 	return out
@@ -1137,14 +1150,7 @@ func planExecutePathMissing(root string, path string) bool {
 }
 
 func planExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
-	section := planExecuteScopeSection(requiredEditPaths, allowedEditPaths)
-	if section == "" {
-		return prompt
-	}
-	if end := strings.Index(prompt, pathparse.BriefBodyEndMarker); end >= 0 {
-		return strings.TrimSpace(prompt[:end]) + "\n\n" + section + "\n\n" + strings.TrimSpace(prompt[end:])
-	}
-	return strings.TrimSpace(prompt) + "\n\n" + section
+	return planexecute.AppendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
 }
 
 func planExecuteScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
@@ -1738,11 +1744,7 @@ func planExecuteAcquireQueueSlot(cfg config.Config, opts planExecuteOptions, ses
 // back to a timestamp-derived hex on the (essentially impossible)
 // rand.Read failure path so the rest of the lane still runs.
 func newPlanExecuteSessionID() string {
-	var buf [8]byte
-	if _, err := rand.Read(buf[:]); err != nil {
-		return fmt.Sprintf("ts%016x", time.Now().UnixNano())
-	}
-	return hex.EncodeToString(buf[:])
+	return planexecute.NewPlanExecuteSessionID()
 }
 
 func NewSessionID() string {
@@ -1757,65 +1759,7 @@ func NewSessionID() string {
 // Empty sessionID falls back to the legacy time-only filter for
 // backward compatibility with callers that don't yet stamp a session.
 func findLatestPlanArtifact(root string, notBefore time.Time, sessionID string) (string, error) {
-	dir := filepath.Join(strings.TrimSpace(root), ".idiom", "plans")
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return "", fmt.Errorf("plan dir %q: %w", dir, err)
-	}
-	type candidate struct {
-		path  string
-		mtime time.Time
-	}
-	sessionID = strings.TrimSpace(sessionID)
-	var hits []candidate
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		name := entry.Name()
-		if name == "last.plan.json" {
-			continue
-		}
-		if !strings.HasSuffix(name, ".plan.json") {
-			continue
-		}
-		info, err := entry.Info()
-		if err != nil {
-			continue
-		}
-		if !notBefore.IsZero() && info.ModTime().Before(notBefore) {
-			continue
-		}
-		path := filepath.Join(dir, name)
-		if sessionID != "" {
-			// Read the artifact's SessionID and skip plans from other
-			// sessions. Cheap (one ReadFile + Unmarshal of a small JSON
-			// header) compared to the cost of dispatching the wrong
-			// edits, which is what this filter prevents.
-			body, err := os.ReadFile(path)
-			if err != nil {
-				continue
-			}
-			var head struct {
-				SessionID string `json:"session_id"`
-			}
-			if err := json.Unmarshal(body, &head); err != nil {
-				continue
-			}
-			if strings.TrimSpace(head.SessionID) != sessionID {
-				continue
-			}
-		}
-		hits = append(hits, candidate{path: path, mtime: info.ModTime()})
-	}
-	if len(hits) == 0 {
-		if sessionID != "" {
-			return "", fmt.Errorf("no plan artifacts under %s written since %s with session_id=%s", dir, notBefore.Format(time.RFC3339), sessionID)
-		}
-		return "", fmt.Errorf("no plan artifacts under %s written since %s", dir, notBefore.Format(time.RFC3339))
-	}
-	sort.Slice(hits, func(i, j int) bool { return hits[i].mtime.After(hits[j].mtime) })
-	return hits[0].path, nil
+	return planexecute.FindLatestPlanArtifact(root, notBefore, sessionID)
 }
 
 // executorPhaseReport summarizes what the executor phase did so the
@@ -2567,7 +2511,7 @@ func collectReviewRepairDiffFromBaseline(root string, paths []string, baseline r
 		if !snapshot.Exists && !afterExists {
 			continue
 		}
-		diff := app.UnifiedDiff(path, snapshot.Before, after)
+		diff := planexecute.UnifiedDiff(path, snapshot.Before, after)
 		if strings.TrimSpace(diff) == "" {
 			continue
 		}
@@ -2888,331 +2832,22 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 }
 
 func runExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
-	plan = workspace.NormalizeLoadedPlanArtifact(plan)
-	verificationCommands = planexecute.VerificationCommandsForChangedPathsInRoot(cfg.Workspace.Root, verificationCommands, planChangedPaths(plan))
-	report := executorPhaseReport{Total: len(plan.Edits)}
-	if len(plan.Edits) == 0 {
-		return report, fmt.Errorf("plan has no edits")
-	}
-	mgr := workspace.NewManager(cfg.Workspace)
-	mgr.SetBypassReadBeforeEdit(true)
-	ctx := context.Background()
-	handoff := classifyExecutorHandoffPacket(cfg.Workspace.Root, plan)
-	report.Handoff = handoff
-	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
-
-	if mismatch := preflightPlanApprovalAndScope(plan); mismatch != nil {
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "plan_scope_drift", planScopeDriftEventFields(handoff, mismatch))
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
-			"edit_index":        mismatch.Index,
-			"path":              sanitizePlanExecuteEventPath(mismatch.Path),
-			"reason":            mismatch.Reason,
-			"handoff_id":        handoff.HandoffID,
-			"approval_scope_id": handoff.ApprovalScopeID,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  preflight FAILED on approval/scope %s: %s\n", mismatch.Path, mismatch.Reason)
-		}
-		return report, fmt.Errorf("plan approval/scope preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
-	}
-	if mismatch := preflightPlanRequiredEditPaths(requiredEditPaths, plan); mismatch != nil {
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
-			"edit_index": mismatch.Index,
-			"path":       mismatch.Path,
-			"reason":     mismatch.Reason,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  preflight FAILED on required_edit_paths %s: %s\n", mismatch.Path, mismatch.Reason)
-		}
-		return report, fmt.Errorf("plan required_edit_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
-	}
-	if len(requiredEditPaths) == 0 {
-		if mismatch := preflightPlanAllowedEditPaths(allowedEditPaths, plan); mismatch != nil {
-			emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
-				"edit_index": mismatch.Index,
-				"path":       mismatch.Path,
-				"reason":     mismatch.Reason,
-			})
-			if !jsonEvents {
-				fmt.Fprintf(stdout, "  preflight FAILED on allowed_edit_paths %s: %s\n", mismatch.Path, mismatch.Reason)
-			}
-			return report, fmt.Errorf("plan allowed_edit_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
-		}
-	}
-
-	// Pre-execute plan validator: walk every edit's old_text and
-	// confirm it appears in the file before any edit lands. This
-	// turns "edit K succeeds, edit K+1 fails" partial state into a
-	// clean abort with a single error pointing at the first
-	// mismatched edit. Mirrors apply_patch's atomic preflight.
-	if mismatch := preflightPlanEdits(cfg.Workspace.Root, plan); mismatch != nil {
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
-			"edit_index": mismatch.Index,
-			"path":       mismatch.Path,
-			"reason":     mismatch.Reason,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  preflight FAILED on edit %d/%d %s: %s\n", mismatch.Index+1, len(plan.Edits), mismatch.Path, mismatch.Reason)
-		}
-		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
-	}
-	if mismatch := preflightPlanUnsupportedProofClaims(plan); mismatch != nil {
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
-			"edit_index": mismatch.Index,
-			"path":       mismatch.Path,
-			"reason":     mismatch.Reason,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  preflight FAILED on edit %d/%d %s: %s\n", mismatch.Index+1, len(plan.Edits), mismatch.Path, mismatch.Reason)
-		}
-		return report, fmt.Errorf("plan preflight failed on edit %d (%s): %s", mismatch.Index, mismatch.Path, mismatch.Reason)
-	}
-	emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_ok", map[string]any{
-		"edits": len(plan.Edits),
-	})
-
-	executorStartedAt := time.Now()
-	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_start", map[string]any{
-		"edits":        len(plan.Edits),
-		"packet_state": handoff.State,
-	})
-	for i, edit := range plan.Edits {
-		// Whole-file / new-file shape: replace_all=true with empty
-		// old_text + new_text=full body. submit_plan accepts this
-		// shape (and the planner addendum tells the model to use it
-		// for new files), but edit_file rejects it — so we dispatch
-		// to write_file instead, mapping new_text → content. Without
-		// this branch the executor would fail every new-file edit
-		// with "edit_file requires old_text..." even though the plan
-		// validator accepted it.
-		isWholeFile := edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != ""
-		var req workspace.ToolRequest
-		if isWholeFile {
-			req = workspace.ToolRequest{
-				Tool:        "write_file",
-				Path:        edit.Path,
-				Content:     edit.NewText,
-				Description: firstNonEmptyString(edit.Purpose, "executor phase: whole-file write"),
-			}
-		} else if edit.InsertAfterLine > 0 {
-			updated, err := projectedInsertAfterLineContent(cfg.Workspace.Root, edit)
-			if err != nil {
-				result := workspace.ToolResult{Tool: "submit_plan", Summary: "Executor insert preflight failed", Error: err.Error()}
-				status := "failed"
-				emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_edit", map[string]any{
-					"step":   i + 1,
-					"total":  len(plan.Edits),
-					"path":   edit.Path,
-					"status": status,
-					"error":  strings.TrimSpace(result.Error),
-				})
-				if !jsonEvents {
-					fmt.Fprintf(stdout, "  edit %d/%d %s ... %s\n", i+1, len(plan.Edits), edit.Path, executorEditOutcome(result))
-				}
-				report.Failed++
-				report.Failures = append(report.Failures, fmt.Sprintf("edits[%d] %s: %s", i, edit.Path, result.Error))
-				emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-					"total":       report.Total,
-					"succeeded":   report.Succeeded,
-					"failed":      report.Failed,
-					"duration_ms": time.Since(executorStartedAt).Milliseconds(),
-				})
-				return report, fmt.Errorf("executor phase aborted on edit %d (%s): %s", i, edit.Path, result.Error)
-			}
-			req = workspace.ToolRequest{
-				Tool:        "write_file",
-				Path:        edit.Path,
-				Content:     updated,
-				Description: firstNonEmptyString(edit.Purpose, "executor phase: planned insertion"),
-			}
-		} else {
-			req = workspace.ToolRequest{
-				Tool:        "edit_file",
-				Path:        edit.Path,
-				OldText:     edit.OldText,
-				NewText:     edit.NewText,
-				StartLine:   edit.StartLine,
-				EndLine:     edit.EndLine,
-				Content:     edit.Content,
-				ReplaceAll:  edit.ReplaceAll,
-				Description: firstNonEmptyString(edit.Purpose, "executor phase: planned edit"),
-			}
-		}
-		result := mgr.Execute(ctx, req)
-		status := "ok"
-		if strings.TrimSpace(result.Error) != "" {
-			status = "failed"
-		}
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_edit", map[string]any{
-			"step":   i + 1,
-			"total":  len(plan.Edits),
-			"path":   edit.Path,
-			"status": status,
-			"error":  strings.TrimSpace(result.Error),
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  edit %d/%d %s ... %s\n", i+1, len(plan.Edits), edit.Path, executorEditOutcome(result))
-		}
-		if len(progress) > 0 && progress[0] != nil {
-			progress[0](i+1, len(plan.Edits), edit.Path, status == "ok")
-		}
-		if status == "failed" {
-			report.Failed++
-			report.Failures = append(report.Failures, fmt.Sprintf("edits[%d] %s: %s", i, edit.Path, result.Error))
-			emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-				"total":       report.Total,
-				"succeeded":   report.Succeeded,
-				"failed":      report.Failed,
-				"duration_ms": time.Since(executorStartedAt).Milliseconds(),
-			})
-			return report, fmt.Errorf("executor phase aborted on edit %d (%s): %s", i, edit.Path, result.Error)
-		}
-		report.Succeeded++
-	}
-	sourceSanityChecked, sourceSanityEvidence, err := runPlanExecuteSourceSanity(ctx, mgr, cfg.Workspace.Root, planChangedPaths(plan), jsonEvents, stdout)
-	report.SourceSanity = sourceSanityEvidence
-	if err != nil {
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-			"total":                 report.Total,
-			"succeeded":             report.Succeeded,
-			"failed":                report.Failed,
-			"source_sanity_checked": sourceSanityChecked,
-			"source_sanity_status":  "failed",
-			"duration_ms":           time.Since(executorStartedAt).Milliseconds(),
-		})
-		return report, err
-	}
-	verificationChecked, verificationEvidence, verificationErr := runPlanExecuteVerificationCommands(cfg.Workspace.Root, verificationCommands, jsonEvents, stdout)
-	report.Verification = verificationEvidence
-	if verificationErr != nil {
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-			"total":                    report.Total,
-			"succeeded":                report.Succeeded,
-			"failed":                   report.Failed,
-			"source_sanity_checked":    sourceSanityChecked,
-			"source_sanity_status":     "passed",
-			"verification_checked":     verificationChecked,
-			"verification_status":      "failed",
-			"verification_command_cnt": len(verificationEvidence),
-			"duration_ms":              time.Since(executorStartedAt).Milliseconds(),
-		})
-		return report, verificationErr
-	}
-	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_complete", map[string]any{
-		"total":                 report.Total,
-		"succeeded":             report.Succeeded,
-		"failed":                report.Failed,
-		"source_sanity_checked": sourceSanityChecked,
-		"source_sanity_status":  "passed",
-		"verification_checked":  verificationChecked,
-		"verification_status":   planExecuteVerificationStatus(verificationEvidence),
-		"duration_ms":           time.Since(executorStartedAt).Milliseconds(),
-	})
-	return report, nil
+	shared, err := planexecute.RunExecutorPhaseScopedWithVerification(cfg, plan, requiredEditPaths, allowedEditPaths, verificationCommands, jsonEvents, stdout, progress...)
+	return fromSharedExecutorPhaseReport(shared), err
 }
 
-func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, root string, paths []string, jsonEvents bool, stdout io.Writer) (int, []phaseEvidenceCheck, error) {
-	checked := 0
-	evidence := make([]phaseEvidenceCheck, 0)
-	for _, path := range mergePlanExecutePaths(paths) {
-		if !workspace.SourceSanityCoversPath(path) {
-			continue
-		}
-		fullPath := path
-		if !filepath.IsAbs(fullPath) {
-			fullPath = filepath.Join(root, path)
-		}
-		info, err := os.Stat(filepath.Clean(fullPath))
-		if err != nil || info.IsDir() {
-			continue
-		}
-		checked++
-		result := mgr.Execute(ctx, workspace.ToolRequest{Tool: "source_sanity", Path: path})
-		status := "ok"
-		errText := strings.TrimSpace(result.Error)
-		if errText != "" {
-			status = "failed"
-		}
-		evidence = append(evidence, phaseEvidenceCheck{
-			Kind:    "source_sanity",
-			Path:    path,
-			Status:  status,
-			Summary: strings.TrimSpace(result.Summary),
-			Error:   errText,
-		})
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "source_sanity", map[string]any{
-			"path":    path,
-			"status":  status,
-			"summary": strings.TrimSpace(result.Summary),
-			"error":   errText,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  source sanity %s ... %s\n", path, status)
-		}
-		if errText != "" {
-			return checked, evidence, fmt.Errorf("source_sanity failed for %s: %s", path, errText)
-		}
-	}
-	return checked, evidence, nil
+func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan planexecute.VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
+	shared, err := planexecute.RunExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
+	return fromSharedExecutorPhaseReport(shared), err
 }
 
-func runPlanExecuteVerificationCommands(root string, commands []string, jsonEvents bool, stdout io.Writer) (int, []phaseEvidenceCheck, error) {
-	commands = planexecute.VerificationCommands(commands)
-	evidence := make([]phaseEvidenceCheck, 0, len(commands))
-	for _, command := range commands {
-		check := runPlanExecuteVerificationCommand(root, command)
-		evidence = append(evidence, check)
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", map[string]any{
-			"command": command,
-			"status":  check.Status,
-			"summary": check.Summary,
-			"error":   check.Error,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "  verification %s ... %s\n", command, check.Status)
-		}
-		if check.Status != "ok" && check.Status != "passed" {
-			return len(evidence), evidence, fmt.Errorf("verification failed for %q: %s", command, firstNonEmptyString(check.Error, check.Summary))
-		}
-	}
-	return len(evidence), evidence, nil
-}
-
-func runPlanExecuteVerificationCommand(root string, command string) phaseEvidenceCheck {
-	command = strings.TrimSpace(command)
-	check := phaseEvidenceCheck{Kind: "verification", Command: command, Status: "failed"}
-	args, ok := planexecute.VerificationCommandArgs(command)
-	if !ok {
-		check.Error = "unsupported verification command"
-		return check
-	}
-	cmd := exec.Command(args[0], args[1:]...)
-	cmd.Dir = strings.TrimSpace(root)
-	if cmd.Dir == "" {
-		cmd.Dir = "."
-	}
-	out, err := cmd.CombinedOutput()
-	output := truncatePlanExecuteText(strings.TrimSpace(string(out)), 12000)
-	if err != nil {
-		check.Error = firstNonEmptyString(output, err.Error())
-		check.Summary = err.Error()
-		return check
-	}
-	check.Status = "ok"
-	check.Summary = output
-	return check
+func runPlanExecuteVerificationPlan(root string, plan planexecute.VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []phaseEvidenceCheck, error) {
+	checked, evidence, err := planexecute.RunVerificationPlan(root, plan, jsonEvents, stdout)
+	return checked, fromSharedPhaseEvidenceChecks(evidence), err
 }
 
 func planExecuteVerificationStatus(evidence []phaseEvidenceCheck) string {
-	if len(evidence) == 0 {
-		return "not_applicable"
-	}
-	for _, check := range evidence {
-		if check.Status != "ok" && check.Status != "passed" {
-			return "failed"
-		}
-	}
-	return "passed"
+	return planexecute.VerificationStatus(toSharedPhaseEvidenceChecks(evidence))
 }
 
 // planEditPreflightMismatch describes the first edit whose old_text
@@ -3223,6 +2858,17 @@ type planEditPreflightMismatch struct {
 	Index  int
 	Path   string
 	Reason string
+}
+
+func planEditPreflightMismatchFromPackage(mismatch *planexecute.PlanEditPreflightMismatch) *planEditPreflightMismatch {
+	if mismatch == nil {
+		return nil
+	}
+	return &planEditPreflightMismatch{
+		Index:  mismatch.Index,
+		Path:   mismatch.Path,
+		Reason: mismatch.Reason,
+	}
 }
 
 func preflightPlanApprovalAndScope(plan workspace.PlanArtifact) *planEditPreflightMismatch {
@@ -3441,13 +3087,7 @@ func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact
 }
 
 func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *planEditPreflightMismatch {
-	for i, edit := range plan.Edits {
-		path := normalizePlanExecutePath(edit.Path)
-		if reason := workspace.PlanEditUnsupportedProofClaimReason(edit); reason != "" {
-			return &planEditPreflightMismatch{Index: i, Path: path, Reason: reason}
-		}
-	}
-	return nil
+	return planEditPreflightMismatchFromPackage(planexecute.PreflightPlanUnsupportedProofClaims(plan))
 }
 
 func normalizePlanExecutePath(path string) string {
@@ -3484,69 +3124,7 @@ func normalizePlanExecutePath(path string) string {
 // still appear in the modified content. The preflight catches the
 // common case where the plan's anchor is wrong from the start.
 func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *planEditPreflightMismatch {
-	cache := make(map[string][]byte)
-	for i, edit := range plan.Edits {
-		oldText := strings.TrimSpace(edit.OldText)
-		if oldText == "" {
-			// Range-shaped or replace_all-only edit — let the
-			// executor handle validation.
-			continue
-		}
-		rawPath := strings.TrimSpace(edit.Path)
-		path := normalizePlanExecutePath(rawPath)
-		if path == "" {
-			reason := "edit has no path"
-			if rawPath != "" {
-				reason = "edit has invalid path"
-			}
-			return &planEditPreflightMismatch{Index: i, Path: rawPath, Reason: reason}
-		}
-		abs := path
-		if !filepath.IsAbs(abs) {
-			abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
-		}
-		body, ok := cache[abs]
-		if !ok {
-			content, err := os.ReadFile(abs)
-			if err != nil {
-				return &planEditPreflightMismatch{Index: i, Path: path, Reason: fmt.Sprintf("could not read file: %s", err.Error())}
-			}
-			body = content
-			cache[abs] = body
-		}
-		current := string(body)
-		if plan.SchemaVersion == workspace.PlanArtifactSchemaVersion && edit.AnchorProvenance == nil {
-			if anchored, err := workspace.AttachPlanEditAnchorProvenance(workspaceRoot, []workspace.PlanEdit{edit}); err == nil && len(anchored) == 1 {
-				edit = anchored[0]
-			}
-		}
-		if err := workspace.ValidatePlanEditAnchorProvenance(workspaceRoot, edit); err != nil {
-			return &planEditPreflightMismatch{
-				Index:  i,
-				Path:   path,
-				Reason: err.Error(),
-			}
-		}
-		matchCount := strings.Count(current, edit.OldText)
-		if matchCount == 0 {
-			return &planEditPreflightMismatch{
-				Index:  i,
-				Path:   path,
-				Reason: "old_text does not appear in file (whitespace/indentation mismatch is the most common cause)",
-			}
-		}
-		if matchCount > 1 && !edit.ReplaceAll {
-			return &planEditPreflightMismatch{
-				Index:  i,
-				Path:   path,
-				Reason: fmt.Sprintf("old_text matched %d locations; use a line-range edit, extend old_text with surrounding context, or set replace_all=true when every occurrence is intended", matchCount),
-			}
-		}
-	}
-	if mismatch := preflightPlanFinalState(workspaceRoot, plan); mismatch != nil {
-		return mismatch
-	}
-	return nil
+	return planEditPreflightMismatchFromPackage(planexecute.PreflightPlanEdits(workspaceRoot, plan))
 }
 
 func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) *planEditPreflightMismatch {
@@ -3601,36 +3179,6 @@ func preflightPlanFinalState(workspaceRoot string, plan workspace.PlanArtifact) 
 		cache[abs] = []byte(updated)
 	}
 	return nil
-}
-
-func projectedInsertAfterLineContent(workspaceRoot string, edit workspace.PlanEdit) (string, error) {
-	path := normalizePlanExecutePath(edit.Path)
-	if path == "" {
-		return "", fmt.Errorf("edit has invalid path")
-	}
-	abs := path
-	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(strings.TrimSpace(workspaceRoot), filepath.FromSlash(path))
-	}
-	body, err := os.ReadFile(abs)
-	if err != nil {
-		return "", fmt.Errorf("insert_after_line could not read existing %s: %w", path, err)
-	}
-	updated, changed, err := workspace.PreviewPlanEditContent(string(body), edit)
-	if err != nil {
-		return "", err
-	}
-	if !changed {
-		return "", fmt.Errorf("insert_after_line would not change %s", path)
-	}
-	return updated, nil
-}
-
-func executorEditOutcome(result workspace.ToolResult) string {
-	if strings.TrimSpace(result.Error) != "" {
-		return "FAILED: " + result.Error
-	}
-	return "ok"
 }
 
 // emitPlanExecuteJSONEvent writes one JSONL line to stdout when the
