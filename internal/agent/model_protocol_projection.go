@@ -133,14 +133,7 @@ func modelProtocolProjectionTools(groups ...[]string) []string {
 }
 
 func modelProtocolKnownReadOnlyPlannerTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "context_pack", "context_query", "context_zoom", "context_status", "discovery_query",
-		"search_files", "search_content", "read_file", "code_navigate",
-		"product_efforts", "product_status", "recovery_inspect", "recovery_status", "submit_plan":
-		return true
-	default:
-		return false
-	}
+	return contractcompile.IsPlanExecutePlannerToolAllowed(tool)
 }
 
 func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []string {

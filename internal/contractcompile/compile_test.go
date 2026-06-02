@@ -266,6 +266,32 @@ func TestCompilePlanExecutePlannerDefaultsKeepRequiredEditsDistinctFromSourceBod
 	}
 }
 
+func TestCompilePlanExecutePlannerAcceptsPlannerToolVocabulary(t *testing.T) {
+	input := plannerFixtureInput()
+	plannerTools := PlanExecutePlannerToolNames()
+	input.AllowedTools = plannerTools
+	input.RequiredTools = []string{"history_range", "history_symbol", "submit_plan"}
+	input.Protocol.VisibleTools = plannerTools
+	input.Protocol.CallableTools = plannerTools
+	input.Protocol.CallableToolsSpecified = true
+
+	result, err := CompilePlanExecutePlanner(input)
+	if err != nil {
+		t.Fatalf("CompilePlanExecutePlanner failed for planner vocabulary: %v", err)
+	}
+	for _, tool := range []string{"blame_range", "context_impact", "harness_feedback", "history_range", "history_symbol"} {
+		if !slices.Contains(result.Protocol.VisibleTools, tool) {
+			t.Fatalf("visible tools missing %s: %#v", tool, result.Protocol.VisibleTools)
+		}
+		if !slices.Contains(result.Protocol.CallableTools, tool) {
+			t.Fatalf("callable tools missing %s: %#v", tool, result.Protocol.CallableTools)
+		}
+	}
+	if slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
+		t.Fatalf("planner vocabulary should not allow additive effects: %#v", result.Contract.Capabilities.AllowedEffects)
+	}
+}
+
 func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T) {
 	for _, tc := range []struct {
 		name   string
@@ -326,6 +352,12 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 			},
 		},
 		{
+			name: "delegate edit forbidden for planner",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.CallableTools = append(input.Protocol.CallableTools, "delegate_edit")
+			},
+		},
+		{
 			name: "allowed forbidden overlap",
 			mutate: func(input *PlanExecutePlannerInput) {
 				input.ForbiddenTools = append(input.ForbiddenTools, "read_file")
@@ -334,7 +366,7 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 		{
 			name: "allowed forbidden capability overlap",
 			mutate: func(input *PlanExecutePlannerInput) {
-				input.ForbiddenTools = append(input.ForbiddenTools, "grep")
+				input.ForbiddenTools = append(input.ForbiddenTools, "search_files")
 			},
 		},
 		{
@@ -346,8 +378,8 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 		{
 			name: "required forbidden capability overlap",
 			mutate: func(input *PlanExecutePlannerInput) {
-				input.RequiredTools = append(input.RequiredTools, "rg")
-				input.ForbiddenTools = append(input.ForbiddenTools, "grep")
+				input.RequiredTools = append(input.RequiredTools, "search_files")
+				input.ForbiddenTools = append(input.ForbiddenTools, "search_content")
 			},
 		},
 		{
@@ -359,8 +391,8 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 		{
 			name: "visible forbidden capability overlap",
 			mutate: func(input *PlanExecutePlannerInput) {
-				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "rg")
-				input.ForbiddenTools = append(input.ForbiddenTools, "grep")
+				input.Protocol.VisibleTools = append(input.Protocol.VisibleTools, "context_query")
+				input.ForbiddenTools = append(input.ForbiddenTools, "context_pack")
 			},
 		},
 		{

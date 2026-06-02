@@ -105,13 +105,7 @@ func validatePlanExecutePlannerInput(input PlanExecutePlannerInput) error {
 }
 
 func plannerForbiddenTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "shell", "source_sanity", "go_diagnostics", "cpp_diagnostics", "task",
-		"edit_file", "write_file", "append_file", "mkdir", "apply_patch":
-		return true
-	default:
-		return false
-	}
+	return !IsPlanExecutePlannerToolAllowed(tool)
 }
 
 func validateProtocolProjection(protocol ModelProtocolProjection) error {

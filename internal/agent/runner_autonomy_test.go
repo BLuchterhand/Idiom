@@ -279,7 +279,15 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 		PermissionProfile: "guarded_workspace_write",
 		RequiredEditPaths: []string{"a.go"},
 		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
-		AllowedTools:      []string{"read_file", "history_range", "history_symbol", "submit_plan"},
+		AllowedTools: []string{
+			"read_file",
+			"context_impact",
+			"harness_feedback",
+			"history_range",
+			"history_symbol",
+			"blame_range",
+			"submit_plan",
+		},
 	}
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
@@ -296,12 +304,22 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 	if phase.PhaseID != turnPhaseHistoryPending {
 		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseHistoryPending)
 	}
+	phase.AllowedTools = uniquePhaseStrings(append(phase.AllowedTools, "blame_range", "context_impact", "harness_feedback"))
+	phase.ActionPolicy.CallableToolNames = uniquePhaseStrings(append(phase.ActionPolicy.CallableToolNames, "blame_range", "context_impact", "harness_feedback"))
 	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
 	if !ok {
 		t.Fatal("expected history-pending model protocol projection to compile")
 	}
 	if !slices.Contains(protocol.CallableActionClasses, actionRead) {
 		t.Fatalf("history-pending protocol should expose history tools as read actions: %#v", protocol.CallableActionClasses)
+	}
+	for _, tool := range []string{"blame_range", "context_impact", "harness_feedback", "history_range", "history_symbol"} {
+		if !slices.Contains(protocol.VisibleTools, tool) {
+			t.Fatalf("history-pending protocol should preserve visible planner tool %s: %#v", tool, protocol.VisibleTools)
+		}
+		if !slices.Contains(protocol.CallableTools, tool) {
+			t.Fatalf("history-pending protocol should preserve callable planner tool %s: %#v", tool, protocol.CallableTools)
+		}
 	}
 	if slices.Contains(protocol.CallableActionClasses, "history") {
 		t.Fatalf("history-pending protocol should not expose non-canonical history action class: %#v", protocol.CallableActionClasses)
