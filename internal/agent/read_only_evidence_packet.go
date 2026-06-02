@@ -33,6 +33,9 @@ type ReadOnlyEvidencePacket struct {
 
 func buildReadOnlyEvidencePacket(objective string, answer string, results []workspace.ToolResult) (ReadOnlyEvidencePacket, bool) {
 	objective = strings.TrimSpace(objective)
+	if readOnlyToolControlGuidanceText(answer) {
+		answer = ""
+	}
 	sourceBodyPaths := readOnlyEvidencePacketSourceBodyPaths(results)
 	candidatePaths := readOnlyEvidencePacketCandidatePaths(results)
 	inspectedPaths := readOnlyEvidencePacketInspectedPaths(sourceBodyPaths, candidatePaths, answer)
@@ -96,7 +99,7 @@ func renderReadOnlyEvidencePacketForToolOutput(packet ReadOnlyEvidencePacket, an
 		b.WriteString(question)
 		b.WriteString("\n")
 	}
-	if answer = strings.TrimSpace(stripDelegatedReadOnlyInternalPacket(answer)); answer != "" {
+	if answer = strings.TrimSpace(stripDelegatedReadOnlyInternalPacket(answer)); answer != "" && !readOnlyToolControlGuidanceText(answer) {
 		b.WriteString("Grounded answer:\n")
 		b.WriteString(answer)
 		b.WriteString("\n")

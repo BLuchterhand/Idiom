@@ -105,6 +105,73 @@ func TestShellSanityCommandsCountAsVerification(t *testing.T) {
 	}
 }
 
+func TestShellSyntaxCheckSatisfiesScriptPostWriteVerification(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "shell", Command: "bash -n scripts/run-harness.sh"}
+	if !isVerificationRequest(req) {
+		t.Fatal("bash -n should count as a verification request for shell script edits")
+	}
+	writeOnlyResults := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh"},
+	}
+	deterministicReq, ok := deterministicPostWriteVerificationRequest(writeOnlyResults, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"})
+	if !ok {
+		t.Fatal("expected deterministic post-write verification request for shell script edits")
+	}
+	if deterministicReq.Tool != "shell" || deterministicReq.Command != "bash -n scripts/run-harness.sh" {
+		t.Fatalf("unexpected deterministic verification request: %#v", deterministicReq)
+	}
+	results := []workspace.ToolResult{
+		{Tool: "edit_file", Summary: "Edited scripts/run-harness.sh"},
+		{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
+	}
+	if !hasSuccessfulVerificationResult(results) {
+		t.Fatal("bash -n shell result should count as successful verification")
+	}
+	if hasPendingVerificationAfterWrites(results, workerruntime.WorkerRuntimeBrief{VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker"}) {
+		t.Fatal("bash -n should clear pending post-write verification for script edits")
+	}
+}
+
+func TestPostWriteVerificationTelemetryForShellSyntaxCheck(t *testing.T) {
+	var events []RunEvent
+	runner := &Runner{OnEvent: func(event RunEvent) {
+		events = append(events, event)
+	}}
+	ok := runner.emitPostWriteVerificationTelemetry(
+		workspace.ToolRequest{Tool: "shell", Command: "bash -n scripts/run-harness.sh"},
+		workspace.ToolResult{Tool: "shell", Summary: "Ran shell command", Output: "$ bash -n scripts/run-harness.sh\n"},
+	)
+	if !ok {
+		t.Fatal("expected telemetry emission for successful shell syntax verification")
+	}
+	if len(events) != 2 || events[0].Role != "verification_plan" || events[1].Role != "verification_feedback" {
+		t.Fatalf("unexpected telemetry events: %#v", events)
+	}
+	var plan struct {
+		Commands         []string `json:"commands"`
+		Confidence       string   `json:"confidence"`
+		ExpectedFailures []string `json:"expected_failures"`
+	}
+	if err := json.Unmarshal([]byte(events[0].Content), &plan); err != nil {
+		t.Fatalf("parse verification plan: %v", err)
+	}
+	if !slices.Contains(plan.Commands, "bash -n scripts/run-harness.sh") ||
+		plan.Confidence != "low" ||
+		!slices.Contains(plan.ExpectedFailures, "shell syntax errors") {
+		t.Fatalf("unexpected verification plan: %#v", plan)
+	}
+	var feedback struct {
+		Confidence            string `json:"confidence"`
+		LearnedRecommendation string `json:"learned_recommendation"`
+	}
+	if err := json.Unmarshal([]byte(events[1].Content), &feedback); err != nil {
+		t.Fatalf("parse verification feedback: %v", err)
+	}
+	if feedback.Confidence != "low" || !strings.Contains(feedback.LearnedRecommendation, "targeted tests") {
+		t.Fatalf("unexpected verification feedback: %#v", feedback)
+	}
+}
+
 func TestPatchHygieneDoesNotSatisfySourceEditCompletion(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -4616,11 +4683,172 @@ func (r *Runner) runChildTask() string {
 		t.Fatalf("expected forced synthesis answer, got %q", answer)
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected first no-gap follow-up to force synthesis immediately, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected first no-gap follow-up to force synthesis, used %d/%d replies", requests, len(replies))
 	}
 	if slices.Contains(roles, "tool_rejected") {
 		t.Fatalf("did not expect a rejected-tool turn before forced synthesis, got roles %v", roles)
 	}
+}
+
+func TestRunnerGatesPostReadinessSourceToolWithoutExactProbeContract(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/agent/runner_child_tasks.go", "package agent\nfunc runChildTask() {}\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	if err := writeTestFile(root, "go.mod", "module idiomtest\n\ngo 1.22\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"go_read_symbol","path":"internal/agent/runner_child_tasks.go","pattern":"runChildTask"}`,
+		"`runChildTask` is already supported by the gathered evidence.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var toolResults []workspace.ToolResult
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 3, MaxNoProgressTurns: 3},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			Objective:         "Explain how `Runner.runChildTask` works.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"go_read_symbol"},
+			Constraints:       []string{"answer_readiness_reached"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Explain how `Runner.runChildTask` works."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			toolResults = append(toolResults, event.Result)
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !strings.Contains(answer, "runChildTask") {
+		t.Fatalf("expected final answer after terminal gate, got %q", answer)
+	}
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
+		t.Fatalf("expected one post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	for _, result := range toolResults {
+		if result.Tool == "go_read_symbol" && strings.TrimSpace(result.Error) == "" {
+			t.Fatalf("gapless post-readiness source probe must not execute successfully, got results=%#v events=%s", toolResults, formatRunEventsForTest(events))
+		}
+	}
+	for _, event := range events {
+		if event.Role == "permission_decision" && strings.Contains(event.Content, `"tool":"go_read_symbol"`) && strings.Contains(event.Content, `"decision":"allow"`) {
+			t.Fatalf("gapless post-readiness source probe reached permission allow: %s", event.Content)
+		}
+	}
+}
+
+func TestRunnerPostReadinessHostCloseoutFeedbackDoesNotCountAsRunnerRejection(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	if err := writeTestFile(root, "go.mod", "module idiomtest\n\ngo 1.22\n"); err != nil {
+		t.Fatalf("write go.mod: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         "Can we shorten the save label in internal/labels/labels.go? Answer from the codebase.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Can we shorten the save label in internal/labels/labels.go? Answer from the codebase."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != 2 {
+		t.Fatalf("expected repeated read to host-closeout after feedback, used %d replies", requests)
+	}
+	if !strings.Contains(answer, "Save changes") || !strings.Contains(answer, "internal/labels/labels.go") {
+		t.Fatalf("expected host-owned answer from gathered evidence, got %q", answer)
+	}
+	if got := countEventsByRole(events, "failure_feedback"); got != 1 {
+		t.Fatalf("expected diagnostic failure_feedback, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
+		t.Fatalf("expected one post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	for _, event := range events {
+		if event.Role == "budget_ledger" {
+			if !strings.Contains(event.Content, `"rejected_actions":0`) {
+				t.Fatalf("host closeout feedback must not count as runner rejection: %s", event.Content)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected budget_ledger event; events=%s", formatRunEventsForTest(events))
 }
 
 func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSufficient(t *testing.T) {
@@ -12250,8 +12478,13 @@ func TestDelegatedReadOnlyRepairsOffContractDiscoveryUsefulnessPurpose(t *testin
 	if decision.Request.Tool != "discovery_query" || decision.Request.Purpose != "architecture_boundary" {
 		t.Fatalf("expected discovery-tool usefulness to force architecture_boundary, got %#v", decision.Request)
 	}
-	if !strings.Contains(decision.Request.Pattern, "discovery[-_ ]?query") || strings.Contains(decision.Request.Pattern, "answer[-_ ]?composer") {
-		t.Fatalf("expected usefulness pattern to target discovery surfaces, got %#v", decision.Request)
+	if decision.Request.Path != "internal/agent" {
+		t.Fatalf("expected discovery usefulness repair to stay on agent synthesis boundary, got %#v", decision.Request)
+	}
+	for _, want := range []string{"answer[-_ ]?composer", "readiness", "closeout", "discovery[-_ ]?query"} {
+		if !strings.Contains(decision.Request.Pattern, want) {
+			t.Fatalf("expected usefulness pattern to include %q, got %#v", want, decision.Request)
+		}
 	}
 }
 
@@ -12415,14 +12648,14 @@ func TestDelegatedReadOnlyBootstrapPatternDoesNotInjectDelegateForDebugFeature(t
 	}
 }
 
-func TestDelegatedReadOnlyBootstrapPatternForDiscoveryUsefulnessTargetsDiscoverySurfaces(t *testing.T) {
+func TestDelegatedReadOnlyBootstrapPatternForDiscoveryUsefulnessTargetsSynthesisBoundary(t *testing.T) {
 	pattern := delegatedReadOnlyBootstrapPattern("What can we add to our discovery tools to increase their overall usefulness?")
-	for _, want := range []string{"discovery", "context", "comprehension", "frontier", "workspace", "tool"} {
+	for _, want := range []string{"answer[-_ ]?composer", "synthesizeDelegatedReadOnlyAnswer", "readiness", "discovery[-_ ]?query", "child[-_ ]?packet", "closeout"} {
 		if !strings.Contains(pattern, want) {
 			t.Fatalf("expected discovery usefulness pattern to include %q, got %q", want, pattern)
 		}
 	}
-	for _, forbidden := range []string{"answer[-_ ]?composer", "runner"} {
+	for _, forbidden := range []string{"comprehension", "frontier", "workspace|tool[-_ ]?surface"} {
 		if strings.Contains(pattern, forbidden) {
 			t.Fatalf("discovery usefulness pattern should not inject %q, got %q", forbidden, pattern)
 		}
@@ -12434,6 +12667,34 @@ func TestDelegatedReadOnlyBootstrapPatternAddsSubagentImplementationAliases(t *t
 	for _, want := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool", "sub[-_ ]?agent"} {
 		if !strings.Contains(pattern, want) {
 			t.Fatalf("expected subagent pattern alias %q, got %q", want, pattern)
+		}
+	}
+}
+
+func TestDelegatedReadOnlyDiscoveryRepairScopesSubagentArchitecture(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "delegated_read_only",
+			Contract:          "architecture_assessment",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Can you tell me how this harness uses subagents?",
+		},
+	}
+	repaired, ok := runner.delegatedReadOnlyDiscoveryQueryRepairRequest(nil, workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "impact_analysis",
+		Path:    ".",
+	})
+	if !ok {
+		t.Fatal("expected delegated subagent discovery query to be repaired")
+	}
+	if repaired.Purpose != "architecture_boundary" || repaired.Path != "internal/agent" {
+		t.Fatalf("expected architecture query scoped to internal/agent, got %#v", repaired)
+	}
+	for _, want := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool"} {
+		if !strings.Contains(repaired.Pattern, want) {
+			t.Fatalf("expected repaired query pattern to contain %q, got %q", want, repaired.Pattern)
 		}
 	}
 }
@@ -12835,6 +13096,43 @@ func TestDelegatedDiscoveryQueryEvidencePathsPreferCoreRunnerFiles(t *testing.T)
 	}
 	if slices.Contains(paths, "internal/agent/modes.go") {
 		t.Fatalf("incidental path displaced core runner evidence: %#v", paths)
+	}
+}
+
+func TestAnswerComposerIncludesDiscoveryUsefulnessSynthesisBoundary(t *testing.T) {
+	summaries := []delegatedDiscoverySummary{{
+		Purpose:      "architecture_boundary",
+		ArtifactPath: ".idiom/discovery/queries/query.json",
+		Evidence: []struct {
+			Name          string `json:"name"`
+			Tool          string `json:"tool"`
+			Summary       string `json:"summary"`
+			Error         string `json:"error,omitempty"`
+			OutputExcerpt string `json:"output_excerpt,omitempty"`
+		}{{
+			Name:          "text_anchor_search",
+			Summary:       "Found discovery tool implementation paths.",
+			OutputExcerpt: "internal/workspace/discovery_query.go:1: package workspace",
+		}},
+	}}
+
+	answer, ok := AnswerComposer{}.Compose(AnswerComposerInput{
+		Question:      "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+		EvidencePaths: []string{"internal/workspace/discovery_query.go"},
+		Summaries:     summaries,
+	})
+	if !ok {
+		t.Fatal("expected discovery-usefulness answer composition")
+	}
+	for _, want := range []string{
+		"`internal/agent/answer_composer.go`",
+		"`internal/agent/runner.go`",
+		"`internal/agent/runner_lane_policy.go`",
+		"`internal/workspace/discovery_query.go`",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected composed answer to cite %q, got:\n%s", want, answer)
+		}
 	}
 }
 
@@ -13890,6 +14188,29 @@ func TestPostReadinessRequestSelfDescribesExactProbe(t *testing.T) {
 	}
 }
 
+func TestPostReadinessExactProbeContractRequiresNamedGapAndWhy(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:            "code_navigate",
+		Path:            "internal/agent/runner_child_tasks.go",
+		Capability:      "read_symbol",
+		Symbol:          "runWorkbranchChildTask",
+		NamedGap:        "confirm runWorkbranchChildTask handoff behavior",
+		WhyNotAnswering: "one remaining claim depends on the exact handoff branch",
+	}
+	if !postReadinessExactProbeContractPresent(req) {
+		t.Fatal("post-readiness exact probes should require both named_gap and why_not_answering")
+	}
+	req.WhyNotAnswering = ""
+	if postReadinessExactProbeContractPresent(req) {
+		t.Fatal("named_gap alone must not satisfy the post-readiness exact-probe contract")
+	}
+	req.NamedGap = ""
+	req.WhyNotAnswering = "one remaining claim depends on the exact handoff branch"
+	if postReadinessExactProbeContractPresent(req) {
+		t.Fatal("why_not_answering alone must not satisfy the post-readiness exact-probe contract")
+	}
+}
+
 func TestPostReadinessReadFileAlreadyCovered(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
@@ -13949,6 +14270,153 @@ func TestReadOnlyAnalysisExactProbeCountIncludesCodeNavigateSourceBody(t *testin
 	}
 }
 
+func TestReadOnlyNoMatchCloseoutAppliesAfterExactEvidence(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		Contract:          "architecture_assessment",
+		TaskFamily:        "architecture",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does the debug log redacted mode do?",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output:  "capability: file_outline\nroute_summary: Outlined internal/transcript/debuglog.go",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "capability: read_symbol\nroute_summary: Read DebugLogger.SetMode in internal/transcript/debuglog.go lines 52-61\n\n52:func (d *DebugLogger) SetMode(mode DebugLogMode) {}",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "No generic code navigation matches for read_symbol",
+			Output:  "capability: read_symbol\nroute_summary: no matches",
+		},
+	}
+
+	if !runner.readOnlyNoMatchCloseoutApplies(
+		workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "redactedBlob"},
+		results[2],
+		results,
+	) {
+		t.Fatal("expected no-match symbol probe after exact source evidence to close out")
+	}
+	if runner.readOnlyNoMatchCloseoutApplies(
+		workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "redactedBlob"},
+		results[2],
+		results[:1],
+	) {
+		t.Fatal("outline-only evidence must not trigger no-match closeout")
+	}
+}
+
+func TestReadOnlyNoMatchCloseoutRequiresSourceBodyEvidence(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		Contract:          "architecture_assessment",
+		TaskFamily:        "architecture",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain how this harness uses subagents.",
+	}}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "discovery_query",
+			Summary: "Ran architecture_boundary discovery query",
+			Output:  "internal/agent/runner.go:574: result := r.runChildTask(ctx, req, opts)\ninternal/agent/runner_child_tasks.go:16: func (r *Runner) runChildTask(...)",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output:  "capability: file_outline\nroute_summary: Outlined internal/agent/runner_child_tasks.go",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "No generic code navigation matches for read_symbol",
+			Output:  "capability: read_symbol\nroute_summary: no matches",
+		},
+	}
+	if runner.readOnlyNoMatchCloseoutApplies(
+		workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Pattern: "Runner.runChildTask"},
+		results[2],
+		results,
+	) {
+		t.Fatal("discovery and outline evidence without source body must not trigger no-match closeout")
+	}
+}
+
+func TestPathlessReadSymbolAfterOutlineInheritsOutlinePath(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed file_outline via go_file_outline",
+		Output:  "capability: file_outline\nroute_summary: Outlined internal/agent/runner_child_tasks.go",
+	}}
+	req := workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Symbol: "Runner.runChildTask"}
+	rewritten, raw, reason, ok := pathlessReadSymbolAfterOutlineRewriteRequest(req, results)
+	if !ok {
+		t.Fatal("expected pathless read_symbol to inherit latest outline path")
+	}
+	if rewritten.Path != "internal/agent/runner_child_tasks.go" || rewritten.Pattern != "Runner.runChildTask" {
+		t.Fatalf("unexpected rewrite: %#v", rewritten)
+	}
+	if !strings.Contains(raw, `"path":"internal/agent/runner_child_tasks.go"`) || reason == "" {
+		t.Fatalf("expected raw path rewrite and reason, raw=%q reason=%q", raw, reason)
+	}
+}
+
+func TestRepeatedFileOutlineUpgradesToReadSymbol(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed file_outline via go_file_outline",
+		Output: strings.Join([]string{
+			"capability: file_outline",
+			"route_summary: Outlined 2 top-level declaration(s) in internal/agent/runner_child_tasks.go.",
+			"declarations:",
+			"- runChildTask lines 16-140 tags: delegation",
+			"- childTaskOptions lines 142-180 tags: support",
+		}, "\n"),
+	}}
+	req := workspace.ToolRequest{Tool: "code_navigate", Path: "internal/agent/runner_child_tasks.go", Capability: "file_outline"}
+	rewritten, raw, reason, ok := repeatedFileOutlineToReadSymbolRewriteRequest(req, results, workerruntime.WorkerRuntimeBrief{
+		Contract:          "architecture_assessment",
+		TaskFamily:        "delegated_read_only",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you tell me how this harness uses subagents?",
+	})
+	if !ok {
+		t.Fatal("expected repeated outline to upgrade to read_symbol")
+	}
+	if rewritten.Capability != "read_symbol" || rewritten.Pattern != "runChildTask" || rewritten.Path != "internal/agent/runner_child_tasks.go" {
+		t.Fatalf("unexpected outline upgrade: %#v", rewritten)
+	}
+	if !strings.Contains(raw, `"capability":"read_symbol"`) || reason == "" {
+		t.Fatalf("expected raw read_symbol rewrite and reason, raw=%q reason=%q", raw, reason)
+	}
+}
+
+func TestReadOnlyDefinitionProbeUpgradesToReadSymbol(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Path:       "internal/transcript/debuglog.go",
+		Capability: "find_definition",
+		Symbol:     "DebugLogModeRedacted",
+	}
+	rewritten, raw, reason, ok := readOnlyDefinitionToReadSymbolRewriteRequest(req, workerruntime.WorkerRuntimeBrief{
+		Contract:          "architecture_assessment",
+		TaskFamily:        "architecture",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does the debug log redacted mode do?",
+	})
+	if !ok {
+		t.Fatal("expected read-only definition probe to upgrade to read_symbol")
+	}
+	if rewritten.Capability != "read_symbol" || rewritten.Pattern != "DebugLogModeRedacted" || rewritten.Path != "internal/transcript/debuglog.go" {
+		t.Fatalf("unexpected definition rewrite: %#v", rewritten)
+	}
+	if !strings.Contains(raw, `"capability":"read_symbol"`) || reason == "" {
+		t.Fatalf("expected raw read_symbol rewrite and reason, raw=%q reason=%q", raw, reason)
+	}
+}
+
 func TestSafeVisibleToolRequestAllowsConcreteDiscoveryQuery(t *testing.T) {
 	runner := &Runner{}
 	if !runner.safeVisibleToolRequest(workspace.ToolRequest{
@@ -13961,6 +14429,84 @@ func TestSafeVisibleToolRequestAllowsConcreteDiscoveryQuery(t *testing.T) {
 	}
 	if runner.safeVisibleToolRequest(workspace.ToolRequest{Tool: "discovery_query"}, nil) {
 		t.Fatal("empty discovery_query should not be safe visible recovery")
+	}
+	if runner.safeVisibleToolRequest(workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "all",
+		Path:    ".",
+	}, nil) {
+		t.Fatal("invalid discovery_query purpose must not be safe visible recovery")
+	}
+	if runner.safeVisibleToolRequest(workspace.ToolRequest{
+		Tool:  "discovery_query",
+		Query: "subagent orchestration",
+		Path:  ".",
+	}, nil) {
+		t.Fatal("arbitrary query text must not be salvaged as a discovery_query purpose")
+	}
+	if !runner.safeVisibleToolRequest(workspace.ToolRequest{
+		Tool:  "discovery_query",
+		Query: "architecture",
+		Path:  ".",
+	}, nil) {
+		t.Fatal("recognized discovery_query purpose aliases should be safe visible recovery")
+	}
+	if !runner.safeVisibleToolRequest(workspace.ToolRequest{
+		Tool:    "discovery_query",
+		Purpose: "Run a deterministic layered discovery recipe to identify subagent definitions and orchestration patterns.",
+		Path:    ".",
+	}, nil) {
+		t.Fatal("descriptive architecture discovery purpose should be canonicalized for safe visible recovery")
+	}
+}
+
+func TestVisibleToolSalvageRepairsDelegatedReadOnlyDiscoveryQuery(t *testing.T) {
+	runner := &Runner{
+		AgentName: "child:explorer",
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "delegated_read_only",
+			Contract:          "architecture_assessment",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+		},
+	}
+	reply := `{"tool":"discovery_query","query":"discovery tool usefulness","path":"."}`
+	req, raw, ok := runner.salvageVisibleToolRequestFromProse(reply, nil)
+	if !ok {
+		t.Fatal("expected delegated discovery query JSON to salvage through repair")
+	}
+	if req.Tool != "discovery_query" || req.Purpose != "architecture_boundary" || req.Path != "internal/agent" {
+		t.Fatalf("expected repaired architecture discovery query scoped to internal/agent, got %#v", req)
+	}
+	if !strings.Contains(req.Pattern, "answer[-_ ]?composer") {
+		t.Fatalf("expected repaired query to target answer synthesis boundary, got %q", req.Pattern)
+	}
+	if !strings.Contains(raw, `"purpose":"architecture_boundary"`) || !strings.Contains(raw, `"path":"internal/agent"`) {
+		t.Fatalf("expected raw repaired request, got %s", raw)
+	}
+}
+
+func TestDelegatedChildFallbackSourceReadUsesExpectedEvidencePath(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"go.mod":                            "module example.test\n",
+		"internal/agent/answer_composer.go": "package agent\n\nfunc ComposeDiscoveryAnswer() string { return \"ok\" }\n",
+		"internal/agent/runner.go":          "package agent\n\nfunc Run() {}\n",
+	})
+	runner := &Runner{Workspace: ws}
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query",
+		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery paths","output_excerpt":"internal/agent/runner.go:1: package agent"}]}`,
+	}}
+	req, result, ok := runner.delegatedChildFallbackSourceRead(context.Background(), "What can we add to our discovery tools in an effort at increasing their overall usefulness?", results)
+	if !ok {
+		t.Fatal("expected fallback source read")
+	}
+	if req.Path != "internal/agent/answer_composer.go" || result.Tool != "read_file" {
+		t.Fatalf("expected answer_composer read_file fallback, req=%#v result=%#v", req, result)
+	}
+	if !readFileResultHasConcreteSourceBody(result) {
+		t.Fatalf("fallback result should contain source body, got %#v", result)
 	}
 }
 
@@ -15089,6 +15635,27 @@ func TestAugmentDelegatedReadOnlyPacketPreservesAdditionalPaths(t *testing.T) {
 	}
 }
 
+func TestAugmentDelegatedReadOnlyPacketIncludesDiscoveryUsefulnessExpectedPaths(t *testing.T) {
+	answer := "For `What can we add to our discovery tools in an effort at increasing their overall usefulness?`, this is grounded in `internal/workspace/discovery_query.go`, `internal/agent/runner.go`."
+	results := []workspace.ToolResult{
+		{
+			Tool:    "discovery_query",
+			Summary: "Ran architecture_boundary discovery query",
+			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found discovery tool implementation paths.","output_excerpt":"internal/workspace/discovery_query.go:338: func runDiscoveryQuery\ninternal/agent/runner.go:648: runChildTask"}]}`,
+		},
+	}
+	augmented := augmentDelegatedReadOnlyPacket(answer, "What can we add to our discovery tools in an effort at increasing their overall usefulness?", results)
+	for _, want := range []string{
+		"Additional inspected paths:",
+		"`internal/agent/answer_composer.go`",
+		"`internal/agent/runner_lane_policy.go`",
+	} {
+		if !strings.Contains(augmented, want) {
+			t.Fatalf("expected augmented discovery packet to contain %q, got %q", want, augmented)
+		}
+	}
+}
+
 func TestInvalidPostReadinessGapDoesNotUseQuestionClassSpecificAdjacentDetailRule(t *testing.T) {
 	results := []workspace.ToolResult{
 		{
@@ -15493,6 +16060,41 @@ func TestHostOwnedReadOnlyCloseoutDoesNotUseCandidateOnlyEvidence(t *testing.T) 
 	}}
 	if answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results); ok {
 		t.Fatalf("candidate-only evidence must not host-closeout, got %q", answer)
+	}
+}
+
+func TestHostOwnedReadOnlyCloseoutIgnoresNoisyMentionedPaths(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain how this harness uses sub-agents.",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "go_read_symbol",
+			Summary: "Read runChildTask in internal/agent/runner_child_tasks.go lines 10-30",
+			Output:  "10:func runChildTask() {}\n",
+		},
+		{
+			Tool:    "discovery_query",
+			Summary: "Discovery packet also mentioned .idiom/discovery/queries/query.json and testdata/swe/generated-logs/direct.jsonl.",
+			Output:  "candidate artifacts: .idiom/discovery/queries/query.json\ntestdata/swe/generated-logs/direct.jsonl\n",
+		},
+	}
+	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+	if !ok {
+		t.Fatal("expected host-owned closeout from accepted source evidence")
+	}
+	if !strings.Contains(answer, "internal/agent/runner_child_tasks.go") {
+		t.Fatalf("closeout answer missing accepted source evidence path:\n%s", answer)
+	}
+	for _, forbidden := range []string{".idiom/discovery/queries/query.json", "testdata/swe/generated-logs/direct.jsonl"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("closeout answer used noisy mentioned path %q:\n%s", forbidden, answer)
+		}
 	}
 }
 
@@ -15989,6 +16591,84 @@ func TestClosurePromptEvidencePathsDropsArtifacts(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("expected prompt evidence paths %#v, got %#v", want, got)
+	}
+}
+
+func TestGeneratedEvidenceArtifactReadRedirectNamesSourcePaths(t *testing.T) {
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: ".idiom/discovery/queries/query.json",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture discovery",
+		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found paths","output_excerpt":"internal/agent/runner.go:128: finish\ninternal/agent/runner_child_tasks.go:16: runChildTask"}]}`,
+	}}
+	result, ok := generatedEvidenceArtifactReadRedirectResult(req, results)
+	if !ok {
+		t.Fatal("expected generated evidence artifact read to redirect to source paths")
+	}
+	if result.Error != "" {
+		t.Fatalf("soft redirect should not be a rejection, got error %q", result.Error)
+	}
+	for _, want := range []string{"generated discovery/context JSON is not source-body evidence", "internal/agent/runner.go", "internal/agent/runner_child_tasks.go"} {
+		if !strings.Contains(result.Output, want) {
+			t.Fatalf("redirect output missing %q:\n%s", want, result.Output)
+		}
+	}
+	if strings.Contains(result.Output, "- .idiom/discovery/queries/query.json") {
+		t.Fatalf("redirect must not list artifact as source evidence:\n%s", result.Output)
+	}
+	redirected, raw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, results)
+	if !ok {
+		t.Fatal("expected generated evidence artifact read to rewrite to source request")
+	}
+	if redirected.Path != "internal/agent/runner.go" {
+		t.Fatalf("expected redirect to first source path, got %#v", redirected)
+	}
+	if !strings.Contains(raw, `"path":"internal/agent/runner.go"`) || reason == "" {
+		t.Fatalf("expected raw rewritten request and reason, raw=%q reason=%q", raw, reason)
+	}
+}
+
+func TestStructuredSourceReadRewriteRunsCodeNavigateInsteadOfControlRedirect(t *testing.T) {
+	ws := newGoTestWorkspace(t)
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          "architecture_assessment",
+		TaskFamily:        "architecture",
+		PermissionProfile: "read_only_workspace",
+	}
+	req := workspace.ToolRequest{
+		Tool:            "read_file",
+		Path:            "main.go",
+		NamedGap:        "verify the file declaration outline before answering",
+		WhyNotAnswering: "without the declaration boundary the answer may cite the wrong symbol",
+	}
+
+	rewritten, raw, reason, ok := structuredSourceReadRewriteRequest(req, ws, []string{"read_file", "code_navigate"}, brief)
+	if !ok {
+		t.Fatal("expected read-only source read to rewrite to structured navigation")
+	}
+	if rewritten.Tool != "code_navigate" || rewritten.Capability != "file_outline" || rewritten.Path != "main.go" {
+		t.Fatalf("unexpected rewrite: %#v", rewritten)
+	}
+	if rewritten.NamedGap != req.NamedGap || rewritten.WhyNotAnswering != req.WhyNotAnswering {
+		t.Fatalf("rewrite should preserve post-readiness contract fields: %#v", rewritten)
+	}
+	if !strings.Contains(raw, `"tool":"code_navigate"`) || !strings.Contains(raw, `"capability":"file_outline"`) {
+		t.Fatalf("rewritten raw should execute code_navigate file_outline, got %s", raw)
+	}
+	if reason != "source read redirected to structured navigation" {
+		t.Fatalf("unexpected reason %q", reason)
+	}
+	if _, _, _, ok := structuredSourceReadRewriteRequest(req, ws, []string{"read_file"}, brief); ok {
+		t.Fatal("rewrite must not fire when code_navigate is not visible")
+	}
+	mutationBrief := brief
+	mutationBrief.PermissionProfile = "workspace_write"
+	mutationBrief.Contract = "plan_execute"
+	if _, _, _, ok := structuredSourceReadRewriteRequest(req, ws, []string{"read_file", "code_navigate"}, mutationBrief); ok {
+		t.Fatal("rewrite must not override mutation-lane source-read policy")
 	}
 }
 
@@ -17660,7 +18340,7 @@ func TestCorrectedNamedGapRetryIsAllowedOnce(t *testing.T) {
 	replies := []string{
 		`{"tool":"discovery_query","purpose":"architecture_boundary","path":"internal/agent","pattern":"task|delegate"}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go"}`,
-		`{"tool":"read_file","path":"internal/agent/runner.go","named_gap":"inspect the exact branch that launches the child task"}`,
+		`{"tool":"read_file","path":"internal/agent/runner.go","named_gap":"inspect the exact branch that launches the child task","why_not_answering":"the final answer depends on the exact child task branch"}`,
 		"answer from the repaired follow-up",
 	}
 
@@ -17724,6 +18404,12 @@ func TestCorrectedNamedGapRetryIsAllowedOnce(t *testing.T) {
 	}
 	if foundMissingGapRejection {
 		t.Fatalf("discovery_query alone should not trigger readiness; read_file should not be rejected for missing named gap, roles=%v", eventRolesFor(events))
+	}
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
+		t.Fatalf("expected one post-readiness terminal gate decision, got %d; roles=%v", got, eventRolesFor(events))
+	}
+	if got := countEventsByRole(events, "post_readiness_gap_declared"); got != 1 {
+		t.Fatalf("expected one declared post-readiness gap after full contract, got %d; roles=%v", got, eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
 		t.Fatalf("expected no rejection_retry_blocked, got %d; roles=%v", got, eventRolesFor(events))
@@ -17940,25 +18626,25 @@ func runRedirectScenario(t *testing.T, replies []string) (events []RunEvent, req
 }
 
 // TestDiscoveryRedirectOnReadFileCodePath asserts that a read_file on a
-// Go source file (no line range) is intercepted and redirected to
-// go_file_outline, with the decision guide appended once.
+// Go source file (no line range) is rewritten to code_navigate file_outline
+// so the turn gets executable source evidence instead of control guidance.
 func TestDiscoveryRedirectOnReadFileCodePath(t *testing.T) {
 	replies := []string{
 		`{"tool":"read_file","path":"main.go"}`,
 		"final answer",
 	}
 	events, _ := runRedirectScenario(t, replies)
-	if got := countEventsByRole(events, "discovery_redirect"); got != 1 {
-		t.Fatalf("expected exactly 1 discovery_redirect event, got %d", got)
+	if got := countEventsByRole(events, "tool_request_rewrite"); got != 1 {
+		t.Fatalf("expected exactly 1 tool_request_rewrite event, got %d", got)
 	}
-	if got := countEventsByRole(events, "discovery_decision_guide"); got != 1 {
-		t.Fatalf("expected exactly 1 discovery_decision_guide event, got %d", got)
+	if got := countEventsByRole(events, "discovery_redirect"); got != 0 {
+		t.Fatalf("structured read rewrite should avoid control redirect events, got %d", got)
 	}
 }
 
-// TestDiscoveryRedirectFallsBackOnSecondCall asserts the one-shot
-// semantics: the second identical generic call after a redirect is
-// allowed through so the model can still fall back.
+// TestDiscoveryRedirectFallsBackOnSecondCall asserts repeated read-only
+// source reads stay on the executable structured route instead of falling
+// back to control-only redirect prose.
 func TestDiscoveryRedirectFallsBackOnSecondCall(t *testing.T) {
 	replies := []string{
 		`{"tool":"read_file","path":"main.go"}`,
@@ -17966,8 +18652,11 @@ func TestDiscoveryRedirectFallsBackOnSecondCall(t *testing.T) {
 		"final",
 	}
 	events, _ := runRedirectScenario(t, replies)
-	if got := countEventsByRole(events, "discovery_redirect"); got != 1 {
-		t.Fatalf("expected exactly 1 discovery_redirect, got %d", got)
+	if got := countEventsByRole(events, "tool_request_rewrite"); got != 3 {
+		t.Fatalf("expected repeated read to rewrite through outline then symbol, got %d", got)
+	}
+	if got := countEventsByRole(events, "discovery_redirect"); got != 0 {
+		t.Fatalf("structured read rewrite should avoid control redirect events, got %d", got)
 	}
 }
 
@@ -18418,12 +19107,12 @@ func TestDiscoveryRedirectSkipsStructuredTool(t *testing.T) {
 	}
 }
 
-// TestDiscoveryRedirectDecisionGuideFiresOncePerLanguage confirms the
-// full decision guide is injected on the first redirect per language
-// and omitted on subsequent redirects in the same turn.
+// TestDiscoveryRedirectDecisionGuideFiresOncePerLanguage confirms read-only
+// source reads rewrite to executable structured reads for each target without
+// injecting language decision-guide prose.
 func TestDiscoveryRedirectDecisionGuideFiresOncePerLanguage(t *testing.T) {
-	// Two distinct read_file targets — each fires a redirect, but only
-	// the first attaches the decision guide.
+	// Two distinct read_file targets should both execute through the
+	// structured route in the same step.
 	replies := []string{
 		`{"tool":"read_file","path":"main.go"}`,
 		`{"tool":"read_file","path":"other.go"}`,
@@ -18471,11 +19160,11 @@ func TestDiscoveryRedirectDecisionGuideFiresOncePerLanguage(t *testing.T) {
 		}
 		return events, requests
 	}()
-	if got := countEventsByRole(events, "discovery_redirect"); got != 2 {
-		t.Fatalf("expected 2 discovery_redirect events, got %d", got)
+	if got := countEventsByRole(events, "tool_request_rewrite"); got != 2 {
+		t.Fatalf("expected 2 tool_request_rewrite events, got %d", got)
 	}
-	if got := countEventsByRole(events, "discovery_decision_guide"); got != 1 {
-		t.Fatalf("expected 1 discovery_decision_guide (one-shot per language), got %d", got)
+	if got := countEventsByRole(events, "discovery_decision_guide"); got != 0 {
+		t.Fatalf("structured read rewrites should not inject decision guides, got %d", got)
 	}
 }
 

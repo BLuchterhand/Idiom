@@ -526,14 +526,19 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 	}
 	repaired := req
 	changed := false
-	if delegatedObjectiveIsDiscoveryToolUsefulness(r.RuntimeBrief.Objective) && strings.TrimSpace(repaired.Purpose) != "architecture_boundary" {
+	if (delegatedObjectiveIsDiscoveryToolUsefulness(r.RuntimeBrief.Objective) || delegatedObjectiveIsSubagentArchitecture(r.RuntimeBrief.Objective)) &&
+		strings.TrimSpace(repaired.Purpose) != "architecture_boundary" {
 		repaired.Purpose = "architecture_boundary"
 		changed = true
 	} else if !validDelegatedDiscoveryPurpose(repaired.Purpose) {
 		repaired.Purpose = delegatedReadOnlyDiscoveryPurpose(r.RuntimeBrief.Objective)
 		changed = true
 	}
-	if strings.TrimSpace(repaired.Path) == "" {
+	if (delegatedObjectiveIsDiscoveryToolUsefulness(r.RuntimeBrief.Objective) || delegatedObjectiveIsSubagentArchitecture(r.RuntimeBrief.Objective)) &&
+		strings.TrimSpace(repaired.Path) != "internal/agent" {
+		repaired.Path = "internal/agent"
+		changed = true
+	} else if strings.TrimSpace(repaired.Path) == "" {
 		repaired.Path = delegatedReadOnlyBootstrapScope(r.RuntimeBrief.Objective)
 		changed = true
 	}
@@ -753,12 +758,15 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 		}
 		return filepath.ToSlash(candidate)
 	}
+	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) {
+		return "internal/agent"
+	}
 	return "."
 }
 
 func delegatedReadOnlyBootstrapPattern(objective string) string {
 	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) {
-		return "discovery[-_ ]?query|discovery[-_ ]?tool|context[-_ ]?pack|context[-_ ]?query|context[-_ ]?graph|comprehension|frontier|workspace|tool[-_ ]?surface"
+		return "answer[-_ ]?composer|synthesizeDelegatedReadOnlyAnswer|final[-_ ]?answer|readiness|discovery[-_ ]?query|child[-_ ]?packet|closeout"
 	}
 	terms := make([]string, 0, 6)
 	for _, line := range strings.Split(objective, "\n") {
@@ -813,8 +821,19 @@ func delegatedReadOnlySubagentAliasTerms(objective string) []string {
 
 func delegatedObjectiveIsDiscoveryToolUsefulness(objective string) bool {
 	lower := strings.ToLower(delegatedDisplayQuestion(objective))
-	return containsAny(lower, "discovery tool", "discovery tools") &&
-		containsAny(lower, "useful", "usefulness", "improve", "improvement", "add")
+	if !containsAny(lower, "discovery tool", "discovery tools", "discovery tool surface", "graph capabilities") {
+		return false
+	}
+	return containsAny(lower,
+		"useful", "usefulness", "improve", "improvement", "add",
+		"gap analysis", "gaps", "limitations", "recommendation", "recommendations",
+		"insufficient", "stale", "unhelpful",
+	)
+}
+
+func delegatedObjectiveIsSubagentArchitecture(objective string) bool {
+	lower := strings.ToLower(delegatedDisplayQuestion(objective))
+	return containsAny(lower, "subagent", "sub-agent", "sub agent", "child task", "child runner", "delegated child", "task tool")
 }
 
 func delegatedReadOnlyQuestionText(objective string) string {
@@ -1232,7 +1251,7 @@ func readOnlyAnalysisPathMatchesObjectiveAlias(path string, objective string) bo
 		return true
 	}
 	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) &&
-		containsAny(path, "discovery", "comprehension", "context", "frontier", "workspace") {
+		containsAny(path, "answer_composer", "runner", "discovery", "comprehension", "context", "frontier", "workspace") {
 		return true
 	}
 	return false
@@ -1272,6 +1291,25 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 		}
 	}
 	return count
+}
+
+func (r *Runner) readOnlyNoMatchCloseoutApplies(req workspace.ToolRequest, result workspace.ToolResult, results []workspace.ToolResult) bool {
+	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return false
+	}
+	if strings.TrimSpace(req.Tool) != "code_navigate" || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	summary := strings.ToLower(strings.TrimSpace(result.Summary))
+	if !strings.Contains(summary, "no generic code navigation matches") {
+		return false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) &&
+		!workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract) &&
+		!workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
+		return false
+	}
+	return len(concreteSourceEvidencePaths(results)) >= 1 && len(promptEvidencePathsFromToolResults(results, 6)) >= 1
 }
 
 func toolResultReadSpan(result workspace.ToolResult) int {

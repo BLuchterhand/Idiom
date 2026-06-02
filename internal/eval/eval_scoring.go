@@ -91,6 +91,7 @@ func Analyze(records []Record) Metrics {
 	requestedToolEventKeys := make(map[string]struct{})
 	countedToolEventKeys := make(map[string]struct{})
 	countedErrorEventKeys := make(map[string]struct{})
+	uncountedRecoverableToolEventKeys := make(map[string]struct{})
 	var firstTS time.Time
 	var lastTS time.Time
 	for _, record := range records {
@@ -229,6 +230,10 @@ func Analyze(records []Record) Metrics {
 				}
 			}
 			switch role {
+			case "verification_plan":
+				if plan := parseVerificationPlan(content); plan.Raw != "" {
+					metrics.VerificationPlans = append(metrics.VerificationPlans, plan)
+				}
 			case "readiness_check":
 				if readiness := parseReadinessCheck(content); readiness.Raw != "" {
 					metrics.ReadinessChecks = append(metrics.ReadinessChecks, readiness)
@@ -305,6 +310,17 @@ func Analyze(records []Record) Metrics {
 			tool := strings.TrimSpace(stringField(record.Data, "tool"))
 			errText := strings.TrimSpace(stringField(record.Data, "error"))
 			metrics.EvidencePaths = append(metrics.EvidencePaths, evidencePathsFromText(stringField(record.Data, "summary"))...)
+			recoverablePostReadinessGap := recoverablePostReadinessGapToolResult(record.Data)
+			if recoverablePostReadinessGap {
+				if key := toolAttemptEventKey(record.Data); key != "" {
+					if _, ok := uncountedRecoverableToolEventKeys[key]; !ok {
+						uncountedRecoverableToolEventKeys[key] = struct{}{}
+						if _, counted := countedToolEventKeys[key]; counted {
+							unrecordToolAttemptMetrics(&metrics, record.Data)
+						}
+					}
+				}
+			}
 			if tool != "" && errText == "" {
 				metrics.SuccessfulTools[tool]++
 			}
@@ -324,7 +340,7 @@ func Analyze(records []Record) Metrics {
 					metrics.RejectedActions = 1
 				}
 			}
-			if errText != "" && !toolResultAttemptWasRequested(record.Data, requestedToolEventKeys, metrics.Tools) {
+			if errText != "" && !recoverablePostReadinessGap && !toolResultAttemptWasRequested(record.Data, requestedToolEventKeys, metrics.Tools) {
 				if key := toolAttemptEventKey(record.Data); key != "" {
 					if _, ok := countedToolEventKeys[key]; ok {
 						// Duplicate runner/telemetry records should not
@@ -586,8 +602,11 @@ func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 	if metrics == nil {
 		return
 	}
-	metrics.ToolRequests++
 	tool := strings.TrimSpace(stringField(data, "tool"))
+	if tool == "completion_gate" {
+		return
+	}
+	metrics.ToolRequests++
 	if tool != "" {
 		metrics.Tools[tool]++
 	}
@@ -624,6 +643,67 @@ func recordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
 	}
 	if boolField(data, "broad") {
 		metrics.BroadToolRequests++
+	}
+}
+
+func unrecordToolAttemptMetrics(metrics *Metrics, data map[string]any) {
+	if metrics == nil {
+		return
+	}
+	if metrics.ToolRequests > 0 {
+		metrics.ToolRequests--
+	}
+	tool := strings.TrimSpace(stringField(data, "tool"))
+	if tool != "" && metrics.Tools[tool] > 0 {
+		metrics.Tools[tool]--
+		if metrics.Tools[tool] == 0 {
+			delete(metrics.Tools, tool)
+		}
+	}
+	class := strings.TrimSpace(stringField(data, "discovery_class"))
+	scope := strings.TrimSpace(stringField(data, "discovery_scope"))
+	cost := strings.TrimSpace(stringField(data, "discovery_cost"))
+	if class == "shell" {
+		class, scope, cost = "other", "", ""
+	}
+	if class == "" || scope == "" || cost == "" {
+		fallbackClass, fallbackScope, fallbackCost := legacyDiscoveryProfile(tool)
+		if class == "" {
+			class = fallbackClass
+		}
+		if scope == "" {
+			scope = fallbackScope
+		}
+		if cost == "" {
+			cost = fallbackCost
+		}
+	}
+	if class != "" && class != "other" {
+		decrementMetricMap(metrics.DiscoveryTools, tool)
+		decrementMetricMap(metrics.DiscoveryClasses, class)
+		if scope != "" {
+			decrementMetricMap(metrics.DiscoveryScopes, scope)
+		}
+		if cost != "" {
+			decrementMetricMap(metrics.DiscoveryCosts, cost)
+			if cost == "high" && metrics.HeavyDiscoveryRequests > 0 {
+				metrics.HeavyDiscoveryRequests--
+			}
+		}
+	}
+	if boolField(data, "broad") && metrics.BroadToolRequests > 0 {
+		metrics.BroadToolRequests--
+	}
+}
+
+func decrementMetricMap(values map[string]int, key string) {
+	key = strings.TrimSpace(key)
+	if key == "" || values == nil || values[key] <= 0 {
+		return
+	}
+	values[key]--
+	if values[key] == 0 {
+		delete(values, key)
 	}
 }
 

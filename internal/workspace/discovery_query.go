@@ -502,6 +502,23 @@ func normalizeDiscoveryQueryPurpose(value string) string {
 	case "history", "history_context":
 		return "history_context"
 	default:
+		if strings.Contains(value, "security") || strings.Contains(value, "vulnerability") {
+			return "security_review"
+		}
+		if strings.Contains(value, "history") || strings.Contains(value, "evolution") {
+			return "history_context"
+		}
+		if strings.Contains(value, "impact") || strings.Contains(value, "blast_radius") {
+			return "impact_analysis"
+		}
+		if strings.Contains(value, "trace") || strings.Contains(value, "tracing") || strings.Contains(value, "call_graph") {
+			return "function_tracing"
+		}
+		if strings.Contains(value, "architecture") ||
+			strings.Contains(value, "boundary") ||
+			(strings.Contains(value, "discovery") && (strings.Contains(value, "implementation") || strings.Contains(value, "definition") || strings.Contains(value, "orchestration") || strings.Contains(value, "pattern"))) {
+			return "architecture_boundary"
+		}
 		return ""
 	}
 }

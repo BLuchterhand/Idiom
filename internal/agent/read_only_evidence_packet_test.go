@@ -109,6 +109,34 @@ func TestReadOnlyEvidencePacketArtifactOnlyIsNotAnswerableAtPacketLevel(t *testi
 	}
 }
 
+func TestReadOnlyEvidencePacketDoesNotRenderGeneratedArtifactRedirectAsAnswer(t *testing.T) {
+	answer := strings.Join([]string{
+		"Generated evidence artifact .idiom/discovery/queries/query.json was not read because generated discovery/context JSON is not source-body evidence.",
+		"Use the source paths already named by the current discovery packet instead:",
+		"- internal/agent/runner.go",
+		"Next exact source probe example: {\"tool\":\"read_file\",\"path\":\"internal/agent/runner.go\"}",
+	}, "\n")
+	childResults := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner.go lines 1-20",
+		Output:  "package agent\nfunc (r *Runner) Run() {}\n",
+	}}
+
+	packet, ok := buildReadOnlyEvidencePacket("Explain the runner.", answer, childResults)
+	if !ok {
+		t.Fatal("expected packet to retain source paths even when redirect answer text is stripped")
+	}
+	rendered := renderReadOnlyEvidencePacketForToolOutput(packet, answer)
+	for _, forbidden := range []string{"Grounded answer:", "Generated evidence artifact", "Next exact source probe example"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("redirect guidance should not render as grounded answer %q:\n%s", forbidden, rendered)
+		}
+	}
+	if readOnlyEvidencePacketAnswerable(packet) {
+		t.Fatalf("redirect-only packet must not be answerable: %#v", packet)
+	}
+}
+
 func TestBuildReadOnlyEvidencePacketFromChildResultsAndAnswerText(t *testing.T) {
 	childResults := []workspace.ToolResult{
 		{

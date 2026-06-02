@@ -1,4 +1,5 @@
 package sweeval
+
 import (
 	"encoding/json"
 	"flag"
@@ -34,6 +35,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	var runLiveContinueOnError bool
 	var runnerCommand string
 	var generatedLogsDir string
+	var allowTrackedGeneratedLogs bool
 	var writeFailingScenarios string
 
 	fs := flag.NewFlagSet("idiom-swe-eval", flag.ContinueOnError)
@@ -46,6 +48,7 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	fs.BoolVar(&runLiveContinueOnError, "run-live-continue-on-error", false, "continue running live suite tasks after a task command fails or times out")
 	fs.StringVar(&runnerCommand, "runner-command", "", "shell command used by -run-live; supports {prompt}, {task_id}, {log_path}, and {fixture}")
 	fs.StringVar(&generatedLogsDir, "generated-logs", "", "directory where -run-live should write generated task logs")
+	fs.BoolVar(&allowTrackedGeneratedLogs, "allow-tracked-generated-logs", false, "allow -run-live to write generated logs to the tracked testdata/swe/generated-logs fixture directory")
 	fs.StringVar(&writeFailingScenarios, "write-failing-scenarios", "", "write a SWE suite skeleton for failed task logs")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -75,6 +78,10 @@ func run(args []string, stdout io.Writer, stderr io.Writer) int {
 	liveLogPaths := map[string]string(nil)
 	if runLive {
 		liveLogsDir := firstNonEmpty(generatedLogsDir, logsDir, filepath.Join(filepath.Dir(suitePath), "generated-logs"))
+		if isTrackedSWEGeneratedLogsDir(suitePath, liveLogsDir) && !allowTrackedGeneratedLogs {
+			fmt.Fprintln(stderr, "refusing to write live generated logs to tracked testdata/swe/generated-logs; pass -allow-tracked-generated-logs for an intentional fixture refresh or choose -generated-logs outside testdata")
+			return 1
+		}
 		var err error
 		liveLogPaths, err = runLiveSuiteTasks(suite, suitePath, liveLogsDir, runnerCommand, stderr, runLiveContinueOnError)
 		if err != nil {
@@ -159,6 +166,22 @@ func taskLogPath(suitePath string, logsDir string, task eval.SWETask) string {
 		return ""
 	}
 	return filepath.Join(logsDir, strings.TrimSpace(task.ID)+".jsonl")
+}
+
+func isTrackedSWEGeneratedLogsDir(suitePath string, logsDir string) bool {
+	suiteDir := filepath.ToSlash(filepath.Clean(filepath.Dir(suitePath)))
+	if !strings.HasSuffix(suiteDir, "testdata/swe") {
+		return false
+	}
+	expected, err := filepath.Abs(filepath.Join(filepath.Dir(suitePath), "generated-logs"))
+	if err != nil {
+		return false
+	}
+	actual, err := filepath.Abs(logsDir)
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(actual) == filepath.Clean(expected)
 }
 
 func printSuiteReport(report eval.SWESuiteReport) {

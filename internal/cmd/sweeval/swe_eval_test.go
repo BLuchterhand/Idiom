@@ -72,6 +72,54 @@ func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
 	}
 }
 
+func TestRunLiveRefusesTrackedSWEGeneratedLogsWithoutOverride(t *testing.T) {
+	dir := t.TempDir()
+	suiteDir := filepath.Join(dir, "testdata", "swe")
+	suitePath := filepath.Join(suiteDir, "live-subset.json")
+	if err := os.MkdirAll(suiteDir, 0o755); err != nil {
+		t.Fatalf("mkdir suite dir: %v", err)
+	}
+	writeSWESmokeSuite(t, suitePath, "")
+
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-runner-command", "exit 99"}, &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{"refusing to write live generated logs", "-allow-tracked-generated-logs"} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Fatalf("expected stderr to contain %q, got %s", want, stderr.String())
+		}
+	}
+}
+
+func TestRunLiveAllowsTrackedSWEGeneratedLogsWithOverride(t *testing.T) {
+	dir := t.TempDir()
+	suiteDir := filepath.Join(dir, "testdata", "swe")
+	suitePath := filepath.Join(suiteDir, "live-subset.json")
+	logsDir := filepath.Join(suiteDir, "generated-logs")
+	if err := os.MkdirAll(suiteDir, 0o755); err != nil {
+		t.Fatalf("mkdir suite dir: %v", err)
+	}
+	writeSWESmokeSuite(t, suitePath, "")
+
+	command := strings.Join([]string{
+		`printf '%s\n'`,
+		`'{"type":"message","role":"user","content":"Explain routing."}'`,
+		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
+		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
+		`> {log_path}`,
+	}, " ")
+	var stdout, stderr bytes.Buffer
+	code := run([]string{"-suite", suitePath, "-run-live", "-allow-tracked-generated-logs", "-runner-command", command}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(logsDir, "direct.jsonl")); err != nil {
+		t.Fatalf("expected generated log with override: %v", err)
+	}
+}
+
 func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")

@@ -155,6 +155,41 @@ func sourceEditsNeedSemanticVerification(brief workerruntime.WorkerRuntimeBrief,
 	return verificationResultIsPatchHygieneOnly(latest)
 }
 
+func deterministicPostWriteVerificationRequest(results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, bool) {
+	if !hasPendingVerificationAfterWrites(results, brief) {
+		return workspace.ToolRequest{}, false
+	}
+	changed := changedPathsFromToolResults(results)
+	var command string
+	for path := range changed {
+		candidate := scriptSyntaxVerificationCommand(path)
+		if candidate == "" {
+			continue
+		}
+		if command != "" {
+			return workspace.ToolRequest{}, false
+		}
+		command = candidate
+	}
+	if command == "" {
+		return workspace.ToolRequest{}, false
+	}
+	return workspace.ToolRequest{Tool: "shell", Command: command}, true
+}
+
+func scriptSyntaxVerificationCommand(path string) string {
+	normalized := normalizeRunnerPath(path)
+	lower := strings.ToLower(normalized)
+	switch {
+	case strings.HasSuffix(lower, ".sh") || strings.HasSuffix(lower, ".bash"):
+		return "bash -n " + normalized
+	case strings.HasSuffix(lower, ".zsh"):
+		return "zsh -n " + normalized
+	default:
+		return ""
+	}
+}
+
 func sourceVerificationBoundaryAllowsTool(tool string) bool {
 	switch strings.TrimSpace(tool) {
 	case "task_ledger", "harness_feedback", "idiom_feedback":
@@ -374,6 +409,7 @@ func isVerificationCommandText(text string) bool {
 		"make test", "make check",
 		"ctest", "mvn test", "gradle test",
 		"tsc", "ruff check", "eslint",
+		"bash -n", "sh -n", "zsh -n", "shellcheck",
 	}
 	for _, snippet := range verificationSnippets {
 		if strings.Contains(command, snippet) {

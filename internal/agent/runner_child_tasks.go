@@ -52,6 +52,16 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		childPolicy.MaxModelCalls = 6
 		childPolicy.MaxDuration = 45 * time.Second
 	}
+	if delegatedObjectiveIsDiscoveryToolUsefulness(prompt) {
+		childPolicy.MaxToolSteps = 1
+		childPolicy.MaxModelCalls = 3
+		childPolicy.MaxDuration = 45 * time.Second
+	}
+	if delegatedObjectiveIsSubagentArchitecture(prompt) && len(pathparse.MentionedWorkspacePaths(prompt)) == 0 {
+		childPolicy.MaxToolSteps = 2
+		childPolicy.MaxModelCalls = 4
+		childPolicy.MaxDuration = 45 * time.Second
+	}
 	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
 		childPolicy.MaxContextMessages = effective.MaxContextMessages
 		childPolicy.MaxContextChars = effective.MaxContextChars
@@ -122,7 +132,40 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Error:   err.Error(),
 		}
 	}
-	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); strings.TrimSpace(answer) == "" || blockerKind != "" {
+	fallbackSourceReads := 0
+	maxFallbackSourceReads := 1
+	if delegatedObjectiveIsSubagentArchitecture(prompt) {
+		maxFallbackSourceReads = 2
+	}
+	for r.Workspace != nil && fallbackSourceReads < maxFallbackSourceReads && delegatedChildFallbackSourceReadNeeded(prompt, childResults) {
+		if req, result, ok := r.delegatedChildFallbackSourceRead(ctx, prompt, childResults); ok {
+			step := len(childResults) + 1
+			profile := workspace.DiscoveryProfileForRequest(req)
+			r.emitEvent(marshalRunEvent("child_tool_request", ToolRequestEvent{
+				Step:           step,
+				Agent:          child.agentName(),
+				Raw:            marshalToolRequestRaw(req),
+				Request:        req,
+				Mode:           r.Workspace.Mode(),
+				Broad:          workspace.IsBroadInspectionRequest(req),
+				Narrowing:      workspace.IsNarrowingRequest(req),
+				Action:         toolActionClass(req),
+				DiscoveryClass: profile.Class,
+				DiscoveryScope: profile.Scope,
+				DiscoveryCost:  profile.Cost,
+			}))
+			r.emitEvent(marshalRunEvent("child_tool_result", ToolResultEvent{
+				Step:   step,
+				Agent:  child.agentName(),
+				Result: result,
+			}))
+			childResults = append(childResults, result)
+			fallbackSourceReads++
+			continue
+		}
+		break
+	}
+	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); strings.TrimSpace(answer) == "" || strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") || blockerKind != "" {
 		if synthesized, ok := synthesizeDelegatedReadOnlyAnswer(prompt, childResults); ok {
 			if blockerKind, _ := child.finalAnswerBlockerKind(synthesized, childResults); blockerKind == "" {
 				answer = synthesized
@@ -145,6 +188,49 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		result = readOnlyEvidencePacketToolResult(result, packet)
 	}
 	return result
+}
+
+func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt string, results []workspace.ToolResult) (workspace.ToolRequest, workspace.ToolResult, bool) {
+	if r == nil || r.Workspace == nil {
+		return workspace.ToolRequest{}, workspace.ToolResult{}, false
+	}
+	paths := append([]string{}, questionExpectedEvidencePaths(prompt)...)
+	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, 6)...)
+	paths = closurePromptEvidencePaths(paths, 6)
+	for _, path := range paths {
+		path = normalizeRunnerPath(path)
+		if path == "" || isNonSourceEvidenceArtifactPath(path) || concreteSourceEvidenceReadForPath(path, results) {
+			continue
+		}
+		req := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         160,
+			NamedGap:        "source-body evidence for delegated read-only synthesis",
+			WhyNotAnswering: "the child has discovery evidence but needs one source-body read before a grounded answer",
+		}
+		result := r.Workspace.Execute(ctx, req)
+		if strings.TrimSpace(result.Error) != "" || !readFileResultHasConcreteSourceBody(result) {
+			continue
+		}
+		return req, result, true
+	}
+	return workspace.ToolRequest{}, workspace.ToolResult{}, false
+}
+
+func delegatedChildFallbackSourceReadNeeded(prompt string, results []workspace.ToolResult) bool {
+	expected := questionExpectedEvidencePaths(prompt)
+	if len(expected) == 0 {
+		return len(delegatedReadOnlySourceBodyEvidencePaths(results)) == 0
+	}
+	for _, path := range expected {
+		path = normalizeRunnerPath(path)
+		if path != "" && !concreteSourceEvidenceReadForPath(path, results) {
+			return true
+		}
+	}
+	return false
 }
 
 func normalizeReadOnlyChildPrompt(prompt string) string {

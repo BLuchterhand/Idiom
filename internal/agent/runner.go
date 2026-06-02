@@ -398,6 +398,7 @@ func (r *Runner) Run(
 	var autonomyRecorder *runnerAutonomyRecorder
 	acceptedAnswerSignalsEmitted := false
 	completionStatusEmitted := false
+	verificationTelemetryEmitted := false
 	completionGateRejections := 0
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
 		completionStatusEmitted = true
@@ -1134,6 +1135,84 @@ func (r *Runner) Run(
 				return finish(answer, err, "diagnostic_log_read_coverage_rejected", true)
 			}
 			continue
+		}
+		if redirected, redirectedRaw, reason, ok := generatedEvidenceArtifactReadRedirectRequest(req, collectedResults); ok {
+			r.emitEvent(marshalRunEvent("generated_evidence_artifact_read_redirect", map[string]any{
+				"from_path": normalizeRunnerPath(req.Path),
+				"to_path":   normalizeRunnerPath(redirected.Path),
+				"reason":    reason,
+			}))
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
+		if redirected, redirectedRaw, reason, ok := structuredSourceReadRewriteRequest(req, r.Workspace, currentAllowedTools, r.RuntimeBrief); ok {
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirected.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         reason,
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
+		if redirected, redirectedRaw, reason, ok := pathlessReadSymbolAfterOutlineRewriteRequest(req, collectedResults); ok {
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirected.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         reason,
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
+		if redirected, redirectedRaw, reason, ok := repeatedFileOutlineToReadSymbolRewriteRequest(req, collectedResults, r.RuntimeBrief); ok {
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirected.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         reason,
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+		}
+		if redirected, redirectedRaw, reason, ok := readOnlyDefinitionToReadSymbolRewriteRequest(req, r.RuntimeBrief); ok {
+			r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+				"agent":          r.agentName(),
+				"original_tool":  strings.TrimSpace(req.Tool),
+				"rewritten_tool": strings.TrimSpace(redirected.Tool),
+				"original_raw":   strings.TrimSpace(raw),
+				"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+				"reason":         reason,
+			}))
+			turnMessages = append(turnMessages, llama.ChatMessage{
+				Role:    "system",
+				Content: rewriteVisibilityNote(req.Tool, redirected.Tool),
+			})
+			req = redirected
+			raw = redirectedRaw
+			currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 		}
 		if summary, errorText, reject := repeatedDiagnosticLogReadFilePreviouslyReadRejection(req, collectedResults); reject {
 			answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -2125,43 +2204,42 @@ func (r *Runner) Run(
 			continue
 		}
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
-			if gap := postReadinessGap(req); gap == "" {
-				if postReadinessRequestSelfDescribesExactProbe(req, collectedResults) {
-					if postReadinessAllowedFollowups >= postReadinessProbeBudget {
-						if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-							emitAcceptedAnswerSignalsOnce(answer)
-							return finish(answer, nil, "host_read_only_closeout", true)
-						}
-					}
-					r.emitPostReadinessGapDeclared(scope, req)
-					postReadinessAllowedFollowups++
-				} else {
-					if postReadinessAllowedFollowups > 0 || postReadinessReadFileAlreadyCovered(req, collectedResults) {
-						if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-							emitAcceptedAnswerSignalsOnce(answer)
-							return finish(answer, nil, "host_read_only_closeout", true)
-						}
-					}
-					requestBudget.postReadinessNoGapRejections++
-					// First miss explains the contract; repeated misses close
-					// the loop by forcing an answer from gathered evidence.
-					summary, errorText := missingPostReadinessGapMessage(scope)
-					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
-					if done {
-						return finish(answer, err, "post_readiness_gap_required", true)
-					}
-					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						emitAcceptedAnswerSignalsOnce(answer)
-						return finish(answer, nil, "host_read_only_closeout", true)
-					}
-					if requestBudget.postReadinessNoGapRejections >= 2 {
-						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated post-readiness follow-up requests omitted `named_gap` and `why_not_answering`. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
-						return finish(answer, err, "post_readiness_gap_required_budget_exhausted", true)
-					}
-					continue
+			if !postReadinessExactProbeContractPresent(req) {
+				r.emitPostReadinessTerminalGate(scope, req, "missing_exact_probe_contract")
+				requestBudget.postReadinessNoGapRejections++
+				// First miss explains the contract; repeated misses close
+				// the loop by forcing an answer from gathered evidence.
+				summary, errorText := missingPostReadinessGapMessage(scope)
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					controller.recordHostCloseoutRejectionFeedback(stepNumber, activeToolCall, req, summary, errorText)
+					emitAcceptedAnswerSignalsOnce(answer)
+					return finish(answer, nil, "host_read_only_closeout", true)
 				}
+				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
+				if done {
+					return finish(answer, err, "post_readiness_gap_required", true)
+				}
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					emitAcceptedAnswerSignalsOnce(answer)
+					return finish(answer, nil, "host_read_only_closeout", true)
+				}
+				if requestBudget.postReadinessNoGapRejections >= 2 {
+					answer, err := controller.completeWithoutMoreToolsWithReason("Repeated post-readiness follow-up requests omitted `named_gap` and `why_not_answering`. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+					return finish(answer, err, "post_readiness_gap_required_budget_exhausted", true)
+				}
+				continue
+			}
+			if postReadinessAllowedFollowups >= postReadinessProbeBudget {
+				r.emitPostReadinessTerminalGate(scope, req, "probe_budget_exhausted")
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					emitAcceptedAnswerSignalsOnce(answer)
+					return finish(answer, nil, "host_read_only_closeout", true)
+				}
+				answer, err := controller.completeWithoutMoreToolsWithReason("The post-readiness exact-probe budget is exhausted. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
+				return finish(answer, err, "post_readiness_probe_budget_exhausted", true)
 			}
 			if summary, errorText, rejected := invalidPostReadinessGap(scope, r.RuntimeBrief.Objective, req, collectedResults); rejected {
+				r.emitPostReadinessTerminalGate(scope, req, "invalid_exact_probe_contract")
 				requestBudget.postReadinessInvalidGapRejections++
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 				if done {
@@ -2177,6 +2255,7 @@ func (r *Runner) Run(
 				}
 				continue
 			}
+			r.emitPostReadinessTerminalGate(scope, req, "allow_exact_probe")
 			r.emitPostReadinessGapDeclared(scope, req)
 			postReadinessAllowedFollowups++
 		}
@@ -3017,6 +3096,39 @@ func (r *Runner) Run(
 			result = verifyResult
 			update = executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
 		}
+		if workspaceWriteResultCompleted(req, result) {
+			if verifyReq, ok := deterministicPostWriteVerificationRequest(collectedResults, r.RuntimeBrief); ok {
+				verifyRaw := marshalToolRequestRaw(verifyReq)
+				metrics.ToolCalls++
+				if onToolRequest != nil {
+					profile := workspace.DiscoveryProfileForRequest(verifyReq)
+					onToolRequest(ToolRequestEvent{
+						Step:           stepNumber,
+						Agent:          r.agentName(),
+						Raw:            verifyRaw,
+						Request:        verifyReq,
+						Mode:           r.Workspace.Mode(),
+						Broad:          workspace.IsBroadInspectionRequest(verifyReq),
+						Narrowing:      workspace.IsNarrowingRequest(verifyReq),
+						Action:         toolActionClass(verifyReq),
+						DiscoveryClass: profile.Class,
+						DiscoveryScope: profile.Scope,
+						DiscoveryCost:  profile.Cost,
+					})
+				}
+				verifyResult := r.Workspace.Execute(ctx, verifyReq)
+				recorder.activeToolCall = nil
+				recorder.recordWithOptions(stepNumber, verifyReq, verifyResult, "deterministic_post_write_verification", runnerRecordOptions{
+					TrackProgress:  true,
+					ResetRejected:  true,
+					SetLastToolKey: true,
+				})
+				r.markConcreteSourceEvidenceObserved(verifyResult)
+				req = verifyReq
+				result = verifyResult
+				update = executionState.applyResult(verifyReq, verifyResult, toolRequestKey(verifyReq), r.Workspace, &requestBudget)
+			}
+		}
 		if update.ResetVerificationGuards {
 			clearVerificationGateFingerprints(requestBudget.fingerprint.rejected)
 			clearRunnerStringIntMap(rejectedActions)
@@ -3052,6 +3164,9 @@ func (r *Runner) Run(
 			len(changedPathsFromToolResults(collectedResults)) > 0 &&
 			!hasPendingVerificationAfterWrites(collectedResults, r.RuntimeBrief) &&
 			!sourceEditsNeedSemanticVerification(r.RuntimeBrief, collectedResults) {
+			if !verificationTelemetryEmitted {
+				verificationTelemetryEmitted = r.emitPostWriteVerificationTelemetry(req, result)
+			}
 			answer, err := controller.completeWithoutMoreToolsWithReason("The requested implementation has a recorded workspace write and successful source-aware verification. Tools are now disabled. Write the implementation result now: changed paths and verification status.")
 			return finish(answer, err, "source_edit_closeout_after_verification", false)
 		}
@@ -3267,6 +3382,14 @@ func (r *Runner) Run(
 			if justBecameReady {
 				rebuildTools()
 			}
+		}
+		if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
+			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+				emitAcceptedAnswerSignalsOnce(answer)
+				return finish(answer, nil, "read_only_no_match_closeout", false)
+			}
+			answer, err := controller.completeWithoutMoreToolsWithReason("The latest symbol probe returned no matches after source evidence was already gathered. Tools are now disabled. Answer from the gathered evidence and name any remaining uncertainty after the supported answer.")
+			return finish(answer, err, "read_only_no_match_closeout", true)
 		}
 		// Conversation lane: once source evidence is available, the
 		// generic post-readiness contract above owns further probes.
@@ -5857,6 +5980,26 @@ func (r *Runner) emitPostReadinessGapDeclared(scope string, req workspace.ToolRe
 	r.OnEvent(RunEvent{Role: "post_readiness_gap_declared", Content: string(data)})
 }
 
+func (r *Runner) emitPostReadinessTerminalGate(scope string, req workspace.ToolRequest, decision string) {
+	if r == nil || r.OnEvent == nil {
+		return
+	}
+	payload := map[string]any{
+		"agent":             r.agentName(),
+		"scope":             strings.TrimSpace(scope),
+		"tool":              strings.TrimSpace(req.Tool),
+		"target":            workerruntime.ToolRequestTarget(req),
+		"decision":          strings.TrimSpace(decision),
+		"named_gap":         strings.TrimSpace(req.NamedGap),
+		"why_not_answering": strings.TrimSpace(req.WhyNotAnswering),
+	}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	r.OnEvent(RunEvent{Role: "post_readiness_terminal_gate", Content: string(data)})
+}
+
 func (r *Runner) compactTurnMessagesIfNeeded(messages *[]llama.ChatMessage, policy RunPolicy, ledger *taskLedgerState, results []workspace.ToolResult) bool {
 	if messages == nil || len(*messages) == 0 {
 		return false
@@ -6406,6 +6549,10 @@ func postReadinessGapScopeForBrief(agent string, delegatedReadOnlyAnswerReady bo
 
 func postReadinessGap(req workspace.ToolRequest) string {
 	return util.FirstNonEmpty(req.NamedGap, req.WhyNotAnswering)
+}
+
+func postReadinessExactProbeContractPresent(req workspace.ToolRequest) bool {
+	return strings.TrimSpace(req.NamedGap) != "" && strings.TrimSpace(req.WhyNotAnswering) != ""
 }
 
 func postReadinessRequestSelfDescribesExactProbe(req workspace.ToolRequest, results []workspace.ToolResult) bool {
@@ -7217,6 +7364,7 @@ func delegatedClosureEvidencePaths(objective string, results []workspace.ToolRes
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*4)...)
+	paths = append(paths, questionExpectedEvidencePaths(objective)...)
 	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, max)
 	return closurePromptEvidencePaths(paths, max)
 }
@@ -10351,7 +10499,25 @@ func (r *Runner) salvageVisibleToolRequestFromProse(reply string, results []work
 	if r.safeVisibleToolRequest(req, results) {
 		return req, parsedRaw, true
 	}
+	if repaired, repairedRaw, repairedOK := r.delegatedReadOnlyVisibleDiscoveryRepair(results, req); repairedOK && r.safeVisibleToolRequest(repaired, results) {
+		return repaired, repairedRaw, true
+	}
 	return workspace.ToolRequest{}, "", false
+}
+
+func (r *Runner) delegatedReadOnlyVisibleDiscoveryRepair(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, string, bool) {
+	if r == nil || len(results) > 0 || strings.TrimSpace(req.Tool) != "discovery_query" {
+		return workspace.ToolRequest{}, "", false
+	}
+	repaired, ok := r.delegatedReadOnlyDiscoveryQueryRepairRequest(results, req)
+	if !ok {
+		return workspace.ToolRequest{}, "", false
+	}
+	raw := marshalToolRequestRaw(repaired)
+	if raw == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	return repaired, raw, true
 }
 
 func parseMalformedVisibleReadOnlyToolJSONPrefix(text string) (workspace.ToolRequest, string, bool) {
@@ -10757,7 +10923,7 @@ func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []w
 	case "context_zoom":
 		return strings.TrimSpace(req.Handle) != ""
 	case "discovery_query":
-		return strings.TrimSpace(util.FirstNonEmpty(req.Purpose, req.Query, req.Pattern, req.Path)) != ""
+		return safeDiscoveryQueryRequest(req)
 	case "structural_search":
 		return strings.TrimSpace(req.Pattern) != ""
 	case "code_navigate":
@@ -10767,6 +10933,56 @@ func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []w
 		return false
 	default:
 		return r.safeReasoningWorkspaceWriteRequest(req)
+	}
+}
+
+func safeDiscoveryQueryRequest(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(util.FirstNonEmpty(req.Purpose, req.Query, req.Pattern, req.Path)) == "" {
+		return false
+	}
+	if purpose := strings.TrimSpace(req.Purpose); purpose != "" {
+		return normalizeRunnerDiscoveryQueryPurpose(purpose) != ""
+	}
+	if query := strings.TrimSpace(req.Query); query != "" {
+		return normalizeRunnerDiscoveryQueryPurpose(query) != ""
+	}
+	return true
+}
+
+func normalizeRunnerDiscoveryQueryPurpose(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	switch value {
+	case "impact", "impact_analysis":
+		return "impact_analysis"
+	case "trace", "function_trace", "function_tracing":
+		return "function_tracing"
+	case "architecture", "architecture_boundary", "boundary", "tool_usefulness", "tooling_usefulness", "discovery_tooling", "discovery_tools", "usefulness":
+		return "architecture_boundary"
+	case "security", "security_review":
+		return "security_review"
+	case "history", "history_context":
+		return "history_context"
+	default:
+		if strings.Contains(value, "security") || strings.Contains(value, "vulnerability") {
+			return "security_review"
+		}
+		if strings.Contains(value, "history") || strings.Contains(value, "evolution") {
+			return "history_context"
+		}
+		if strings.Contains(value, "impact") || strings.Contains(value, "blast_radius") {
+			return "impact_analysis"
+		}
+		if strings.Contains(value, "trace") || strings.Contains(value, "tracing") || strings.Contains(value, "call_graph") {
+			return "function_tracing"
+		}
+		if strings.Contains(value, "architecture") ||
+			strings.Contains(value, "boundary") ||
+			(strings.Contains(value, "discovery") && (strings.Contains(value, "implementation") || strings.Contains(value, "definition") || strings.Contains(value, "orchestration") || strings.Contains(value, "pattern"))) {
+			return "architecture_boundary"
+		}
+		return ""
 	}
 }
 
@@ -13687,7 +13903,6 @@ func normalizedObjectiveAliases(objective string) []string {
 
 func readOnlyCloseoutEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
 	paths := acceptedAnswerEvidencePaths("", results, brief)
-	paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResults(results, 24))
 	return closurePromptEvidencePaths(paths, max)
 }
 
@@ -16734,11 +16949,7 @@ func childPacketContainsGroundedAnswerEvidence(objective string, output string) 
 		return false
 	}
 	lower := strings.ToLower(output)
-	if containsAny(lower,
-		"redirected to ",
-		"try: {\"tool\":",
-		"retry your original request and it will execute",
-	) {
+	if readOnlyToolControlGuidanceText(lower) {
 		return false
 	}
 	if len(sourceBodyEvidencePathsFromDelegatedPacket(output)) == 0 {
@@ -17159,7 +17370,8 @@ func delegatedReadOnlyFindingLineIsUseful(line string) bool {
 		return false
 	}
 	lower := strings.ToLower(line)
-	if strings.Contains(lower, "<<question>>") ||
+	if readOnlyToolControlGuidanceText(lower) ||
+		strings.Contains(lower, "<<question>>") ||
 		strings.Contains(lower, "completion gate") ||
 		strings.Contains(lower, "missing completion evidence") ||
 		strings.Contains(lower, "child task completed") ||
@@ -17181,6 +17393,24 @@ func delegatedReadOnlyFindingLineIsUseful(line string) bool {
 		return false
 	}
 	return strings.Contains(line, ":") || strings.Contains(line, "`") || strings.Contains(line, ".")
+}
+
+func readOnlyToolControlGuidanceText(value string) bool {
+	lower := strings.ToLower(strings.TrimSpace(value))
+	if lower == "" {
+		return false
+	}
+	return containsAny(lower,
+		"generated evidence artifact",
+		"generated discovery/context json is not source-body evidence",
+		"not source-body evidence",
+		"use the source paths already named by the current discovery packet",
+		"next exact source probe example",
+		"after one source-body read resolves the claim",
+		"redirected to ",
+		"try: {\"tool\":",
+		"retry your original request and it will execute",
+	)
 }
 
 type delegatedDiscoverySummary struct {
@@ -17778,6 +18008,128 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
 	}))
+}
+
+func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	if r == nil || r.OnEvent == nil || strings.TrimSpace(result.Error) != "" || !resultCountsAsSuccessfulVerification(result) {
+		return false
+	}
+	command := postWriteVerificationTelemetryCommand(req, result)
+	if command == "" {
+		return false
+	}
+	confidence := postWriteVerificationTelemetryConfidence(command)
+	plan := map[string]any{
+		"commands":          []string{command},
+		"uses_full_suite":   postWriteVerificationUsesFullSuite(command),
+		"coverage":          postWriteVerificationTelemetryCoverage(command),
+		"confidence":        confidence,
+		"risk_level":        postWriteVerificationTelemetryRisk(command),
+		"expected_failures": postWriteVerificationExpectedFailures(command),
+		"repair_policy":     "repair failing checks before widening scope",
+	}
+	r.emitEvent(marshalRunEvent("verification_plan", plan))
+	feedback := map[string]any{
+		"commands":               []string{command},
+		"failed_commands":        []string{},
+		"confidence":             confidence,
+		"coverage":               plan["coverage"],
+		"risk_level":             plan["risk_level"],
+		"learned_recommendation": postWriteVerificationRecommendation(command),
+	}
+	r.emitEvent(marshalRunEvent("verification_feedback", feedback))
+	return true
+}
+
+func postWriteVerificationTelemetryCommand(req workspace.ToolRequest, result workspace.ToolResult) string {
+	if strings.TrimSpace(req.Tool) == "shell" {
+		if command := strings.TrimSpace(req.Command); command != "" {
+			return command
+		}
+		if command := shellCommandFromToolResult(result); command != "" {
+			return command
+		}
+	}
+	if strings.TrimSpace(result.Tool) == "shell" {
+		if command := shellCommandFromToolResult(result); command != "" {
+			return command
+		}
+	}
+	if strings.TrimSpace(req.Tool) == "source_sanity" && strings.TrimSpace(req.Path) != "" {
+		return "source_sanity " + normalizeRunnerPath(req.Path)
+	}
+	if isDiagnosticsVerificationTool(req.Tool) {
+		return strings.TrimSpace(req.Tool)
+	}
+	return ""
+}
+
+func postWriteVerificationUsesFullSuite(command string) bool {
+	lower := strings.ToLower(command)
+	return strings.Contains(lower, "go test ./...") ||
+		strings.Contains(lower, "make test") ||
+		strings.Contains(lower, "npm test") ||
+		strings.Contains(lower, "pnpm test") ||
+		strings.Contains(lower, "cargo test")
+}
+
+func postWriteVerificationTelemetryCoverage(command string) string {
+	lower := strings.ToLower(command)
+	switch {
+	case strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck"):
+		return "targeted script syntax verification"
+	case postWriteVerificationUsesFullSuite(command):
+		return "full-suite verification"
+	case strings.Contains(lower, "test") || strings.Contains(lower, "build") || strings.Contains(lower, "check"):
+		return "targeted project verification"
+	default:
+		return "targeted verification"
+	}
+}
+
+func postWriteVerificationTelemetryConfidence(command string) string {
+	lower := strings.ToLower(command)
+	if strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck") {
+		return "low"
+	}
+	if postWriteVerificationUsesFullSuite(command) {
+		return "high"
+	}
+	return "medium"
+}
+
+func postWriteVerificationTelemetryRisk(command string) string {
+	if postWriteVerificationUsesFullSuite(command) {
+		return "high"
+	}
+	return "low"
+}
+
+func postWriteVerificationExpectedFailures(command string) []string {
+	lower := strings.ToLower(command)
+	switch {
+	case strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck"):
+		return []string{"shell syntax errors"}
+	case strings.Contains(lower, "test"):
+		return []string{"test failures"}
+	case strings.Contains(lower, "build"):
+		return []string{"build failures"}
+	case strings.Contains(lower, "check"):
+		return []string{"check failures"}
+	default:
+		return []string{"verification failures"}
+	}
+}
+
+func postWriteVerificationRecommendation(command string) string {
+	lower := strings.ToLower(command)
+	if strings.Contains(lower, "bash -n") || strings.Contains(lower, "sh -n") || strings.Contains(lower, "zsh -n") || strings.Contains(lower, "shellcheck") {
+		return "syntax verification passed; run targeted tests when behavior changes beyond script parsing"
+	}
+	if postWriteVerificationUsesFullSuite(command) {
+		return "record full-suite success for similar high-risk surfaces"
+	}
+	return "keep targeted tests close to the changed surface before widening scope"
 }
 
 // requiredEditPathsProgressMessage returns a compact authoritative
@@ -18847,6 +19199,244 @@ func isNonSourceEvidenceArtifactPath(path string) bool {
 	default:
 		return false
 	}
+}
+
+func generatedEvidenceArtifactReadRedirectResult(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return workspace.ToolResult{}, false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if !isGeneratedDiscoveryContextArtifactPath(path) {
+		return workspace.ToolResult{}, false
+	}
+	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
+	if len(paths) == 0 {
+		paths = promptEvidencePathsFromToolResults(results, 6)
+	}
+	paths = nonArtifactEvidencePaths(paths)
+	if len(paths) == 0 {
+		return workspace.ToolResult{}, false
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Generated evidence artifact %s was not read because generated discovery/context JSON is not source-body evidence.\n", path)
+	b.WriteString("Use the source paths already named by the current discovery packet instead:\n")
+	for _, sourcePath := range limitRunnerStrings(paths, 6) {
+		fmt.Fprintf(&b, "- %s\n", sourcePath)
+	}
+	fmt.Fprintf(&b, "Next exact source probe example: {\"tool\":\"read_file\",\"path\":%q}\n", paths[0])
+	b.WriteString("After one source-body read resolves the claim, answer from the gathered evidence instead of reading artifact JSON.")
+	return workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: "Redirected generated evidence artifact read to source paths",
+		Output:  strings.TrimSpace(b.String()),
+	}, true
+}
+
+func generatedEvidenceArtifactReadRedirectRequest(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, string, bool) {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if !isGeneratedDiscoveryContextArtifactPath(path) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
+	if len(paths) == 0 {
+		paths = promptEvidencePathsFromToolResults(results, 6)
+	}
+	paths = nonArtifactEvidencePaths(paths)
+	if len(paths) == 0 {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	redirected := req
+	redirected.Path = paths[0]
+	redirected.StartLine = 0
+	redirected.EndLine = 0
+	redirected.NamedGap = util.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence named by generated discovery artifact")
+	redirected.WhyNotAnswering = util.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "generated discovery/context JSON is provenance, not source-body evidence")
+	return redirected, marshalToolRequestRaw(redirected), "generated discovery/context artifact redirected to source-body path", true
+}
+
+func structuredSourceReadRewriteRequest(req workspace.ToolRequest, ws *workspace.Manager, allowedTools []string, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, string, string, bool) {
+	if ws == nil || runnerBriefRequiresMutation(brief) || !redirectToolAllowed(allowedTools, "code_navigate") {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	if strings.TrimSpace(req.Tool) != "read_file" || req.StartLine > 0 || req.EndLine > 0 {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	lang, cap, ok := matchRedirectRule(req, ws)
+	if !ok || cap != workspace.CapFileOutline {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	path, ok := redirectReadFilePath(req, ws)
+	if !ok || strings.TrimSpace(path) == "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	redirected := workspace.ToolRequest{
+		Tool:            "code_navigate",
+		Capability:      string(cap),
+		Path:            normalizeRunnerPath(path),
+		Language:        lang.Name,
+		NamedGap:        req.NamedGap,
+		WhyNotAnswering: req.WhyNotAnswering,
+	}
+	raw := marshalToolRequestRaw(redirected)
+	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	return redirected, raw, "source read redirected to structured navigation", true
+}
+
+func pathlessReadSymbolAfterOutlineRewriteRequest(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolRequest, string, string, bool) {
+	if strings.TrimSpace(req.Tool) != "code_navigate" || strings.TrimSpace(req.Path) != "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	if capability != "read_symbol" && capability != "symbol_body" && capability != "inspect_symbol" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	symbol := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
+	if symbol == "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	path := latestCodeNavigateOutlinePath(results)
+	if path == "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	redirected := req
+	redirected.Path = path
+	if strings.TrimSpace(redirected.Pattern) == "" {
+		redirected.Pattern = symbol
+	}
+	if strings.TrimSpace(redirected.Symbol) == "" {
+		redirected.Symbol = symbol
+	}
+	raw := marshalToolRequestRaw(redirected)
+	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	return redirected, raw, "pathless read_symbol anchored to latest file_outline path", true
+}
+
+func latestCodeNavigateOutlinePath(results []workspace.ToolResult) string {
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != "code_navigate" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
+		if !strings.Contains(text, "file_outline") {
+			continue
+		}
+		for _, path := range readPathsFromToolResult(result) {
+			path = normalizeRunnerPath(path)
+			if path != "" && !isNonSourceEvidenceArtifactPath(path) {
+				return path
+			}
+		}
+		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(strings.Join([]string{result.Summary, result.Output}, "\n"))) {
+			path = normalizeRunnerPath(path)
+			if path != "" && !isNonSourceEvidenceArtifactPath(path) {
+				return path
+			}
+		}
+	}
+	return ""
+}
+
+func repeatedFileOutlineToReadSymbolRewriteRequest(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, string, string, bool) {
+	if runnerBriefRequiresMutation(brief) || strings.TrimSpace(req.Tool) != "code_navigate" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	if capability != "file_outline" && capability != "outline" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || concreteSourceEvidenceReadForPath(path, results) || !priorFileOutlineForPath(path, results) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	symbol := planThenExecuteBestOutlineSymbol(path, brief.Objective, results)
+	if symbol == "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	redirected := req
+	redirected.Capability = "read_symbol"
+	redirected.Operation = ""
+	redirected.Action = ""
+	redirected.Pattern = symbol
+	redirected.Symbol = symbol
+	redirected.NamedGap = util.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for repeated outline path")
+	redirected.WhyNotAnswering = util.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "need a declaration body from the outlined file rather than another outline")
+	raw := marshalToolRequestRaw(redirected)
+	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	return redirected, raw, "repeated file_outline upgraded to source-body read_symbol", true
+}
+
+func priorFileOutlineForPath(path string, results []workspace.ToolResult) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "code_navigate" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{result.Summary, result.Output}, "\n"))
+		if !strings.Contains(text, "file_outline") {
+			continue
+		}
+		for _, candidate := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(strings.Join([]string{result.Summary, result.Output}, "\n"))) {
+			if normalizeRunnerPath(candidate) == path {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func readOnlyDefinitionToReadSymbolRewriteRequest(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) (workspace.ToolRequest, string, string, bool) {
+	if runnerBriefRequiresMutation(brief) || strings.TrimSpace(req.Tool) != "code_navigate" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
+		!workerruntime.RuntimeContractIsArchitecture(brief.Contract) &&
+		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation, req.Action))
+	if capability != "find_definition" && capability != "definition" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	symbol := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Symbol, req.Query))
+	if path == "" || symbol == "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	redirected := req
+	redirected.Path = path
+	redirected.Capability = "read_symbol"
+	redirected.Operation = ""
+	redirected.Action = ""
+	redirected.Pattern = symbol
+	redirected.Symbol = symbol
+	redirected.NamedGap = util.FirstNonEmpty(strings.TrimSpace(req.NamedGap), "source-body evidence for definition target")
+	redirected.WhyNotAnswering = util.FirstNonEmpty(strings.TrimSpace(req.WhyNotAnswering), "definition location is anchor evidence; the answer needs the declaration body")
+	raw := marshalToolRequestRaw(redirected)
+	if raw == "" || normalizedToolRequestRaw(redirected) == normalizedToolRequestRaw(req) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	return redirected, raw, "read-only definition probe upgraded to source-body read_symbol", true
+}
+
+func isGeneratedDiscoveryContextArtifactPath(path string) bool {
+	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	lower = strings.TrimPrefix(lower, "./")
+	return strings.HasPrefix(lower, ".idiom/discovery/queries/") ||
+		strings.HasPrefix(lower, ".idiom/comprehension/views/") ||
+		strings.HasPrefix(lower, ".codex/discovery/")
 }
 
 func latestDebugLogSearchHit(results []workspace.ToolResult) (debugLogSearchHit, bool) {

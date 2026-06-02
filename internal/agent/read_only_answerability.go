@@ -216,11 +216,7 @@ func delegatedTaskOutputHasFindingEvidence(output string) bool {
 		return false
 	}
 	lower := strings.ToLower(output)
-	if containsAny(lower,
-		"redirected to ",
-		"try: {\"tool\":",
-		"retry your original request and it will execute",
-	) {
+	if readOnlyToolControlGuidanceText(lower) {
 		return false
 	}
 	return containsAny(lower,

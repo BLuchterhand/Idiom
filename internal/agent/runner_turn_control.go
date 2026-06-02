@@ -80,6 +80,22 @@ func (c *runnerTurnController) rejectTool(step int, activeToolCall *llama.ToolCa
 	return "", nil, false
 }
 
+func (c *runnerTurnController) recordHostCloseoutRejectionFeedback(step int, activeToolCall *llama.ToolCall, req workspace.ToolRequest, summary string, errorText string) {
+	if c == nil || c.recorder == nil {
+		return
+	}
+	result := workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: summary,
+		Error:   errorText,
+	}
+	c.recorder.activeToolCall = activeToolCall
+	c.recorder.recordWithOptions(step, req, result, "tool_rejected", runnerRecordOptions{
+		CountRejected:  false,
+		SetLastToolKey: true,
+	})
+}
+
 func (c *runnerTurnController) rejectCompletion(step int, activeToolCall *llama.ToolCall, reply llama.ChatMessage, result workspace.ToolResult) {
 	if c == nil || c.recorder == nil {
 		return

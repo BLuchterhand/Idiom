@@ -272,7 +272,12 @@ func TestDiscoveryQueryRejectsUnknownPurpose(t *testing.T) {
 }
 
 func TestDiscoveryQueryNormalizesArchitectureUsefulnessAliases(t *testing.T) {
-	for _, purpose := range []string{"tool_usefulness", "discovery_tools", "usefulness"} {
+	for _, purpose := range []string{
+		"tool_usefulness",
+		"discovery_tools",
+		"usefulness",
+		"Run a deterministic layered discovery recipe to identify subagent definitions and orchestration patterns.",
+	} {
 		if got := normalizeDiscoveryQueryPurpose(purpose); got != "architecture_boundary" {
 			t.Fatalf("normalizeDiscoveryQueryPurpose(%q) = %q, want architecture_boundary", purpose, got)
 		}

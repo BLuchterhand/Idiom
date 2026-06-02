@@ -647,6 +647,122 @@ func TestAnalyzeCountsRejectedToolResultWithoutRequestAsAttempt(t *testing.T) {
 	}
 }
 
+func TestAnalyzeUncountsRecoverablePostReadinessGapAttempt(t *testing.T) {
+	records := []Record{
+		{
+			Type: "tool_request",
+			Data: map[string]any{
+				"step":            1,
+				"tool":            "read_file",
+				"path":            "internal/labels/labels.go",
+				"discovery_class": "file_read",
+				"discovery_scope": "targeted",
+				"discovery_cost":  "low",
+			},
+		},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/labels/labels.go", "error": ""}},
+		{
+			Type: "tool_request",
+			Data: map[string]any{
+				"step":            2,
+				"tool":            "code_navigate",
+				"path":            "internal/labels/labels.go",
+				"discovery_class": "language_symbol",
+				"discovery_scope": "targeted",
+				"discovery_cost":  "low",
+			},
+		},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":            2,
+				"tool":            "code_navigate",
+				"summary":         "Post-readiness follow-up missing named gap",
+				"error":           "post-readiness exact source probes require a named_gap",
+				"discovery_class": "language_symbol",
+				"discovery_scope": "targeted",
+				"discovery_cost":  "low",
+			},
+		},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 1 {
+		t.Fatalf("expected recoverable post-readiness gap attempt to be uncounted, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["code_navigate"] != 0 {
+		t.Fatalf("expected recoverable code_navigate attempt to be uncounted, got %#v", metrics.Tools)
+	}
+	if metrics.DiscoveryTools["code_navigate"] != 0 || metrics.DiscoveryClasses["language_symbol"] != 0 {
+		t.Fatalf("expected recoverable discovery metrics to be uncounted, tools=%#v classes=%#v", metrics.DiscoveryTools, metrics.DiscoveryClasses)
+	}
+	if metrics.ErrorCount != 0 || len(metrics.Errors) != 0 {
+		t.Fatalf("expected recoverable post-readiness gap not to count as an error, count=%d errors=%#v", metrics.ErrorCount, metrics.Errors)
+	}
+}
+
+func TestAnalyzeDoesNotCountCompletionGateAsToolRequest(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "read_file", "path": "internal/agent/runner.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Read internal/agent/runner.go", "error": ""}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "completion_gate", "summary": "Textual tool-call markup rejected as final answer", "error": "the reply contains textual tool-call markup instead of prose"}},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 1 {
+		t.Fatalf("expected completion_gate feedback not to count as workspace tool request, got %d", metrics.ToolRequests)
+	}
+	if metrics.Tools["completion_gate"] != 0 {
+		t.Fatalf("expected completion_gate not to count as tool usage, got %#v", metrics.Tools)
+	}
+	if metrics.CompletionGateRejections != 1 {
+		t.Fatalf("expected completion gate rejection metric to remain, got %d", metrics.CompletionGateRejections)
+	}
+}
+
+func TestAnalyzeParsesVerificationPlanRunEvent(t *testing.T) {
+	records := []Record{{
+		Type: "run_event",
+		Data: map[string]any{
+			"role":    "verification_plan",
+			"content": `{"commands":["bash -n scripts/run-harness.sh"],"confidence":"low","expected_failures":["shell syntax errors"]}`,
+		},
+	}}
+
+	metrics := Analyze(records)
+	if len(metrics.VerificationPlans) != 1 {
+		t.Fatalf("expected verification plan from run_event, got %#v", metrics.VerificationPlans)
+	}
+	plan := metrics.VerificationPlans[0]
+	if plan.Confidence != "low" || !containsStringFold(plan.Commands, "bash -n scripts/run-harness.sh") || !containsStringFold(plan.ExpectedFailures, "shell syntax errors") {
+		t.Fatalf("unexpected verification plan: %#v", plan)
+	}
+}
+
+func TestAnalyzeDoesNotUncountPriorToolForUnrequestedRecoverableGap(t *testing.T) {
+	records := []Record{
+		{Type: "tool_request", Data: map[string]any{"step": 1, "tool": "code_navigate", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "code_navigate", "summary": "Read Label", "error": ""}},
+		{
+			Type: "tool_result",
+			Data: map[string]any{
+				"step":    2,
+				"tool":    "code_navigate",
+				"summary": "Post-readiness follow-up missing named gap",
+				"error":   "post-readiness exact source probes require a named_gap",
+			},
+		},
+	}
+
+	metrics := Analyze(records)
+	if metrics.ToolRequests != 1 || metrics.Tools["code_navigate"] != 1 {
+		t.Fatalf("expected unrequested recoverable gap not to decrement prior valid attempt, requests=%d tools=%#v", metrics.ToolRequests, metrics.Tools)
+	}
+	if metrics.ErrorCount != 0 {
+		t.Fatalf("expected unrequested recoverable gap not to count as an error, got %d", metrics.ErrorCount)
+	}
+}
+
 func TestAnalyzeKeepsRepeatedIdenticalErrorEventCount(t *testing.T) {
 	records := []Record{
 		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "duplicate rejection"}},

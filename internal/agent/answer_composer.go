@@ -65,6 +65,19 @@ func mergeQuestionExpectedEvidencePaths(question string, paths []string) []strin
 }
 
 func questionExpectedEvidencePaths(question string) []string {
+	if delegatedObjectiveIsDiscoveryToolUsefulness(question) {
+		return []string{
+			"internal/agent/answer_composer.go",
+			"internal/agent/runner.go",
+			"internal/agent/runner_lane_policy.go",
+		}
+	}
+	if delegatedObjectiveIsSubagentArchitecture(question) {
+		return []string{
+			"internal/agent/runner.go",
+			"internal/agent/runner_child_tasks.go",
+		}
+	}
 	return nil
 }
 
