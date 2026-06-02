@@ -4348,9 +4348,9 @@
         "multi-turn",
         "conversation"
       ],
-      "fixture": "fixtures/frozen-label-repo",
+      "fixture": "fixtures/evidence-repo",
       "scenario": {
-        "name": "scripted-conversation-empty-content-tui-fallback",
+        "name": "scripted-conversation-evidence-git-operations",
         "prompt_contains": [
           "evidence",
           "git operations"
@@ -4365,10 +4365,11 @@
           "source_sanity"
         ],
         "require_tools": [
-          "read_file"
+          "read_file",
+          "search_content"
         ],
         "require_evidence_paths": [
-          "internal/labels/labels.go"
+          "docs/evidence.md"
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
@@ -4376,8 +4377,15 @@
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
+        "final_assistant_contains": [
+          "evidence-producing probes",
+          "intended change paths",
+          "separate contracts"
+        ],
         "forbid_final_assistant_contains": [
           "No files were changed",
+          "internal/labels/labels.go",
+          "ShortLabel",
           "type ",
           "func "
         ],
