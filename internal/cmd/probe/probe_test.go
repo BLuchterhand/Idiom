@@ -1,4 +1,5 @@
 package probe
+
 import (
 	"bytes"
 	"os"

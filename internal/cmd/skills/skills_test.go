@@ -1,4 +1,5 @@
 package skills
+
 import (
 	"bytes"
 	"os"

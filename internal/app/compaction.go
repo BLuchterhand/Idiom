@@ -23,7 +23,6 @@ import (
 
 const compactionSystemPromptPreamble = "You are producing a compact session digest. Preserve only the facts that the next turn needs to act correctly: the user's original goals, any hard constraints or boundaries, files and paths that have been read or edited, outcomes of tool calls, open questions, and the last known blocker. Write plain prose in 12 lines or fewer. Do not invent facts. Do not request tools."
 
-
 // compactionContextSize returns the context window size in tokens used for
 // deriving compaction thresholds. It reads from the main model's LlamaServer
 // config and falls back through available sources.
@@ -98,7 +97,6 @@ func runnerContextLimitsForConversation(ctxSize int) (maxMsgs int, maxChars int)
 	maxChars = ctxSize * 4 * 80 / 100
 	return maxMsgs, maxChars
 }
-
 
 type historyCompactionResult struct {
 	Messages  []llama.ChatMessage

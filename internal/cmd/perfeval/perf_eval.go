@@ -7,6 +7,7 @@
 // behavior suite, pipe the logs through this tool, and the next harness
 // change targets whichever anti-pattern tops the hit-rate list.
 package perfeval
+
 import (
 	"encoding/json"
 	"flag"

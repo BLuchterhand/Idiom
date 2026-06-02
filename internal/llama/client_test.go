@@ -513,7 +513,7 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []ToolCall{
 					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
@@ -543,7 +543,7 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []ToolCall{
 					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
@@ -588,7 +588,7 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []ToolCall{
 					{ID: "call_1", Function: ToolCallFunc{Name: "read_file"}},
@@ -620,7 +620,7 @@ func TestRepairMessageToolPairing_OrphanedToolCalls(t *testing.T) {
 			{Role: "system", Content: "you are a helpful assistant"},
 			{Role: "user", Content: "hello"},
 			{
-				Role: "assistant",
+				Role:    "assistant",
 				Content: "",
 				ToolCalls: []ToolCall{
 					{ID: "", Function: ToolCallFunc{Name: "unknown"}}, // empty ID

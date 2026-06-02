@@ -154,7 +154,7 @@ func TestCompactionParamsScalesWithContextSize(t *testing.T) {
 		wantRecent    int
 	}{
 		{ctxSize: 32768, wantThreshold: 104, wantRecent: 40},  // 32K model (recent capped at 40)
-		{ctxSize: 65536, wantThreshold: 200, wantRecent: 40}, // 64K model (both capped)
+		{ctxSize: 65536, wantThreshold: 200, wantRecent: 40},  // 64K model (both capped)
 		{ctxSize: 131072, wantThreshold: 200, wantRecent: 40}, // 128K model (capped at max)
 		{ctxSize: 8192, wantThreshold: 26, wantRecent: 13},    // 8K model
 		{ctxSize: 4096, wantThreshold: 13, wantRecent: 6},     // 4K model
@@ -188,7 +188,6 @@ func TestCompactionParamsForNilModel(t *testing.T) {
 		t.Errorf("nil Model threshold = %d, want %d", threshold, wantThreshold)
 	}
 }
-
 
 func TestCompactionWithRestrictiveMaxHistory(t *testing.T) {
 	// Simulate the common case: a large-context model (64K+) with the

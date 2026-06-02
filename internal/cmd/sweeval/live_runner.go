@@ -1,4 +1,5 @@
 package sweeval
+
 import (
 	"context"
 	"encoding/json"

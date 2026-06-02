@@ -595,7 +595,6 @@ func repairMessageToolPairing(messages []ChatMessage) []ChatMessage {
 	return repaired
 }
 
-
 func hostedChatMessages(messages []ChatMessage) []ChatMessage {
 	if len(messages) == 0 {
 		return nil

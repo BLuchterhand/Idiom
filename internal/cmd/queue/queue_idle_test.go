@@ -1,4 +1,5 @@
 package queue
+
 import (
 	"strings"
 	"testing"

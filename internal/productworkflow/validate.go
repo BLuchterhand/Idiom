@@ -6,14 +6,6 @@ import (
 	"strings"
 )
 
-
-
-
-
-
-
-
-
 func validateEffortIndex(idx EffortIndex) error {
 	var errs []error
 	require(&errs, idx.SchemaVersion, "effort index missing schema_version")
@@ -198,7 +190,6 @@ func validateTDDCoverage(coverage TDDCoverage) []error {
 	}
 	return errs
 }
-
 
 func validateEvidenceCard(card EvidenceCard, line int) error {
 	var errs []error
@@ -395,9 +386,6 @@ func validatePrivacyFlags(context string, privacy PrivacyState) error {
 	return errors.Join(errs...)
 }
 
-
-
-
 func validateResearchProfile(profile ResearchProfile) error {
 	var errs []error
 	require(&errs, profile.SchemaVersion, "research profile missing schema_version")
@@ -422,12 +410,6 @@ func validateResearchProfile(profile ResearchProfile) error {
 	require(&errs, profile.MergePolicy.StaleLocalContext, "research profile missing merge_policy.stale_local_context")
 	return errors.Join(errs...)
 }
-
-
-
-
-
-
 
 func validatePRD(doc PRDDocument) error {
 	var errs []error
@@ -566,23 +548,6 @@ func validateADR(doc ADRDocument) error {
 	return errors.Join(errs...)
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 func validateAcceptanceMetadata(context, status, acceptedAt, acceptedBy, acceptanceProfile string) error {
 	if status != string(ArtifactStateAccepted) {
 		return nil
@@ -593,11 +558,6 @@ func validateAcceptanceMetadata(context, status, acceptedAt, acceptedBy, accepta
 	require(&errs, acceptanceProfile, context+" missing acceptance_profile for accepted artifact")
 	return errors.Join(errs...)
 }
-
-
-
-
-
 
 func validateImplementationReport(r ImplementationReport) error {
 	var errs []error
@@ -747,4 +707,3 @@ func validateReportPrivacyNote(note string) error {
 	}
 	return nil
 }
-

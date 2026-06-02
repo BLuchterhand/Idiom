@@ -24,6 +24,8 @@ type runnerExecutionState struct {
 	pendingDiscoverySummary          string
 	pendingDiscoveryOutput           string
 	pendingDiscoveryCandidates       []string
+	pendingDiscoveryWeakPacket       bool
+	pendingDiscoveryFailedAttempt    bool
 	checkpointCreated                bool
 	writesSinceVerification          int
 	consecutiveMissingPathListErrors int
@@ -124,8 +126,12 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.pendingDiscoverySummary = truncForRetryReason(result.Summary)
 		s.pendingDiscoveryOutput = truncForRetryReason(result.Output)
 		s.pendingDiscoveryCandidates = discoveryConsumptionCandidatesFromResult(result, 6)
+		s.pendingDiscoveryWeakPacket = contextPackResultWeakSourceOwner(result)
+		s.pendingDiscoveryFailedAttempt = false
 	} else if sourceBodyConsumed {
 		s.clearPendingDiscoveryConsumption()
+	} else if s.pendingDiscoveryConsumption && isContentInspectionTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
+		s.pendingDiscoveryFailedAttempt = true
 	}
 	if requestBudget != nil {
 		if currentFingerprint != "" && strings.TrimSpace(result.Error) == "" && workerruntime.IsZeroHitSearchResult(result) {
@@ -147,6 +153,8 @@ func (s *runnerExecutionState) clearPendingDiscoveryConsumption() {
 	s.pendingDiscoverySummary = ""
 	s.pendingDiscoveryOutput = ""
 	s.pendingDiscoveryCandidates = nil
+	s.pendingDiscoveryWeakPacket = false
+	s.pendingDiscoveryFailedAttempt = false
 }
 
 func verificationPhaseState(result workspace.ToolResult) (state string, detail string) {
@@ -233,7 +241,7 @@ func successfulDiscoveryConsumptionResult(req workspace.ToolRequest, result work
 	}
 	switch strings.TrimSpace(req.Tool) {
 	case "context_pack":
-		return contextPackResultHasTargets(result)
+		return contextPackResultHasTargets(result) && !contextPackResultWeakSourceOwner(result)
 	case "search_files", "search_content", "rg", "grep",
 		"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol",
 		"structural_search", "discovery_query", "context_query", "context_zoom", "context_impact":
@@ -244,19 +252,17 @@ func successfulDiscoveryConsumptionResult(req workspace.ToolRequest, result work
 }
 
 func (s *runnerExecutionState) shouldConsumeSearchHitBeforeMoreSearch(req workspace.ToolRequest) bool {
-	if s == nil || !s.pendingSearchInspection {
-		return false
-	}
-	switch strings.TrimSpace(req.Tool) {
-	case "search_files", "search_content", "rg", "grep":
-		return true
-	default:
-		return false
-	}
+	return false
 }
 
 func (s *runnerExecutionState) shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) bool {
 	if s == nil || !s.pendingDiscoveryConsumption {
+		return false
+	}
+	if s.pendingDiscoveryWeakPacket && strings.TrimSpace(req.Tool) == "context_pack" {
+		return false
+	}
+	if s.pendingDiscoveryFailedAttempt && strings.TrimSpace(s.pendingDiscoveryTool) != "context_pack" {
 		return false
 	}
 	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) ||

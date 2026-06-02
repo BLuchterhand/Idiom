@@ -152,10 +152,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "search_files",
-			Description: "Find files by name pattern (glob-like).",
+			Description: "Find files by name or path pattern.",
 			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("name pattern, e.g. *.go")+`,"path":`+strProp("root to search under"),
+				nil,
+				`"pattern":`+strProp("filename/path substring or simple glob, e.g. app or *.go; one of pattern, glob, or query is required")+`,"path":`+strProp("root to search under")+`,"glob":`+strProp("optional glob pattern; accepted as the file search pattern when pattern is omitted")+`,"query":`+strProp("optional filename/path query; accepted as the file search pattern when pattern and glob are omitted"),
 			),
 		},
 		{

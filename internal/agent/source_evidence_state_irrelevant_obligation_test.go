@@ -165,4 +165,3 @@ func TestObligationResolutionAttemptsCountsOnlyNavigationFailures(t *testing.T) 
 		t.Fatalf("resolution attempts = %d, want 1 (only the one failed code_navigate on the path should count)", attempts)
 	}
 }
-

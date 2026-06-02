@@ -1,4 +1,5 @@
 package refine
+
 import (
 	"io"
 	"os"

@@ -1,4 +1,5 @@
 package audit
+
 import (
 	"bytes"
 	"encoding/json"

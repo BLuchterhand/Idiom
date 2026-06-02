@@ -143,6 +143,19 @@ live/scripted contracts are covered by a better boundary.
   be weak. Before adding another late message, inspect the first prompt the model
   saw and make sure it frontloads the executable sequence: evidence prerequisite,
   permitted tool action, schema shape, and terminal outcomes.
+- Treat repeated searches as an unmet-evidence signal before treating them as
+  disobedience. After a candidate-producing search, the next phase surface must
+  reconcile with the open evidence obligation: classify returned paths as
+  source, test, doc, fixture, generated log, config, or directory; surface
+  concrete source-body read/capability affordances for real source candidates;
+  and state explicitly when the hits are only noisy diagnostics. A generic
+  `read/search` menu plus prose like "read the highest-confidence hit" is not
+  an executable contract.
+- Unify repeated-fingerprint recovery before adjacent replay and UI doom-loop
+  approval. Replaying prior evidence once is useful; after that, the same
+  normalized request should enter one typed terminal/recovery state that owns
+  the next visible surface and telemetry. Do not let separate counters,
+  replay-once paths, and TUI approval hooks compete over the same repeat.
 - Do not start cleanup with a broad revert. First make a retention table with:
   changed area, original failure or obligation, evidence that the obligation
   still exists, tests/logs that exercise it, keep/remove decision, and focused

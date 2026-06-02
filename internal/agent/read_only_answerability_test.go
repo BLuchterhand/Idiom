@@ -180,6 +180,62 @@ func TestReadOnlyAnswerabilityOutlinesAndGeneratedArtifactsDoNotAnswer(t *testin
 	}
 }
 
+func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourceBody(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Research the TUI chat input newline rendering bug.")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote .idiom/comprehension/views/pack.json",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"language: go",
+				"routed_tool: go_read_symbol",
+				"route_summary: Read Model.View in internal/app/rendering.go lines 32-70",
+				"",
+				"32:func (m Model) View() string {",
+				"33:    return \"Loading UI...\"",
+				"34:}",
+			}, "\n"),
+		},
+	}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("context_pack candidate membership alone must not make unrelated source body answerable: %#v", ledger)
+	}
+	if conversationEvidenceSatisfied(brief, results) {
+		t.Fatal("direct-answer readiness must remain false for source body that lacks objective relevance")
+	}
+	if slices.Contains(ledger.RelevantSourceBodyPaths, "internal/app/rendering.go") {
+		t.Fatalf("unrelated context candidate source body should not be relevant, got %#v", ledger.RelevantSourceBodyPaths)
+	}
+
+	results[1] = workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.renderChatInput in internal/app/rendering.go lines 120-150",
+			"",
+			"120:func (m Model) renderChatInput() string {",
+			"121:    // chat input newline rendering",
+			"122:    return m.textarea.View()",
+			"123:}",
+		}, "\n"),
+	}
+	ledger = readOnlyAnswerabilityForResults(brief, results)
+	if !ledger.Answerable() {
+		t.Fatalf("objective-relevant source body from context candidate should be answerable: %#v", ledger)
+	}
+}
+
 func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
 	results := []workspace.ToolResult{{

@@ -1,4 +1,5 @@
 package doctor
+
 import (
 	"bytes"
 	"encoding/json"

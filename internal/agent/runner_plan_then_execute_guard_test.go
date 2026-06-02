@@ -482,7 +482,7 @@ func TestDeterministicPlanExecuteGroundingRecoveryPrioritizesRejectedMissingSour
 	}
 }
 
-func TestDeterministicPlanExecuteChainedSearchRecoveryReadsContextPackCandidate(t *testing.T) {
+func TestDeterministicPlanExecuteChainedSearchRecoveryDoesNotOverrideModelStrategy(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily: PlanThenExecutePlannerTaskFamily,
@@ -507,11 +507,8 @@ func TestDeterministicPlanExecuteChainedSearchRecoveryReadsContextPackCandidate(
 		},
 		state,
 	)
-	if !ok {
-		t.Fatal("expected chained-search recovery to read the top context-pack candidate")
-	}
-	if req.Tool != "read_file" || req.Path != "internal/productworkflow/coverage_gate.go" {
-		t.Fatalf("unexpected recovery request: %#v", req)
+	if ok {
+		t.Fatalf("chained-search recovery should not inject a host-chosen read request, got %#v", req)
 	}
 }
 

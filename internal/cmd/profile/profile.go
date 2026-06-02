@@ -1,6 +1,7 @@
 // Package profilecmd implements the `idiom profile` subcommand for
 // inspecting and changing the active backend profile.
 package profile
+
 import (
 	"flag"
 	"fmt"
@@ -120,4 +121,3 @@ func printUsage(stderr io.Writer) {
 	fmt.Fprintln(stderr, "flags:")
 	fmt.Fprintln(stderr, "  --project-root <path>    project root (defaults to cwd)")
 }
-

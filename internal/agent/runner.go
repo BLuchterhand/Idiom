@@ -2041,6 +2041,19 @@ func (r *Runner) Run(
 		}
 
 		toolKey := toolRequestKey(req)
+		if shouldRejectExactReplayBeforeLoopGate(req) && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] > 0 {
+			answer, err, done := controller.rejectTool(
+				stepNumber,
+				activeToolCall,
+				req,
+				"Repeated tool request rejected",
+				"this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker.",
+			)
+			if done {
+				return finish(answer, err, "repeated_tool_budget_exhausted", true)
+			}
+			continue
+		}
 		// DOOM_LOOP guard — if the model emits exactly the same tool + args
 		// three turns in a row, stop the auto-execute path and surface a
 		// concrete blocker to the user. OpenCode uses threshold=3 at
@@ -10043,25 +10056,76 @@ func contextPackResultHasTargets(result workspace.ToolResult) bool {
 }
 
 // contextPackCandidateSymbols extracts the top-ranked symbol references from
-// a context_pack view JSON. It reads candidate_files.handles (which carry
-// symbol URIs like symbol://path#Name) and formats them as human-readable
-// "path#qualified_name" annotations the model can act on directly.
+// a context_pack view JSON. It prefers top-level candidate_symbols and packet
+// quality evidence, then falls back to candidate_files.handles from older views.
 func contextPackCandidateSymbols(output string, max int) []string {
 	output = strings.TrimSpace(output)
 	if output == "" || max <= 0 {
 		return nil
 	}
 	var view struct {
+		Task    string `json:"task"`
+		Quality struct {
+			EvidencePaths []string `json:"evidence_paths"`
+		} `json:"quality"`
 		CandidateFiles []struct {
 			Path    string   `json:"path"`
 			Role    string   `json:"role"`
+			Reason  string   `json:"reason"`
 			Handles []string `json:"handles"`
 		} `json:"candidate_files"`
+		CandidateSymbols []struct {
+			Path          string `json:"path"`
+			Kind          string `json:"kind"`
+			QualifiedName string `json:"qualified_name"`
+			Reason        string `json:"reason"`
+		} `json:"candidate_symbols"`
 	}
 	if err := json.Unmarshal([]byte(output), &view); err != nil {
 		return nil
 	}
+	evidenceRank := map[string]int{}
+	for i, path := range view.Quality.EvidencePaths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := evidenceRank[path]; !ok {
+			evidenceRank[path] = i
+		}
+	}
+	tokens := runnerEvidenceTokens(view.Task)
+	candidates := make([]contextPackSymbolCandidate, 0, len(view.CandidateSymbols))
+	for _, symbol := range view.CandidateSymbols {
+		path := strings.TrimSpace(symbol.Path)
+		name := strings.TrimSpace(symbol.QualifiedName)
+		if path == "" || name == "" {
+			continue
+		}
+		candidates = append(candidates, contextPackSymbolCandidate{
+			value:        path + "#" + name,
+			path:         path,
+			evidenceRank: contextPackEvidenceRank(evidenceRank, path),
+			score:        runnerEvidenceOverlap(tokens, strings.Join([]string{path, symbol.Kind, name, symbol.Reason}, " ")),
+		})
+	}
+	sortContextPackSymbolCandidates(candidates)
 	var symbols []string
+	seen := map[string]struct{}{}
+	addSymbol := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" || len(symbols) >= max {
+			return
+		}
+		if _, ok := seen[value]; ok {
+			return
+		}
+		seen[value] = struct{}{}
+		symbols = append(symbols, value)
+	}
+	for _, candidate := range candidates {
+		addSymbol(candidate.value)
+	}
 	for _, f := range view.CandidateFiles {
 		if len(symbols) >= max {
 			break
@@ -10081,13 +10145,50 @@ func contextPackCandidateSymbols(output string, max int) []string {
 			if handle == "" || handle == path {
 				continue
 			}
-			symbols = append(symbols, handle)
+			addSymbol(handle)
 		}
 	}
 	if len(symbols) == 0 {
 		return nil
 	}
 	return symbols
+}
+
+type contextPackSymbolCandidate struct {
+	value        string
+	path         string
+	evidenceRank int
+	score        int
+}
+
+func contextPackEvidenceRank(ranks map[string]int, path string) int {
+	if len(ranks) == 0 {
+		return -1
+	}
+	if rank, ok := ranks[strings.TrimSpace(path)]; ok {
+		return rank
+	}
+	return -1
+}
+
+func sortContextPackSymbolCandidates(candidates []contextPackSymbolCandidate) {
+	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].evidenceRank >= 0 || candidates[j].evidenceRank >= 0 {
+			if candidates[i].evidenceRank < 0 {
+				return false
+			}
+			if candidates[j].evidenceRank < 0 {
+				return true
+			}
+			if candidates[i].evidenceRank != candidates[j].evidenceRank {
+				return candidates[i].evidenceRank < candidates[j].evidenceRank
+			}
+		}
+		if candidates[i].score != candidates[j].score {
+			return candidates[i].score > candidates[j].score
+		}
+		return candidates[i].value < candidates[j].value
+	})
 }
 
 func concreteRecoveryEvidencePaths(results []workspace.ToolResult, max int) []string {
@@ -10201,23 +10302,95 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 		seen[path] = struct{}{}
 		paths = append(paths, path)
 	}
+	addRanked := func(candidates []contextPackEvidenceCandidate) bool {
+		sort.SliceStable(candidates, func(i, j int) bool {
+			if candidates[i].score != candidates[j].score {
+				return candidates[i].score > candidates[j].score
+			}
+			if candidates[i].source != candidates[j].source {
+				return candidates[i].source
+			}
+			return candidates[i].path < candidates[j].path
+		})
+		for _, candidate := range candidates {
+			if candidate.score <= 0 {
+				continue
+			}
+			add(candidate.path)
+			if len(paths) >= max {
+				return true
+			}
+		}
+		return false
+	}
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != "context_pack" || strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
 		}
 		var view struct {
+			Task    string `json:"task"`
+			Quality struct {
+				LocalizationConfidence string   `json:"localization_confidence"`
+				SourceOwnerFound       bool     `json:"source_owner_found"`
+				EvidencePaths          []string `json:"evidence_paths"`
+			} `json:"quality"`
 			CandidateFiles []struct {
-				Path string `json:"path"`
+				Path    string   `json:"path"`
+				Role    string   `json:"role"`
+				Reason  string   `json:"reason"`
+				Handles []string `json:"handles"`
 			} `json:"candidate_files"`
 			CandidateSymbols []struct {
-				Path string `json:"path"`
+				Path          string `json:"path"`
+				Kind          string `json:"kind"`
+				QualifiedName string `json:"qualified_name"`
+				Reason        string `json:"reason"`
 			} `json:"candidate_symbols"`
 			Tests []struct {
-				Path string `json:"path"`
+				Path    string `json:"path"`
+				Symbol  string `json:"symbol"`
+				Command string `json:"command"`
+				Reason  string `json:"reason"`
 			} `json:"tests"`
 		}
 		if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
 			continue
+		}
+		weakQuality := strings.TrimSpace(view.Quality.LocalizationConfidence) == "low" && !view.Quality.SourceOwnerFound
+		for _, path := range view.Quality.EvidencePaths {
+			if weakQuality && !runnerEvidencePathIsTest(path) {
+				continue
+			}
+			add(path)
+			if len(paths) >= max {
+				return paths
+			}
+		}
+		if tokens := runnerEvidenceTokens(view.Task); len(tokens) > 0 {
+			candidates := make([]contextPackEvidenceCandidate, 0, len(view.CandidateFiles)+len(view.CandidateSymbols)+len(view.Tests))
+			for _, file := range view.CandidateFiles {
+				candidates = append(candidates, contextPackEvidenceCandidate{
+					path:   file.Path,
+					source: !runnerEvidencePathIsTest(file.Path),
+					score:  runnerEvidenceOverlap(tokens, strings.Join(append([]string{file.Path, file.Role, file.Reason}, file.Handles...), " ")),
+				})
+			}
+			for _, symbol := range view.CandidateSymbols {
+				candidates = append(candidates, contextPackEvidenceCandidate{
+					path:   symbol.Path,
+					source: !runnerEvidencePathIsTest(symbol.Path) && symbol.Kind != "test",
+					score:  runnerEvidenceOverlap(tokens, strings.Join([]string{symbol.Path, symbol.Kind, symbol.QualifiedName, symbol.Reason}, " ")),
+				})
+			}
+			for _, test := range view.Tests {
+				candidates = append(candidates, contextPackEvidenceCandidate{
+					path:  test.Path,
+					score: runnerEvidenceOverlap(tokens, strings.Join([]string{test.Path, test.Symbol, test.Command, test.Reason}, " ")),
+				})
+			}
+			if addRanked(candidates) {
+				return paths
+			}
 		}
 		for _, file := range view.CandidateFiles {
 			add(file.Path)
@@ -10239,6 +10412,123 @@ func contextPackCandidatePathsFromResults(results []workspace.ToolResult, max in
 		}
 	}
 	return paths
+}
+
+type contextPackEvidenceCandidate struct {
+	path   string
+	source bool
+	score  int
+}
+
+func contextPackResultWeakSourceOwner(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Tool) != "context_pack" || strings.TrimSpace(result.Output) == "" || strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	var view struct {
+		Quality struct {
+			LocalizationConfidence string `json:"localization_confidence"`
+			SourceOwnerFound       bool   `json:"source_owner_found"`
+		} `json:"quality"`
+	}
+	if err := json.Unmarshal([]byte(result.Output), &view); err != nil {
+		return false
+	}
+	return strings.TrimSpace(view.Quality.LocalizationConfidence) == "low" && !view.Quality.SourceOwnerFound
+}
+
+func runnerEvidenceTokens(text string) map[string]struct{} {
+	out := map[string]struct{}{}
+	for _, token := range splitRunnerEvidenceText(text) {
+		if len(token) < 3 || runnerEvidenceStopToken(token) {
+			continue
+		}
+		out[runnerEvidenceStem(token)] = struct{}{}
+	}
+	return out
+}
+
+func runnerEvidenceOverlap(tokens map[string]struct{}, text string) int {
+	seen := map[string]struct{}{}
+	for _, token := range splitRunnerEvidenceText(text) {
+		stem := runnerEvidenceStem(token)
+		if _, ok := tokens[stem]; ok {
+			seen[stem] = struct{}{}
+		}
+	}
+	return len(seen)
+}
+
+func splitRunnerEvidenceText(text string) []string {
+	var tokens []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		tokens = append(tokens, strings.ToLower(b.String()))
+		b.Reset()
+	}
+	for _, r := range text {
+		if r >= 'A' && r <= 'Z' {
+			flush()
+			b.WriteRune(r + ('a' - 'A'))
+			continue
+		}
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			continue
+		}
+		flush()
+	}
+	flush()
+	return tokens
+}
+
+func runnerEvidenceStem(token string) string {
+	token = strings.TrimSpace(strings.ToLower(token))
+	for _, suffix := range []string{"ing", "ed", "es", "s"} {
+		if len(token) > len(suffix)+3 && strings.HasSuffix(token, suffix) {
+			return runnerEvidenceTrimDoubledFinalConsonant(strings.TrimSuffix(token, suffix))
+		}
+	}
+	return token
+}
+
+func runnerEvidenceTrimDoubledFinalConsonant(token string) string {
+	if len(token) < 2 {
+		return token
+	}
+	last := token[len(token)-1]
+	prev := token[len(token)-2]
+	if last == prev {
+		switch last {
+		case 'b', 'd', 'g', 'm', 'n', 'p', 'r', 't':
+			return token[:len(token)-1]
+		}
+	}
+	return token
+}
+
+func runnerEvidenceStopToken(token string) bool {
+	switch token {
+	case "the", "and", "for", "with", "where", "when", "that", "this", "from", "into", "over",
+		"do", "not", "no", "only", "same", "way", "longer", "first", "later", "time",
+		"bug", "fix", "issue", "fail", "fails", "failure", "source", "file", "files", "symbol", "symbols",
+		"research", "repo", "repository", "edit", "edits", "editing", "investigate", "identify", "name",
+		"likely", "smallest", "proper", "propose", "return", "answer", "evidence", "codebase", "exact",
+		"missing", "insufficient", "sufficient", "claim":
+		return true
+	default:
+		return false
+	}
+}
+
+func runnerEvidencePathIsTest(path string) bool {
+	path = filepath.ToSlash(strings.ToLower(strings.TrimSpace(path)))
+	return strings.HasSuffix(path, "_test.go") ||
+		strings.Contains(path, "/testdata/") ||
+		strings.Contains(path, "/fixtures/") ||
+		strings.Contains(path, "/tests/")
 }
 
 func unreadPlanThenExecuteCandidateScopePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
@@ -11991,25 +12281,10 @@ func (r *Runner) deterministicPlanExecuteNonToolCandidateRecovery(reply string, 
 }
 
 func (r *Runner) deterministicPlanExecuteChainedSearchRecovery(req workspace.ToolRequest, results []workspace.ToolResult, executionState *runnerExecutionState) (workspace.ToolRequest, string, bool) {
-	if r == nil || executionState == nil || !r.planThenExecutePlannerPhase() || !r.unscopedNoWriteCompletionRecoveryApplies(results) {
-		return workspace.ToolRequest{}, "", false
-	}
-	if !executionState.shouldConsumeSearchHitBeforeMoreSearch(req) || successfulSubmitPlanResultCount(results) > 0 || len(readPathsFromResults(results)) > 0 {
-		return workspace.ToolRequest{}, "", false
-	}
-	paths := contextPackCandidatePathsFromResults(results, 4)
-	if len(paths) == 0 {
-		return workspace.ToolRequest{}, "", false
-	}
-	recovered := workspace.ToolRequest{
-		Tool:            "read_file",
-		Path:            paths[0],
-		StartLine:       1,
-		EndLine:         180,
-		NamedGap:        "source-body evidence for highest-ranked context-pack candidate path",
-		WhyNotAnswering: "planner attempted another search before reading a concrete candidate; need current source before submit_plan",
-	}
-	return recovered, marshalToolRequestRaw(recovered), true
+	// Chained search is strategy, not a hard invariant. Exact-repeat and
+	// no-progress guards still prevent loops; otherwise the model owns whether
+	// a follow-up search or a source read is the better next probe.
+	return workspace.ToolRequest{}, "", false
 }
 
 func (r *Runner) deterministicNoWriteRecoveryTargetRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
@@ -16272,6 +16547,15 @@ func doomLoopForcedCloseoutPrompt(req workspace.ToolRequest, identicalCallRun in
 		tool = "the same tool"
 	}
 	return fmt.Sprintf("The exact same %s request was stopped after %d identical attempts. Tools are now disabled. Complete the active contract from the evidence already gathered. If the evidence is sufficient, answer with the required final decision or summary. If one concrete claim remains unsupported, answer with <<QUESTION>> and the exact unresolved blocker; do not request more tools.", tool, identicalCallRun)
+}
+
+func shouldRejectExactReplayBeforeLoopGate(req workspace.ToolRequest) bool {
+	switch strings.TrimSpace(req.Tool) {
+	case "search_files", "search_content", "rg", "grep":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeRunnerToolRequest(req workspace.ToolRequest) workspace.ToolRequest {

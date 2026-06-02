@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"idiom/internal/autonomy"
-	"idiom/internal/localops"
 	localopscmd "idiom/internal/cmd/localops"
+	"idiom/internal/localops"
 	"idiom/internal/workspace"
 )
 

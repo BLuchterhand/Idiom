@@ -1,4 +1,5 @@
 package tool
+
 import (
 	"bytes"
 	"encoding/json"

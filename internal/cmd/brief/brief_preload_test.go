@@ -1,4 +1,5 @@
 package brief
+
 import (
 	"bytes"
 	"os"

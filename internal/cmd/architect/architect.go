@@ -1,4 +1,5 @@
 package architect
+
 import (
 	"context"
 	"encoding/json"

@@ -5392,7 +5392,7 @@ func TestConversationPreflightRejectsRepeatedBroadDiscoveryWithoutForcingAnswer(
 	}
 }
 
-func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterContextPack(t *testing.T) {
+func TestConversationDiscoveryConsumptionAllowsFollowupSearchAfterContextPack(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -5404,24 +5404,71 @@ func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterContextPack(t *t
 		workspace.ToolResult{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote view with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/app/model.go"},{"path":"internal/app/view.go"}]}`,
+			Output:  `{"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/app/model.go"],"reasons":["related_evidence_without_source_owner"]},"candidate_files":[{"path":"internal/app/model.go"},{"path":"internal/app/view.go"}]}`,
 		},
 		"",
 		nil,
 		nil,
 	)
 
-	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}, brief) {
-		t.Fatal("expected broad search to be rejected until a discovery candidate is consumed")
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}, brief) {
+		t.Fatal("follow-up file search should stay available after weak context_pack localization")
 	}
-	errorText := state.discoveryConsumptionError()
-	for _, want := range []string{"source-body evidence", "internal/app/model.go", "answer from the evidence", "exact blocker"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("discovery consumption error missing %q:\n%s", want, errorText)
+	targetedFileSearch := workspace.ToolRequest{
+		Tool:    "search_files",
+		Pattern: "**/tui*.go",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(targetedFileSearch, brief) {
+		t.Fatal("concrete file/glob search should stay available after weak context_pack localization")
+	}
+	targetedGlobFieldSearch := workspace.ToolRequest{
+		Tool: "search_files",
+		Glob: "**/tui/**/*.go",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(targetedGlobFieldSearch, brief) {
+		t.Fatal("concrete glob-field file search should stay available after weak context_pack localization")
+	}
+	targetedContent := workspace.ToolRequest{
+		Tool:     "search_content",
+		Pattern:  "chat input newline textarea",
+		Path:     ".",
+		NamedGap: "find the concrete text anchor for the chat input newline rendering path",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(targetedContent, brief) {
+		t.Fatal("content search with a concrete named gap should stay available after weak context_pack localization")
+	}
+	broadMultiTermContent := workspace.ToolRequest{
+		Tool:    "search_content",
+		Pattern: "chat input newline textarea",
+		Path:    ".",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(broadMultiTermContent, brief) {
+		t.Fatal("repo-root follow-up content search should stay available after weak context_pack localization")
+	}
+	fileScopedContent := workspace.ToolRequest{
+		Tool:    "search_content",
+		Pattern: "textarea",
+		Path:    "internal/app/lifecycle.go",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(fileScopedContent, brief) {
+		t.Fatal("file-scoped content search should stay available after weak context_pack localization")
+	}
+	genericContent := workspace.ToolRequest{
+		Tool:    "search_content",
+		Pattern: "scroll",
+		Path:    ".",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(genericContent, brief) {
+		t.Fatal("single-token follow-up content search should stay available after weak context_pack localization")
+	}
+	for _, req := range []workspace.ToolRequest{
+		{Tool: "search_files", Pattern: "*.go"},
+		{Tool: "search_files", Pattern: "**/*.go"},
+		{Tool: "search_files", Glob: "internal/**/*.go"},
+	} {
+		if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
+			t.Fatalf("follow-up file search should stay available after weak context_pack localization: %#v", req)
 		}
-	}
-	if strings.Contains(strings.ToLower(errorText), "resize") || strings.Contains(strings.ToLower(errorText), "tui") {
-		t.Fatalf("generic discovery guard must not hardcode the live incident shape:\n%s", errorText)
 	}
 
 	targeted := workspace.ToolRequest{
@@ -5453,6 +5500,190 @@ func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterContextPack(t *t
 	)
 	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}, brief) {
 		t.Fatal("successful source-body read should clear pending discovery consumption")
+	}
+}
+
+func TestConversationDiscoveryConsumptionRejectsBroadSearchAfterStrongContextPack(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_pack", Query: "debug scroll regression"},
+		workspace.ToolResult{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view with 2 candidate file(s)",
+			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/app/model.go"],"reasons":["source_owner_token_overlap_high"]},"candidate_files":[{"path":"internal/app/model.go"},{"path":"internal/app/view.go"}]}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	for _, req := range []workspace.ToolRequest{
+		{Tool: "search_files", Path: ".", Pattern: "scroll"},
+		{Tool: "search_files", Path: ".", Pattern: "**/*.go"},
+		{Tool: "search_content", Path: ".", Pattern: "scroll"},
+	} {
+		if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
+			t.Fatalf("strong packet should require candidate consumption before broad rediscovery: %#v", req)
+		}
+	}
+	targeted := workspace.ToolRequest{
+		Tool:     "search_content",
+		Path:     ".",
+		Pattern:  "scroll viewport update",
+		NamedGap: "find the concrete source anchor for viewport scrolling",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(targeted, brief) {
+		t.Fatal("strong packet should still allow a named-gap targeted probe")
+	}
+	errorText := state.discoveryConsumptionError()
+	for _, want := range []string{"source-body evidence", "internal/app/model.go", "answer from the evidence", "exact blocker"} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("discovery consumption error missing %q:\n%s", want, errorText)
+		}
+	}
+	if strings.Contains(strings.ToLower(errorText), "resize") || strings.Contains(strings.ToLower(errorText), "tui") {
+		t.Fatalf("generic discovery guard must not hardcode the live incident shape:\n%s", errorText)
+	}
+}
+
+func TestStrongContextPackStillRejectsBroadSearchAfterFailedGuessedRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_pack", Query: "debug scroll regression"},
+		workspace.ToolResult{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view with 1 candidate file(s)",
+			Output:  `{"quality":{"localization_confidence":"high","source_owner_found":true,"evidence_paths":["internal/app/model.go"],"reasons":["source_owner_token_overlap_high"]},"candidate_files":[{"path":"internal/app/model.go"}]}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "read_file", Path: "internal/app/tui.go", StartLine: 1, EndLine: 80},
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Failed to resolve file target",
+			Error:   "file not found: internal/app/tui.go",
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "search_files", Path: ".", Pattern: "scroll"}, brief) {
+		t.Fatal("failed guessed read after strong context_pack must not reopen broad file search")
+	}
+	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(workspace.ToolRequest{Tool: "context_pack", Task: "scroll"}, brief) {
+		t.Fatal("failed guessed read after strong context_pack must not reopen broad context_pack")
+	}
+	targeted := workspace.ToolRequest{
+		Tool:     "search_content",
+		Path:     ".",
+		Pattern:  "scroll viewport update",
+		NamedGap: "find the concrete source anchor after guessed path failed",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(targeted, brief) {
+		t.Fatal("named-gap corrective search should remain available after failed guessed read")
+	}
+}
+
+func TestWeakContextPackDoesNotBlockRefinedContextPack(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+	}
+	state := newRunnerExecutionState(false, 0)
+	state.applyResult(
+		workspace.ToolRequest{Tool: "context_pack", Task: "chat input text box newline wrapping first line invisible"},
+		workspace.ToolResult{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote view with 3 candidate file(s)",
+			Output: `{
+				"task":"chat input text box newline wrapping first line invisible",
+				"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/app/rendering_test.go"],"reasons":["related_evidence_without_source_owner"]},
+				"candidate_files":[
+					{"path":"internal/transcript/debuglog.go","reason":"matched task terms"},
+					{"path":"internal/app/plan.go","reason":"matched task terms"},
+					{"path":"internal/app/theme_style.go","reason":"matched task terms"}
+				],
+				"tests":[{"path":"internal/app/rendering_test.go","symbol":"TestInputHeightUsesTextareaWrappedLineCount","command":"go test ./internal/app"}]
+			}`,
+		},
+		"",
+		nil,
+		nil,
+	)
+
+	refined := workspace.ToolRequest{
+		Tool: "context_pack",
+		Task: "textarea syncInputHeight input height wraps prompt visible top line",
+	}
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(refined, brief) {
+		t.Fatal("weak packet must not force consumption before a materially refined context_pack")
+	}
+}
+
+func TestContextPackCandidatePathsPreferPacketQualityEvidence(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote view with weak source owner",
+		Output: `{
+			"task":"chat input text box newline wrapping first line invisible",
+			"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/app/rendering_test.go"],"reasons":["related_evidence_without_source_owner"]},
+			"candidate_files":[
+				{"path":"internal/transcript/debuglog.go","reason":"matched task terms"},
+				{"path":"internal/app/plan.go","reason":"matched task terms"},
+				{"path":"internal/app/theme_style.go","reason":"matched task terms"}
+			],
+			"candidate_symbols":[
+				{"path":"internal/app/rendering_test.go","kind":"test","qualified_name":"TestInputHeightUsesTextareaWrappedLineCount"}
+			],
+			"tests":[{"path":"internal/app/rendering_test.go","symbol":"TestInputHeightUsesTextareaWrappedLineCount","command":"go test ./internal/app"}]
+		}`,
+	}
+
+	paths := contextPackCandidatePathsFromResults([]workspace.ToolResult{result}, 4)
+	if len(paths) == 0 || paths[0] != "internal/app/rendering_test.go" {
+		t.Fatalf("expected quality evidence path first, got %#v", paths)
+	}
+	if paths[0] == "internal/transcript/debuglog.go" {
+		t.Fatalf("candidate files must not saturate recovery ahead of stronger packet evidence: %#v", paths)
+	}
+}
+
+func TestContextPackCandidateSymbolsPreferTopLevelQualityEvidence(t *testing.T) {
+	output := `{
+		"task":"chat input text box newline wrapping first line invisible",
+		"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/app/rendering_test.go"],"reasons":["related_evidence_without_source_owner"]},
+		"candidate_files":[
+			{"path":"internal/transcript/debuglog.go","role":"editable","reason":"matched task terms","handles":["symbol://internal/transcript/debuglog.go#DebugLogger.LogContext"]},
+			{"path":"internal/app/mocha_style.go","role":"editable","reason":"matched task terms","handles":["symbol://internal/app/mocha_style.go#mochaText"]}
+		],
+		"candidate_symbols":[
+			{"path":"internal/app/rendering_test.go","kind":"test","qualified_name":"TestInputHeightUsesTextareaWrappedLineCount","reason":"matched task terms"},
+			{"path":"internal/agent/runner.go","kind":"func","qualified_name":"textOnlyChatOptions","reason":"matched task terms"}
+		],
+		"tests":[{"path":"internal/app/rendering_test.go","symbol":"TestInputHeightUsesTextareaWrappedLineCount","command":"go test ./internal/app"}]
+	}`
+
+	symbols := contextPackCandidateSymbols(output, 4)
+	if len(symbols) == 0 || symbols[0] != "internal/app/rendering_test.go#TestInputHeightUsesTextareaWrappedLineCount" {
+		t.Fatalf("expected top-level quality evidence symbol first, got %#v", symbols)
+	}
+	if symbols[0] == "internal/transcript/debuglog.go#DebugLogger.LogContext" {
+		t.Fatalf("candidate-file handles must not outrank top-level quality evidence: %#v", symbols)
 	}
 }
 
@@ -5531,7 +5762,7 @@ func TestCandidateAnchorMissDoesNotCountAsSourceBodyEvidence(t *testing.T) {
 	}
 }
 
-func TestSearchConsumptionSurvivesFailedGuessedRead(t *testing.T) {
+func TestSearchEvidenceSurvivesFailedGuessedReadWithoutBlockingFollowupSearch(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -5562,11 +5793,11 @@ func TestSearchConsumptionSurvivesFailedGuessedRead(t *testing.T) {
 	)
 
 	req := workspace.ToolRequest{Tool: "search_files", Pattern: "scroll"}
-	if !state.shouldConsumeSearchHitBeforeMoreSearch(req) {
-		t.Fatal("failed guessed read must not clear pending search-hit consumption")
+	if state.shouldConsumeSearchHitBeforeMoreSearch(req) {
+		t.Fatal("failed guessed read must not force a follow-up search rejection")
 	}
-	if !state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
-		t.Fatal("failed guessed read must not clear pending discovery consumption")
+	if state.shouldConsumeDiscoveryBeforeMoreBroadDiscovery(req, brief) {
+		t.Fatal("failed guessed read must not force a follow-up search discovery-consumption rejection")
 	}
 	if got := state.discoveryConsumptionError(); !strings.Contains(got, "internal/app/model.go") {
 		t.Fatalf("expected recovery to preserve returned candidates, got:\n%s", got)
@@ -8517,6 +8748,85 @@ func TestRunnerReplaysFirstRepeatedToolRequestThenRejectsExactLoop(t *testing.T)
 	}
 	if requests != 4 {
 		t.Fatalf("expected three loop requests plus one forced closeout, got %d", requests)
+	}
+}
+
+func TestRepeatedSearchFilesRejectsAfterReplayBeforeDoomLoop(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/app/input.go", "package app\n"); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"search_files","pattern":"input","path":"."}`,
+		`{"tool":"search_files","pattern":"input","path":"."}`,
+		`{"tool":"search_files","pattern":"input","path":"."}`,
+		"Stopped after exact search replay rejection.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var replayed bool
+	var rejected bool
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxNoProgressTurns: 8},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "find input"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "search_files" && strings.Contains(strings.ToLower(event.Result.Summary), "replayed prior evidence") {
+				replayed = true
+			}
+			if event.Result.Tool == "search_files" && strings.Contains(event.Result.Summary, "Repeated tool request rejected") {
+				rejected = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !replayed {
+		t.Fatal("expected the second exact search_files request to replay prior evidence")
+	}
+	if !rejected {
+		t.Fatal("expected the third exact search_files request to reject the exhausted replay")
+	}
+	for _, event := range events {
+		if event.Role == "doom_loop_guard" || strings.Contains(event.Content, "doom_loop_guard") {
+			t.Fatalf("exact search replay exhaustion should reject before doom-loop approval path, events=%v", eventRolesFor(events))
+		}
+	}
+	if answer != "Stopped after exact search replay rejection." {
+		t.Fatalf("unexpected answer: %q", answer)
+	}
+	if requests != 4 {
+		t.Fatalf("expected three tool requests plus final answer, got %d", requests)
 	}
 }
 
@@ -18033,23 +18343,33 @@ func recoveryCardsByRole(t *testing.T, events []RunEvent) map[string][]string {
 	return cards
 }
 
-func TestSuccessfulSearchMustBeConsumedBeforeAnotherSearch(t *testing.T) {
+func TestSuccessfulSearchAllowsBroadFollowupSearch(t *testing.T) {
 	replies := []string{
 		`{"tool":"search_files","path":"internal","pattern":"*runner*"}`,
-		`{"tool":"search_files","path":"internal","pattern":"*task*"}`,
+		`{"tool":"search_files","path":".","pattern":"**/*.go"}`,
 		"final answer",
 	}
 	events, _ := runNudgeScenario(t, RunPolicy{MaxNoProgressTurns: 8}, replies)
 
-	found := false
 	for _, ev := range events {
 		if strings.Contains(ev.Content, "Chained search rejected") {
-			found = true
-			break
+			t.Fatalf("follow-up search should not be rejected after a successful search hit; exact-repeat guards own loop prevention; events=%v", eventRolesFor(events))
 		}
 	}
-	if !found {
-		t.Fatalf("expected chained-search guard to fire, events: %v", eventRolesFor(events))
+}
+
+func TestSuccessfulSearchAllowsConcreteFollowupSearch(t *testing.T) {
+	replies := []string{
+		`{"tool":"search_content","path":".","pattern":"package app"}`,
+		`{"tool":"search_files","path":".","pattern":"**/input*.go"}`,
+		"final answer",
+	}
+	events, _ := runNudgeScenario(t, RunPolicy{MaxNoProgressTurns: 8}, replies)
+
+	for _, ev := range events {
+		if strings.Contains(ev.Content, "Chained search rejected") {
+			t.Fatalf("concrete follow-up search should not be rejected after a successful search hit; events=%v", eventRolesFor(events))
+		}
 	}
 }
 
@@ -18118,8 +18438,8 @@ func TestSuccessfulSearchCanContinueAfterConcreteInspection(t *testing.T) {
 			t.Fatalf("search_files should not stay hidden after concrete inspection; results=%#v events=%v", results, eventRolesFor(events))
 		}
 	}
-	if successfulSearches != 2 {
-		t.Fatalf("expected first and post-inspection searches to execute, got %d results=%#v", successfulSearches, results)
+	if successfulSearches != 3 {
+		t.Fatalf("expected first, concrete follow-up, and post-inspection searches to execute, got %d results=%#v", successfulSearches, results)
 	}
 }
 

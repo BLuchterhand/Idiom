@@ -1,4 +1,5 @@
 package artifact
+
 import (
 	"bytes"
 	"encoding/json"

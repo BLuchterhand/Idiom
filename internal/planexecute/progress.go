@@ -337,7 +337,7 @@ func (s ProgressState) ReviewResumeReady() bool {
 	case ProgressPhaseExecutor:
 		return s.Status == ProgressStatusCompleted ||
 			(s.Status == ProgressStatusFailed &&
-			s.FailureKind == RunFailureSourceSanityFailed &&
+				s.FailureKind == RunFailureSourceSanityFailed &&
 				s.Executor.Status == ProgressStatusCompleted) ||
 			(s.Status == ProgressStatusFailed &&
 				s.FailureKind == RunFailureVerificationRequired &&

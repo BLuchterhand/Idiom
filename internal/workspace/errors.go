@@ -16,4 +16,3 @@ var (
 	// binary cannot be found or started.
 	ErrPythonLSPUnavailable = errors.New("python language server unavailable")
 )
-

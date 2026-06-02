@@ -1162,7 +1162,6 @@ func TestParseToolRequestRejectsProseWithToolPrefixNoJSON(t *testing.T) {
 	}
 }
 
-
 func TestExploreShellClassificationAndValidation(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "shell", Command: "find . -maxdepth 2"}) {
 		t.Fatal("expected find shell command to be broad inspection")

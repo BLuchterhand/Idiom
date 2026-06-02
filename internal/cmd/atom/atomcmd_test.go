@@ -1,4 +1,5 @@
 package atom
+
 import (
 	"bytes"
 	"encoding/json"

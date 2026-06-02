@@ -2393,9 +2393,17 @@ type compactContextPackView struct {
 	PackID           string                     `json:"pack_id"`
 	ContextArtifact  string                     `json:"context_artifact_path"`
 	ArtifactPath     string                     `json:"artifact_path"`
+	Quality          compactContextPackQuality  `json:"quality"`
 	CandidateFiles   []compactContextPackFile   `json:"candidate_files"`
 	CandidateSymbols []compactContextPackSymbol `json:"candidate_symbols"`
 	Tests            []compactContextPackTest   `json:"tests"`
+}
+
+type compactContextPackQuality struct {
+	LocalizationConfidence string   `json:"localization_confidence"`
+	SourceOwnerFound       bool     `json:"source_owner_found"`
+	EvidencePaths          []string `json:"evidence_paths"`
+	Reasons                []string `json:"reasons"`
 }
 
 type compactContextPackFile struct {
@@ -2443,11 +2451,36 @@ func compactContextPackOutputForModel(output string) string {
 	if artifact != "" {
 		b.WriteString("artifact_path: " + artifact + "\n")
 	}
+	writeCompactContextPackQuality(&b, view.Quality)
 	writeCompactContextPackFileList(&b, "candidate_files", view.CandidateFiles, 10)
 	writeCompactContextPackSymbolList(&b, view.CandidateSymbols, 12)
 	writeCompactContextPackTestList(&b, view.Tests, 8)
 	b.WriteString("evidence_note: context_pack is localization evidence, not source-body evidence.\n")
 	return strings.TrimSpace(b.String())
+}
+
+func writeCompactContextPackQuality(b *strings.Builder, quality compactContextPackQuality) {
+	if strings.TrimSpace(quality.LocalizationConfidence) == "" && len(quality.EvidencePaths) == 0 && len(quality.Reasons) == 0 {
+		return
+	}
+	b.WriteString("packet_quality:\n")
+	if confidence := strings.TrimSpace(quality.LocalizationConfidence); confidence != "" {
+		b.WriteString("- localization_confidence: " + confidence + "\n")
+	}
+	b.WriteString(fmt.Sprintf("- source_owner_found: %t\n", quality.SourceOwnerFound))
+	if len(quality.EvidencePaths) > 0 {
+		b.WriteString("- strongest_evidence_paths:\n")
+		for _, path := range quality.EvidencePaths {
+			path = strings.TrimSpace(path)
+			if path == "" {
+				continue
+			}
+			b.WriteString("  - " + path + "\n")
+		}
+	}
+	if len(quality.Reasons) > 0 {
+		b.WriteString("- reasons: " + truncateWorkspaceModelLine(strings.Join(quality.Reasons, ", "), 180) + "\n")
+	}
 }
 
 func writeCompactContextPackFileList(b *strings.Builder, label string, files []compactContextPackFile, max int) {
@@ -3717,7 +3750,7 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "search_files", Summary: "Failed to resolve path", Error: err.Error()}
 	}
 
-	pattern := strings.TrimSpace(req.Pattern)
+	pattern, interpretedPattern := searchFilesPattern(req)
 	if pattern == "" {
 		err := "pattern is required"
 		// Detect when the model may have put a glob in the path field
@@ -3737,12 +3770,6 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 	query := strings.ToLower(pattern)
 	includeLogDirs := searchIntentTargetsLogs(req.Path, pattern, req.Glob)
 	rootDepth := strings.Count(filepath.Clean(base), string(filepath.Separator))
-	type searchFileMatch struct {
-		path    string
-		display string
-		modTime time.Time
-		size    int64
-	}
 	var matches []searchFileMatch
 
 	_ = filepath.WalkDir(base, func(path string, d os.DirEntry, walkErr error) error {
@@ -3794,9 +3821,9 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		// sibling-directory fallback inside findPathSuggestions. Cap
 		// the final list at 5. Phrasing steers the model out of search
 		// mode — these are paths to read, not patterns to re-search.
-		suggestions := m.findPathSuggestions(pattern, 5)
 		tokenHits := m.tokenMatchedPaths(pattern, 5)
-		for _, p := range tokenHits {
+		suggestions := append([]string{}, tokenHits...)
+		for _, p := range m.findPathSuggestions(pattern, 5) {
 			if len(suggestions) >= 5 {
 				break
 			}
@@ -3811,10 +3838,14 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 				suggestions = append(suggestions, p)
 			}
 		}
+		sortSearchFileSuggestions(suggestions)
 		output := ""
 		summary := fmt.Sprintf("No file matches for %q", pattern)
 		if len(suggestions) > 0 {
 			summary = fmt.Sprintf("No file matches for %q. Closest paths in this workspace: %s.", pattern, strings.Join(suggestions, ", "))
+			if note := searchFileSuggestionEvidenceShapeSummary(suggestions); note != "" {
+				summary += " " + note
+			}
 			output = "Closest real paths:\n" + strings.Join(suggestions, "\n")
 		}
 		// When the pattern looks like a symbol (bare identifier) and
@@ -3832,6 +3863,9 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 				summary += " The pattern also looks like a symbol name rather than a filename."
 			}
 		}
+		if interpretedPattern != "" {
+			summary += " " + interpretedPattern
+		}
 		return ToolResult{
 			Tool:    "search_files",
 			Summary: summary,
@@ -3847,7 +3881,12 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 			return matches[i].display < matches[j].display
 		})
 	} else {
-		slices.SortFunc(matches, func(a, b searchFileMatch) int { return cmp.Compare(a.display, b.display) })
+		slices.SortFunc(matches, func(a, b searchFileMatch) int {
+			if rankDiff := cmp.Compare(searchFileKindRank(classifySearchFilePath(a.display)), searchFileKindRank(classifySearchFilePath(b.display))); rankDiff != 0 {
+				return rankDiff
+			}
+			return cmp.Compare(a.display, b.display)
+		})
 	}
 	displayLimit := len(matches)
 	if includeLogDirs && displayLimit > 24 {
@@ -3869,12 +3908,185 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 		} else {
 			summary = fmt.Sprintf("Found %d matching log-like file(s), newest first with modified time and size.", len(matches))
 		}
+	} else if note := searchFileEvidenceShapeSummary(matches); note != "" {
+		summary += " " + note
+	}
+	if interpretedPattern != "" {
+		summary += " " + interpretedPattern
 	}
 	return ToolResult{
 		Tool:    "search_files",
 		Summary: summary,
 		Output:  strings.Join(output, "\n"),
 	}
+}
+
+type searchFileMatch struct {
+	path    string
+	display string
+	modTime time.Time
+	size    int64
+}
+
+type searchFileKind string
+
+const (
+	searchFileKindSource    searchFileKind = "source"
+	searchFileKindTest      searchFileKind = "test"
+	searchFileKindConfig    searchFileKind = "config"
+	searchFileKindDocs      searchFileKind = "docs"
+	searchFileKindFixture   searchFileKind = "fixtures"
+	searchFileKindGenerated searchFileKind = "generated"
+	searchFileKindLog       searchFileKind = "logs"
+	searchFileKindOther     searchFileKind = "other"
+)
+
+func classifySearchFilePath(displayPath string) searchFileKind {
+	clean := filepath.ToSlash(strings.TrimSpace(displayPath))
+	lower := strings.ToLower(clean)
+	name := strings.ToLower(filepath.Base(lower))
+	segments := strings.Split(lower, "/")
+	for _, segment := range segments {
+		switch segment {
+		case ".idiom", "logs", "log":
+			return searchFileKindLog
+		case "testdata", "fixtures", "fixture":
+			return searchFileKindFixture
+		case "generated", "generated-logs", "vendor", "node_modules":
+			return searchFileKindGenerated
+		case "docs", "doc":
+			return searchFileKindDocs
+		}
+	}
+	if strings.HasSuffix(name, ".jsonl") || strings.HasSuffix(name, ".log") {
+		return searchFileKindLog
+	}
+	if strings.HasPrefix(name, "readme") || strings.HasSuffix(name, ".md") || strings.HasSuffix(name, ".mdx") {
+		return searchFileKindDocs
+	}
+	if strings.HasSuffix(name, ".gen.go") || strings.HasSuffix(name, ".pb.go") || strings.Contains(lower, "/generated/") {
+		return searchFileKindGenerated
+	}
+	if strings.HasSuffix(name, "_test.go") || strings.HasSuffix(name, ".spec.ts") || strings.HasSuffix(name, ".test.ts") || strings.HasSuffix(name, ".spec.tsx") || strings.HasSuffix(name, ".test.tsx") {
+		return searchFileKindTest
+	}
+	switch filepath.Ext(name) {
+	case ".go", ".rs", ".py", ".ts", ".tsx", ".js", ".jsx", ".java", ".c", ".cc", ".cpp", ".h", ".hpp", ".swift", ".kt":
+		return searchFileKindSource
+	case ".json", ".yaml", ".yml", ".toml", ".mod", ".sum", ".lock":
+		return searchFileKindConfig
+	default:
+		return searchFileKindOther
+	}
+}
+
+func searchFileKindRank(kind searchFileKind) int {
+	switch kind {
+	case searchFileKindSource:
+		return 0
+	case searchFileKindTest:
+		return 1
+	case searchFileKindConfig:
+		return 2
+	case searchFileKindDocs:
+		return 3
+	case searchFileKindFixture:
+		return 4
+	case searchFileKindGenerated:
+		return 5
+	case searchFileKindLog:
+		return 6
+	default:
+		return 7
+	}
+}
+
+func searchFileKindIsCodeLike(kind searchFileKind) bool {
+	return kind == searchFileKindSource || kind == searchFileKindTest
+}
+
+func searchFileEvidenceShapeSummary(matches []searchFileMatch) string {
+	if len(matches) == 0 {
+		return ""
+	}
+	kindCounts := make(map[searchFileKind]int)
+	codeLike := 0
+	for _, match := range matches {
+		kind := classifySearchFilePath(match.display)
+		kindCounts[kind]++
+		if searchFileKindIsCodeLike(kind) {
+			codeLike++
+		}
+	}
+	if codeLike > 0 {
+		if codeLike == len(matches) {
+			return "All matches are code-like paths."
+		}
+		return "Code-like paths are ranked first; remaining matches include " + searchFileKindList(kindCounts, false) + "."
+	}
+	return "No code-like file matches; matches are " + searchFileKindList(kindCounts, true) + " paths."
+}
+
+func sortSearchFileSuggestions(suggestions []string) {
+	slices.SortStableFunc(suggestions, func(a, b string) int {
+		if rankDiff := cmp.Compare(searchFileKindRank(classifySearchFilePath(a)), searchFileKindRank(classifySearchFilePath(b))); rankDiff != 0 {
+			return rankDiff
+		}
+		return cmp.Compare(a, b)
+	})
+}
+
+func searchFileSuggestionEvidenceShapeSummary(suggestions []string) string {
+	if len(suggestions) == 0 {
+		return ""
+	}
+	matches := make([]searchFileMatch, 0, len(suggestions))
+	for _, suggestion := range suggestions {
+		matches = append(matches, searchFileMatch{display: suggestion})
+	}
+	return strings.Replace(searchFileEvidenceShapeSummary(matches), "matches are", "suggestions are", 1)
+}
+
+func searchFileKindList(kindCounts map[searchFileKind]int, includeCodeLike bool) string {
+	var kinds []string
+	for _, kind := range []searchFileKind{
+		searchFileKindSource,
+		searchFileKindTest,
+		searchFileKindConfig,
+		searchFileKindDocs,
+		searchFileKindFixture,
+		searchFileKindGenerated,
+		searchFileKindLog,
+		searchFileKindOther,
+	} {
+		if kindCounts[kind] == 0 {
+			continue
+		}
+		if !includeCodeLike && searchFileKindIsCodeLike(kind) {
+			continue
+		}
+		kinds = append(kinds, string(kind))
+	}
+	if len(kinds) == 0 {
+		return "other"
+	}
+	return strings.Join(kinds, ", ")
+}
+
+func searchFilesPattern(req ToolRequest) (pattern string, interpreted string) {
+	pattern = strings.TrimSpace(req.Pattern)
+	if pattern != "" {
+		return pattern, ""
+	}
+	glob := strings.TrimSpace(req.Glob)
+	if glob != "" {
+		return glob, fmt.Sprintf("Interpreted glob %q as the file search pattern.", glob)
+	}
+	query := strings.TrimSpace(req.Query)
+	if query != "" {
+		return query, fmt.Sprintf("Interpreted query %q as the file search pattern.", query)
+	}
+	return "", ""
 }
 
 func (m *Manager) readFile(req ToolRequest) ToolResult {
@@ -5326,6 +5538,9 @@ func matchesSearchFilePattern(rel string, name string, query string) bool {
 		return true
 	}
 	if strings.ContainsAny(query, "*?[") {
+		if ok, err := recursivePathGlobMatch(query, rel); err == nil && ok {
+			return true
+		}
 		if ok, err := path.Match(query, name); err == nil && ok {
 			return true
 		}
@@ -5338,6 +5553,40 @@ func matchesSearchFilePattern(rel string, name string, query string) bool {
 		}
 	}
 	return false
+}
+
+func recursivePathGlobMatch(pattern string, rel string) (bool, error) {
+	pattern = path.Clean(filepath.ToSlash(strings.TrimSpace(pattern)))
+	rel = path.Clean(filepath.ToSlash(strings.TrimSpace(rel)))
+	if pattern == "" || pattern == "." || rel == "" || rel == "." || !strings.Contains(pattern, "**") {
+		return false, nil
+	}
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		ch := pattern[i]
+		if ch == '*' {
+			if i+1 < len(pattern) && pattern[i+1] == '*' {
+				i++
+				if i+1 < len(pattern) && pattern[i+1] == '/' {
+					b.WriteString("(?:.*/)?")
+					i++
+				} else {
+					b.WriteString(".*")
+				}
+			} else {
+				b.WriteString("[^/]*")
+			}
+			continue
+		}
+		if ch == '?' {
+			b.WriteString("[^/]")
+			continue
+		}
+		b.WriteString(regexp.QuoteMeta(string(ch)))
+	}
+	b.WriteString("$")
+	return regexp.MatchString(b.String(), rel)
 }
 
 func searchPathTargetsSkippedDir(path string) bool {

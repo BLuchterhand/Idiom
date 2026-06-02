@@ -174,7 +174,6 @@ func TestValidatePRDIntakeMultipleRequirements(t *testing.T) {
 	}
 }
 
-
 func TestValidatePRDIntakeCombinedFailures(t *testing.T) {
 	doc := PRDDocument{
 		FrontMatter: PRDFrontMatter{
@@ -388,4 +387,3 @@ func hasCode(result IntakeResult, code string) bool {
 	}
 	return false
 }
-

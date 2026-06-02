@@ -11,7 +11,6 @@ func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]wor
 	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, "")
 }
 
-
 func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	if len(required) == 0 {
@@ -44,7 +43,6 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 	}
 	return nil, reason
 }
-
 
 func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	type pendingOldBlock struct {
@@ -144,7 +142,6 @@ func planExecuteExactPlanEditsFromSection(section string, required []string, wor
 	return edits, ""
 }
 
-
 func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
 	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
 		section := atomMarkdownSectionByHeading(candidatePrompt, "required behavior")
@@ -162,7 +159,6 @@ func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, works
 	}
 	return nil, "no exact-edit section"
 }
-
 
 func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []string, workspaceRoot string) []workspace.PlanEdit {
 	var edits []workspace.PlanEdit
@@ -218,7 +214,6 @@ func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []s
 	return edits
 }
 
-
 func planExecuteImplicitBodyBoundPaths(recent []string, required []string) []string {
 	for i := len(recent) - 1; i >= 0; i-- {
 		line := strings.TrimSpace(recent[i])
@@ -229,4 +224,3 @@ func planExecuteImplicitBodyBoundPaths(recent []string, required []string) []str
 	}
 	return atomRequiredEditPathsFromLabel(strings.Join(recent, "\n"), required)
 }
-

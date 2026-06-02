@@ -1,4 +1,5 @@
 package lane
+
 import "testing"
 
 func TestParseSessionSummaryExtractsTokens(t *testing.T) {

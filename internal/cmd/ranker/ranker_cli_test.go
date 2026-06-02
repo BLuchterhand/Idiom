@@ -1,4 +1,5 @@
 package ranker
+
 import (
 	"bytes"
 	"fmt"

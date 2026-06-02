@@ -7,7 +7,6 @@ import (
 	"strings"
 )
 
-
 func containsString(slice []string, target string) bool {
 	for _, s := range slice {
 		if s == target {
@@ -16,7 +15,6 @@ func containsString(slice []string, target string) bool {
 	}
 	return false
 }
-
 
 func canonicalStringSet(values []string) []string {
 	seen := make(map[string]bool, len(values))
@@ -33,9 +31,7 @@ func canonicalStringSet(values []string) []string {
 	return out
 }
 
-
 type ArtifactState string
-
 
 const (
 	ArtifactStateDraft      ArtifactState = "draft"
@@ -45,7 +41,6 @@ const (
 	ArtifactStateDispatched ArtifactState = "dispatched"
 )
 
-
 var validArtifactStates = map[ArtifactState]bool{
 	ArtifactStateDraft:      true,
 	ArtifactStateAudited:    true,
@@ -53,7 +48,6 @@ var validArtifactStates = map[ArtifactState]bool{
 	ArtifactStateBlocked:    true,
 	ArtifactStateDispatched: true,
 }
-
 
 func ValidateArtifactState(status string) error {
 	if status == "" {
@@ -65,13 +59,11 @@ func ValidateArtifactState(status string) error {
 	return nil
 }
 
-
 func require(errs *[]error, value string, message string) {
 	if strings.TrimSpace(value) == "" {
 		*errs = append(*errs, errors.New(message))
 	}
 }
-
 
 func isValidCommitHash(s string) bool {
 	if len(s) != 40 {
@@ -85,7 +77,6 @@ func isValidCommitHash(s string) bool {
 	return true
 }
 
-
 func ClassifyReportFileName(name string) (reportType string, known bool) {
 	if strings.HasSuffix(name, "-implementation.json") {
 		return "implementation", true
@@ -98,4 +89,3 @@ func ClassifyReportFileName(name string) (reportType string, known bool) {
 	}
 	return "", false
 }
-

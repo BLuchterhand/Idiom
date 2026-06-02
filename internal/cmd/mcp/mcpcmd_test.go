@@ -1,4 +1,5 @@
 package mcp
+
 import (
 	"bufio"
 	"bytes"
@@ -14,12 +15,12 @@ import (
 	"testing"
 	"time"
 
+	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/config"
 	"idiom/internal/localops"
 	mcppkg "idiom/internal/mcp"
 	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
-	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/workspace"
 )
 

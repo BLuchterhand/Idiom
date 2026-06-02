@@ -162,6 +162,15 @@ failure patterns that have cost time in real Idiom/Colony runs.
   does not actually satisfy. Fix the command, packet, schema, or expectation
   before adding another nudge that pushes the model away from what it is trying
   to inspect.
+- **Generic surface after specific evidence need**: after discovery returns
+  candidates, do not keep presenting the same generic `read/search` menu while
+  prose says "read the highest-confidence hit." The active phase must reconcile
+  the visible surface with the open evidence obligation: identify source-like
+  candidates, expose concrete source-body read/capability affordances, and
+  state when hits are only docs, fixtures, generated logs, or diagnostics. If
+  the model repeats a search, first assume the returned candidates did not
+  satisfy the needed evidence shape; fix ranking, candidate typing, or
+  model-facing affordances before adding a loop guard.
 - **Classifier answers overridden by keyword lanes**: if the route classifier
   emits a coherent read-only/direct-answer route, do not promote it to a
   special lane with keyword heuristics such as subsystem names, feature names,

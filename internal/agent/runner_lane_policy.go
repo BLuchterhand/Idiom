@@ -228,18 +228,29 @@ func conversationBroadDiscoveryToolResult(result workspace.ToolResult) bool {
 }
 
 func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
-	if conversationTargetedGraphQueryWithGap(req) || conversationTargetedContextZoom(req) || conversationTargetedFileNameSearchWithGap(req) {
+	if conversationTargetedGraphQueryWithGap(req) ||
+		conversationTargetedContextZoom(req) ||
+		conversationTargetedFileNameSearch(req) ||
+		conversationTargetedContentSearch(req) {
 		return false
 	}
 	switch strings.TrimSpace(req.Tool) {
-	case "context_pack", "context_query", "context_zoom", "context_impact", "discovery_query", "search_files", "structural_search":
+	case "context_pack", "context_query", "context_zoom", "context_impact", "discovery_query", "search_files", "search_content", "structural_search":
 		return true
-	case "search_content":
-		path := strings.TrimSpace(req.Path)
-		return path == "" || path == "." || !pathparse.HasWorkspaceFileExtension(path)
 	default:
 		return false
 	}
+}
+
+func conversationTargetedContentSearch(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "search_content" {
+		return false
+	}
+	pattern := strings.TrimSpace(util.FirstNonEmpty(req.Pattern, req.Query))
+	if pattern == "" {
+		return false
+	}
+	return postReadinessGap(req) != "" || conversationConcreteSearchScope(req.Path)
 }
 
 func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
@@ -252,8 +263,8 @@ func conversationTargetedContextZoom(req workspace.ToolRequest) bool {
 	return strings.TrimSpace(req.Resolution) != "" || req.IncludeSource || postReadinessGap(req) != ""
 }
 
-func conversationTargetedFileNameSearchWithGap(req workspace.ToolRequest) bool {
-	if strings.TrimSpace(req.Tool) != "search_files" || postReadinessGap(req) == "" {
+func conversationTargetedFileNameSearch(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "search_files" {
 		return false
 	}
 	pattern := util.FirstNonEmpty(req.Pattern, req.Glob, req.Query)
@@ -261,7 +272,73 @@ func conversationTargetedFileNameSearchWithGap(req workspace.ToolRequest) bool {
 	if pattern == "" {
 		return false
 	}
-	return strings.Contains(pattern, "/") || pathparse.HasWorkspaceFileExtension(pattern)
+	return postReadinessGap(req) != "" || conversationFileSearchPatternIsConcrete(pattern)
+}
+
+func conversationConcreteSearchScope(path string) bool {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	if path == "" || path == "." || strings.ContainsAny(path, "*?[") {
+		return false
+	}
+	return pathparse.HasWorkspaceFileExtension(path) || strings.Contains(path, "/")
+}
+
+func conversationFileSearchPatternIsConcrete(pattern string) bool {
+	pattern = filepath.ToSlash(strings.TrimSpace(pattern))
+	if pattern == "" {
+		return false
+	}
+	if !strings.ContainsAny(pattern, "*?[") {
+		return strings.Contains(pattern, "/") || pathparse.HasWorkspaceFileExtension(pattern)
+	}
+	for _, token := range recoveryObjectiveSearchWords(pattern, 16) {
+		token = strings.ToLower(strings.TrimSpace(token))
+		if len(token) < 3 || conversationBroadFileSearchToken(token) {
+			continue
+		}
+		return true
+	}
+	for _, token := range conversationFileSearchPatternTokens(pattern) {
+		if len(token) < 3 || conversationBroadFileSearchToken(token) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func conversationFileSearchPatternTokens(pattern string) []string {
+	pattern = strings.ToLower(filepath.ToSlash(strings.TrimSpace(pattern)))
+	if pattern == "" {
+		return nil
+	}
+	words := strings.FieldsFunc(pattern, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	var out []string
+	seen := map[string]struct{}{}
+	for _, word := range words {
+		word = strings.TrimSpace(word)
+		if len(word) < 3 {
+			continue
+		}
+		if _, ok := seen[word]; ok {
+			continue
+		}
+		seen[word] = struct{}{}
+		out = append(out, word)
+	}
+	return out
+}
+
+func conversationBroadFileSearchToken(token string) bool {
+	switch token {
+	case "cmd", "src", "pkg", "lib", "app", "apps", "test", "tests", "internal", "script", "scripts",
+		"go", "rs", "py", "js", "jsx", "ts", "tsx", "java", "cpp", "hpp", "cc", "cxx", "md", "json", "yaml", "yml", "toml":
+		return true
+	default:
+		return false
+	}
 }
 
 func conversationTargetedGraphQueryWithGap(req workspace.ToolRequest) bool {

@@ -1,4 +1,5 @@
 package recover
+
 import (
 	"encoding/json"
 	"flag"
@@ -9,11 +10,11 @@ import (
 	"strings"
 	"time"
 
+	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/config"
 	"idiom/internal/planexecute"
 	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
-	toolcmd "idiom/internal/cmd/tool"
 )
 
 type recoverInspectOptions struct {

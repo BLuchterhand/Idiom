@@ -1,6 +1,7 @@
 package comprehension
 
 import (
+	"cmp"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -8,7 +9,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"cmp"
 	"slices"
 	"strings"
 	"time"

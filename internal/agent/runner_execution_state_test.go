@@ -148,8 +148,17 @@ func TestRunnerExecutionStateTracksPendingSearchInspection(t *testing.T) {
 	if !state.pendingSearchInspection {
 		t.Fatal("expected pendingSearchInspection after successful search hit")
 	}
-	if !state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_files", Path: "internal", Pattern: "*task*"}) {
-		t.Fatal("expected follow-up search to be blocked until a concrete inspection happens")
+	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_files", Path: ".", Pattern: "**/*.go"}) {
+		t.Fatal("expected broad follow-up file search to remain available; exact-repeat guards own loop prevention")
+	}
+	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_files", Path: ".", Pattern: "**/input*.go"}) {
+		t.Fatal("expected concrete follow-up file search to remain available after successful search hit")
+	}
+	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_content", Path: "internal/agent/runner.go", Pattern: "budget"}) {
+		t.Fatal("expected file-scoped follow-up content search to remain available after successful search hit")
+	}
+	if state.shouldConsumeSearchHitBeforeMoreSearch(workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "budget runner"}) {
+		t.Fatal("expected repo-root follow-up content search to remain available; exact-repeat guards own loop prevention")
 	}
 	searchFeedback := state.searchHitConsumptionError()
 	for _, want := range []string{

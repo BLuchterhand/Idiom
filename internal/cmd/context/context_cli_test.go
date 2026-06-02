@@ -1,4 +1,5 @@
 package context
+
 import (
 	"bytes"
 	"database/sql"
@@ -9,8 +10,8 @@ import (
 	"sync"
 	"testing"
 
-	"idiom/internal/telemetry"
 	toolcmd "idiom/internal/cmd/tool"
+	"idiom/internal/telemetry"
 
 	_ "modernc.org/sqlite"
 )

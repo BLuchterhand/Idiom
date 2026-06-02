@@ -25,4 +25,3 @@ var (
 	// response after retry prompting.
 	ErrAgentEmptyResponse = errors.New("agent returned an empty response")
 )
-

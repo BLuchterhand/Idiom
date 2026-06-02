@@ -1,4 +1,5 @@
 package refine
+
 import (
 	"bytes"
 	"os"

@@ -1,4 +1,5 @@
 package mcp
+
 import "strings"
 
 const mcpStdioTransport = StdioTransport

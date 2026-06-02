@@ -1,4 +1,5 @@
 package perfeval
+
 import (
 	"bytes"
 	"encoding/json"

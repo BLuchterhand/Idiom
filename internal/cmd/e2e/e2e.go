@@ -2,6 +2,7 @@
 // prints a verification summary. Use to confirm the runner's decisioning loop
 // actually works end-to-end. Requires llama-server running at cfg.BaseURL().
 package e2e
+
 import (
 	"context"
 	"encoding/json"

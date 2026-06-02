@@ -1,4 +1,5 @@
 package brief
+
 import (
 	"os"
 	"os/exec"

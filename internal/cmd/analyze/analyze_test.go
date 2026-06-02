@@ -1,4 +1,5 @@
 package analyze
+
 import (
 	"os"
 	"path/filepath"

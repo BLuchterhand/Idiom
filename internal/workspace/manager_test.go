@@ -914,6 +914,7 @@ func TestFormatToolResultForModelCompactsContextPackOutput(t *testing.T) {
 		Output: `{
 			"pack_id":"abc",
 			"artifact_path":".idiom/comprehension/views/abc.json",
+			"quality":{"localization_confidence":"low","source_owner_found":false,"evidence_paths":["internal/productworkflow/coverage_gate_test.go"],"reasons":["related_evidence_without_source_owner"]},
 			"candidate_files":[
 				{"path":"internal/productworkflow/coverage_gate.go","role":"editable","reason":"coverage gate implementation"},
 				{"path":"cmd/idiom/product_workflow.go","role":"editable","reason":"product tdd command wiring"},
@@ -929,6 +930,10 @@ func TestFormatToolResultForModelCompactsContextPackOutput(t *testing.T) {
 	for _, want := range []string{
 		"context_pack_summary:",
 		"pack_id: abc",
+		"packet_quality:",
+		"localization_confidence: low",
+		"source_owner_found: false",
+		"internal/productworkflow/coverage_gate_test.go",
 		"internal/productworkflow/coverage_gate.go",
 		"cmd/idiom/product_workflow.go",
 		"candidate_symbols:",
@@ -1679,6 +1684,172 @@ func TestSearchFilesIncludesLogsForLogIntent(t *testing.T) {
 	}
 	if !strings.Contains(result.Output, "modified ") || !strings.Contains(result.Output, "size ") || !strings.Contains(result.Summary, "newest first") {
 		t.Fatalf("log-shaped search should include recency metadata, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+}
+
+func TestSearchFilesAcceptsGlobWhenPatternOmitted(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "internal", "tui", "chat", "input.go"), "package chat\n")
+	writeTestFile(t, filepath.Join(dir, "tui", "chat", "root_input.go"), "package chat\n")
+	writeTestFile(t, filepath.Join(dir, "internal", "app", "input.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "search_files",
+		Glob: "**/tui/**/*.go",
+		Path: ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("glob-only search_files should execute, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "internal/tui/chat/input.go") {
+		t.Fatalf("recursive glob should match nested tui Go file, got:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Output, "tui/chat/root_input.go") {
+		t.Fatalf("recursive glob should match root-level tui Go file, got:\n%s", result.Output)
+	}
+	if strings.Contains(result.Output, "internal/app/input.go") {
+		t.Fatalf("recursive glob should not collapse to a broad input search, got:\n%s", result.Output)
+	}
+	if !strings.Contains(result.Summary, "Interpreted glob") {
+		t.Fatalf("summary should explain glob interpretation, got %q", result.Summary)
+	}
+
+	patternResult := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "**/tui/**/*.go",
+		Path:    ".",
+	})
+	if patternResult.Error != "" {
+		t.Fatalf("pattern recursive glob should execute, got %#v", patternResult)
+	}
+	if patternResult.Output != result.Output {
+		t.Fatalf("pattern and glob recursive searches should return the same output:\npattern=%s\nglob=%s", patternResult.Output, result.Output)
+	}
+}
+
+func TestSearchFilesGlobOnlyZeroHitIsSearchResultNotSchemaError(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "internal", "app", "input.go"), "package app\n")
+	writeTestFile(t, filepath.Join(dir, "docs", "tui-notes.md"), "tui notes\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "search_files",
+		Glob: "**/tui/**/*.go",
+		Path: ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("glob-only zero-hit should not be a schema error, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, "No file matches") || !strings.Contains(result.Summary, "Interpreted glob") {
+		t.Fatalf("zero-hit glob summary should be explicit, got %q", result.Summary)
+	}
+	if !strings.Contains(result.Output, "docs/tui-notes.md") {
+		t.Fatalf("zero-hit glob should surface token-matched real paths before generic directories, got:\n%s", result.Output)
+	}
+}
+
+func TestSearchFilesAcceptsQueryAliasWhenPatternOmitted(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "internal", "app", "input.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:  "search_files",
+		Query: "input",
+		Path:  ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("query alias should execute, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "internal/app/input.go") || !strings.Contains(result.Summary, "Interpreted query") {
+		t.Fatalf("query alias should return file evidence and interpretation note, got summary=%q output=\n%s", result.Summary, result.Output)
+	}
+}
+
+func TestSearchFilesRanksCodeLikeMatchesBeforeNoisyMatches(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "docs", "chat-input.md"), "input docs\n")
+	writeTestFile(t, filepath.Join(dir, "testdata", "fixtures", "input-layout.json"), "{}\n")
+	writeTestFile(t, filepath.Join(dir, "internal", "app", "input.go"), "package app\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "input",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files failed: %#v", result)
+	}
+	sourceIndex := strings.Index(result.Output, "internal/app/input.go")
+	docsIndex := strings.Index(result.Output, "docs/chat-input.md")
+	fixtureIndex := strings.Index(result.Output, "testdata/fixtures/input-layout.json")
+	if sourceIndex < 0 || docsIndex < 0 || fixtureIndex < 0 {
+		t.Fatalf("expected source, docs, and fixture matches, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if sourceIndex > docsIndex || sourceIndex > fixtureIndex {
+		t.Fatalf("code-like path should rank before noisy matches, summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if !strings.Contains(result.Summary, "Code-like paths are ranked first") || !strings.Contains(result.Summary, "docs") || !strings.Contains(result.Summary, "fixtures") {
+		t.Fatalf("summary should describe evidence shape, got %q", result.Summary)
+	}
+}
+
+func TestSearchFilesReportsNoCodeLikeMatches(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "docs", "tui-input.md"), "input docs\n")
+	writeTestFile(t, filepath.Join(dir, "testdata", "scripted-contracts", "fixtures", "tui-input-layout-repo", "README.md"), "input fixture\n")
+	writeTestFile(t, filepath.Join(dir, "testdata", "scripted-contracts", "fixtures", "tui-input-layout-repo", "scripts", "tui-input.json"), "{}\n")
+
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:    "search_files",
+		Pattern: "input",
+		Path:    ".",
+	})
+	if result.Error != "" {
+		t.Fatalf("search_files failed: %#v", result)
+	}
+	if !strings.Contains(result.Summary, "No code-like file matches") || !strings.Contains(result.Summary, "docs") || !strings.Contains(result.Summary, "fixtures") {
+		t.Fatalf("summary should state that matches are noisy/non-code, got %q output=\n%s", result.Summary, result.Output)
+	}
+}
+
+func TestSearchFilesRejectsWhenPatternGlobAndQueryOmitted(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+	})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool: "search_files",
+		Path: ".",
+	})
+	if result.Error == "" || !strings.Contains(result.Error, "pattern is required") {
+		t.Fatalf("missing pattern/glob/query should still reject clearly, got %#v", result)
 	}
 }
 

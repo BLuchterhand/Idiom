@@ -280,4 +280,3 @@ type ProductWorkflowMetrics struct {
 	ADRCount              int            `json:"adr_count"`
 	EvidenceLinkCounts    map[string]int `json:"evidence_link_counts"`
 }
-

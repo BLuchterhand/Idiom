@@ -301,7 +301,10 @@ func (l readOnlyAnswerabilityLedger) sourceBodyPathRelevant(path string, candida
 		return objectiveHit
 	}
 	if _, ok := candidateSet[path]; ok {
-		return true
+		if !l.directAnswerConversation() {
+			return true
+		}
+		return l.candidateSourceBodyPathRelevant(path, objectiveCandidateSet, objectiveBodySet)
 	}
 	if _, ok := objectiveBodySet[path]; ok {
 		return true
@@ -313,6 +316,50 @@ func (l readOnlyAnswerabilityLedger) sourceBodyPathRelevant(path string, candida
 		return true
 	}
 	return !fromTaskPacket && len(candidateSet) == 0 && len(namedSet) == 0 && !l.directConversationWithoutObjective()
+}
+
+func (l readOnlyAnswerabilityLedger) directAnswerConversation() bool {
+	return workerruntime.TaskFamilyIsConversation(l.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(l.Contract)
+}
+
+func (l readOnlyAnswerabilityLedger) candidateSourceBodyPathRelevant(path string, objectiveCandidateSet map[string]struct{}, objectiveBodySet map[string]struct{}) bool {
+	if strings.TrimSpace(l.Objective) == "" {
+		return true
+	}
+	if _, ok := objectiveBodySet[path]; ok {
+		return true
+	}
+	if candidateSourcePathStronglyOverlapsObjective(path, l.Objective) {
+		return true
+	}
+	_, objectiveHit := objectiveCandidateSet[path]
+	return objectiveHit
+}
+
+func candidateSourcePathStronglyOverlapsObjective(path string, objective string) bool {
+	path = strings.ToLower(strings.TrimSpace(path))
+	objective = strings.ToLower(strings.TrimSpace(objective))
+	if path == "" || objective == "" {
+		return false
+	}
+	path = strings.NewReplacer("-", " ", "_", " ", "/", " ", ".", " ").Replace(path)
+	matches := 0
+	seen := map[string]struct{}{}
+	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
+		term = singularObjectiveWord(strings.TrimSpace(term))
+		if len(term) < 4 {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		if strings.Contains(path, term) {
+			matches++
+		}
+	}
+	return matches >= 2
 }
 
 func readOnlyObjectiveCandidatePathsFromSearch(result workspace.ToolResult, objective string, max int) []string {

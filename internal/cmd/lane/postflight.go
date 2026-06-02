@@ -1,4 +1,5 @@
 package lane
+
 import (
 	"encoding/json"
 	"flag"

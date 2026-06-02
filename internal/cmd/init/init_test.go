@@ -1,4 +1,5 @@
 package init
+
 import (
 	"bytes"
 	"os"

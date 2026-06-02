@@ -75,7 +75,10 @@ func modelErrorFallbackHasGroundedReadOnlyEvidence(brief workerruntime.WorkerRun
 		if strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		if concreteSourceEvidenceResult(result) || isResultUsefulForFallback(normalizeFallbackResult(result)) {
+		if concreteSourceEvidenceResult(result) {
+			return true
+		}
+		if isResultUsefulForFallback(normalizeFallbackResult(result)) {
 			useful++
 		}
 		if useful >= 2 {

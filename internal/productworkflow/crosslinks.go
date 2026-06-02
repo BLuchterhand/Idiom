@@ -6,14 +6,12 @@ import (
 	"strings"
 )
 
-
 type ADRCrossLinkError struct {
 	ADRPath string
 	Field   string
 	Value   string
 	Message string
 }
-
 
 func ValidateADRCrossLinks(
 	adrs []ParsedADR,
@@ -58,7 +56,6 @@ func ValidateADRCrossLinks(
 	return errs
 }
 
-
 func adrCrossLinkReference(adr ParsedADR) string {
 	if ref := strings.TrimSpace(adr.RelPath); ref != "" {
 		return ref
@@ -69,13 +66,11 @@ func adrCrossLinkReference(adr ParsedADR) string {
 	return "(unknown)"
 }
 
-
 type PRDTDDObligationLinkError struct {
 	RequirementID string
 	TDDObligation string
 	Message       string
 }
-
 
 func ValidatePRDTDDObligationCrossLinks(
 	requirements []PRDRequirement,
@@ -102,13 +97,11 @@ func ValidatePRDTDDObligationCrossLinks(
 	return errs
 }
 
-
 type ParsedADR struct {
 	Doc         ADRDocument
 	RelPath     string
 	RawMarkdown string
 }
-
 
 type ADRSupersessionLinkError struct {
 	Code    string
@@ -118,7 +111,6 @@ type ADRSupersessionLinkError struct {
 	Ref     string
 	Message string
 }
-
 
 func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 	var errs []ADRSupersessionLinkError
@@ -194,7 +186,6 @@ func ValidateADRSupersessionLinks(adrs []ParsedADR) []ADRSupersessionLinkError {
 	return errs
 }
 
-
 func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError {
 	var errs []ADRSupersessionLinkError
 	byID := make(map[string]ADRIndexEntry, len(idx.ADRs))
@@ -269,7 +260,6 @@ func ValidateADRIndexSupersessionLinks(idx ADRIndex) []ADRSupersessionLinkError 
 	return errs
 }
 
-
 type ADRIndexFrontMatterConsistencyError struct {
 	Code    string
 	Path    string
@@ -277,7 +267,6 @@ type ADRIndexFrontMatterConsistencyError struct {
 	Field   string
 	Message string
 }
-
 
 func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []ADRIndexFrontMatterConsistencyError {
 	var errs []ADRIndexFrontMatterConsistencyError
@@ -327,14 +316,12 @@ func ValidateADRIndexFrontMatterConsistency(idx ADRIndex, adrs []ParsedADR) []AD
 	return errs
 }
 
-
 type TraceabilityLinkError struct {
 	RowIndex int
 	Field    string
 	Value    string
 	Message  string
 }
-
 
 func ValidateTraceabilityCrossLinks(
 	matrix TraceabilityMatrix,
@@ -398,4 +385,3 @@ func ValidateTraceabilityCrossLinks(
 	}
 	return errs
 }
-

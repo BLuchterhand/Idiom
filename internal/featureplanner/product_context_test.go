@@ -82,4 +82,3 @@ func TestProductWorkflowBrief_MinimalRoundTrip(t *testing.T) {
 		t.Errorf("EffortID: got %q want minimal", roundTripped.EffortID)
 	}
 }
-
