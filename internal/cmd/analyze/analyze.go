@@ -7,6 +7,7 @@
 // deterministic findings plus compressed per-session traces and names
 // patterns the rule-miner missed. One call per run, off any hot path.
 package analyze
+
 import (
 	"cmp"
 	"context"
@@ -42,14 +43,6 @@ type toolRequestPayload struct {
 	Step int    `json:"step"`
 	Tool string `json:"tool"`
 	Raw  string `json:"raw"`
-}
-
-type toolResultPayload struct {
-	Turn    int    `json:"turn"`
-	Step    int    `json:"step"`
-	Tool    string `json:"tool"`
-	Summary string `json:"summary"`
-	Error   string `json:"error"`
 }
 
 type toolCall struct {
@@ -309,7 +302,6 @@ var (
 	// because of the wildcard, so the current redirect misses them.
 	reGoFuncWildcard = regexp.MustCompile(`^func[.\\\s]*[*+]?\s*[A-Za-z_]\w*`)
 	reCppClassDef    = regexp.MustCompile(`^(class|struct)\s+[A-Za-z_]\w*`)
-	reCppFuncDef     = regexp.MustCompile(`^[A-Za-z_][\w:]*\s+[A-Za-z_]\w*\s*\(`)
 	reBareIdent      = regexp.MustCompile(`^[A-Za-z_][\w:]*$`)
 	reRegexMeta      = regexp.MustCompile(`\\[bBdDsSwW]|\.[*+?]|\([^)]*[|*+?]|\[[^\]]+\]`)
 )

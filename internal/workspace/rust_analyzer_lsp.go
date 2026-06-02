@@ -2,94 +2,27 @@ package workspace
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
-	"time"
 
 	"idiom/internal/semantic"
 )
 
-// rustAnalyzerLSPClient wraps a subprocess rust-analyzer and speaks LSP
-// over stdio. Shape mirrors clangdLSPClient — we intentionally keep the
-// two clients parallel so adding a new LSP is a copy-and-rename job.
 type rustAnalyzerLSPClient struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr bytes.Buffer
-	nextID int
+	lspBaseClient
 }
 
-type raEnvelope struct {
-	ID     json.RawMessage `json:"id,omitempty"`
-	Method string          `json:"method,omitempty"`
-	Result json.RawMessage `json:"result,omitempty"`
-	Error  *raRPCError     `json:"error,omitempty"`
-	Params json.RawMessage `json:"params,omitempty"`
-}
-
-type raRPCError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-}
-
-type raPosition struct {
-	Line      int `json:"line"`
-	Character int `json:"character"`
-}
-
-type raRange struct {
-	Start raPosition `json:"start"`
-	End   raPosition `json:"end"`
-}
-
-type raLocation struct {
-	URI   string  `json:"uri"`
-	Range raRange `json:"range"`
-}
-
-type raLocationLink struct {
-	TargetURI            string  `json:"targetUri"`
-	TargetRange          raRange `json:"targetRange"`
-	TargetSelectionRange raRange `json:"targetSelectionRange"`
-}
-
-type raSymbolInfo struct {
-	Name          string     `json:"name"`
-	Kind          int        `json:"kind"`
-	Location      raLocation `json:"location"`
-	ContainerName string     `json:"containerName"`
-}
-
-type raCallHierarchyItem struct {
-	Name           string  `json:"name"`
-	Kind           int     `json:"kind"`
-	URI            string  `json:"uri"`
-	Range          raRange `json:"range"`
-	SelectionRange raRange `json:"selectionRange"`
-	Detail         string  `json:"detail"`
-}
-
-type raIncomingCall struct {
-	From       raCallHierarchyItem `json:"from"`
-	FromRanges []raRange           `json:"fromRanges"`
-}
-
-type raOutgoingCall struct {
-	To         raCallHierarchyItem `json:"to"`
-	FromRanges []raRange           `json:"fromRanges"`
-}
+type raLocation = LSPLocation
+type raSymbolInfo = LSPSymbolInfo
+type raCallHierarchyItem = LSPCallHierarchyItem
+type raIncomingCall = LSPIncomingCall
+type raOutgoingCall = LSPOutgoingCall
 
 func (m *Manager) rustAnalyzerBinary() string {
 	path, _ := exec.LookPath("rust-analyzer")
@@ -111,10 +44,12 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 	if err != nil {
 		return nil, err
 	}
-	client := &rustAnalyzerLSPClient{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReader(stdout),
+	client := &rustAnalyzerLSPClient{}
+	client.lspBaseClient = lspBaseClient{
+		serverName: "rust-analyzer",
+		cmd:        cmd,
+		stdin:      stdin,
+		stdout:     bufio.NewReader(stdout),
 	}
 	cmd.Stderr = &client.stderr
 	if err := cmd.Start(); err != nil {
@@ -149,166 +84,16 @@ func (m *Manager) newRustAnalyzerLSPClient(ctx context.Context) (*rustAnalyzerLS
 	return client, nil
 }
 
-func (c *rustAnalyzerLSPClient) close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = c.request(ctx, "shutdown", nil, nil)
-	_ = c.notify("exit", map[string]any{})
-	c.forceClose()
-}
-
-func (c *rustAnalyzerLSPClient) forceClose() {
-	_ = c.stdin.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	_, _ = io.Copy(io.Discard, c.stdout)
-	_ = c.cmd.Wait()
-}
-
-func (c *rustAnalyzerLSPClient) notify(method string, params any) error {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-	}
-	return c.writeMessage(msg)
-}
-
-func (c *rustAnalyzerLSPClient) request(ctx context.Context, method string, params any, result any) error {
-	id := c.nextID + 1
-	c.nextID = id
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	if err := c.writeMessage(msg); err != nil {
-		return err
-	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		body, err := c.readMessage()
-		if err != nil {
-			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
-				return fmt.Errorf("%w: %s", err, stderr)
-			}
-			return err
-		}
-		var env raEnvelope
-		if err := json.Unmarshal(body, &env); err != nil {
-			continue
-		}
-		if len(env.ID) == 0 {
-			continue
-		}
-		respID, err := parseRAResponseID(env.ID)
-		if err != nil || respID != id {
-			continue
-		}
-		if env.Error != nil {
-			return fmt.Errorf("%s (code %d)", env.Error.Message, env.Error.Code)
-		}
-		if result != nil && len(env.Result) > 0 {
-			if err := json.Unmarshal(env.Result, result); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-func parseRAResponseID(raw json.RawMessage) (int, error) {
-	var id int
-	if err := json.Unmarshal(raw, &id); err == nil {
-		return id, nil
-	}
-	var idString string
-	if err := json.Unmarshal(raw, &idString); err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(idString)
-}
-
-func (c *rustAnalyzerLSPClient) writeMessage(msg any) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
-	if _, err := io.WriteString(c.stdin, header); err != nil {
-		return err
-	}
-	_, err = c.stdin.Write(body)
-	return err
-}
-
-func (c *rustAnalyzerLSPClient) readMessage() ([]byte, error) {
-	contentLength := -1
-	for {
-		line, err := c.stdout.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			value := strings.TrimSpace(parts[1])
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, err
-			}
-			contentLength = n
-		}
-	}
-	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header from rust-analyzer")
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(c.stdout, body); err != nil {
-		return nil, err
-	}
-	return body, nil
-}
-
 func (c *rustAnalyzerLSPClient) openFile(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{
-			"uri":        raFileURI(path),
-			"languageId": "rust",
-			"version":    1,
-			"text":       string(content),
-		},
-	}
-	return c.notify("textDocument/didOpen", params)
+	return c.lspBaseClient.openFile(path, "rust")
 }
 
 func raFileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	return LSPFileURI(path)
 }
 
 func raPathFromURI(uri string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(uri))
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme != "file" && parsed.Scheme != "" {
-		return "", fmt.Errorf("unsupported rust-analyzer URI scheme %q", parsed.Scheme)
-	}
-	return filepath.Clean(parsed.Path), nil
+	return LSPPathFromURI(uri, "rust-analyzer")
 }
 
 // -- Capability wrappers ---------------------------------------------------
@@ -328,89 +113,44 @@ func (m *Manager) rustWorkspaceSymbolsViaRustAnalyzer(ctx context.Context, patte
 }
 
 func (m *Manager) rustDefinitionViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch) (string, error) {
-	client, err := m.newRustAnalyzerLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": raFileURI(abs)},
-		"position":     m.rustLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, "textDocument/definition", params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseRALocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatRALocations(locations, "", 4, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "rust-analyzer",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newRustAnalyzerLSPClient(ctx)
+		},
+		fileURI: raFileURI,
+		format:  m.formatRALocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.rustLSPPosition(abs, match)
+	}, "textDocument/definition", nil, "", 4, false)
 }
 
 func (m *Manager) rustReferencesViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newRustAnalyzerLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": raFileURI(abs)},
-		"position":     m.rustLSPPosition(abs, match),
-		"context": map[string]any{
-			"includeDeclaration": true,
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "rust-analyzer",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newRustAnalyzerLSPClient(ctx)
 		},
-	}
-	var locations []raLocation
-	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
-		return "", err
-	}
-	return m.formatRALocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
+		fileURI: raFileURI,
+		format:  m.formatRALocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.rustLSPPosition(abs, match)
+	}, "textDocument/references", map[string]any{
+		"context": map[string]any{"includeDeclaration": true},
+	}, pathFilter, m.cfg.MaxDirectoryEntries, true)
 }
 
 func (m *Manager) rustImplementationsViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newRustAnalyzerLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": raFileURI(abs)},
-		"position":     m.rustLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, "textDocument/implementation", params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseRALocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatRALocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "rust-analyzer",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newRustAnalyzerLSPClient(ctx)
+		},
+		fileURI: raFileURI,
+		format:  m.formatRALocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.rustLSPPosition(abs, match)
+	}, "textDocument/implementation", nil, pathFilter, m.cfg.MaxDirectoryEntries, false)
 }
 
 func (m *Manager) rustCallHierarchyViaRustAnalyzer(ctx context.Context, match semantic.RustSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
@@ -503,42 +243,6 @@ func (m *Manager) rustLSPCharacter(abs string, match semantic.RustSymbolMatch) (
 }
 
 // -- Formatting -------------------------------------------------------------
-
-func parseRALocations(raw json.RawMessage) ([]raLocation, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
-	}
-	var list []raLocation
-	if err := json.Unmarshal(trimmed, &list); err == nil {
-		return list, nil
-	}
-	var single raLocation
-	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []raLocation{single}, nil
-	}
-	var links []raLocationLink
-	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]raLocation, 0, len(links))
-		for _, link := range links {
-			location := raLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-			if location.Range == (raRange{}) {
-				location.Range = link.TargetRange
-			}
-			out = append(out, location)
-		}
-		return out, nil
-	}
-	var link raLocationLink
-	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		location := raLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-		if location.Range == (raRange{}) {
-			location.Range = link.TargetRange
-		}
-		return []raLocation{location}, nil
-	}
-	return nil, fmt.Errorf("unsupported rust-analyzer location payload")
-}
 
 func (m *Manager) formatRALocations(locations []raLocation, pathFilter string, limit int, includeLineText bool) string {
 	type entry struct {

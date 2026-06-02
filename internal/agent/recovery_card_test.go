@@ -167,12 +167,13 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, RenderRecoveryCard(card))
 }
 
-func TestRecoveryCardForTextualReadOnlyEvidenceAvailableKeepsReadTools(t *testing.T) {
+func TestRecoveryCardForTextualReadOnlyEvidencePendingKeepsReadTools(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
 			Contract:          "direct_answer",
 			PermissionProfile: "read_only_workspace",
+			Objective:         "Compare internal/labels/labels.go and internal/labels/labels_test.go.",
 			AllowedTools:      []string{"read_file", "search_content", "code_navigate"},
 		},
 		Results: []workspace.ToolResult{
@@ -183,6 +184,9 @@ func TestRecoveryCardForTextualReadOnlyEvidenceAvailableKeepsReadTools(t *testin
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
+	}
 	card := BuildRecoveryCard(RecoveryCardInput{
 		PhaseContract:       contract,
 		CurrentAllowedTools: []string{"read_file", "search_content", "code_navigate"},
@@ -201,7 +205,7 @@ func TestRecoveryCardForTextualReadOnlyEvidenceAvailableKeepsReadTools(t *testin
 		"search",
 	)
 	if strings.Contains(got, "currently callable tools: none") {
-		t.Fatalf("read-only evidence recovery card must not close the textual tool surface:\n%s", got)
+		t.Fatalf("read-only pending recovery card must not close the textual tool surface:\n%s", got)
 	}
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }

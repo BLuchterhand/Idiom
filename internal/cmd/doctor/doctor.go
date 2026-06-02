@@ -1,4 +1,5 @@
 package doctor
+
 import (
 	"encoding/json"
 	"flag"
@@ -24,7 +25,6 @@ type checkResult struct {
 	remedy string
 }
 
-type readinessCheck = readiness.Check
 type readinessProfileReport = readiness.ProfileReport
 
 // Run implements `idiom doctor` — a preflight diagnostic that
@@ -429,8 +429,4 @@ func readinessHostChecks(results []checkResult) []readiness.HostCheck {
 		})
 	}
 	return out
-}
-
-func isReadinessProfileSelectionError(err error) bool {
-	return readiness.IsProfileSelectionError(err)
 }

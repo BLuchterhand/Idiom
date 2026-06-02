@@ -90,14 +90,10 @@ func planExecuteGoTestCommandsFromLine(line string) []string {
 	var commands []string
 	text := strings.TrimSpace(line)
 	for _, span := range planExecuteInlineCodeSpans(text) {
-		for _, command := range planExecuteGoTestCommandsFromPlainText(span) {
-			commands = append(commands, command)
-		}
+		commands = append(commands, planExecuteGoTestCommandsFromPlainText(span)...)
 	}
 	text = planExecuteStripInlineCodeSpans(text)
-	for _, command := range planExecuteGoTestCommandsFromPlainText(text) {
-		commands = append(commands, command)
-	}
+	commands = append(commands, planExecuteGoTestCommandsFromPlainText(text)...)
 	return commands
 }
 

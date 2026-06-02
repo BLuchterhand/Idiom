@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
@@ -706,15 +705,6 @@ func WriteScenario(path string, scenario Scenario) error {
 		return fmt.Errorf("write scenario: %w", err)
 	}
 	return nil
-}
-
-func sortedToolKeys(tools map[string]int) []string {
-	keys := make([]string, 0, len(tools))
-	for tool := range tools {
-		keys = append(keys, tool)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 func containsStringFold(items []string, target string) bool {

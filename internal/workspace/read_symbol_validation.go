@@ -71,7 +71,7 @@ func symbolPatternRejection(tool, pattern string) error {
 		"%s: pattern %q does not look like a symbol identifier or declaration shape (it contains a function call, a comparison/boolean expression, or runs longer than a declaration). "+
 			"Literal text or expressions need exact-text search with the literal as the pattern. "+
 			"Structural code patterns (call shapes, expression shapes) need an AST-pattern capability. "+
-			"read_symbol expects identifiers like 'MyClass' or 'MyClass::method', or short declaration hints like 'struct Foo', 'class Engine', 'type Runner struct'.",
+			"read_symbol expects identifiers like 'MyClass' or 'MyClass::method', or short declaration hints like 'struct Foo', 'class Engine', 'type Runner struct'",
 		tool, pattern,
 	)
 }

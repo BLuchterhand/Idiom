@@ -414,11 +414,6 @@ type rankedPackage struct {
 	pkg  GoPackage
 }
 
-type scoredFile struct {
-	file  GoFile
-	score int
-}
-
 func (idx *GoIndex) sortedPackages() []rankedPackage {
 	pkgs := make([]rankedPackage, 0, len(idx.Package))
 	for path, pkg := range idx.Package {
@@ -436,44 +431,11 @@ func (idx *GoIndex) sortedPackages() []rankedPackage {
 }
 
 func (idx *GoIndex) rankFiles(scoreFn func(GoFile) int, limit int) []GoFile {
-	scored := make([]scoredFile, 0, len(idx.Files))
-	for _, file := range idx.Files {
-		score := scoreFn(file)
-		if score <= 0 {
-			continue
-		}
-		scored = append(scored, scoredFile{file: file, score: score})
-	}
-	slices.SortFunc(scored, func(a, b scoredFile) int {
-		if c := -cmp.Compare(a.score, b.score); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.file.Path, b.file.Path)
-	})
-	if limit > 0 && len(scored) > limit {
-		scored = scored[:limit]
-	}
-	files := make([]GoFile, 0, len(scored))
-	for _, item := range scored {
-		files = append(files, item.file)
-	}
-	return files
+	return RankFiles(idx.Files, scoreFn, limit)
 }
 
 func (idx *GoIndex) uniqueRankedPaths(files []GoFile, limit int) []string {
-	seen := make(map[string]struct{})
-	paths := make([]string, 0, len(files))
-	for _, file := range files {
-		if _, ok := seen[file.Path]; ok {
-			continue
-		}
-		seen[file.Path] = struct{}{}
-		paths = append(paths, file.Path)
-		if limit > 0 && len(paths) >= limit {
-			break
-		}
-	}
-	return paths
+	return UniqueRankedPaths(files, limit)
 }
 
 func exportedSymbolCount(symbols []GoSymbol) int {

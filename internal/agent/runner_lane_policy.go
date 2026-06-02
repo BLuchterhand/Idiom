@@ -291,30 +291,23 @@ func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, resul
 		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
 		return false
 	}
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		if !isReadClassTool(workspace.ToolRequest{Tool: result.Tool}) {
-			continue
-		}
-		if concreteSourceEvidenceResult(result) {
-			return true
-		}
+	return readOnlyClosureDecisionForResults(brief, results).Answerable()
+}
+
+func searchContentSummaryMatchCount(summary string) (int, bool) {
+	match := regexp.MustCompile(`Found (\d+) matching line`).FindStringSubmatch(strings.TrimSpace(summary))
+	if len(match) != 2 {
+		return 0, false
 	}
-	return readOnlyAnalysisReadyFromEvidence(results)
+	count, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, false
+	}
+	return count, true
 }
 
 func conversationEvidenceSatisfiedForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if !conversationEvidenceSatisfied(brief, results) {
-		return false
-	}
-	for _, path := range conversationNamedEvidencePaths(brief) {
-		if !concreteSourceEvidenceReadForPath(path, results) {
-			return false
-		}
-	}
-	return true
+	return conversationEvidenceSatisfied(brief, results)
 }
 
 func conversationNamedEvidencePaths(brief workerruntime.WorkerRuntimeBrief) []string {
@@ -1116,6 +1109,7 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 		return false
 	}
 	tool := strings.TrimSpace(util.FirstNonEmpty(result.Tool, req.Tool))
+	closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
 	switch {
 	case tool == "discovery_query":
 		if !delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
@@ -1125,11 +1119,11 @@ func (r *Runner) delegatedReadOnlyAnswerReadyAfterResult(req workspace.ToolReque
 		// source content. Require at least one source body read before
 		// declaring readiness, otherwise the model is blocked from
 		// reading the files the discovery query surfaced.
-		if len(delegatedReadOnlyInspectedImplementationPaths(results)) < 1 {
+		if !closure.Answerable() {
 			return false
 		}
 	case isReadClassTool(workspace.ToolRequest{Tool: tool}):
-		if len(delegatedReadOnlyInspectedImplementationPaths(results)) < 2 {
+		if !closure.Answerable() {
 			return false
 		}
 	default:

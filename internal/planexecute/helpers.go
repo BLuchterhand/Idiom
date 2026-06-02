@@ -2110,10 +2110,6 @@ func VerificationStatus(evidence []PhaseEvidenceCheck) string {
 	return "passed"
 }
 
-func planExecuteVerificationStatus(evidence []PhaseEvidenceCheck) string {
-	return VerificationStatus(evidence)
-}
-
 func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, root string, paths []string, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
 	checked := 0
 	evidence := make([]PhaseEvidenceCheck, 0)

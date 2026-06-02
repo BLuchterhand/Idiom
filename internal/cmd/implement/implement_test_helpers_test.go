@@ -1,15 +1,11 @@
 package implement
+
 import (
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"idiom/internal/app"
-	"idiom/internal/cmdruntime"
-	"idiom/internal/telemetry"
 )
 
 func writeMainConfig(t *testing.T) string {
@@ -18,17 +14,6 @@ func writeMainConfig(t *testing.T) string {
 	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
 	path := filepath.Join(root, "config.json")
 	if err := os.WriteFile(path, []byte("{}\n"), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
-	}
-	return path
-}
-
-func writeMainConfigRoot(t *testing.T, root string) string {
-	t.Helper()
-	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
-	path := filepath.Join(t.TempDir(), "config.json")
-	configJSON := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q}}`, root, root)
-	if err := os.WriteFile(path, []byte(configJSON+"\n"), 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
@@ -94,8 +79,4 @@ func jsonEventStringSliceContains(value any, want string) bool {
 		}
 	}
 	return false
-}
-
-func modelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskFamily string) func() {
-	return cmdruntime.ModelCloseout(rec, model, mode, taskFamily)
 }

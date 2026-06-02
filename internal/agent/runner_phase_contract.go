@@ -47,7 +47,10 @@ func (r *Runner) deriveCurrentTurnPhaseContract(input runnerTurnPhaseContractInp
 }
 
 func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contract TurnPhaseContract) runnerNextActionState {
-	if contract.PhaseID == "" || contract.PhaseID == turnPhaseGeneric {
+	if contract.PhaseID == "" {
+		return state
+	}
+	if contract.PhaseID == turnPhaseGeneric && strings.TrimSpace(contract.Phase) == "generic" {
 		return state
 	}
 	if strings.TrimSpace(contract.Phase) != "" {
@@ -148,15 +151,6 @@ func turnPhaseContractTerminalOutcomesDriveNextActions(contract TurnPhaseContrac
 	return strings.Contains(phaseID, "submit_ready") ||
 		strings.Contains(phaseID, "review_repair") ||
 		strings.Contains(phaseID, "final")
-}
-
-func phaseStringsIntersect(left []string, right []string) bool {
-	for _, value := range left {
-		if containsPhaseString(right, value) {
-			return true
-		}
-	}
-	return false
 }
 
 func turnPhaseSurfaceInvalidActionClassesFromText(values []string) []string {

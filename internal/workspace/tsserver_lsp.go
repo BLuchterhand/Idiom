@@ -9,13 +9,10 @@ package workspace
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,23 +25,16 @@ import (
 )
 
 type tsLSPClient struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr bytes.Buffer
-	nextID int
-
+	lspBaseClient
 	pendingDiagnostics map[string][]tsDiagnostic
 }
 
-
-
 type tsDiagnostic struct {
 	Range    LSPRange `json:"range"`
-	Severity int     `json:"severity"`
-	Code     any     `json:"code"`
-	Source   string  `json:"source"`
-	Message  string  `json:"message"`
+	Severity int      `json:"severity"`
+	Code     any      `json:"code"`
+	Source   string   `json:"source"`
+	Message  string   `json:"message"`
 }
 
 type tsPublishDiagnosticsParams struct {
@@ -75,11 +65,13 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 	if err != nil {
 		return nil, err
 	}
-	client := &tsLSPClient{
+	client := &tsLSPClient{pendingDiagnostics: make(map[string][]tsDiagnostic)}
+	client.lspBaseClient = lspBaseClient{
+		serverName:         "typescript-language-server",
 		cmd:                cmd,
 		stdin:              stdin,
 		stdout:             bufio.NewReader(stdout),
-		pendingDiagnostics: make(map[string][]tsDiagnostic),
+		handleNotification: client.handleNotification,
 	}
 	cmd.Stderr = &client.stderr
 	if err := cmd.Start(); err != nil {
@@ -125,160 +117,18 @@ func (m *Manager) newTsLSPClient(ctx context.Context) (*tsLSPClient, error) {
 	return client, nil
 }
 
-func (c *tsLSPClient) close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = c.request(ctx, "shutdown", nil, nil)
-	_ = c.notify("exit", map[string]any{})
-	c.forceClose()
-}
-
-func (c *tsLSPClient) forceClose() {
-	_ = c.stdin.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
+func (c *tsLSPClient) handleNotification(method string, params json.RawMessage) {
+	if method != "textDocument/publishDiagnostics" || len(params) == 0 {
+		return
 	}
-	_, _ = io.Copy(io.Discard, c.stdout)
-	_ = c.cmd.Wait()
-}
-
-func (c *tsLSPClient) notify(method string, params any) error {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
+	var payload tsPublishDiagnosticsParams
+	if err := json.Unmarshal(params, &payload); err == nil {
+		c.pendingDiagnostics[payload.URI] = payload.Diagnostics
 	}
-	return c.writeMessage(msg)
-}
-
-func (c *tsLSPClient) request(ctx context.Context, method string, params any, result any) error {
-	id := c.nextID + 1
-	c.nextID = id
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	if err := c.writeMessage(msg); err != nil {
-		return err
-	}
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		body, err := c.readMessage()
-		if err != nil {
-			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
-				return fmt.Errorf("%w: %s", err, stderr)
-			}
-			return err
-		}
-		var env LSPEnvelope
-		if err := json.Unmarshal(body, &env); err != nil {
-			continue
-		}
-		// Route diagnostics notifications into the pending map.
-		if env.Method == "textDocument/publishDiagnostics" && len(env.Params) > 0 {
-			var params tsPublishDiagnosticsParams
-			if err := json.Unmarshal(env.Params, &params); err == nil {
-				c.pendingDiagnostics[params.URI] = params.Diagnostics
-			}
-			continue
-		}
-		if len(env.ID) == 0 {
-			continue
-		}
-		respID, err := parseTsResponseID(env.ID)
-		if err != nil || respID != id {
-			continue
-		}
-		if env.Error != nil {
-			return fmt.Errorf("%s (code %d)", env.Error.Message, env.Error.Code)
-		}
-		if result != nil && len(env.Result) > 0 {
-			if err := json.Unmarshal(env.Result, result); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-func parseTsResponseID(raw json.RawMessage) (int, error) {
-	var id int
-	if err := json.Unmarshal(raw, &id); err == nil {
-		return id, nil
-	}
-	var idString string
-	if err := json.Unmarshal(raw, &idString); err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(idString)
-}
-
-func (c *tsLSPClient) writeMessage(msg any) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
-	if _, err := io.WriteString(c.stdin, header); err != nil {
-		return err
-	}
-	_, err = c.stdin.Write(body)
-	return err
-}
-
-func (c *tsLSPClient) readMessage() ([]byte, error) {
-	contentLength := -1
-	for {
-		line, err := c.stdout.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			value := strings.TrimSpace(parts[1])
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, err
-			}
-			contentLength = n
-		}
-	}
-	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header from typescript-language-server")
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(c.stdout, body); err != nil {
-		return nil, err
-	}
-	return body, nil
 }
 
 func (c *tsLSPClient) openFile(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{
-			"uri":        tsFileURI(path),
-			"languageId": tsLanguageID(path),
-			"version":    1,
-			"text":       string(content),
-		},
-	}
-	return c.notify("textDocument/didOpen", params)
+	return c.lspBaseClient.openFile(path, tsLanguageID(path))
 }
 
 // waitForDiagnostics drains pending LSP messages for a short window so
@@ -302,18 +152,11 @@ func (c *tsLSPClient) waitForDiagnostics(ctx context.Context, uri string, budget
 }
 
 func tsFileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	return LSPFileURI(path)
 }
 
 func tsPathFromURI(uri string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(uri))
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme != "file" && parsed.Scheme != "" {
-		return "", fmt.Errorf("unsupported ts LSP URI scheme %q", parsed.Scheme)
-	}
-	return filepath.Clean(parsed.Path), nil
+	return LSPPathFromURI(uri, "ts LSP")
 }
 
 func tsLanguageID(path string) string {
@@ -422,87 +265,44 @@ func (m *Manager) tsDefinitionViaLSP(ctx context.Context, match semantic.TsSymbo
 }
 
 func (m *Manager) LSPLocationQueryViaLSP(ctx context.Context, match semantic.TsSymbolMatch, method string) (string, error) {
-	client, err := m.newTsLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": tsFileURI(abs)},
-		"position":     m.tsLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, method, params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseTsLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatTsLocations(locations, "", 4, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "ts LSP",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newTsLSPClient(ctx)
+		},
+		fileURI: tsFileURI,
+		format:  m.formatTsLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.tsLSPPosition(abs, match)
+	}, method, nil, "", 4, false)
 }
 
 func (m *Manager) tsImplementationsViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newTsLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": tsFileURI(abs)},
-		"position":     m.tsLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, "textDocument/implementation", params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseTsLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatTsLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "ts LSP",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newTsLSPClient(ctx)
+		},
+		fileURI: tsFileURI,
+		format:  m.formatTsLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.tsLSPPosition(abs, match)
+	}, "textDocument/implementation", nil, pathFilter, m.cfg.MaxDirectoryEntries, false)
 }
 
 func (m *Manager) tsReferencesViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newTsLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": tsFileURI(abs)},
-		"position":     m.tsLSPPosition(abs, match),
-		"context":      map[string]any{"includeDeclaration": true},
-	}
-	var locations []LSPLocation
-	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
-		return "", err
-	}
-	return m.formatTsLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "ts LSP",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newTsLSPClient(ctx)
+		},
+		fileURI: tsFileURI,
+		format:  m.formatTsLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.tsLSPPosition(abs, match)
+	}, "textDocument/references", map[string]any{
+		"context": map[string]any{"includeDeclaration": true},
+	}, pathFilter, m.cfg.MaxDirectoryEntries, true)
 }
 
 func (m *Manager) tsCallHierarchyViaLSP(ctx context.Context, match semantic.TsSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
@@ -571,42 +371,6 @@ func (m *Manager) tsDiagnosticsViaLSP(ctx context.Context, rel string) (string, 
 	}
 	diagnostics := client.waitForDiagnostics(ctx, tsFileURI(abs), 2*time.Second)
 	return m.formatTsDiagnostics(abs, diagnostics), nil
-}
-
-func parseTsLocations(raw json.RawMessage) ([]LSPLocation, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
-	}
-	var list []LSPLocation
-	if err := json.Unmarshal(trimmed, &list); err == nil {
-		return list, nil
-	}
-	var single LSPLocation
-	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []LSPLocation{single}, nil
-	}
-	var links []LSPLocationLink
-	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]LSPLocation, 0, len(links))
-		for _, link := range links {
-			location := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-			if location.Range == (LSPRange{}) {
-				location.Range = link.TargetRange
-			}
-			out = append(out, location)
-		}
-		return out, nil
-	}
-	var link LSPLocationLink
-	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		location := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-		if location.Range == (LSPRange{}) {
-			location.Range = link.TargetRange
-		}
-		return []LSPLocation{location}, nil
-	}
-	return nil, fmt.Errorf("unsupported ts LSP location payload")
 }
 
 func (m *Manager) formatTsLocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {

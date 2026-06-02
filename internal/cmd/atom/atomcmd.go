@@ -1,4 +1,5 @@
 package atom
+
 import (
 	"bytes"
 	"encoding/json"
@@ -440,11 +441,6 @@ func (e atomRequiredEditEvaluation) StaleNeedsRebase() bool {
 		return false
 	}
 	return e.ExactMatches > 0 || e.NearMatches > 0
-}
-
-func atomRequiredEditsSourceSatisfied(specBody, projectRoot string, existingPaths, scopePaths []string) (bool, []string) {
-	eval := atomEvaluateRequiredEditSnippets(specBody, projectRoot, existingPaths, scopePaths)
-	return eval.SourceSatisfied(), eval.Evidence
 }
 
 type atomCurrentStateEvaluation struct {
@@ -903,23 +899,6 @@ func atomRequiredEditSnippetMatch(content, snippet, anchor, path string) atomReq
 	}
 }
 
-func atomOrderedLineMatchCount(contentLines, snippetLines []string) int {
-	if len(contentLines) == 0 || len(snippetLines) == 0 {
-		return 0
-	}
-	next := 0
-	for _, line := range contentLines {
-		if line != snippetLines[next] {
-			continue
-		}
-		next++
-		if next == len(snippetLines) {
-			return next
-		}
-	}
-	return next
-}
-
 func atomLineMultisetMatchCount(contentLines, snippetLines []string) int {
 	if len(contentLines) == 0 || len(snippetLines) == 0 {
 		return 0
@@ -1063,14 +1042,6 @@ func atomRequiredEditPathsCompatible(anchorPaths, blockPaths []string) bool {
 		}
 	}
 	return true
-}
-
-func atomRequiredEditPathFromLabel(label string, scopePaths []string) string {
-	paths := atomRequiredEditPathsFromLabel(label, scopePaths)
-	if len(paths) == 1 {
-		return paths[0]
-	}
-	return ""
 }
 
 func atomRequiredEditPathsFromLabel(label string, scopePaths []string) []string {

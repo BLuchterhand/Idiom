@@ -121,7 +121,7 @@ func ParsePatch(text string) ([]PatchOp, error) {
 			return nil, fmt.Errorf("unexpected line outside of any file section: %q", line)
 		case current.Kind == PatchOpAdd:
 			if !strings.HasPrefix(line, "+") {
-				return nil, fmt.Errorf("Add File body lines must start with '+': %q", line)
+				return nil, fmt.Errorf("add file body lines must start with '+': %q", line)
 			}
 			addBody = append(addBody, strings.TrimPrefix(line, "+"))
 		case current.Kind == PatchOpUpdate:
@@ -132,7 +132,7 @@ func ParsePatch(text string) ([]PatchOp, error) {
 				continue
 			}
 			if hunk == nil {
-				return nil, fmt.Errorf("Update File body must contain a %q hunk header before content", patchHunkMarker)
+				return nil, fmt.Errorf("update file body must contain a %q hunk header before content", patchHunkMarker)
 			}
 			switch {
 			case strings.HasPrefix(line, "+"):

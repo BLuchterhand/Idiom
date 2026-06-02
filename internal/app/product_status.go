@@ -11,6 +11,12 @@ import (
 	"idiom/internal/productworkflow"
 )
 
+const (
+	productCreateUsage   = "usage: /product-create [--effort-root <path>|<path>]"
+	productContinueUsage = "usage: /product-continue <action> [--effort-root <path>|<path>]"
+	productStatusUsage   = "usage: /product-status [--effort-root <path>|<path>]"
+)
+
 func (m *Model) slashProductCreate(_ string, fields []string) bool {
 	effortRoot, err := m.productCreateEffortRoot(fields)
 	if err != nil {
@@ -47,16 +53,16 @@ func (m *Model) productCreateEffortRoot(fields []string) (string, error) {
 		return m.productStatusAbsPath(".")
 	case 2:
 		if fields[1] == "--effort-root" {
-			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+			return "", errors.New(productCreateUsage)
 		}
 		return m.productStatusAbsPath(fields[1])
 	case 3:
 		if fields[1] != "--effort-root" {
-			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+			return "", errors.New(productCreateUsage)
 		}
 		return m.productStatusAbsPath(fields[2])
 	default:
-		return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
+		return "", errors.New(productCreateUsage)
 	}
 }
 
@@ -146,7 +152,7 @@ func (m *Model) slashProductContinue(_ string, fields []string) bool {
 
 func productContinueArgs(fields []string) (string, []string, error) {
 	if len(fields) < 2 {
-		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+		return "", nil, errors.New(productContinueUsage)
 	}
 	action := ""
 	rootFields := []string{fields[0]}
@@ -157,7 +163,7 @@ func productContinueArgs(fields []string) (string, []string, error) {
 		}
 		if field == "--effort-root" {
 			if i+1 >= len(fields) {
-				return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+				return "", nil, errors.New(productContinueUsage)
 			}
 			rootFields = append(rootFields, "--effort-root", fields[i+1])
 			i++
@@ -171,10 +177,10 @@ func productContinueArgs(fields []string) (string, []string, error) {
 			rootFields = append(rootFields, field)
 			continue
 		}
-		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+		return "", nil, errors.New(productContinueUsage)
 	}
 	if action == "" {
-		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
+		return "", nil, errors.New(productContinueUsage)
 	}
 	return action, rootFields, nil
 }
@@ -241,21 +247,21 @@ func (m *Model) productStatusEffortRoot(fields []string) (string, error) {
 			return "", err
 		}
 		if _, err := os.Stat(filepath.Join(absRoot, "workflow_state.json")); err != nil {
-			return "", errors.New("Usage: /product-status --effort-root <path> (or run from an effort root)")
+			return "", errors.New("usage: /product-status --effort-root <path> (or run from an effort root)")
 		}
 		return absRoot, nil
 	case 2:
 		if fields[1] == "--effort-root" {
-			return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
+			return "", errors.New(productStatusUsage)
 		}
 		return m.productStatusAbsPath(fields[1])
 	case 3:
 		if fields[1] != "--effort-root" {
-			return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
+			return "", errors.New(productStatusUsage)
 		}
 		return m.productStatusAbsPath(fields[2])
 	default:
-		return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
+		return "", errors.New(productStatusUsage)
 	}
 }
 

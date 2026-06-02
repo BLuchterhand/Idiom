@@ -2990,12 +2990,12 @@ func TestRouteClassifierChatClientFallsBackToPlannerWhenClassifierUnreachable(t 
 	}
 }
 
-func TestCorrectTurnRoutePlanDemotesConceptualDebugLogQuestion(t *testing.T) {
+func TestCorrectTurnRoutePlanKeepsConceptualDebugLogQuestionOnStandardReadLane(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", agent.BuildMode())
-	if plan.Family != "architecture" {
-		t.Fatalf("family = %q, want architecture", plan.Family)
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
 	}
-	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -3038,7 +3038,7 @@ func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testi
 	}
 }
 
-func TestCorrectTurnRoutePlanUpgradesRepoInternalArchitectureQuestions(t *testing.T) {
+func TestCorrectTurnRoutePlanTrustsClassifierForRepoInternalQuestions(t *testing.T) {
 	prompts := []string{
 		"What does the debug log redacted mode do?",
 		"Can you tell me how this harness uses subagents?",
@@ -3046,10 +3046,10 @@ func TestCorrectTurnRoutePlanUpgradesRepoInternalArchitectureQuestions(t *testin
 	}
 	for _, prompt := range prompts {
 		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
-		if plan.Family != "architecture" {
-			t.Fatalf("family for %q = %q, want architecture", prompt, plan.Family)
+		if plan.Family != "conversation" {
+			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
 		}
-		if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
+		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
 			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
 		}
 	}

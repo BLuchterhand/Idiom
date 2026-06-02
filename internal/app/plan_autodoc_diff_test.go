@@ -325,13 +325,14 @@ func TestRecordWriteSuccessMultiplePathsPerCall(t *testing.T) {
 // unique across a session so clicks resolve to the right diff record.
 func TestNewPlanEntryIDDistinct(t *testing.T) {
 	seen := map[string]bool{}
+	hexIDRe := regexp.MustCompile(`^[0-9a-f]+$`)
 	for range 64 {
 		id := newPlanEntryID()
 		if seen[id] {
 			t.Fatalf("duplicate id %q after %d draws", id, len(seen))
 		}
 		seen[id] = true
-		if matched, _ := regexp.MatchString(`^[0-9a-f]+$`, id); !matched {
+		if !hexIDRe.MatchString(id) {
 			t.Errorf("id %q not hex/safe", id)
 		}
 	}

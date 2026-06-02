@@ -1,4 +1,5 @@
 package queue
+
 import (
 	"context"
 	"encoding/json"
@@ -92,14 +93,6 @@ func runQueueServe(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintln(stdout, "shutting down...")
 	srv.Stop()
 	return 0
-}
-
-// runQueueRun is the project-side wrapper. It enqueues, blocks for a
-// slot, then execs the wrapped command, and releases the slot on
-// exit (success or failure). Exit code mirrors the wrapped command,
-// so this composes with shell-level error handling.
-func runQueueRun(args []string, stdout, stderr io.Writer) int {
-	return runQueueRunWithTelemetry(args, stdout, stderr, nil)
 }
 
 func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *telemetry.Recorder) int {

@@ -76,7 +76,6 @@ var (
 	javaTypeRe = regexp.MustCompile(`^\s*(?:public\s+|protected\s+|private\s+|abstract\s+|final\s+|static\s+|sealed\s+|non-sealed\s+)*(class|interface|enum|record|@interface)\s+([A-Za-z_][A-Za-z0-9_]*)([^{]*)`)
 	// Method/constructor signature candidates — the parser below still
 	// verifies parentheses and rejects control-flow keywords.
-	javaMethodStartRe   = regexp.MustCompile(`^\s*(?:public\s+|protected\s+|private\s+|abstract\s+|static\s+|final\s+|synchronized\s+|native\s+|default\s+|strictfp\s+)+.*\(`)
 	javaNameBeforeParen = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_]*)\s*(?:<[^>]*>\s*)?$`)
 	javaCallRe          = regexp.MustCompile(`\b([A-Za-z_][A-Za-z0-9_]*)\s*\(`)
 )
@@ -339,53 +338,11 @@ func (idx *JavaIndex) findFiles(pattern string) []string {
 }
 
 func (idx *JavaIndex) rankFiles(scoreFn func(JavaFile) int, limit int) []JavaFile {
-	scored := make([]struct {
-		file  JavaFile
-		score int
-	}, 0, len(idx.Files))
-	for _, file := range idx.Files {
-		score := scoreFn(file)
-		if score <= 0 {
-			continue
-		}
-		scored = append(scored, struct {
-			file  JavaFile
-			score int
-		}{file: file, score: score})
-	}
-	slices.SortFunc(scored, func(a, b struct {
-		file  JavaFile
-		score int
-	}) int {
-		if c := -cmp.Compare(a.score, b.score); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.file.Path, b.file.Path)
-	})
-	if limit > 0 && len(scored) > limit {
-		scored = scored[:limit]
-	}
-	out := make([]JavaFile, 0, len(scored))
-	for _, item := range scored {
-		out = append(out, item.file)
-	}
-	return out
+	return RankFiles(idx.Files, scoreFn, limit)
 }
 
 func (idx *JavaIndex) uniqueRankedPaths(files []JavaFile, limit int) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		if _, ok := seen[file.Path]; ok {
-			continue
-		}
-		seen[file.Path] = struct{}{}
-		out = append(out, file.Path)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
-	}
-	return out
+	return UniqueRankedPaths(files, limit)
 }
 
 // Entrypoints scans every file for likely entry functions:
@@ -708,24 +665,9 @@ func parseJavaMethodSignature(signature string, pkg string, classStack []string)
 }
 
 func extractJavaCalls(lines []string, startLine int, endLine int) []JavaCall {
-	if startLine <= 0 || endLine < startLine || endLine > len(lines) {
-		return nil
-	}
-	calls := make([]JavaCall, 0, 16)
-	for line := startLine; line <= endLine; line++ {
-		text := stripJavaLineComment(lines[line-1])
-		for _, match := range javaCallRe.FindAllStringSubmatch(text, -1) {
-			if len(match) != 2 {
-				continue
-			}
-			name := match[1]
-			if isJavaKeywordName(name) {
-				continue
-			}
-			calls = append(calls, JavaCall{Name: name, Line: line})
-		}
-	}
-	return calls
+	return ExtractLineCalls(lines, startLine, endLine, javaCallRe, stripJavaLineComment, isJavaKeywordName, func(name string, line int) JavaCall {
+		return JavaCall{Name: name, Line: line}
+	})
 }
 
 func findJavaBraceEnd(lines []string, startIdx int) int {

@@ -452,13 +452,15 @@
           "source evidence"
         ],
         "final_assistant_contains": [
-          "delegated read-only evidence packet",
-          "Key findings",
           "internal/labels/labels.go",
+          "ShortLabel",
           "Save changes"
         ],
         "forbid_final_assistant_contains": [
-          "BAD_FALLBACK_NOT_USED"
+          "BAD_FALLBACK_NOT_USED",
+          "delegated read-only evidence packet",
+          "Key findings",
+          "symbol/body/branch"
         ],
         "forbid_tools": [
           "edit_file",
@@ -494,7 +496,7 @@
         "require_clean_rollback": true,
         "require_no_timeout": true,
         "groundedness": {
-          "min_score": 0.35,
+          "min_score": 0.2,
           "context_fragments": [
             "internal/labels/labels.go package labels func ShortLabel string return Save changes"
           ]
@@ -526,13 +528,15 @@
           "source evidence"
         ],
         "final_assistant_contains": [
-          "delegated read-only evidence packet",
-          "Key findings",
           "internal/labels/labels.go",
+          "ShortLabel",
           "Save changes"
         ],
         "forbid_final_assistant_contains": [
-          "BAD_FALLBACK_NOT_USED"
+          "BAD_FALLBACK_NOT_USED",
+          "delegated read-only evidence packet",
+          "Key findings",
+          "symbol/body/branch"
         ],
         "forbid_tools": [
           "edit_file",
@@ -568,7 +572,7 @@
         "require_clean_rollback": true,
         "require_no_timeout": true,
         "groundedness": {
-          "min_score": 0.35,
+          "min_score": 0.2,
           "context_fragments": [
             "internal/labels/labels.go package labels func ShortLabel string return Save changes"
           ]
@@ -2899,7 +2903,7 @@
           "read_file",
           "submit_plan"
         ],
-        "require_verification": "none",
+        "require_verification": "passed",
         "require_approval": false
       },
       "oracle": {

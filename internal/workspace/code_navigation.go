@@ -45,7 +45,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 	if err != nil {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: err.Error()}
 	}
-	req.Pattern = util.FirstNonEmpty(req.Pattern, req.Query)
+	req.Pattern = util.FirstNonEmpty(req.Pattern, req.Query, req.Symbol)
 	if spec.RequiresPattern && strings.TrimSpace(req.Pattern) == "" {
 		return ToolResult{Tool: "code_navigate", Summary: "Code navigation rejected", Error: fmt.Sprintf("pattern is required for %s", spec.Name)}
 	}
@@ -83,7 +83,7 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 		return codeNavigationSpec{Name: "workspace_symbol", Capability: CapWorkspaceSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, nil
 	case "read_symbol", "inspect_symbol", "symbol_body":
 		return codeNavigationSpec{Name: "read_symbol", Capability: CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, nil
-	case "definition", "declaration", "goto_definition", "go_to_definition":
+	case "definition", "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition":
 		return codeNavigationSpec{Name: "definition", Capability: CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
 	case "references", "reference", "usages", "find_references", "find_reference":
 		return codeNavigationSpec{Name: "references", Capability: CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil

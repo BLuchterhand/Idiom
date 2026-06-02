@@ -484,14 +484,6 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent
 	if corrected, ok := routePlanCorrectedByOutcomeContract(normalized, mode); ok {
 		normalized = corrected
 	}
-	if shouldUpgradeConversationRouteToArchitecture(normalized, prompt) {
-		normalized.Family = "architecture"
-		normalized.InitialLane = "architecture"
-		normalized.FollowupLane = ""
-		normalized.Contract = "architecture_assessment"
-		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "repo_internal_architecture_question")
-		return normalizeTurnRoutePlan(normalized, mode)
-	}
 	return normalized
 }
 
@@ -567,34 +559,6 @@ func readOnlyRouteForOutcome(plan turnRoutePlan, mode agent.Mode, reasonCode str
 	plan.Reason = util.FirstNonEmpty(plan.Reason, reasonCode)
 	plan.ReasonCodes = appendUniqueBriefStrings(plan.ReasonCodes, reasonCode)
 	return normalizeTurnRoutePlan(plan, mode)
-}
-
-func shouldUpgradeConversationRouteToArchitecture(plan turnRoutePlan, prompt string) bool {
-	if strings.TrimSpace(plan.Family) != "conversation" ||
-		strings.TrimSpace(plan.Contract) != "direct_answer" {
-		return false
-	}
-	words := plannerWordText(prompt)
-	if !plannerWordsContainAny(words,
-		"harness",
-		"subagent", "subagents", "sub agent", "sub agents",
-		"discovery tool", "discovery tools",
-		"debug log", "debug logs", "debuglog",
-		"redacted mode", "redaction",
-		"control rail", "control rails",
-		"readiness", "runner",
-		"workspace tool", "workspace tools",
-	) {
-		return false
-	}
-	if plannerPromptHasExplicitMutationIntent(words) &&
-		!plannerWordsContainAny(words, "what can we add", "can we add", "could we add", "should we add") {
-		return false
-	}
-	return plannerWordsContainAny(words,
-		"how", "what", "why", "explain", "tell me", "can you tell", "what does",
-		"what can we add", "increase", "usefulness", "improve", "improvements",
-	)
 }
 
 func promptRequestsReadOnlyEvidenceReport(prompt string) bool {
@@ -994,27 +958,6 @@ func (m *Model) workspaceAllowedTools() []string {
 		return nil
 	}
 	return m.workspace.AllowedTools()
-}
-
-func appendRunnerStateStrings(values []string, extra ...string) []string {
-	out := append([]string(nil), values...)
-	for _, value := range extra {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		found := false
-		for _, existing := range out {
-			if existing == value {
-				found = true
-				break
-			}
-		}
-		if !found {
-			out = append(out, value)
-		}
-	}
-	return out
 }
 
 func normalizeRouteValue(value string) string {

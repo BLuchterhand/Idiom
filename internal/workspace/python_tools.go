@@ -202,19 +202,8 @@ func (m *Manager) pythonRelatedFiles(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "python_related_files", Summary: "Python related-file search unavailable", Error: err.Error()}
 	}
-	paths := filterPythonRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.pythonPathFilter(req.Path))
-	if len(paths) == 0 {
-		return ToolResult{Tool: "python_related_files", Summary: fmt.Sprintf("No related Python files matched %q", pattern)}
-	}
-	lines := make([]string, 0, len(paths))
-	for _, rel := range paths {
-		display, err := m.pythonHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, display)
-	}
-	return ToolResult{Tool: "python_related_files", Summary: fmt.Sprintf("Found %d related Python file(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	paths := filterRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.pythonPathFilter(req.Path))
+	return m.relatedFilesResult("python_related_files", "Python", pattern, paths, m.pythonHandleDisplay)
 }
 
 func (m *Manager) pythonWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -647,19 +636,6 @@ func filterPythonCallMatches(matches []semantic.PythonCallMatch, pathFilter stri
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)
-		}
-	}
-	return out
-}
-
-func filterPythonRelatedPaths(paths []string, pathFilter string) []string {
-	if pathFilter == "" {
-		return paths
-	}
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if pathMatchesFilter(path, pathFilter) {
-			out = append(out, path)
 		}
 	}
 	return out

@@ -2750,7 +2750,7 @@ var (
 
 func extractLineAnchoredToolJSONObjectPayload(text string) (string, bool, error) {
 	match := lineAnchoredToolJSONPattern.FindStringSubmatchIndex(text)
-	if match == nil || len(match) < 8 {
+	if len(match) < 8 {
 		return "", false, nil
 	}
 	tool := strings.TrimSpace(text[match[4]:match[5]])
@@ -3303,12 +3303,8 @@ func qwenXMLParameterRaw(name string, value string) (json.RawMessage, error) {
 }
 
 func trimQwenXMLParameterValue(value string) string {
-	if strings.HasPrefix(value, "\n") {
-		value = value[1:]
-	}
-	if strings.HasSuffix(value, "\n") {
-		value = value[:len(value)-1]
-	}
+	value = strings.TrimPrefix(value, "\n")
+	value = strings.TrimSuffix(value, "\n")
 	return value
 }
 
@@ -3882,6 +3878,16 @@ func (m *Manager) searchFiles(req ToolRequest) ToolResult {
 func (m *Manager) readFile(req ToolRequest) ToolResult {
 	path, description, err := m.resolveReadTarget(req)
 	if err != nil {
+		if recoveredPath, ok := m.closestRecoverableReadPath(req.Path, req.Workdir); ok {
+			recoveredReq := req
+			recoveredReq.Path = recoveredPath
+			recoveredReq.ID = ""
+			result := m.readFile(recoveredReq)
+			if strings.TrimSpace(result.Error) == "" {
+				result.Summary = fmt.Sprintf("Recovered missing read_file path %q as %q; %s", strings.TrimSpace(req.Path), recoveredPath, result.Summary)
+				return result
+			}
+		}
 		errMsg := err.Error()
 		// OpenCode-adoption fix D — when the requested path's parent
 		// directory does not exist, say so explicitly instead of letting
@@ -7046,7 +7052,7 @@ func (m *Manager) resolveExplicitReadPath(path string) (string, string, error) {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
 			return "", "", fmt.Errorf(
-				"path %q was not found. %s Available recovery capabilities: file-name search, structured symbol/navigation, or exact text search followed by a returned handle.",
+				"path %q was not found. %s Available recovery capabilities: file-name search, structured symbol/navigation, or exact text search followed by a returned handle",
 				m.displayPath(path),
 				m.notFoundRecoveryHint(path),
 			)
@@ -7057,6 +7063,98 @@ func (m *Manager) resolveExplicitReadPath(path string) (string, string, error) {
 		m.rememberPath(path)
 	}
 	return path, m.handleDisplay(path), nil
+}
+
+func (m *Manager) closestRecoverableReadPath(query string, workdir string) (string, bool) {
+	query = strings.TrimSpace(query)
+	if query == "" || !m.Enabled() {
+		return "", false
+	}
+	queryKey := normalizedReadPathBasename(query)
+	if queryKey == "" {
+		return "", false
+	}
+	queryParent := normalizedReadPathParent(query)
+	suggestions := m.findPathSuggestions(query, 5)
+	var match string
+	for _, suggestion := range suggestions {
+		candidate := suggestedWorkspacePath(suggestion)
+		if candidate == "" || normalizeWorkspaceSlash(candidate) == normalizeWorkspaceSlash(query) {
+			continue
+		}
+		if normalizedReadPathParent(candidate) != queryParent {
+			continue
+		}
+		if normalizedReadPathBasename(candidate) != queryKey {
+			continue
+		}
+		resolved, err := m.resolvePath(candidate, workdir)
+		if err != nil {
+			continue
+		}
+		info, err := os.Stat(resolved)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		display := m.displayPath(resolved)
+		if match != "" && match != display {
+			return "", false
+		}
+		match = display
+	}
+	if match == "" {
+		return "", false
+	}
+	return match, true
+}
+
+func suggestedWorkspacePath(suggestion string) string {
+	fields := strings.Fields(strings.TrimSpace(suggestion))
+	if len(fields) >= 2 && isFileHandleToken(fields[0]) {
+		return strings.Join(fields[1:], " ")
+	}
+	return strings.TrimSpace(suggestion)
+}
+
+func isFileHandleToken(value string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 2 || value[0] != 'f' {
+		return false
+	}
+	for _, r := range value[1:] {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func normalizedReadPathBasename(path string) string {
+	base := strings.ToLower(filepath.Base(filepath.ToSlash(strings.TrimSpace(path))))
+	var b strings.Builder
+	for _, r := range base {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+func normalizedReadPathParent(path string) string {
+	path = normalizeWorkspaceSlash(path)
+	parent := filepath.ToSlash(filepath.Dir(path))
+	if parent == "." {
+		return ""
+	}
+	return strings.ToLower(parent)
+}
+
+func normalizeWorkspaceSlash(path string) string {
+	path = filepath.ToSlash(strings.TrimSpace(path))
+	return strings.TrimPrefix(path, "./")
 }
 
 // notFoundRecoveryHint inspects the parent directory of a missing

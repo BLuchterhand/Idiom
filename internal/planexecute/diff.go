@@ -5,7 +5,21 @@ import (
 	"strings"
 )
 
-func unifiedDiff(path, before, after string) string {
+// UnifiedDiff renders a minimal unified diff between before and after,
+// labelled with path. Output mirrors `diff -u`:
+//
+//	--- a/<path>
+//	+++ b/<path>
+//	@@ -<beforeStart>,<beforeLen> +<afterStart>,<afterLen> @@
+//	 context
+//	-removed
+//	+added
+//
+// It is line-based (no intra-line diff), uses 3 lines of context, and
+// coalesces adjacent edit regions into one hunk. A "\ No newline at
+// end of file" marker is emitted when either side lacked a terminal
+// newline, matching GNU diff and `git diff` output.
+func UnifiedDiff(path, before, after string) string {
 	if before == after {
 		return ""
 	}
@@ -24,10 +38,8 @@ func unifiedDiff(path, before, after string) string {
 	return out.String()
 }
 
-func UnifiedDiff(path, before, after string) string {
-	return unifiedDiff(path, before, after)
-}
-
+// splitLines returns the lines and whether the original string ended
+// with a newline. An empty string has no lines and no trailing newline.
 func splitLines(s string) ([]string, bool) {
 	if s == "" {
 		return nil, false
@@ -40,11 +52,14 @@ func splitLines(s string) ([]string, bool) {
 }
 
 type diffOp struct {
-	kind byte
-	bIdx int
-	aIdx int
+	kind byte // ' ' equal, '-' del, '+' add
+	bIdx int  // index in before (-1 if add)
+	aIdx int  // index in after (-1 if del)
 }
 
+// diffScript produces a line-level edit script via LCS. O(n*m) memory,
+// acceptable for source files up to a few thousand lines, which covers
+// the common case here (single-function edits in source files).
 func diffScript(a, b []string) []diffOp {
 	n, m := len(a), len(b)
 	dp := make([][]int, n+1)
@@ -90,9 +105,11 @@ func diffScript(a, b []string) []diffOp {
 }
 
 type hunk struct {
-	startOp, endOp int
+	startOp, endOp int // half-open [start, end) into ops
 }
 
+// buildHunks groups runs of edit ops with up to ctx lines of context
+// on each side, merging adjacent edit runs whose context overlaps.
 func buildHunks(ops []diffOp, ctx int) []hunk {
 	var hunks []hunk
 	i := 0
@@ -105,6 +122,8 @@ func buildHunks(ops []diffOp, ctx int) []hunk {
 		if start < 0 {
 			start = 0
 		}
+		// Walk forward through edits, absorbing context up to 2*ctx
+		// between runs before starting a new hunk.
 		j := i
 		for j < len(ops) {
 			if ops[j].kind != ' ' {
@@ -121,7 +140,9 @@ func buildHunks(ops []diffOp, ctx int) []hunk {
 			}
 			break
 		}
+		// Trim trailing edit ops so `end` sits just past the last edit.
 		end := j
+		// Extend with up to ctx trailing context lines.
 		trailing := 0
 		for end < len(ops) && ops[end].kind == ' ' && trailing < ctx {
 			end++
@@ -151,6 +172,7 @@ func renderHunk(out *strings.Builder, ops []diffOp, before, after []string, h hu
 			aLen++
 		}
 	}
+	// 1-indexed; empty ranges are emitted as "0,0" per unified-diff convention.
 	hBStart := bStart + 1
 	hAStart := aStart + 1
 	if bLen == 0 {
@@ -166,6 +188,9 @@ func renderHunk(out *strings.Builder, ops []diffOp, before, after []string, h hu
 		case ' ':
 			line := before[o.bIdx]
 			fmt.Fprintf(out, " %s\n", line)
+			// If this context line is the final line of both files and
+			// either side lacks a trailing newline, emit the marker
+			// for the side that's missing it.
 			last := k == len(ops)-1
 			if last {
 				if o.bIdx == len(before)-1 && !bHadNL {

@@ -21,7 +21,7 @@ func SaveMarkdown(dir string, messages []llama.ChatMessage) (string, error) {
 	b.WriteString("Saved: " + time.Now().Format(time.RFC3339) + "\n\n")
 
 	for _, msg := range messages {
-		role := strings.Title(msg.Role)
+		role := transcriptTitle(msg.Role)
 		if role == "" {
 			role = "Message"
 		}
@@ -34,4 +34,12 @@ func SaveMarkdown(dir string, messages []llama.ChatMessage) (string, error) {
 		return "", fmt.Errorf("write transcript: %w", err)
 	}
 	return filename, nil
+}
+
+func transcriptTitle(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
 }

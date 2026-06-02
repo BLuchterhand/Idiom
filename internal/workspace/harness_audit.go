@@ -28,8 +28,8 @@ const (
 
 var harnessAuditGateMetadataIntroducedAt = time.Date(2026, 5, 24, 23, 56, 18, 0, time.UTC)
 var harnessAuditBehaviorFindingsIntroducedAt = time.Date(2026, 5, 26, 7, 30, 0, 0, time.UTC)
-var harnessAuditLifecycleCloseoutIntroducedAt = time.Date(2026, 5, 25, 0, 0, 0, 0, time.UTC)
-var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 5, 26, 7, 30, 0, 0, time.UTC)
+var harnessAuditLifecycleCloseoutIntroducedAt = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
+var harnessAuditTurnPhaseProjectionIntroducedAt = time.Date(2026, 6, 2, 0, 0, 0, 0, time.UTC)
 
 type harnessAuditReport struct {
 	GeneratedAt             string                       `json:"generated_at"`
@@ -1638,10 +1638,6 @@ func auditStringFromRaw(raw json.RawMessage) string {
 		return ""
 	}
 	return strings.TrimSpace(value)
-}
-
-func unmarshalHarnessAuditAutonomyEvent(raw []byte) (autonomy.Event, error) {
-	return unmarshalHarnessAuditAutonomyEventWithOptions(raw, harnessAuditAutonomyDecodeOptions{})
 }
 
 func unmarshalHarnessAuditAutonomyEventWithOptions(raw []byte, opts harnessAuditAutonomyDecodeOptions) (autonomy.Event, error) {

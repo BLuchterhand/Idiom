@@ -280,10 +280,6 @@ func RunReleaseMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writ
 	}
 }
 
-func runReleaseEvidence(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runReleaseEvidenceWithDeps(args, stdout, stderr, rec, Dependencies{})
-}
-
 func runReleaseEvidenceWithDeps(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
 	fs := flag.NewFlagSet("idiom release evidence", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -1119,15 +1115,7 @@ func releaseReadinessFromProduct(rows []productEvidenceReleaseGateLinkage, clien
 	rows = releaseGateLinkageFromProduct(rows, clients, activation)
 	out := make([]releaseEvidenceGateReadiness, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, releaseEvidenceGateReadiness{
-			Gate:        row.Gate,
-			Status:      row.Status,
-			Evidence:    row.Evidence,
-			ClaimImpact: row.ClaimImpact,
-			Counts:      row.Counts,
-			Blockers:    row.Blockers,
-			EvidenceIDs: row.EvidenceIDs,
-		})
+		out = append(out, releaseEvidenceGateReadiness(row))
 	}
 	return out
 }
@@ -1376,10 +1364,6 @@ func releaseEvidenceHash(report releaseEvidenceBundle) string {
 	return localops.ContentHash(body)
 }
 
-func releaseEvidenceBuildInfo() releaseEvidenceBuildMetadata {
-	return releaseEvidenceBuildInfoWithDeps(Dependencies{})
-}
-
 func releaseEvidenceBuildInfoWithDeps(deps Dependencies) releaseEvidenceBuildMetadata {
 	deps = currentDependencies(deps)
 	resolvedCommit, resolvedDate := deps.Commit, deps.Date
@@ -1420,10 +1404,6 @@ func releaseEvidenceCompactBlockers(blockers []releaseEvidenceBlocker) []release
 		out = append(out, blocker)
 	}
 	return out
-}
-
-func sanitizeReleaseEvidenceTelemetryArgs(args []string) []string {
-	return SanitizeReleaseEvidenceTelemetryArgs(args)
 }
 
 func SanitizeReleaseEvidenceTelemetryArgs(args []string) []string {

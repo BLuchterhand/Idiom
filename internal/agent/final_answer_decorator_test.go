@@ -181,6 +181,7 @@ func TestDecorateFinalAnswerSynthesizesReadOnlySourceReturnAnswer(t *testing.T) 
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
 		PermissionProfile: "read_only_workspace",
+		Objective:         "What does internal/labels/labels.go ShortLabel return?",
 	}
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
@@ -197,15 +198,91 @@ func TestDecorateFinalAnswerSynthesizesReadOnlySourceReturnAnswer(t *testing.T) 
 		Results:    results,
 		UserFacing: true,
 	})
-	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\"", "No files were changed"} {
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
 	}
-	for _, forbidden := range []string{"Changing that returned string", "would be the source edit"} {
+	for _, forbidden := range []string{"Changing that returned string", "would be the source edit", "No files were changed", "contains `func ShortLabel"} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated answer should not infer edit advice %q:\n%s", forbidden, got)
 		}
+	}
+}
+
+func TestDecorateFinalAnswerBudgetStopDoesNotPreserveRetainedContextScaffold(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does internal/labels/labels.go ShortLabel return?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
+		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}\n",
+	}}
+	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "tool_step_budget_exhausted",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated budget-stop answer missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "retained source context identifies") {
+		t.Fatalf("budget-stop scaffold should not bypass decoration:\n%s", got)
+	}
+}
+
+func TestPresentableReadFileSourceAnswerSkipsGeneratedArtifacts(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain internal/app/history.go rendering.",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-5 (total lines: 5)",
+		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}\n",
+	}}
+	if answer, ok := presentableReadFileSourceAnswer(brief, results, ""); ok {
+		t.Fatalf("generated artifacts must not be converted into source-body answers, got %q", answer)
+	}
+}
+
+func TestDecorateFinalAnswerDoesNotPromoteGeneratedArtifactGarbage(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain how discovery tools help debug this codebase.",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-5 (total lines: 5)",
+		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}\n",
+	}}
+	answer := "The inspected source in `.idiom/comprehension/views/context.json` contains `1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}`. No files were changed.\n\nWhat this establishes:\n- 1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}"
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "tool_step_budget_exhausted",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	if strings.Contains(got, ".idiom/comprehension/views/context.json") || strings.Contains(got, "candidate_files") {
+		t.Fatalf("generated context artifact must not become a user-facing grounded answer:\n%s", got)
 	}
 }
 
@@ -231,10 +308,13 @@ func TestDecorateFinalAnswerAnswersReadOnlyTextChangeQuestion(t *testing.T) {
 		Results:    results,
 		UserFacing: true,
 	})
-	for _, want := range []string{"At the source level, yes", "internal/labels/labels.go", "\"Save changes\"", "No files were changed"} {
+	for _, want := range []string{"At the source level, yes", "internal/labels/labels.go", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "No files were changed") || strings.Contains(got, "contains `func ShortLabel") {
+		t.Fatalf("decorated answer should not echo source-body transcript:\n%s", got)
 	}
 	if strings.Contains(got, "tool: read_file") || strings.Contains(got, `{"tool"`) {
 		t.Fatalf("decorated answer leaked internal tool request:\n%s", got)
@@ -262,13 +342,237 @@ func TestDecorateFinalAnswerTreatsLineOrientedJSONToolAsInternal(t *testing.T) {
 		Results:    results,
 		UserFacing: true,
 	})
-	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\"", "No files were changed"} {
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "\"Save changes\""} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("decorated answer missing %q:\n%s", want, got)
 		}
 	}
+	if strings.Contains(got, "No files were changed") || strings.Contains(got, "contains `func ShortLabel") {
+		t.Fatalf("decorated answer should not echo source-body transcript:\n%s", got)
+	}
 	if strings.Contains(got, "tool: read_file") || strings.Contains(got, `{"tool"`) {
 		t.Fatalf("decorated answer leaked internal tool request:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerSynthesizesRoutedCodeNavigateSourceBodyAnswer(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain how task delegation isolates child runs.",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Runner.launchReadOnlyChild in internal/agent/runner.go lines 100-150",
+			"100:func (r *Runner) launchReadOnlyChild() {",
+			"101:\tpolicy := RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}",
+			"102:\tbrief := RuntimeBriefForRole(\"read_only_child\")",
+			"103:\tchild := Runner{PermissionPolicy: readOnlyChildTaskPermissionPolicy(), RuntimeBrief: brief}",
+			"104:\tchild.DisableTaskTool = true",
+			"105:\tchild.Run(ctx, request)",
+			"106:}",
+		}, "\n"),
+	}}
+	answer := "Partial findings from this turn (the model stopped before a full synthesis):\n\nVerified context:\n- code_navigate internal/agent/runner.go"
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "rejection_retry_blocked",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{
+		"Runner.launchReadOnlyChild",
+		"internal/agent/runner.go",
+		"assigns `policy` from `RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}`",
+		"assigns `brief` from `RuntimeBriefForRole(\"read_only_child\")`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("decorated answer missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"bounded execution policy",
+		"child-scoped runtime context",
+		"disables nested task delegation",
+		"nested child runner",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("decorated answer used scenario-specific phrase %q:\n%s", forbidden, got)
+		}
+	}
+	if strings.HasPrefix(got, "<<QUESTION>>") || strings.Contains(got, "did not retain a concrete user-facing finding") {
+		t.Fatalf("routed source-body evidence should synthesize a concrete answer, got:\n%s", got)
+	}
+}
+
+func TestPresentableExactProbeAnswerAcceptsReadOnlyCapabilitySourceBody(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain the child runner policy.",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_only_capability",
+		Summary: "Read-only capability routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"route_summary: Read Runner.childPolicy in internal/agent/runner.go lines 20-40",
+			"20:func (r *Runner) childPolicy() RunPolicy {",
+			"21:\treturn RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}",
+			"22:}",
+		}, "\n"),
+	}}
+
+	got, ok := presentableExactProbeAnswer(brief, results)
+	if !ok {
+		t.Fatal("expected routed read_only_capability source body to be presentable")
+	}
+	for _, want := range []string{"Runner.childPolicy", "internal/agent/runner.go", "returns `RunPolicy{MaxToolSteps: 4, MaxModelCalls: 2}`"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("presentable answer missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestExactProbeObservationsUseGenericSourceFacts(t *testing.T) {
+	output := strings.Join([]string{
+		"10:func run() string {",
+		"11:\tpolicy := RunPolicy{MaxToolSteps: 4}",
+		"12:\tchild.DisableTaskTool = true",
+		"13:\tchild.Run(ctx, request)",
+		"14:\treturn policy.Name",
+		"15:}",
+	}, "\n")
+
+	got := strings.Join(exactProbeObservations("run", output), " ")
+	for _, want := range []string{
+		"assigns `policy` from `RunPolicy{MaxToolSteps: 4}`",
+		"sets `child.DisableTaskTool` to `true`",
+		"returns `policy.Name`",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("generic exact-probe observations missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"delegated prompt",
+		"bounded execution policy",
+		"child-scoped runtime context",
+		"permission policy",
+		"nested task delegation",
+		"nested child runner",
+		"child answer",
+		"task-result/evidence flow",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("exact-probe observation used scenario-specific phrase %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestExactProbeObservationsDoNotInferChildRuntimeSemantics(t *testing.T) {
+	output := strings.Join([]string{
+		"10:func inspect() {",
+		"11:\tnormalizeReadOnlyChildPrompt(prompt)",
+		"12:\tRuntimeBriefForRole(\"read_only_child\")",
+		"13:\treadOnlyChildTaskPermissionPolicy()",
+		"14:\tchild.Run(ctx, request)",
+		"15:\taugmentDelegatedReadOnlyPacket(packet)",
+		"16:}",
+	}, "\n")
+
+	got := strings.Join(exactProbeObservations("inspect", output), " ")
+	if !strings.Contains(got, "calls ") {
+		t.Fatalf("expected generic call observation, got:\n%s", got)
+	}
+	for _, want := range []string{
+		"normalizeReadOnlyChildPrompt",
+		"RuntimeBriefForRole",
+		"readOnlyChildTaskPermissionPolicy",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("generic call observation missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"rewrites the delegated prompt",
+		"bounded execution policy",
+		"child-scoped runtime context",
+		"permission policy instead of inheriting unrestricted access",
+		"nested task delegation",
+		"nested child runner",
+		"folds the child answer",
+		"task-result/evidence flow",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("exact-probe observation inferred scenario semantics %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestPresentableExactProbeAnswerRejectsRoutedNonBodyEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain the runner.",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed file_outline via go_file_outline",
+			Output:  "capability: file_outline\nroute_summary: Outlined 2 top-level declaration(s) in internal/agent/runner.go.",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"route_summary: Read Candidate in .idiom/comprehension/views/context.json lines 1-2",
+				"1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}",
+			}, "\n"),
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  `route_summary: Go symbol read path-filter miss; found 1 candidate anchor(s) for "Runner.Run"`,
+		},
+	}
+
+	if got, ok := presentableExactProbeAnswer(brief, results); ok {
+		t.Fatalf("non-body routed evidence must not be presentable, got:\n%s", got)
+	}
+}
+
+func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"route_summary: Read Model.renderMessages in internal/app/rendering.go lines 459-520",
+			"459:func (m *Model) renderMessages() {",
+			"460:\tm.messagesViewport.SetContent(rendered)",
+			"461:}",
+		}, "\n"),
+	}}
+
+	symbols := exactEvidenceSymbolSet(results)
+	for _, want := range []string{"Model.renderMessages", "SetContent"} {
+		key := normalizedAnswerSymbol(want)
+		if _, ok := symbols[key]; !ok {
+			t.Fatalf("exact evidence symbol set missing %q (%q): %#v", want, key, symbols)
+		}
 	}
 }
 
@@ -298,7 +602,7 @@ func TestPresentableNoToolsFallbackDoesNotReadWorkspaceFromPathOnlyEvidence(t *t
 	}
 }
 
-func TestPresentableNoToolsFallbackUsesSearchEvidenceBody(t *testing.T) {
+func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -313,12 +617,30 @@ func TestPresentableNoToolsFallbackUsesSearchEvidenceBody(t *testing.T) {
 
 	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
 	if !ok {
-		t.Fatal("expected presentable fallback answer")
+		t.Fatal("expected fallback to convert unsupported scaffold into a blocker")
 	}
-	for _, want := range []string{"internal/labels/labels.go", "\"Save changes\"", "No files were changed"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("fallback answer missing %q:\n%s", want, got)
-		}
+	if !strings.HasPrefix(got, "<<QUESTION>>:") {
+		t.Fatalf("expected blocker for search-only source evidence, got:\n%s", got)
+	}
+	if strings.Contains(got, "\"Save changes\"") {
+		t.Fatalf("search hit text must not be promoted to source-body evidence:\n%s", got)
+	}
+}
+
+func TestPresentableEvidenceBodySourceAnswerRejectsSearchHits(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does ShortLabel return?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line(s).",
+		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+	}}
+	if got, ok := presentableEvidenceBodySourceAnswer(brief, results); ok {
+		t.Fatalf("literal search hit must not be rendered as source-body answer:\n%s", got)
 	}
 }
 
@@ -356,7 +678,11 @@ func TestPresentableNoToolsFallbackPreservesSubstantiveAnswerAfterStrippingAppen
 		Contract:          "direct_answer",
 		PermissionProfile: "read_only_workspace",
 	}
-	results := []workspace.ToolResult{}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/app/history.go lines 1-80",
+		Output:  "package app\n\nfunc RenderHistory() {}\n",
+	}}
 	answer := "The implementation lives in internal/app/history.go. " +
 		"The key function is RenderHistory which handles display layout " +
 		"and wraps content based on available terminal width. " +
@@ -458,8 +784,11 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 		{Tool: "context_query", Summary: "Context query returned 12 nodes"},
 	}
 	got := synthesizeBriefConversationFallback(brief, results)
-	if !strings.Contains(got, "inspected") {
-		t.Errorf("fallback should mention inspected paths: %q", got)
+	if !strings.HasPrefix(got, "<<QUESTION>>:") {
+		t.Errorf("fallback should be a typed blocker, got: %q", got)
+	}
+	if !strings.Contains(got, "Evidence paths") {
+		t.Errorf("fallback should mention evidence paths: %q", got)
 	}
 	if !strings.Contains(got, "Read Model.resize in internal/app/model_state.go lines 774-820") {
 		t.Errorf("fallback should retain source anchors without dumping source body: %q", got)
@@ -473,7 +802,7 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	if strings.Contains(strings.ToLower(got), "budget") {
 		t.Errorf("fallback must not claim budget exhaustion without a budget-exhausted stop reason: %q", got)
 	}
-	if !strings.Contains(got, "full narrative answer") {
+	if !strings.Contains(got, "did not retain a concrete user-facing finding") {
 		t.Errorf("fallback should identify the actual failure class: %q", got)
 	}
 }
@@ -487,6 +816,7 @@ func TestDecorateFinalAnswerConversationFallbackDoesNotInventBudgetExhaustion(t 
 			TaskFamily:        "conversation",
 			Contract:          "direct_answer",
 			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain internal/architect/packet.go.",
 		},
 		Results: []workspace.ToolResult{
 			{Tool: "read_file", Summary: "Read file: internal/architect/packet.go", Output: "type Evidence struct {...}"},
@@ -526,8 +856,8 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *tes
 	if strings.Contains(got, "No files were changed") {
 		t.Errorf("source-body extraction garbage leaked into conversation fallback: %q", got)
 	}
-	if !strings.Contains(got, "inspected") {
-		t.Errorf("fallback should provide useful context: %q", got)
+	if !strings.Contains(got, "Evidence paths") {
+		t.Errorf("fallback should provide useful evidence context: %q", got)
 	}
 }
 
@@ -574,5 +904,38 @@ func TestDeterministicNoToolsAnswerSkipsSourceBodyForReadOnlyConversation(t *tes
 	}
 	if !strings.Contains(got, "internal/labels/labels.go") {
 		t.Errorf("fallback should retain inspected path context: %q", got)
+	}
+}
+
+func TestDeterministicNoToolsAnswerUsesSourceBodyWhenObjectiveIsConcrete(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What is the debug log redacted mode alternative?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/transcript/debuglog.go lines 1-20",
+		Output: strings.Join([]string{
+			"1:package transcript",
+			"2:",
+			"3:const DebugLogModeRedacted = \"redacted\"",
+			"4:const DebugLogModeFull = \"full\"",
+			"5:// Debug log redacted mode omits prompts and tool payloads.",
+		}, "\n"),
+	}}
+
+	got, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic source-body answer")
+	}
+	for _, want := range []string{"debug log redacted mode", "internal/transcript/debuglog.go", "DebugLogModeRedacted", "DebugLogModeFull"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("deterministic answer missing %q:\n%s", want, got)
+		}
+	}
+	if strings.HasPrefix(got, "<<QUESTION>>") || strings.Contains(got, "did not retain a concrete user-facing finding") {
+		t.Fatalf("concrete objective and source body should not collapse to blocker:\n%s", got)
 	}
 }

@@ -30,6 +30,14 @@ func normalizeHistoryRole(role string) string {
 	}
 }
 
+func titleDisplay(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return strings.ToUpper(value[:1]) + value[1:]
+}
+
 type eventMsg struct {
 	msg tea.Msg
 }
@@ -46,10 +54,4 @@ func (m *Model) waitForEventCmd() tea.Cmd {
 	}
 	m.eventWaitArmed = true
 	return waitForEvent(m.events)
-}
-
-func normalizeGuardedPath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.TrimPrefix(path, "./")
-	return path
 }

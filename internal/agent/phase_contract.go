@@ -666,12 +666,17 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 	contract.PhaseID = turnPhaseGeneric
 	contract.Phase = "generic"
 	contract.DerivationReason = "no_specialized_phase_matched"
+	allowedClasses := genericAllowedActionClasses(contract.AllowedTools)
 	contract.TerminalOutcomes = []string{"final answer", "<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   []string{actionFinalAnswer, actionBlocker},
+		AllowedActionClasses:   allowedClasses,
 		InvalidActionClasses:   nil,
 		TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
 		CallableToolNames:      contract.AllowedTools,
+	}
+	if phaseEvidenceHasOpenObligation(contract.EvidenceState) {
+		contract.ActionPolicy.AllowedActionClasses = removePhaseActionClass(contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+		contract.ActionPolicy.InvalidActionClasses = append(contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	}
 	if brief.Readiness != nil && brief.Readiness.ReadyToVerify {
 		contract.ActionPolicy.AllowedActionClasses = []string{actionVerify, actionBlocker}
@@ -680,14 +685,14 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 	if genericReadOnlyEvidenceReady(brief, results) {
 		contract.Phase = "read_only_evidence_available"
 		contract.DerivationReason = "read_only_workspace_evidence_available"
-		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
-		contract.RequiredNext = []string{"final answer if the evidence is sufficient, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
-		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "repeated broad or identical read/search"}
+		contract.AllowedTools = nil
+		contract.RequiredNext = []string{"final answer from the gathered evidence, or <<QUESTION>> with the exact unsupported claim and missing evidence source"}
+		contract.InvalidNext = []string{"workspace read/search after evidence is sufficient", "workspace write", "shell/mutating command", "repeated broad or identical read/search"}
 		contract.ActionPolicy = TurnActionClassPolicy{
-			AllowedActionClasses:   []string{actionRead, actionSearch, actionFinalAnswer, actionBlocker},
-			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify, actionGenericProbe},
+			AllowedActionClasses:   []string{actionFinalAnswer, actionBlocker},
+			InvalidActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionVerify, actionGenericProbe},
 			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
-			CallableToolNames:      contract.AllowedTools,
+			CallableToolNames:      nil,
 		}
 		contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
 		return
@@ -708,6 +713,38 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
 }
 
+func genericAllowedActionClasses(tools []string) []string {
+	classes := []string{actionFinalAnswer, actionBlocker}
+	for _, tool := range tools {
+		switch strings.TrimSpace(tool) {
+		case "read_file", "code_navigate", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_definition", "file_stats", "read_only_capability":
+			classes = append(classes, actionRead)
+		case "list_files", "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom", "structural_search", "mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
+			classes = append(classes, actionSearch)
+		case "submit_plan":
+			classes = append(classes, actionSubmitPlan)
+		case "edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "delegate_edit":
+			classes = append(classes, actionPerEditWrite)
+		case "shell", "source_sanity", "git_diff", "git_status", "context_trace_pack":
+			classes = append(classes, actionVerify)
+		case "task":
+			classes = append(classes, actionGenericProbe)
+		}
+	}
+	return uniquePhaseStrings(classes)
+}
+
+func removePhaseActionClass(classes []string, remove string) []string {
+	var out []string
+	for _, class := range classes {
+		if strings.TrimSpace(class) == remove {
+			continue
+		}
+		out = append(out, class)
+	}
+	return uniquePhaseStrings(out)
+}
+
 func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
 		return false
@@ -719,7 +756,7 @@ func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, result
 		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
 		return conversationEvidenceSatisfiedForObjective(brief, results)
 	}
-	return false
+	return genericReadOnlyAnswerEvidenceReady(brief, results)
 }
 
 func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allowedTools []string, results []workspace.ToolResult) bool {
@@ -738,45 +775,17 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 		if genericReadOnlyEvidenceReady(brief, results) {
 			return false
 		}
-	} else if genericReadOnlyAnswerEvidenceReady(results) {
+	} else if genericReadOnlyAnswerEvidenceReady(brief, results) {
 		return false
 	}
 	return len(genericReadOnlyEvidenceTools(allowedTools)) > 0
 }
 
-func genericReadOnlyAnswerEvidenceReady(results []workspace.ToolResult) bool {
+func genericReadOnlyAnswerEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if conversationBroadDiscoveryRejectionRecorded(results) {
 		return true
 	}
-	for _, result := range results {
-		if strings.TrimSpace(result.Tool) == "task" && strings.TrimSpace(result.Error) == "" && childPacketContainsGroundedAnswerEvidence("", result.Output) {
-			return true
-		}
-		if concreteSourceEvidenceResult(result) {
-			return true
-		}
-	}
-	return readOnlyAnalysisReadyFromEvidence(results)
-}
-
-func genericReadOnlyEvidenceSeen(results []workspace.ToolResult) bool {
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		tool := strings.TrimSpace(result.Tool)
-		if tool == "code_navigate" && (!routedSourceReadOutputHasBody(result.Output) || len(readPathsFromToolResult(result)) == 0) {
-			continue
-		}
-		switch tool {
-		case "task", "context_pack", "context_query", "context_zoom", "discovery_query",
-			"search_files", "search_content", "read_file", "code_navigate",
-			"file_stats", "structural_search",
-			"mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
-			return true
-		}
-	}
-	return false
+	return readOnlyClosureDecisionForResults(brief, results).Answerable()
 }
 
 func genericReadOnlyEvidenceTools(tools []string) []string {
@@ -1131,7 +1140,7 @@ func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contra
 		return false
 	}
 	switch strings.TrimSpace(contract.Phase) {
-	case "generic", "read_only_evidence_pending", "read_only_evidence_available":
+	case "generic", "read_only_evidence_pending":
 		return true
 	default:
 		return false

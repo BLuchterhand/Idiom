@@ -1,9 +1,6 @@
 package featureplanner
 
-import (
-	"errors"
-	"fmt"
-)
+import "fmt"
 
 type ActionError struct {
 	Action string
@@ -20,16 +17,4 @@ type ReplayError struct {
 
 func (e ReplayError) Error() string {
 	return e.Message
-}
-
-func errInvalidAction(action, state string) error {
-	return ActionError{Action: action, State: state}
-}
-
-func errReplayf(format string, args ...any) error {
-	return ReplayError{Message: fmt.Sprintf(format, args...)}
-}
-
-func errorsJoin(errs []error) error {
-	return errors.Join(errs...)
 }

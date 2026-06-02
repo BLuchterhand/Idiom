@@ -184,19 +184,6 @@ func filterJavaCallMatches(matches []semantic.JavaCallMatch, pathFilter string) 
 	return out
 }
 
-func filterJavaRelatedPaths(paths []string, pathFilter string) []string {
-	if pathFilter == "" {
-		return paths
-	}
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if pathMatchesFilter(path, pathFilter) {
-			out = append(out, path)
-		}
-	}
-	return out
-}
-
 func (m *Manager) selectJavaSymbolMatch(req ToolRequest) (semantic.JavaSymbolMatch, error) {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
@@ -361,19 +348,8 @@ func (m *Manager) javaRelatedFiles(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "java_related_files", Summary: "Java related-file search unavailable", Error: err.Error()}
 	}
-	paths := filterJavaRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.javaPathFilter(req.Path))
-	if len(paths) == 0 {
-		return ToolResult{Tool: "java_related_files", Summary: fmt.Sprintf("No related Java files matched %q", pattern)}
-	}
-	lines := make([]string, 0, len(paths))
-	for _, rel := range paths {
-		display, err := m.javaHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, display)
-	}
-	return ToolResult{Tool: "java_related_files", Summary: fmt.Sprintf("Found %d related Java file(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	paths := filterRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.javaPathFilter(req.Path))
+	return m.relatedFilesResult("java_related_files", "Java", pattern, paths, m.javaHandleDisplay)
 }
 
 func (m *Manager) javaWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {

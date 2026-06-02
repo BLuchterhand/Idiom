@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/llama"
+	"idiom/internal/planexecute"
 	"idiom/internal/workspace"
 )
 
@@ -272,7 +273,7 @@ func (m *Model) recordWriteSuccess(step int, req workspace.ToolRequest, result w
 		if data, err := os.ReadFile(abs); err == nil {
 			after = string(data)
 		}
-		diff := unifiedDiff(snap.Path, snap.Before, after)
+		diff := planexecute.UnifiedDiff(snap.Path, snap.Before, after)
 		id := newPlanEntryID()
 		m.appendPlanDiffEntry(planDiffEntry{
 			ID:          id,
@@ -957,10 +958,7 @@ func (m *Model) recordSubmittedPlan(req workspace.ToolRequest, result workspace.
 	content := string(existing)
 
 	var b strings.Builder
-	rest, hasSection := cutPlanSection(content, "### Plan")
-	if hasSection {
-		// Drop the old ### Plan section; we'll rewrite it.
-	}
+	rest, _ := cutPlanSection(content, "### Plan")
 	b.WriteString(rest)
 	if !strings.HasSuffix(rest, "\n") {
 		b.WriteString("\n")

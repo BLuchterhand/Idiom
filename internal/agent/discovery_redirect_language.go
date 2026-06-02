@@ -16,31 +16,6 @@ func searchContentTargetsConcreteFile(req workspace.ToolRequest) bool {
 	return filepath.Ext(filepath.Base(path)) != ""
 }
 
-func pathLooksTestLike(path string) bool {
-	normalized := strings.ToLower(strings.ReplaceAll(filepath.ToSlash(strings.TrimSpace(path)), "\\", "/"))
-	if normalized == "" {
-		return false
-	}
-	parts := strings.Split(normalized, "/")
-	for _, part := range parts[:len(parts)-1] {
-		switch part {
-		case "test", "tests", "__tests__", "spec", "specs", "fixtures":
-			return true
-		}
-	}
-	base := strings.TrimSuffix(filepath.Base(normalized), filepath.Ext(normalized))
-	if base == "" {
-		return false
-	}
-	return strings.HasPrefix(base, "test_") ||
-		strings.HasSuffix(base, "_test") ||
-		strings.HasSuffix(base, "_tests") ||
-		strings.HasPrefix(base, "spec_") ||
-		strings.HasSuffix(base, "_spec") ||
-		strings.Contains(normalized, ".test.") ||
-		strings.Contains(normalized, ".spec.")
-}
-
 // languageForSearchRequest infers a language for a generic search_content
 // request from the strongest available signal. It deliberately avoids
 // guessing: ambiguous syntax in a polyglot workspace falls through to the

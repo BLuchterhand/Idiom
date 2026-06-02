@@ -86,7 +86,11 @@ func (m *Model) View() string {
 	if footer != "" {
 		parts = append(parts, footer)
 	}
-	return lipgloss.JoinVertical(lipgloss.Left, parts...)
+	view := lipgloss.JoinVertical(lipgloss.Left, parts...)
+	if popup := m.renderModelPopup(w, max(0, m.height)); popup != "" {
+		view = lipgloss.JoinVertical(lipgloss.Left, view, popup)
+	}
+	return view
 }
 
 func (m *Model) requestMessages() []llama.ChatMessage {
@@ -648,7 +652,7 @@ func (m *Model) renderSingleMessage(msg llama.ChatMessage, msgBodyStyle lipgloss
 		}
 		label = toolLabelStyle.Render("▶ " + toolName)
 	default:
-		label = systemLabelStyle.Render(strings.Title(msg.Role))
+		label = systemLabelStyle.Render(titleDisplay(msg.Role))
 	}
 
 	var b strings.Builder

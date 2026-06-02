@@ -1,4 +1,5 @@
 package refine
+
 import (
 	"bytes"
 	"cmp"
@@ -14,9 +15,9 @@ import (
 	"strings"
 	"time"
 
+	"idiom/internal/cliassets"
 	atomcmd "idiom/internal/cmd/atom"
 	briefcmd "idiom/internal/cmd/brief"
-	"idiom/internal/cliassets"
 	"idiom/internal/refinescope"
 	"idiom/internal/telemetry"
 )
@@ -90,7 +91,6 @@ type refineDispatchFn func(metaBriefPath string, stdout, stderr io.Writer) int
 
 type Options = laneRefineOptions
 type DispatchFunc = refineDispatchFn
-type briefLintFinding = briefcmd.LintFinding
 type briefLintReport = briefcmd.LintReport
 
 func Run(opts Options, dispatch DispatchFunc, stdout, stderr io.Writer) int {
@@ -107,10 +107,6 @@ func atomSpecDispatchBlocker(specBody string) string {
 
 func runBriefLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return briefcmd.RunLint(args, stdout, stderr, rec)
-}
-
-func parseBriefLintFindings(briefPath, combined string) []briefLintFinding {
-	return briefcmd.ParseLintFindings(briefPath, combined)
 }
 
 var laneBriefLintRunner = func(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -161,10 +157,6 @@ func refinePhaseRouting(metaBriefPath string) (pool, model string, maxTokens int
 	default: // "draft"
 		return refineDefaultPool, refineDefaultModel, 16384
 	}
-}
-
-func defaultRefineDispatch(metaBriefPath string, stdout, stderr io.Writer) int {
-	return defaultRefineDispatchWithConfig(metaBriefPath, "", stdout, stderr)
 }
 
 func defaultRefineDispatchWithConfig(metaBriefPath string, configPath string, stdout, stderr io.Writer) int {
@@ -1183,14 +1175,6 @@ func extractDeliverableTargets(specBody, mode string) []string {
 	return refinescope.ExtractDeliverableTargets(specBody, mode)
 }
 
-// extractDeliverableTarget preserves the legacy single-target helper
-// contract for tests and older callers. New refine code should use
-// extractDeliverableTargets so anchored specs can carry a complete
-// multi-file allowlist.
-func extractDeliverableTarget(specBody string) string {
-	return firstRefineDeliverableTarget(extractDeliverableTargets(specBody, refineDetectMode(specBody)))
-}
-
 // refineDeliverableTargetMismatch returns a formatted BLOCK string
 // (suitable for prepending to lint output) when the brief's Files To
 // Modify allowlist does NOT reference the extracted deliverable
@@ -1250,14 +1234,6 @@ func normalizeRefineTargets(targets []string) []string {
 	return refinescope.NormalizeTargets(targets)
 }
 
-func normalizeRefinePath(path string) string {
-	return refinescope.NormalizePath(path)
-}
-
-func filterRefineFilePaths(candidates []string) []string {
-	return refinescope.FilterFilePaths(candidates)
-}
-
 func bodyContainsAnyRefineTarget(body string, targets []string) bool {
 	for _, target := range targets {
 		if strings.Contains(body, target) {
@@ -1303,31 +1279,6 @@ func refineFormatBacktickList(targets []string) string {
 // "foo.md") don't trip the BLOCK.
 func pathsEquivalent(a, b string) bool {
 	return refinescope.PathsEquivalent(a, b)
-}
-
-// pathLooksLikeSource returns true when the path ends in a known
-// source-extension. Used by extractDeliverableTarget to skip source
-// citations (anchored-edits mode) when looking for the deliverable
-// target of a markdown-shape atom.
-func pathLooksLikeSource(path string) bool {
-	return refinescope.PathLooksLikeSource(path)
-}
-
-func pathLooksLikeFile(path string) bool {
-	return refinescope.PathLooksLikeFile(path)
-}
-
-func refineKnownFileExtension(ext string) bool {
-	return refinescope.KnownFileExtension(ext)
-}
-
-// extensionMentioned reports whether `ext` (e.g. ".m") appears in
-// `text` as a real file extension — followed by a non-alphabetic
-// character or end-of-string. Plain strings.Contains fails here
-// because ".m" is a substring of ".md", which leaks Objective-C
-// matches into every Markdown-only spec.
-func extensionMentioned(text, ext string) bool {
-	return refinescope.ExtensionMentioned(text, ext)
 }
 
 func writeRefineReviewMeta(metaPath, draftPath, reviewPath, projectRoot, lintOutput string) error {
@@ -2105,28 +2056,6 @@ func refineDraftIsTrivial(path string) (bool, string) {
 		return true, "no-section-heading"
 	}
 	return false, ""
-}
-
-func finalizeRefine(draftPath, outputPath string, iter int, reason string, stderr io.Writer) int {
-	return finalizeRefineWithTitle(draftPath, outputPath, "", iter, reason, stderr)
-}
-
-// finalizeRefineWithTitle is the marker-aware variant. The marker line
-// becomes the FIRST non-warning line of the output brief so
-// detectBriefProvenance can identify refine-drafted briefs in lane
-// history. Reads draft, renders the final artifact shape, lints that
-// exact artifact, then writes output.
-//
-// Exit-code contract (Colony's Q4 review, 2026-05-11): ONLY a
-// `ship-as-is` reason returns 0. Every other reason (failsoft-*,
-// diverging, no-improvement, max-iters-exhausted) returns non-zero
-// AND prepends a sentinel WARNING blockquote so the artifact is
-// self-documenting. The orchestrator must inspect rather than auto-
-// pipe to plan-execute on non-zero exits. Saving the best draft on
-// non-zero exit preserves debugging signal — the dichotomy isn't
-// "save vs. fail-loud", it's "save AND fail-loud."
-func finalizeRefineWithTitle(draftPath, outputPath, title string, iter int, reason string, stderr io.Writer) int {
-	return finalizeRefineWithTitleAndOverlay(draftPath, outputPath, title, iter, reason, "", "", nil, stderr)
 }
 
 // finalizeRefineWithTitleAndOverlay is the §2.4-aware finalize path.

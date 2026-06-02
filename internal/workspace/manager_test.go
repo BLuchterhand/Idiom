@@ -543,6 +543,95 @@ func TestResolveReadPathMissingFileSuggestsStructuredDiscovery(t *testing.T) {
 	}
 }
 
+func TestReadFileRecoversUniqueNormalizedClosestPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "transcript"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "transcript", "debuglog.go"), []byte("package transcript\n\nfunc DebugLog() {}\n"), 0o644); err != nil {
+		t.Fatalf("write source: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "transcript", "debuglog_test.go"), []byte("package transcript\n"), 0o644); err != nil {
+		t.Fatalf("write test: %v", err)
+	}
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+		MaxFileBytes:        65536,
+		MaxOutputBytes:      65536,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "internal/transcript/debug_log.go"})
+	if result.Error != "" {
+		t.Fatalf("expected normalized closest path recovery, got %#v", result)
+	}
+	if !strings.Contains(result.Summary, `Recovered missing read_file path "internal/transcript/debug_log.go" as "internal/transcript/debuglog.go"`) {
+		t.Fatalf("expected recovery summary to name requested and recovered paths, got %q", result.Summary)
+	}
+	if !strings.Contains(result.Output, "func DebugLog()") {
+		t.Fatalf("expected recovered source body, got %#v", result)
+	}
+}
+
+func TestReadFileDoesNotRecoverAmbiguousNormalizedClosestPath(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "transcript"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	for _, name := range []string{"debuglog.go", "debug-log.go"} {
+		if err := os.WriteFile(filepath.Join(dir, "internal", "transcript", name), []byte("package transcript\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+		MaxFileBytes:        65536,
+		MaxOutputBytes:      65536,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "internal/transcript/debug_log.go"})
+	if result.Error == "" {
+		t.Fatalf("ambiguous normalized matches must remain model-visible suggestions, got %#v", result)
+	}
+	if !strings.Contains(result.Output, "Did you mean") {
+		t.Fatalf("expected suggestions to remain available, got %#v", result)
+	}
+}
+
+func TestReadFileDoesNotRecoverClosestPathFromDifferentParentOrExtension(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "transcript"), 0o755); err != nil {
+		t.Fatalf("mkdir transcript: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "internal", "other"), 0o755); err != nil {
+		t.Fatalf("mkdir other: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "other", "debuglog.go"), []byte("package other\n"), 0o644); err != nil {
+		t.Fatalf("write other: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "internal", "transcript", "debuglog.md"), []byte("# debug\n"), 0o644); err != nil {
+		t.Fatalf("write md: %v", err)
+	}
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 100,
+		MaxFileBytes:        65536,
+		MaxOutputBytes:      65536,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "internal/transcript/debug_log.go"})
+	if result.Error == "" {
+		t.Fatalf("different parent or extension must not be auto-read, got %#v", result)
+	}
+	if strings.Contains(result.Summary, "Recovered missing read_file path") {
+		t.Fatalf("unexpected recovery summary: %#v", result)
+	}
+}
+
 func TestResolveReadTargetPrefersExplicitPathOverStaleHandle(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "old.txt"), []byte("old\n"), 0o644); err != nil {

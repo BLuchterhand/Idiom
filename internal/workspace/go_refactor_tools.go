@@ -123,9 +123,7 @@ func goOutlineMoveBatches(parsed *goParsedFile) []goOutlineMoveBatch {
 		if filepath.Clean(destination) == filepath.Clean(parsed.display) {
 			continue
 		}
-		for _, name := range decl.names {
-			groups[file] = append(groups[file], name)
-		}
+		groups[file] = append(groups[file], decl.names...)
 	}
 	files := make([]string, 0, len(groups))
 	for file := range groups {

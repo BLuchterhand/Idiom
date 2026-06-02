@@ -174,10 +174,6 @@ func RunProductEvidenceMainWithTelemetry(args []string, stdout io.Writer, stderr
 	}
 }
 
-func runProductEvidenceExport(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductEvidenceExportWithDeps(args, stdout, stderr, rec, Dependencies{})
-}
-
 func runProductEvidenceExportWithDeps(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, deps Dependencies) int {
 	fs := flag.NewFlagSet("idiom product-evidence export", flag.ContinueOnError)
 	fs.SetOutput(stderr)
@@ -362,13 +358,6 @@ func buildProductEvidenceExportReportWithDeps(root string, summary LaneHistorySu
 	}
 	finalizeProductEvidenceIdentity(&report)
 	return report
-}
-
-func productEvidenceAvailabilityGate(available bool) string {
-	if available {
-		return "partial"
-	}
-	return "not_available"
 }
 
 func productEvidenceStatusWithRecovery(status string, recoveryStatus string) string {
@@ -1666,10 +1655,6 @@ func p910RequiredBaseline(required []string, baseline string) bool {
 	return false
 }
 
-func p911ClientDemoGate(demos p711DemoTranscriptSet, ref productEvidenceSourceReference) productEvidenceReleaseGateLinkage {
-	return p911ClientDemoGateWithDeps(demos, ref, Dependencies{})
-}
-
 func p911ClientDemoGateWithDeps(demos p711DemoTranscriptSet, ref productEvidenceSourceReference, deps Dependencies) productEvidenceReleaseGateLinkage {
 	deps = currentDependencies(deps)
 	required := p711Classifications()
@@ -1855,10 +1840,6 @@ func p911EvaluateDemoTranscript(demo p711DemoTranscript, counts map[string]int, 
 	if malformed {
 		counts["malformed_transcripts"]++
 	}
-}
-
-func p911DemoRunnableCommandEvidence(demo p711DemoTranscript) p911RunnableCommandEvidence {
-	return p911DemoRunnableCommandEvidenceWithDeps(demo, Dependencies{})
 }
 
 func p911DemoRunnableCommandEvidenceWithDeps(demo p711DemoTranscript, deps Dependencies) p911RunnableCommandEvidence {
@@ -2186,10 +2167,6 @@ func p911FlagValue(args []string, flag string) string {
 	return ""
 }
 
-func p911ExecuteDemoCommand(demo p711DemoTranscript, command p711DemoCommand) []string {
-	return p911ExecuteDemoCommandWithDeps(demo, command, Dependencies{})
-}
-
 func p911ExecuteDemoCommandWithDeps(demo p711DemoTranscript, command p711DemoCommand, deps Dependencies) []string {
 	root, err := os.MkdirTemp("", "idiom-p911-demo-")
 	if err != nil {
@@ -2279,10 +2256,6 @@ func p911DemoArgs(args []string, configPath string) []string {
 		}
 	}
 	return copied
-}
-
-func p911RunMainNoTelemetry(args []string, stdout io.Writer, stderr io.Writer) int {
-	return p911RunMainNoTelemetryWithDeps(args, stdout, stderr, Dependencies{})
 }
 
 func p911CommandOutputBlockers(command p711DemoCommand, stdout []byte) []string {
@@ -3968,10 +3941,7 @@ func p99LocalNegationPrefix(prefix string) bool {
 			return true
 		}
 	}
-	if p99ContainsNoAssertionNegation(prefix) {
-		return true
-	}
-	return false
+	return p99ContainsNoAssertionNegation(prefix)
 }
 
 func p99ContainsLocalListNegation(prefix string, negator string) bool {
@@ -4507,10 +4477,6 @@ func p99ProductPrivacyStateFromReport(report productEvidenceExportReport) p99Pro
 		}
 	}
 	return state
-}
-
-func sanitizeProductEvidenceTelemetryArgs(args []string) []string {
-	return SanitizeProductEvidenceTelemetryArgs(args)
 }
 
 func SanitizeProductEvidenceTelemetryArgs(args []string) []string {

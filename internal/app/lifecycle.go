@@ -1161,16 +1161,6 @@ func (m *Model) projectRoot() string {
 	return ""
 }
 
-// loadModeSystemPrompts reads each file named in Mode.SystemPromptFiles
-// and joins their contents into a single trailing system-prompt section.
-// Files already present in the prompt stack are skipped so the same
-// baseline guidance is not sent twice when both config and Mode include it.
-// Unknown or unreadable files are skipped silently so a Mode can list
-// optional fragments without breaking when they're absent.
-func loadModeSystemPrompts(mode agent.Mode, projectRoot string, existing []promptstack.Source) string {
-	return loadModeSystemPromptFragments(mode, projectRoot, existing).Text
-}
-
 type systemPromptFragments struct {
 	Text    string
 	Sources []promptstack.Source

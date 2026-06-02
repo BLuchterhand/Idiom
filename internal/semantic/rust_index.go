@@ -362,53 +362,11 @@ func (idx *RustIndex) FileByPath(path string) *RustFile {
 }
 
 func (idx *RustIndex) rankFiles(scoreFn func(RustFile) int, limit int) []RustFile {
-	scored := make([]struct {
-		file  RustFile
-		score int
-	}, 0, len(idx.Files))
-	for _, file := range idx.Files {
-		score := scoreFn(file)
-		if score <= 0 {
-			continue
-		}
-		scored = append(scored, struct {
-			file  RustFile
-			score int
-		}{file: file, score: score})
-	}
-	slices.SortFunc(scored, func(a, b struct {
-		file  RustFile
-		score int
-	}) int {
-		if c := -cmp.Compare(a.score, b.score); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.file.Path, b.file.Path)
-	})
-	if limit > 0 && len(scored) > limit {
-		scored = scored[:limit]
-	}
-	out := make([]RustFile, 0, len(scored))
-	for _, item := range scored {
-		out = append(out, item.file)
-	}
-	return out
+	return RankFiles(idx.Files, scoreFn, limit)
 }
 
 func (idx *RustIndex) uniqueRankedPaths(files []RustFile, limit int) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		if _, ok := seen[file.Path]; ok {
-			continue
-		}
-		seen[file.Path] = struct{}{}
-		out = append(out, file.Path)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
-	}
-	return out
+	return UniqueRankedPaths(files, limit)
 }
 
 // EntrypointFiles returns paths that look like Rust entrypoints:

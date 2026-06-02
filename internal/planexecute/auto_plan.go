@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"idiom/internal/config"
-	"idiom/internal/workspace"
 	"idiom/internal/plancontract"
+	"idiom/internal/workspace"
 )
 
 type planExecuteAutoExactPlanResult struct {
@@ -24,7 +24,6 @@ type planExecuteAutoExactPlanResult struct {
 	PendingPaths    []string
 	UnknownPaths    []string
 }
-
 
 func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) planExecuteAutoExactPlanResult {
 	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, cfg.Workspace.Root)
@@ -65,7 +64,6 @@ func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditP
 	return classified
 }
 
-
 func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEdit) planExecuteAutoExactPlanResult {
 	var result planExecuteAutoExactPlanResult
 	var appliedPaths []string
@@ -92,7 +90,6 @@ func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEd
 	return result
 }
 
-
 func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
 	var pending []workspace.PlanEdit
 	for _, edit := range edits {
@@ -102,7 +99,6 @@ func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) [
 	}
 	return pending
 }
-
 
 func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
 	path := normalizePlanExecutePath(edit.Path)
@@ -124,7 +120,6 @@ func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string
 	return status
 }
 
-
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	var b strings.Builder
@@ -140,7 +135,6 @@ func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 	}
 	return strings.TrimSpace(b.String())
 }
-
 
 func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
 	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
@@ -161,11 +155,9 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	return scoped
 }
 
-
 func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
 	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredEditPaths)
 }
-
 
 func planExecuteAutoPlanScanTexts(prompt string) []string {
 	texts := []string{prompt}
@@ -176,7 +168,6 @@ func planExecuteAutoPlanScanTexts(prompt string) []string {
 	return texts
 }
 
-
 func planExecuteUnquoteMarkdown(text string) string {
 	lines := strings.Split(text, "\n")
 	changed := false
@@ -186,9 +177,7 @@ func planExecuteUnquoteMarkdown(text string) string {
 			continue
 		}
 		trimmed = strings.TrimPrefix(trimmed, ">")
-		if strings.HasPrefix(trimmed, " ") {
-			trimmed = strings.TrimPrefix(trimmed, " ")
-		}
+		trimmed = strings.TrimPrefix(trimmed, " ")
 		lines[i] = trimmed
 		changed = true
 	}
@@ -198,7 +187,6 @@ func planExecuteUnquoteMarkdown(text string) string {
 	return strings.Join(lines, "\n")
 }
 
-
 func planExecuteImplicitNewFileBodyContext(contextText string) bool {
 	lower := strings.ToLower(contextText)
 	return strings.Contains(lower, "create ") ||
@@ -206,4 +194,3 @@ func planExecuteImplicitNewFileBodyContext(contextText string) bool {
 		strings.Contains(lower, "full file body") ||
 		strings.Contains(lower, "following content")
 }
-

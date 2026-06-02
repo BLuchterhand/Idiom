@@ -36,7 +36,7 @@ const maxObligationResolutionAttempts = 3
 
 func sourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
 	path = normalizeRunnerPath(path)
-	if path == "" {
+	if path == "" || isNonSourceEvidenceArtifactPath(path) {
 		return planThenExecuteSourceEvidence{}
 	}
 	best := planThenExecuteSourceEvidence{Path: path}
@@ -77,6 +77,9 @@ func sourceEvidenceBodyPaths(results []workspace.ToolResult) []string {
 		for _, path := range readPathsFromToolResult(result) {
 			normalized := normalizeRunnerPath(path)
 			if normalized == "" {
+				continue
+			}
+			if isNonSourceEvidenceArtifactPath(normalized) {
 				continue
 			}
 			if !sourceEvidenceBodyReadForPath(normalized, results) {
@@ -179,6 +182,12 @@ func sourceEvidencePathSharesObjectiveTerm(path string, objective string) bool {
 	}
 	for _, term := range implementationPathTerms(path) {
 		if _, ok := objectiveTerms[term]; ok {
+			return true
+		}
+	}
+	compactPath := strings.ToLower(strings.Join(implementationPathTerms(path), ""))
+	for term := range objectiveTerms {
+		if len(term) >= 4 && strings.Contains(compactPath, term) {
 			return true
 		}
 	}

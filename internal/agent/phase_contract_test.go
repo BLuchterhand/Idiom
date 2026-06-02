@@ -798,6 +798,38 @@ func TestDeriveTurnPhaseContractGenericTextualDoesNotAdvertiseManifestTools(t *t
 	}
 }
 
+func TestDeriveTurnPhaseContractVerificationOnlyShellAllowsVerify(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "verification_only",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_verification_shell",
+			AllowedTools:      []string{"shell"},
+			RequiredNext:      []string{"first tool call must run one verification command with shell"},
+		},
+	})
+
+	if contract.PhaseID != turnPhaseGeneric {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseGeneric)
+	}
+	assertEqualSet(t, contract.AllowedTools, []string{"shell"})
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionVerify)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionVerify)
+	if issues := autonomy.ReconcileTurnPhaseSurface(
+		contract.autonomyEventPayload(),
+		autonomy.TurnPhaseSurfaceSummaryEvent{
+			SchemaVersion:           autonomy.TurnPhaseSurfaceSummarySchemaVersion,
+			SurfaceID:               "next_action_state",
+			ContractID:              contract.ContractID,
+			PhaseID:                 contract.PhaseID,
+			AdvertisedActionClasses: []string{actionVerify, actionBlocker},
+		},
+	); len(issues) != 0 {
+		t.Fatalf("verification-only shell surface should reconcile cleanly, got %#v", issues)
+	}
+}
+
 func TestDeriveTurnPhaseContractUnscopedImplementationVerifyReadyRequiresVerificationFirst(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -1261,23 +1293,30 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 		}},
 	})
 
-	if contract.Phase != "generic" {
-		t.Fatalf("Phase = %q, want generic after evidence", contract.Phase)
+	if contract.Phase != "read_only_evidence_available" {
+		t.Fatalf("Phase = %q, want read_only_evidence_available after evidence", contract.Phase)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
 }
 
-func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsReadTools(t *testing.T) {
+func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableClosesToolSurface(t *testing.T) {
 	input := TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "conversation",
 			Contract:          "direct_answer",
 			PermissionProfile: "read_only_workspace",
+			Objective:         "What does internal/labels/labels.go return?",
 			AllowedTools:      []string{"search_content", "read_file", "code_navigate"},
 		},
 		Results: []workspace.ToolResult{
-			{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5"},
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 internal/labels/labels.go lines 1-5",
+				Output:  "package labels\nfunc ShortLabel() string { return \"Save changes\" }\n",
+			},
 			{Tool: "code_navigate", Summary: "Code navigation routed references via go_references"},
 		},
 	}
@@ -1288,13 +1327,12 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsReadTo
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
-	assertContains(t, contract.AllowedTools, "read_file")
-	assertContains(t, contract.AllowedTools, "search_content")
-	assertContains(t, contract.ActionPolicy.CallableToolNames, "read_file")
-	assertContains(t, contract.ActionPolicy.CallableToolNames, "search_content")
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
+	assertEqualSet(t, contract.AllowedTools, nil)
+	assertEqualSet(t, contract.ActionPolicy.CallableToolNames, nil)
 
 	input.TextualToolParser = true
 	input.ToolTransportMode = "textual"
@@ -1302,13 +1340,12 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsReadTo
 	if textual.Phase != "read_only_evidence_available" {
 		t.Fatalf("textual Phase = %q, want read_only_evidence_available", textual.Phase)
 	}
-	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, textual.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertNotContains(t, textual.ActionPolicy.InvalidActionClasses, actionRead)
-	assertContains(t, textual.AllowedTools, "read_file")
-	assertContains(t, textual.AllowedTools, "search_content")
-	assertContains(t, textual.ActionPolicy.CallableToolNames, "read_file")
-	assertContains(t, textual.ActionPolicy.CallableToolNames, "search_content")
+	assertNotContains(t, textual.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, textual.ActionPolicy.AllowedActionClasses, actionSearch)
+	assertContains(t, textual.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, textual.ActionPolicy.InvalidActionClasses, actionSearch)
+	assertEqualSet(t, textual.AllowedTools, nil)
+	assertEqualSet(t, textual.ActionPolicy.CallableToolNames, nil)
 }
 
 func TestDeriveTurnPhaseContractReadOnlyConversationKeepsToolsForUnreadNamedPath(t *testing.T) {
@@ -1582,16 +1619,6 @@ func assertContains(t *testing.T, values []string, want string) {
 	if !slices.Contains(values, want) {
 		t.Fatalf("expected %q in %#v", want, values)
 	}
-}
-
-func firstPhaseTestActionClass(values []string) string {
-	for _, value := range values {
-		switch value {
-		case actionRead, actionSearch, actionPerEditWrite, actionVerify, actionFinalAnswer:
-			return value
-		}
-	}
-	return ""
 }
 
 func phaseTestActionClassPrompt(actionClass string) string {

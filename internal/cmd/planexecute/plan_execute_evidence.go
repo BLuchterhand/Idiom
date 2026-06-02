@@ -470,92 +470,6 @@ func phaseEvidencePacketSummary(packet phaseEvidencePacket) string {
 	}
 }
 
-func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "schema: %s\nphase: %s\n", bundle.SchemaVersion, bundle.Phase)
-	fmt.Fprintf(&b, "changed_paths: %s\n", formatInlineList(bundle.ChangedPaths))
-	fmt.Fprintf(&b, "required_paths: %s\n", formatInlineList(bundle.RequiredPaths))
-	fmt.Fprintf(&b, "allowed_repair_paths: %s\n", formatInlineList(bundle.AllowedPaths))
-	fmt.Fprintf(&b, "edit_set_obligations: %s\n\n", formatInlineList(bundle.EditSetObligations.Kinds()))
-	fmt.Fprintf(&b, "context_packet: status=%s", bundle.Packet.Status)
-	if bundle.Packet.PackID != "" {
-		fmt.Fprintf(&b, " pack_id=%s", bundle.Packet.PackID)
-	}
-	if bundle.Packet.IndexID != "" {
-		fmt.Fprintf(&b, " index_id=%s fresh=%t", bundle.Packet.IndexID, bundle.Packet.Fresh)
-	}
-	if summary := phaseEvidencePacketSummary(bundle.Packet); summary != "" {
-		fmt.Fprintf(&b, " summary=%s", summary)
-	}
-	b.WriteString("\n")
-	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s", bundle.ExecutorHandoff.PacketState, bundle.ExecutorHandoff.Reason)
-	if bundle.ExecutorHandoff.PackID != "" {
-		fmt.Fprintf(&b, " pack_id=%s", bundle.ExecutorHandoff.PackID)
-	}
-	if bundle.ExecutorHandoff.IndexID != "" {
-		fmt.Fprintf(&b, " index_id=%s fresh=%t", bundle.ExecutorHandoff.IndexID, bundle.ExecutorHandoff.Fresh)
-	}
-	b.WriteString("\n")
-	if len(bundle.Packet.CandidateFiles) > 0 {
-		b.WriteString("candidate_files:\n")
-		for _, file := range bundle.Packet.CandidateFiles {
-			fmt.Fprintf(&b, "- `%s` role=%s reason=%s confidence=%s\n", file.Path, file.Role, file.Reason, file.Confidence)
-		}
-	}
-	if len(bundle.Packet.CandidateSymbols) > 0 {
-		b.WriteString("candidate_symbols:\n")
-		for _, symbol := range bundle.Packet.CandidateSymbols {
-			fmt.Fprintf(&b, "- `%s` (%s) path=%s reason=%s\n", symbol.Name, symbol.Kind, symbol.Path, symbol.Reason)
-		}
-	}
-	if len(bundle.SuggestedTests) > 0 {
-		b.WriteString("suggested_tests:\n")
-		for _, test := range bundle.SuggestedTests {
-			fmt.Fprintf(&b, "- `%s` path=%s reason=%s\n", test.Command, test.Path, test.Reason)
-		}
-	}
-	if len(bundle.SubmittedPlan) > 0 {
-		b.WriteString("submitted_plan_state:\n")
-		for _, check := range bundle.SubmittedPlan {
-			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Path, check.Status, check.Summary, check.Error)
-		}
-	}
-	if len(bundle.SourceSanity) > 0 {
-		b.WriteString("source_sanity:\n")
-		for _, check := range bundle.SourceSanity {
-			fmt.Fprintf(&b, "- `%s` status=%s summary=%s error=%s\n", check.Path, check.Status, check.Summary, check.Error)
-		}
-	}
-	if len(bundle.Verification) > 0 {
-		b.WriteString("verification:\n")
-		for _, check := range bundle.Verification {
-			workingDir := ""
-			if strings.TrimSpace(check.WorkingDir) != "" {
-				workingDir = " working_dir=" + strings.TrimSpace(check.WorkingDir)
-			}
-			fmt.Fprintf(&b, "- `%s`%s status=%s summary=%s error=%s\n", check.Command, workingDir, check.Status, check.Summary, check.Error)
-		}
-	}
-	fmt.Fprintf(&b, "patch_hygiene: status=%s", bundle.PatchHygiene.Status)
-	if strings.TrimSpace(bundle.PatchHygiene.Error) != "" {
-		fmt.Fprintf(&b, " error=%s", strings.TrimSpace(bundle.PatchHygiene.Error))
-	}
-	b.WriteString("\n")
-	if len(bundle.UnresolvedGaps) > 0 {
-		b.WriteString("unresolved_gaps:\n")
-		for _, gap := range bundle.UnresolvedGaps {
-			fmt.Fprintf(&b, "- %s\n", gap)
-		}
-	}
-	if len(bundle.OpenObligations) > 0 {
-		b.WriteString("open_obligations:\n")
-		for _, obligation := range bundle.OpenObligations {
-			fmt.Fprintf(&b, "- %s\n", obligation)
-		}
-	}
-	return b.String()
-}
-
 func phaseEvidenceTelemetry(bundle phaseEvidenceBundle) map[string]any {
 	return map[string]any{
 		"schema_version":            bundle.SchemaVersion,
@@ -702,12 +616,4 @@ func phaseEvidenceMinInt(a int, b int) int {
 		return a
 	}
 	return b
-}
-
-func formatInlineList(values []string) string {
-	values = cappedStrings(values, 12)
-	if len(values) == 0 {
-		return "(none)"
-	}
-	return strings.Join(values, ", ")
 }

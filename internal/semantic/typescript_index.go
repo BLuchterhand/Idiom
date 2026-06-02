@@ -77,7 +77,6 @@ var (
 	tsDeclConstRe  = regexp.MustCompile(`^(?:\s*export\s+)?(?:declare\s+)?(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*(?::[^;]+)?;?\s*$`)
 	tsMethodRe     = regexp.MustCompile(`^\s*(?:public\s+|private\s+|protected\s+|static\s+|readonly\s+|async\s+|override\s+|abstract\s+)*(?:get\s+|set\s+)?([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
 	tsCallRe       = regexp.MustCompile(`\b([A-Za-z_$][A-Za-z0-9_$]*)\s*\(`)
-	tsIdentStart   = regexp.MustCompile(`^[A-Za-z_$]`)
 )
 
 var tsFileExtensions = map[string]struct{}{
@@ -244,30 +243,15 @@ func (idx *TsIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("Indexed ")
-	b.WriteString(intString(len(idx.Files)))
-	b.WriteString(" TypeScript/JavaScript files\n")
-	entrypoints := idx.DefaultFiles(4)
-	if len(entrypoints) > 0 {
-		b.WriteString("Likely anchors:\n")
-		for _, path := range entrypoints {
-			file := idx.FileByPath(path)
-			if file == nil {
-				continue
-			}
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteString(" (")
-			b.WriteString(intString(file.Funcs + file.Methods))
-			b.WriteString(" funcs/methods, ")
-			b.WriteString(intString(file.Types))
-			b.WriteString(" types, ")
-			b.WriteString(intString(len(file.Imports)))
-			b.WriteString(" imports)\n")
+	return FormatIndexSummary(len(idx.Files), "TypeScript/JavaScript", idx.DefaultFiles(4), func(path string) (string, bool) {
+		file := idx.FileByPath(path)
+		if file == nil {
+			return "", false
 		}
-	}
-	return strings.TrimSpace(b.String())
+		return intString(file.Funcs+file.Methods) + " funcs/methods, " +
+			intString(file.Types) + " types, " +
+			intString(len(file.Imports)) + " imports", true
+	})
 }
 
 func (idx *TsIndex) DefaultFiles(limit int) []string {
@@ -299,28 +283,7 @@ func (idx *TsIndex) RelevantFiles(terms []string, limit int) []string {
 		return nil
 	}
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file TsFile) int {
-		score := 0
-		pathLower := strings.ToLower(file.Path)
-		for _, term := range normalized {
-			if strings.Contains(pathLower, term) {
-				score += 16
-			}
-			for _, imp := range file.Imports {
-				if strings.Contains(strings.ToLower(imp), term) {
-					score += 6
-				}
-			}
-			for _, symbol := range file.Symbols {
-				if strings.Contains(strings.ToLower(symbol.Name), term) || strings.Contains(strings.ToLower(symbol.Qualified), term) {
-					score += 10
-				}
-			}
-		}
-		score += tsSourceDirPriority(file.SourceDir)
-		if file.IsTest {
-			score -= 20
-		}
-		return score
+		return RelevantFileScore(normalized, file.Path, file.Imports, tsSymbolSearchTerms(file.Symbols), tsSourceDirPriority(file.SourceDir), file.IsTest)
 	}, limit), limit)
 }
 
@@ -345,53 +308,19 @@ func (idx *TsIndex) findFiles(pattern string) []string {
 }
 
 func (idx *TsIndex) rankFiles(scoreFn func(TsFile) int, limit int) []TsFile {
-	scored := make([]struct {
-		file  TsFile
-		score int
-	}, 0, len(idx.Files))
-	for _, file := range idx.Files {
-		score := scoreFn(file)
-		if score <= 0 {
-			continue
-		}
-		scored = append(scored, struct {
-			file  TsFile
-			score int
-		}{file: file, score: score})
-	}
-	slices.SortFunc(scored, func(a, b struct {
-		file  TsFile
-		score int
-	}) int {
-		if c := -cmp.Compare(a.score, b.score); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.file.Path, b.file.Path)
-	})
-	if limit > 0 && len(scored) > limit {
-		scored = scored[:limit]
-	}
-	out := make([]TsFile, 0, len(scored))
-	for _, item := range scored {
-		out = append(out, item.file)
-	}
-	return out
+	return RankFiles(idx.Files, scoreFn, limit)
 }
 
 func (idx *TsIndex) uniqueRankedPaths(files []TsFile, limit int) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		if _, ok := seen[file.Path]; ok {
-			continue
-		}
-		seen[file.Path] = struct{}{}
-		out = append(out, file.Path)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
+	return UniqueRankedPaths(files, limit)
+}
+
+func tsSymbolSearchTerms(symbols []TsSymbol) []string {
+	terms := make([]string, 0, len(symbols)*2)
+	for _, symbol := range symbols {
+		terms = append(terms, symbol.Name, symbol.Qualified)
 	}
-	return out
+	return terms
 }
 
 // parseTsImports extracts module specifiers from import/export/require/dynamic
@@ -596,35 +525,19 @@ type classFrame struct {
 
 func popClassFrames(stack *[]classFrame, line string, lineNo int) {
 	delta := tsBraceDelta(stripTsLineComment(line))
-	for len(*stack) > 0 && delta != 0 {
+	if len(*stack) > 0 && delta != 0 {
 		top := &(*stack)[len(*stack)-1]
 		top.depth += delta
 		if top.depth <= 0 {
 			*stack = (*stack)[:len(*stack)-1]
 		}
-		break
 	}
 }
 
 func extractTsCalls(lines []string, startLine int, endLine int) []TsCall {
-	if startLine <= 0 || endLine < startLine || endLine > len(lines) {
-		return nil
-	}
-	calls := make([]TsCall, 0, 16)
-	for line := startLine; line <= endLine; line++ {
-		text := stripTsLineComment(lines[line-1])
-		for _, match := range tsCallRe.FindAllStringSubmatch(text, -1) {
-			if len(match) != 2 {
-				continue
-			}
-			name := match[1]
-			if isTsJSBuiltinKeyword(name) {
-				continue
-			}
-			calls = append(calls, TsCall{Name: name, Line: line})
-		}
-	}
-	return calls
+	return ExtractLineCalls(lines, startLine, endLine, tsCallRe, stripTsLineComment, isTsJSBuiltinKeyword, func(name string, line int) TsCall {
+		return TsCall{Name: name, Line: line}
+	})
 }
 
 func findTsBraceEnd(lines []string, startIdx int) int {

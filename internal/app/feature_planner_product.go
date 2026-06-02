@@ -192,7 +192,7 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 
 	prd, repaired, parseErr := productworkflow.TryParsePRDMarkdown(answer)
 	if parseErr == nil {
-		return answer, prd, false, nil
+		return repaired, prd, false, nil
 	}
 	if featurePlannerAnswerIsDirectPlan(answer) {
 		return answer, productworkflow.PRDDocument{}, true, nil
@@ -217,8 +217,7 @@ func (m *Model) generatePRDWithRepair(ctx context.Context, prompt string, opts l
 		answer = repairAnswer
 		prd, repaired, parseErr = productworkflow.TryParsePRDMarkdown(answer)
 		if parseErr == nil {
-			_ = repaired // successfully repaired text is written below
-			return answer, prd, false, nil
+			return repaired, prd, false, nil
 		}
 		if featurePlannerAnswerIsDirectPlan(answer) {
 			return answer, productworkflow.PRDDocument{}, true, nil

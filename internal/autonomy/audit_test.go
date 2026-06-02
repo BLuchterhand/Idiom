@@ -624,7 +624,7 @@ func TestAuditEventsFlagsTurnPhaseContradictoryToolAction(t *testing.T) {
 	}
 }
 
-func TestAuditEventsFlagsTextualPhaseWithManifestAllowedTools(t *testing.T) {
+func TestAuditEventsAllowsTextualPhaseCallableToolsWhenActionIsExpressible(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 20, 20, 0, 0, time.UTC)
 	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
@@ -649,12 +649,11 @@ func TestAuditEventsFlagsTextualPhaseWithManifestAllowedTools(t *testing.T) {
 
 	report := AuditEvents([]Event{compiled, presented}, EventAuditOptions{})
 
-	if len(report.TurnPhaseCoverage.Contradictions) != 1 ||
-		!strings.Contains(report.TurnPhaseCoverage.Contradictions[0].Reason, "textual phase advertised") {
-		t.Fatalf("expected textual manifest contradiction, got %#v", report.TurnPhaseCoverage.Contradictions)
+	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
+		t.Fatalf("textual callable tools should reconcile when their action class is expressible, got %#v", report.TurnPhaseCoverage.Contradictions)
 	}
-	if !hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
-		t.Fatalf("expected contradiction finding, got %#v", report.Findings)
+	if hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
+		t.Fatalf("unexpected contradiction finding for textual callable tools: %#v", report.Findings)
 	}
 }
 

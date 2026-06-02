@@ -1627,15 +1627,6 @@ func countObligationKind(obligations []autonomy.Obligation, kind autonomy.Obliga
 	return count
 }
 
-func hasTurnPhaseIssueForSurface(issues []autonomy.TurnPhaseContradiction, surfaceID string, invariantID string) bool {
-	for _, issue := range issues {
-		if issue.SurfaceID == surfaceID && issue.InvariantID == invariantID {
-			return true
-		}
-	}
-	return false
-}
-
 func hasPathRole(roles []autonomy.PathRole, kind autonomy.PathRoleKind, pattern string) bool {
 	for _, role := range roles {
 		if role.Role == kind && role.PathPattern == pattern {

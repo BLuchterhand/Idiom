@@ -46,7 +46,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 	}
 	prompt = normalizeReadOnlyChildPrompt(prompt)
 	prompt = r.augmentReadOnlyChildPrompt(prompt)
-	childPolicy := RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 3, MaxModelCalls: 8, MaxDuration: 2 * time.Minute}
+	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6, MaxDuration: 90 * time.Second}
 	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
 		childPolicy.MaxToolSteps = 4
 		childPolicy.MaxModelCalls = 6
@@ -94,8 +94,8 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 				Content: strings.Join([]string{
 					"You are a read-only delegated child task.",
 					"Answer the delegated question directly using concise grounded evidence.",
-					"For broad architecture, impact, tracing, security, or history questions, a layered discovery evidence packet satisfies the initial orientation contract when available.",
-					"After one sufficient packet or exact probe, answer unless one exact missing claim would materially change the answer.",
+					"For broad architecture, impact, tracing, security, or history questions, a layered discovery evidence packet satisfies orientation only; read at least one relevant source body before answering.",
+					"After one sufficient source-body probe, answer unless one exact missing claim would materially change the answer.",
 					"Prefer the minimal implementation surface needed to answer the question. Do not expand into side-path comparison, mode-by-mode breakdowns, or policy tables unless the question explicitly requires that detail.",
 					"After readiness, either answer or take one exact follow-up inside packet-named files or symbols. Do not switch to README, docs, or repo-wide search for completeness.",
 					"Prefer structured symbol/body tools, discovered handles, or narrow line ranges over raw path-wide rereads.",
@@ -120,6 +120,11 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Tool:    "task",
 			Summary: "Child task failed",
 			Error:   err.Error(),
+		}
+	}
+	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); blockerKind != "" {
+		if synthesized, ok := synthesizeDelegatedReadOnlyAnswer(prompt, childResults); ok {
+			answer = synthesized
 		}
 	}
 	answer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)

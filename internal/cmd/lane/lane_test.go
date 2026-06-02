@@ -1,4 +1,5 @@
 package lane
+
 import (
 	"bytes"
 	"context"
@@ -1223,10 +1224,10 @@ func TestClaudeQwenProfileCarriesPlanExecuteSubmitPlanQualityBar(t *testing.T) {
 			t.Fatalf("claude-qwen profile missing submit_plan quality bar %q:\n%s", want, text)
 		}
 	}
-	if strings.Index(text, "**Line-range**") < 0 || strings.Index(text, "**Substring**") < 0 {
+	if !strings.Contains(text, "**Line-range**") || !strings.Contains(text, "**Substring**") {
 		t.Fatalf("claude-qwen profile missing edit-shape headings:\n%s", text)
 	}
-	if strings.Index(text, "**Insertion**") < 0 || strings.Index(text, "**Insertion**") > strings.Index(text, "**Line-range**") {
+	if !strings.Contains(text, "**Insertion**") || strings.Index(text, "**Insertion**") > strings.Index(text, "**Line-range**") {
 		t.Fatalf("claude-qwen profile should present typed insertion before replacement shapes:\n%s", text)
 	}
 	for _, stale := range []string{"accepts three edit shapes", "line-range first"} {

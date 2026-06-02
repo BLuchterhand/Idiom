@@ -437,10 +437,6 @@ func ImplementationAffectingClaimEvidenceFindings(prd PRDDocument, adrs []Parsed
 	return findings
 }
 
-func unresolvedImplementationClaimEvidenceFindings(adrs []ParsedADR, evidenceIDs map[string]bool) []ProfileFinding {
-	return ImplementationAffectingClaimEvidenceFindings(PRDDocument{}, adrs, evidenceIDs)
-}
-
 func TraceabilityEvidenceIDs(matrix TraceabilityMatrix) map[string]bool {
 	ids := make(map[string]bool)
 	for _, row := range matrix.Matrix {

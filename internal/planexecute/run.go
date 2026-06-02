@@ -446,7 +446,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 	reviewBaseline := CaptureReviewRepairBaseline(cfg.Workspace.Root, changedPaths)
 	progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, reviewBaseline)
-	progressPath, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+	_, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
@@ -502,7 +502,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		}
 		reviewSessionID := NewPlanExecuteSessionID()
 		progress.MarkReviewStarted(reviewSessionID)
-		progressPath, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
+		_, err = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 		if err != nil {
 			reviewErr = err
 		} else {
@@ -604,7 +604,7 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	}
 	reviewSessionID := NewPlanExecuteSessionID()
 	state.MarkReviewStarted(reviewSessionID)
-	progressPath, err := saveRunProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
+	_, err = saveRunProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: statePath}
@@ -634,7 +634,7 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 			state.FailureReason = sanitizeProgressReason(verificationErr.Error())
 		}
 	}
-	progressPath, err = saveRunProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
+	progressPath, err := saveRunProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil && reviewErr == nil {
 		reviewErr = err
 	}

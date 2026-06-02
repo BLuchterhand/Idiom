@@ -209,19 +209,8 @@ func (m *Manager) tsRelatedFiles(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "ts_related_files", Summary: "TypeScript related-file search unavailable", Error: err.Error()}
 	}
-	paths := filterTsRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.tsPathFilter(req.Path))
-	if len(paths) == 0 {
-		return ToolResult{Tool: "ts_related_files", Summary: fmt.Sprintf("No related TypeScript files matched %q", pattern)}
-	}
-	lines := make([]string, 0, len(paths))
-	for _, rel := range paths {
-		display, err := m.tsHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, display)
-	}
-	return ToolResult{Tool: "ts_related_files", Summary: fmt.Sprintf("Found %d related TypeScript file(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	paths := filterRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.tsPathFilter(req.Path))
+	return m.relatedFilesResult("ts_related_files", "TypeScript", pattern, paths, m.tsHandleDisplay)
 }
 
 func (m *Manager) tsWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -683,19 +672,6 @@ func filterTsCallMatches(matches []semantic.TsCallMatch, pathFilter string) []se
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)
-		}
-	}
-	return out
-}
-
-func filterTsRelatedPaths(paths []string, pathFilter string) []string {
-	if pathFilter == "" {
-		return paths
-	}
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if pathMatchesFilter(path, pathFilter) {
-			out = append(out, path)
 		}
 	}
 	return out

@@ -170,9 +170,9 @@ type Model struct {
 	composedPromptCacheKey         string
 	activeProfiles                 []string
 	streaming                      bool
-	turnEvidence       *turnEvidence
-	pastTurnContainers []completedEvidence
-	lastBudget         *budgetData
+	turnEvidence                   *turnEvidence
+	pastTurnContainers             []completedEvidence
+	lastBudget                     *budgetData
 	bootingServer                  bool
 	serverUp                       bool
 	managedServer                  bool
@@ -203,14 +203,11 @@ type Model struct {
 	traceMode                      traceDisplayMode
 	planPhaseText                  string
 
-	workspaceOverviewInjected bool
-
 	pinnedFiles *PinnedFileRegistry
 
 	approvalMu          sync.Mutex
 	approvalSerial      sync.Mutex
 	approvalPending     *pendingApproval
-	detailPanelVisible  bool
 	modelPopup          modelPopupState
 	rollbackHistory     []rollbackEntry
 	instructionAttacher *agent.InstructionAttacher
@@ -368,7 +365,7 @@ func formatPlanPhaseText(phase, detail string) string {
 	case "reviewing":
 		label = "Reviewing"
 	default:
-		label = strings.Title(phase)
+		label = titleDisplay(phase)
 	}
 	detail = strings.TrimSpace(detail)
 	if detail == "" {
@@ -1025,33 +1022,6 @@ func (m *Model) insertBeforePendingAssistant(message llama.ChatMessage) {
 		return
 	}
 	m.messages = append(m.messages[:idx], append([]llama.ChatMessage{message}, m.messages[idx:]...)...)
-}
-
-func (m *Model) setPendingAssistantMessage(message llama.ChatMessage) {
-	message.Role = util.Fallback(strings.TrimSpace(message.Role), "assistant")
-	idx := m.pendingAssistantIndex()
-	if idx == -1 {
-		m.messages = append(m.messages, message)
-		return
-	}
-	m.messages[idx] = message
-}
-
-func (m *Model) appendPendingAssistantContent(content string) {
-	idx := m.pendingAssistantIndex()
-	if idx == -1 {
-		m.messages = append(m.messages, llama.ChatMessage{Role: "assistant", Content: content})
-		return
-	}
-	m.messages[idx].Content += content
-}
-
-func (m *Model) removePendingAssistant() {
-	idx := m.pendingAssistantIndex()
-	if idx == -1 {
-		return
-	}
-	m.messages = append(m.messages[:idx], m.messages[idx+1:]...)
 }
 
 func (m *Model) contextSourceNames() []string {

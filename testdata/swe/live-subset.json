@@ -18,11 +18,11 @@
         "final_assistant_contains": [
           "redacted",
           "debug log",
-          "safe default",
-          "What Gets Redacted"
+          "internal/transcript/debuglog.go"
         ],
         "forbid_final_assistant_contains": [
           "raw secret",
+          "What Gets Redacted",
           "Discovery packet",
           "Relevant source hits",
           "Evidence used"
@@ -83,10 +83,12 @@
         "final_assistant_contains": [
           "task",
           "subagent",
-          "Subagent Handoff Architecture",
-          "Two Modes"
+          "internal/agent/runner.go",
+          "internal/agent/runner_child_tasks.go"
         ],
         "forbid_final_assistant_contains": [
+          "Subagent Handoff Architecture",
+          "Two Modes",
           "partial findings",
           "budget was reached before a full synthesis",
           "Discovery packet",
@@ -178,12 +180,16 @@
           "overall usefulness"
         ],
         "final_assistant_contains": [
+          "discovery",
+          "tool",
+          "internal/agent/answer_composer.go",
+          "internal/agent/runner.go"
+        ],
+        "forbid_final_assistant_contains": [
           "Discovery Tool Improvements",
           "Additions Worth Making",
           "Purpose-specific answer blueprints",
-          "Layer-aware synthesis"
-        ],
-        "forbid_final_assistant_contains": [
+          "Layer-aware synthesis",
           "What I found:",
           "text_anchor_search:",
           "Discovery packet",

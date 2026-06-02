@@ -344,9 +344,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 		}
 		if parsedWorkflowState != nil {
 			parity := EvaluateObsidianParity(repoRoot, parsedWorkflowState, parsedLedger, parsedInvestigations)
-			for _, checked := range parity.CheckedFiles {
-				result.CheckedFiles = append(result.CheckedFiles, checked)
-			}
+			result.CheckedFiles = append(result.CheckedFiles, parity.CheckedFiles...)
 			for _, finding := range parity.Findings {
 				addFinding(finding.Code, finding.Path, finding.Message)
 			}

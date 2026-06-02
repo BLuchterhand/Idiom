@@ -57,6 +57,20 @@ func TestSourceEvidenceStateTracksRedirectPendingUntilBodyEvidence(t *testing.T)
 	}
 }
 
+func TestSourceEvidenceIgnoresGeneratedArtifacts(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-20 (total lines: 20)",
+		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}\n",
+	}}
+	if sourceEvidenceBodyReadForPath(".idiom/comprehension/views/context.json", results) {
+		t.Fatal("generated context artifacts must not satisfy source-body evidence")
+	}
+	if paths := sourceEvidenceBodyPaths(results); len(paths) != 0 {
+		t.Fatalf("generated context artifacts must not appear in source-body path list: %#v", paths)
+	}
+}
+
 func TestSourceEvidenceIgnoresCandidateAnchorMiss(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "go_read_symbol",

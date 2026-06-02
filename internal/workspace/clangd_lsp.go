@@ -2,12 +2,10 @@ package workspace
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,8 +19,6 @@ import (
 type clangdLSPClient struct {
 	lspBaseClient
 }
-
-
 
 func (m *Manager) newClangdLSPClient(ctx context.Context) (*clangdLSPClient, error) {
 	clangd := m.clangdBinary()
@@ -102,21 +98,11 @@ func (c *clangdLSPClient) openFile(path string) error {
 }
 
 func clangdFileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	return LSPFileURI(path)
 }
 
 func clangdPathFromURI(uri string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(uri))
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme != "file" && parsed.Scheme != "" {
-		return "", fmt.Errorf("unsupported clangd URI scheme %q", parsed.Scheme)
-	}
-	if parsed.Scheme == "" {
-		return filepath.Clean(parsed.Path), nil
-	}
-	return filepath.Clean(parsed.Path), nil
+	return LSPPathFromURI(uri, "clangd")
 }
 
 func clangdLanguageID(path string) string {
@@ -126,18 +112,6 @@ func clangdLanguageID(path string) string {
 	default:
 		return "cpp"
 	}
-}
-
-func (m *Manager) cppSymbolPosition(match semantic.CppSymbolMatch) string {
-	line := match.Line
-	if line <= 0 {
-		line = 1
-	}
-	column := match.Column
-	if column <= 0 {
-		column = 1
-	}
-	return fmt.Sprintf("%s:%d:%d", filepath.ToSlash(match.Path), line, column)
 }
 
 func (m *Manager) cppWorkspaceSymbolsViaClangd(ctx context.Context, pattern string, pathFilter string, limit int) (string, error) {
@@ -230,60 +204,31 @@ func (m *Manager) cppLocationQueryViaClangd(ctx context.Context, match semantic.
 }
 
 func (m *Manager) cppImplementationsViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newClangdLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": clangdFileURI(abs)},
-		"position":     m.cppLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, "textDocument/implementation", params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseClangdLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatClangdLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "clangd",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newClangdLSPClient(ctx)
+		},
+		fileURI: clangdFileURI,
+		format:  m.formatClangdLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.cppLSPPosition(abs, match)
+	}, "textDocument/implementation", nil, pathFilter, m.cfg.MaxDirectoryEntries, false)
 }
 
 func (m *Manager) cppReferencesViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newClangdLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": clangdFileURI(abs)},
-		"position":     m.cppLSPPosition(abs, match),
-		"context": map[string]any{
-			"includeDeclaration": true,
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "clangd",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newClangdLSPClient(ctx)
 		},
-	}
-	var locations []LSPLocation
-	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
-		return "", err
-	}
-	return m.formatClangdLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
+		fileURI: clangdFileURI,
+		format:  m.formatClangdLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.cppLSPPosition(abs, match)
+	}, "textDocument/references", map[string]any{
+		"context": map[string]any{"includeDeclaration": true},
+	}, pathFilter, m.cfg.MaxDirectoryEntries, true)
 }
 
 func (m *Manager) cppCallHierarchyViaClangd(ctx context.Context, match semantic.CppSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
@@ -409,45 +354,7 @@ func (m *Manager) cppLSPCharacter(abs string, match semantic.CppSymbolMatch) (in
 }
 
 func parseClangdLocations(raw json.RawMessage) ([]LSPLocation, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
-	}
-	var list []LSPLocation
-	if err := json.Unmarshal(trimmed, &list); err == nil {
-		return list, nil
-	}
-	var single LSPLocation
-	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []LSPLocation{single}, nil
-	}
-	var links []LSPLocationLink
-	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]LSPLocation, 0, len(links))
-		for _, link := range links {
-			location := LSPLocation{
-				URI:   link.TargetURI,
-				Range: link.TargetSelectionRange,
-			}
-			if location.Range == (LSPRange{}) {
-				location.Range = link.TargetRange
-			}
-			out = append(out, location)
-		}
-		return out, nil
-	}
-	var link LSPLocationLink
-	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		location := LSPLocation{
-			URI:   link.TargetURI,
-			Range: link.TargetSelectionRange,
-		}
-		if location.Range == (LSPRange{}) {
-			location.Range = link.TargetRange
-		}
-		return []LSPLocation{location}, nil
-	}
-	return nil, fmt.Errorf("unsupported clangd location payload")
+	return parseLSPLocations(raw, "clangd")
 }
 
 func (m *Manager) formatClangdLocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {

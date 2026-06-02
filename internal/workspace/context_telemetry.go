@@ -365,8 +365,8 @@ func addContextStaleEvidenceTelemetry(payload map[string]any, fields map[string]
 func addContextCacheTelemetry(payload map[string]any, fields map[string]any) {
 	value, ok := payload["cache"].(map[string]any)
 	if !ok {
-		contract, ok := payload["contract"].(map[string]any)
-		if ok {
+		contract, contractOK := payload["contract"].(map[string]any)
+		if contractOK {
 			value, ok = contract["cache"].(map[string]any)
 		}
 	}

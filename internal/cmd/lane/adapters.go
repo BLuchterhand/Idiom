@@ -1,21 +1,21 @@
 package lane
+
 import (
 	"io"
 	"strings"
 
-	"idiom/internal/app"
 	atomcmd "idiom/internal/cmd/atom"
 	briefcmd "idiom/internal/cmd/brief"
+	implementcmd "idiom/internal/cmd/implement"
+	planexecutecmd "idiom/internal/cmd/planexecute"
+	refinecmd "idiom/internal/cmd/refine"
+	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/cmdroute"
 	"idiom/internal/cmdruntime"
 	"idiom/internal/config"
-	implementcmd "idiom/internal/cmd/implement"
 	"idiom/internal/lanehistory"
-	planexecutecmd "idiom/internal/cmd/planexecute"
 	"idiom/internal/readiness"
-	refinecmd "idiom/internal/cmd/refine"
 	"idiom/internal/telemetry"
-	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/writerroute"
 )
 
@@ -25,24 +25,9 @@ type promptRunner = cmdruntime.PromptRunner
 type atomIntakeReport = atomcmd.IntakeReport
 type atomRequiredEditSnippet = atomcmd.RequiredEditSnippet
 
-const (
-	atomStateDispatchable     = atomcmd.StateDispatchable
-	atomStateComplete         = atomcmd.StateComplete
-	atomStateSourceSatisfied  = atomcmd.StateSourceSatisfied
-	atomStateStaleNeedsRebase = atomcmd.StateStaleNeedsRebase
-	atomStateFailedRefine     = atomcmd.StateFailedRefine
-	atomStateBlockedDirty     = atomcmd.StateBlockedDirty
-	atomStateMissingScope     = atomcmd.StateMissingScope
-	atomStateInvalidScope     = atomcmd.StateInvalidScope
-
-	atomInvalidScopeOutsideProjectRoot     = atomcmd.InvalidScopeOutsideProjectRoot
-	atomInvalidScopeAmbiguousBareShorthand = atomcmd.InvalidScopeAmbiguousBareShorthand
-)
-
 const laneHistoryRelPath = lanehistory.RelPath
 
 type laneHistoryEvent = lanehistory.Event
-type laneHistorySummary = lanehistory.Summary
 type laneHistoryFilter = lanehistory.Filter
 type readinessProfileReport = readiness.ProfileReport
 type laneRefineOptions = refinecmd.Options
@@ -111,10 +96,6 @@ func atomSpecHasAcceptedResult(specBody string) bool {
 
 func atomRequiredEditSnippetsFromSpec(specBody string, scopePaths []string) []atomRequiredEditSnippet {
 	return atomcmd.RequiredEditSnippetsFromSpec(specBody, scopePaths)
-}
-
-func atomRequiredEditPathsFromLabel(label string, scopePaths []string) []string {
-	return atomcmd.RequiredEditPathsFromLabel(label, scopePaths)
 }
 
 func atomMarkdownSectionByHeading(markdown string, headingName string) string {
@@ -196,8 +177,4 @@ func laneDegradationKinds(degradations []laneDegradation) []string {
 		return nil
 	}
 	return kinds
-}
-
-func requiredEditPathsFromPrompt(prompt string) []string {
-	return app.RequiredEditPathsFromPrompt(prompt)
 }

@@ -12,65 +12,6 @@ import (
 	"idiom/internal/llama"
 )
 
-func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
-	objective = strings.TrimSpace(objective)
-	if objective == "" {
-		return "", fmt.Errorf("feature-planner objective is required")
-	}
-	m.emitJSONStart(objective)
-	if err := m.ensureServerReady(ctx); err != nil {
-		m.emitJSONError("server_not_ready", err.Error())
-		return "", err
-	}
-	sessionID := m.featurePlannerSessionID()
-	state := featureplanner.NewState(sessionID, objective, "", 3, time.Now().UTC())
-	operatorCommand := "/feature-planner " + objective
-	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: operatorCommand})
-	m.logMessage("user", operatorCommand)
-	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
-	m.logMessage("idiom.feature_planner.start", objective)
-
-	implementorBlocked := false
-	result, err := featureplanner.Run(state, featureplanner.RunOptions{
-		Prompt:                objective,
-		MaxPlanningIterations: 3,
-		Now:                   time.Now().UTC(),
-	}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == "feature_planner_implementor" {
-			if implementorBlocked {
-				return encodeFeaturePlannerSiblingDispatchPaused(), nil
-			}
-			answer, runErr := m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
-			if runErr != nil || featurePlannerPlanExecuteOutputBlocks(answer) {
-				implementorBlocked = true
-			}
-			return answer, runErr
-		}
-		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
-	})
-	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
-		return "", err
-	}
-	for _, event := range result.Events {
-		m.logFeaturePlannerEvent(event)
-	}
-	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), result.State.SessionID, result.Events)
-	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
-		return "", err
-	}
-	result.State.EventsPath = eventsPath
-	statePath, err := featureplanner.SaveState(m.projectRoot(), &result.State)
-	if err != nil {
-		m.emitJSONError("run_failed", err.Error())
-		return "", err
-	}
-	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
-	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
-	return m.finishPromptOnceReply(answer), nil
-}
-
 func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
 	m.logMessage("feature_planner_prompt", prompt)
 	opts := m.chatOptions()

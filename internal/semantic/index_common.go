@@ -4,11 +4,10 @@ import (
 	"cmp"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
-
-type hasPath interface{ GetPath() string }
 
 type ScoredEntry[T any] struct {
 	File  T
@@ -55,6 +54,79 @@ func UniqueRankedPaths[T any](files []T, limit int) []string {
 		}
 	}
 	return out
+}
+
+func FormatIndexSummary(fileCount int, language string, anchors []string, describeAnchor func(string) (string, bool)) string {
+	if fileCount == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Indexed ")
+	b.WriteString(intString(fileCount))
+	b.WriteString(" ")
+	b.WriteString(language)
+	b.WriteString(" files\n")
+	if len(anchors) > 0 {
+		b.WriteString("Likely anchors:\n")
+		for _, anchor := range anchors {
+			description, ok := describeAnchor(anchor)
+			if !ok {
+				continue
+			}
+			b.WriteString("- ")
+			b.WriteString(anchor)
+			b.WriteString(" (")
+			b.WriteString(description)
+			b.WriteString(")\n")
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func RelevantFileScore(terms []string, path string, related []string, symbolTerms []string, sourceDirPriority int, isTest bool) int {
+	score := 0
+	pathLower := strings.ToLower(path)
+	for _, term := range terms {
+		if strings.Contains(pathLower, term) {
+			score += 16
+		}
+		for _, item := range related {
+			if strings.Contains(strings.ToLower(item), term) {
+				score += 6
+			}
+		}
+		for _, symbol := range symbolTerms {
+			if strings.Contains(strings.ToLower(symbol), term) {
+				score += 10
+			}
+		}
+	}
+	score += sourceDirPriority
+	if isTest {
+		score -= 20
+	}
+	return score
+}
+
+func ExtractLineCalls[T any](lines []string, startLine int, endLine int, callPattern *regexp.Regexp, stripComment func(string) string, isKeyword func(string) bool, buildCall func(string, int) T) []T {
+	if startLine <= 0 || endLine < startLine || endLine > len(lines) {
+		return nil
+	}
+	calls := make([]T, 0, 16)
+	for line := startLine; line <= endLine; line++ {
+		text := stripComment(lines[line-1])
+		for _, match := range callPattern.FindAllStringSubmatch(text, -1) {
+			if len(match) != 2 {
+				continue
+			}
+			name := match[1]
+			if isKeyword(name) {
+				continue
+			}
+			calls = append(calls, buildCall(name, line))
+		}
+	}
+	return calls
 }
 
 func FindFilesExactPartial[T any](files []T, pattern string) []string {

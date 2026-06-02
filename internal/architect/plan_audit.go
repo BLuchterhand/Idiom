@@ -843,15 +843,6 @@ func packetHandles(packet Packet) map[string]struct{} {
 	return out
 }
 
-func packetTestCommands(packet Packet) []string {
-	out := make([]string, 0, len(packet.Tests))
-	for _, test := range packet.Tests {
-		out = append(out, test.Command)
-	}
-	slices.Sort(out)
-	return out
-}
-
 func pathAllowedAsNew(path string, roles map[string]string, lines []string) bool {
 	role := roles[path]
 	if strings.Contains(role, "create") || strings.Contains(role, "new") || strings.Contains(role, "add") {

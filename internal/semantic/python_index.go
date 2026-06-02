@@ -217,30 +217,15 @@ func (idx *PythonIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("Indexed ")
-	b.WriteString(intString(len(idx.Files)))
-	b.WriteString(" Python files\n")
-	entrypoints := idx.DefaultFiles(4)
-	if len(entrypoints) > 0 {
-		b.WriteString("Likely anchors:\n")
-		for _, path := range entrypoints {
-			file := idx.FileByPath(path)
-			if file == nil {
-				continue
-			}
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteString(" (")
-			b.WriteString(intString(file.Funcs + file.Methods))
-			b.WriteString(" funcs/methods, ")
-			b.WriteString(intString(file.Classes))
-			b.WriteString(" classes, ")
-			b.WriteString(intString(len(file.Imports)))
-			b.WriteString(" imports)\n")
+	return FormatIndexSummary(len(idx.Files), "Python", idx.DefaultFiles(4), func(path string) (string, bool) {
+		file := idx.FileByPath(path)
+		if file == nil {
+			return "", false
 		}
-	}
-	return strings.TrimSpace(b.String())
+		return intString(file.Funcs+file.Methods) + " funcs/methods, " +
+			intString(file.Classes) + " classes, " +
+			intString(len(file.Imports)) + " imports", true
+	})
 }
 
 // DefaultFiles ranks files by a "likely anchor" heuristic: files with
@@ -276,28 +261,7 @@ func (idx *PythonIndex) RelevantFiles(terms []string, limit int) []string {
 		return nil
 	}
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file PythonFile) int {
-		score := 0
-		pathLower := strings.ToLower(file.Path)
-		for _, term := range normalized {
-			if strings.Contains(pathLower, term) {
-				score += 16
-			}
-			for _, imp := range file.RawImports {
-				if strings.Contains(strings.ToLower(imp), term) {
-					score += 6
-				}
-			}
-			for _, symbol := range file.Symbols {
-				if strings.Contains(strings.ToLower(symbol.Name), term) || strings.Contains(strings.ToLower(symbol.Qualified), term) {
-					score += 10
-				}
-			}
-		}
-		score += pythonSourceDirPriority(file.SourceDir)
-		if file.IsTest {
-			score -= 20
-		}
-		return score
+		return RelevantFileScore(normalized, file.Path, file.RawImports, pythonSymbolSearchTerms(file.Symbols), pythonSourceDirPriority(file.SourceDir), file.IsTest)
 	}, limit), limit)
 }
 
@@ -323,53 +287,19 @@ func (idx *PythonIndex) findFiles(pattern string) []string {
 }
 
 func (idx *PythonIndex) rankFiles(scoreFn func(PythonFile) int, limit int) []PythonFile {
-	scored := make([]struct {
-		file  PythonFile
-		score int
-	}, 0, len(idx.Files))
-	for _, file := range idx.Files {
-		score := scoreFn(file)
-		if score <= 0 {
-			continue
-		}
-		scored = append(scored, struct {
-			file  PythonFile
-			score int
-		}{file: file, score: score})
-	}
-	slices.SortFunc(scored, func(a, b struct {
-		file  PythonFile
-		score int
-	}) int {
-		if c := -cmp.Compare(a.score, b.score); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.file.Path, b.file.Path)
-	})
-	if limit > 0 && len(scored) > limit {
-		scored = scored[:limit]
-	}
-	out := make([]PythonFile, 0, len(scored))
-	for _, item := range scored {
-		out = append(out, item.file)
-	}
-	return out
+	return RankFiles(idx.Files, scoreFn, limit)
 }
 
 func (idx *PythonIndex) uniqueRankedPaths(files []PythonFile, limit int) []string {
-	seen := make(map[string]struct{})
-	out := make([]string, 0, len(files))
-	for _, file := range files {
-		if _, ok := seen[file.Path]; ok {
-			continue
-		}
-		seen[file.Path] = struct{}{}
-		out = append(out, file.Path)
-		if limit > 0 && len(out) >= limit {
-			break
-		}
+	return UniqueRankedPaths(files, limit)
+}
+
+func pythonSymbolSearchTerms(symbols []PythonSymbol) []string {
+	terms := make([]string, 0, len(symbols)*2)
+	for _, symbol := range symbols {
+		terms = append(terms, symbol.Name, symbol.Qualified)
 	}
-	return out
+	return terms
 }
 
 // parsePythonImports extracts `import X` and `from X import Y` lines and

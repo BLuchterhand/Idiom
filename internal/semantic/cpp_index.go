@@ -207,30 +207,15 @@ func (idx *CppIndex) Summary() string {
 	if idx == nil || len(idx.Files) == 0 {
 		return ""
 	}
-	var b strings.Builder
-	b.WriteString("Indexed ")
-	b.WriteString(intString(len(idx.Files)))
-	b.WriteString(" C/C++ files\n")
-	entrypoints := idx.DefaultFiles(4)
-	if len(entrypoints) > 0 {
-		b.WriteString("Likely anchors:\n")
-		for _, path := range entrypoints {
-			file := idx.FileByPath(path)
-			if file == nil {
-				continue
-			}
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteString(" (")
-			b.WriteString(intString(file.Funcs + file.Methods))
-			b.WriteString(" funcs/methods, ")
-			b.WriteString(intString(file.Types))
-			b.WriteString(" types, ")
-			b.WriteString(intString(len(file.Includes)))
-			b.WriteString(" includes)\n")
+	return FormatIndexSummary(len(idx.Files), "C/C++", idx.DefaultFiles(4), func(path string) (string, bool) {
+		file := idx.FileByPath(path)
+		if file == nil {
+			return "", false
 		}
-	}
-	return strings.TrimSpace(b.String())
+		return intString(file.Funcs+file.Methods) + " funcs/methods, " +
+			intString(file.Types) + " types, " +
+			intString(len(file.Includes)) + " includes", true
+	})
 }
 
 func (idx *CppIndex) DefaultFiles(limit int) []string {
@@ -258,28 +243,7 @@ func (idx *CppIndex) RelevantFiles(terms []string, limit int) []string {
 		return nil
 	}
 	return idx.uniqueRankedPaths(idx.rankFiles(func(file CppFile) int {
-		score := 0
-		pathLower := strings.ToLower(file.Path)
-		for _, term := range normalized {
-			if strings.Contains(pathLower, term) {
-				score += 16
-			}
-			for _, include := range file.Includes {
-				if strings.Contains(strings.ToLower(include), term) {
-					score += 6
-				}
-			}
-			for _, symbol := range file.Symbols {
-				if strings.Contains(strings.ToLower(symbol.Name), term) || strings.Contains(strings.ToLower(symbol.Qualified), term) {
-					score += 10
-				}
-			}
-		}
-		score += cppSourceDirPriority(file.SourceDir)
-		if file.IsTest {
-			score -= 20
-		}
-		return score
+		return RelevantFileScore(normalized, file.Path, file.Includes, cppSymbolSearchTerms(file.Symbols), cppSourceDirPriority(file.SourceDir), file.IsTest)
 	}, limit), limit)
 }
 
@@ -309,6 +273,14 @@ func (idx *CppIndex) rankFiles(scoreFn func(CppFile) int, limit int) []CppFile {
 
 func (idx *CppIndex) uniqueRankedPaths(files []CppFile, limit int) []string {
 	return UniqueRankedPaths(files, limit)
+}
+
+func cppSymbolSearchTerms(symbols []CppSymbol) []string {
+	terms := make([]string, 0, len(symbols)*2)
+	for _, symbol := range symbols {
+		terms = append(terms, symbol.Name, symbol.Qualified)
+	}
+	return terms
 }
 
 func parseCppIncludes(rel string, content string, byName map[string][]string, byRel map[string]string) []string {
@@ -471,24 +443,9 @@ func parseCppFunctionSignature(signature string) (CppSymbol, bool) {
 }
 
 func extractCppCalls(lines []string, startLine int, endLine int) []CppCall {
-	if startLine <= 0 || endLine < startLine || endLine > len(lines) {
-		return nil
-	}
-	calls := make([]CppCall, 0, 16)
-	for line := startLine; line <= endLine; line++ {
-		text := stripCppLineComment(lines[line-1])
-		for _, match := range cppCallRe.FindAllStringSubmatch(text, -1) {
-			if len(match) != 2 {
-				continue
-			}
-			name := match[1]
-			if isCppKeywordName(name) {
-				continue
-			}
-			calls = append(calls, CppCall{Name: name, Line: line})
-		}
-	}
-	return calls
+	return ExtractLineCalls(lines, startLine, endLine, cppCallRe, stripCppLineComment, isCppKeywordName, func(name string, line int) CppCall {
+		return CppCall{Name: name, Line: line}
+	})
 }
 
 func filterCppDefinitionCalls(symbol CppSymbol, calls []CppCall) []CppCall {

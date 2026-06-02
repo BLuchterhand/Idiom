@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -324,18 +323,4 @@ func (m *Model) AvailableSessionIDs(limit int) []string {
 		out = append(out, sessions[i].ID)
 	}
 	return out
-}
-
-// ensureResumeDirExists is a small sanity helper the CLI calls so a
-// resume request fails with a clearer message than ENOENT when the
-// debug-log dir is misconfigured.
-func (m *Model) ensureResumeDirExists() error {
-	dir := m.cfg.Chat.DebugLogDir
-	if strings.TrimSpace(dir) == "" {
-		dir = "logs/conversations"
-	}
-	if _, err := os.Stat(dir); err != nil {
-		return fmt.Errorf("debug log dir %q: %w", filepath.Clean(dir), err)
-	}
-	return nil
 }

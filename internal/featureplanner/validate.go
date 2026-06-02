@@ -217,9 +217,7 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 		}
 	}
 	for i, atom := range plan.Atoms {
-		for _, scopeErr := range repoGrounding.validateAtomEditScope(i, atom) {
-			errs = append(errs, scopeErr)
-		}
+		errs = append(errs, repoGrounding.validateAtomEditScope(i, atom)...)
 		if readinessErrs := validateProductTDDReadiness(i, atom, productTDD); len(readinessErrs) > 0 {
 			errs = append(errs, readinessErrs...)
 		}
@@ -369,18 +367,6 @@ func looksExecutableCommand(command string) bool {
 	return strings.Contains(command, " ")
 }
 
-func tddRefsByPRDRequirement(requirements []PRDRequirementBrief) map[string]map[string]bool {
-	out := map[string]map[string]bool{}
-	for _, requirement := range requirements {
-		id := strings.TrimSpace(requirement.ID)
-		if id == "" {
-			continue
-		}
-		out[id] = normalizedStringSet(requirement.Obligations)
-	}
-	return out
-}
-
 func tddObligationsByID(obligations []TDDObligationBrief) map[string]TDDObligationBrief {
 	out := map[string]TDDObligationBrief{}
 	for _, obligation := range obligations {
@@ -389,15 +375,6 @@ func tddObligationsByID(obligations []TDDObligationBrief) map[string]TDDObligati
 		}
 	}
 	return out
-}
-
-func intersectsStringSet(values []string, set map[string]bool) bool {
-	for _, value := range values {
-		if set[strings.TrimSpace(value)] {
-			return true
-		}
-	}
-	return false
 }
 
 func existingPackageDir(dir string) bool {
@@ -471,19 +448,6 @@ func pathWithinAnyRoot(path string, roots map[string]bool) bool {
 			continue
 		}
 		if path == root || strings.HasPrefix(path, root+"/") {
-			return true
-		}
-	}
-	return false
-}
-
-func sameDirAsAny(path string, paths map[string]bool) bool {
-	dir := normalizedPathDir(path)
-	if dir == "" {
-		return false
-	}
-	for other := range paths {
-		if normalizedPathDir(other) == dir {
 			return true
 		}
 	}

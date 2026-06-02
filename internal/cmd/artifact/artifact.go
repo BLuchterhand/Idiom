@@ -1,4 +1,5 @@
 package artifact
+
 import (
 	"bufio"
 	"bytes"
@@ -399,25 +400,6 @@ func repairArtifactMechanically(answer string) (string, bool) {
 		return unwrapped, true
 	}
 	return answer, false
-}
-
-func unwrapSingleMarkdownFence(value string) (string, bool) {
-	trimmed := strings.TrimSpace(value)
-	lines := strings.Split(trimmed, "\n")
-	if len(lines) < 3 {
-		return "", false
-	}
-	if !strings.HasPrefix(strings.TrimSpace(lines[0]), "```") {
-		return "", false
-	}
-	if strings.TrimSpace(lines[len(lines)-1]) != "```" {
-		return "", false
-	}
-	body := strings.TrimSpace(strings.Join(lines[1:len(lines)-1], "\n"))
-	if body == "" {
-		return "", false
-	}
-	return body, true
 }
 
 func runArtifactValidator(command string, artifactPath string, stderr io.Writer) (int, error) {

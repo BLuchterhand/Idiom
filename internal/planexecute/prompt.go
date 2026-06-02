@@ -495,27 +495,6 @@ func normalizePromptSectionHeading(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
 
-func promptHeadingInSet(candidate string, headingSet map[string]struct{}) bool {
-	if _, ok := headingSet[candidate]; ok {
-		return true
-	}
-	if trimmed := trimPromptHeadingQualifier(candidate); trimmed != candidate {
-		_, ok := headingSet[trimmed]
-		return ok
-	}
-	return false
-}
-
-func trimPromptHeadingQualifier(heading string) string {
-	heading = strings.TrimSpace(heading)
-	for _, marker := range []string{" (", " [", " - ", " -- "} {
-		if idx := strings.Index(heading, marker); idx > 0 {
-			return strings.TrimSpace(heading[:idx])
-		}
-	}
-	return heading
-}
-
 func appendUniqueBriefStrings(dst []string, values ...string) []string {
 	for _, v := range values {
 		dst = util.AppendUnique(dst, v)

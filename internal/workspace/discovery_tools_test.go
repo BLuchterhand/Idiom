@@ -2248,7 +2248,7 @@ func TestHarnessAuditIgnoresLegacyTurnPhaseProjectionContradictions(t *testing.T
 	historicalFindings := historicalTurnPhaseProjectionFindingsFromEvents(historicalEvents)
 	if !slices.ContainsFunc(historicalFindings, func(finding harnessAuditFinding) bool {
 		return finding.ID == "historical_turn_phase_contract_contradiction" &&
-			strings.Contains(finding.Evidence, "3 pre-current turn-phase projection contradiction(s)")
+			strings.Contains(finding.Evidence, "1 pre-current turn-phase projection contradiction(s)")
 	}) {
 		t.Fatalf("legacy turn-phase contradiction should be retained as historical finding")
 	}
@@ -2296,7 +2296,7 @@ func mustWorkspaceTextualTurnPhaseProjectionEvent(t *testing.T, occurredAt time.
 		Phase:         "generic",
 		AllowedTools:  []string{"read_file"},
 		ActionPolicy: autonomy.TurnActionClassPolicyEvent{
-			AllowedActionClasses:   []string{"final_answer"},
+			AllowedActionClasses:   []string{"final_answer", "read"},
 			TerminalResponseShapes: []string{"final answer"},
 			CallableToolNames:      []string{"read_file"},
 		},

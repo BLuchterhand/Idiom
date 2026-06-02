@@ -93,6 +93,17 @@ require_single_turn_lane_entrypoint() {
   fi
 }
 
+family_uses_implement_entrypoint() {
+  case "${IDIOM_SWE_FAMILY:-}" in
+    implementation|test_authoring|config_edit|script_edit|docs_edit|locate_then_implement|explore_then_implement|investigate_then_implement|review_then_implement|failure_injection)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 terminate_tree() {
   local signal="$1"
   local pid="$2"
@@ -174,7 +185,7 @@ fi
     if [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
       require_single_turn_lane_entrypoint "plan-execute"
       IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
-    elif [[ "$runner_mode" == "implement" ]]; then
+    elif [[ "$runner_mode" == "implement" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && family_uses_implement_entrypoint; }; then
       require_single_turn_lane_entrypoint "implement"
       IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" "$idiom_bin" implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
     elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then
@@ -188,7 +199,7 @@ fi
     if [[ "$runner_mode" == "plan-execute" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && { [[ "${IDIOM_SWE_FAMILY:-}" == plan_then_execute* || "${IDIOM_SWE_FAMILY:-}" == plan_execute* ]]; }; }; then
       require_single_turn_lane_entrypoint "plan-execute"
       IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom plan-execute -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
-    elif [[ "$runner_mode" == "implement" ]]; then
+    elif [[ "$runner_mode" == "implement" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && family_uses_implement_entrypoint; }; then
       require_single_turn_lane_entrypoint "implement"
       IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" go run ./cmd/idiom implement -config "$config_path" -json --prompt-file "$prompt_file" ${IDIOM_EXTRA_ARGS:-}
     elif [[ "$runner_mode" == "auto" || -z "$runner_mode" ]]; then

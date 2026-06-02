@@ -95,7 +95,7 @@ func TestSlashProductStatusRequiresEffortRootOutsideEffortDirectory(t *testing.T
 	if len(model.messages) != 0 {
 		t.Fatalf("usage failure must not append a transcript message, got %#v", model.messages)
 	}
-	if !strings.Contains(model.status, "Usage: /product-status --effort-root <path>") {
+	if !strings.Contains(model.status, "usage: /product-status --effort-root <path>") {
 		t.Fatalf("expected explicit usage guidance outside an effort root, got %q", model.status)
 	}
 }

@@ -370,27 +370,6 @@ type planEditorDoneMsg struct {
 	err error
 }
 
-// planLastModifiedLabel returns a short human-readable staleness label for
-// the footer, e.g. "plan · just now" or "plan · 3m".
-func (m *Model) planLastModifiedLabel() string {
-	if m.planMTime.IsZero() {
-		return "plan · empty"
-	}
-	age := time.Since(m.planMTime)
-	switch {
-	case age < 30*time.Second:
-		return "plan · just now"
-	case age < time.Minute:
-		return "plan · <1m"
-	case age < time.Hour:
-		return fmt.Sprintf("plan · %dm", int(age.Minutes()))
-	case age < 24*time.Hour:
-		return fmt.Sprintf("plan · %dh", int(age.Hours()))
-	default:
-		return fmt.Sprintf("plan · %dd", int(age.Hours()/24))
-	}
-}
-
 // renderPanelTabs builds the header strip that sits above the active tab's
 // content. Active tab is highlighted; inactive tabs render dim.
 func (m *Model) renderPanelTabs(width int) string {

@@ -256,7 +256,7 @@ func (m *Manager) rustRelatedFiles(req ToolRequest) ToolResult {
 		return ToolResult{Tool: "rust_related_files", Summary: "Rust related-file search unavailable", Error: err.Error()}
 	}
 	pathFilter := m.rustPathFilter(req.Path)
-	collected := filterRustRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), pathFilter)
+	collected := filterRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), pathFilter)
 
 	// Augment with module-tree siblings when the caller's path points at a
 	// specific .rs file.
@@ -272,19 +272,8 @@ func (m *Manager) rustRelatedFiles(req ToolRequest) ToolResult {
 		}
 	}
 
-	if len(collected) == 0 {
-		return ToolResult{Tool: "rust_related_files", Summary: fmt.Sprintf("No related Rust files matched %q", pattern)}
-	}
 	slices.Sort(collected)
-	lines := make([]string, 0, len(collected))
-	for _, rel := range collected {
-		display, err := m.rustHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, display)
-	}
-	return ToolResult{Tool: "rust_related_files", Summary: fmt.Sprintf("Found %d related Rust file(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	return m.relatedFilesResult("rust_related_files", "Rust", pattern, collected, m.rustHandleDisplay)
 }
 
 // -- Tool: rust_file_outline ------------------------------------------------
@@ -624,19 +613,6 @@ func filterRustCallMatches(matches []semantic.RustCallMatch, pathFilter string) 
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)
-		}
-	}
-	return out
-}
-
-func filterRustRelatedPaths(paths []string, pathFilter string) []string {
-	if pathFilter == "" {
-		return paths
-	}
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if pathMatchesFilter(path, pathFilter) {
-			out = append(out, path)
 		}
 	}
 	return out

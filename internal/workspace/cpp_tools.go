@@ -182,19 +182,8 @@ func (m *Manager) cppRelatedFiles(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "cpp_related_files", Summary: "C++ related-file search unavailable", Error: err.Error()}
 	}
-	paths := filterCppRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.cppPathFilter(req.Path))
-	if len(paths) == 0 {
-		return ToolResult{Tool: "cpp_related_files", Summary: fmt.Sprintf("No related C++ files matched %q", pattern)}
-	}
-	lines := make([]string, 0, len(paths))
-	for _, rel := range paths {
-		display, err := m.cppHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, display)
-	}
-	return ToolResult{Tool: "cpp_related_files", Summary: fmt.Sprintf("Found %d related C++ file(s).", len(lines)), Output: strings.Join(lines, "\n")}
+	paths := filterRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.cppPathFilter(req.Path))
+	return m.relatedFilesResult("cpp_related_files", "C++", pattern, paths, m.cppHandleDisplay)
 }
 
 func (m *Manager) cppWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
@@ -442,7 +431,7 @@ func (m *Manager) cppIncludes(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "cpp_includes", Summary: "C++ include query unavailable", Error: err.Error()}
 	}
-	deps := filterCppRelatedPaths(index.Dependencies(pattern), m.cppPathFilter(req.Path))
+	deps := filterRelatedPaths(index.Dependencies(pattern), m.cppPathFilter(req.Path))
 	if len(deps) == 0 {
 		return ToolResult{Tool: "cpp_includes", Summary: fmt.Sprintf("No C++ include dependencies matched %q", pattern)}
 	}
@@ -466,7 +455,7 @@ func (m *Manager) cppWhoIncludes(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "cpp_who_includes", Summary: "C++ reverse-include query unavailable", Error: err.Error()}
 	}
-	deps := filterCppRelatedPaths(index.WhoIncludes(pattern), m.cppPathFilter(req.Path))
+	deps := filterRelatedPaths(index.WhoIncludes(pattern), m.cppPathFilter(req.Path))
 	if len(deps) == 0 {
 		return ToolResult{Tool: "cpp_who_includes", Summary: fmt.Sprintf("No C++ includers matched %q", pattern)}
 	}
@@ -490,7 +479,7 @@ func (m *Manager) cppBlastRadius(req ToolRequest) ToolResult {
 	if err != nil {
 		return ToolResult{Tool: "cpp_blast_radius", Summary: "C++ blast-radius query unavailable", Error: err.Error()}
 	}
-	files := filterCppRelatedPaths(index.BlastRadius(pattern), m.cppPathFilter(req.Path))
+	files := filterRelatedPaths(index.BlastRadius(pattern), m.cppPathFilter(req.Path))
 	if len(files) == 0 {
 		return ToolResult{Tool: "cpp_blast_radius", Summary: fmt.Sprintf("No C++ translation units were affected by %q", pattern)}
 	}
@@ -878,19 +867,6 @@ func filterCppCallMatches(matches []semantic.CppCallMatch, pathFilter string) []
 	for _, match := range matches {
 		if pathMatchesFilter(match.Caller.Path, pathFilter) {
 			out = append(out, match)
-		}
-	}
-	return out
-}
-
-func filterCppRelatedPaths(paths []string, pathFilter string) []string {
-	if pathFilter == "" {
-		return paths
-	}
-	out := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if pathMatchesFilter(path, pathFilter) {
-			out = append(out, path)
 		}
 	}
 	return out

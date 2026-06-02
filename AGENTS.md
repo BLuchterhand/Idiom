@@ -70,6 +70,25 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
   debugging reviewer bench, then implement the smallest contract-level fix that
   addresses that root cause. Do not land symptom patches or lane-specific
   workarounds while a broader harness contract explains the failure.
+- For every bug, perform a root-cause checkpoint before editing: name the first
+  broken invariant, the boundary that owns it, the evidence proving that
+  boundary failed, and the broader class of future failures the fix should
+  prevent. A narrow code patch is acceptable only after this checkpoint shows
+  the invariant is truly local; otherwise prefer the deeper contract, tool,
+  readiness, acceptance, or architecture repair even when a smaller patch would
+  make the immediate test pass.
+- Treat repeated small fixes in the same area as evidence of a missing
+  abstraction or contract. Pause, review the churn, and consolidate around the
+  shared concept before adding another guard, string check, prompt nudge, or
+  eval expectation.
+- Strongly avoid bespoke implementations of shared logic. If a fix needs a new
+  branch, string matcher, lane-specific path, scenario-specific prompt, or
+  one-off helper, first identify the shared invariant and the boundary that
+  should own it. Prefer a typed contract, reusable predicate, common adapter,
+  or existing abstraction over duplicating behavior in a local patch. A special
+  case is acceptable only when the domain boundary is real, explicitly named,
+  covered by tests, and reviewed as intentionally isolated rather than a
+  shortcut around the common mechanism.
 - For non-trivial write work, keep a short explicit plan/checklist so the intended edits and verification stay visible.
 - When committing, make the commit body useful future evidence: explain the
   problem or failure that forced the change, the chosen contract/design, any
@@ -95,6 +114,14 @@ For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or 
   contract boundary that explains the evidence. Prefer fixes to runtime
   contracts, tool affordances, completion/readiness gates, or final-answer
   transport over scenario-specific prompt nudges.
+- Never treat "make this failing scenario pass" as the root cause. The required
+  diagnosis is the reusable invariant failure that made the scenario possible,
+  such as stale authority, missing source-body evidence, mismatched tool schema,
+  premature readiness, weak final-answer acceptance, or an incoherent actor
+  boundary.
+- Before proposing a fix, explicitly list tempting smaller patches and why they
+  are insufficient or genuinely enough. If the answer is "because it satisfies
+  the current assertion," the analysis is incomplete.
 - Treat `harness_audit` behavior output as local diagnostic evidence. Before storing, sharing, or committing audit artifacts, redact raw prompt, raw transcript, log excerpt, file-body, secret, and customer-identifying fields; keep aggregate counts, command IDs, paths, findings, and session IDs needed for reproduction.
 - Do not treat contract audit `all_clear` as sufficient by itself. Check `contract_coverage.gate_coverage.open_obligation_refs`, unresolved obligations, invalid-event warnings, and sidecar/tool correlation findings before using audit output as proof.
 - If the logs do not make the failure shape obvious, improve the structured logging or audit coverage as part of the fix. A harness behavior bug is not fully diagnosable until conversation/telemetry logs and audit output can surface the same class of failure without hand-reconstructing raw prose.

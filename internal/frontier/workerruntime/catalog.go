@@ -498,32 +498,6 @@ func implementationScopedEditToolNames() []string {
 	return names
 }
 
-func selectAllowedTools(available []string, allowWrites bool, allowShell bool, allowTask bool) []string {
-	if len(available) == 0 {
-		return nil
-	}
-	var out []string
-	for _, tool := range available {
-		switch {
-		case workspace.IsWorkspaceWriteTool(tool):
-			if allowWrites {
-				out = append(out, tool)
-			}
-		case tool == "shell":
-			if allowShell {
-				out = append(out, tool)
-			}
-		case tool == "task", tool == "task_ledger":
-			if allowTask {
-				out = append(out, tool)
-			}
-		default:
-			out = append(out, tool)
-		}
-	}
-	return out
-}
-
 func filterAllowedTools(available []string, profile ToolCapabilityProfile, names ...string) []string {
 	if len(available) == 0 || len(names) == 0 {
 		return nil

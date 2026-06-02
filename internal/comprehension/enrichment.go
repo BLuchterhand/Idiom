@@ -3,8 +3,6 @@ package comprehension
 import (
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,7 +10,6 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"time"
 )
 
 type CollectorReport struct {
@@ -517,16 +514,6 @@ func manifestNodeID(path string) string {
 	return "manifest://" + filepath.ToSlash(filepath.Clean(path))
 }
 
-func evidenceNodeID(tool string, subject string) string {
-	sum := sha256.Sum256([]byte(tool + "\x00" + subject))
-	return "evidence://" + strings.TrimSpace(tool) + "/" + hex.EncodeToString(sum[:8])
-}
-
-func diagnosticNodeID(language string, path string, tool string) string {
-	sum := sha256.Sum256([]byte(language + "\x00" + path + "\x00" + tool))
-	return "diagnostic://" + normalizeLanguage(language) + "/" + hex.EncodeToString(sum[:8])
-}
-
 func normalizeIndexMode(mode string) string {
 	switch strings.ToLower(strings.TrimSpace(mode)) {
 	case "quick", "standard", "deep":
@@ -534,8 +521,4 @@ func normalizeIndexMode(mode string) string {
 	default:
 		return "standard"
 	}
-}
-
-func timestampNowUTC() string {
-	return time.Now().UTC().Format(time.RFC3339)
 }

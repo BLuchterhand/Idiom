@@ -97,6 +97,19 @@ type LSPOutgoingCall struct {
 
 type lspNotificationHandler func(method string, params json.RawMessage)
 
+type managedLSPClient interface {
+	close()
+	openFile(path string) error
+	request(ctx context.Context, method string, params any, result any) error
+}
+
+type lspLocationQueryConfig struct {
+	serverName string
+	newClient  func(context.Context) (managedLSPClient, error)
+	fileURI    func(string) string
+	format     func([]LSPLocation, string, int, bool) string
+}
+
 func (c *lspBaseClient) close() {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -233,6 +246,96 @@ func (c *lspBaseClient) openFile(path string, languageID string) error {
 		},
 	}
 	return c.notify("textDocument/didOpen", params)
+}
+
+func (m *Manager) lspLocationQuery(ctx context.Context, cfg lspLocationQueryConfig, sourcePath string, position func(string) map[string]any, method string, extraParams map[string]any, pathFilter string, limit int, includeLineText bool) (string, error) {
+	client, err := cfg.newClient(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer client.close()
+
+	abs, err := m.resolvePath(sourcePath, "")
+	if err != nil {
+		return "", err
+	}
+	if err := client.openFile(abs); err != nil {
+		return "", err
+	}
+	params := map[string]any{
+		"textDocument": map[string]any{"uri": cfg.fileURI(abs)},
+		"position":     position(abs),
+	}
+	for key, value := range extraParams {
+		params[key] = value
+	}
+	var raw json.RawMessage
+	if err := client.request(ctx, method, params, &raw); err != nil {
+		return "", err
+	}
+	locations, err := parseLSPLocations(raw, cfg.serverName)
+	if err != nil {
+		return "", err
+	}
+	return cfg.format(locations, pathFilter, limit, includeLineText), nil
+}
+
+func parseLSPLocations(raw json.RawMessage, serverName string) ([]LSPLocation, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, nil
+	}
+	var locations []LSPLocation
+	if err := json.Unmarshal(trimmed, &locations); err == nil && validLSPLocationList(locations) {
+		return locations, nil
+	}
+	var single LSPLocation
+	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
+		return []LSPLocation{single}, nil
+	}
+	var links []LSPLocationLink
+	if err := json.Unmarshal(trimmed, &links); err == nil && validLSPLocationLinkList(links) {
+		return locationsFromLSPLocationLinks(links), nil
+	}
+	var link LSPLocationLink
+	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
+		return []LSPLocation{locationFromLSPLocationLink(link)}, nil
+	}
+	return nil, fmt.Errorf("unsupported %s location payload", serverName)
+}
+
+func validLSPLocationList(locations []LSPLocation) bool {
+	for _, location := range locations {
+		if location.URI == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validLSPLocationLinkList(links []LSPLocationLink) bool {
+	for _, link := range links {
+		if link.TargetURI == "" {
+			return false
+		}
+	}
+	return true
+}
+
+func locationsFromLSPLocationLinks(links []LSPLocationLink) []LSPLocation {
+	locations := make([]LSPLocation, 0, len(links))
+	for _, link := range links {
+		locations = append(locations, locationFromLSPLocationLink(link))
+	}
+	return locations
+}
+
+func locationFromLSPLocationLink(link LSPLocationLink) LSPLocation {
+	location := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
+	if location.Range == (LSPRange{}) {
+		location.Range = link.TargetRange
+	}
+	return location
 }
 
 func lspParseResponseID(raw json.RawMessage) (int, error) {

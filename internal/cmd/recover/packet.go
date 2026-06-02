@@ -1,4 +1,5 @@
 package recover
+
 import (
 	"bytes"
 	"context"
@@ -365,10 +366,11 @@ func buildRecoverReconcileReport(root string, opts recoverReconcileOptions) (rec
 	if !found {
 		return recoverReconcileReport{}, fmt.Errorf("recovery decomposition packet not found: %s", opts.PacketPath)
 	}
-	outputPath, relReconciliationPath, err := resolveRecoveryReconciliationOutputPath(root, packetPath, packet.FailureID, opts.OutputPath)
+	outputPath, _, err := resolveRecoveryReconciliationOutputPath(root, packetPath, packet.FailureID, opts.OutputPath)
 	if err != nil {
 		return recoverReconcileReport{}, err
 	}
+	var relReconciliationPath string
 	completedIDs := recoverCompletedAtomIDs(opts.CompletedAtomIDs)
 	if existing, _, existingFound, err := recovery.TryLoadReconciliation(outputPath); err != nil {
 		return recoverReconcileReport{}, err

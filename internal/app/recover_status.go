@@ -1,6 +1,7 @@
 package app
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 	"idiom/internal/recoverstatus"
 )
 
-const recoverStatusUsage = "Usage: /recover-status [--packet <path>|<path>]"
+const recoverStatusUsage = "usage: /recover-status [--packet <path>|<path>]"
 
 func (m *Model) slashRecoverStatus(_ string, fields []string) bool {
 	packetPath, err := recoverStatusPacketPath(fields)
@@ -52,16 +53,16 @@ func recoverStatusPacketPath(fields []string) (string, error) {
 	switch len(fields) {
 	case 2:
 		if fields[1] == "--packet" || strings.HasPrefix(fields[1], "-") {
-			return "", fmt.Errorf(recoverStatusUsage)
+			return "", errors.New(recoverStatusUsage)
 		}
 		return fields[1], nil
 	case 3:
 		if fields[1] != "--packet" || strings.TrimSpace(fields[2]) == "" {
-			return "", fmt.Errorf(recoverStatusUsage)
+			return "", errors.New(recoverStatusUsage)
 		}
 		return fields[2], nil
 	default:
-		return "", fmt.Errorf(recoverStatusUsage)
+		return "", errors.New(recoverStatusUsage)
 	}
 }
 
@@ -78,7 +79,7 @@ func (m *Model) recoverStatusWorkspaceRoot() string {
 func (m *Model) recoverStatusAbsPacketPath(path string) (string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "", fmt.Errorf(recoverStatusUsage)
+		return "", errors.New(recoverStatusUsage)
 	}
 	base := ""
 	if m != nil && m.workspace != nil && strings.TrimSpace(m.workspace.CWD()) != "" {

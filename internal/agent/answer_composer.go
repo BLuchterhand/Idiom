@@ -20,13 +20,14 @@ type AnswerComposerInput struct {
 func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
 	question := strings.TrimSpace(input.Question)
 	paths := uniqueDelegatedDiscoveryPaths(input.EvidencePaths)
-	if len(input.Summaries) == 0 {
+	lines := decoratedDiscoveryFindingLines(input.Summaries, 4)
+	if len(input.Summaries) == 0 || len(lines) == 0 {
 		return "", false
 	}
-	return composeGenericEvidenceAnswer(question, input.Summaries, paths), true
+	return composeGenericEvidenceAnswer(question, paths, lines), true
 }
 
-func composeGenericEvidenceAnswer(question string, summaries []delegatedDiscoverySummary, paths []string) string {
+func composeGenericEvidenceAnswer(question string, paths []string, lines []string) string {
 	var b strings.Builder
 	paths = mergeQuestionExpectedEvidencePaths(question, paths)
 	if len(paths) > 0 {
@@ -41,18 +42,12 @@ func composeGenericEvidenceAnswer(question string, summaries []delegatedDiscover
 		b.WriteString(strings.TrimSpace(question))
 		b.WriteString("`.")
 	}
-	if block := questionPresentationBlock(question); block != "" {
-		b.WriteString("\n\n")
-		b.WriteString(block)
-	}
 	b.WriteString("\n\n")
-	if lines := decoratedDiscoveryFindingLines(summaries, 4); len(lines) > 0 {
-		b.WriteString("What this establishes:\n")
-		for _, line := range lines {
-			b.WriteString("- ")
-			b.WriteString(line)
-			b.WriteString("\n")
-		}
+	b.WriteString("What this establishes:\n")
+	for _, line := range lines {
+		b.WriteString("- ")
+		b.WriteString(line)
+		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -70,44 +65,11 @@ func mergeQuestionExpectedEvidencePaths(question string, paths []string) []strin
 }
 
 func questionExpectedEvidencePaths(question string) []string {
-	lower := strings.ToLower(strings.TrimSpace(question))
-	switch {
-	case strings.Contains(lower, "debug log") && (strings.Contains(lower, "redacted") || strings.Contains(lower, "redaction")):
-		return []string{"internal/transcript/debuglog.go", "internal/config/config.go"}
-	case strings.Contains(lower, "subagent") || strings.Contains(lower, "sub-agent"):
-		return []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"}
-	case strings.Contains(lower, "discovery tool") || strings.Contains(lower, "discovery tools"):
-		return []string{"internal/agent/answer_composer.go", "internal/agent/runner.go"}
-	default:
-		return nil
-	}
+	return nil
 }
 
 func questionPresentationBlock(question string) string {
-	lower := strings.ToLower(strings.TrimSpace(question))
-	switch {
-	case strings.Contains(lower, "debug log") && (strings.Contains(lower, "redacted") || strings.Contains(lower, "redaction")):
-		return strings.Join([]string{
-			"What Gets Redacted:",
-			"- Redacted debug log mode is the safe default for shareable logs: it keeps operational events useful while masking sensitive values and local workspace paths before they are written.",
-		}, "\n")
-	case strings.Contains(lower, "subagent") || strings.Contains(lower, "sub-agent"):
-		return strings.Join([]string{
-			"Subagent Handoff Architecture:",
-			"- The task tool (`task`) hands scoped read-only or workbranch prompts to child runners, then the parent consumes the child packet as bounded evidence.",
-			"Two Modes:",
-			"- Read-only explorer handoffs gather evidence; isolated workbranch handoffs produce scoped changes for the parent workflow to reconcile.",
-		}, "\n")
-	case strings.Contains(lower, "discovery tool") || strings.Contains(lower, "discovery tools"):
-		return strings.Join([]string{
-			"Discovery Tool Improvements:",
-			"Additions Worth Making:",
-			"- Purpose-specific answer blueprints can help convert deterministic discovery results into user-facing synthesis without leaking raw tool metadata.",
-			"- Layer-aware synthesis can preserve which layer supplied each claim while keeping broad scans, graph evidence, and source reads distinct.",
-		}, "\n")
-	default:
-		return ""
-	}
+	return ""
 }
 
 func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {

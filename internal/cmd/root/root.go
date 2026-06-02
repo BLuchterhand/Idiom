@@ -1,11 +1,12 @@
 package root
+
 import (
 	"fmt"
 	"io"
 
+	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/cmdtelemetry"
 	"idiom/internal/telemetry"
-	toolcmd "idiom/internal/cmd/tool"
 )
 
 type Options struct {
@@ -69,7 +70,7 @@ func runMainWithTelemetryDir(args []string, stdout io.Writer, stderr io.Writer, 
 		case "backend":
 			return runBackendMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "profile":
-						return runProfileMain(subcommandArgs, stdout, stderr)
+			return runProfileMain(subcommandArgs, stdout, stderr)
 		case "architect":
 			return runArchitectMainWithTelemetry(subcommandArgs, stdout, stderr, rec)
 		case "audit":
@@ -109,10 +110,6 @@ func applyBuildInfo(opts Options) {
 	}
 	commit = opts.Commit
 	date = opts.Date
-}
-
-func runToolMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return toolcmd.Run(args, stdout, stderr)
 }
 
 func runToolMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

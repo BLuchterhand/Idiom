@@ -155,9 +155,7 @@ func PlanProductStatusMigration(workflowState WorkflowState, effortIndex EffortI
 	}
 
 	indexEntry, indexBlockers := migrationIndexEntry(effortIndex, workflowState.EffortID)
-	for _, blocker := range indexBlockers {
-		plan.Blockers = append(plan.Blockers, blocker)
-	}
+	plan.Blockers = append(plan.Blockers, indexBlockers...)
 	if indexEntry != nil {
 		indexFolderPath := ""
 		if strings.TrimSpace(indexEntry.FolderPath) != "" {
@@ -370,11 +368,6 @@ func migrationNextValidActions(statusBucket, currentState string) ([]string, []T
 		return []string{"inspect_closed_effort"}, nil
 	}
 	return transitionActionNames(actions), nil
-}
-
-func safeEffortRelativePath(value string) bool {
-	_, ok := normalizedSafeEffortPath(value)
-	return ok
 }
 
 func normalizedSafeEffortPath(value string) (string, bool) {

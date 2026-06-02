@@ -2,18 +2,14 @@ package workspace
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -29,22 +25,16 @@ import (
 // Neither is bundled with idiom; callers report availability as a capability
 // gap instead of prescribing installation.
 type pylspLSPClient struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr bytes.Buffer
-	nextID int
+	lspBaseClient
 	server string // "pyright" or "pylsp"
 }
 
-
-
 type pylspDiagnostic struct {
 	Range    LSPRange `json:"range"`
-	Severity int        `json:"severity"`
-	Code     any        `json:"code"`
-	Source   string     `json:"source"`
-	Message  string     `json:"message"`
+	Severity int      `json:"severity"`
+	Code     any      `json:"code"`
+	Source   string   `json:"source"`
+	Message  string   `json:"message"`
 }
 
 // pythonLSPBinary resolves the preferred LSP server binary. Returns
@@ -87,11 +77,12 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 	if err != nil {
 		return nil, err
 	}
-	client := &pylspLSPClient{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReader(stdout),
-		server: server,
+	client := &pylspLSPClient{server: server}
+	client.lspBaseClient = lspBaseClient{
+		serverName: "Python LSP",
+		cmd:        cmd,
+		stdin:      stdin,
+		stdout:     bufio.NewReader(stdout),
 	}
 	cmd.Stderr = &client.stderr
 	if err := cmd.Start(); err != nil {
@@ -125,179 +116,16 @@ func (m *Manager) newPylspLSPClient(ctx context.Context) (*pylspLSPClient, error
 	return client, nil
 }
 
-func (c *pylspLSPClient) close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = c.request(ctx, "shutdown", nil, nil)
-	_ = c.notify("exit", map[string]any{})
-	c.forceClose()
-}
-
-func (c *pylspLSPClient) forceClose() {
-	_ = c.stdin.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	_, _ = io.Copy(io.Discard, c.stdout)
-	_ = c.cmd.Wait()
-}
-
-func (c *pylspLSPClient) notify(method string, params any) error {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-	}
-	return c.writeMessage(msg)
-}
-
-func (c *pylspLSPClient) request(ctx context.Context, method string, params any, result any) error {
-	id := c.nextID + 1
-	c.nextID = id
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	if err := c.writeMessage(msg); err != nil {
-		return err
-	}
-
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		body, err := c.readMessage()
-		if err != nil {
-			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
-				return fmt.Errorf("%w: %s", err, stderr)
-			}
-			return err
-		}
-		var env LSPEnvelope
-		if err := json.Unmarshal(body, &env); err != nil {
-			continue
-		}
-		if len(env.ID) == 0 {
-			continue
-		}
-		respID, err := parsePylspResponseID(env.ID)
-		if err != nil || respID != id {
-			continue
-		}
-		if env.Error != nil {
-			return fmt.Errorf("%s (code %d)", env.Error.Message, env.Error.Code)
-		}
-		if result != nil && len(env.Result) > 0 {
-			if err := json.Unmarshal(env.Result, result); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-func parsePylspResponseID(raw json.RawMessage) (int, error) {
-	var id int
-	if err := json.Unmarshal(raw, &id); err == nil {
-		return id, nil
-	}
-	var idString string
-	if err := json.Unmarshal(raw, &idString); err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(idString)
-}
-
-func (c *pylspLSPClient) writeMessage(msg any) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
-	if _, err := io.WriteString(c.stdin, header); err != nil {
-		return err
-	}
-	_, err = c.stdin.Write(body)
-	return err
-}
-
-func (c *pylspLSPClient) readMessage() ([]byte, error) {
-	contentLength := -1
-	for {
-		line, err := c.stdout.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			value := strings.TrimSpace(parts[1])
-			n, err := strconv.Atoi(value)
-			if err != nil {
-				return nil, err
-			}
-			contentLength = n
-		}
-	}
-	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header from Python LSP")
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(c.stdout, body); err != nil {
-		return nil, err
-	}
-	return body, nil
-}
-
 func (c *pylspLSPClient) openFile(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{
-			"uri":        pylspFileURI(path),
-			"languageId": "python",
-			"version":    1,
-			"text":       string(content),
-		},
-	}
-	return c.notify("textDocument/didOpen", params)
+	return c.lspBaseClient.openFile(path, "python")
 }
 
 func pylspFileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	return LSPFileURI(path)
 }
 
 func pylspPathFromURI(uri string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(uri))
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme != "file" && parsed.Scheme != "" {
-		return "", fmt.Errorf("unsupported Python LSP URI scheme %q", parsed.Scheme)
-	}
-	return filepath.Clean(parsed.Path), nil
-}
-
-func (m *Manager) pythonSymbolPosition(match semantic.PythonSymbolMatch) string {
-	line := match.Line
-	if line <= 0 {
-		line = 1
-	}
-	column := match.Column
-	if column <= 0 {
-		column = 1
-	}
-	return fmt.Sprintf("%s:%d:%d", filepath.ToSlash(match.Path), line, column)
+	return LSPPathFromURI(uri, "Python LSP")
 }
 
 func (m *Manager) pythonWorkspaceSymbolsViaLSP(ctx context.Context, pattern string, pathFilter string, limit int) (string, error) {
@@ -348,89 +176,44 @@ func (m *Manager) pythonDefinitionViaLSP(ctx context.Context, match semantic.Pyt
 }
 
 func (m *Manager) pythonLocationQueryViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, method string) (string, error) {
-	client, err := m.newPylspLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": pylspFileURI(abs)},
-		"position":     m.pythonLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, method, params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parsePylspLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatPylspLocations(locations, "", 4, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "Python LSP",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newPylspLSPClient(ctx)
+		},
+		fileURI: pylspFileURI,
+		format:  m.formatPylspLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.pythonLSPPosition(abs, match)
+	}, method, nil, "", 4, false)
 }
 
 func (m *Manager) pythonImplementationsViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newPylspLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": pylspFileURI(abs)},
-		"position":     m.pythonLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, "textDocument/implementation", params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parsePylspLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatPylspLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "Python LSP",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newPylspLSPClient(ctx)
+		},
+		fileURI: pylspFileURI,
+		format:  m.formatPylspLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.pythonLSPPosition(abs, match)
+	}, "textDocument/implementation", nil, pathFilter, m.cfg.MaxDirectoryEntries, false)
 }
 
 func (m *Manager) pythonReferencesViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newPylspLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": pylspFileURI(abs)},
-		"position":     m.pythonLSPPosition(abs, match),
-		"context": map[string]any{
-			"includeDeclaration": true,
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "Python LSP",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newPylspLSPClient(ctx)
 		},
-	}
-	var locations []LSPLocation
-	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
-		return "", err
-	}
-	return m.formatPylspLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
+		fileURI: pylspFileURI,
+		format:  m.formatPylspLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.pythonLSPPosition(abs, match)
+	}, "textDocument/references", map[string]any{
+		"context": map[string]any{"includeDeclaration": true},
+	}, pathFilter, m.cfg.MaxDirectoryEntries, true)
 }
 
 func (m *Manager) pythonCallHierarchyViaLSP(ctx context.Context, match semantic.PythonSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {
@@ -568,48 +351,6 @@ func (m *Manager) pythonLSPCharacter(abs string, match semantic.PythonSymbolMatc
 		return idx, true
 	}
 	return 0, false
-}
-
-func parsePylspLocations(raw json.RawMessage) ([]LSPLocation, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
-	}
-	var list []LSPLocation
-	if err := json.Unmarshal(trimmed, &list); err == nil {
-		return list, nil
-	}
-	var single LSPLocation
-	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []LSPLocation{single}, nil
-	}
-	var links []LSPLocationLink
-	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]LSPLocation, 0, len(links))
-		for _, link := range links {
-			location := LSPLocation{
-				URI:   link.TargetURI,
-				Range: link.TargetSelectionRange,
-			}
-			if location.Range == (LSPRange{}) {
-				location.Range = link.TargetRange
-			}
-			out = append(out, location)
-		}
-		return out, nil
-	}
-	var link LSPLocationLink
-	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		location := LSPLocation{
-			URI:   link.TargetURI,
-			Range: link.TargetSelectionRange,
-		}
-		if location.Range == (LSPRange{}) {
-			location.Range = link.TargetRange
-		}
-		return []LSPLocation{location}, nil
-	}
-	return nil, fmt.Errorf("unsupported Python LSP location payload")
 }
 
 func (m *Manager) formatPylspLocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {

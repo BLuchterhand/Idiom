@@ -336,8 +336,5 @@ func looksLikeStructuredInternalState(p string) bool {
 		strings.Contains(lower, `"tool_manifest"`) ||
 		strings.Contains(lower, `"allowed_tools"`) ||
 		strings.Contains(lower, `"forbidden_tools"`)
-	if hasInternalStateMarker {
-		return true
-	}
-	return false
+	return hasInternalStateMarker
 }

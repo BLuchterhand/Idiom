@@ -27,12 +27,6 @@ func SurfaceSummaryFromTurnPhaseContract(phase TurnPhaseContractEvent) TurnPhase
 func SurfaceSummaryFromModelProtocol(protocol ModelProtocolEvent, phase TurnPhaseContractEvent) TurnPhaseSurfaceSummaryEvent {
 	protocol.normalize()
 	phase.normalize()
-	callableTools := append([]string(nil), protocol.CallableTools...)
-	if strings.EqualFold(protocol.ToolTransportMode, "textual") ||
-		strings.EqualFold(protocol.ParserTransportMode, "textual") ||
-		strings.EqualFold(protocol.ParserTransportMode, "textual_json") {
-		callableTools = nil
-	}
 	return TurnPhaseSurfaceSummaryEvent{
 		SchemaVersion:           TurnPhaseSurfaceSummarySchemaVersion,
 		SurfaceID:               "model_protocol",
@@ -42,7 +36,7 @@ func SurfaceSummaryFromModelProtocol(protocol ModelProtocolEvent, phase TurnPhas
 		ProtocolHash:            protocol.ProtocolHash,
 		InvariantID:             protocol.ActiveInvariantID,
 		AdvertisedActionClasses: append([]string(nil), protocol.CallableActionClasses...),
-		CallableTools:           callableTools,
+		CallableTools:           append([]string(nil), protocol.CallableTools...),
 		TerminalOutcomes:        append([]string(nil), protocol.TerminalResponseShapes...),
 		TerminalResponseShapes:  append([]string(nil), protocol.TerminalResponseShapes...),
 		InvalidActionClasses:    append([]string(nil), protocol.InvalidActionClasses...),
@@ -118,9 +112,6 @@ func (r *turnPhaseSurfaceReconciler) checkToolVisibility() {
 	callable := r.phase.ActionPolicy.CallableToolNames
 	if len(callable) == 0 {
 		callable = r.phase.AllowedTools
-	}
-	if strings.EqualFold(r.phase.RuntimeCall.ToolTransportMode, "textual") && len(r.surface.CallableTools) > 0 {
-		r.add(strings.Join(r.surface.CallableTools, ","), "", "turn_phase.parser_transport.textual_manifest_tools", "textual surface advertised manifest-visible callable tools")
 	}
 	for _, tool := range r.surface.CallableTools {
 		actionClass := turnPhaseActionClassForTool(tool)
@@ -233,9 +224,6 @@ func (r *turnPhaseSurfaceReconciler) checkRuntimeCompatibility() {
 		if len(runtime.ExpressibleActionClasses) > 0 && !stringSetContains(runtime.ExpressibleActionClasses, actionClass) {
 			r.add("", actionClass, "turn_phase.runtime.inexpressible_action", "surface advertised action class that runtime_call cannot express")
 		}
-	}
-	if strings.EqualFold(runtime.ToolTransportMode, "textual") && len(r.surface.CallableTools) > 0 {
-		r.add(strings.Join(r.surface.CallableTools, ","), "", "turn_phase.runtime.textual_manifest_tools", "surface runtime_call is textual but callable_tools are manifest-visible")
 	}
 }
 

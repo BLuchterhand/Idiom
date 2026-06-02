@@ -2,44 +2,21 @@ package workspace
 
 import (
 	"bufio"
-	"bytes"
 	"cmp"
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"idiom/internal/semantic"
 )
 
-// jdtlsLSPClient is the Java equivalent of clangdLSPClient. It spawns
-// jdtls, speaks JSON-RPC over stdio, and exposes a small set of LSP
-// methods the Java tools consume. The protocol surface is identical to
-// clangd — just a different server — so the scaffolding here mirrors
-// clangd_lsp.go beat-for-beat.
 type jdtlsLSPClient struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stdout *bufio.Reader
-	stderr bytes.Buffer
-	nextID int
-}
-
-
-
-type jdtlsDiagnostic struct {
-	Range    LSPRange `json:"range"`
-	Severity int        `json:"severity"`
-	Source   string     `json:"source"`
-	Message  string     `json:"message"`
+	lspBaseClient
 }
 
 // jdtlsInitializeTimeout is generous: jdtls commonly spends 5–10s on
@@ -67,9 +44,12 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 		return nil, err
 	}
 	client := &jdtlsLSPClient{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: bufio.NewReader(stdout),
+		lspBaseClient: lspBaseClient{
+			serverName: "jdtls",
+			cmd:        cmd,
+			stdin:      stdin,
+			stdout:     bufio.NewReader(stdout),
+		},
 	}
 	cmd.Stderr = &client.stderr
 	if err := cmd.Start(); err != nil {
@@ -127,165 +107,16 @@ func (m *Manager) newJdtlsLSPClient(ctx context.Context) (*jdtlsLSPClient, error
 	return client, nil
 }
 
-func (c *jdtlsLSPClient) close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	_ = c.request(ctx, "shutdown", nil, nil)
-	_ = c.notify("exit", map[string]any{})
-	c.forceClose()
-}
-
-func (c *jdtlsLSPClient) forceClose() {
-	_ = c.stdin.Close()
-	if c.cmd.Process != nil {
-		_ = c.cmd.Process.Kill()
-	}
-	_, _ = io.Copy(io.Discard, c.stdout)
-	_ = c.cmd.Wait()
-}
-
-func (c *jdtlsLSPClient) notify(method string, params any) error {
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"method":  method,
-		"params":  params,
-	}
-	return c.writeMessage(msg)
-}
-
-func (c *jdtlsLSPClient) request(ctx context.Context, method string, params any, result any) error {
-	id := c.nextID + 1
-	c.nextID = id
-	msg := map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"method":  method,
-		"params":  params,
-	}
-	if err := c.writeMessage(msg); err != nil {
-		return err
-	}
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		body, err := c.readMessage()
-		if err != nil {
-			if stderr := strings.TrimSpace(c.stderr.String()); stderr != "" {
-				return fmt.Errorf("%w: %s", err, stderr)
-			}
-			return err
-		}
-		var env LSPEnvelope
-		if err := json.Unmarshal(body, &env); err != nil {
-			continue
-		}
-		if len(env.ID) == 0 {
-			continue
-		}
-		respID, err := parseJdtlsResponseID(env.ID)
-		if err != nil || respID != id {
-			continue
-		}
-		if env.Error != nil {
-			return fmt.Errorf("%s (code %d)", env.Error.Message, env.Error.Code)
-		}
-		if result != nil && len(env.Result) > 0 {
-			if err := json.Unmarshal(env.Result, result); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
-}
-
-func parseJdtlsResponseID(raw json.RawMessage) (int, error) {
-	var id int
-	if err := json.Unmarshal(raw, &id); err == nil {
-		return id, nil
-	}
-	var s string
-	if err := json.Unmarshal(raw, &s); err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(s)
-}
-
-func (c *jdtlsLSPClient) writeMessage(msg any) error {
-	body, err := json.Marshal(msg)
-	if err != nil {
-		return err
-	}
-	header := fmt.Sprintf("Content-Length: %d\r\n\r\n", len(body))
-	if _, err := io.WriteString(c.stdin, header); err != nil {
-		return err
-	}
-	_, err = c.stdin.Write(body)
-	return err
-}
-
-func (c *jdtlsLSPClient) readMessage() ([]byte, error) {
-	contentLength := -1
-	for {
-		line, err := c.stdout.ReadString('\n')
-		if err != nil {
-			return nil, err
-		}
-		line = strings.TrimRight(line, "\r\n")
-		if line == "" {
-			break
-		}
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
-		if strings.EqualFold(strings.TrimSpace(parts[0]), "Content-Length") {
-			n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-			if err != nil {
-				return nil, err
-			}
-			contentLength = n
-		}
-	}
-	if contentLength < 0 {
-		return nil, fmt.Errorf("missing Content-Length header from jdtls")
-	}
-	body := make([]byte, contentLength)
-	if _, err := io.ReadFull(c.stdout, body); err != nil {
-		return nil, err
-	}
-	return body, nil
-}
-
 func (c *jdtlsLSPClient) openFile(path string) error {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{
-			"uri":        jdtlsFileURI(path),
-			"languageId": "java",
-			"version":    1,
-			"text":       string(content),
-		},
-	}
-	return c.notify("textDocument/didOpen", params)
+	return c.lspBaseClient.openFile(path, "java")
 }
 
 func jdtlsFileURI(path string) string {
-	return (&url.URL{Scheme: "file", Path: filepath.ToSlash(path)}).String()
+	return LSPFileURI(path)
 }
 
 func jdtlsPathFromURI(uri string) (string, error) {
-	parsed, err := url.Parse(strings.TrimSpace(uri))
-	if err != nil {
-		return "", err
-	}
-	if parsed.Scheme != "file" && parsed.Scheme != "" {
-		return "", fmt.Errorf("unsupported jdtls URI scheme %q", parsed.Scheme)
-	}
-	return filepath.Clean(parsed.Path), nil
+	return LSPPathFromURI(uri, "jdtls")
 }
 
 func (m *Manager) javaLSPPosition(abs string, match semantic.JavaSymbolMatch) map[string]any {
@@ -318,42 +149,6 @@ func (m *Manager) javaLSPCharacter(abs string, match semantic.JavaSymbolMatch) (
 		return idx, true
 	}
 	return 0, false
-}
-
-func parseJdtlsLocations(raw json.RawMessage) ([]LSPLocation, error) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
-		return nil, nil
-	}
-	var list []LSPLocation
-	if err := json.Unmarshal(trimmed, &list); err == nil {
-		return list, nil
-	}
-	var single LSPLocation
-	if err := json.Unmarshal(trimmed, &single); err == nil && single.URI != "" {
-		return []LSPLocation{single}, nil
-	}
-	var links []LSPLocationLink
-	if err := json.Unmarshal(trimmed, &links); err == nil {
-		out := make([]LSPLocation, 0, len(links))
-		for _, link := range links {
-			loc := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-			if loc.Range == (LSPRange{}) {
-				loc.Range = link.TargetRange
-			}
-			out = append(out, loc)
-		}
-		return out, nil
-	}
-	var link LSPLocationLink
-	if err := json.Unmarshal(trimmed, &link); err == nil && link.TargetURI != "" {
-		loc := LSPLocation{URI: link.TargetURI, Range: link.TargetSelectionRange}
-		if loc.Range == (LSPRange{}) {
-			loc.Range = link.TargetRange
-		}
-		return []LSPLocation{loc}, nil
-	}
-	return nil, fmt.Errorf("unsupported jdtls location payload")
 }
 
 func (m *Manager) formatJdtlsLocations(locations []LSPLocation, pathFilter string, limit int, includeLineText bool) string {
@@ -684,89 +479,44 @@ func (m *Manager) javaDefinitionViaJdtls(ctx context.Context, match semantic.Jav
 }
 
 func (m *Manager) javaLocationQueryViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, method string) (string, error) {
-	client, err := m.newJdtlsLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": jdtlsFileURI(abs)},
-		"position":     m.javaLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, method, params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseJdtlsLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatJdtlsLocations(locations, "", 4, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "jdtls",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newJdtlsLSPClient(ctx)
+		},
+		fileURI: jdtlsFileURI,
+		format:  m.formatJdtlsLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.javaLSPPosition(abs, match)
+	}, method, nil, "", 4, false)
 }
 
 func (m *Manager) javaImplementationsViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newJdtlsLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": jdtlsFileURI(abs)},
-		"position":     m.javaLSPPosition(abs, match),
-	}
-	var raw json.RawMessage
-	if err := client.request(ctx, "textDocument/implementation", params, &raw); err != nil {
-		return "", err
-	}
-	locations, err := parseJdtlsLocations(raw)
-	if err != nil {
-		return "", err
-	}
-	return m.formatJdtlsLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, false), nil
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "jdtls",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newJdtlsLSPClient(ctx)
+		},
+		fileURI: jdtlsFileURI,
+		format:  m.formatJdtlsLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.javaLSPPosition(abs, match)
+	}, "textDocument/implementation", nil, pathFilter, m.cfg.MaxDirectoryEntries, false)
 }
 
 func (m *Manager) javaReferencesViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string) (string, error) {
-	client, err := m.newJdtlsLSPClient(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer client.close()
-
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return "", err
-	}
-	if err := client.openFile(abs); err != nil {
-		return "", err
-	}
-	params := map[string]any{
-		"textDocument": map[string]any{"uri": jdtlsFileURI(abs)},
-		"position":     m.javaLSPPosition(abs, match),
-		"context": map[string]any{
-			"includeDeclaration": true,
+	return m.lspLocationQuery(ctx, lspLocationQueryConfig{
+		serverName: "jdtls",
+		newClient: func(ctx context.Context) (managedLSPClient, error) {
+			return m.newJdtlsLSPClient(ctx)
 		},
-	}
-	var locations []LSPLocation
-	if err := client.request(ctx, "textDocument/references", params, &locations); err != nil {
-		return "", err
-	}
-	return m.formatJdtlsLocations(locations, pathFilter, m.cfg.MaxDirectoryEntries, true), nil
+		fileURI: jdtlsFileURI,
+		format:  m.formatJdtlsLocations,
+	}, match.Path, func(abs string) map[string]any {
+		return m.javaLSPPosition(abs, match)
+	}, "textDocument/references", map[string]any{
+		"context": map[string]any{"includeDeclaration": true},
+	}, pathFilter, m.cfg.MaxDirectoryEntries, true)
 }
 
 func (m *Manager) javaCallHierarchyViaJdtls(ctx context.Context, match semantic.JavaSymbolMatch, pathFilter string, incoming bool) (callHierarchyResult, error) {

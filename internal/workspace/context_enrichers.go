@@ -667,9 +667,7 @@ func normalizeGraphOutputPath(path string, root string) string {
 	if path == "" {
 		return ""
 	}
-	if strings.HasPrefix(path, "file://") {
-		path = strings.TrimPrefix(path, "file://")
-	}
+	path = strings.TrimPrefix(path, "file://")
 	if filepath.IsAbs(path) {
 		if rel, err := filepath.Rel(root, path); err == nil {
 			path = rel

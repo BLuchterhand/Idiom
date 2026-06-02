@@ -1,8 +1,8 @@
 package root
+
 import (
 	"io"
 
-	"idiom/internal/app"
 	"idiom/internal/cmdruntime"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
@@ -22,14 +22,6 @@ func runWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptR
 	return cmdruntime.RunWithTelemetry(args, stdout, stderr, promptRun, promptsRun, tuiRun, serverRun, listSessions, runVersionMain, rec)
 }
 
-func loadPromptTurns(path string) ([]string, error) {
-	return cmdruntime.LoadPromptTurns(path)
-}
-
-func cleanPromptTurns(prompts []string) ([]string, error) {
-	return cmdruntime.CleanPromptTurns(prompts)
-}
-
 func runTUI(cfg config.Config, opts runOptions) error {
 	return cmdruntime.RunTUI(cfg, opts)
 }
@@ -42,16 +34,8 @@ func runPromptsOnce(cfg config.Config, prompts []string, opts runOptions, stdout
 	return cmdruntime.RunPromptsOnce(cfg, prompts, opts, stdout)
 }
 
-func modelCloseout(rec *telemetry.Recorder, model *app.Model, mode string, taskFamily string) func() {
-	return cmdruntime.ModelCloseout(rec, model, mode, taskFamily)
-}
-
 func sessionIDFromPath(path string) string {
 	return cmdruntime.SessionIDFromPath(path)
-}
-
-func logModelSessionLink(rec *telemetry.Recorder, mode string, debugLogPath string) {
-	cmdruntime.LogModelSessionLink(rec, mode, debugLogPath)
 }
 
 func runListSessions(cfg config.Config, stdout io.Writer) error {
@@ -60,8 +44,4 @@ func runListSessions(cfg config.Config, stdout io.Writer) error {
 
 func runServerOnly(cfg config.Config, opts runOptions) error {
 	return cmdruntime.RunServerOnly(cfg, opts)
-}
-
-func runServerOnlyWithTelemetry(cfg config.Config, opts runOptions) error {
-	return cmdruntime.RunServerOnlyWithTelemetry(cfg, opts)
 }

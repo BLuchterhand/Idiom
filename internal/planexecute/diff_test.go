@@ -1,4 +1,4 @@
-package app
+package planexecute
 
 import (
 	"strings"
@@ -7,17 +7,17 @@ import (
 
 // TestUnifiedDiffIdenticalReturnsEmpty verifies that no spurious hunks
 // are emitted when the before and after payloads match byte-for-byte.
-// This is the canonical "no-op write" path — a user editing a file and
+// This is the canonical "no-op write" path: a user editing a file and
 // hitting save without changes should not clutter the plan log.
 func TestUnifiedDiffIdenticalReturnsEmpty(t *testing.T) {
-	got := unifiedDiff("a.txt", "hello\nworld\n", "hello\nworld\n")
+	got := UnifiedDiff("a.txt", "hello\nworld\n", "hello\nworld\n")
 	if got != "" {
 		t.Fatalf("identical inputs should return empty, got:\n%s", got)
 	}
 }
 
 func TestUnifiedDiffHeadersIncludePath(t *testing.T) {
-	got := unifiedDiff("pkg/foo.go", "a\n", "b\n")
+	got := UnifiedDiff("pkg/foo.go", "a\n", "b\n")
 	if !strings.Contains(got, "--- a/pkg/foo.go") {
 		t.Errorf("missing --- header: %q", got)
 	}
@@ -27,7 +27,7 @@ func TestUnifiedDiffHeadersIncludePath(t *testing.T) {
 }
 
 func TestUnifiedDiffSimpleReplace(t *testing.T) {
-	got := unifiedDiff("x", "one\ntwo\nthree\n", "one\nTWO\nthree\n")
+	got := UnifiedDiff("x", "one\ntwo\nthree\n", "one\nTWO\nthree\n")
 	want := "--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n one\n-two\n+TWO\n three\n"
 	if got != want {
 		t.Fatalf("diff mismatch\n got:\n%s\nwant:\n%s", got, want)
@@ -35,7 +35,7 @@ func TestUnifiedDiffSimpleReplace(t *testing.T) {
 }
 
 func TestUnifiedDiffPureAddition(t *testing.T) {
-	got := unifiedDiff("x", "", "hello\n")
+	got := UnifiedDiff("x", "", "hello\n")
 	if !strings.Contains(got, "+hello") {
 		t.Errorf("should include added line: %q", got)
 	}
@@ -49,7 +49,7 @@ func TestUnifiedDiffPureAddition(t *testing.T) {
 }
 
 func TestUnifiedDiffPureDeletion(t *testing.T) {
-	got := unifiedDiff("x", "hello\n", "")
+	got := UnifiedDiff("x", "hello\n", "")
 	if !strings.Contains(got, "-hello") {
 		t.Errorf("should emit removal: %q", got)
 	}
@@ -66,7 +66,7 @@ func TestUnifiedDiffPureDeletion(t *testing.T) {
 func TestUnifiedDiffMissingTrailingNewline(t *testing.T) {
 	// Both sides change the last line; before lacks the trailing NL so
 	// the removal side must carry the "No newline" annotation.
-	got := unifiedDiff("x", "one\ntwo", "one\nTWO\n")
+	got := UnifiedDiff("x", "one\ntwo", "one\nTWO\n")
 	if !strings.Contains(got, "\\ No newline at end of file") {
 		t.Errorf("missing trailing-newline marker: %q", got)
 	}
@@ -75,13 +75,13 @@ func TestUnifiedDiffMissingTrailingNewline(t *testing.T) {
 	}
 }
 
-// TestUnifiedDiffCoalescesNearbyEdits verifies the ctx=3 hunk merger —
+// TestUnifiedDiffCoalescesNearbyEdits verifies the ctx=3 hunk merger:
 // two edits 4 lines apart should produce a single hunk rather than
 // two neighboring hunks that duplicate their shared context.
 func TestUnifiedDiffCoalescesNearbyEdits(t *testing.T) {
 	before := "a\nb\nc\nd\ne\nf\ng\nh\ni\n"
 	after := "a\nB\nc\nd\ne\nf\ng\nH\ni\n"
-	got := unifiedDiff("x", before, after)
+	got := UnifiedDiff("x", before, after)
 	hunks := strings.Count(got, "@@ ")
 	if hunks != 1 {
 		t.Errorf("expected edits within 2*ctx to merge into 1 hunk, got %d hunks:\n%s", hunks, got)
@@ -89,12 +89,12 @@ func TestUnifiedDiffCoalescesNearbyEdits(t *testing.T) {
 }
 
 // TestUnifiedDiffSplitsFarApartEdits verifies that edits far enough
-// apart do produce separate hunks — otherwise the single-hunk output
+// apart do produce separate hunks; otherwise the single-hunk output
 // would drag unrelated chunks of the file into the plan view.
 func TestUnifiedDiffSplitsFarApartEdits(t *testing.T) {
 	before := "a\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\np\n"
 	after := "A\nb\nc\nd\ne\nf\ng\nh\ni\nj\nk\nl\nm\nn\no\nP\n"
-	got := unifiedDiff("x", before, after)
+	got := UnifiedDiff("x", before, after)
 	hunks := strings.Count(got, "@@ ")
 	if hunks != 2 {
 		t.Errorf("expected 2 hunks for far-apart edits, got %d:\n%s", hunks, got)
@@ -102,7 +102,7 @@ func TestUnifiedDiffSplitsFarApartEdits(t *testing.T) {
 }
 
 func TestUnifiedDiffEmptyBothReturnsEmpty(t *testing.T) {
-	if got := unifiedDiff("x", "", ""); got != "" {
+	if got := UnifiedDiff("x", "", ""); got != "" {
 		t.Fatalf("empty/empty should return empty, got %q", got)
 	}
 }

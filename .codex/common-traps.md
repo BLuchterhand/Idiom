@@ -155,6 +155,61 @@ failure patterns that have cost time in real Idiom/Colony runs.
   does not actually satisfy. Fix the command, packet, schema, or expectation
   before adding another nudge that pushes the model away from what it is trying
   to inspect.
+- **Classifier answers overridden by keyword lanes**: if the route classifier
+  emits a coherent read-only/direct-answer route, do not promote it to a
+  special lane with keyword heuristics such as subsystem names, feature names,
+  or common debugging nouns. Those overrides are brittle authority leaks. If a
+  route is wrong, improve the classifier contract, typed outcome fields, or
+  eval evidence instead of hardcoding a lane switch after classification.
+- **Redirecting literal search away from the requested evidence**: a
+  `search_content` request for a literal term is often exactly what the model
+  needs. Do not convert literal text search into a graph/context query merely
+  because a structured tool exists. Structured tools are valuable when the
+  request is symbol-shaped or the model asks for relationships; literal search
+  should return literal hits, especially when the model is narrowing from a
+  broad or noisy result set.
+- **Generated artifacts mistaken for source bodies**: `.idiom/` context views,
+  discovery query JSON, generated live/eval logs, top-level logs, and top-level
+  transcripts are diagnostic artifacts. They can explain what happened in a run,
+  but they must not satisfy source-body evidence, final-answer citations, or
+  readiness for codebase behavior. Preserve real checked-in source packages such
+  as `internal/transcript/` and explicit fixture reads when the fixture itself
+  is in scope.
+- **Closest-path hints without recovery**: when `read_file` can prove exactly
+  one same-directory existing file has the same normalized basename as the
+  requested missing path, the tool should satisfy the model by reading that
+  file and naming the recovery in the summary. If the closest match is
+  ambiguous, in another directory, or has a different extension, keep the error
+  and suggestions visible rather than guessing.
+- **Readiness after one noisy hit**: one source-body read is not enough to close
+  a read-only answer when the immediately preceding discovery was a broad,
+  high-cardinality search. Treat that state as partially grounded: the model has
+  a real anchor, but it may still need to narrow to the source body that answers
+  the actual question.
+- **Small patches after repeated failures**: when two or more fixes in the same
+  subsystem add guards, string filters, prompt reminders, eval exceptions, or
+  answer-shape cleanup, stop treating the next failure as local. Reconstruct the
+  first broken invariant, identify the owning boundary, and consolidate the
+  behavior into one typed contract or abstraction before adding another patch.
+- **Passing the assertion instead of fixing the invariant**: a live/eval
+  expectation is evidence, not the root cause. Do not update an oracle, add a
+  topic-specific path, or suppress an error counter until the reusable failure
+  class is named and reviewer-validated. A correct fix should explain what
+  future bug shape is now impossible.
+- **Bespoke logic replacing a missing contract**: repeated local branches,
+  string matchers, lane-specific helpers, prompt snippets, or eval-only
+  exceptions are usually evidence that the shared invariant has no owner. Stop
+  before adding another special case. Name the common behavior, decide whether
+  it belongs in a typed contract, evidence ledger, tool adapter, gate, scorer,
+  or presenter, then implement it once behind that boundary. If a special case
+  is genuinely required, make the boundary explicit, keep it isolated at the
+  adapter edge, add tests proving it does not shadow the generic path, and get
+  reviewer agreement before landing it.
+- **Answer-shape cleanup as evidence grounding**: filtering phrases like
+  "retained source context" or "What this establishes" can make a transcript
+  look better while leaving readiness and citation authority broken. Fix the
+  evidence ledger, source-body contract, and final-answer critic before adding
+  presentation cleanup.
 
 ## Audit, Logs, And Feedback Traps
 
@@ -227,6 +282,10 @@ failure patterns that have cost time in real Idiom/Colony runs.
 - **Changing gates without prompt parity**: the model should see the same
   contract the harness enforces. If a gate rejects an action, the prompt or
   runtime brief should make the valid alternatives visible.
+- **Skipping the root-cause checkpoint**: before editing for any bug, write down
+  the first broken invariant, owner boundary, proving evidence, tempting smaller
+  patch, and reason the chosen fix is generic. If any item is unknown, gather
+  more evidence or ask reviewers before patching.
 - **Fixing only the late symptom**: completion gates and recovery controllers
   are often where a bug becomes visible, but the cause may be an earlier prompt
   that sounded advisory, omitted the executable action sequence, or contradicted

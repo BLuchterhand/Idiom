@@ -739,6 +739,60 @@ func TestEvaluateSWETaskProductWorkflowBlockerDoesNotSatisfyImplementationAccept
 	}
 }
 
+func TestEvaluateSWETaskCountsExplicitCompletionGateRejectAfterPostReadinessGap(t *testing.T) {
+	task := SWETask{
+		ID:     "read-only-gap-friction",
+		Family: "direct_question",
+		Scenario: Scenario{
+			Name:                        "read-only-gap-friction",
+			PromptContains:              []string{"save label"},
+			FinalAssistantContains:      []string{"Save changes"},
+			RequireAssistantForEachUser: true,
+		},
+		Oracle: SWEOracle{
+			RequireNoChangedFiles:     true,
+			RequireNoRunnerRejections: true,
+			MaxErrors:                 intPtr(0),
+		},
+	}
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "Can we shorten the save label?"}},
+		{Type: "tool_request", Data: map[string]any{"tool": "read_file", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{"tool": "read_file", "summary": "Read internal/labels/labels.go lines 1-5", "error": ""}},
+		{Type: "tool_request", Data: map[string]any{"tool": "code_navigate", "path": "internal/labels/labels.go"}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "code_navigate",
+			"summary": "Post-readiness follow-up missing named gap",
+			"error":   "answer readiness has already been reached for this read-only lane",
+		}},
+		{Type: "run_event", Data: map[string]any{
+			"role":    "failure_feedback",
+			"content": `{"reason":"tool_rejected","failure_class":"tool_failure","result_summary":"Post-readiness follow-up missing named gap","failed_tool":"code_navigate"}`,
+		}},
+		{Type: "run_event", Data: map[string]any{
+			"role":    "autonomy_event",
+			"content": `{"type":"gate_decision","gate":{"gate":"completion_gate","decision":"reject","reason_code":"non_answer_prose"},"correlation":{"permission_profile":"read_only_workspace"}}`,
+		}},
+		{Type: "turn_summary", Data: map[string]any{
+			"rejected_actions":           1,
+			"completion_gate_rejections": 1,
+			"stop_reason":                "post_readiness_gap_required_budget_exhausted",
+		}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "The inspected source returns `Save changes`, so the label can be shortened. No files were edited."}},
+	}
+
+	report := EvaluateSWETask("read-only-gap-friction.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("explicit completion-gate rejection should still fail no-runner-rejection oracle")
+	}
+	if report.Metrics.TotalErrorEvents() != 0 {
+		t.Fatalf("recoverable post-readiness tool friction should not be scored as a tool error: %#v", report.Metrics)
+	}
+	if report.Metrics.RejectedActions != 1 || report.Metrics.CompletionGateRejections != 1 {
+		t.Fatalf("explicit completion gate rejection should remain visible: %#v", report.Metrics)
+	}
+}
+
 func TestEvaluateSWETaskSourceSatisfiedNeedsExplicitAllowanceForImplementationRequiredTask(t *testing.T) {
 	task := SWETask{
 		ID:     "source-satisfied-implementation",

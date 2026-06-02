@@ -28,7 +28,7 @@ func (c *scriptedLLMClient) CompleteChat(_ context.Context, _ []llama.ChatMessag
 }
 
 func (c *scriptedLLMClient) CompleteChatMessage(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions) (llama.ChatMessage, error) {
-	resp, _ := c.CompleteChat(nil, nil, llama.ChatOptions{})
+	resp, _ := c.CompleteChat(context.TODO(), nil, llama.ChatOptions{})
 	return llama.ChatMessage{Role: "assistant", Content: resp}, nil
 }
 

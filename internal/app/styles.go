@@ -49,7 +49,6 @@ var (
 // ── Footer ────────────────────────────────────────────────────────────────────
 
 var (
-	contextStyle  = lipgloss.NewStyle().Foreground(colorAccent).Padding(0, 1)
 	approvalStyle = lipgloss.NewStyle().Bold(true).Foreground(colorWarningFg).Background(colorWarningBg).Padding(0, 1)
 	errorStyle    = lipgloss.NewStyle().Bold(true).Foreground(colorErrorFg).Background(colorErrorBg).Padding(0, 1)
 )
@@ -97,9 +96,9 @@ var (
 // ── Slash-command suggestion popup ────────────────────────────────────────────
 
 var (
-	slashSuggestBoxStyle     = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(colorMuted).Padding(0, 1)
-	slashSuggestActiveStyle  = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
+	slashSuggestBoxStyle      = lipgloss.NewStyle().Border(lipgloss.NormalBorder()).BorderForeground(colorMuted).Padding(0, 1)
+	slashSuggestActiveStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorOnPrimary).Background(colorPrimary).Padding(0, 1)
 	slashSuggestInactiveStyle = lipgloss.NewStyle().Foreground(colorText).Padding(0, 1)
-	slashSuggestUsageStyle   = lipgloss.NewStyle().Foreground(colorDim)
-	slashSuggestHintStyle    = lipgloss.NewStyle().Foreground(colorDim)
+	slashSuggestUsageStyle    = lipgloss.NewStyle().Foreground(colorDim)
+	slashSuggestHintStyle     = lipgloss.NewStyle().Foreground(colorDim)
 )

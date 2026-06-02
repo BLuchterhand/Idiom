@@ -31,6 +31,11 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 		return "", false
 	}
 	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+		if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
+			if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer, ""); ok {
+				return presentable, true
+			}
+		}
 		return annotateBudgetLimitedAnswer(answer), true
 	}
 	if output, ok := bestTaskResultOutput(results); ok && childPacketContainsGroundedAnswerEvidence(brief.Objective, output) {
@@ -49,17 +54,20 @@ func (r *Runner) modelErrorAfterReadOnlyEvidenceAnswer(err error, results []work
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return "", false
 	}
-	if !modelErrorFallbackHasGroundedReadOnlyEvidence(results) {
+	if !modelErrorFallbackHasGroundedReadOnlyEvidence(r.RuntimeBrief, results) {
 		return "", false
+	}
+	if conversationFallbackShouldAvoidSourceBody(r.RuntimeBrief) {
+		return synthesizeBriefConversationFallback(r.RuntimeBrief, results), true
 	}
 	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
 }
 
-func modelErrorFallbackHasGroundedReadOnlyEvidence(results []workspace.ToolResult) bool {
+func modelErrorFallbackHasGroundedReadOnlyEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if len(results) == 0 {
 		return false
 	}
-	if genericReadOnlyAnswerEvidenceReady(results) {
+	if genericReadOnlyAnswerEvidenceReady(brief, results) {
 		return true
 	}
 	useful := 0

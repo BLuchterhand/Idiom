@@ -528,21 +528,6 @@ func (m *Manager) contextReadFreshness(ctx context.Context, req ToolRequest, ope
 	})
 }
 
-func (m *Manager) contextAutoRefresh(ctx context.Context, req ToolRequest, purpose string) *comprehension.RefreshReport {
-	decision, err := m.contextReadFreshness(ctx, req, purpose)
-	if err != nil {
-		return &comprehension.RefreshReport{
-			Attempted:     false,
-			Scope:         boundedContextRefreshScope(req),
-			Language:      contextRefreshLanguage(req),
-			Reason:        "status_error",
-			SkippedReason: "status_error",
-			Error:         err.Error(),
-		}
-	}
-	return decision.Refresh
-}
-
 func (m *Manager) contextStatusFreshness(ctx context.Context, req ToolRequest, status comprehension.StatusReport) comprehension.FreshnessDecision {
 	freshnessStatus := status
 	decision, err := comprehension.EnsureFresh(ctx, comprehension.FreshnessRequest{

@@ -1,4 +1,5 @@
 package brief
+
 import (
 	"bytes"
 	"encoding/json"
@@ -488,9 +489,6 @@ func runBriefPreview(args []string, stdout io.Writer, stderr io.Writer, rec *tel
 		}
 		if inRB && strings.HasPrefix(line, "## ") && !strings.HasPrefix(line, "## Required Behavior") {
 			inRB = false
-		}
-		if inRB && strings.HasPrefix(line, "### ") {
-			// subsections don't count as steps
 		}
 		if inRB {
 			// top-level numbered items: "1.", "2.", etc.

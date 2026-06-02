@@ -1,4 +1,5 @@
 package refine
+
 import (
 	"bytes"
 	"encoding/json"
@@ -13,6 +14,7 @@ import (
 	"testing"
 
 	"idiom/internal/app"
+	briefcmd "idiom/internal/cmd/brief"
 )
 
 // nonTrivialDraftBody returns a canned draft body sized to clear the
@@ -1615,37 +1617,37 @@ func TestParseBriefLintFindingsCategorizesByKeyword(t *testing.T) {
 	cases := []struct {
 		name string
 		raw  string
-		want briefLintFinding
+		want briefcmd.LintFinding
 	}{
 		{
 			name: "anchor-specificity-block",
 			raw:  "idiom brief preflight: FAIL /b.md\n- exact-anchor specificity failed for x.go.\n",
-			want: briefLintFinding{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/b.md", Message: "exact-anchor specificity failed for x.go."},
+			want: briefcmd.LintFinding{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/b.md", Message: "exact-anchor specificity failed for x.go."},
 		},
 		{
 			name: "warn-current-state",
 			raw:  "- WARN: no obvious verified-current-state section found.\n",
-			want: briefLintFinding{Severity: "WARN", Category: "missing-current-state", Brief: "/b.md", Message: "no obvious verified-current-state section found."},
+			want: briefcmd.LintFinding{Severity: "WARN", Category: "missing-current-state", Brief: "/b.md", Message: "no obvious verified-current-state section found."},
 		},
 		{
 			name: "info-note",
 			raw:  "- INFO: noteworthy detail\n",
-			want: briefLintFinding{Severity: "INFO", Category: "other", Brief: "/b.md", Message: "noteworthy detail"},
+			want: briefcmd.LintFinding{Severity: "INFO", Category: "other", Brief: "/b.md", Message: "noteworthy detail"},
 		},
 		{
 			name: "unfilled-placeholder-block",
 			raw:  "- some unfilled placeholder somewhere\n",
-			want: briefLintFinding{Severity: "BLOCK", Category: "unfilled-placeholder", Brief: "/b.md", Message: "some unfilled placeholder somewhere"},
+			want: briefcmd.LintFinding{Severity: "BLOCK", Category: "unfilled-placeholder", Brief: "/b.md", Message: "some unfilled placeholder somewhere"},
 		},
 		{
 			name: "unknown-falls-through-to-other",
 			raw:  "- something nobody planned for\n",
-			want: briefLintFinding{Severity: "BLOCK", Category: "other", Brief: "/b.md", Message: "something nobody planned for"},
+			want: briefcmd.LintFinding{Severity: "BLOCK", Category: "other", Brief: "/b.md", Message: "something nobody planned for"},
 		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := parseBriefLintFindings("/b.md", tc.raw)
+			got := briefcmd.ParseLintFindings("/b.md", tc.raw)
 			if len(got) != 1 {
 				t.Fatalf("expected 1 finding, got %d: %+v", len(got), got)
 			}
@@ -1892,9 +1894,9 @@ func TestExtractDeliverableTargetExtractsFirstNonSourcePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := extractDeliverableTarget(tc.spec)
+			got := firstRefineDeliverableTarget(extractDeliverableTargets(tc.spec, refineDetectMode(tc.spec)))
 			if got != tc.want {
-				t.Fatalf("extractDeliverableTarget(%q) = %q, want %q", tc.spec, got, tc.want)
+				t.Fatalf("first extracted deliverable target for %q = %q, want %q", tc.spec, got, tc.want)
 			}
 		})
 	}
@@ -2365,10 +2367,10 @@ func TestMarkdownDraftTemplateClarifiesTwoPaths(t *testing.T) {
 // prompts, future tooling) depend on. Renaming or removing a field
 // here is a breaking change and must be deliberate.
 func TestBriefLintJSONEnvelopeSchemaIsStable(t *testing.T) {
-	report := briefLintReport{
+	report := briefcmd.LintReport{
 		Brief: "/x.md",
 		Exit:  1,
-		Findings: []briefLintFinding{
+		Findings: []briefcmd.LintFinding{
 			{Severity: "BLOCK", Category: "anchor-specificity", Brief: "/x.md", Message: "test"},
 		},
 	}

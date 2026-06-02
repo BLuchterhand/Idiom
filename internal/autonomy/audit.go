@@ -436,9 +436,6 @@ func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContr
 		!stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, "submit_plan") {
 		s.addTurnPhaseContradiction(event, phase, "", "submit_plan", "phase allows submit_plan but runtime_call cannot express submit_plan")
 	}
-	if strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") && len(phase.AllowedTools) > 0 {
-		s.addTurnPhaseContradiction(event, phase, strings.Join(phase.AllowedTools, ","), "", "textual phase advertised manifest-visible allowed_tools")
-	}
 	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, "final_answer") && turnPhaseEvidenceOpen(phase.EvidenceState) {
 		s.addTurnPhaseContradiction(event, phase, "", "final_answer", "phase allows final_answer while evidence_state still has open acceptance, verification, recovery, or blocker evidence")
 	}

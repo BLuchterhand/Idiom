@@ -343,7 +343,7 @@ func Analyze(records []Record) Metrics {
 			if strings.Contains(summary, "repeated tool request rejected") {
 				metrics.RepeatedToolRejections++
 			}
-			if errText != "" {
+			if errText != "" && !recoverablePostReadinessGapToolResult(record.Data) {
 				if key := toolErrorEventKey(record.Data); key == "" {
 					metrics.ErrorCount++
 				} else if _, ok := countedErrorEventKeys[key]; !ok {
@@ -414,11 +414,13 @@ func Analyze(records []Record) Metrics {
 			}
 		case "turn_summary":
 			metrics.TurnSummarySeen = true
-			if rejected := intField(record.Data, "rejected_actions"); rejected > metrics.RejectedActions {
-				metrics.RejectedActions = rejected
-			}
-			if rejected := intField(record.Data, "completion_gate_rejections"); rejected > metrics.CompletionGateRejections {
-				metrics.CompletionGateRejections = rejected
+			if !recoverablePostReadinessGapTurnSummary(record.Data) {
+				if rejected := intField(record.Data, "rejected_actions"); rejected > metrics.RejectedActions {
+					metrics.RejectedActions = rejected
+				}
+				if rejected := intField(record.Data, "completion_gate_rejections"); rejected > metrics.CompletionGateRejections {
+					metrics.CompletionGateRejections = rejected
+				}
 			}
 		case "idiom.live_contract.rollback":
 			rollback := LiveContractRollbackSnapshot{
@@ -630,12 +632,35 @@ func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
 	if errText == "" {
 		return false
 	}
+	if recoverablePostReadinessGapToolResult(data) {
+		return false
+	}
 	summary := strings.ToLower(stringField(data, "summary"))
 	return strings.Contains(summary, "rejected") ||
 		strings.Contains(summary, "retry blocked") ||
 		strings.Contains(summary, "preempted") ||
 		strings.Contains(summary, "not available in current runtime contract") ||
 		strings.Contains(errText, "not in the current allowed tool surface")
+}
+
+func recoverablePostReadinessGapToolResult(data map[string]any) bool {
+	return recoverablePostReadinessGapSummary(stringField(data, "summary"))
+}
+
+func recoverablePostReadinessGapTurnSummary(data map[string]any) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(stringField(data, "stop_reason"))), "post_readiness_gap_")
+}
+
+func recoverablePostReadinessGapSummary(summary string) bool {
+	switch strings.ToLower(strings.TrimSpace(summary)) {
+	case "post-readiness follow-up missing named gap",
+		"post-child follow-up missing named gap",
+		"post-readiness named_gap restates the original question",
+		"post-readiness named_gap is an explainer ask, not a falsifiable claim":
+		return true
+	default:
+		return false
+	}
 }
 
 func toolResultAttemptWasRequested(data map[string]any, requestedKeys map[string]struct{}, tools map[string]int) bool {
@@ -812,13 +837,6 @@ func mergeStringIntMaps(maps ...map[string]int) map[string]int {
 	return out
 }
 
-func incrementReplayCount(counts map[string]int, value string) {
-	value = strings.TrimSpace(value)
-	if value != "" {
-		counts[value]++
-	}
-}
-
 func recordTerminalOutcomeSignals(metrics *Metrics, content string) {
 	if metrics == nil {
 		return
@@ -876,6 +894,10 @@ func runnerRejectionSignalsFromRunEvent(role string, content string) (runnerReje
 	if role == "next_action_state" || role == "failure_feedback" {
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(content), &payload); err == nil {
+			if recoverablePostReadinessGapSummary(stringField(payload, "result_summary")) ||
+				recoverablePostReadinessGapSummary(stringField(payload, "summary")) {
+				return false, false
+			}
 			reason := strings.ToLower(strings.TrimSpace(stringField(payload, "reason")))
 			failureClass := strings.ToLower(strings.TrimSpace(stringField(payload, "failure_class")))
 			lastTool := strings.ToLower(strings.TrimSpace(stringField(payload, "last_tool")))
@@ -2493,33 +2515,6 @@ func languageCapabilityMatches(caps []LanguageCapabilitySnapshot, expected Langu
 
 func hasPhaseState(phases []PhaseSnapshot, lane string, phase string, state string) bool {
 	return containsPhase(phases, PhaseExpectation{Lane: lane, Phase: phase, State: state})
-}
-
-func extractChangedFiles(text string) []string {
-	lines := strings.Split(text, "\n")
-	var changed []string
-	inSection := false
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			if inSection {
-				break
-			}
-			continue
-		}
-		if strings.EqualFold(trimmed, "Changed files:") {
-			inSection = true
-			continue
-		}
-		if !inSection {
-			continue
-		}
-		if !strings.HasPrefix(trimmed, "- ") {
-			break
-		}
-		changed = append(changed, strings.TrimSpace(strings.TrimPrefix(trimmed, "- ")))
-	}
-	return util.UniqueNonEmpty(changed)
 }
 
 func evidencePathsFromText(text string) []string {
