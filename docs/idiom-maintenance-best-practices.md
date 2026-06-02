@@ -68,6 +68,13 @@ assert acceptable, grounded, non-garbage output.
   throughput tests for the implementation pipeline.
 - If a phase outcome is mechanically knowable, encode it in intake/preflight or
   the phase state machine. Prompt wording is secondary.
+- Treat read-only readiness as a terminal transport boundary, not only a
+  helpful nudge. After answer readiness or delegated packet closure, the exposed
+  action surface should be final answer, typed blocker, or one exact-probe
+  contract the active phase still allows, carrying the required `named_gap` and
+  `why_not_answering` fields. Any read/search request outside that contract
+  should be rejected before permission dispatch, with telemetry proving the
+  terminal gate fired before tool execution.
 - If a phase only needs to generate one bounded scratchpad artifact, prefer an
   artifact-owned path (`idiom artifact --no-tools --output ...`) over asking an
   implementation lane to call `write_file`. Record output/report paths and a
@@ -135,6 +142,10 @@ assert acceptable, grounded, non-garbage output.
 
 - For a phase-contract bug, prefer one typed state transition plus a focused
   gate over scattered prompt text.
+- For post-readiness bugs, fix the shared terminal-action gate first. Avoid
+  piling up counters, duplicate host closeout calls, or individual tool
+  allowances around the runner loop unless they hang off that one typed
+  readiness state.
 - If a prompt or recovery packet currently acts as authority, extract the
   authority into a typed contract first, then make the prompt describe that
   contract. Prompt text, examples, tool schemas, and context packets may explain
@@ -193,6 +204,18 @@ assert acceptable, grounded, non-garbage output.
   executable authority; the normal `submit_plan` validation/preflight path
   remains the execution boundary. The `artifact_distiller` role is no-tool,
   no-write, and must never emit `submit_plan` directly.
+- Apply the same acceptance parity to read-only tool salvage. A visible or
+  reasoning-text `ToolRequest` parsed from malformed output is not dispatchable
+  until it has passed the active phase validator, tool-specific enum validation,
+  target-shape checks, post-readiness action-class policy, and recovery budget.
+  Non-mutating discovery or audit tools can still consume context and block
+  final answers, so they do not get a softer path than ordinary read tools.
+- Host-owned closeout presenters must cite only ledger-backed evidence. Final
+  evidence paths should come from typed evidence packets, exact source-body
+  reads, direct source probes, or explicitly accepted inspected paths. Broad
+  mentioned-path scans are useful for diagnostics and candidate lists, but they
+  must not populate final closeout citations once the host is synthesizing the
+  answer.
 - For generated scratchpad bugs, prefer host-owned artifact materialization plus
   validation over another "remember to write the file" prompt.
 - For an observability bug, update the event/ledger/audit schema and tests
@@ -231,6 +254,11 @@ assert acceptable, grounded, non-garbage output.
   new logs, tests, or product requirements supersede it.
 - Add regression tests for both sides of a boundary: the bad artifact must be
   blocked, and a valid artifact must remain dispatchable.
+- Treat generated logs and golden-like eval outputs as source changes only when
+  the suite contract calls for an intentional fixture refresh. A fixture refresh
+  needs the old/new behavior being blessed, the oracle rationale, and a passing
+  focused eval or live-contract run after the artifact update. Failed-run
+  generated logs are diagnostic evidence, not commit material.
 - Validate with the narrow package tests first, then `go test ./...` for shared
   runner, CLI, workspace, audit, or prompt-contract changes.
 - After changing entrypoints or binary wiring, run `make build`.

@@ -64,6 +64,15 @@ The durable policy is:
   semantic, multi-file, or open-ended. The harness should provide a typed bridge
   from strategy to executable handoff.
 
+Read-only tool salvage follows the same rule. If the parser recovers a visible
+or reasoning-text `ToolRequest` for `discovery_query`, `context_*`,
+`harness_audit`, language navigation, or raw read/search, that request is still
+only intake. It is not dispatchable until the active phase validator accepts the
+tool class, tool-specific enum values such as `discovery_query.purpose`, target
+shape, post-readiness action policy, and recovery budget. Non-mutating tools can
+still consume budget, hide terminal readiness, and prevent a final answer, so
+they must not get a softer acceptance path than write-shaped artifacts.
+
 This design intentionally does not loosen `submit_plan` validation. It moves
 the brittle part earlier and makes it explicit: raw model output can be
 distilled into a smaller, typed intermediate artifact, then compiled and

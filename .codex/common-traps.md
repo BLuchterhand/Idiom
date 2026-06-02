@@ -144,6 +144,13 @@ failure patterns that have cost time in real Idiom/Colony runs.
   issue: unclear readiness, missing evidence, weak closeout nudges, or tool
   surfaces that keep offering discovery after the answer is known. Prefer
   readiness contracts and targeted recovery.
+- **Post-readiness tools escaping terminal transport**: after
+  `read_only_answer_ready` or delegated packet closure, the next action surface
+  is terminal: final answer, typed blocker, or a typed exact-probe contract the
+  active phase still permits. Read/search/verify requests must be hidden or
+  rejected by one terminal-action gate before normal permission dispatch. Do not
+  patch this boundary with follow-up counters, repeated closeout branches, or
+  tool-specific exceptions.
 - **Tool results that prescribe strategy**: evidence tools should report facts,
   paths, symbols, counts, uncertainty, and provenance. Strategy guidance belongs
   in the runtime contract or a deterministic rejection message.
@@ -168,6 +175,13 @@ failure patterns that have cost time in real Idiom/Colony runs.
   request is symbol-shaped or the model asks for relationships; literal search
   should return literal hits, especially when the model is narrowing from a
   broad or noisy result set.
+- **Salvaged read-only tools bypassing validation**: permissive parsing of
+  visible or reasoning-text tool requests is intake, not authority. A salvaged
+  `ToolRequest` must pass the same active phase, capability, enum, target-shape,
+  readiness, and recovery-budget validator as a normal tool call. Do not let a
+  non-mutating tool such as `discovery_query`, `context_*`, or `harness_audit`
+  skip normalization merely because it cannot edit files; broad read-only calls
+  can still consume budget, reset recovery, and prevent final answers.
 - **Generated artifacts mistaken for source bodies**: `.idiom/` context views,
   discovery query JSON, generated live/eval logs, top-level logs, and top-level
   transcripts are diagnostic artifacts. They can explain what happened in a run,
@@ -175,6 +189,12 @@ failure patterns that have cost time in real Idiom/Colony runs.
   readiness for codebase behavior. Preserve real checked-in source packages such
   as `internal/transcript/` and explicit fixture reads when the fixture itself
   is in scope.
+- **Mentioned paths promoted to closeout evidence**: host-owned read-only
+  closeout evidence is final-answer citation authority. It must come from typed
+  evidence packets, exact source-body reads, direct probes, or explicitly
+  accepted inspected paths. Broad mentioned-path scans across summaries, errors,
+  context packets, `.idiom/` artifacts, or generated logs may suggest candidates
+  or diagnostics, but they must not ride along in the final evidence path list.
 - **Closest-path hints without recovery**: when `read_file` can prove exactly
   one same-directory existing file has the same normalized basename as the
   requested missing path, the tool should satisfy the model by reading that
@@ -223,6 +243,12 @@ failure patterns that have cost time in real Idiom/Colony runs.
   prior similar logs before classifying root cause. If the same signature
   appears across attempts, fix the reusable harness contract or audit/scorer
   gap rather than adding a one-off prompt nudge.
+- **Committing failed generated logs as fixtures**: generated live/eval logs,
+  score outputs, and golden-like artifacts are churn by default after a failing
+  run. Do not commit them, cite them as passing proof, or bless oracle changes
+  unless the suite contract explicitly expects a fixture refresh, the reusable
+  behavior change has been named, and the focused suite passes after the
+  artifact update.
 - **Skipping model-state checks**: for hallucinated paths, malformed tool JSON,
   missing visible tool calls, repeated `submit_plan` rejection loops, or
   suddenly weak local-model behavior, explicitly check the logged model alias,
