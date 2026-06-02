@@ -2,12 +2,12 @@
 
 package backends
 
-import "errors"
+import "idiom/internal/failures"
 
 // errProcUnavailable is the sentinel pidForPortViaProc returns on
 // platforms where /proc isn't a kernel-managed surface. macOS and
 // the BSDs fall through to the lsof-only path.
-var errProcUnavailable = errors.New("backends: /proc not available on this platform")
+var errProcUnavailable = failures.New(failures.Unavailable, reasonBackendProcUnavailable, "backends: /proc not available on this platform")
 
 // pidForPortViaProc is the no-op fallback for non-Linux Unixes.
 // Returns errProcUnavailable so the lsof-first chain can either

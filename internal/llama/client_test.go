@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/config"
+	"idiom/internal/failures"
 )
 
 func TestCompleteChatSendsOptionsAndParsesResponse(t *testing.T) {
@@ -66,6 +67,8 @@ func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
 	client := NewClient(server.URL, time.Second)
 	if _, err := client.CompleteChat(context.Background(), nil, ChatOptions{}); err == nil {
 		t.Fatal("expected HTTP error")
+	} else if got := failures.CodeOf(err); got != failures.InvalidArgument {
+		t.Fatalf("HTTP error code = %v, want %v", got, failures.InvalidArgument)
 	}
 
 	emptyChoices := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -75,6 +78,8 @@ func TestCompleteChatReportsHTTPAndEmptyChoiceErrors(t *testing.T) {
 	client = NewClient(emptyChoices.URL, time.Second)
 	if _, err := client.CompleteChat(context.Background(), nil, ChatOptions{}); err == nil {
 		t.Fatal("expected empty choices error")
+	} else if got := failures.CodeOf(err); got != failures.Internal {
+		t.Fatalf("empty choices code = %v, want %v", got, failures.Internal)
 	}
 }
 

@@ -439,8 +439,7 @@ func TestReadOnlyCapabilityRoutesNamedSliceThroughExistingAdapters(t *testing.T)
 		MaxDirectoryEntries:   1024,
 		EnableShell:           true,
 	})
-	mgr.goplsChecked = true
-	mgr.goplsPath = ""
+	mgr.setGoplsBinaryForTesting("")
 	tests := []struct {
 		name           string
 		req            ToolRequest

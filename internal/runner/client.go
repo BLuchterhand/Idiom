@@ -3,18 +3,12 @@ package runner
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
 	"sync"
 	"time"
 )
-
-// ErrDaemonUnreachable wraps the underlying dial error so the CLI
-// layer can recognize "daemon isn't running" cleanly and print the
-// canonical "start it with `idiom queue serve`" hint.
-var ErrDaemonUnreachable = errors.New("runner daemon unreachable")
 
 // dialTimeout is short by design — if the daemon isn't already
 // listening we want to fail fast and tell the user how to start it,
@@ -38,7 +32,7 @@ func roundTrip(socketPath string, req Request) (Response, error) {
 		return Response{}, fmt.Errorf("decode %s: %w", req.Action, err)
 	}
 	if resp.Error != "" {
-		return Response{}, errors.New(resp.Error)
+		return Response{}, daemonResponseError(resp.Error)
 	}
 	return resp, nil
 }
@@ -49,7 +43,7 @@ func Status(socketPath string) (StatusPayload, error) {
 		return StatusPayload{}, err
 	}
 	if resp.Status == nil {
-		return StatusPayload{}, errors.New("status response missing payload")
+		return StatusPayload{}, daemonProtocolError("status response missing payload")
 	}
 	return *resp.Status, nil
 }
@@ -149,7 +143,7 @@ func Acquire(ctx context.Context, socketPath, pool, label, client string) (*Leas
 	}
 	if first.Error != "" {
 		conn.Close()
-		return nil, errors.New(first.Error)
+		return nil, daemonResponseError(first.Error)
 	}
 	lease := &Lease{
 		JobID:   first.JobID,
@@ -200,7 +194,7 @@ func (l *Lease) readLoop(dec *json.Decoder) {
 		}
 		if resp.Error != "" {
 			select {
-			case l.errCh <- errors.New(resp.Error):
+			case l.errCh <- daemonResponseError(resp.Error):
 			default:
 			}
 			return

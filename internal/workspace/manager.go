@@ -25,8 +25,9 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/discovery"
+	"idiom/internal/failures"
 	"idiom/internal/mcp"
-	"idiom/internal/semantic"
+	"idiom/internal/semantic/languagetools"
 )
 
 var exploreBlockedTools = map[string]string{
@@ -44,7 +45,7 @@ var exploreBlockedTools = map[string]string{
 //	ToolSurface   — tool manifest, classification, and allowed-tools computation
 //	                (see tool_class.go, tool_manifest.go, capabilities.go)
 //	PathTracker   — file handle assignment, path observation, and handle resolution
-//	LanguageIndex — per-language LSP index management (goIndex, cppIndex, goplsPath)
+//	LanguageTools — semantic navigation, language indexes, and LSP integration
 //	ExternalTools — MCP registry and external tool registration
 //	EditRecovery  — edit-recovery state tracking
 //
@@ -67,12 +68,7 @@ type Manager struct {
 	permissionRules            map[string][]ToolRule
 	mcpRegistry                *mcp.Registry
 	externalToolsRegistry      *ExternalToolRegistry
-	goIndex                    *semantic.GoIndex
-	goIndexToken               string
-	cppIndex                   *semantic.CppIndex
-	cppIndexToken              string
-	goplsPath                  string
-	goplsChecked               bool
+	languageTools              *languagetools.Manager
 	editRecoveryRequired       map[string]editRecoveryState
 }
 
@@ -246,6 +242,7 @@ type ToolResult struct {
 	Summary       string
 	Output        string
 	Error         string
+	Failure       error              `json:"-"`
 	PrecisionTier string             `json:"precision_tier,omitempty"`
 	Relationships []ToolRelationship `json:"relationships,omitempty"`
 	PayloadType   string             `json:"payload_type,omitempty"`
@@ -274,7 +271,7 @@ const listFilesDisplayCap = 80
 func NewManager(cfg config.Workspace) *Manager {
 	cfg.Root = config.CanonicalizeExistingPath(cfg.Root)
 	cfg.CWD = config.CanonicalizeExistingPath(cfg.CWD)
-	return &Manager{
+	m := &Manager{
 		cfg:                  cfg,
 		mode:                 ModeNormal,
 		thoroughness:         ThoroughnessMedium,
@@ -285,6 +282,8 @@ func NewManager(cfg config.Workspace) *Manager {
 		observedPaths:        make(map[string]struct{}),
 		editRecoveryRequired: make(map[string]editRecoveryState),
 	}
+	m.languageTools = languagetools.NewManager(languageToolHost{manager: m})
+	return m
 }
 
 // MarkPathObserved records that a caller has successfully read or enumerated
@@ -693,6 +692,7 @@ func appendExternalToolDefinitions(defs []ToolDefinition, extReg *ExternalToolRe
 // loop.
 func (m *Manager) Execute(ctx context.Context, req ToolRequest) (result ToolResult) {
 	defer func() {
+		result = annotateToolFailure(result)
 		result = annotateLanguagePrecisionTier(result)
 		result = annotateLanguageRelationships(result)
 	}()
@@ -712,11 +712,7 @@ func (m *Manager) toolRuleDeniedResult(req ToolRequest) ToolResult {
 	if target == "" {
 		target = "<request>"
 	}
-	return ToolResult{
-		Tool:    tool,
-		Summary: "Tool request denied by workspace tool_rules",
-		Error:   fmt.Sprintf("workspace tool_rules deny %s on %s", tool, target),
-	}
+	return toolPermissionPolicyResult(tool, "Tool request denied by workspace tool_rules", fmt.Sprintf("workspace tool_rules deny %s on %s", tool, target))
 }
 
 // executeWithTimeout runs the tool dispatch in a goroutine and races it
@@ -746,6 +742,7 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 					Tool:    req.Tool,
 					Summary: "Tool panicked",
 					Error:   fmt.Sprintf("%s panicked while executing: %v", strings.TrimSpace(req.Tool), r),
+					Failure: failures.New(failures.Internal, failures.NoReason, fmt.Sprintf("%s panicked while executing", strings.TrimSpace(req.Tool))),
 				}
 			}
 		}()
@@ -760,12 +757,14 @@ func (m *Manager) executeWithTimeoutFn(ctx context.Context, req ToolRequest, tim
 				Tool:    req.Tool,
 				Summary: "Tool timed out",
 				Error:   fmt.Sprintf("%s did not return within %s; the runner is moving on. Treat this as a tool stall and pick a different approach (e.g., a different tool, narrower input, or a per-path blocker).", strings.TrimSpace(req.Tool), timeout),
+				Failure: failures.New(failures.DeadlineExceeded, failures.NoReason, fmt.Sprintf("%s did not return within %s", strings.TrimSpace(req.Tool), timeout)),
 			}
 		}
 		return ToolResult{
 			Tool:    req.Tool,
 			Summary: "Tool canceled",
 			Error:   "the run was canceled before this tool returned",
+			Failure: failures.New(failures.Canceled, failures.NoReason, "the run was canceled before this tool returned"),
 		}
 	}
 }
@@ -829,7 +828,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 	case "file_stats":
 		return m.fileStats(req)
 	case "code_navigate":
-		return m.codeNavigate(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "read_only_capability":
 		return m.readOnlyCapability(ctx, req)
 	case "source_sanity":
@@ -883,111 +882,111 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 	case "joern_scan":
 		return m.joernScan(ctx, req)
 	case "go_overview":
-		return m.goOverview()
+		return m.executeLanguageTool(ctx, req)
 	case "go_entrypoints":
-		return m.goEntrypoints(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_find_symbol":
-		return m.goFindSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_find_function":
-		return m.goFindFunction(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_find_type":
-		return m.goFindType(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_find_const":
-		return m.goFindConst(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_file_outline":
-		return m.goFileOutline(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_read_symbol":
-		return m.goReadSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_overview":
-		return m.cppOverview()
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_entrypoints":
-		return m.cppEntrypoints(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_find_symbol":
-		return m.cppFindSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_read_symbol":
-		return m.cppReadSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_related_files":
-		return m.cppRelatedFiles(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_definition":
-		return m.cppDefinition(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_declaration":
-		return m.cppDeclaration(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_implementations":
-		return m.cppImplementations(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_references":
-		return m.cppReferences(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_calls_from":
-		return m.cppCallsFrom(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_calls_into":
-		return m.cppCallsInto(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_extract_body":
-		return m.cppExtractBody(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_includes":
-		return m.cppIncludes(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_who_includes":
-		return m.cppWhoIncludes(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_blast_radius":
-		return m.cppBlastRadius(req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_dead_symbol":
-		return m.cppDeadSymbol(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_workspace_symbol":
-		return m.cppWorkspaceSymbol(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_diagnostics":
-		return m.cppDiagnostics(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "cpp_file_outline":
-		return m.cppFileOutline(req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_overview":
-		return m.pythonOverview()
+		return m.executeLanguageTool(ctx, req)
 	case "python_entrypoints":
-		return m.pythonEntrypoints(req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_find_symbol":
-		return m.pythonFindSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_read_symbol":
-		return m.pythonReadSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_related_files":
-		return m.pythonRelatedFiles(req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_definition":
-		return m.pythonDefinition(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_implementations":
-		return m.pythonImplementations(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_references":
-		return m.pythonReferences(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_calls_from":
-		return m.pythonCallsFrom(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_calls_into":
-		return m.pythonCallsInto(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_workspace_symbol":
-		return m.pythonWorkspaceSymbol(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_diagnostics":
-		return m.pythonDiagnostics(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "python_file_outline":
-		return m.pythonFileOutline(req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_overview":
-		return m.tsOverview()
+		return m.executeLanguageTool(ctx, req)
 	case "ts_entrypoints":
-		return m.tsEntrypoints(req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_find_symbol":
-		return m.tsFindSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_read_symbol":
-		return m.tsReadSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_related_files":
-		return m.tsRelatedFiles(req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_definition":
-		return m.tsDefinition(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_implementations":
-		return m.tsImplementations(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_references":
-		return m.tsReferences(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_calls_from":
-		return m.tsCallsFrom(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_calls_into":
-		return m.tsCallsInto(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_workspace_symbol":
-		return m.tsWorkspaceSymbol(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_diagnostics":
-		return m.tsDiagnostics(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "ts_file_outline":
-		return m.tsFileOutline(req)
+		return m.executeLanguageTool(ctx, req)
 	case "rust_overview",
 		"rust_entrypoints",
 		"rust_find_symbol",
@@ -1001,83 +1000,83 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		"rust_calls_into",
 		"rust_implementations",
 		"rust_diagnostics":
-		return m.ExecuteRustTool(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_overview":
-		return m.javaOverview()
+		return m.executeLanguageTool(ctx, req)
 	case "java_entrypoints":
-		return m.javaEntrypoints(req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_find_symbol":
-		return m.javaFindSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_read_symbol":
-		return m.javaReadSymbol(req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_related_files":
-		return m.javaRelatedFiles(req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_workspace_symbol":
-		return m.javaWorkspaceSymbol(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_definition":
-		return m.javaDefinition(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_references":
-		return m.javaReferences(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_implementations":
-		return m.javaImplementations(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_calls_from":
-		return m.javaCallsFrom(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_calls_into":
-		return m.javaCallsInto(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_diagnostics":
-		return m.javaDiagnostics(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "java_file_outline":
-		return m.javaFileOutline(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_find_package":
-		return m.goFindPackage(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_related_files":
-		return m.goRelatedFiles(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_definition":
-		return m.goDefinition(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_references":
-		return m.goReferences(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_implementations":
-		return m.goImplementations(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_calls_from":
-		return m.goCallsFrom(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_calls_into":
-		return m.goCallsInto(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_extract_body":
-		return m.goExtractBody(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_importers":
-		return m.goImporters(req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_diagnostics":
-		return m.goDiagnostics(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_workspace_symbol":
-		return m.goWorkspaceSymbol(ctx, req)
+		return m.executeLanguageTool(ctx, req)
 	case "go_move_declarations":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
+			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
 		}
-		return m.goMoveDeclarations(req)
+		return m.executeLanguageTool(ctx, req)
 	case "mkdir":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
+			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
 		}
 		return m.makeDir(req)
 	case "edit_file":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
+			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
 		}
 		return m.editFile(req)
 	case "write_file":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
+			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
 		}
 		return m.writeFile(req, false)
 	case "append_file":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
+			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
 		}
 		return m.writeFile(req, true)
 	case "apply_patch":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
-			return ToolResult{Tool: req.Tool, Summary: "Tool request rejected", Error: "explore mode is read-only; leave explore mode before " + blocked}
+			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
 		}
 		return m.applyPatch(req)
 	case "shell":
@@ -1097,11 +1096,7 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		// model can self-correct after a typo or hallucinated name.
 		// Helpful across any project — the suggestion list is built
 		// from the live tool surface (built-ins + external + MCP).
-		return ToolResult{
-			Tool:    tool,
-			Summary: "Tool request rejected",
-			Error:   m.unsupportedToolError(tool),
-		}
+		return toolUnsupportedResult(tool, "Tool request rejected", m.unsupportedToolError(tool))
 	}
 }
 
@@ -1246,13 +1241,13 @@ func levenshteinDistance(a, b string) int {
 func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResult {
 	registry := m.ExternalToolsRegistry()
 	if registry == nil {
-		return ToolResult{Tool: req.Tool, Summary: "External tools unavailable", Error: "external tools registry not configured"}
+		return toolUnavailableResult(req.Tool, "External tools unavailable", "external tools registry not configured")
 	}
 	if !registry.Has(req.Tool) {
-		return ToolResult{Tool: req.Tool, Summary: "Unknown external tool", Error: "external tool not registered: " + req.Tool}
+		return toolUnsupportedResult(req.Tool, "Unknown external tool", "external tool not registered: "+req.Tool)
 	}
 	if ok, reason := registry.Availability(req.Tool, m.externalToolBaseDir()); !ok {
-		return ToolResult{Tool: req.Tool, Summary: "External tool unavailable", Error: "external tool " + req.Tool + " unavailable: " + reason}
+		return toolUnavailableResult(req.Tool, "External tool unavailable", "external tool "+req.Tool+" unavailable: "+reason)
 	}
 	args := req.Args
 	if len(args) == 0 {
@@ -1262,6 +1257,7 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 	out := ToolResult{Tool: req.Tool, Summary: "External tool " + req.Tool, Output: output}
 	if err != nil {
 		out.Error = err.Error()
+		out.Failure = failures.Wrap(failures.Internal, reasonToolInternalFailure, "external tool failed", err)
 		if output == "" {
 			out.Output = ""
 		}
@@ -1279,10 +1275,10 @@ func (m *Manager) executeExternal(ctx context.Context, req ToolRequest) ToolResu
 func (m *Manager) executeMCP(ctx context.Context, req ToolRequest) ToolResult {
 	registry := m.MCPRegistry()
 	if registry == nil {
-		return ToolResult{Tool: req.Tool, Summary: "MCP unavailable", Error: "mcp registry not configured"}
+		return toolUnavailableResult(req.Tool, "MCP unavailable", "mcp registry not configured")
 	}
 	if !registry.Has(req.Tool) {
-		return ToolResult{Tool: req.Tool, Summary: "Unknown MCP tool", Error: "mcp tool not registered: " + req.Tool}
+		return toolUnsupportedResult(req.Tool, "Unknown MCP tool", "mcp tool not registered: "+req.Tool)
 	}
 	args := req.Args
 	if len(args) == 0 {
@@ -1290,7 +1286,7 @@ func (m *Manager) executeMCP(ctx context.Context, req ToolRequest) ToolResult {
 	}
 	result, err := registry.Call(ctx, req.Tool, args)
 	if err != nil {
-		return ToolResult{Tool: req.Tool, Summary: "MCP call failed", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult(req.Tool, "MCP call failed", err, failures.Internal, reasonToolInternalFailure)
 	}
 	output := joinMCPContent(result.Content)
 	summary := "MCP " + req.Tool
@@ -4528,1694 +4524,16 @@ func countFileLinesFromData(data []byte) int {
 	return count
 }
 
-func (m *Manager) goOverview() ToolResult {
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_overview", Summary: "Go overview unavailable", Error: err.Error()}
-	}
-
-	paths := index.DefaultFiles(4)
-	m.PrimeDiscoveredPaths(paths)
-	summary := index.Summary()
-	if summary == "" {
-		summary = "Go semantic index is available, but no summary could be generated."
-	}
-	return ToolResult{
-		Tool:    "go_overview",
-		Summary: "Built Go semantic overview for the workspace",
-		Output:  summary,
-	}
-}
-
-func (m *Manager) goEntrypoints(req ToolRequest) ToolResult {
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_entrypoints", Summary: "Go entrypoints unavailable", Error: err.Error()}
-	}
-
-	paths := index.DefaultFiles(goResultLimit(req.MaxDepth, 6))
-	if len(paths) == 0 {
-		return ToolResult{Tool: "go_entrypoints", Summary: "No Go entrypoints found"}
-	}
-
-	lines := make([]string, 0, len(paths))
-	for _, rel := range paths {
-		file := index.FileByPath(rel)
-		display, err := m.goHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		line := display
-		if file != nil {
-			line += fmt.Sprintf(" (package %s, funcs=%d, methods=%d, types=%d)", file.Package, file.Funcs, file.Methods, file.Types)
-		}
-		lines = append(lines, line)
-	}
-	return ToolResult{
-		Tool:    "go_entrypoints",
-		Summary: fmt.Sprintf("Found %d likely Go entrypoint file(s).", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goFindSymbol(req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "go_find_symbol", Summary: "Go symbol search rejected", Error: "pattern is required"}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_find_symbol", Summary: "Go symbol search unavailable", Error: err.Error()}
-	}
-
-	matches := filterSymbolMatches(index.FindSymbols(pattern, goResultLimit(req.MaxDepth, 8)), m.goPathFilter(req.Path))
-	if len(matches) == 0 {
-		return ToolResult{Tool: "go_find_symbol", Summary: fmt.Sprintf("No Go symbols matched %q", pattern)}
-	}
-
-	lines := make([]string, 0, len(matches))
-	for _, match := range matches {
-		display, err := m.goHandleDisplay(match.Path)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, goQualifiedSymbol(match)))
-	}
-	return ToolResult{
-		Tool:    "go_find_symbol",
-		Summary: fmt.Sprintf("Found %d matching Go symbol(s).", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goFindFunction(req ToolRequest) ToolResult {
-	return m.goFindSymbolsByKind(req, "func", "go_find_function", "function")
-}
-
-func (m *Manager) goFindType(req ToolRequest) ToolResult {
-	return m.goFindSymbolsByKind(req, "type", "go_find_type", "type")
-}
-
-func (m *Manager) goFindConst(req ToolRequest) ToolResult {
-	return m.goFindSymbolsByKind(req, "const", "go_find_const", "constant")
-}
-
-func (m *Manager) goFindSymbolsByKind(req ToolRequest, kind string, toolName string, label string) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: toolName, Summary: "Go symbol search rejected", Error: "pattern is required"}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: toolName, Summary: "Go symbol search unavailable", Error: err.Error()}
-	}
-
-	matches := filterSymbolMatches(index.FindSymbolsByKind(pattern, kind, goResultLimit(req.MaxDepth, 8)), m.goPathFilter(req.Path))
-	if len(matches) == 0 {
-		return ToolResult{Tool: toolName, Summary: fmt.Sprintf("No Go %s matched %q", label, pattern)}
-	}
-
-	lines := make([]string, 0, len(matches))
-	for _, match := range matches {
-		display, err := m.goHandleDisplay(match.Path)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, goQualifiedSymbol(match)))
-	}
-	return ToolResult{
-		Tool:    toolName,
-		Summary: fmt.Sprintf("Found %d matching Go %s(s).", len(lines), label),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goReadSymbol(req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read rejected", Error: "pattern is required"}
-	}
-	if err := validateSymbolPattern("go_read_symbol", pattern); err != nil {
-		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read rejected", Error: err.Error()}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read unavailable", Error: err.Error()}
-	}
-
-	pathFilter, err := m.goPathFilterForRequest(req)
-	if err != nil {
-		return ToolResult{Tool: "go_read_symbol", Summary: "Go symbol read rejected", Error: err.Error()}
-	}
-	matches := filterSymbolMatches(index.FindSymbols(pattern, 4), pathFilter)
-	if len(matches) == 0 {
-		if result, ok := m.goReadSymbolPathMiss(req, pattern, pathFilter, index); ok {
-			return result
-		}
-		return ToolResult{Tool: "go_read_symbol", Summary: fmt.Sprintf("No Go symbols matched %q", pattern)}
-	}
-
-	match := matches[0]
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return ToolResult{Tool: "go_read_symbol", Summary: "Failed to resolve Go symbol path", Error: err.Error()}
-	}
-	m.rememberPath(abs)
-
-	start, end := goReadSymbolWindow(match, req.StartLine, req.EndLine)
-	summary := fmt.Sprintf("Read %s in %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end)
-	if req.StartLine == 0 && req.EndLine == 0 && match.EndLine > 0 && end < match.EndLine {
-		summary = fmt.Sprintf("%s (truncated from lines %d-%d; full-body adapter: go_extract_body)", summary, match.StartLine, match.EndLine)
-	}
-
-	snippet, err := m.readFileLines(abs, start, end)
-	if err != nil {
-		return ToolResult{Tool: "go_read_symbol", Summary: "Failed to read Go symbol snippet", Error: err.Error()}
-	}
-	return ToolResult{
-		Tool:    "go_read_symbol",
-		Summary: summary,
-		Output:  snippet,
-	}
-}
-
-// goReadSymbolWindow picks the line range to return for a go_read_symbol
-// call. When the model passes an explicit StartLine/EndLine, honor that.
-// Otherwise prefer the symbol's actual extent (match.StartLine / EndLine
-// from the index) capped at goReadSymbolMaxLines so very large functions
-// don't dump hundreds of lines into the model's context. Falls back to a
-// window centered on match.Line only when the symbol has no recorded
-// extent — that's the legacy behavior for index entries that pre-date
-// extent tracking.
-//
-// Previous bug: this function used `match.Line - 12` to `match.Line + 20`
-// regardless of where the symbol started. For a function declared at
-// line 16 (with imports above), the read returned lines 4-36 — the
-// imports plus the function signature, not the function body. Live
-// run 20260425-161904 surfaced this when go_read_symbol on
-// `Runner.runChildTask` returned imports while go_extract_body returned
-// the actual 117-line function body. Fixed by reading from the symbol's
-// real start line.
-func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd int) (int, int) {
-	if requestedStart > 0 && requestedEnd >= requestedStart {
-		return requestedStart, requestedEnd
-	}
-	const goReadSymbolMaxLines = 120
-	if match.StartLine > 0 {
-		start := match.StartLine
-		end := match.EndLine
-		if end < start {
-			end = start
-		}
-		if end == 0 {
-			end = start + goReadSymbolMaxLines
-		}
-		if end-start+1 > goReadSymbolMaxLines {
-			end = start + goReadSymbolMaxLines - 1
-		}
-		return start, end
-	}
-	start := match.Line - 12
-	if start < 1 {
-		start = 1
-	}
-	end := match.Line + 20
-	return start, end
-}
-
-func (m *Manager) goFindPackage(req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "go_find_package", Summary: "Go package search rejected", Error: "pattern is required"}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_find_package", Summary: "Go package search unavailable", Error: err.Error()}
-	}
-
-	matches := filterPackageMatches(index.FindPackages(pattern, goResultLimit(req.MaxDepth, 8)), m.goPathFilter(req.Path))
-	if len(matches) == 0 {
-		return ToolResult{Tool: "go_find_package", Summary: fmt.Sprintf("No Go packages matched %q", pattern)}
-	}
-
-	lines := make([]string, 0, len(matches))
-	for _, match := range matches {
-		lines = append(lines, fmt.Sprintf("%s (package %s, files=%d, funcs=%d, methods=%d, types=%d)", match.Path, match.Name, match.Files, match.Funcs, match.Methods, match.Types))
-	}
-	return ToolResult{
-		Tool:    "go_find_package",
-		Summary: fmt.Sprintf("Found %d matching Go package(s).", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goRelatedFiles(req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "go_related_files", Summary: "Go related-file search rejected", Error: "pattern is required"}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_related_files", Summary: "Go related-file search unavailable", Error: err.Error()}
-	}
-
-	paths := filterRelatedPaths(index.RelevantFiles(strings.Fields(pattern), goResultLimit(req.MaxDepth, 8)), m.goPathFilter(req.Path))
-	if len(paths) == 0 {
-		return ToolResult{Tool: "go_related_files", Summary: fmt.Sprintf("No related Go files matched %q", pattern)}
-	}
-
-	lines := make([]string, 0, len(paths))
-	for _, rel := range paths {
-		display, err := m.goHandleDisplay(rel)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, display)
-	}
-	return ToolResult{
-		Tool:    "go_related_files",
-		Summary: fmt.Sprintf("Found %d related Go file(s).", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goWorkspaceSymbol(ctx context.Context, req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "go_workspace_symbol", Summary: "Go workspace-symbol search rejected", Error: "pattern is required"}
-	}
-
-	if gopls := m.goplsBinary(); gopls != "" {
-		output, err := m.runGoPLSCommand(ctx, "workspace_symbol", pattern)
-		formatted := m.formatGoplsWorkspaceSymbolOutput(output)
-		result := ToolResult{
-			Tool:    "go_workspace_symbol",
-			Summary: "Resolved Go workspace symbols with gopls",
-			Output:  formatted,
-		}
-		if err != nil {
-			fallback := m.goFindSymbol(req)
-			fallback.Tool = "go_workspace_symbol"
-			if fallback.Error == "" {
-				fallback.Summary = "Resolved Go workspace symbols via semantic fallback after gopls failure"
-				return fallback
-			}
-			result.Summary = "gopls workspace-symbol search failed"
-			result.Error = err.Error()
-		}
-		if strings.TrimSpace(result.Output) == "" && result.Error == "" {
-			fallback := m.goFindSymbol(req)
-			fallback.Tool = "go_workspace_symbol"
-			if fallback.Error == "" && strings.TrimSpace(fallback.Output) != "" {
-				fallback.Summary = "Resolved Go workspace symbols via semantic fallback after empty gopls result"
-				return fallback
-			}
-			result.Summary = fmt.Sprintf("No Go workspace symbols matched %q", pattern)
-		}
-		return result
-	}
-
-	fallback := m.goFindSymbol(req)
-	fallback.Tool = "go_workspace_symbol"
-	if fallback.Error == "" {
-		fallback.Summary += " (semantic fallback; gopls unavailable)"
-	} else {
-		fallback.Error = "gopls is not installed and semantic fallback did not find a match: " + fallback.Error
-	}
-	return fallback
-}
-
-func (m *Manager) goDefinition(ctx context.Context, req ToolRequest) ToolResult {
-	return m.runGoLocationQuery(ctx, "go_definition", "definition", req, "Resolved Go definition")
-}
-
-func (m *Manager) goReferences(ctx context.Context, req ToolRequest) ToolResult {
-	return m.runGoLocationQuery(ctx, "go_references", "references", req, "Resolved Go references")
-}
-
-func (m *Manager) goImplementations(ctx context.Context, req ToolRequest) ToolResult {
-	return m.runGoLocationQuery(ctx, "go_implementations", "implementation", req, "Resolved Go implementations")
-}
-
-func (m *Manager) goCallsFrom(ctx context.Context, req ToolRequest) ToolResult {
-	match, err := m.selectGoSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "go_calls_from", Summary: "Go outgoing-call query rejected", Error: err.Error()}
-	}
-
-	if gopls := m.goplsBinary(); gopls != "" {
-		output, err := m.runGoPLSCommand(ctx, "call_hierarchy", m.goSymbolPosition(match))
-		result := ToolResult{
-			Tool:    "go_calls_from",
-			Summary: "Resolved outgoing calls with gopls",
-			Output:  m.formatGoCallHierarchy(output, "callee["),
-		}
-		if err != nil {
-			result.Summary = "gopls outgoing-call query failed"
-			result.Error = err.Error()
-			return result
-		}
-		if strings.TrimSpace(result.Output) != "" {
-			return result
-		}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_calls_from", Summary: "Go outgoing-call query unavailable", Error: err.Error()}
-	}
-	matches := filterCallMatches(index.FindCallsFrom(match.Name, 16), m.goPathFilter(req.Path))
-	if len(matches) == 0 {
-		return ToolResult{Tool: "go_calls_from", Summary: fmt.Sprintf("No outgoing Go calls matched %s", goQualifiedSymbol(match))}
-	}
-	lines := make([]string, 0, len(matches))
-	for _, call := range matches {
-		callerDisplay, err := m.goHandleDisplay(call.Caller.Path)
-		if err != nil {
-			continue
-		}
-		line := fmt.Sprintf("%s:%d -> %s", callerDisplay, call.Line, call.CalleeName)
-		if call.CalleeTarget.Path != "" {
-			targetDisplay, err := m.goHandleDisplay(call.CalleeTarget.Path)
-			if err == nil {
-				line = fmt.Sprintf("%s:%d -> %s %s", callerDisplay, call.Line, targetDisplay, goQualifiedSymbol(call.CalleeTarget))
-			}
-		}
-		lines = append(lines, line)
-	}
-	return ToolResult{
-		Tool:    "go_calls_from",
-		Summary: fmt.Sprintf("Found %d outgoing Go call(s) via semantic fallback.", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goCallsInto(ctx context.Context, req ToolRequest) ToolResult {
-	match, err := m.selectGoSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "go_calls_into", Summary: "Go incoming-call query rejected", Error: err.Error()}
-	}
-
-	if gopls := m.goplsBinary(); gopls != "" {
-		output, err := m.runGoPLSCommand(ctx, "call_hierarchy", m.goSymbolPosition(match))
-		result := ToolResult{
-			Tool:    "go_calls_into",
-			Summary: "Resolved incoming calls with gopls",
-			Output:  m.formatGoCallHierarchy(output, "caller["),
-		}
-		if err != nil {
-			result.Summary = "gopls incoming-call query failed"
-			result.Error = err.Error()
-			return result
-		}
-		if strings.TrimSpace(result.Output) != "" {
-			return result
-		}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_calls_into", Summary: "Go incoming-call query unavailable", Error: err.Error()}
-	}
-	matches := filterCallMatches(index.FindCallsInto(match.Name, 16), m.goPathFilter(req.Path))
-	if len(matches) == 0 {
-		return ToolResult{Tool: "go_calls_into", Summary: fmt.Sprintf("No incoming Go calls matched %s", goQualifiedSymbol(match))}
-	}
-	lines := make([]string, 0, len(matches))
-	for _, call := range matches {
-		display, err := m.goHandleDisplay(call.Caller.Path)
-		if err != nil {
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("%s:%d -> %s", display, call.Line, goQualifiedSymbol(match)))
-	}
-	return ToolResult{
-		Tool:    "go_calls_into",
-		Summary: fmt.Sprintf("Found %d incoming Go call(s) via semantic fallback.", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goExtractBody(req ToolRequest) ToolResult {
-	match, err := m.selectGoSymbolMatch(req)
-	if err != nil {
-		return ToolResult{Tool: "go_extract_body", Summary: "Go body extraction rejected", Error: err.Error()}
-	}
-	abs, err := m.resolvePath(match.Path, "")
-	if err != nil {
-		return ToolResult{Tool: "go_extract_body", Summary: "Failed to resolve Go symbol path", Error: err.Error()}
-	}
-	m.rememberPath(abs)
-
-	start := match.StartLine
-	end := match.EndLine
-	if req.StartLine > 0 {
-		start = req.StartLine
-	}
-	if req.EndLine > 0 {
-		end = req.EndLine
-	}
-	body, err := m.readFileLines(abs, start, end)
-	if err != nil {
-		return ToolResult{Tool: "go_extract_body", Summary: "Failed to extract Go body", Error: err.Error()}
-	}
-	return ToolResult{
-		Tool:    "go_extract_body",
-		Summary: fmt.Sprintf("Extracted %s from %s lines %d-%d", goQualifiedSymbol(match), m.displayPath(abs), start, end),
-		Output:  body,
-	}
-}
-
-func (m *Manager) goImporters(req ToolRequest) ToolResult {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: "go_importers", Summary: "Go importer query rejected", Error: "pattern is required"}
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return ToolResult{Tool: "go_importers", Summary: "Go importer query unavailable", Error: err.Error()}
-	}
-
-	packages := filterPackageMatches(index.FindPackages(pattern, goResultLimit(req.MaxDepth, 8)), m.goPathFilter(req.Path))
-	if len(packages) == 0 && index.Module != "" {
-		modulePattern := strings.TrimPrefix(pattern, index.Module)
-		modulePattern = strings.TrimPrefix(modulePattern, "/")
-		if modulePattern != pattern {
-			packages = filterPackageMatches(index.FindPackages(modulePattern, goResultLimit(req.MaxDepth, 8)), m.goPathFilter(req.Path))
-		}
-	}
-	if len(packages) == 0 {
-		return ToolResult{Tool: "go_importers", Summary: fmt.Sprintf("No Go packages matched %q", pattern)}
-	}
-
-	targets := make(map[string]string, len(packages))
-	for _, pkg := range packages {
-		targets[m.goImportPath(pkg.Path, index.Module)] = pkg.Path
-	}
-
-	lines := make([]string, 0)
-	for _, file := range index.Files {
-		for _, imp := range file.Imports {
-			targetPath, ok := targets[imp]
-			if !ok {
-				continue
-			}
-			display, err := m.goHandleDisplay(file.Path)
-			if err != nil {
-				continue
-			}
-			lines = append(lines, fmt.Sprintf("%s imports %s", display, targetPath))
-			break
-		}
-		if len(lines) >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	if len(lines) == 0 {
-		return ToolResult{Tool: "go_importers", Summary: fmt.Sprintf("No local Go importers found for %q", pattern)}
-	}
-	slices.Sort(lines)
-	return ToolResult{
-		Tool:    "go_importers",
-		Summary: fmt.Sprintf("Found %d Go importer file(s).", len(lines)),
-		Output:  strings.Join(lines, "\n"),
-	}
-}
-
-func (m *Manager) goDiagnostics(ctx context.Context, req ToolRequest) ToolResult {
-	files, err := m.goDiagnosticTargets(req)
-	if err != nil {
-		return ToolResult{Tool: "go_diagnostics", Summary: "Go diagnostics unavailable", Error: err.Error()}
-	}
-	if len(files) == 0 {
-		return ToolResult{Tool: "go_diagnostics", Summary: "No Go files available for diagnostics"}
-	}
-
-	lines := make([]string, 0, len(files))
-	failures := make([]string, 0)
-	if m.goplsBinary() != "" {
-		compiled := make(map[string]struct{})
-		for _, rel := range files {
-			output, err := m.runGoPLSCommand(ctx, "check", rel)
-			output = m.formatGoLocationOutput(output)
-			if err != nil {
-				line := fmt.Sprintf("%s: %s", rel, err.Error())
-				if strings.TrimSpace(output) != "" {
-					line += "\n" + output
-				}
-				lines = append(lines, line)
-				failures = append(failures, line)
-			} else if strings.TrimSpace(output) == "" {
-				lines = append(lines, fmt.Sprintf("%s: no warnings or errors", rel))
-			} else {
-				lines = append(lines, output)
-				failures = append(failures, output)
-			}
-			if pkg, ok := goPackageForDiagnosticFile(rel); ok {
-				if _, seen := compiled[pkg]; seen {
-					continue
-				}
-				compiled[pkg] = struct{}{}
-				line, compileErr := m.goTestCompileDiagnostic(ctx, pkg)
-				lines = append(lines, line)
-				if compileErr != nil {
-					failures = append(failures, line)
-				}
-			}
-		}
-		result := ToolResult{
-			Tool:    "go_diagnostics",
-			Summary: fmt.Sprintf("Collected Go diagnostics for %d file(s).", len(files)),
-			Output:  strings.Join(lines, "\n"),
-		}
-		if len(failures) > 0 {
-			result.Error = strings.Join(failures, "\n")
-		}
-		return result
-	}
-
-	output, err := m.runCommand(ctx, m.cfg.Root, "go", "build", "./...")
-	result := ToolResult{
-		Tool:    "go_diagnostics",
-		Summary: "Collected Go build diagnostics via go build fallback",
-		Output:  strings.TrimSpace(output),
-	}
-	if err != nil {
-		result.Error = err.Error()
-	}
-	for _, pkg := range goPackagesForDiagnosticFiles(files) {
-		line, compileErr := m.goTestCompileDiagnostic(ctx, pkg)
-		if strings.TrimSpace(result.Output) == "" {
-			result.Output = line
-		} else {
-			result.Output += "\n" + line
-		}
-		if compileErr != nil {
-			if strings.TrimSpace(result.Error) == "" {
-				result.Error = line
-			} else {
-				result.Error += "\n" + line
-			}
-		}
-	}
-	return result
-}
-
-func goPackagesForDiagnosticFiles(files []string) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	for _, file := range files {
-		pkg, ok := goPackageForDiagnosticFile(file)
-		if !ok {
-			continue
-		}
-		if _, exists := seen[pkg]; exists {
-			continue
-		}
-		seen[pkg] = struct{}{}
-		out = append(out, pkg)
-	}
-	slices.Sort(out)
-	return out
-}
-
-func goPackageForDiagnosticFile(file string) (string, bool) {
-	file = filepath.ToSlash(strings.TrimSpace(file))
-	if !strings.HasSuffix(strings.ToLower(filepath.Base(file)), ".go") {
-		return "", false
-	}
-	dir := filepath.ToSlash(filepath.Dir(file))
-	if dir == "" || dir == "." {
-		return ".", true
-	}
-	return "./" + strings.TrimPrefix(dir, "./"), true
-}
-
-func (m *Manager) goTestCompileDiagnostic(ctx context.Context, pkg string) (string, error) {
-	output, err := m.runCommand(ctx, m.cfg.Root, "go", "test", pkg, "-run", "^$")
-	output = strings.TrimSpace(output)
-	if err != nil {
-		if output == "" {
-			output = err.Error()
-		}
-		return fmt.Sprintf("%s: go test compile failed\n%s", pkg, output), err
-	}
-	if output == "" {
-		output = "ok"
-	}
-	return fmt.Sprintf("%s: go test compile passed\n%s", pkg, output), nil
-}
-
-func (m *Manager) runGoLocationQuery(ctx context.Context, toolName string, goplsCommand string, req ToolRequest, successSummary string) ToolResult {
-	match, err := m.selectGoSymbolMatch(req)
-	if err != nil {
-		if goSymbolNoMatchError(err) {
-			return ToolResult{Tool: toolName, Summary: "Go location query found no matching symbol", Output: err.Error()}
-		}
-		return ToolResult{Tool: toolName, Summary: "Go location query rejected", Error: err.Error()}
-	}
-	var goplsErr error
-	if m.goplsBinary() != "" {
-		args := []string{goplsCommand, m.goSymbolPosition(match)}
-		if toolName == "go_references" {
-			args = []string{goplsCommand, "-d", m.goSymbolPosition(match)}
-		}
-		output, err := m.runGoPLSCommand(ctx, args...)
-		result := ToolResult{
-			Tool:    toolName,
-			Summary: successSummary,
-			Output:  m.formatGoLocationOutput(output),
-		}
-		if err != nil {
-			goplsErr = err
-		} else if strings.TrimSpace(result.Output) != "" {
-			return result
-		}
-	}
-
-	switch toolName {
-	case "go_definition":
-		display, err := m.goHandleDisplay(match.Path)
-		if err != nil {
-			return ToolResult{Tool: toolName, Summary: "Go definition unavailable", Error: err.Error()}
-		}
-		return ToolResult{
-			Tool:    toolName,
-			Summary: goLocationFallbackSummary("Resolved Go definition via semantic fallback", goplsErr),
-			Output:  goLocationFallbackOutput(fmt.Sprintf("%s:%d %s %s", display, match.Line, match.Kind, goQualifiedSymbol(match)), goplsErr),
-		}
-	case "go_references":
-		refReq := ToolRequest{Pattern: "\\b" + match.Name + "\\b", Path: ".", Glob: "*.go"}
-		if strings.TrimSpace(req.Path) != "" {
-			refReq.Path = req.Path
-		}
-		result := m.searchContent(ctx, refReq, toolName)
-		if result.Error == "" {
-			result.Summary = goLocationFallbackSummary("Resolved Go references via semantic/rg fallback", goplsErr)
-			result.Output = goLocationFallbackOutput(result.Output, goplsErr)
-		}
-		return result
-	case "go_implementations":
-		return ToolResult{Tool: toolName, Summary: "Go implementations unavailable", Error: "gopls is required for implementation queries in this harness"}
-	default:
-		return ToolResult{Tool: toolName, Summary: "Unsupported Go location query", Error: "unsupported query"}
-	}
-}
-
-func goSymbolNoMatchError(err error) bool {
-	if err == nil {
-		return false
-	}
-	lower := strings.ToLower(strings.TrimSpace(err.Error()))
-	return strings.HasPrefix(lower, "no go symbols matched ")
-}
-
-func goLocationFallbackSummary(summary string, goplsErr error) string {
-	if goplsErr == nil {
-		return summary
-	}
-	return summary + " (gopls failed)"
-}
-
-func goLocationFallbackOutput(output string, goplsErr error) string {
-	if goplsErr == nil {
-		return output
-	}
-	if strings.TrimSpace(output) == "" {
-		return "gopls_error: " + goplsErr.Error()
-	}
-	return output + "\n\ngopls_error: " + goplsErr.Error()
-}
-
-func (m *Manager) runGoPLSCommand(ctx context.Context, args ...string) (string, error) {
-	gopls := m.goplsBinary()
-	if gopls == "" {
-		return "", fmt.Errorf("gopls is not installed")
-	}
-	cacheRoot := filepath.Join(os.TempDir(), "idiom-gopls")
-	_ = os.MkdirAll(filepath.Join(cacheRoot, "xdg"), 0o755)
-	_ = os.MkdirAll(filepath.Join(cacheRoot, "gocache"), 0o755)
-	_ = os.MkdirAll(filepath.Join(cacheRoot, "home"), 0o755)
-	stdout, stderr, err := m.runCommandDetailedWithEnv(
-		ctx,
-		m.cfg.Root,
-		[]string{
-			"HOME=" + filepath.Join(cacheRoot, "home"),
-			"XDG_CACHE_HOME=" + filepath.Join(cacheRoot, "xdg"),
-			"GOCACHE=" + filepath.Join(cacheRoot, "gocache"),
-		},
-		gopls,
-		args...,
-	)
-	output := strings.TrimSpace(stdout)
-	if err != nil {
-		errText := strings.TrimSpace(stderr)
-		if errText != "" {
-			if output != "" {
-				output += "\n"
-			}
-			output += errText
-		}
-		if len(output) > m.cfg.MaxOutputBytes {
-			output = output[:m.cfg.MaxOutputBytes] + "\n...[truncated]"
-		}
-		return output, err
-	}
-	if len(output) > m.cfg.MaxOutputBytes {
-		output = output[:m.cfg.MaxOutputBytes] + "\n...[truncated]"
-	}
-	return output, nil
-}
-
-func (m *Manager) searchContent(parent context.Context, req ToolRequest, toolName string) ToolResult {
-	workdir, err := m.resolveWorkdir(req.Workdir)
-	if err != nil {
-		return ToolResult{Tool: toolName, Summary: "Failed to resolve workdir", Error: err.Error()}
-	}
-
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return ToolResult{Tool: toolName, Summary: "Content search rejected", Error: "pattern is required"}
-	}
-	if scope := strings.TrimSpace(req.Path); scope != "" && scope != "." {
-		resolvedScope, err := m.resolvePath(scope, req.Workdir)
-		if err != nil {
-			return ToolResult{Tool: toolName, Summary: "Search scope not found", Output: formatPathSuggestions(m.findPathSuggestions(scope, 5))}
-		}
-		if _, err := os.Stat(resolvedScope); err != nil {
-			result := ToolResult{Tool: toolName, Summary: "Search scope not found"}
-			if !os.IsNotExist(err) {
-				result.Summary = "Search scope unavailable"
-				result.Error = err.Error()
-				return result
-			}
-			result.Output = formatPathSuggestions(m.findPathSuggestions(scope, 5))
-			return result
-		}
-	}
-
-	backend, err := resolveContentSearchBackend()
-	if err != nil {
-		return ToolResult{
-			Tool:    toolName,
-			Summary: "Content search unavailable",
-			Error:   err.Error(),
-		}
-	}
-	args := backend.args(req, m.defaultSearchExcludeGlobs(req.Path, req.Pattern, req.Glob))
-
-	stdout, stderr, err := m.runCommandDetailed(parent, workdir, backend.bin, args...)
-	if err != nil && !isNoMatchExit(err) {
-		output := strings.TrimSpace(strings.TrimSpace(stdout) + "\n" + strings.TrimSpace(stderr))
-		errMsg := err.Error()
-		if trimmed := strings.TrimSpace(stderr); trimmed != "" {
-			errMsg = fmt.Sprintf("%s: %s", errMsg, trimmed)
-		}
-		return ToolResult{
-			Tool:    toolName,
-			Summary: "Content search failed",
-			Output:  strings.TrimSpace(output),
-			Error:   errMsg,
-		}
-	}
-	if isNoMatchExit(err) || strings.TrimSpace(stdout) == "" {
-		// Zero-hit enrichment. Common confused-mode: model pastes a
-		// symbol name as a search_content pattern but the actual
-		// definition lives in a file whose *name* contains that term
-		// (e.g. searching content for "prompt_routing" in a repo whose
-		// file is literally internal/app/prompt_routing.go). Offer
-		// path suggestions that match the pattern as a name so the
-		// model switches to a targeted read_file. Intentionally
-		// conservative: we only surface name-match suggestions for
-		// identifier-shaped patterns (letters/digits/_), avoiding
-		// noise on full regexes where the pattern is not a name.
-		summary := fmt.Sprintf("No content matches for %q", pattern)
-		output := ""
-		if looksLikeBareIdentifier(pattern) {
-			suggestions := m.findPathSuggestions(pattern, 5)
-			if len(suggestions) > 0 {
-				summary = fmt.Sprintf("No content matches for %q, but these paths contain it as part of their name — the symbol may be defined there: %s.", pattern, strings.Join(suggestions, ", "))
-				output = "Paths whose name contains the pattern:\n" + strings.Join(suggestions, "\n")
-			}
-		}
-		return ToolResult{
-			Tool:    toolName,
-			Summary: summary,
-			Output:  output,
-		}
-	}
-
-	lines := strings.Split(strings.TrimSpace(stdout), "\n")
-	// Hard display cap. Logs show 100+ hits routinely in monorepos, and
-	// the model re-ingests the full result on every subsequent turn.
-	// Capping the rendered view at 50 lets the model scan the top hits,
-	// see the total, and narrow on demand.
-	const searchContentDisplayCap = 50
-	type searchContentMatch struct {
-		formatted string
-		display   string
-		line      int
-		termScore int
-		pathScore int
-	}
-	matches := make([]searchContentMatch, 0, len(lines))
-	singlePath := ""
-	singleLine := 0
-	totalMatches := 0
-	rankingTerms := searchPatternRankingTerms(pattern)
-	for _, line := range lines {
-		parts := strings.SplitN(line, ":", 3)
-		if len(parts) < 3 {
-			continue
-		}
-
-		totalMatches++
-
-		absPath := filepath.Clean(filepath.Join(workdir, parts[0]))
-		handle := m.rememberPath(absPath)
-		display := m.displayPath(absPath)
-		lineNumber, _ := strconv.Atoi(parts[1])
-		matches = append(matches, searchContentMatch{
-			formatted: fmt.Sprintf("%s %s:%s:%s", handle, display, parts[1], truncateSearchContentLine(parts[2], searchContentLineCap)),
-			display:   display,
-			line:      lineNumber,
-			termScore: searchContentTermScore(display, parts[2], rankingTerms),
-			pathScore: searchContentPathPriority(display),
-		})
-		if len(lines) == 1 {
-			if lineNumber > 0 {
-				singlePath = display
-				singleLine = lineNumber
-			}
-		}
-		if totalMatches >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	sort.SliceStable(matches, func(i, j int) bool {
-		if matches[i].termScore != matches[j].termScore {
-			return matches[i].termScore > matches[j].termScore
-		}
-		if matches[i].pathScore != matches[j].pathScore {
-			return matches[i].pathScore < matches[j].pathScore
-		}
-		if matches[i].display != matches[j].display {
-			return matches[i].display < matches[j].display
-		}
-		return matches[i].line < matches[j].line
-	})
-	formatted := make([]string, 0, min(len(matches), searchContentDisplayCap)+1)
-	capped := false
-	for _, match := range matches {
-		if len(formatted) >= searchContentDisplayCap {
-			capped = true
-			break
-		}
-		formatted = append(formatted, match.formatted)
-	}
-	if capped {
-		remaining := totalMatches - searchContentDisplayCap
-		formatted = append(formatted, fmt.Sprintf("... and %d more matching line(s) omitted.", remaining))
-	}
-
-	summary := fmt.Sprintf("Found %d matching line(s).", totalMatches)
-	if capped {
-		summary = fmt.Sprintf("Found %d matching line(s) (showing first %d).", totalMatches, searchContentDisplayCap)
-	}
-	if len(formatted) == 1 && singlePath != "" && singleLine > 0 {
-		summary = fmt.Sprintf("Found 1 matching line at %s:%d.", singlePath, singleLine)
-		if snippet := m.searchContextSnippet(filepath.Join(m.cfg.Root, singlePath), singleLine, 2); snippet != "" {
-			formatted = append(formatted, "context:\n"+snippet)
-		}
-	}
-
-	return ToolResult{
-		Tool:    toolName,
-		Summary: summary,
-		Output:  strings.Join(formatted, "\n"),
-	}
-}
-
-func searchPatternRankingTerms(pattern string) []*regexp.Regexp {
-	parts := strings.Split(pattern, "|")
-	out := make([]*regexp.Regexp, 0, len(parts))
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		re, err := regexp.Compile("(?i)" + part)
-		if err == nil {
-			out = append(out, re)
-		}
-	}
-	return out
-}
-
-func searchContentTermScore(path string, line string, terms []*regexp.Regexp) int {
-	score := 0
-	target := path + "\n" + line
-	for _, term := range terms {
-		if term != nil && term.MatchString(target) {
-			score++
-		}
-	}
-	return score
-}
-
-func searchContentPathPriority(path string) int {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-	switch {
-	case strings.HasSuffix(lower, "_test.go"):
-		return 3
-	case strings.Contains(lower, "/testdata/"):
-		return 4
-	case strings.HasSuffix(lower, ".md") || strings.HasPrefix(lower, "docs/") || strings.Contains(lower, "/docs/"):
-		return 5
-	case strings.HasPrefix(lower, "internal/agent/"), strings.HasPrefix(lower, "internal/workspace/"), strings.HasPrefix(lower, "cmd/"):
-		return 0
-	case strings.HasPrefix(lower, "internal/"), strings.HasPrefix(lower, "pkg/"), strings.HasPrefix(lower, "src/"):
-		return 1
-	default:
-		return 2
-	}
-}
-
-func (m *Manager) defaultSearchExcludeGlobs(path string, pattern string, glob string) []string {
-	if searchPathTargetsSkippedDir(path) {
-		return nil
-	}
-	excludes := discovery.RipgrepExcludeGlobs()
-	if searchIntentTargetsLogs(path, pattern, glob) {
-		filtered := excludes[:0]
-		for _, exclude := range excludes {
-			if exclude == "!**/logs/**" {
-				continue
-			}
-			filtered = append(filtered, exclude)
-		}
-		excludes = filtered
-	}
-	return excludes
-}
-
-func searchIntentTargetsLogs(path string, pattern string, glob string) bool {
-	combined := strings.ToLower(strings.TrimSpace(path) + " " + strings.TrimSpace(pattern) + " " + strings.TrimSpace(glob))
-	if strings.Contains(combined, "logs") || strings.Contains(combined, "log/") || strings.Contains(combined, ".log") || strings.Contains(combined, "jsonl") {
-		return true
-	}
-	return false
-}
-
-func matchesSearchFilePattern(rel string, name string, query string) bool {
-	if strings.Contains(rel, query) || strings.Contains(name, query) {
-		return true
-	}
-	if strings.ContainsAny(query, "*?[") {
-		if ok, err := recursivePathGlobMatch(query, rel); err == nil && ok {
-			return true
-		}
-		if ok, err := path.Match(query, name); err == nil && ok {
-			return true
-		}
-		if ok, err := path.Match(query, rel); err == nil && ok {
-			return true
-		}
-		trimmed := strings.Trim(query, "*?")
-		if trimmed != "" && (strings.Contains(rel, trimmed) || strings.Contains(name, trimmed)) {
-			return true
-		}
-	}
-	return false
-}
-
-func recursivePathGlobMatch(pattern string, rel string) (bool, error) {
-	pattern = path.Clean(filepath.ToSlash(strings.TrimSpace(pattern)))
-	rel = path.Clean(filepath.ToSlash(strings.TrimSpace(rel)))
-	if pattern == "" || pattern == "." || rel == "" || rel == "." || !strings.Contains(pattern, "**") {
-		return false, nil
-	}
-	var b strings.Builder
-	b.WriteString("^")
-	for i := 0; i < len(pattern); i++ {
-		ch := pattern[i]
-		if ch == '*' {
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				i++
-				if i+1 < len(pattern) && pattern[i+1] == '/' {
-					b.WriteString("(?:.*/)?")
-					i++
-				} else {
-					b.WriteString(".*")
-				}
-			} else {
-				b.WriteString("[^/]*")
-			}
-			continue
-		}
-		if ch == '?' {
-			b.WriteString("[^/]")
-			continue
-		}
-		b.WriteString(regexp.QuoteMeta(string(ch)))
-	}
-	b.WriteString("$")
-	return regexp.MatchString(b.String(), rel)
-}
-
-func searchPathTargetsSkippedDir(path string) bool {
-	cleaned := filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
-	if cleaned == "" || cleaned == "." {
-		return false
-	}
-	first := strings.Trim(strings.Split(cleaned, "/")[0], "/")
-	if first == "" || first == "." {
-		return false
-	}
-	return discovery.RelTargetsNoisyDir(cleaned) || discovery.ShouldSkipRelFile(cleaned)
-}
-
-func truncateSearchContentLine(line string, max int) string {
-	line = strings.TrimRight(line, "\r\n")
-	if max <= 0 || len(line) <= max {
-		return line
-	}
-	return line[:max] + "...[line truncated]"
-}
-
-func (m *Manager) searchContextSnippet(path string, lineNumber int, radius int) string {
-	content, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	spans := lineSpans(string(content))
-	if len(spans) == 0 || lineNumber <= 0 || lineNumber > len(spans) {
-		return ""
-	}
-	startLine := lineNumber - radius
-	if startLine < 1 {
-		startLine = 1
-	}
-	endLine := lineNumber + radius
-	if endLine > len(spans) {
-		endLine = len(spans)
-	}
-
-	var b strings.Builder
-	for i := startLine; i <= endLine; i++ {
-		segment := string(content[spans[i-1].start:spans[i-1].end])
-		segment = strings.TrimRight(segment, "\n")
-		segment = truncateSearchContentLine(segment, searchContentLineCap)
-		b.WriteString(fmt.Sprintf("%d:%s\n", i, segment))
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func (m *Manager) isGoWorkspace() bool {
-	if !m.Enabled() {
-		return false
-	}
-	info, err := os.Stat(filepath.Join(m.cfg.Root, "go.mod"))
-	return err == nil && !info.IsDir()
-}
-
-func (m *Manager) getGoIndex() (*semantic.GoIndex, error) {
-	if !m.isGoWorkspace() {
-		return nil, fmt.Errorf("go-specific tools require a workspace with go.mod at the root")
-	}
-
-	token := m.currentGoIndexToken()
-	m.mu.Lock()
-	cached := m.goIndex
-	cachedToken := m.goIndexToken
-	m.mu.Unlock()
-	if cached != nil && (token == "" || token == cachedToken) {
-		return cached, nil
-	}
-
-	index, err := semantic.BuildGoIndex(m.cfg.Root)
-	if err != nil {
-		return nil, fmt.Errorf("build Go semantic index: %w", err)
-	}
-	if index == nil {
-		return nil, fmt.Errorf("no Go files were indexed under the workspace")
-	}
-
-	m.mu.Lock()
-	m.goIndex = index
-	m.goIndexToken = token
-	m.mu.Unlock()
-	return index, nil
-}
-
-func (m *Manager) invalidateGoIndex() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.goIndex = nil
-	m.goIndexToken = ""
-}
-
-func (m *Manager) currentGoIndexToken() string {
-	if !m.Enabled() {
-		return ""
-	}
-	head, err := exec.Command("git", "-C", m.cfg.Root, "rev-parse", "HEAD").Output()
-	if err != nil {
-		return ""
-	}
-	status, err := exec.Command("git", "-C", m.cfg.Root, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all").Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(head)) + "\n" + strings.TrimSpace(string(status))
-}
-
-func (m *Manager) goplsBinary() string {
-	m.mu.Lock()
-	if m.goplsChecked {
-		path := m.goplsPath
-		m.mu.Unlock()
-		return path
-	}
-	m.mu.Unlock()
-
-	path, _ := exec.LookPath("gopls")
-	if path == "" {
-		path = m.findGoTool("gopls")
-	}
-
-	m.mu.Lock()
-	m.goplsPath = path
-	m.goplsChecked = true
-	m.mu.Unlock()
-	return path
-}
-
-func (m *Manager) findGoTool(name string) string {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-
-	if gobin, err := m.goEnv("GOBIN"); err == nil && gobin != "" {
-		candidate := filepath.Join(gobin, name)
-		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
-			return candidate
-		}
-	}
-	if gopath, err := m.goEnv("GOPATH"); err == nil && gopath != "" {
-		candidate := filepath.Join(gopath, "bin", name)
-		if stat, err := os.Stat(candidate); err == nil && !stat.IsDir() {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func (m *Manager) goEnv(key string) (string, error) {
-	output, err := exec.Command("go", "env", key).Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(output)), nil
-}
-
-func (m *Manager) goHandleDisplay(rel string) (string, error) {
-	abs, err := m.resolvePath(rel, "")
-	if err != nil {
-		return "", err
-	}
-	return m.handleDisplay(abs), nil
-}
-
-// FileLineCount returns the number of lines in the file at the given
-// path and true on success. Returns (0, false) if the path can't be
-// resolved, stat'd, or read. Cheap enough to call from redirect
-// decisions — used to skip the outline detour for tiny files where
-// reading the whole range costs less than outline+read_symbol.
-func (m *Manager) FileLineCount(path string) (int, bool) {
-	if m == nil {
-		return 0, false
-	}
-	resolved, err := m.resolvePath(strings.TrimSpace(path), "")
-	if err != nil {
-		return 0, false
-	}
-	data, err := os.ReadFile(resolved)
-	if err != nil {
-		return 0, false
-	}
-	// Count newlines; add 1 unless the file is empty or ends with a
-	// newline (the trailing newline doesn't introduce another line).
-	if len(data) == 0 {
-		return 0, true
-	}
-	count := bytes.Count(data, []byte{'\n'})
-	if data[len(data)-1] != '\n' {
-		count++
-	}
-	return count, true
-}
-
-func (m *Manager) readFileLines(path string, start, end int) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
-	}
-	lines := splitWorkspaceFileLines(data)
-	if start <= 0 {
-		start = 1
-	}
-	if end <= 0 || end > len(lines) {
-		end = len(lines)
-	}
-	start, end, _ = clampRequestedLineRange(len(lines), start, end, start, end)
-	if start > end {
-		return "", fmt.Errorf("start_line must be <= end_line")
-	}
-
-	var b strings.Builder
-	for i := start - 1; i < end && i < len(lines); i++ {
-		fmt.Fprintf(&b, "%d:%s\n", i+1, lines[i])
-	}
-	return strings.TrimRight(b.String(), "\n"), nil
-}
-
-func splitWorkspaceFileLines(data []byte) []string {
-	if len(data) == 0 {
-		return nil
-	}
-	lines := strings.Split(string(data), "\n")
-	if len(lines) > 1 && lines[len(lines)-1] == "" {
-		return lines[:len(lines)-1]
-	}
-	return lines
-}
-
-func clampRequestedLineRange(totalLines int, start int, end int, requestedStart int, requestedEnd int) (int, int, bool) {
-	if totalLines <= 0 {
-		return start, end, false
-	}
-	clamped := false
-	if end > totalLines {
-		end = totalLines
-		clamped = true
-	}
-	if start > totalLines {
-		span := 0
-		if requestedStart > 0 && requestedEnd >= requestedStart {
-			span = requestedEnd - requestedStart
-		} else if end >= start {
-			span = end - start
-		}
-		start = totalLines - span
-		if start < 1 {
-			start = 1
-		}
-		clamped = true
-	}
-	if start > end {
-		start = end
-		clamped = true
-	}
-	return start, end, clamped
-}
-
-func displayRequestedLine(requested int, fallback int) int {
-	if requested > 0 {
-		return requested
-	}
-	return fallback
-}
-
-func (m *Manager) goPathFilter(path string) string {
-	path = strings.TrimSpace(path)
-	if path == "" {
-		return ""
-	}
-	resolved, err := m.resolvePath(path, "")
-	if err != nil {
-		return ""
-	}
-	return filepath.ToSlash(m.displayPath(resolved))
-}
-
-func filterSymbolMatches(matches []semantic.SymbolMatch, pathFilter string) []semantic.SymbolMatch {
-	if pathFilter == "" {
-		return matches
-	}
-	filtered := make([]semantic.SymbolMatch, 0, len(matches))
-	for _, match := range matches {
-		if pathMatchesFilter(match.Path, pathFilter) {
-			filtered = append(filtered, match)
-		}
-	}
-	return filtered
-}
-
-func filterPackageMatches(matches []semantic.PackageMatch, pathFilter string) []semantic.PackageMatch {
-	if pathFilter == "" {
-		return matches
-	}
-	filtered := make([]semantic.PackageMatch, 0, len(matches))
-	for _, match := range matches {
-		if pathMatchesFilter(match.Path, pathFilter) {
-			filtered = append(filtered, match)
-		}
-	}
-	return filtered
-}
-
-func filterRelatedPaths(paths []string, pathFilter string) []string {
-	if pathFilter == "" {
-		return paths
-	}
-	filtered := make([]string, 0, len(paths))
-	for _, path := range paths {
-		if pathMatchesFilter(path, pathFilter) {
-			filtered = append(filtered, path)
-		}
-	}
-	return filtered
-}
-
-func pathMatchesFilter(path string, filter string) bool {
-	path = filepath.ToSlash(strings.TrimSpace(path))
-	filter = filepath.ToSlash(strings.TrimSpace(filter))
-	if path == "" || filter == "" {
-		return false
-	}
-	if path == filter {
-		return true
-	}
-	return strings.HasPrefix(path, filter+"/")
-}
-
-func goQualifiedSymbol(match semantic.SymbolMatch) string {
-	if match.Kind == "method" && strings.TrimSpace(match.Receiver) != "" {
-		return match.Receiver + "." + match.Name
-	}
-	return match.Name
-}
-
-func goResultLimit(requested int, fallback int) int {
-	if requested > 0 {
-		return requested
-	}
-	return fallback
-}
-
-func (m *Manager) selectGoSymbolMatch(req ToolRequest) (semantic.SymbolMatch, error) {
-	pattern := strings.TrimSpace(req.Pattern)
-	if pattern == "" {
-		return semantic.SymbolMatch{}, fmt.Errorf("pattern is required")
-	}
-
-	index, err := m.getGoIndex()
-	if err != nil {
-		return semantic.SymbolMatch{}, err
-	}
-
-	pathFilter, err := m.goPathFilterForRequest(req)
-	if err != nil {
-		return semantic.SymbolMatch{}, err
-	}
-
-	matches := filterSymbolMatches(index.FindSymbols(pattern, 12), pathFilter)
-	if len(matches) == 0 {
-		if pathFilter != "" {
-			return semantic.SymbolMatch{}, fmt.Errorf("no Go symbols matched %q under %s", pattern, pathFilter)
-		}
-		return semantic.SymbolMatch{}, fmt.Errorf("no Go symbols matched %q", pattern)
-	}
-	return matches[0], nil
-}
-
-func (m *Manager) goPathFilterForRequest(req ToolRequest) (string, error) {
-	if strings.TrimSpace(req.Path) != "" {
-		return m.goPathFilter(req.Path), nil
-	}
-	if strings.TrimSpace(req.ID) == "" {
-		return "", nil
-	}
-	path, err := m.pathForHandle(req.ID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.ToSlash(m.displayPath(path)), nil
-}
-
-func (m *Manager) goSymbolPosition(match semantic.SymbolMatch) string {
-	line := match.Line
-	if line <= 0 {
-		line = 1
-	}
-	column := match.Column
-	if column <= 0 {
-		column = 1
-	}
-	return fmt.Sprintf("%s:%d:%d", filepath.ToSlash(match.Path), line, column)
-}
-
-func (m *Manager) formatGoLocationOutput(output string) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	formatted := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if rewritten, ok := m.rewriteGoplsWorkspaceSymbolLine(line); ok {
-			formatted = append(formatted, rewritten)
-		} else {
-			formatted = append(formatted, line)
-		}
-		if len(formatted) >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	return strings.Join(formatted, "\n")
-}
-
-func (m *Manager) formatGoCallHierarchy(output string, prefix string) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	formatted := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if prefix != "" && !strings.HasPrefix(line, prefix) {
-			continue
-		}
-		if idx := strings.Index(line, " in "); idx >= 0 {
-			suffix := line[idx+4:]
-			parts := strings.Fields(suffix)
-			if len(parts) > 0 {
-				if abs, err := m.resolvePath(parts[0], ""); err == nil {
-					line = strings.Replace(line, " in "+parts[0], " in "+m.handleDisplay(abs), 1)
-				}
-			}
-		}
-		formatted = append(formatted, line)
-		if len(formatted) >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	return strings.Join(formatted, "\n")
-}
-
-func filterCallMatches(matches []semantic.CallMatch, pathFilter string) []semantic.CallMatch {
-	if pathFilter == "" {
-		return matches
-	}
-	filtered := make([]semantic.CallMatch, 0, len(matches))
-	for _, match := range matches {
-		if pathMatchesFilter(match.Caller.Path, pathFilter) || pathMatchesFilter(match.CalleeTarget.Path, pathFilter) {
-			filtered = append(filtered, match)
-		}
-	}
-	return filtered
-}
-
-func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
-	index, err := m.getGoIndex()
-	if err != nil {
-		return nil, err
-	}
-
-	resolveTarget := func(path string) ([]string, error) {
-		resolved, err := m.resolvePath(path, "")
-		if err != nil {
-			return nil, err
-		}
-		info, err := os.Stat(resolved)
-		if err != nil {
-			return nil, err
-		}
-		if !info.IsDir() {
-			rel := filepath.ToSlash(m.displayPath(resolved))
-			if filepath.Ext(rel) != ".go" {
-				return nil, fmt.Errorf("%s is not a Go file", rel)
-			}
-			return []string{rel}, nil
-		}
-
-		filter, err := filepath.Rel(m.cfg.Root, resolved)
-		if err != nil {
-			return nil, err
-		}
-		filter = filepath.ToSlash(strings.TrimSpace(filter))
-		if filter == "." {
-			filter = ""
-		}
-		files := make([]string, 0)
-		for _, file := range index.Files {
-			if filter == "" || pathMatchesFilter(file.Path, filter) {
-				files = append(files, file.Path)
-			}
-		}
-		slices.Sort(files)
-		limit := goResultLimit(req.MaxDepth, 8)
-		if limit > 0 && len(files) > limit {
-			files = files[:limit]
-		}
-		return files, nil
-	}
-
-	if strings.TrimSpace(req.Path) != "" {
-		return resolveTarget(req.Path)
-	}
-	if strings.TrimSpace(req.ID) != "" {
-		path, err := m.pathForHandle(req.ID)
-		if err != nil {
-			return nil, err
-		}
-		return resolveTarget(path)
-	}
-
-	files := index.IssueHuntFiles(goResultLimit(req.MaxDepth, 4))
-	if len(files) == 0 {
-		files = index.DefaultFiles(goResultLimit(req.MaxDepth, 4))
-	}
-	return files, nil
-}
-
-func (m *Manager) goImportPath(pkgPath string, module string) string {
-	pkgPath = filepath.ToSlash(strings.TrimSpace(pkgPath))
-	module = strings.TrimSpace(module)
-	if module == "" {
-		return pkgPath
-	}
-	if pkgPath == "." {
-		return module
-	}
-	return module + "/" + pkgPath
-}
-
-func (m *Manager) formatGoplsWorkspaceSymbolOutput(output string) string {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	formatted := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if rewritten, ok := m.rewriteGoplsWorkspaceSymbolLine(line); ok {
-			formatted = append(formatted, rewritten)
-		} else {
-			formatted = append(formatted, line)
-		}
-		if len(formatted) >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	return strings.Join(formatted, "\n")
-}
-
-func (m *Manager) rewriteGoplsWorkspaceSymbolLine(line string) (string, bool) {
-	path, rest, ok := splitGoplsLocation(line)
-	if !ok {
-		return "", false
-	}
-	abs, err := m.resolvePath(path, "")
-	if err != nil {
-		return "", false
-	}
-	return m.handleDisplay(abs) + ":" + rest, true
-}
-
-func splitGoplsLocation(line string) (string, string, bool) {
-	first := strings.Index(line, ":")
-	if first <= 0 {
-		return "", "", false
-	}
-	second := strings.Index(line[first+1:], ":")
-	if second <= 0 {
-		return "", "", false
-	}
-	second += first + 1
-	if !allDigits(line[first+1 : second]) {
-		return "", "", false
-	}
-	third := strings.Index(line[second+1:], ":")
-	if third <= 0 {
-		rangeText := line[second+1:]
-		if !allDigitsOrRange(rangeText) {
-			return "", "", false
-		}
-		return line[:first], line[first+1:], true
-	}
-	third += second + 1
-	if !allDigitsOrRange(line[second+1 : third]) {
-		return "", "", false
-	}
-	return line[:first], line[first+1:], true
-}
-
-func allDigits(text string) bool {
-	if text == "" {
-		return false
-	}
-	for _, ch := range text {
-		if ch < '0' || ch > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-func allDigitsOrRange(text string) bool {
-	if text == "" {
-		return false
-	}
-	for _, ch := range text {
-		switch {
-		case ch >= '0' && ch <= '9':
-		case ch == '-':
-		default:
-			return false
-		}
-	}
-	return true
-}
-
 func (m *Manager) makeDir(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
-		return ToolResult{Tool: "mkdir", Summary: "Write request rejected", Error: "workspace writes are disabled"}
+		return toolWriteDisabledResult("mkdir", "Write request rejected", "workspace writes are disabled")
 	}
 	path, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "mkdir", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("mkdir", "Failed to resolve path", err)
 	}
 	if err := os.MkdirAll(path, 0o755); err != nil {
-		return ToolResult{Tool: "mkdir", Summary: "Failed to create directory", Error: err.Error()}
+		return toolWriteFailureResult("mkdir", "Failed to create directory", err)
 	}
 	m.invalidateGoIndex()
 	m.invalidateCppIndex()
@@ -6232,50 +4550,50 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 		toolName = "append_file"
 	}
 	if !m.cfg.EnableWrites {
-		return ToolResult{Tool: toolName, Summary: "Write request rejected", Error: "workspace writes are disabled"}
+		return toolWriteDisabledResult(toolName, "Write request rejected", "workspace writes are disabled")
 	}
 	path, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: toolName, Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult(toolName, "Failed to resolve path", err)
 	}
 
 	updated := []byte(req.Content)
 	if appendMode {
 		current, err := os.ReadFile(path)
 		if err != nil && !os.IsNotExist(err) {
-			return ToolResult{Tool: toolName, Summary: "Failed to read existing file", Error: err.Error()}
+			return toolFailureFromErrorResult(toolName, "Failed to read existing file", err, failures.Internal, reasonToolInternalFailure)
 		}
 		updated = append(append([]byte(nil), current...), []byte(req.Content)...)
 	} else if current, err := os.ReadFile(path); err == nil {
 		if IsCompletedPlanningArtifact(path, current) {
-			return ToolResult{
+			return withToolFailure(ToolResult{
 				Tool:    toolName,
 				Summary: "Write request rejected",
 				Error:   fmt.Sprintf("write_file refuses to overwrite completed planning artifact %s. The available contract outcomes are a bounded anchored update or explicit user approval to reopen/replace the completed artifact.", m.displayPath(path)),
-			}
+			}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		}
 	} else if !os.IsNotExist(err) {
-		return ToolResult{Tool: toolName, Summary: "Failed to read existing file", Error: err.Error()}
+		return toolFailureFromErrorResult(toolName, "Failed to read existing file", err, failures.Internal, reasonToolInternalFailure)
 	}
 	if rejected := m.rejectInvalidPlannedWrite(toolName, "Write request rejected", path, updated); rejected != nil {
 		return *rejected
 	}
 
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return ToolResult{Tool: toolName, Summary: "Failed to create parent directory", Error: err.Error()}
+		return toolWriteFailureResult(toolName, "Failed to create parent directory", err)
 	}
 	if appendMode {
 		file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 		if err != nil {
-			return ToolResult{Tool: toolName, Summary: "Failed to open file", Error: err.Error()}
+			return toolWriteFailureResult(toolName, "Failed to open file", err)
 		}
 		defer file.Close()
 		if _, err := file.WriteString(req.Content); err != nil {
-			return ToolResult{Tool: toolName, Summary: "Failed to append file", Error: err.Error()}
+			return toolWriteFailureResult(toolName, "Failed to append file", err)
 		}
 	} else {
 		if err := os.WriteFile(path, updated, 0o644); err != nil {
-			return ToolResult{Tool: toolName, Summary: "Failed to write file", Error: err.Error()}
+			return toolWriteFailureResult(toolName, "Failed to write file", err)
 		}
 	}
 
@@ -6294,11 +4612,11 @@ func (m *Manager) writeFile(req ToolRequest, appendMode bool) ToolResult {
 
 func (m *Manager) editFile(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "workspace writes are disabled"}
+		return toolWriteDisabledResult("edit_file", "Edit request rejected", "workspace writes are disabled")
 	}
 	path, err := m.resolvePath(req.Path, req.Workdir)
 	if err != nil {
-		result := ToolResult{Tool: "edit_file", Summary: "Failed to resolve path", Error: err.Error()}
+		result := toolPathResolutionFailureResult("edit_file", "Failed to resolve path", err)
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -6309,11 +4627,11 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 	// listing) before edit_file will touch it. Prevents the hallucinated-path
 	// retry loops documented in docs/opencode-fixes-design.md §1.
 	if !m.bypassReadBeforeEdit && !m.HasObservedPath(m.displayPath(path)) && !m.HasObservedPath(req.Path) {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("edit_file requires you to have observed %s in this session before editing it.", m.displayPath(path)),
-		}
+		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	if rejected := m.rejectPendingEditRecovery("edit_file", path); rejected != nil {
 		return *rejected
@@ -6321,7 +4639,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 
 	content, err := os.ReadFile(path)
 	if err != nil {
-		result := ToolResult{Tool: "edit_file", Summary: "Failed to read file", Error: err.Error()}
+		result := toolFailureFromErrorResult("edit_file", "Failed to read file", err, failures.Internal, reasonToolInternalFailure)
 		if strings.TrimSpace(req.Path) != "" {
 			result.Output = formatPathSuggestions(m.findPathSuggestions(req.Path, 5))
 		}
@@ -6336,7 +4654,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 			// replacement instead of treating empty line-range content as a
 			// deletion or ignoring new_text.
 		} else if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.NewText) != "" {
-			return ToolResult{
+			return withToolFailure(ToolResult{
 				Tool:    "edit_file",
 				Summary: "Edit request rejected",
 				Error: fmt.Sprintf(
@@ -6345,7 +4663,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 						"or provide old_text with new_text and omit the line range.",
 					m.displayPath(path), req.StartLine, req.EndLine,
 				),
-			}
+			}, failures.InvalidArgument, reasonToolInvalidArgument)
 		} else {
 			return m.editFileByLineRange(path, current, req)
 		}
@@ -6394,30 +4712,30 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 				display, display,
 			)
 		}
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: example}
+		return toolInvalidArgumentResult("edit_file", "Edit request rejected", example)
 	}
 
 	matchCount := strings.Count(current, req.OldText)
 	if matchCount == 0 {
 		if containsCaseFoldedSubstring(current, req.OldText) {
-			return ToolResult{
+			return withToolFailure(ToolResult{
 				Tool:    "edit_file",
 				Summary: "Edit request rejected",
 				Error:   fmt.Sprintf("old_text did not appear in %s, but a case-insensitive match exists. Preserve exact casing from the file when copying anchors, or switch to the start_line/end_line+content form.", m.displayPath(path)),
-			}
+			}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		}
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("old_text did not appear in %s. Copy the exact substring from the file (including whitespace) or switch to the start_line/end_line+content form.", m.displayPath(path)),
-		}
+		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	if matchCount > 1 && !req.ReplaceAll {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("old_text matched %d locations in %s. Either extend old_text with surrounding context so it matches exactly one place, or set replace_all=true.", matchCount, m.displayPath(path)),
-		}
+		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 
 	replaced := 1
@@ -6437,7 +4755,7 @@ func (m *Manager) editFile(req ToolRequest) ToolResult {
 		return *rejected
 	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-		return ToolResult{Tool: "edit_file", Summary: "Failed to write edited file", Error: err.Error()}
+		return toolWriteFailureResult("edit_file", "Failed to write edited file", err)
 	}
 
 	m.invalidateGoIndex()
@@ -6472,25 +4790,25 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	startLine := req.StartLine
 	endLine := req.EndLine
 	if startLine <= 0 {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "start_line must be >= 1 (line numbers are 1-indexed)."}
+		return toolInvalidArgumentResult("edit_file", "Edit request rejected", "start_line must be >= 1 (line numbers are 1-indexed).")
 	}
 	if endLine == 0 {
 		endLine = startLine
 	}
 	if endLine < startLine {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine)}
+		return toolInvalidArgumentResult("edit_file", "Edit request rejected", fmt.Sprintf("end_line (%d) must be >= start_line (%d). Swap them if you meant the other direction, or set end_line=start_line for a single-line edit.", endLine, startLine))
 	}
 
 	spans := lineSpans(current)
 	if len(spans) == 0 {
-		return ToolResult{Tool: "edit_file", Summary: "Edit request rejected", Error: "cannot apply a line edit to an empty file"}
+		return toolInvalidArgumentResult("edit_file", "Edit request rejected", "cannot apply a line edit to an empty file")
 	}
 	if startLine > len(spans) || endLine > len(spans) {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
 			Error:   fmt.Sprintf("requested lines %d-%d are outside %s (file has %d lines)", startLine, endLine, m.displayPath(path), len(spans)),
-		}
+		}, failures.OutOfRange, reasonToolInvalidArgument)
 	}
 
 	startOffset := spans[startLine-1].start
@@ -6504,7 +4822,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 	// use the exact old_text/new_text form where the removed content is explicit.
 	if strings.TrimSpace(req.Content) == "" && strings.TrimSpace(req.NewText) == "" &&
 		strings.TrimSpace(replacedRange) != "" {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
 			Error: fmt.Sprintf(
@@ -6515,10 +4833,10 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 					"so the deleted text is explicit.",
 				startLine, endLine, m.displayPath(path),
 			),
-		}
+		}, failures.InvalidArgument, reasonToolInvalidArgument)
 	}
 	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, startLine, req.Content) {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "edit_file",
 			Summary: "Edit request rejected",
 			Error: fmt.Sprintf(
@@ -6527,7 +4845,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 					"For inserts, use old_text/new_text with a unique existing snippet and append the new content to new_text.",
 				m.displayPath(path), startLine, endLine,
 			),
-		}
+		}, failures.InvalidArgument, reasonToolInvalidArgument)
 	}
 	replacement := req.Content
 	if replacement != "" && strings.HasSuffix(replacedRange, "\n") &&
@@ -6546,7 +4864,7 @@ func (m *Manager) editFileByLineRange(path string, current string, req ToolReque
 		return *rejected
 	}
 	if err := os.WriteFile(path, []byte(updated), 0o644); err != nil {
-		return ToolResult{Tool: "edit_file", Summary: "Failed to write edited file", Error: err.Error()}
+		return toolWriteFailureResult("edit_file", "Failed to write edited file", err)
 	}
 
 	m.invalidateGoIndex()
@@ -6623,14 +4941,11 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 	}
 	before, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
-		return &ToolResult{
-			Tool:    toolName,
-			Summary: summary,
-			Error:   fmt.Sprintf("preflight could not read existing %s: %s", m.displayPath(path), err.Error()),
-		}
+		result := toolFailureFromErrorResult(toolName, summary, fmt.Errorf("preflight could not read existing %s: %w", m.displayPath(path), err), failures.Internal, reasonToolInternalFailure)
+		return &result
 	}
 	if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, before, contents); ok {
-		return &ToolResult{
+		result := withToolFailure(ToolResult{
 			Tool:    toolName,
 			Summary: summary,
 			Error: fmt.Sprintf(
@@ -6638,7 +4953,8 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 					"Combine adjacent edits into one replacement or include the existing line in old_text instead of re-declaring it.",
 				m.displayPath(path), lineNo, line,
 			),
-		}
+		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		return &result
 	}
 	switch strings.ToLower(filepath.Ext(path)) {
 	case ".go":
@@ -6646,19 +4962,21 @@ func (m *Manager) rejectInvalidPlannedWrite(toolName string, summary string, pat
 		if _, err := parser.ParseFile(fset, path, contents, parser.AllErrors); err != nil {
 			line := syntaxErrorLine(err)
 			m.noteEditRecoveryRequired(path, line, err.Error())
-			return &ToolResult{
+			result := withToolFailure(ToolResult{
 				Tool:    toolName,
 				Summary: summary,
 				Error:   m.formatSyntaxPreflightError(path, contents, line, err),
-			}
+			}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+			return &result
 		}
 	case ".json":
 		if !json.Valid(contents) {
-			return &ToolResult{
+			result := withToolFailure(ToolResult{
 				Tool:    toolName,
 				Summary: summary,
 				Error:   fmt.Sprintf("preflight JSON validation failed for %s", m.displayPath(path)),
-			}
+			}, failures.InvalidArgument, reasonToolInvalidArgument)
+			return &result
 		}
 	}
 	return nil
@@ -6848,7 +5166,7 @@ func (m *Manager) rejectPendingEditRecovery(toolName string, path string) *ToolR
 	if state.line > 0 {
 		lineHint = fmt.Sprintf(" around line %d", state.line)
 	}
-	return &ToolResult{
+	result := withToolFailure(ToolResult{
 		Tool:    toolName,
 		Summary: "Edit request rejected",
 		Error: fmt.Sprintf(
@@ -6857,7 +5175,8 @@ func (m *Manager) rejectPendingEditRecovery(toolName string, path string) *ToolR
 			lineHint,
 			state.detail,
 		),
-	}
+	}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+	return &result
 }
 
 func (m *Manager) noteEditRecoveryRequired(path string, line int, detail string) {
@@ -7005,30 +5324,30 @@ func lineSpans(text string) []lineSpan {
 
 func (m *Manager) runShell(ctx context.Context, req ToolRequest) ToolResult {
 	if !m.cfg.EnableShell {
-		return ToolResult{Tool: "shell", Summary: "Shell request rejected", Error: "shell execution is disabled"}
+		return toolPermissionPolicyResult("shell", "Shell request rejected", "shell execution is disabled")
 	}
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "shell", Summary: "Failed to resolve workdir", Error: err.Error()}
+		return toolPathResolutionFailureResult("shell", "Failed to resolve workdir", err)
 	}
 	command := strings.TrimSpace(req.Command)
 	if command == "" {
-		return ToolResult{Tool: "shell", Summary: "Shell request rejected", Error: "command is required"}
+		return toolInvalidArgumentResult("shell", "Shell request rejected", "command is required")
 	}
 	if isDirectoryOnlyShellCommand(command) {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "shell",
 			Summary: "Shell request rejected",
 			Error:   "directory changes inside shell commands do not persist; set workdir or include the command to run in that directory",
-		}
+		}, failures.InvalidArgument, reasonToolInvalidArgument)
 	}
 	if m.Mode() == ModeExplore {
 		if err := validateExploreShellCommand(command); err != nil {
-			return ToolResult{
+			return withToolFailure(ToolResult{
 				Tool:    "shell",
 				Summary: "Shell request rejected",
 				Error:   "explore mode only allows read-only inspection shell commands: " + err.Error(),
-			}
+			}, failures.PermissionDenied, reasonToolPermissionPolicy)
 		}
 	}
 

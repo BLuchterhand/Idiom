@@ -7,7 +7,11 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"idiom/internal/failures"
 )
+
+const reasonProductWorkflowMetrics failures.Reason = 11001
 
 type ProductWorkflowMetricsError struct {
 	Op   string
@@ -24,6 +28,21 @@ func (e ProductWorkflowMetricsError) Error() string {
 
 func (e ProductWorkflowMetricsError) Unwrap() error {
 	return e.Err
+}
+
+func (e ProductWorkflowMetricsError) Code() failures.Code {
+	switch {
+	case os.IsNotExist(e.Err):
+		return failures.NotFound
+	case os.IsPermission(e.Err):
+		return failures.PermissionDenied
+	default:
+		return failures.InvalidArgument
+	}
+}
+
+func (e ProductWorkflowMetricsError) Reason() failures.Reason {
+	return reasonProductWorkflowMetrics
 }
 
 func BuildProductWorkflowMetrics(absRoot string) (ProductWorkflowMetrics, error) {

@@ -22,6 +22,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
+	"idiom/internal/failures"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/plancontract"
 	"idiom/internal/telemetry"
@@ -1058,6 +1059,17 @@ func RunReviewRepairPhase(
 func reviewRepairDegradedReasonClass(err error) string {
 	if err == nil {
 		return ""
+	}
+	switch failures.CodeOf(err) {
+	case failures.Canceled:
+		return "backend_canceled"
+	case failures.DeadlineExceeded:
+		return "backend_timeout"
+	case failures.Unavailable, failures.NotFound:
+		return "backend_unreachable"
+	case failures.Unauthenticated, failures.PermissionDenied, failures.ResourceExhausted,
+		failures.InvalidArgument, failures.Internal, failures.DataLoss:
+		return "review_model_error"
 	}
 	reason := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {

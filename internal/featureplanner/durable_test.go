@@ -3,6 +3,7 @@ package featureplanner
 import (
 	"encoding/json"
 	"errors"
+	"idiom/internal/failures"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -56,6 +57,39 @@ func TestReplayRejectsStaleFeatureRevision(t *testing.T) {
 	var replayErr ReplayError
 	if !errors.As(err, &replayErr) {
 		t.Fatalf("expected ReplayError, got %v", err)
+	}
+}
+
+func TestReplayErrorClassifiesReplayInvariantViolations(t *testing.T) {
+	state := durableState()
+	state.Revision = 3
+	_, err := Replay(state, []Event{{
+		SchemaVersion:         FeatureEventSchemaVersion,
+		EventID:               "evt-stale",
+		IdempotencyKey:        "feature-one/rev-0/dispatch",
+		Type:                  "idiom.feature.atom_started",
+		SessionID:             "session",
+		FeatureID:             "feature-one",
+		FeatureRevisionBefore: 0,
+		FeatureRevisionAfter:  1,
+		FeatureFrom:           FeatureStateReady,
+		FeatureTo:             FeatureStateDispatching,
+	}})
+	if err == nil {
+		t.Fatal("expected replay error")
+	}
+	var replayErr ReplayError
+	if !errors.As(err, &replayErr) {
+		t.Fatalf("expected ReplayError, got %v", err)
+	}
+	if got := failures.CodeOf(err); got != failures.FailedPrecondition {
+		t.Fatalf("CodeOf(err) = %v, want %v", got, failures.FailedPrecondition)
+	}
+	if got := failures.ReasonOf(err); got != ReplayInvariantViolation {
+		t.Fatalf("ReasonOf(err) = %v, want %v", got, ReplayInvariantViolation)
+	}
+	if !strings.Contains(err.Error(), "expected feature_revision_before") {
+		t.Fatalf("existing replay error message changed: %v", err)
 	}
 }
 

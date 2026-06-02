@@ -46,12 +46,12 @@ func (s *ServerController) Start(ctx context.Context) error {
 	}
 
 	if err := os.MkdirAll(filepath.Dir(s.cfg.LogFile), 0o755); err != nil {
-		return fmt.Errorf("create log directory: %w", err)
+		return llmServerStartError("create log directory", err)
 	}
 
 	logFile, err := os.OpenFile(s.cfg.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
-		return fmt.Errorf("open log file: %w", err)
+		return llmServerStartError("open log file", err)
 	}
 
 	args := s.buildArgs()
@@ -61,7 +61,7 @@ func (s *ServerController) Start(ctx context.Context) error {
 
 	if err := cmd.Start(); err != nil {
 		_ = logFile.Close()
-		return fmt.Errorf("start llama-server: %w", err)
+		return llmServerStartError("start llama-server", err)
 	}
 
 	s.cmd = cmd
@@ -82,17 +82,17 @@ func (s *ServerController) Start(ctx context.Context) error {
 
 func (s *ServerController) validateLaunchConfig() error {
 	if strings.TrimSpace(s.cfg.Binary) == "" {
-		return fmt.Errorf("server binary is required")
+		return llmServerConfigError("server binary is required")
 	}
 	model := strings.TrimSpace(s.cfg.Model)
 	if model == "" {
-		return fmt.Errorf("server model is required")
+		return llmServerConfigError("server model is required")
 	}
 	if s.cfg.IsMLX() {
 		return nil
 	}
 	if _, err := os.Stat(model); err != nil {
-		return fmt.Errorf("llama model path %q is not readable: %w", model, err)
+		return llmServerModelUnavailableError(fmt.Sprintf("llama model path %q is not readable", model), err)
 	}
 	return nil
 }
@@ -108,7 +108,7 @@ func (s *ServerController) Stop(ctx context.Context) error {
 
 	if err := cmd.Process.Signal(os.Interrupt); err != nil {
 		if err := cmd.Process.Kill(); err != nil {
-			return fmt.Errorf("stop llama-server: %w", err)
+			return llmServerStopError("stop llama-server", err)
 		}
 	}
 
@@ -119,7 +119,7 @@ func (s *ServerController) Stop(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			_ = cmd.Process.Kill()
-			return ctx.Err()
+			return llmServerStopError("stop llama-server", ctx.Err())
 		case <-ticker.C:
 			if !processAlive(cmd.Process) {
 				return nil
@@ -145,14 +145,14 @@ func (s *ServerController) WaitUntilReady(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
+			return llmServerStopError("wait for llama-server readiness", ctx.Err())
 		case <-ticker.C:
 			models, err := s.client.ListModels(ctx)
 			if err == nil && len(models) > 0 {
 				return nil
 			}
 			if !s.IsRunning() {
-				return fmt.Errorf("llama-server exited before becoming ready")
+				return llmServerReadinessError("llama-server exited before becoming ready")
 			}
 		}
 	}

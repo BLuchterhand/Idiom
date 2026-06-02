@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"idiom/internal/failures"
 )
 
 func TestToolTimeoutForKnownTools(t *testing.T) {
@@ -73,6 +75,9 @@ func TestExecuteWithTimeoutFnSynthesizesTimeoutOnStall(t *testing.T) {
 	if !strings.Contains(res.Error, "30ms") {
 		t.Fatalf("error should name the configured timeout, got %q", res.Error)
 	}
+	if !failures.IsCode(res.Failure, failures.DeadlineExceeded) {
+		t.Fatalf("timeout result should carry DeadlineExceeded failure metadata, got %#v", res.Failure)
+	}
 	if elapsed > 200*time.Millisecond {
 		t.Fatalf("wrapper should fire the deadline, not wait for the slow dispatch (elapsed=%v)", elapsed)
 	}
@@ -88,6 +93,9 @@ func TestExecuteWithTimeoutFnRecoversPanic(t *testing.T) {
 	}
 	if !strings.Contains(res.Error, "synthetic panic") {
 		t.Fatalf("error should carry the panic message, got %q", res.Error)
+	}
+	if !failures.IsCode(res.Failure, failures.Internal) {
+		t.Fatalf("panic result should carry Internal failure metadata, got %#v", res.Failure)
 	}
 }
 
@@ -109,6 +117,9 @@ func TestExecuteWithTimeoutFnHonorsParentCancellation(t *testing.T) {
 	elapsed := time.Since(start)
 	if !strings.Contains(res.Summary, "canceled") && !strings.Contains(res.Summary, "timed out") {
 		t.Fatalf("expected cancellation/timeout summary, got %q", res.Summary)
+	}
+	if failures.CodeOf(res.Failure) != failures.Canceled && failures.CodeOf(res.Failure) != failures.DeadlineExceeded {
+		t.Fatalf("cancellation result should carry canceled/timeout metadata, got %#v", res.Failure)
 	}
 	if elapsed > 200*time.Millisecond {
 		t.Fatalf("wrapper should observe parent cancellation, elapsed=%v", elapsed)

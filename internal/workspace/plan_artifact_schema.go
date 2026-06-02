@@ -11,6 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"idiom/internal/failures"
 	"idiom/internal/util"
 )
 
@@ -142,6 +143,14 @@ func (e *PlanArtifactValidationError) Error() string {
 		parts = append(parts, fmt.Sprintf("and_%d_more", len(e.Errors)-limit))
 	}
 	return "plan_artifact.schema_errors " + strings.Join(parts, "; ")
+}
+
+func (e *PlanArtifactValidationError) Code() failures.Code {
+	return failures.InvalidArgument
+}
+
+func (e *PlanArtifactValidationError) Reason() failures.Reason {
+	return reasonPlanArtifactSchemaInvalid
 }
 
 func approvedPlanArtifactClientClasses() []string {

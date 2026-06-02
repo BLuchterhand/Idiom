@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"idiom/internal/failures"
 )
 
 // LaunchSpec is the argv recipe a Launcher hands to os/exec to
@@ -499,7 +501,7 @@ func pidForPortViaLsof(port int) (int, error) {
 // errLsofUnavailable signals "the lsof binary isn't on PATH." On
 // Linux, realPIDForPort falls through to a /proc-based lookup; on
 // other platforms the caller treats this as "no PID found."
-var errLsofUnavailable = errors.New("backends: lsof not available")
+var errLsofUnavailable = failures.New(failures.Unavailable, reasonBackendLsofUnavailable, "backends: lsof not available")
 
 // StatusResult is one row of the status table.
 type StatusResult struct {

@@ -423,7 +423,7 @@ func (c *Client) applyAuth(req *http.Request) error {
 	}
 	key := strings.TrimSpace(os.Getenv(env))
 	if key == "" {
-		return fmt.Errorf("%s is required for %s backend", env, c.Backend())
+		return llmAuthMissingError(env, c.Backend())
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	return nil
@@ -440,18 +440,18 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return nil, err
+		return nil, llmTransportError("list models transport failed", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return nil, fmt.Errorf("list models failed: %s", strings.TrimSpace(string(body)))
+		return nil, llmHTTPStatusError("list models failed", resp.StatusCode, string(body))
 	}
 
 	var parsed modelsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return nil, fmt.Errorf("decode model list: %w", err)
+		return nil, llmDecodeError("decode model list", err)
 	}
 	return parsed.Data, nil
 }
@@ -617,7 +617,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 		}
 	}
 	if isOpenAIResponsesBackend(c.Backend()) {
-		return fmt.Errorf("streaming is not implemented for %s backend", c.Backend())
+		return llmUnsupportedError(fmt.Sprintf("streaming is not implemented for %s backend", c.Backend()))
 	}
 
 	var payload any
@@ -652,7 +652,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	}
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("marshal request: %w", err)
+		return llmDecodeError("marshal request", err)
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.chatCompletionsURL(), bytes.NewReader(data))
@@ -666,13 +666,13 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("chat request transport failed: %w", err)
+		return llmTransportError("chat request transport failed", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return fmt.Errorf("chat request failed: %s", strings.TrimSpace(string(body)))
+		return llmHTTPStatusError("chat request failed", resp.StatusCode, string(body))
 	}
 
 	scanner := bufio.NewScanner(resp.Body)
@@ -691,11 +691,11 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 
 		var parsed chatStreamChunk
 		if err := json.Unmarshal([]byte(chunk), &parsed); err != nil {
-			return fmt.Errorf("decode stream chunk: %w", err)
+			return llmDecodeError("decode stream chunk", err)
 		}
 
 		if parsed.Error != nil {
-			return fmt.Errorf("%s", parsed.Error.Message)
+			return llmAPIError(parsed.Error.Message)
 		}
 		if len(parsed.Choices) == 0 {
 			continue
@@ -719,7 +719,7 @@ func (c *Client) StreamChat(ctx context.Context, messages []ChatMessage, opts Ch
 	}
 
 	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("read stream: %w", err)
+		return llmTransportError("read stream", err)
 	}
 	return nil
 }
@@ -879,7 +879,7 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return ChatMessage{}, fmt.Errorf("marshal responses request: %w", err)
+		return ChatMessage{}, llmDecodeError("marshal responses request", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.responsesURL(), bytes.NewReader(data))
 	if err != nil {
@@ -891,20 +891,20 @@ func (c *Client) completeResponsesChatMessage(ctx context.Context, messages []Ch
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ChatMessage{}, fmt.Errorf("responses request transport failed: %w", err)
+		return ChatMessage{}, llmTransportError("responses request transport failed", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= http.StatusBadRequest {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 16*1024))
-		return ChatMessage{}, fmt.Errorf("responses request failed: %s", strings.TrimSpace(string(body)))
+		return ChatMessage{}, llmHTTPStatusError("responses request failed", resp.StatusCode, string(body))
 	}
 
 	var parsed responsesResponse
 	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
-		return ChatMessage{}, fmt.Errorf("decode responses response: %w", err)
+		return ChatMessage{}, llmDecodeError("decode responses response", err)
 	}
 	if parsed.Error != nil {
-		return ChatMessage{}, fmt.Errorf("%s", parsed.Error.Message)
+		return ChatMessage{}, llmAPIError(parsed.Error.Message)
 	}
 
 	var content strings.Builder
@@ -1021,7 +1021,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return ChatMessage{}, fmt.Errorf("marshal request: %w", err)
+		return ChatMessage{}, llmDecodeError("marshal request", err)
 	}
 
 	for {
@@ -1036,7 +1036,7 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 
 		resp, err := c.http.Do(req)
 		if err != nil {
-			return ChatMessage{}, fmt.Errorf("chat request transport failed: %w", err)
+			return ChatMessage{}, llmTransportError("chat request transport failed", err)
 		}
 
 		if resp.StatusCode >= http.StatusBadRequest {
@@ -1049,14 +1049,14 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 				}
 				continue
 			}
-			return ChatMessage{}, fmt.Errorf("chat request failed: %s", bodyText)
+			return ChatMessage{}, llmHTTPStatusError("chat request failed", resp.StatusCode, bodyText)
 		}
 
 		var parsed chatResponse
 		err = json.NewDecoder(resp.Body).Decode(&parsed)
 		_ = resp.Body.Close()
 		if err != nil {
-			return ChatMessage{}, fmt.Errorf("decode chat response: %w", err)
+			return ChatMessage{}, llmDecodeError("decode chat response", err)
 		}
 		if parsed.Error != nil {
 			if shouldRetryLoadingModel(http.StatusServiceUnavailable, parsed.Error.Message) {
@@ -1065,10 +1065,10 @@ func (c *Client) CompleteChatMessage(ctx context.Context, messages []ChatMessage
 				}
 				continue
 			}
-			return ChatMessage{}, fmt.Errorf("%s", parsed.Error.Message)
+			return ChatMessage{}, llmAPIError(parsed.Error.Message)
 		}
 		if len(parsed.Choices) == 0 {
-			return ChatMessage{}, fmt.Errorf("chat response did not contain any choices")
+			return ChatMessage{}, llmMalformedResponseError("chat response did not contain any choices")
 		}
 
 		choice := parsed.Choices[0]

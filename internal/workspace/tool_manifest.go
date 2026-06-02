@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/semantic/languagetools"
 	"idiom/internal/util"
 )
 
@@ -173,7 +174,7 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 		)
 	}
 	if opts.IncludeRust {
-		tools = append(tools, RustToolNames()...)
+		tools = append(tools, languagetools.RustToolNames()...)
 	}
 	if opts.IncludeJava {
 		tools = append(tools,

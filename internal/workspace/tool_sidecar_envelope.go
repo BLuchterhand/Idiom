@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/failures"
 	"idiom/internal/util"
 )
 
@@ -522,10 +523,13 @@ func toolSidecarAuditEventIDs(output map[string]any) []string {
 
 func toolSidecarError(result ToolResult) *ToolSidecarError {
 	message := strings.TrimSpace(result.Error)
-	if message == "" {
+	code := classifyToolSidecarError(result)
+	if message == "" && classifyTypedToolSidecarFailure(result.Failure) != "" {
+		message = strings.TrimSpace(result.Failure.Error())
+	}
+	if message == "" || code == "" {
 		return nil
 	}
-	code := classifyToolSidecarError(result)
 	return &ToolSidecarError{
 		Class:   code,
 		Code:    code,
@@ -569,6 +573,12 @@ func boundedToolSidecarErrorMessage(message string) string {
 }
 
 func classifyToolSidecarError(result ToolResult) string {
+	if code := classifyToolSidecarResultCode(result.Code); code != "" {
+		return code
+	}
+	if code := classifyTypedToolSidecarFailure(result.Failure); code != "" {
+		return code
+	}
 	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, " "))
 	switch {
 	case strings.Contains(text, "profile_denied"):
@@ -588,6 +598,51 @@ func classifyToolSidecarError(result ToolResult) string {
 	case strings.Contains(text, "unavailable") || strings.Contains(text, "not configured") || strings.Contains(text, "not found"):
 		return "backend_unavailable"
 	case strings.Contains(text, "failed"):
+		return "tool_failed"
+	default:
+		return "tool_error"
+	}
+}
+
+func classifyToolSidecarResultCode(code string) string {
+	switch strings.TrimSpace(code) {
+	case "profile_denied", "read_only_profile":
+		return strings.TrimSpace(code)
+	default:
+		return ""
+	}
+}
+
+func classifyTypedToolSidecarFailure(failure error) string {
+	if failure == nil {
+		return ""
+	}
+	switch failures.ReasonOf(failure) {
+	case reasonContextFreshnessBlocker:
+		return "stale_context"
+	case reasonToolUnsupported:
+		return "unsupported_tool"
+	case reasonToolPermissionPolicy, reasonToolWriteDisabled:
+		return "permission_policy"
+	case reasonToolInvalidArgument, reasonToolPathResolutionFailed, reasonPlanArtifactSchemaInvalid:
+		return "invalid_input"
+	case reasonToolUnavailable, reasonPythonLSPUnavailable, reasonGitHistoryUnavailable:
+		return "backend_unavailable"
+	}
+	switch failures.CodeOf(failure) {
+	case failures.Unknown:
+		return ""
+	case failures.InvalidArgument, failures.OutOfRange:
+		return "invalid_input"
+	case failures.PermissionDenied, failures.Unauthenticated:
+		return "permission_policy"
+	case failures.Unimplemented:
+		return "unsupported_tool"
+	case failures.DeadlineExceeded:
+		return "timeout"
+	case failures.Unavailable, failures.NotFound:
+		return "backend_unavailable"
+	case failures.Internal, failures.DataLoss, failures.Aborted, failures.ResourceExhausted, failures.FailedPrecondition, failures.Canceled, failures.AlreadyExists:
 		return "tool_failed"
 	default:
 		return "tool_error"

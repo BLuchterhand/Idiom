@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"idiom/internal/discovery"
+	"idiom/internal/failures"
 )
 
 const (
@@ -34,15 +35,15 @@ var (
 func (m *Manager) structuralSearch(ctx context.Context, req ToolRequest) ToolResult {
 	pattern := strings.TrimSpace(req.Pattern)
 	if pattern == "" {
-		return ToolResult{Tool: "structural_search", Summary: "Structural search rejected", Error: "pattern is required"}
+		return toolInvalidArgumentResult("structural_search", "Structural search rejected", "pattern is required")
 	}
 	bin := firstAvailableBinary("ast-grep", "sg")
 	if bin == "" {
-		return ToolResult{Tool: "structural_search", Summary: "Structural search unavailable", Error: "ast-grep is not installed"}
+		return toolUnavailableResult("structural_search", "Structural search unavailable", "ast-grep is not installed")
 	}
 	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "structural_search", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("structural_search", "Failed to resolve path", err)
 	}
 	args := []string{"--pattern", pattern, "--json"}
 	if lang := strings.TrimSpace(req.Language); lang != "" {
@@ -64,7 +65,7 @@ func (m *Manager) structuralSearch(ctx context.Context, req ToolRequest) ToolRes
 func (m *Manager) dependencyGraph(ctx context.Context, req ToolRequest) ToolResult {
 	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "dependency_graph", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("dependency_graph", "Failed to resolve path", err)
 	}
 	lang := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(req.Language)), ".")
 	if lang == "" {
@@ -82,17 +83,17 @@ func (m *Manager) dependencyGraph(ctx context.Context, req ToolRequest) ToolResu
 	case "java":
 		return m.javaDependencyGraph(ctx, target)
 	default:
-		return ToolResult{Tool: "dependency_graph", Summary: "Dependency graph unavailable", Error: "could not infer ecosystem; pass language as go, rust, typescript, python, or java"}
+		return toolInvalidArgumentResult("dependency_graph", "Dependency graph unavailable", "could not infer ecosystem; pass language as go, rust, typescript, python, or java")
 	}
 }
 
 func (m *Manager) historyRange(ctx context.Context, req ToolRequest) ToolResult {
 	rel, err := m.gitRelPath(req.Path, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "history_range", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("history_range", "Failed to resolve path", err)
 	}
 	if req.StartLine <= 0 || req.EndLine <= 0 || req.StartLine > req.EndLine {
-		return ToolResult{Tool: "history_range", Summary: "History query rejected", Error: "start_line and end_line are required and start_line must be <= end_line"}
+		return toolInvalidArgumentResult("history_range", "History query rejected", "start_line and end_line are required and start_line must be <= end_line")
 	}
 	if result, handled := m.gitHistoryApplicability(ctx, "history_range", rel); handled {
 		return result
@@ -109,11 +110,11 @@ func (m *Manager) historyRange(ctx context.Context, req ToolRequest) ToolResult 
 func (m *Manager) historySymbol(ctx context.Context, req ToolRequest) ToolResult {
 	rel, err := m.gitRelPath(req.Path, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "history_symbol", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("history_symbol", "Failed to resolve path", err)
 	}
 	symbol := strings.TrimSpace(req.Pattern)
 	if symbol == "" {
-		return ToolResult{Tool: "history_symbol", Summary: "History query rejected", Error: "pattern is required"}
+		return toolInvalidArgumentResult("history_symbol", "History query rejected", "pattern is required")
 	}
 	if result, handled := m.gitHistoryApplicability(ctx, "history_symbol", rel); handled {
 		return result
@@ -130,7 +131,7 @@ func (m *Manager) historySymbol(ctx context.Context, req ToolRequest) ToolResult
 func (m *Manager) blameRange(ctx context.Context, req ToolRequest) ToolResult {
 	rel, err := m.gitRelPath(req.Path, req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "blame_range", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("blame_range", "Failed to resolve path", err)
 	}
 	if result, handled := m.gitHistoryApplicability(ctx, "blame_range", rel); handled {
 		return result
@@ -143,7 +144,7 @@ func (m *Manager) blameRange(ctx context.Context, req ToolRequest) ToolResult {
 			start = 1
 		}
 		if end > 0 && start > end {
-			return ToolResult{Tool: "blame_range", Summary: "Blame query rejected", Error: "start_line must be <= end_line"}
+			return toolInvalidArgumentResult("blame_range", "Blame query rejected", "start_line must be <= end_line")
 		}
 		if end > 0 {
 			args = append(args, "-L", fmt.Sprintf("%d,%d", start, end))
@@ -164,13 +165,13 @@ func (m *Manager) gitHistoryApplicability(ctx context.Context, tool string, rel 
 	abs := filepath.Join(m.cfg.Root, filepath.FromSlash(rel))
 	info, err := os.Stat(abs)
 	if err != nil {
-		return ToolResult{Tool: tool, Summary: "Failed to stat path", Error: fmt.Sprintf("path %q does not exist in this workspace: %v", rel, err)}, true
+		return toolNotFoundResult(tool, "Failed to stat path", fmt.Sprintf("path %q does not exist in this workspace: %v", rel, err)), true
 	}
 	if info.IsDir() {
-		return ToolResult{Tool: tool, Summary: "History query rejected", Error: fmt.Sprintf("path %q is a directory; history tools require a file path", rel)}, true
+		return toolInvalidArgumentResult(tool, "History query rejected", fmt.Sprintf("path %q is a directory; history tools require a file path", rel)), true
 	}
 	if firstAvailableBinary("git") == "" {
-		return ToolResult{Tool: tool, Summary: "Git history unavailable", Error: "git is not installed"}, true
+		return toolFailureResult(tool, "Git history unavailable", "git is not installed", failures.Unavailable, reasonGitHistoryUnavailable), true
 	}
 	if !hasGitMetadataAncestor(m.cfg.Root) {
 		return historyNotApplicableResult(tool, rel, "non_git_root"), true
@@ -227,6 +228,7 @@ func gitHistoryFailureResult(tool string, summary string, output string, err err
 		Summary: summary,
 		Output:  strings.TrimSpace(output),
 		Error:   err.Error(),
+		Failure: failures.Wrap(failures.Unavailable, reasonGitHistoryUnavailable, summary, err),
 	}
 }
 
@@ -243,11 +245,11 @@ func gitOutputContainsPath(output string, rel string) bool {
 func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult {
 	bin := firstAvailableBinary("ctags")
 	if bin == "" {
-		return ToolResult{Tool: "ctags_symbols", Summary: "Ctags symbol search unavailable", Error: "ctags is not installed"}
+		return toolUnavailableResult("ctags_symbols", "Ctags symbol search unavailable", "ctags is not installed")
 	}
 	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "ctags_symbols", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("ctags_symbols", "Failed to resolve path", err)
 	}
 	output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--output-format=json", "--fields=+nK", "-f", "-", "-R", target)
 	if filter := strings.TrimSpace(req.Pattern); filter != "" {
@@ -263,11 +265,11 @@ func (m *Manager) ctagsSymbols(ctx context.Context, req ToolRequest) ToolResult 
 func (m *Manager) semgrepScan(ctx context.Context, req ToolRequest) ToolResult {
 	bin := firstAvailableBinary("semgrep")
 	if bin == "" {
-		return ToolResult{Tool: "semgrep_scan", Summary: "Semgrep scan unavailable", Error: "semgrep is not installed"}
+		return toolUnavailableResult("semgrep_scan", "Semgrep scan unavailable", "semgrep is not installed")
 	}
 	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "semgrep_scan", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("semgrep_scan", "Failed to resolve path", err)
 	}
 	config := strings.TrimSpace(req.Pattern)
 	if config == "" {
@@ -284,11 +286,11 @@ func (m *Manager) semgrepScan(ctx context.Context, req ToolRequest) ToolResult {
 func (m *Manager) joernScan(ctx context.Context, req ToolRequest) ToolResult {
 	bin := firstAvailableBinary("joern-scan")
 	if bin == "" {
-		return ToolResult{Tool: "joern_scan", Summary: "Joern scan unavailable", Error: "joern-scan is not installed"}
+		return toolUnavailableResult("joern_scan", "Joern scan unavailable", "joern-scan is not installed")
 	}
 	target, err := m.resolvePath(defaultString(req.Path, "."), req.Workdir)
 	if err != nil {
-		return ToolResult{Tool: "joern_scan", Summary: "Failed to resolve path", Error: err.Error()}
+		return toolPathResolutionFailureResult("joern_scan", "Failed to resolve path", err)
 	}
 	output, execErr := m.runCommand(ctx, m.cfg.Root, bin, "--src", target)
 	result := ToolResult{Tool: "joern_scan", Summary: fmt.Sprintf("Ran Joern scan under %s", m.displayPath(target)), Output: strings.TrimSpace(output)}
@@ -300,7 +302,7 @@ func (m *Manager) joernScan(ctx context.Context, req ToolRequest) ToolResult {
 
 func (m *Manager) goDependencyGraph(ctx context.Context, target string) ToolResult {
 	if !m.isGoWorkspace() {
-		return ToolResult{Tool: "dependency_graph", Summary: "Go dependency graph unavailable", Error: "go.mod was not found at the workspace root"}
+		return toolUnavailableResult("dependency_graph", "Go dependency graph unavailable", "go.mod was not found at the workspace root")
 	}
 	output, execErr := m.runCommand(ctx, m.cfg.Root, "go", "list", "-deps", "./...")
 	result := ToolResult{Tool: "dependency_graph", Summary: "Collected Go dependency graph with go list -deps", Output: strings.TrimSpace(output)}
@@ -313,7 +315,7 @@ func (m *Manager) goDependencyGraph(ctx context.Context, target string) ToolResu
 func (m *Manager) rustDependencyGraph(ctx context.Context, target string) ToolResult {
 	cargoRoot := nearestAncestorWithFile(target, "Cargo.toml", m.cfg.Root)
 	if cargoRoot == "" {
-		return ToolResult{Tool: "dependency_graph", Summary: "Rust dependency graph unavailable", Error: "Cargo.toml was not found"}
+		return toolUnavailableResult("dependency_graph", "Rust dependency graph unavailable", "Cargo.toml was not found")
 	}
 	output, execErr := m.runCommand(ctx, cargoRoot, "cargo", "tree", "--prefix", "depth")
 	result := ToolResult{Tool: "dependency_graph", Summary: fmt.Sprintf("Collected Rust dependency graph in %s", m.displayPath(cargoRoot)), Output: strings.TrimSpace(output)}
@@ -376,7 +378,7 @@ func (m *Manager) javaDependencyGraph(ctx context.Context, target string) ToolRe
 		}
 		return result
 	default:
-		return ToolResult{Tool: "dependency_graph", Summary: "Java dependency graph unavailable", Error: "pom.xml or Gradle build files were not found"}
+		return toolUnavailableResult("dependency_graph", "Java dependency graph unavailable", "pom.xml or Gradle build files were not found")
 	}
 }
 

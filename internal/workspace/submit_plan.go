@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"idiom/internal/failures"
 )
 
 const SubmitPlanEmptyEditsCode = "submit_plan.empty_edits"
@@ -146,7 +148,9 @@ const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: sour
 // default.
 func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if req.PlanArtifact == nil && len(req.Edits) == 0 {
-		return ToolResult{Tool: "submit_plan", Code: SubmitPlanEmptyEditsCode, Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
+		result := toolInvalidArgumentResult("submit_plan", "submit_plan rejected", "submit_plan requires at least one edit in the edits array")
+		result.Code = SubmitPlanEmptyEditsCode
+		return result
 	}
 	stamp := time.Now().UTC().Format("20060102-150405.000")
 	stamp = strings.ReplaceAll(stamp, ".", "")
@@ -154,76 +158,78 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	planID := "plan_" + stamp
 	artifact, err := newPlanArtifactFromSubmitPlanRequest(req, m.cfg.SessionID, created, planID)
 	if err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
 	if planRationaleClaimsNoEditsNeeded(artifact.Rationale) {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied rationale",
 			Error:   "submit_plan rationale says the requested final state is already present or that edits are placeholders. Do not submit verification/placeholder edits; answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact blocker.",
-		}
+		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	if len(artifact.Edits) == 0 {
-		return ToolResult{Tool: "submit_plan", Code: SubmitPlanEmptyEditsCode, Summary: "submit_plan rejected", Error: "submit_plan requires at least one edit in the edits array"}
+		result := toolInvalidArgumentResult("submit_plan", "submit_plan rejected", "submit_plan requires at least one edit in the edits array")
+		result.Code = SubmitPlanEmptyEditsCode
+		return result
 	}
 	m.repairPlanArtifactOldTextAnchors(&artifact)
 	validationArtifact := artifact
 	validationArtifact.Edits = append([]PlanEdit(nil), artifact.Edits...)
 	if err := hydratePlanArtifactRefs(m.planArtifactDir(), &validationArtifact); err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
 	if planEditsAreVerificationOnly(artifact.Edits) {
-		return ToolResult{
+		return withToolFailure(ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: verification-only edits",
 			Error:   "submit_plan edits describe verification/checking work rather than state mutation. If the files already satisfy the task, answer `Decision: source-satisfied`; otherwise submit only real corrective edits or answer <<QUESTION>> with the exact blocker.",
-		}
+		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	for i, edit := range validationArtifact.Edits {
 		if err := validatePlanEdit(edit); err != nil {
-			return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: fmt.Sprintf("edits[%d]: %s", i, err.Error())}
+			return toolFailureResult("submit_plan", "submit_plan rejected", fmt.Sprintf("edits[%d]: %s", i, err.Error()), failures.InvalidArgument, reasonPlanSubmissionRejected)
 		}
 		if err := m.validatePlanEditAgainstWorkspace(edit); err != nil {
-			return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: fmt.Sprintf("edits[%d]: %s", i, err.Error())}
+			return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", fmt.Errorf("edits[%d]: %w", i, err), failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		}
 	}
 	if err := m.validatePlanEditSequenceAgainstWorkspace(validationArtifact.Edits); err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	artifact.Edits, err = AttachPlanEditAnchorProvenance(m.cfg.Root, artifact.Edits)
 	if err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	if err := ValidatePlanArtifact(artifact); err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.InvalidArgument, reasonPlanArtifactSchemaInvalid)
 	}
 	audit := AuditPlanArtifact(m.cfg.Root, artifact, PlanArtifactAuditOptions{EnforcePacketEvidence: req.PlanArtifact != nil})
 	if !audit.OK {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Output: audit.SummaryLine(), Error: audit.ErrorSummary()}
+		return withToolFailure(ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Output: audit.SummaryLine(), Error: audit.ErrorSummary()}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	dir := m.planArtifactDir()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: fmt.Sprintf("create plan dir: %s", err.Error())}
+		return toolFailureFromErrorResult("submit_plan", "submit_plan failed", fmt.Errorf("create plan dir: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 	edits, spilled, err := spillLargePlanEditBodies(dir, stamp, artifact.Edits)
 	if err != nil {
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan failed", err, failures.Internal, reasonToolWriteFailed)
 	}
 	artifact.Edits = edits
 	artifact = normalizePlanArtifactForSubmit(artifact, m.cfg.SessionID, created, planID, req.PlanArtifact == nil)
 	if err := ValidatePlanArtifact(artifact); err != nil {
 		cleanupPlanEditBodyRefs(dir, artifact.Edits)
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan rejected", Error: err.Error()}
+		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.InvalidArgument, reasonPlanArtifactSchemaInvalid)
 	}
 	path := filepath.Join(dir, stamp+".plan.json")
 	body, err := json.MarshalIndent(artifact, "", "  ")
 	if err != nil {
 		cleanupPlanEditBodyRefs(dir, artifact.Edits)
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: fmt.Sprintf("marshal artifact: %s", err.Error())}
+		return toolFailureFromErrorResult("submit_plan", "submit_plan failed", fmt.Errorf("marshal artifact: %w", err), failures.Internal, reasonToolInternalFailure)
 	}
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		cleanupPlanEditBodyRefs(dir, artifact.Edits)
-		return ToolResult{Tool: "submit_plan", Summary: "submit_plan failed", Error: fmt.Sprintf("write artifact: %s", err.Error())}
+		return toolFailureFromErrorResult("submit_plan", "submit_plan failed", fmt.Errorf("write artifact: %w", err), failures.Internal, reasonToolWriteFailed)
 	}
 	pointer := filepath.Join(dir, "last.plan.json")
 	_ = os.WriteFile(pointer, body, 0o644)

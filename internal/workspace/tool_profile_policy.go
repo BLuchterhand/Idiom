@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/failures"
 	"idiom/internal/util"
 )
 
@@ -85,8 +86,10 @@ func ToolProfileDeniedResult(tool string, profile string, decision ToolProfileDe
 	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), "tool is not allowed by profile")
 	return ToolResult{
 		Tool:    strings.TrimSpace(tool),
+		Code:    code,
 		Summary: "Tool request denied by " + profile + " profile",
 		Error:   fmt.Sprintf("%s: read_only_profile: %s", code, reason),
+		Failure: failures.New(failures.PermissionDenied, failures.NoReason, reason),
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"idiom/internal/failures"
 	"idiom/internal/runner"
 	"idiom/internal/telemetry"
 )
@@ -144,7 +145,7 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 		startedAt := time.Now()
 		l, err := runner.Acquire(ctx, *socketPath, *pool, *label, *clientID)
 		if err != nil {
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": "failed", "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err.Error()), "degraded": true})
+			logQueuePhase(rec, "queue_admission", map[string]any{"state": "failed", "pool": *pool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
 			if errors.Is(err, runner.ErrDaemonUnreachable) {
 				fmt.Fprintf(stderr, "queue run: %v\nstart the daemon with `idiom queue serve` (or set IDIOM_RUNNER_SOCKET).\n", err)
 			} else {
@@ -168,7 +169,7 @@ func runQueueRunWithTelemetry(args []string, stdout, stderr io.Writer, rec *tele
 		case <-lease.Granted():
 			logQueuePhase(rec, "queue_admission", map[string]any{"state": "granted", "pool": lease.Pool, "wait_ms": time.Since(startedAt).Milliseconds(), "degraded": false})
 		case err := <-lease.Err():
-			logQueuePhase(rec, "queue_admission", map[string]any{"state": "failed_before_grant", "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err.Error()), "degraded": true})
+			logQueuePhase(rec, "queue_admission", map[string]any{"state": "failed_before_grant", "pool": resolvedPool, "wait_ms": time.Since(startedAt).Milliseconds(), "reason_class": queueReasonClass(err), "degraded": true})
 			fmt.Fprintf(stderr, "queue run: lease error before grant: %v\n", err)
 			return 1
 		case <-ctx.Done():
@@ -414,8 +415,24 @@ func logQueuePhase(rec *telemetry.Recorder, eventType string, fields map[string]
 	_ = rec.Log(eventType, fields)
 }
 
-func queueReasonClass(reason string) string {
-	reason = strings.ToLower(strings.TrimSpace(reason))
+func queueReasonClass(err error) string {
+	if err == nil {
+		return "unknown"
+	}
+	if errors.Is(err, runner.ErrDaemonUnreachable) {
+		return "daemon_unreachable"
+	}
+	switch failures.CodeOf(err) {
+	case failures.Unavailable:
+		return "queue_unavailable"
+	case failures.DeadlineExceeded, failures.Canceled:
+		return "timeout_or_canceled"
+	case failures.InvalidArgument:
+		return "unknown_pool"
+	case failures.FailedPrecondition:
+		return "queue_error"
+	}
+	reason := strings.ToLower(strings.TrimSpace(err.Error()))
 	switch {
 	case strings.Contains(reason, "unreachable"), strings.Contains(reason, "connection refused"), strings.Contains(reason, "no such file"):
 		return "daemon_unreachable"

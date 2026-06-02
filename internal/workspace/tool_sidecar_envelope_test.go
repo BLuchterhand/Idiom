@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"idiom/internal/failures"
 )
 
 func TestBuildToolSidecarEnvelopeIncludesStructuredFreshness(t *testing.T) {
@@ -168,6 +170,75 @@ func TestBuildToolSidecarEnvelopeClassifiesStructuredError(t *testing.T) {
 	}
 	if envelope.Error.Message != result.Error {
 		t.Fatalf("error message changed: %#v", envelope.Error)
+	}
+}
+
+func TestBuildToolSidecarEnvelopePrefersTypedFailureMetadata(t *testing.T) {
+	result := ToolResult{
+		Tool:    "context_query",
+		Summary: "Context query failed",
+		Error:   "invalid input: pattern is required",
+		Failure: failures.New(failures.PermissionDenied, failures.NoReason, "permission denied by policy"),
+	}
+	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "default")
+	if envelope.Error == nil {
+		t.Fatalf("expected structured error")
+	}
+	if envelope.Error.Class != "permission_policy" || envelope.Error.Code != "permission_policy" {
+		t.Fatalf("typed failure should override message classification, got %#v", envelope.Error)
+	}
+	if envelope.Error.Message != result.Error {
+		t.Fatalf("error message should preserve legacy text, got %#v", envelope.Error)
+	}
+}
+
+func TestBuildToolSidecarEnvelopePreservesStructuredResultCode(t *testing.T) {
+	result := ToolResult{
+		Tool:    "context_status",
+		Code:    "profile_denied",
+		Summary: "Tool request denied by discovery profile",
+		Error:   "profile_denied: read_only_profile: refresh requests are not allowed",
+		Failure: failures.New(failures.PermissionDenied, failures.NoReason, "refresh requests are not allowed"),
+	}
+	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_status"}, result, "discovery")
+	if envelope.Error == nil {
+		t.Fatalf("expected structured error")
+	}
+	if envelope.Error.Class != "profile_denied" || envelope.Error.Code != "profile_denied" {
+		t.Fatalf("structured result code should override generic typed failure, got %#v", envelope.Error)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeFallsBackToStringClassification(t *testing.T) {
+	result := ToolResult{
+		Tool:    "context_query",
+		Summary: "Context query rejected",
+		Error:   "invalid input: pattern is required",
+	}
+	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "default")
+	if envelope.Error == nil {
+		t.Fatalf("expected structured error")
+	}
+	if envelope.Error.Class != "invalid_input" || envelope.Error.Code != "invalid_input" {
+		t.Fatalf("legacy message classification should still work, got %#v", envelope.Error)
+	}
+}
+
+func TestBuildToolSidecarEnvelopeRendersTypedFailureWithoutLegacyError(t *testing.T) {
+	result := ToolResult{
+		Tool:    "context_query",
+		Summary: "Context query failed",
+		Failure: failures.New(failures.DeadlineExceeded, failures.NoReason, "context_query exceeded its deadline"),
+	}
+	envelope := BuildToolSidecarEnvelope(ToolRequest{Tool: "context_query"}, result, "default")
+	if envelope.Error == nil {
+		t.Fatalf("expected structured error")
+	}
+	if envelope.Error.Class != "timeout" || envelope.Error.Code != "timeout" {
+		t.Fatalf("typed failure should classify timeout, got %#v", envelope.Error)
+	}
+	if !strings.Contains(envelope.Error.Message, "context_query exceeded its deadline") {
+		t.Fatalf("typed failure message should be rendered when legacy Error is empty, got %#v", envelope.Error)
 	}
 }
 

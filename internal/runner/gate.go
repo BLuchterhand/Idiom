@@ -2,7 +2,6 @@ package runner
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -137,7 +136,7 @@ func MaybeAcquireWithResult(ctx context.Context, socketPath, pool, label, client
 			if e != nil {
 				return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: e.Error(), Release: func() {}, Err: e}
 			}
-			err := errors.New("queue connection closed before grant")
+			err := queueConnectionClosedError()
 			return MaybeAcquireResult{State: MaybeAcquireStateError, Pool: lease.Pool, Reason: err.Error(), Release: func() {}, Err: err}
 		case <-ctx.Done():
 			_ = lease.Close()

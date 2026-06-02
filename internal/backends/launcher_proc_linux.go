@@ -4,19 +4,20 @@ package backends
 
 import (
 	"bufio"
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"idiom/internal/failures"
 )
 
 // errProcUnavailable is the sentinel pidForPortViaProc returns when
 // the kernel surface it needs (`/proc/net/tcp`, `/proc/<pid>/fd/`)
 // is missing. Linux normally has both; the error covers exotic
 // chroots / sandboxes that hide them.
-var errProcUnavailable = errors.New("backends: /proc not available")
+var errProcUnavailable = failures.New(failures.Unavailable, reasonBackendProcUnavailable, "backends: /proc not available")
 
 // pidForPortViaProc finds the PID listening on a TCP port by
 // walking /proc/net/tcp{,6} for the LISTEN-state socket inode and

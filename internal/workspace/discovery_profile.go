@@ -103,6 +103,47 @@ func readOnlyCapabilityDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
 	return codeNavigationDiscoveryProfile(routed)
 }
 
+func codeNavigationDiscoveryProfile(req ToolRequest) ToolDiscoveryProfile {
+	class := "language_symbol"
+	cost := "low"
+	switch normalizeCodeNavigationCapability(req.Capability) {
+	case "definition", "references", "calls_from", "calls_into", "implementations", "related_files":
+		class = "language_relationship"
+		cost = "medium"
+	}
+	return discoveryProfile(class, scopeFromPathAndPattern(req.Path, util.FirstNonEmpty(req.Pattern, req.Query)), cost, true)
+}
+
+func normalizeCodeNavigationCapability(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "-", "_")
+	value = strings.ReplaceAll(value, " ", "_")
+	switch value {
+	case "outline":
+		return "file_outline"
+	case "symbol", "symbol_lookup", "lookup":
+		return "find_symbol"
+	case "workspace_symbols", "find_symbol_workspace":
+		return "workspace_symbol"
+	case "inspect_symbol", "symbol_body":
+		return "read_symbol"
+	case "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition":
+		return "definition"
+	case "reference", "usages", "find_references", "find_reference":
+		return "references"
+	case "callees":
+		return "calls_from"
+	case "callers":
+		return "calls_into"
+	case "implementation", "impls":
+		return "implementations"
+	case "related":
+		return "related_files"
+	default:
+		return value
+	}
+}
+
 func discoveryProfile(class string, scope string, cost string, generic bool) ToolDiscoveryProfile {
 	return ToolDiscoveryProfile{
 		Class:     class,

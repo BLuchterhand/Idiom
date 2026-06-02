@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"idiom/internal/failures"
 )
 
 // startTestServer binds the daemon to a short-path Unix socket and
@@ -397,6 +399,9 @@ func TestDaemonUnreachableErrorWraps(t *testing.T) {
 	}
 	if !errors.Is(err, ErrDaemonUnreachable) {
 		t.Fatalf("error should wrap ErrDaemonUnreachable, got %v", err)
+	}
+	if got := failures.CodeOf(err); got != failures.Unavailable {
+		t.Fatalf("daemon unreachable code = %v, want %v", got, failures.Unavailable)
 	}
 }
 

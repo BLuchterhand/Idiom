@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/failures"
 	"idiom/internal/util"
 )
 
@@ -662,7 +663,7 @@ func contextFreshnessBlockerResult(tool string, freshness comprehension.Freshnes
 		StaleEvidence: comprehension.StaleEvidenceSafetyForFreshness(freshness),
 	}, "", "  ")
 	if err != nil {
-		return ToolResult{Tool: tool, Summary: "Context freshness blocker encode failed", Error: err.Error()}
+		return toolInternalFailureResult(tool, "Context freshness blocker encode failed", err)
 	}
 	reason := strings.TrimSpace(freshness.Reason)
 	if reason == "" {
@@ -673,6 +674,11 @@ func contextFreshnessBlockerResult(tool string, freshness comprehension.Freshnes
 		Summary: fmt.Sprintf("%s blocked by context freshness (%s)", tool, reason),
 		Output:  string(output),
 		Error:   "freshness_blocker",
+		Failure: failures.New(
+			failures.FailedPrecondition,
+			reasonContextFreshnessBlocker,
+			fmt.Sprintf("%s blocked by context freshness (%s)", tool, reason),
+		),
 	}
 }
 

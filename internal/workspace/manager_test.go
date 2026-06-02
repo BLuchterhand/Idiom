@@ -387,8 +387,7 @@ func TestGoWorkspaceSymbolFallsBackAfterGoplsFailure(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
-	mgr.goplsChecked = true
-	mgr.goplsPath = gopls
+	mgr.setGoplsBinaryForTesting(gopls)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "ExampleWorker"})
 	if result.Error != "" {
@@ -413,8 +412,7 @@ func TestGoWorkspaceSymbolFallsBackAfterEmptyGoplsResult(t *testing.T) {
 	}
 
 	mgr := NewManager(config.Workspace{Root: dir, CWD: dir, CommandTimeoutSeconds: 5})
-	mgr.goplsChecked = true
-	mgr.goplsPath = gopls
+	mgr.setGoplsBinaryForTesting(gopls)
 
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "go_workspace_symbol", Pattern: "func ExampleWorker"})
 	if result.Error != "" {
