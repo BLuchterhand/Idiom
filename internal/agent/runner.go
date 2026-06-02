@@ -640,7 +640,7 @@ func (r *Runner) Run(
 		}
 		contractID := ""
 		if autonomyRecorder != nil {
-			contractID = autonomyRecorder.contract.ContractID
+			contractID = autonomyRecorder.contractIDForTurnPhase()
 		}
 		phaseContract := r.deriveCurrentTurnPhaseContract(runnerTurnPhaseContractInput{
 			ContractID:          contractID,

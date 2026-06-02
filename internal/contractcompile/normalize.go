@@ -308,101 +308,20 @@ func canonicalActionClassStrings(values []string) []string {
 	return uniqueStrings(out)
 }
 
-var planExecutePlannerToolVocabulary = map[string]ToolVocabularyEntry{
-	"blame_range":      plannerTool("blame_range", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"code_navigate":    plannerTool("code_navigate", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"context_impact":   plannerTool("context_impact", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"context_pack":     plannerTool("context_pack", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"context_query":    plannerTool("context_query", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"context_status":   plannerTool("context_status", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"context_zoom":     plannerTool("context_zoom", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"discovery_query":  plannerTool("discovery_query", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"file_stats":       plannerTool("file_stats", autonomy.CapabilityBoundedRead, autonomy.SideEffectReadOnly, true),
-	"harness_feedback": plannerTool("harness_feedback", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"history_range":    plannerTool("history_range", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"history_symbol":   plannerTool("history_symbol", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"product_efforts":  plannerTool("product_efforts", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"product_status":   plannerTool("product_status", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"read_file":        plannerTool("read_file", autonomy.CapabilityBoundedRead, autonomy.SideEffectReadOnly, true),
-	"recovery_inspect": plannerTool("recovery_inspect", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"recovery_status":  plannerTool("recovery_status", autonomy.CapabilitySemanticDiscovery, autonomy.SideEffectReadOnly, true),
-	"search_content":   plannerTool("search_content", autonomy.CapabilityLiteralSearch, autonomy.SideEffectReadOnly, true),
-	"search_files":     plannerTool("search_files", autonomy.CapabilityLiteralSearch, autonomy.SideEffectReadOnly, true),
-	"structural_search": plannerTool(
-		"structural_search",
-		autonomy.CapabilityLiteralSearch,
-		autonomy.SideEffectReadOnly,
-		true,
-	),
-	"submit_plan": plannerTool("submit_plan", autonomy.CapabilityPlanSubmission, autonomy.SideEffectReadOnly, true),
-
-	"append_file":        plannerTool("append_file", autonomy.CapabilitySourceEdit, autonomy.SideEffectAdditive, false),
-	"apply_patch":        plannerTool("apply_patch", autonomy.CapabilityApplyPatch, autonomy.SideEffectAdditive, false),
-	"context_trace_pack": plannerTool("context_trace_pack", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"cpp_diagnostics":    plannerTool("cpp_diagnostics", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"delegate_edit":      plannerTool("delegate_edit", autonomy.CapabilityDelegation, autonomy.SideEffectAdditive, false),
-	"edit_file":          plannerTool("edit_file", autonomy.CapabilitySourceEdit, autonomy.SideEffectAdditive, false),
-	"go_diagnostics":     plannerTool("go_diagnostics", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"go_move_declarations": plannerTool(
-		"go_move_declarations",
-		autonomy.CapabilitySourceEdit,
-		autonomy.SideEffectAdditive,
-		false,
-	),
-	"java_diagnostics":   plannerTool("java_diagnostics", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"mkdir":              plannerTool("mkdir", autonomy.CapabilitySourceEdit, autonomy.SideEffectAdditive, false),
-	"python_diagnostics": plannerTool("python_diagnostics", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"recovery_decompose": plannerTool("recovery_decompose", autonomy.CapabilityExternalWrite, autonomy.SideEffectAdditive, false),
-	"rust_diagnostics":   plannerTool("rust_diagnostics", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"shell":              plannerTool("shell", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"source_sanity":      plannerTool("source_sanity", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"task":               plannerTool("task", autonomy.CapabilityDelegation, autonomy.SideEffectUnknown, false),
-	"task_ledger":        plannerTool("task_ledger", autonomy.CapabilityExternalWrite, autonomy.SideEffectAdditive, false),
-	"ts_diagnostics":     plannerTool("ts_diagnostics", autonomy.CapabilityShellVerification, autonomy.SideEffectUnknown, false),
-	"write_file":         plannerTool("write_file", autonomy.CapabilitySourceEdit, autonomy.SideEffectAdditive, false),
-}
-
-func plannerTool(tool string, capability autonomy.Capability, sideEffect autonomy.SideEffectClass, plannerAllowed bool) ToolVocabularyEntry {
-	return ToolVocabularyEntry{
-		Tool:           tool,
-		Capabilities:   []autonomy.Capability{capability},
-		SideEffect:     sideEffect,
-		PlannerAllowed: plannerAllowed,
-	}
-}
-
 func PlanExecutePlannerToolVocabulary() []ToolVocabularyEntry {
-	entries := make([]ToolVocabularyEntry, 0, len(planExecutePlannerToolVocabulary))
-	for _, entry := range planExecutePlannerToolVocabulary {
-		entry.Capabilities = append([]autonomy.Capability(nil), entry.Capabilities...)
-		entries = append(entries, entry)
-	}
-	slices.SortFunc(entries, func(a, b ToolVocabularyEntry) int { return cmp.Compare(a.Tool, b.Tool) })
-	return entries
+	return autonomy.PlanExecutePlannerToolMetadataEntries()
 }
 
 func PlanExecutePlannerToolNames() []string {
-	var tools []string
-	for _, entry := range PlanExecutePlannerToolVocabulary() {
-		if entry.PlannerAllowed {
-			tools = append(tools, entry.Tool)
-		}
-	}
-	return tools
+	return autonomy.PlanExecutePlannerToolNames()
 }
 
 func IsPlanExecutePlannerToolAllowed(tool string) bool {
-	entry, ok := toolVocabularyEntry(tool)
-	return ok && entry.PlannerAllowed
+	return autonomy.IsPlanExecutePlannerToolAllowed(tool)
 }
 
 func toolVocabularyEntry(tool string) (ToolVocabularyEntry, bool) {
-	entry, ok := planExecutePlannerToolVocabulary[strings.TrimSpace(tool)]
-	if !ok {
-		return ToolVocabularyEntry{}, false
-	}
-	entry.Capabilities = append([]autonomy.Capability(nil), entry.Capabilities...)
-	return entry, true
+	return autonomy.LookupPlanExecutePlannerToolMetadata(tool)
 }
 
 func capabilitiesForTool(tool string) []autonomy.Capability {

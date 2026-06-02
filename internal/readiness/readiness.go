@@ -51,38 +51,116 @@ type Unavailable struct {
 	Remedy string `json:"remedy,omitempty"`
 }
 
+const RuntimeReadinessSchemaVersion = "idiom.runtime_readiness.v1"
+
+type EnforcementMode string
+
+const (
+	EnforcementReportOnly EnforcementMode = "report_only"
+)
+
+type RuntimeReadinessDecision string
+
+const (
+	RuntimeReadinessReady           RuntimeReadinessDecision = "ready"
+	RuntimeReadinessAllowedDegraded RuntimeReadinessDecision = "allowed_degraded"
+	RuntimeReadinessLaunchBlocked   RuntimeReadinessDecision = "launch_blocked"
+)
+
+type RuntimeReadinessReasonClass string
+
+const (
+	ReasonBackendConfigInvalid     RuntimeReadinessReasonClass = "backend_config_invalid"
+	ReasonBackendConfigUnavailable RuntimeReadinessReasonClass = "backend_config_unavailable"
+	ReasonBackendProfileUnresolved RuntimeReadinessReasonClass = "backend_profile_unresolved"
+	ReasonConfigUnavailable        RuntimeReadinessReasonClass = "config_unavailable"
+	ReasonInvalidContextBudget     RuntimeReadinessReasonClass = "invalid_context_budget"
+	ReasonMissingBackendRole       RuntimeReadinessReasonClass = "missing_backend_role"
+	ReasonQueueSoftDegraded        RuntimeReadinessReasonClass = "queue_soft_degraded"
+	ReasonQueueUnavailable         RuntimeReadinessReasonClass = "queue_unavailable"
+	ReasonReadinessCheckFailed     RuntimeReadinessReasonClass = "readiness_check_failed"
+	ReasonRouteClassifierFallback  RuntimeReadinessReasonClass = "route_classifier_fallback"
+)
+
+type RuntimeReadinessFallback string
+
+const (
+	FallbackDeterministicRouting RuntimeReadinessFallback = "deterministic_routing"
+	FallbackLegacyConfig         RuntimeReadinessFallback = "legacy_config"
+	FallbackQueueOperatorRepair  RuntimeReadinessFallback = "queue_operator_repair"
+	FallbackQueueOpportunistic   RuntimeReadinessFallback = "queue_gating_opportunistic"
+)
+
+type RuntimeReadinessReport struct {
+	SchemaVersion          string                        `json:"schema_version"`
+	Profile                string                        `json:"profile"`
+	State                  string                        `json:"state"`
+	Decision               RuntimeReadinessDecision      `json:"decision"`
+	Enforcement            EnforcementMode               `json:"enforcement"`
+	RequiredForLaunch      bool                          `json:"required_for_launch"`
+	LaunchBlocked          bool                          `json:"launch_blocked"`
+	LaunchBlockingEnforced bool                          `json:"launch_blocking_enforced"`
+	Degraded               bool                          `json:"degraded"`
+	Invariants             []RuntimeReadinessInvariant   `json:"invariants,omitempty"`
+	Fallbacks              []RuntimeReadinessFallbackUse `json:"fallbacks,omitempty"`
+}
+
+type RuntimeReadinessInvariant struct {
+	InvariantID       string                      `json:"invariant_id"`
+	Gate              string                      `json:"gate"`
+	Status            string                      `json:"status"`
+	Severity          string                      `json:"severity,omitempty"`
+	Decision          RuntimeReadinessDecision    `json:"decision"`
+	RequiredForLaunch bool                        `json:"required_for_launch,omitempty"`
+	Evidence          string                      `json:"evidence,omitempty"`
+	ReasonClass       RuntimeReadinessReasonClass `json:"reason_class,omitempty"`
+	Fallback          RuntimeReadinessFallback    `json:"fallback,omitempty"`
+}
+
+type RuntimeReadinessFallbackUse struct {
+	InvariantID string                      `json:"invariant_id"`
+	Gate        string                      `json:"gate"`
+	Fallback    RuntimeReadinessFallback    `json:"fallback"`
+	ReasonClass RuntimeReadinessReasonClass `json:"reason_class,omitempty"`
+}
+
 type GateDecision struct {
-	Name              string `json:"name"`
-	Status            string `json:"status"`
-	Severity          string `json:"severity"`
-	Enforcement       string `json:"enforcement"`
-	RequiredForLaunch bool   `json:"required_for_launch"`
-	Evidence          string `json:"evidence"`
-	Reason            string `json:"reason,omitempty"`
-	Remedy            string `json:"remedy,omitempty"`
+	Name              string                      `json:"name"`
+	InvariantID       string                      `json:"invariant_id,omitempty"`
+	Status            string                      `json:"status"`
+	Severity          string                      `json:"severity"`
+	RuntimeDecision   RuntimeReadinessDecision    `json:"runtime_decision,omitempty"`
+	Enforcement       string                      `json:"enforcement"`
+	RequiredForLaunch bool                        `json:"required_for_launch"`
+	Evidence          string                      `json:"evidence"`
+	ReasonClass       RuntimeReadinessReasonClass `json:"reason_class,omitempty"`
+	Fallback          RuntimeReadinessFallback    `json:"fallback,omitempty"`
+	Reason            string                      `json:"reason,omitempty"`
+	Remedy            string                      `json:"remedy,omitempty"`
 }
 
 type ProfileReport struct {
-	Name                 string            `json:"name"`
-	State                string            `json:"state"`
-	Detail               string            `json:"detail,omitempty"`
-	Enforcement          string            `json:"enforcement"`
-	RequiredForLaunch    bool              `json:"required_for_launch"`
-	TaskFamily           string            `json:"task_family"`
-	Contract             string            `json:"contract"`
-	PermissionProfile    string            `json:"permission_profile,omitempty"`
-	ToolProfile          string            `json:"tool_profile,omitempty"`
-	RequiredEvidence     []string          `json:"required_evidence,omitempty"`
-	ReadinessGate        []string          `json:"readiness_gate,omitempty"`
-	VerificationContract string            `json:"verification_contract,omitempty"`
-	RequiredRoles        []string          `json:"required_roles,omitempty"`
-	RoleAliases          map[string]string `json:"role_aliases,omitempty"`
-	Gates                []GateDecision    `json:"gates,omitempty"`
-	HardFailures         []GateDecision    `json:"hard_failures,omitempty"`
-	SoftDegradations     []GateDecision    `json:"soft_degradations,omitempty"`
-	Checks               []Check           `json:"checks,omitempty"`
-	Unavailable          []Unavailable     `json:"unavailable,omitempty"`
-	Metrics              Metrics           `json:"metrics,omitempty"`
+	Name                 string                 `json:"name"`
+	State                string                 `json:"state"`
+	Detail               string                 `json:"detail,omitempty"`
+	Enforcement          string                 `json:"enforcement"`
+	RequiredForLaunch    bool                   `json:"required_for_launch"`
+	RuntimeReadiness     RuntimeReadinessReport `json:"runtime_readiness"`
+	TaskFamily           string                 `json:"task_family"`
+	Contract             string                 `json:"contract"`
+	PermissionProfile    string                 `json:"permission_profile,omitempty"`
+	ToolProfile          string                 `json:"tool_profile,omitempty"`
+	RequiredEvidence     []string               `json:"required_evidence,omitempty"`
+	ReadinessGate        []string               `json:"readiness_gate,omitempty"`
+	VerificationContract string                 `json:"verification_contract,omitempty"`
+	RequiredRoles        []string               `json:"required_roles,omitempty"`
+	RoleAliases          map[string]string      `json:"role_aliases,omitempty"`
+	Gates                []GateDecision         `json:"gates,omitempty"`
+	HardFailures         []GateDecision         `json:"hard_failures,omitempty"`
+	SoftDegradations     []GateDecision         `json:"soft_degradations,omitempty"`
+	Checks               []Check                `json:"checks,omitempty"`
+	Unavailable          []Unavailable          `json:"unavailable,omitempty"`
+	Metrics              Metrics                `json:"metrics,omitempty"`
 }
 
 type Metrics struct {
@@ -215,7 +293,7 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 		VerificationContract: contract.VerificationContract,
 		RequiredRoles:        append([]string(nil), spec.requiredRoles...),
 		RoleAliases:          map[string]string{},
-		Enforcement:          "report_only",
+		Enforcement:          string(EnforcementReportOnly),
 		RequiredForLaunch:    true,
 	}
 	report.Checks = append(report.Checks, Check{
@@ -253,6 +331,7 @@ func buildProfile(spec profileSpec, hostChecks []HostCheck, backendFile backends
 	report.State = profileState(report.Checks, report.Gates)
 	report.Detail = profileDetail(report.State)
 	report.Metrics = metricsFor(report.Checks, report.Gates, queueMetrics)
+	report.RuntimeReadiness = BuildRuntimeReadiness(report)
 	if len(report.RoleAliases) == 0 {
 		report.RoleAliases = nil
 	}
@@ -392,10 +471,13 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 		if severity == "" {
 			continue
 		}
+		status := gateStatus(check, severity)
 		gate := GateDecision{
 			Name:              policy.name,
-			Status:            gateStatus(check, severity),
+			InvariantID:       runtimeInvariantID(policy.name),
+			Status:            status,
 			Severity:          severity,
+			RuntimeDecision:   runtimeDecisionForGateStatus(status),
 			Enforcement:       report.Enforcement,
 			RequiredForLaunch: policy.requiredForLaunch && severity == "hard",
 			Evidence:          check.Name,
@@ -405,6 +487,9 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 		if gate.Status == "pass" {
 			gate.Reason = ""
 			gate.Remedy = ""
+		} else {
+			gate.ReasonClass = gateReasonClass(policy, check)
+			gate.Fallback = gateFallback(policy, check)
 		}
 		report.Gates = append(report.Gates, gate)
 		switch gate.Status {
@@ -415,6 +500,169 @@ func applyGatePolicy(report ProfileReport) ProfileReport {
 		}
 	}
 	return report
+}
+
+func BuildRuntimeReadiness(report ProfileReport) RuntimeReadinessReport {
+	decision := runtimeDecisionForProfile(report)
+	out := RuntimeReadinessReport{
+		SchemaVersion:          RuntimeReadinessSchemaVersion,
+		Profile:                report.Name,
+		State:                  report.State,
+		Decision:               decision,
+		Enforcement:            normalizeEnforcement(report.Enforcement),
+		RequiredForLaunch:      report.RequiredForLaunch,
+		LaunchBlocked:          decision == RuntimeReadinessLaunchBlocked,
+		LaunchBlockingEnforced: decision == RuntimeReadinessLaunchBlocked && normalizeEnforcement(report.Enforcement) != EnforcementReportOnly,
+		Degraded:               decision == RuntimeReadinessAllowedDegraded,
+	}
+	for _, gate := range report.Gates {
+		invariant := RuntimeReadinessInvariant{
+			InvariantID:       firstNonEmpty(gate.InvariantID, runtimeInvariantID(gate.Name)),
+			Gate:              gate.Name,
+			Status:            gate.Status,
+			Severity:          gate.Severity,
+			Decision:          firstRuntimeDecision(gate.RuntimeDecision, runtimeDecisionForGateStatus(gate.Status)),
+			RequiredForLaunch: gate.RequiredForLaunch,
+			Evidence:          gate.Evidence,
+			ReasonClass:       gate.ReasonClass,
+			Fallback:          gate.Fallback,
+		}
+		out.Invariants = append(out.Invariants, invariant)
+		if gate.Fallback != "" {
+			out.Fallbacks = append(out.Fallbacks, RuntimeReadinessFallbackUse{
+				InvariantID: invariant.InvariantID,
+				Gate:        gate.Name,
+				Fallback:    gate.Fallback,
+				ReasonClass: gate.ReasonClass,
+			})
+		}
+	}
+	return out
+}
+
+func normalizeEnforcement(value string) EnforcementMode {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return EnforcementReportOnly
+	}
+	return EnforcementMode(value)
+}
+
+func runtimeDecisionForProfile(report ProfileReport) RuntimeReadinessDecision {
+	for _, gate := range report.Gates {
+		if gate.RuntimeDecision == RuntimeReadinessLaunchBlocked || gate.Status == "blocked" {
+			return RuntimeReadinessLaunchBlocked
+		}
+	}
+	switch report.State {
+	case "blocked":
+		return RuntimeReadinessLaunchBlocked
+	case "degraded":
+		return RuntimeReadinessAllowedDegraded
+	case "pass":
+		return RuntimeReadinessReady
+	default:
+		return RuntimeReadinessAllowedDegraded
+	}
+}
+
+func runtimeDecisionForGateStatus(status string) RuntimeReadinessDecision {
+	switch status {
+	case "pass":
+		return RuntimeReadinessReady
+	case "blocked":
+		return RuntimeReadinessLaunchBlocked
+	default:
+		return RuntimeReadinessAllowedDegraded
+	}
+}
+
+func firstRuntimeDecision(values ...RuntimeReadinessDecision) RuntimeReadinessDecision {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return RuntimeReadinessAllowedDegraded
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func runtimeInvariantID(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	return "runtime." + name
+}
+
+func gateReasonClass(policy gatePolicy, check Check) RuntimeReadinessReasonClass {
+	switch policy.name {
+	case "backend_roles_resolved":
+		return backendRoleReasonClass(check)
+	case "queue_admission_known":
+		if check.State == "unavailable" {
+			return ReasonQueueUnavailable
+		}
+		if check.State == "degraded" {
+			return ReasonQueueSoftDegraded
+		}
+	case "context_budget_valid":
+		if check.State == "unavailable" {
+			return ReasonConfigUnavailable
+		}
+		return ReasonInvalidContextBudget
+	case "route_classifier_available_or_fallback_recorded":
+		if check.State == "unavailable" {
+			return ReasonConfigUnavailable
+		}
+		return ReasonRouteClassifierFallback
+	}
+	return ReasonReadinessCheckFailed
+}
+
+func backendRoleReasonClass(check Check) RuntimeReadinessReasonClass {
+	detail := strings.ToLower(strings.TrimSpace(check.Detail))
+	switch {
+	case strings.Contains(detail, "missing role aliases"):
+		return ReasonMissingBackendRole
+	case strings.Contains(detail, ".idiom/backends.json not found"):
+		return ReasonBackendConfigUnavailable
+	case strings.Contains(detail, "backends: parse") || strings.Contains(detail, "backends: read"):
+		return ReasonBackendConfigInvalid
+	case strings.Contains(detail, "no default or unambiguous backend profile selected"):
+		return ReasonBackendProfileUnresolved
+	}
+	return ReasonReadinessCheckFailed
+}
+
+func gateFallback(policy gatePolicy, check Check) RuntimeReadinessFallback {
+	switch policy.name {
+	case "backend_roles_resolved":
+		class := backendRoleReasonClass(check)
+		if class == ReasonMissingBackendRole || class == ReasonBackendConfigUnavailable {
+			return FallbackLegacyConfig
+		}
+	case "queue_admission_known":
+		if check.State == "unavailable" {
+			return FallbackQueueOpportunistic
+		}
+		if check.State == "degraded" {
+			return FallbackQueueOperatorRepair
+		}
+	case "route_classifier_available_or_fallback_recorded":
+		if check.State != "pass" {
+			return FallbackDeterministicRouting
+		}
+	}
+	return ""
 }
 
 func gateSeverity(profile string, policy gatePolicy) string {

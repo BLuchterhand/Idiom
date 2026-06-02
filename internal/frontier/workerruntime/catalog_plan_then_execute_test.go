@@ -1,7 +1,10 @@
 package workerruntime
 
 import (
+	"slices"
 	"testing"
+
+	"idiom/internal/autonomy"
 )
 
 func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing.T) {
@@ -74,6 +77,24 @@ func TestRuntimeBriefForPlanThenExecutePlannerKeepsSubmitPlanInAllowedTools(t *t
 	for _, forbidden := range []string{"edit_file", "apply_patch", "shell", "git_diff", "task", "task_ledger", "recovery_decompose"} {
 		if planThenExecuteToolListContains(brief.AllowedTools, forbidden) {
 			t.Fatalf("planner brief must not advertise %s; got %v", forbidden, brief.AllowedTools)
+		}
+	}
+}
+
+func TestPlanSubmissionPlannerProfileUsesAutonomyMetadata(t *testing.T) {
+	canonicalTools := autonomy.PlanExecutePlannerToolNames()
+	if got := planSubmissionPlannerToolNames(); !slices.Equal(got, canonicalTools) {
+		t.Fatalf("runtime planner profile names = %#v, want autonomy metadata names %#v", got, canonicalTools)
+	}
+	manifestTools := ManifestToolsForCapabilityProfile(CapabilityPlanSubmissionPlanner)
+	for _, tool := range canonicalTools {
+		if !planThenExecuteToolListContains(manifestTools, tool) {
+			t.Fatalf("planner manifest missing autonomy tool %q: manifest=%#v canonical=%#v", tool, manifestTools, canonicalTools)
+		}
+	}
+	for _, tool := range manifestTools {
+		if !slices.Contains(canonicalTools, tool) {
+			t.Fatalf("planner manifest exposes non-autonomy tool %q: manifest=%#v canonical=%#v", tool, manifestTools, canonicalTools)
 		}
 	}
 }

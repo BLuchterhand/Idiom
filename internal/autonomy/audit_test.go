@@ -190,6 +190,123 @@ func TestAuditEventsReportsGateCoverageAndUnresolvedObligations(t *testing.T) {
 	}
 }
 
+func TestAuditEventsCountsReadinessAndCompletionCoverage(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 18, 46, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	readiness := mustAutonomyEvent(NewReadinessStateEvent(contract, ContractReadinessEvent{
+		ReadyToAnswer:       true,
+		ReadyToVerify:       true,
+		ClosedClaims:        []string{"claim:source-body-read"},
+		OpenObligations:     []string{"obl-verify"},
+		EvidenceRefs:        []string{"event-read-source"},
+		FurtherReadsRequire: "one exact missing claim",
+	}, occurredAt.Add(time.Second), 2))
+	completion := mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+		Decision:           PolicyAllow,
+		InvariantID:        "completion.readiness",
+		ProtocolHash:       "sha256:phase",
+		VerificationStatus: "passed",
+		ChangedPaths:       []string{"internal/autonomy/audit.go"},
+		RequiredPathStatus: []string{"internal/autonomy/audit.go:changed"},
+	}, occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, readiness, completion}, EventAuditOptions{})
+
+	if report.ReadinessCoverage.Total != 1 ||
+		report.ReadinessCoverage.StateUpdatedEvents != 1 ||
+		report.ReadinessCoverage.ReadyToAnswerEvents != 1 ||
+		report.ReadinessCoverage.ReadyToWriteEvents != 0 ||
+		report.ReadinessCoverage.ReadyToVerifyEvents != 1 ||
+		report.ReadinessCoverage.EventsWithClosedClaims != 1 ||
+		report.ReadinessCoverage.EventsWithOpenObligations != 1 ||
+		report.ReadinessCoverage.EventsWithEvidenceRefs != 1 ||
+		report.ReadinessCoverage.EventsWithFurtherReadCriteria != 1 {
+		t.Fatalf("expected readiness coverage counts, got %#v", report.ReadinessCoverage)
+	}
+	if !slices.Contains(report.ReadinessCoverage.ContractsWithReadiness, contract.ContractID) {
+		t.Fatalf("expected contract readiness coverage for %q, got %#v", contract.ContractID, report.ReadinessCoverage.ContractsWithReadiness)
+	}
+	if report.CompletionCoverage.Total != 1 ||
+		report.CompletionCoverage.DecisionEvents != 1 ||
+		report.CompletionCoverage.DecisionCounts[string(PolicyAllow)] != 1 ||
+		report.CompletionCoverage.VerificationStatusCounts["passed"] != 1 ||
+		report.CompletionCoverage.EventsWithProtocolHash != 1 ||
+		report.CompletionCoverage.EventsMissingProtocolHash != 0 ||
+		report.CompletionCoverage.EventsWithChangedPaths != 1 ||
+		report.CompletionCoverage.EventsWithRequiredPathStatus != 1 {
+		t.Fatalf("expected completion coverage counts, got %#v", report.CompletionCoverage)
+	}
+	if !slices.Contains(report.CompletionCoverage.ContractsWithCompletion, contract.ContractID) {
+		t.Fatalf("expected contract completion coverage for %q, got %#v", contract.ContractID, report.CompletionCoverage.ContractsWithCompletion)
+	}
+	if len(report.Contracts) != 1 ||
+		report.Contracts[0].ReadinessEvents[string(EventReadinessStateUpdated)] != 1 ||
+		report.Contracts[0].ReadinessSignalCounts["ready_to_answer"] != 1 ||
+		report.Contracts[0].ReadinessSignalCounts["ready_to_verify"] != 1 ||
+		report.Contracts[0].ReadinessSignalCounts["closed_claims"] != 1 ||
+		report.Contracts[0].CompletionEvents[string(EventCompletionGateDecision)] != 1 ||
+		report.Contracts[0].CompletionDecisions[string(PolicyAllow)] != 1 ||
+		report.Contracts[0].CompletionVerifications["passed"] != 1 ||
+		report.Contracts[0].CompletionSignals["protocol_hash_present"] != 1 ||
+		report.Contracts[0].CompletionSignals["changed_paths"] != 1 ||
+		report.Contracts[0].CompletionSignals["required_path_status"] != 1 {
+		t.Fatalf("expected per-contract readiness/completion coverage, got %#v", report.Contracts)
+	}
+	if len(report.LifecycleCoverage.LifecycleOnlyContracts) != 0 {
+		t.Fatalf("readiness/completion-bearing contract should not be lifecycle-only: %#v", report.LifecycleCoverage.LifecycleOnlyContracts)
+	}
+	if !report.AllClear || len(report.Findings) != 0 {
+		t.Fatalf("expected all-clear readiness/completion coverage, all_clear=%v findings=%#v", report.AllClear, report.Findings)
+	}
+}
+
+func TestAuditEventsFlagsCompletionAllowWithRemainingObligationsButOnlyCountsMissingProtocolHash(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 18, 46, 30, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	allowWithRemaining := mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+		Decision:             PolicyAllow,
+		InvariantID:          "completion.readiness",
+		ProtocolHash:         "sha256:phase",
+		RemainingObligations: []string{"obl-verify"},
+		VerificationStatus:   "pending",
+	}, occurredAt.Add(time.Second), 2))
+	missingProtocolHash := mustAutonomyEvent(NewCompletionGateDecisionEvent(contract, ContractCompletionEvent{
+		Decision:           PolicyReject,
+		InvariantID:        "completion.readiness",
+		VerificationStatus: "pending",
+	}, occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, allowWithRemaining, missingProtocolHash}, EventAuditOptions{})
+
+	if report.CompletionCoverage.DecisionEvents != 2 ||
+		report.CompletionCoverage.DecisionCounts[string(PolicyAllow)] != 1 ||
+		report.CompletionCoverage.DecisionCounts[string(PolicyReject)] != 1 ||
+		report.CompletionCoverage.EventsWithRemainingObligations != 1 ||
+		report.CompletionCoverage.EventsWithProtocolHash != 1 ||
+		report.CompletionCoverage.EventsMissingProtocolHash != 1 {
+		t.Fatalf("expected completion coverage counts, got %#v", report.CompletionCoverage)
+	}
+	if len(report.CompletionCoverage.AllowWithRemainingObligationsRefs) != 1 ||
+		report.CompletionCoverage.AllowWithRemainingObligationsRefs[0].EventID != allowWithRemaining.EventID {
+		t.Fatalf("expected allow-with-remaining-obligations ref, got %#v", report.CompletionCoverage.AllowWithRemainingObligationsRefs)
+	}
+	if len(report.CompletionCoverage.MissingProtocolHashRefs) != 1 ||
+		report.CompletionCoverage.MissingProtocolHashRefs[0].EventID != missingProtocolHash.EventID {
+		t.Fatalf("expected missing protocol hash ref, got %#v", report.CompletionCoverage.MissingProtocolHashRefs)
+	}
+	if !hasEventAuditFinding(report, "contract_event_completion_allow_with_remaining_obligations") {
+		t.Fatalf("expected completion allow finding, got %#v", report.Findings)
+	}
+	if hasEventAuditFinding(report, "contract_event_completion_missing_protocol_hash") {
+		t.Fatalf("missing completion protocol hash should remain coverage-only, got %#v", report.Findings)
+	}
+	if report.AllClear {
+		t.Fatalf("completion allow with remaining obligations should not be all-clear")
+	}
+}
+
 func TestAuditEventsCountsExtendedGateDecisionFieldsWhenPresent(t *testing.T) {
 	if !contractGateEventHasExtendedAuditFields() {
 		t.Skip("ContractGateEvent extended audit fields are not present in this checkout")

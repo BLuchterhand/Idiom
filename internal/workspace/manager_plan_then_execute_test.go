@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"slices"
 	"testing"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/config"
 )
 
@@ -50,6 +52,12 @@ func TestManagerPlanThenExecutePlannerModeSwapsManifest(t *testing.T) {
 	restored := mgr.AllowedTools()
 	if !planModeManifestContains(restored, "edit_file") || planModeManifestContains(restored, "submit_plan") {
 		t.Fatalf("toggling planner mode off must restore the default manifest, got %v", restored)
+	}
+}
+
+func TestPlanThenExecutePlannerManifestUsesAutonomyMetadata(t *testing.T) {
+	if got, want := planThenExecutePlannerManifestToolNames(), autonomy.PlanExecutePlannerToolNames(); !slices.Equal(got, want) {
+		t.Fatalf("workspace planner manifest names = %#v, want autonomy metadata names %#v", got, want)
 	}
 }
 

@@ -21,12 +21,7 @@ type CompileResult struct {
 	Protocol      ModelProtocolProjection   `json:"model_protocol"`
 }
 
-type ToolVocabularyEntry struct {
-	Tool           string
-	Capabilities   []autonomy.Capability
-	SideEffect     autonomy.SideEffectClass
-	PlannerAllowed bool
-}
+type ToolVocabularyEntry = autonomy.PlanExecutePlannerToolMetadata
 
 type PlanExecutePlannerInput struct {
 	ParentID             string

@@ -4,8 +4,8 @@
 their context, decisions, or outputs. Idiom sells the missing substrate: repo
 memory, freshness, contracts, audit, and evals.**
 
-Status: accepted design with phase 1 compiler foundation started, created
-2026-05-24
+Status: accepted design with phase 1 report-only planner authority pilot
+started, created 2026-05-24, updated 2026-06-02
 
 ## Purpose
 
@@ -49,6 +49,11 @@ Verified facts:
 - File-size inspection shows high responsibility concentration in
   `internal/agent/runner.go`, `internal/workspace/manager.go`,
   `internal/app/implementation_dispatch.go`, and `cmd/idiom/plan_execute.go`.
+- The 2026-06-02 implementation batch added prompt-scope parser consolidation
+  in `internal/plancontract`, shared planner tool metadata in
+  `internal/autonomy`, a typed report-only runtime readiness projection,
+  a plan-execute planner recorder pilot that consumes compiled contract
+  identity, and readiness/completion audit coverage.
 
 Inferences:
 
@@ -75,8 +80,11 @@ Evidence gaps:
   report is review evidence for the design, not implementation proof.
 - Implementation evidence for the first atoms is summarized in
   `docs/evidence/contract-capability-architecture-overhaul-implementation.md`.
-  Phase 1 currently has a passive, report-only compiler package; runner behavior
-  has not been switched to contract enforcement by this design slice.
+  Phase 1 now has a report-only compiler foundation plus a covered
+  plan-execute planner pilot where the runner autonomy recorder consumes the
+  compiled contract identity. Enforcement has not been graduated beyond
+  report-only, and non-planner runner paths still use the legacy contract
+  construction path.
 
 ## Problem Statement
 

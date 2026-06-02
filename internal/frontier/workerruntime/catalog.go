@@ -3,6 +3,7 @@ package workerruntime
 import (
 	"strings"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/workspace"
 )
 
@@ -415,29 +416,7 @@ func planSubmissionReviewToolNames() []string {
 }
 
 func planSubmissionPlannerToolNames() []string {
-	return []string{
-		"search_files",
-		"search_content",
-		"read_file",
-		"file_stats",
-		"code_navigate",
-		"harness_feedback",
-		"recovery_inspect",
-		"recovery_status",
-		"product_efforts",
-		"product_status",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"discovery_query",
-		"structural_search",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"submit_plan",
-	}
+	return autonomy.PlanExecutePlannerToolNames()
 }
 
 func guardedWriteToolNames() []string {

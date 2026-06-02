@@ -23,6 +23,8 @@ type runnerAutonomyRecorder struct {
 	runner             *Runner
 	brief              workerruntime.WorkerRuntimeBrief
 	contract           autonomy.AutonomyContract
+	plannerCompile     contractcompile.CompileResult
+	hasPlannerCompile  bool
 	sequence           int64
 	occurredAt         time.Time
 	obligations        []autonomy.Obligation
@@ -76,22 +78,91 @@ func newRunnerAutonomyRecorder(r *Runner, policy RunPolicy, brief workerruntime.
 	if r == nil || r.OnEvent == nil {
 		return nil
 	}
-	contract, obligations, ok := runnerAutonomyContract(r, policy, brief, results)
+	compiled, ok := buildRunnerAutonomyContract(r, policy, brief, results)
 	if !ok {
 		return nil
 	}
 	return &runnerAutonomyRecorder{
 		runner:            r,
 		brief:             workerruntime.NormalizeRuntimeBrief(brief),
-		contract:          contract,
+		contract:          compiled.contract,
+		plannerCompile:    compiled.plannerCompile,
+		hasPlannerCompile: compiled.hasPlannerCompile,
 		occurredAt:        time.Now().UTC(),
-		obligations:       obligations,
+		obligations:       compiled.obligations,
 		openObligations:   make(map[string]autonomy.Obligation),
 		closedObligations: make(map[string]struct{}),
 	}
 }
 
+type runnerAutonomyContractBuild struct {
+	contract          autonomy.AutonomyContract
+	obligations       []autonomy.Obligation
+	plannerCompile    contractcompile.CompileResult
+	hasPlannerCompile bool
+}
+
+func buildRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (runnerAutonomyContractBuild, bool) {
+	if planThenExecutePlannerBrief(brief) {
+		compiled, ok := compileRunnerPlanExecutePlannerContract(r, policy, brief, results)
+		if !ok {
+			return runnerAutonomyContractBuild{}, false
+		}
+		return runnerAutonomyContractBuild{
+			contract:          compiled.Contract,
+			obligations:       append([]autonomy.Obligation(nil), compiled.Contract.Obligations...),
+			plannerCompile:    compiled,
+			hasPlannerCompile: true,
+		}, true
+	}
+	contract, obligations, ok := legacyRunnerAutonomyContract(r, policy, brief, results)
+	if !ok {
+		return runnerAutonomyContractBuild{}, false
+	}
+	return runnerAutonomyContractBuild{
+		contract:    contract,
+		obligations: obligations,
+	}, true
+}
+
+func compileRunnerPlanExecutePlannerContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (contractcompile.CompileResult, bool) {
+	input, ok := runnerPlanExecutePlannerInput(brief, results, TurnPhaseContract{}, policy, false, "")
+	if !ok {
+		return contractcompile.CompileResult{}, false
+	}
+	compiled, err := contractcompile.CompilePlanExecutePlanner(input)
+	if err != nil {
+		if r != nil {
+			r.emitEvent(marshalRunEvent("runner_autonomy_contract_gap", map[string]any{
+				"task_family": strings.TrimSpace(brief.TaskFamily),
+				"reason":      "compile_failed",
+				"error":       err.Error(),
+			}))
+		}
+		return contractcompile.CompileResult{}, false
+	}
+	return compiled, true
+}
+
+func (a *runnerAutonomyRecorder) contractIDForTurnPhase() string {
+	if a == nil {
+		return ""
+	}
+	if a.hasPlannerCompile && strings.TrimSpace(a.plannerCompile.Contract.ContractID) != "" {
+		return a.plannerCompile.Contract.ContractID
+	}
+	return a.contract.ContractID
+}
+
 func runnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
+	compiled, ok := buildRunnerAutonomyContract(r, policy, brief, results)
+	if !ok {
+		return autonomy.AutonomyContract{}, nil, false
+	}
+	return compiled.contract, compiled.obligations, true
+}
+
+func legacyRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	lane := util.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName())
 	if lane == "" {
@@ -183,12 +254,12 @@ func runnerAutonomyCapabilities(brief workerruntime.WorkerRuntimeBrief) autonomy
 	allowedSet := map[autonomy.Capability]struct{}{}
 	forbiddenSet := map[autonomy.Capability]struct{}{}
 	for _, tool := range brief.AllowedTools {
-		for _, capability := range runnerAutonomyCapabilitiesForTool(tool) {
+		for _, capability := range runnerAutonomyCapabilitiesForTool(brief, tool) {
 			allowedSet[capability] = struct{}{}
 		}
 	}
 	for _, tool := range brief.ForbiddenTools {
-		for _, capability := range runnerAutonomyCapabilitiesForTool(tool) {
+		for _, capability := range runnerAutonomyCapabilitiesForTool(brief, tool) {
 			forbiddenSet[capability] = struct{}{}
 		}
 	}
@@ -206,7 +277,21 @@ func runnerAutonomyCapabilities(brief workerruntime.WorkerRuntimeBrief) autonomy
 	}
 }
 
-func runnerAutonomyCapabilitiesForTool(tool string) []autonomy.Capability {
+func runnerAutonomyCapabilitiesForTool(brief workerruntime.WorkerRuntimeBrief, tool string) []autonomy.Capability {
+	if metadata, ok := runnerAutonomyPlannerToolMetadata(brief, tool); ok {
+		return append([]autonomy.Capability(nil), metadata.Capabilities...)
+	}
+	return runnerAutonomyFallbackCapabilitiesForTool(tool)
+}
+
+func runnerAutonomyPlannerToolMetadata(brief workerruntime.WorkerRuntimeBrief, tool string) (autonomy.PlanExecutePlannerToolMetadata, bool) {
+	if !planThenExecutePlannerBrief(brief) {
+		return autonomy.PlanExecutePlannerToolMetadata{}, false
+	}
+	return autonomy.LookupPlanExecutePlannerToolMetadata(tool)
+}
+
+func runnerAutonomyFallbackCapabilitiesForTool(tool string) []autonomy.Capability {
 	switch strings.TrimSpace(tool) {
 	case "read_file":
 		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
@@ -1509,7 +1594,7 @@ func runnerAutonomyPolicyFrictionEvidenceRefs(input runnerAutonomyPolicyEventInp
 }
 
 func (a *runnerAutonomyRecorder) policyEventForRequest(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) autonomy.ContractPolicyEvent {
-	intent := runnerAutonomyIntentForRequest(req, input)
+	intent := runnerAutonomyIntentForRequest(a.brief, req, input)
 	action := autonomy.ActionFromIntent(intent)
 	policy := autonomy.ContractPolicyEvent{
 		ToolName:         strings.TrimSpace(req.Tool),
@@ -1566,16 +1651,16 @@ func (a *runnerAutonomyRecorder) policyEventForRequest(req workspace.ToolRequest
 	return policy
 }
 
-func runnerAutonomyIntentForRequest(req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) autonomy.ToolIntent {
+func runnerAutonomyIntentForRequest(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest, input runnerAutonomyPolicyEventInput) autonomy.ToolIntent {
 	transport := input.Transport
 	if transport == "" {
 		transport = autonomy.ToolTransportTextualCall
 	}
 	intent := autonomy.ToolIntent{
 		ToolName:        strings.TrimSpace(req.Tool),
-		Capability:      runnerAutonomyPrimaryCapability(req.Tool),
-		SideEffect:      runnerAutonomySideEffectForRequest(req),
-		ActionClass:     runnerAutonomyActionClassForRequest(req),
+		Capability:      runnerAutonomyPrimaryCapability(brief, req.Tool),
+		SideEffect:      runnerAutonomySideEffectForBrief(brief, req),
+		ActionClass:     runnerAutonomyActionClassForBrief(brief, req),
 		Transport:       transport,
 		ParserFailure:   input.ParserFailure,
 		RepairSource:    input.RepairSource,
@@ -1587,6 +1672,10 @@ func runnerAutonomyIntentForRequest(req workspace.ToolRequest, input runnerAuton
 }
 
 func runnerAutonomyActionClassForRequest(req workspace.ToolRequest) autonomy.ActionClass {
+	return runnerAutonomyActionClassForBrief(workerruntime.WorkerRuntimeBrief{}, req)
+}
+
+func runnerAutonomyActionClassForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) autonomy.ActionClass {
 	tool := strings.TrimSpace(req.Tool)
 	switch {
 	case tool == "submit_plan":
@@ -1598,7 +1687,7 @@ func runnerAutonomyActionClassForRequest(req workspace.ToolRequest) autonomy.Act
 			return autonomy.ActionClassDeliverableWrite
 		}
 		return autonomy.ActionClassPerEditWrite
-	case runnerAutonomyVerificationTool(req):
+	case runnerAutonomyVerificationTool(brief, req):
 		return autonomy.ActionClassVerify
 	case workspace.IsReadTool(tool):
 		if strings.Contains(toolActionClass(req), "broad_inspection") ||
@@ -1611,12 +1700,12 @@ func runnerAutonomyActionClassForRequest(req workspace.ToolRequest) autonomy.Act
 	}
 }
 
-func runnerAutonomyVerificationTool(req workspace.ToolRequest) bool {
+func runnerAutonomyVerificationTool(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case "source_sanity", "go_diagnostics", "cpp_diagnostics":
 		return true
 	case "shell":
-		return runnerAutonomySideEffectForRequest(req) == autonomy.SideEffectReadOnly
+		return runnerAutonomySideEffectForBrief(brief, req) == autonomy.SideEffectReadOnly
 	default:
 		return false
 	}
@@ -1868,8 +1957,8 @@ func runnerAutonomyArgumentsDigest(req workspace.ToolRequest) string {
 	return "sha256:" + digestRunnerAutonomyValue(string(data))
 }
 
-func runnerAutonomyPrimaryCapability(tool string) autonomy.Capability {
-	capabilities := runnerAutonomyCapabilitiesForTool(strings.TrimSpace(tool))
+func runnerAutonomyPrimaryCapability(brief workerruntime.WorkerRuntimeBrief, tool string) autonomy.Capability {
+	capabilities := runnerAutonomyCapabilitiesForTool(brief, strings.TrimSpace(tool))
 	if len(capabilities) == 0 {
 		return ""
 	}
@@ -1895,6 +1984,17 @@ func runnerAutonomyPolicyPaths(req workspace.ToolRequest) []string {
 }
 
 func runnerAutonomySideEffectForRequest(req workspace.ToolRequest) autonomy.SideEffectClass {
+	return runnerAutonomySideEffectForBrief(workerruntime.WorkerRuntimeBrief{}, req)
+}
+
+func runnerAutonomySideEffectForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) autonomy.SideEffectClass {
+	if metadata, ok := runnerAutonomyPlannerToolMetadata(brief, req.Tool); ok {
+		return metadata.SideEffect
+	}
+	return runnerAutonomyFallbackSideEffectForRequest(req)
+}
+
+func runnerAutonomyFallbackSideEffectForRequest(req workspace.ToolRequest) autonomy.SideEffectClass {
 	switch strings.TrimSpace(req.Tool) {
 	case "read_file", "search_files", "search_content", "list_files", "context_pack", "context_query", "context_zoom",
 		"discovery_query", "go_read_symbol", "go_extract_body", "go_find_symbol", "cpp_read_symbol", "cpp_find_symbol",

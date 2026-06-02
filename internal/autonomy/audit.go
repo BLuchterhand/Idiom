@@ -24,6 +24,8 @@ type EventAuditReport struct {
 	LifecycleCoverage      LifecycleEventCoverage         `json:"lifecycle_coverage"`
 	PolicyCoverage         PolicyEventCoverage            `json:"policy_coverage"`
 	ObligationCoverage     ObligationEventCoverage        `json:"obligation_coverage"`
+	ReadinessCoverage      ReadinessEventCoverage         `json:"readiness_coverage"`
+	CompletionCoverage     CompletionEventCoverage        `json:"completion_coverage"`
 	GateCoverage           GateEventCoverage              `json:"gate_coverage"`
 	GuardFrictionCoverage  GuardFrictionCoverage          `json:"guard_friction_coverage"`
 	TurnPhaseCoverage      TurnPhaseEventCoverage         `json:"turn_phase_coverage"`
@@ -34,27 +36,33 @@ type EventAuditReport struct {
 }
 
 type ContractEventCoverage struct {
-	ContractID             string         `json:"contract_id"`
-	ParentID               string         `json:"parent_id,omitempty"`
-	EventCount             int            `json:"event_count"`
-	FirstSequence          int64          `json:"first_sequence,omitempty"`
-	LastSequence           int64          `json:"last_sequence,omitempty"`
-	LifecycleEvents        map[string]int `json:"lifecycle_events,omitempty"`
-	PolicyEvents           map[string]int `json:"policy_events,omitempty"`
-	PolicyDecisions        map[string]int `json:"policy_decisions,omitempty"`
-	PolicyTools            map[string]int `json:"policy_tools,omitempty"`
-	ObligationEvents       map[string]int `json:"obligation_events,omitempty"`
-	ObligationStatusCounts map[string]int `json:"obligation_status_counts,omitempty"`
-	ObligationKindCounts   map[string]int `json:"obligation_kind_counts,omitempty"`
-	GateEvents             map[string]int `json:"gate_events,omitempty"`
-	GateDecisionCounts     map[string]int `json:"gate_decision_counts,omitempty"`
-	GateKindCounts         map[string]int `json:"gate_kind_counts,omitempty"`
-	GuardFrictionCounts    map[string]int `json:"guard_friction_counts,omitempty"`
-	OpenObligations        []string       `json:"open_obligations,omitempty"`
-	ResolvedObligations    []string       `json:"resolved_obligations,omitempty"`
-	WaivedObligations      []string       `json:"waived_obligations,omitempty"`
-	SidecarRequestIDs      []string       `json:"sidecar_request_ids,omitempty"`
-	ToolCallIDs            []string       `json:"tool_call_ids,omitempty"`
+	ContractID              string         `json:"contract_id"`
+	ParentID                string         `json:"parent_id,omitempty"`
+	EventCount              int            `json:"event_count"`
+	FirstSequence           int64          `json:"first_sequence,omitempty"`
+	LastSequence            int64          `json:"last_sequence,omitempty"`
+	LifecycleEvents         map[string]int `json:"lifecycle_events,omitempty"`
+	PolicyEvents            map[string]int `json:"policy_events,omitempty"`
+	PolicyDecisions         map[string]int `json:"policy_decisions,omitempty"`
+	PolicyTools             map[string]int `json:"policy_tools,omitempty"`
+	ObligationEvents        map[string]int `json:"obligation_events,omitempty"`
+	ObligationStatusCounts  map[string]int `json:"obligation_status_counts,omitempty"`
+	ObligationKindCounts    map[string]int `json:"obligation_kind_counts,omitempty"`
+	ReadinessEvents         map[string]int `json:"readiness_events,omitempty"`
+	ReadinessSignalCounts   map[string]int `json:"readiness_signal_counts,omitempty"`
+	CompletionEvents        map[string]int `json:"completion_events,omitempty"`
+	CompletionDecisions     map[string]int `json:"completion_decisions,omitempty"`
+	CompletionSignals       map[string]int `json:"completion_signals,omitempty"`
+	CompletionVerifications map[string]int `json:"completion_verifications,omitempty"`
+	GateEvents              map[string]int `json:"gate_events,omitempty"`
+	GateDecisionCounts      map[string]int `json:"gate_decision_counts,omitempty"`
+	GateKindCounts          map[string]int `json:"gate_kind_counts,omitempty"`
+	GuardFrictionCounts     map[string]int `json:"guard_friction_counts,omitempty"`
+	OpenObligations         []string       `json:"open_obligations,omitempty"`
+	ResolvedObligations     []string       `json:"resolved_obligations,omitempty"`
+	WaivedObligations       []string       `json:"waived_obligations,omitempty"`
+	SidecarRequestIDs       []string       `json:"sidecar_request_ids,omitempty"`
+	ToolCallIDs             []string       `json:"tool_call_ids,omitempty"`
 }
 
 type LifecycleEventCoverage struct {
@@ -92,6 +100,34 @@ type ObligationEventCoverage struct {
 	OpenObligations          []ObligationAuditRef `json:"open_obligations,omitempty"`
 	UnresolvedObligations    []ObligationAuditRef `json:"unresolved_obligations,omitempty"`
 	UnmatchedObligations     []ObligationAuditRef `json:"unmatched_obligations,omitempty"`
+}
+
+type ReadinessEventCoverage struct {
+	Total                         int      `json:"total"`
+	StateUpdatedEvents            int      `json:"state_updated_events"`
+	ReadyToAnswerEvents           int      `json:"ready_to_answer_events"`
+	ReadyToWriteEvents            int      `json:"ready_to_write_events"`
+	ReadyToVerifyEvents           int      `json:"ready_to_verify_events"`
+	EventsWithClosedClaims        int      `json:"events_with_closed_claims"`
+	EventsWithOpenObligations     int      `json:"events_with_open_obligations"`
+	EventsWithEvidenceRefs        int      `json:"events_with_evidence_refs"`
+	EventsWithFurtherReadCriteria int      `json:"events_with_further_read_criteria"`
+	ContractsWithReadiness        []string `json:"contracts_with_readiness,omitempty"`
+}
+
+type CompletionEventCoverage struct {
+	Total                             int             `json:"total"`
+	DecisionEvents                    int             `json:"decision_events"`
+	DecisionCounts                    map[string]int  `json:"decision_counts,omitempty"`
+	VerificationStatusCounts          map[string]int  `json:"verification_status_counts,omitempty"`
+	EventsWithProtocolHash            int             `json:"events_with_protocol_hash"`
+	EventsMissingProtocolHash         int             `json:"events_missing_protocol_hash"`
+	EventsWithRemainingObligations    int             `json:"events_with_remaining_obligations"`
+	EventsWithChangedPaths            int             `json:"events_with_changed_paths"`
+	EventsWithRequiredPathStatus      int             `json:"events_with_required_path_status"`
+	ContractsWithCompletion           []string        `json:"contracts_with_completion,omitempty"`
+	MissingProtocolHashRefs           []EventAuditRef `json:"missing_protocol_hash_refs,omitempty"`
+	AllowWithRemainingObligationsRefs []EventAuditRef `json:"allow_with_remaining_obligations_refs,omitempty"`
 }
 
 type GateEventCoverage struct {
@@ -337,6 +373,10 @@ func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnap
 		s.addPolicy(event)
 	case EventObligationOpened, EventObligationResolved, EventObligationWaived:
 		s.addObligation(event)
+	case EventReadinessStateUpdated:
+		s.addReadiness(event)
+	case EventCompletionGateDecision:
+		s.addCompletion(event)
 	case EventGateDecision:
 		s.addGate(event, rawGateFields)
 	case EventGuardFriction:
@@ -562,6 +602,103 @@ func (s *eventAuditState) addObligation(event Event) {
 			coverage := s.contractCoverage(event.ContractID)
 			coverage.OpenObligations = removeString(coverage.OpenObligations, event.Obligation.ObligationID)
 		}
+	}
+}
+
+func (s *eventAuditState) addReadiness(event Event) {
+	s.report.ReadinessCoverage.Total++
+	if event.ContractID != "" {
+		incrementContractMap(s.contractCoverage(event.ContractID), "readiness", string(event.Type))
+	}
+	switch event.Type {
+	case EventReadinessStateUpdated:
+		s.report.ReadinessCoverage.StateUpdatedEvents++
+	}
+	if event.Readiness == nil {
+		return
+	}
+	readiness := *event.Readiness
+	readiness.normalize()
+	var coverage *ContractEventCoverage
+	if event.ContractID != "" {
+		coverage = s.contractCoverage(event.ContractID)
+	}
+	if readiness.ReadyToAnswer {
+		s.report.ReadinessCoverage.ReadyToAnswerEvents++
+		incrementContractReadinessSignal(coverage, "ready_to_answer")
+	}
+	if readiness.ReadyToWrite {
+		s.report.ReadinessCoverage.ReadyToWriteEvents++
+		incrementContractReadinessSignal(coverage, "ready_to_write")
+	}
+	if readiness.ReadyToVerify {
+		s.report.ReadinessCoverage.ReadyToVerifyEvents++
+		incrementContractReadinessSignal(coverage, "ready_to_verify")
+	}
+	if len(readiness.ClosedClaims) > 0 {
+		s.report.ReadinessCoverage.EventsWithClosedClaims++
+		incrementContractReadinessSignal(coverage, "closed_claims")
+	}
+	if len(readiness.OpenObligations) > 0 {
+		s.report.ReadinessCoverage.EventsWithOpenObligations++
+		incrementContractReadinessSignal(coverage, "open_obligations")
+	}
+	if len(readiness.EvidenceRefs) > 0 {
+		s.report.ReadinessCoverage.EventsWithEvidenceRefs++
+		incrementContractReadinessSignal(coverage, "evidence_refs")
+	}
+	if readiness.FurtherReadsRequire != "" {
+		s.report.ReadinessCoverage.EventsWithFurtherReadCriteria++
+		incrementContractReadinessSignal(coverage, "further_reads_require")
+	}
+}
+
+func (s *eventAuditState) addCompletion(event Event) {
+	s.report.CompletionCoverage.Total++
+	if event.ContractID != "" {
+		incrementContractMap(s.contractCoverage(event.ContractID), "completion", string(event.Type))
+	}
+	switch event.Type {
+	case EventCompletionGateDecision:
+		s.report.CompletionCoverage.DecisionEvents++
+	}
+	if event.Completion == nil {
+		return
+	}
+	completion := *event.Completion
+	completion.normalize()
+	var coverage *ContractEventCoverage
+	if event.ContractID != "" {
+		coverage = s.contractCoverage(event.ContractID)
+	}
+	incrementStringMap(&s.report.CompletionCoverage.DecisionCounts, string(completion.Decision))
+	incrementStringMap(&s.report.CompletionCoverage.VerificationStatusCounts, completion.VerificationStatus)
+	if coverage != nil {
+		incrementStringMap(&coverage.CompletionDecisions, string(completion.Decision))
+		incrementStringMap(&coverage.CompletionVerifications, completion.VerificationStatus)
+	}
+	if completion.ProtocolHash != "" {
+		s.report.CompletionCoverage.EventsWithProtocolHash++
+		incrementContractCompletionSignal(coverage, "protocol_hash_present")
+	} else {
+		s.report.CompletionCoverage.EventsMissingProtocolHash++
+		s.report.CompletionCoverage.MissingProtocolHashRefs = append(s.report.CompletionCoverage.MissingProtocolHashRefs, auditRef(event, "protocol_hash", "completion event missing protocol_hash"))
+		incrementContractCompletionSignal(coverage, "protocol_hash_missing")
+	}
+	if len(completion.RemainingObligations) > 0 {
+		s.report.CompletionCoverage.EventsWithRemainingObligations++
+		incrementContractCompletionSignal(coverage, "remaining_obligations")
+		if completion.Decision == PolicyAllow {
+			s.report.CompletionCoverage.AllowWithRemainingObligationsRefs = append(s.report.CompletionCoverage.AllowWithRemainingObligationsRefs, auditRef(event, "remaining_obligations", "completion allowed with remaining obligations"))
+		}
+	}
+	if len(completion.ChangedPaths) > 0 {
+		s.report.CompletionCoverage.EventsWithChangedPaths++
+		incrementContractCompletionSignal(coverage, "changed_paths")
+	}
+	if len(completion.RequiredPathStatus) > 0 {
+		s.report.CompletionCoverage.EventsWithRequiredPathStatus++
+		incrementContractCompletionSignal(coverage, "required_path_status")
 	}
 }
 
@@ -807,6 +944,8 @@ func (s *eventAuditState) finish() {
 	s.report.LifecycleCoverage.ContractsWithLifecycle = sortedKeys(s.lifecycleContracts)
 	s.report.PolicyCoverage.ContractsWithPolicy = s.contractsWithMap("policy")
 	s.report.ObligationCoverage.ContractsWithObligations = s.contractsWithMap("obligation")
+	s.report.ReadinessCoverage.ContractsWithReadiness = s.contractsWithMap("readiness")
+	s.report.CompletionCoverage.ContractsWithCompletion = s.contractsWithMap("completion")
 	s.report.GateCoverage.ContractsWithGateEvents = s.contractsWithMap("gate")
 	s.report.LifecycleCoverage.LifecycleOnlyContracts = s.lifecycleOnlyContracts()
 	s.report.SidecarToolCorrelation.SidecarRequestIDs = sortedKeys(s.sidecarRequestIDs)
@@ -825,6 +964,8 @@ func (s *eventAuditState) finish() {
 	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedContractReferences)
 	sortAuditRefs(s.report.ReferenceCoverage.StaleContractReferences)
 	sortAuditRefs(s.report.ReferenceCoverage.UnmatchedParentReferences)
+	sortAuditRefs(s.report.CompletionCoverage.MissingProtocolHashRefs)
+	sortAuditRefs(s.report.CompletionCoverage.AllowWithRemainingObligationsRefs)
 	sortAuditRefs(s.report.GateCoverage.InconsistentOpenObligationRefs)
 	sortAuditRefs(s.report.GateCoverage.MissingPackIDRefs)
 	sortAuditRefs(s.report.GateCoverage.MissingEnforcementModeRefs)
@@ -924,6 +1065,15 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromAuditRefs(refs),
 		})
 	}
+	if refs := s.report.CompletionCoverage.AllowWithRemainingObligationsRefs; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_completion_allow_with_remaining_obligations",
+			Severity:    "medium",
+			Evidence:    fmt.Sprintf("%d completion allow event(s) reported remaining obligations", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsOnlyFromAuditRefs(refs),
+		})
+	}
 	if refs := s.report.ObligationCoverage.UnmatchedObligations; len(refs) > 0 {
 		s.report.Findings = append(s.report.Findings, EventAuditFinding{
 			ID:          "contract_event_unmatched_obligation_reference",
@@ -993,6 +1143,14 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 			if len(coverage.ObligationEvents) > 0 {
 				set[contractID] = struct{}{}
 			}
+		case "readiness":
+			if len(coverage.ReadinessEvents) > 0 {
+				set[contractID] = struct{}{}
+			}
+		case "completion":
+			if len(coverage.CompletionEvents) > 0 {
+				set[contractID] = struct{}{}
+			}
 		case "gate":
 			if len(coverage.GateEvents) > 0 {
 				set[contractID] = struct{}{}
@@ -1009,7 +1167,7 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 func (s *eventAuditState) lifecycleOnlyContracts() []string {
 	set := make(map[string]struct{})
 	for contractID, coverage := range s.contracts {
-		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.GateEvents) == 0 && len(coverage.GuardFrictionCounts) == 0 {
+		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.ReadinessEvents) == 0 && len(coverage.CompletionEvents) == 0 && len(coverage.GateEvents) == 0 && len(coverage.GuardFrictionCounts) == 0 {
 			set[contractID] = struct{}{}
 		}
 	}
@@ -1024,9 +1182,27 @@ func incrementContractMap(coverage *ContractEventCoverage, kind string, key stri
 		incrementStringMap(&coverage.PolicyEvents, key)
 	case "obligation":
 		incrementStringMap(&coverage.ObligationEvents, key)
+	case "readiness":
+		incrementStringMap(&coverage.ReadinessEvents, key)
+	case "completion":
+		incrementStringMap(&coverage.CompletionEvents, key)
 	case "gate":
 		incrementStringMap(&coverage.GateEvents, key)
 	}
+}
+
+func incrementContractReadinessSignal(coverage *ContractEventCoverage, key string) {
+	if coverage == nil {
+		return
+	}
+	incrementStringMap(&coverage.ReadinessSignalCounts, key)
+}
+
+func incrementContractCompletionSignal(coverage *ContractEventCoverage, key string) {
+	if coverage == nil {
+		return
+	}
+	incrementStringMap(&coverage.CompletionSignals, key)
 }
 
 func incrementStringMap(target *map[string]int, key string) {
@@ -1346,6 +1522,16 @@ func contractIDsFromAuditRefs(refs []EventAuditRef) []string {
 		}
 		if ref.Reference != "" {
 			set[ref.Reference] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func contractIDsOnlyFromAuditRefs(refs []EventAuditRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.ContractID != "" {
+			set[ref.ContractID] = struct{}{}
 		}
 	}
 	return sortedKeys(set)

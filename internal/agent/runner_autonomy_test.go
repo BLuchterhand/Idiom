@@ -83,6 +83,105 @@ func TestRunnerAutonomyContractMapsMutationGatesToObligations(t *testing.T) {
 	}
 }
 
+func TestRunnerAutonomyPlanExecutePlannerUsesSharedToolMetadata(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+	}
+
+	for _, entry := range autonomy.PlanExecutePlannerToolMetadataEntries() {
+		t.Run(entry.Tool, func(t *testing.T) {
+			if got := runnerAutonomyCapabilitiesForTool(brief, entry.Tool); !slices.Equal(got, entry.Capabilities) {
+				t.Fatalf("runner capabilities = %#v, want metadata capabilities %#v", got, entry.Capabilities)
+			}
+			req := workspace.ToolRequest{
+				Tool:    entry.Tool,
+				Command: "go test ./internal/agent",
+				Content: "*** Begin Patch\n*** Delete File: doomed.txt\n*** End Patch\n",
+			}
+			if got := runnerAutonomySideEffectForBrief(brief, req); got != entry.SideEffect {
+				t.Fatalf("runner side effect = %q, want metadata side effect %q", got, entry.SideEffect)
+			}
+		})
+	}
+}
+
+func TestRunnerAutonomyPlanExecutePlannerPolicyEventsUseSharedToolMetadata(t *testing.T) {
+	tests := []struct {
+		tool       string
+		capability autonomy.Capability
+		effect     autonomy.SideEffectClass
+	}{
+		{tool: "submit_plan", capability: autonomy.CapabilityPlanSubmission, effect: autonomy.SideEffectReadOnly},
+		{tool: "read_file", capability: autonomy.CapabilityBoundedRead, effect: autonomy.SideEffectReadOnly},
+		{tool: "search_content", capability: autonomy.CapabilityLiteralSearch, effect: autonomy.SideEffectReadOnly},
+		{tool: "context_status", capability: autonomy.CapabilitySemanticDiscovery, effect: autonomy.SideEffectReadOnly},
+		{tool: "apply_patch", capability: autonomy.CapabilityApplyPatch, effect: autonomy.SideEffectAdditive},
+		{tool: "shell", capability: autonomy.CapabilityShellVerification, effect: autonomy.SideEffectUnknown},
+		{tool: "task", capability: autonomy.CapabilityDelegation, effect: autonomy.SideEffectUnknown},
+		{tool: "recovery_decompose", capability: autonomy.CapabilityExternalWrite, effect: autonomy.SideEffectAdditive},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.tool, func(t *testing.T) {
+			var runEvents []RunEvent
+			runner := &Runner{
+				AgentName: "main",
+				OnEvent: func(event RunEvent) {
+					runEvents = append(runEvents, event)
+				},
+			}
+			brief := workerruntime.WorkerRuntimeBrief{
+				Lane:              "plan-execute",
+				TaskFamily:        PlanThenExecutePlannerTaskFamily,
+				Contract:          "submit_plan",
+				PermissionProfile: "guarded_workspace_write",
+				AllowedTools:      []string{tt.tool},
+			}
+			recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, nil)
+			if recorder == nil {
+				t.Fatal("newRunnerAutonomyRecorder returned nil")
+			}
+
+			recorder.emitIntentClassified(workspace.ToolRequest{
+				Tool:    tt.tool,
+				Command: "go test ./internal/agent",
+				Content: "*** Begin Patch\n*** Delete File: doomed.txt\n*** End Patch\n",
+			})
+
+			events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+			intent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolIntentClassified, tt.tool, "")
+			if intent.Policy.Capability != tt.capability || intent.Policy.SideEffect != tt.effect {
+				t.Fatalf("policy event classification = capability %q side_effect %q, want %q/%q", intent.Policy.Capability, intent.Policy.SideEffect, tt.capability, tt.effect)
+			}
+		})
+	}
+}
+
+func TestRunnerAutonomySharedPlannerMetadataDoesNotChangeNonPlannerFallback(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+	}
+
+	if got := runnerAutonomyCapabilitiesForTool(brief, "code_navigate"); len(got) != 0 {
+		t.Fatalf("non-planner code_navigate should keep legacy fallback capabilities, got %#v", got)
+	}
+	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{Tool: "shell", Command: "go test ./internal/agent"}); got != autonomy.SideEffectReadOnly {
+		t.Fatalf("non-planner shell verification side effect = %q, want legacy read_only", got)
+	}
+	if got := runnerAutonomySideEffectForBrief(brief, workspace.ToolRequest{
+		Tool:    "apply_patch",
+		Content: "*** Begin Patch\n*** Delete File: doomed.txt\n*** End Patch\n",
+	}); got != autonomy.SideEffectDestructive {
+		t.Fatalf("non-planner delete patch side effect = %q, want legacy destructive", got)
+	}
+}
+
 func TestRunnerAutonomyRecorderPolicyEventsMapAllowedAndNoApprovalNeeded(t *testing.T) {
 	root := t.TempDir()
 	var runEvents []RunEvent
@@ -211,6 +310,100 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 	report := autonomy.AuditEvents(events, autonomy.EventAuditOptions{})
 	if report.TurnPhaseCoverage.Total != 1 || len(report.TurnPhaseCoverage.Contradictions) != 0 {
 		t.Fatalf("expected clean turn phase audit coverage, got %#v", report.TurnPhaseCoverage)
+	}
+}
+
+func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+		RequiredTools:     []string{"submit_plan"},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
+	policy := RunPolicy{MaxToolSteps: 2, MaxModelCalls: 1}
+	recorder := newRunnerAutonomyRecorder(runner, policy, brief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	if !recorder.hasPlannerCompile {
+		t.Fatal("plan-execute planner recorder should retain compiled contractcompile result")
+	}
+	if recorder.contract.Scope.InvocationKind != autonomy.InvocationPhase ||
+		recorder.contract.Scope.TaskFamily != contractcompile.InvocationPlanExecutePlanner ||
+		recorder.contract.Scope.Phase != contractcompile.DefaultPlannerPhase {
+		t.Fatalf("planner recorder should use compiled phase contract scope, got %#v", recorder.contract.Scope)
+	}
+	recorder.emitContractStarted(brief)
+
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         recorder.contractIDForTurnPhase(),
+		ModelCallID:        recorder.contractIDForTurnPhase() + ":model_call_1",
+		Step:               1,
+		Brief:              brief,
+		Results:            results,
+		BaseAllowedTools:   []string{"read_file", "code_navigate", "submit_plan"},
+		TextualToolParser:  true,
+		VerificationStatus: "not_required",
+	})
+	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, policy, true)
+	if !ok {
+		t.Fatal("expected model protocol projection")
+	}
+	if protocol.ContractID != recorder.contract.ContractID {
+		t.Fatalf("model protocol should cite compiled recorder contract %q, got %q", recorder.contract.ContractID, protocol.ContractID)
+	}
+	recorder.emitTurnPhaseContract(phase, protocol)
+	recorder.markModelProtocolPresented(protocol)
+	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	var compiledID, presentedID, presentedProtocolID, presentedProtocolHash, gateID, gateProtocolHash string
+	for _, event := range events {
+		switch event.Type {
+		case autonomy.EventContractCompiled:
+			compiledID = event.ContractID
+			if event.Lifecycle == nil || event.Lifecycle.Summary == nil || event.Lifecycle.Summary.ContractID != recorder.contract.ContractID {
+				t.Fatalf("contract_compiled summary should carry compiled contract id: %#v", event.Lifecycle)
+			}
+		case autonomy.EventContractPresented:
+			if event.Lifecycle != nil && event.Lifecycle.ModelProtocol != nil {
+				presentedID = event.ContractID
+				presentedProtocolID = event.Lifecycle.ModelProtocol.ContractID
+				presentedProtocolHash = event.Lifecycle.ModelProtocol.ProtocolHash
+			}
+		case autonomy.EventGateDecision:
+			if event.Gate != nil && event.Gate.Gate == autonomy.GateCompletion {
+				gateID = event.ContractID
+				gateProtocolHash = event.Gate.ProtocolHash
+			}
+		}
+	}
+	if compiledID == "" || presentedID == "" || gateID == "" {
+		t.Fatalf("missing compiled/presented/gate events: compiled=%q presented=%q gate=%q events=%#v", compiledID, presentedID, gateID, events)
+	}
+	for label, got := range map[string]string{
+		"contract_compiled":        compiledID,
+		"contract_presented":       presentedID,
+		"model_protocol_contract":  presentedProtocolID,
+		"completion_gate_contract": gateID,
+	} {
+		if got != recorder.contract.ContractID {
+			t.Fatalf("%s contract id = %q, want compiled recorder id %q", label, got, recorder.contract.ContractID)
+		}
+	}
+	if presentedProtocolHash == "" || gateProtocolHash != presentedProtocolHash || gateProtocolHash != protocol.ProtocolHash {
+		t.Fatalf("gate protocol hash should match presented protocol hash %q, got gate=%q protocol=%q", presentedProtocolHash, gateProtocolHash, protocol.ProtocolHash)
 	}
 }
 

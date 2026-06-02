@@ -4,22 +4,20 @@ import (
 	"slices"
 	"testing"
 
+	"idiom/internal/autonomy"
 	"idiom/internal/contractcompile"
-	"idiom/internal/frontier/workerruntime"
 )
 
-func TestPlanExecutePlannerVocabularyAlignsWithRuntimeManifest(t *testing.T) {
-	manifestTools := workerruntime.ManifestToolsForCapabilityProfile(workerruntime.CapabilityPlanSubmissionPlanner)
+func TestPlanExecutePlannerVocabularyAlignsWithAutonomyMetadata(t *testing.T) {
+	canonicalTools := autonomy.PlanExecutePlannerToolNames()
 	compilerTools := contractcompile.PlanExecutePlannerToolNames()
 
-	for _, tool := range manifestTools {
-		if !contractcompile.IsPlanExecutePlannerToolAllowed(tool) {
-			t.Fatalf("compiler planner vocabulary does not allow manifest tool %q; compiler=%#v manifest=%#v", tool, compilerTools, manifestTools)
-		}
+	if !slices.Equal(compilerTools, canonicalTools) {
+		t.Fatalf("compiler planner tool names = %#v, want autonomy metadata names %#v", compilerTools, canonicalTools)
 	}
-	for _, tool := range compilerTools {
-		if !slices.Contains(manifestTools, tool) {
-			t.Fatalf("compiler planner vocabulary allows non-manifest tool %q; compiler=%#v manifest=%#v", tool, compilerTools, manifestTools)
+	for _, entry := range autonomy.PlanExecutePlannerToolMetadataEntries() {
+		if got := contractcompile.IsPlanExecutePlannerToolAllowed(entry.Tool); got != entry.PlannerAllowed {
+			t.Fatalf("compiler planner allowed(%q) = %v, want autonomy metadata %v", entry.Tool, got, entry.PlannerAllowed)
 		}
 	}
 }

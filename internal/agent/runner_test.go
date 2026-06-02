@@ -7361,7 +7361,7 @@ func TestDecorateFinalAnswerPreservesConcreteMissingPathBlocker(t *testing.T) {
 	}
 }
 
-func TestPlannerCompletionGateKeepsWorkspaceWriteObligationsPendingAfterSubmitPlan(t *testing.T) {
+func TestPlannerCompletionGateResolvesPlanCoverageAfterSubmitPlan(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
@@ -7377,6 +7377,9 @@ func TestPlannerCompletionGateKeepsWorkspaceWriteObligationsPendingAfterSubmitPl
 		t.Fatal("expected autonomy recorder")
 	}
 	recorder.emitContractStarted(brief)
+	if countObligationKind(recorder.obligations, autonomy.ObligationWrite) != 0 {
+		t.Fatalf("compiled planner contract should not carry executor workspace write obligations: %#v", recorder.obligations)
+	}
 	refs := recorder.obligationIDsForGate(autonomy.GateCompletion)
 	resolved, open := recorder.completionGateResolvedAndOpenObligations(runnerAutonomyGateDecision{
 		Gate:         autonomy.GateCompletion,
@@ -7385,16 +7388,21 @@ func TestPlannerCompletionGateKeepsWorkspaceWriteObligationsPendingAfterSubmitPl
 		ChangedPaths: nil,
 	}, refs)
 
+	coverageIDs := plannerCoverageObligationsByPathForTest(t, recorder)
 	for _, path := range brief.RequiredEditPaths {
-		id := runnerAutonomyObligationID(autonomy.ObligationWrite, path)
-		if slices.Contains(resolved, id) {
-			t.Fatalf("planner submit_plan must not resolve workspace write obligation %s; resolved=%#v open=%#v", id, resolved, open)
+		id := coverageIDs[path]
+		if id == "" {
+			t.Fatalf("missing planner coverage obligation for %s in %#v", path, recorder.obligations)
 		}
-		if !slices.Contains(open, id) {
-			t.Fatalf("workspace write obligation %s should remain open while changed_path_count=0; resolved=%#v open=%#v", id, resolved, open)
+		if !slices.Contains(resolved, id) {
+			t.Fatalf("planner submit_plan should resolve plan coverage obligation %s; resolved=%#v open=%#v", id, resolved, open)
+		}
+		if slices.Contains(open, id) {
+			t.Fatalf("planner submit_plan should not leave plan coverage obligation %s open; resolved=%#v open=%#v", id, resolved, open)
 		}
 	}
-	if !slices.Contains(resolved, "obl-final-answer") {
+	finalAnswerID := obligationIDByKindForTest(t, recorder, autonomy.ObligationFinalAnswer)
+	if !slices.Contains(resolved, finalAnswerID) {
 		t.Fatalf("planner short-circuit should still resolve final-answer/plan artifact closeout, resolved=%#v", resolved)
 	}
 }
@@ -7415,6 +7423,9 @@ func TestPlannerCompletionGateResolvesSourceSatisfiedRequiredPaths(t *testing.T)
 		t.Fatal("expected autonomy recorder")
 	}
 	recorder.emitContractStarted(brief)
+	if countObligationKind(recorder.obligations, autonomy.ObligationWrite) != 0 {
+		t.Fatalf("compiled planner contract should not carry executor workspace write obligations: %#v", recorder.obligations)
+	}
 	refs := recorder.obligationIDsForGate(autonomy.GateCompletion)
 	resolved, open := recorder.completionGateResolvedAndOpenObligations(runnerAutonomyGateDecision{
 		Gate:       autonomy.GateCompletion,
@@ -7423,18 +7434,22 @@ func TestPlannerCompletionGateResolvesSourceSatisfiedRequiredPaths(t *testing.T)
 		TargetRefs: []string{"a.txt:pending", "b.txt:pending"},
 	}, refs)
 
+	coverageIDs := plannerCoverageObligationsByPathForTest(t, recorder)
 	for _, path := range brief.RequiredEditPaths {
-		id := runnerAutonomyObligationID(autonomy.ObligationWrite, path)
+		id := coverageIDs[path]
+		if id == "" {
+			t.Fatalf("missing planner coverage obligation for %s in %#v", path, recorder.obligations)
+		}
 		if !slices.Contains(resolved, id) {
-			t.Fatalf("source-satisfied closeout should resolve workspace write obligation %s; resolved=%#v open=%#v", id, resolved, open)
+			t.Fatalf("source-satisfied closeout should resolve plan coverage obligation %s; resolved=%#v open=%#v", id, resolved, open)
 		}
 		if slices.Contains(open, id) {
-			t.Fatalf("source-satisfied closeout should not leave workspace write obligation %s open; resolved=%#v open=%#v", id, resolved, open)
+			t.Fatalf("source-satisfied closeout should not leave plan coverage obligation %s open; resolved=%#v open=%#v", id, resolved, open)
 		}
 	}
 }
 
-func TestPlannerCompletionGateResolvesUnscopedSourceSatisfiedWriteObligation(t *testing.T) {
+func TestPlannerCompletionGateResolvesUnscopedSourceSatisfiedFinalOutcome(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
@@ -7449,6 +7464,9 @@ func TestPlannerCompletionGateResolvesUnscopedSourceSatisfiedWriteObligation(t *
 		t.Fatal("expected autonomy recorder")
 	}
 	recorder.emitContractStarted(brief)
+	if countObligationKind(recorder.obligations, autonomy.ObligationWrite) != 0 {
+		t.Fatalf("compiled planner contract should not carry generic executor write obligation: %#v", recorder.obligations)
+	}
 	refs := recorder.obligationIDsForGate(autonomy.GateCompletion)
 	resolved, open := recorder.completionGateResolvedAndOpenObligations(runnerAutonomyGateDecision{
 		Gate:       autonomy.GateCompletion,
@@ -7456,12 +7474,36 @@ func TestPlannerCompletionGateResolvesUnscopedSourceSatisfiedWriteObligation(t *
 		ReasonCode: "plan_source_satisfied_short_circuit",
 	}, refs)
 
-	if !slices.Contains(resolved, "obl-write-workspace-change") {
-		t.Fatalf("unscoped source-satisfied closeout should resolve generic write obligation; resolved=%#v open=%#v", resolved, open)
+	finalAnswerID := obligationIDByKindForTest(t, recorder, autonomy.ObligationFinalAnswer)
+	if !slices.Contains(resolved, finalAnswerID) {
+		t.Fatalf("unscoped source-satisfied closeout should resolve planner final outcome obligation; resolved=%#v open=%#v", resolved, open)
 	}
-	if slices.Contains(open, "obl-write-workspace-change") {
-		t.Fatalf("unscoped source-satisfied closeout should not leave generic write obligation open; resolved=%#v open=%#v", resolved, open)
+	if slices.Contains(open, finalAnswerID) {
+		t.Fatalf("unscoped source-satisfied closeout should not leave planner final outcome obligation open; resolved=%#v open=%#v", resolved, open)
 	}
+}
+
+func plannerCoverageObligationsByPathForTest(t *testing.T, recorder *runnerAutonomyRecorder) map[string]string {
+	t.Helper()
+	ids := make(map[string]string)
+	for _, obligation := range recorder.obligations {
+		if obligation.Kind != autonomy.ObligationEvidence || obligation.RequiredBy != "submit_plan_required_edit_coverage" {
+			continue
+		}
+		ids[obligation.TargetRef] = obligation.ObligationID
+	}
+	return ids
+}
+
+func obligationIDByKindForTest(t *testing.T, recorder *runnerAutonomyRecorder, kind autonomy.ObligationKind) string {
+	t.Helper()
+	for _, obligation := range recorder.obligations {
+		if obligation.Kind == kind {
+			return obligation.ObligationID
+		}
+	}
+	t.Fatalf("missing obligation kind %q in %#v", kind, recorder.obligations)
+	return ""
 }
 
 func TestMutationFallbackAnswerReportsChangedPathsAndVerification(t *testing.T) {

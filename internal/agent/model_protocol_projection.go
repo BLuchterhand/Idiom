@@ -15,12 +15,44 @@ import (
 const modelProtocolProjectionSchemaVersion = "idiom.model_protocol_projection.v1"
 
 func (r *Runner) compileModelProtocolProjection(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, phase TurnPhaseContract, policy RunPolicy, supportsNativeTools bool) (contractcompile.ModelProtocolProjection, bool) {
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+	input, ok := runnerPlanExecutePlannerInput(brief, results, phase, policy, supportsNativeTools, strings.TrimSpace(phase.ContractID))
+	if !ok {
 		return contractcompile.ModelProtocolProjection{}, false
 	}
-	input := contractcompile.PlanExecutePlannerInput{
-		ParentID:             strings.TrimSpace(phase.ContractID),
+	compiled, err := contractcompile.CompilePlanExecutePlanner(input)
+	if err != nil {
+		if r != nil {
+			r.emitEvent(marshalRunEvent("model_protocol_projection_gap", map[string]any{
+				"phase_id": phase.PhaseID,
+				"reason":   "compile_failed",
+				"error":    err.Error(),
+			}))
+		}
+		return contractcompile.ModelProtocolProjection{}, false
+	}
+	return compiled.Protocol, true
+}
+
+func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, phase TurnPhaseContract, policy RunPolicy, supportsNativeTools bool, parentID string) (contractcompile.PlanExecutePlannerInput, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return contractcompile.PlanExecutePlannerInput{}, false
+	}
+	phaseSpecified := runnerPlanExecutePlannerPhaseSpecified(phase)
+	visibleTools := modelProtocolVisibleTools(phase)
+	callableTools := modelProtocolProjectionTools(phase.ActionPolicy.CallableToolNames)
+	allowedTools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
+	if !phaseSpecified && len(allowedTools) == 0 {
+		allowedTools = modelProtocolProjectionTools(brief.AllowedTools)
+	}
+	if !phaseSpecified && len(visibleTools) == 0 {
+		visibleTools = append([]string(nil), allowedTools...)
+	}
+	if !phaseSpecified && len(callableTools) == 0 {
+		callableTools = append([]string(nil), allowedTools...)
+	}
+	return contractcompile.PlanExecutePlannerInput{
+		ParentID:             strings.TrimSpace(parentID),
 		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), contractcompile.DefaultPlanExecuteLane),
 		Phase:                contractcompile.DefaultPlannerPhase,
 		TaskFamily:           contractcompile.InvocationPlanExecutePlanner,
@@ -32,7 +64,8 @@ func (r *Runner) compileModelProtocolProjection(brief workerruntime.WorkerRuntim
 		EvidencePaths:        append(append([]string(nil), brief.EvidencePaths...), sortedRunnerPathKeys(readPathsFromResults(results))...),
 		ChangedPaths:         mapKeys(changedPathsFromToolResults(results)),
 		UserBoundaries:       append([]string(nil), brief.UserBoundaries...),
-		AllowedTools:         modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames),
+		AllowedTools:         allowedTools,
+		ForbiddenTools:       modelProtocolKnownPlannerTools(brief.ForbiddenTools),
 		RequiredEvidence:     append([]string(nil), brief.RequiredEvidence...),
 		RequiredTools:        modelProtocolRequiredTools(brief.RequiredTools, phase),
 		ReadinessGate:        append([]string(nil), brief.ReadinessGate...),
@@ -75,8 +108,8 @@ func (r *Runner) compileModelProtocolProjection(brief workerruntime.WorkerRuntim
 			PhaseID:                phase.PhaseID,
 			ParserMode:             phase.RuntimeCall.ParserContract,
 			ExpectedVisibleOutput:  phase.RuntimeCall.ExpectedVisibleOutput,
-			VisibleTools:           modelProtocolVisibleTools(phase),
-			CallableTools:          modelProtocolProjectionTools(phase.ActionPolicy.CallableToolNames),
+			VisibleTools:           visibleTools,
+			CallableTools:          callableTools,
 			CallableToolsSpecified: true,
 			CallableActionClasses:  append([]string(nil), phase.ActionPolicy.AllowedActionClasses...),
 			InvalidActionClasses:   append([]string(nil), phase.ActionPolicy.InvalidActionClasses...),
@@ -88,19 +121,18 @@ func (r *Runner) compileModelProtocolProjection(brief workerruntime.WorkerRuntim
 			RecoveryBudget:         modelProtocolRecoveryBudget(phase),
 		},
 		MetadataTags: []string{"phase1_report_only", "model_protocol_projection"},
-	}
-	compiled, err := contractcompile.CompilePlanExecutePlanner(input)
-	if err != nil {
-		if r != nil {
-			r.emitEvent(marshalRunEvent("model_protocol_projection_gap", map[string]any{
-				"phase_id": phase.PhaseID,
-				"reason":   "compile_failed",
-				"error":    err.Error(),
-			}))
-		}
-		return contractcompile.ModelProtocolProjection{}, false
-	}
-	return compiled.Protocol, true
+	}, true
+}
+
+func runnerPlanExecutePlannerPhaseSpecified(phase TurnPhaseContract) bool {
+	return strings.TrimSpace(phase.PhaseID) != "" ||
+		strings.TrimSpace(phase.Phase) != "" ||
+		strings.TrimSpace(phase.RuntimeCall.ParserContract) != "" ||
+		len(phase.AllowedTools) > 0 ||
+		len(phase.ActionPolicy.CallableToolNames) > 0 ||
+		len(phase.ActionPolicy.AllowedActionClasses) > 0 ||
+		len(phase.ActionPolicy.InvalidActionClasses) > 0 ||
+		len(phase.ActionPolicy.TerminalResponseShapes) > 0
 }
 
 func modelProtocolReadinessInput(brief workerruntime.WorkerRuntimeBrief) contractcompile.ReadinessInput {
@@ -134,6 +166,25 @@ func modelProtocolProjectionTools(groups ...[]string) []string {
 
 func modelProtocolKnownReadOnlyPlannerTool(tool string) bool {
 	return contractcompile.IsPlanExecutePlannerToolAllowed(tool)
+}
+
+func modelProtocolKnownPlannerTools(values []string) []string {
+	known := make(map[string]struct{})
+	for _, entry := range contractcompile.PlanExecutePlannerToolVocabulary() {
+		known[strings.TrimSpace(entry.Tool)] = struct{}{}
+	}
+	var tools []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := known[value]; !ok {
+			continue
+		}
+		tools = append(tools, value)
+	}
+	return uniquePhaseStrings(tools)
 }
 
 func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []string {
