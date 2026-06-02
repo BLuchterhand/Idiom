@@ -65,6 +65,10 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
   with `history_range`, `history_symbol`, `blame_range`, or focused `git log`
   when the prior rationale is not obvious. Treat commit messages as evidence of
   why a decision exists, not as unquestionable authority.
+- Before removing behavior from a recent broad commit, build a retention table:
+  changed area, failure it addressed, current tests/logs that still depend on
+  it, keep/remove decision, and focused verification. Do not broad-revert first
+  and discover dependent live contracts afterward.
 - Before sending or committing a behavior fix, step back and state the deepest
   generic root cause supported by the logs. Validate that hypothesis with the
   debugging reviewer bench, then implement the smallest contract-level fix that
@@ -148,6 +152,10 @@ For bugs involving agent behavior, readiness, tool loops, prompts, recovery, or 
 - For required-path implementation failures, distinguish exact-anchor write-first contracts from abstract scope-ready packets. Check both what tells the model to write and which bounded read/search affordances remain visible.
 - Prefer removing conflicting affordances or encoding a typed contract over adding another prompt reminder.
 - Add regression tests for the absence of bad behavior, not only the presence of desired guidance.
+- For answer-quality scripted regressions, avoid absence-only oracles. Use a
+  fixture that contains the concept under test, require the evidence path that
+  proves it, and assert positive semantic content in the final answer so
+  irrelevant but well-formed output cannot pass.
 
 ### Discovery Tool CLI Reference
 

@@ -55,6 +55,12 @@ Behavior fixes need scripted e2e regression coverage in addition to focused
 unit tests. The e2e should exercise the real CLI/TUI contract that failed and
 assert acceptable, grounded, non-garbage output.
 
+For retrospective or cleanup work, treat the existing harness as live product
+behavior until evidence proves otherwise. A large, noisy commit may contain
+churn, but deletion is still a behavior change. Review first, then remove only
+the pieces whose original failure no longer applies or whose dependent
+live/scripted contracts are covered by a better boundary.
+
 ## Deterministic Gates
 
 - Classify artifacts before dispatch: `dispatchable`, `source-satisfied`,
@@ -137,6 +143,15 @@ assert acceptable, grounded, non-garbage output.
   be weak. Before adding another late message, inspect the first prompt the model
   saw and make sure it frontloads the executable sequence: evidence prerequisite,
   permitted tool action, schema shape, and terminal outcomes.
+- Do not start cleanup with a broad revert. First make a retention table with:
+  changed area, original failure or obligation, evidence that the obligation
+  still exists, tests/logs that exercise it, keep/remove decision, and focused
+  verification command. Run the smallest live/scripted contract for a removal
+  before widening to suite-level validation.
+- Treat rollback failures as first-class evidence. If a proposed cleanup causes
+  live-readiness, TUI, or scripted-suite regressions and restoring the removed
+  behavior makes them pass, the cleanup path is the regression. Stop there and
+  either keep the behavior or replace it with a proven equivalent boundary.
 
 ## Change Locality
 
@@ -252,8 +267,25 @@ assert acceptable, grounded, non-garbage output.
   commit/blame/symbol history when current intent is ambiguous. History is not
   a veto, but it is evidence: preserve still-valid rationale and call out when
   new logs, tests, or product requirements supersede it.
+- For "review the previous commit" work, include the retention table in the
+  review notes or commit body. Future agents should not have to infer whether a
+  removed hunk was deliberate cleanup, an accidental rollback, or a failed
+  experiment.
 - Add regression tests for both sides of a boundary: the bad artifact must be
   blocked, and a valid artifact must remain dispatchable.
+- For answer-quality scripted regressions, require a positive semantic oracle.
+  The test should fail if the model answers from an unrelated path, even when
+  the answer avoids forbidden boilerplate. Align four things before trusting the
+  result: fixture content, scripted model tool calls, required evidence paths,
+  and final-answer assertions.
+- For multi-turn TUI scripted regressions, place done markers only in the
+  intended terminal response. If the marker appears in an intermediate answer,
+  the runner can stop early and turn a multi-turn regression into a misleading
+  one-turn success or failure.
+- When debugging approval surprises, classify the event before changing policy:
+  permission approval, route confirmation, and user-facing lane confirmation
+  have different owners and different oracles. Use the log role/event name as
+  the authority, not the user-visible phrasing alone.
 - Treat generated logs and golden-like eval outputs as source changes only when
   the suite contract calls for an intentional fixture refresh. A fixture refresh
   needs the old/new behavior being blessed, the oracle rationale, and a passing

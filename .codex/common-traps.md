@@ -216,6 +216,17 @@ failure patterns that have cost time in real Idiom/Colony runs.
   topic-specific path, or suppress an error counter until the reusable failure
   class is named and reviewer-validated. A correct fix should explain what
   future bug shape is now impossible.
+- **Weak oracle that allows garbage**: absence-only assertions can let a test
+  pass while the answer is irrelevant. Every scripted regression for answer
+  quality should include positive semantic assertions that prove the answer
+  addressed the user's actual question, plus negative assertions only for known
+  bad fallback shapes.
+- **Fixture mismatch**: a fixture that does not contain the concept under test
+  invites irrelevant evidence and misleading success. For answer-quality,
+  routing, or evidence regressions, the fixture, scripted tool calls, required
+  evidence paths, and final-answer oracle must all point at the same domain
+  concept. Do not reuse the frozen label fixture for unrelated policy,
+  architecture, or evidence questions just because it is convenient.
 - **Bespoke logic replacing a missing contract**: repeated local branches,
   string matchers, lane-specific helpers, prompt snippets, or eval-only
   exceptions are usually evidence that the shared invariant has no owner. Stop
@@ -249,6 +260,15 @@ failure patterns that have cost time in real Idiom/Colony runs.
   unless the suite contract explicitly expects a fixture refresh, the reusable
   behavior change has been named, and the focused suite passes after the
   artifact update.
+- **TUI completion marker on the wrong turn**: multi-turn scripted TUI tests
+  use completion markers as terminal state. Put the marker only in the intended
+  final assistant response; otherwise the watchdog can stop before later turns
+  run and the suite may report a misleading one-turn result.
+- **Approval terms collapsed together**: permission approvals, route
+  confirmations, and user-facing lane confirmations are different contracts.
+  When debugging "approval" surprises, inspect the log role/event first
+  (`permission_decision`, `route_confirmation`, assistant confirmation text,
+  etc.) and name which contract fired before changing either policy or oracle.
 - **Skipping model-state checks**: for hallucinated paths, malformed tool JSON,
   missing visible tool calls, repeated `submit_plan` rejection loops, or
   suddenly weak local-model behavior, explicitly check the logged model alias,
@@ -303,6 +323,16 @@ failure patterns that have cost time in real Idiom/Colony runs.
   check focused git history, blame, or symbol history when the existing design
   is not self-explanatory. If the old rationale still applies, preserve it or
   explain why the new evidence supersedes it.
+- **Broad rollback before retention proof**: "review the previous commit" does
+  not mean broad-revert first. Build a retention table before changing files:
+  changed area, failure it addressed, current tests/logs that depend on it,
+  keep/remove decision, and verification target. Treat deletion of existing
+  harness behavior as a behavior change that needs focused live evidence before
+  it lands.
+- **Treating rollback failure as noise**: if removing prior behavior causes a
+  live or scripted suite regression and restoring it makes the suite pass, the
+  rollback is the regression. Record that evidence and stop the cleanup path
+  rather than adding compensating patches around the removal.
 - **Changing prompts without gates**: prompt cleanup is useful, but a contract
   invariant needs a deterministic backstop and tests.
 - **Changing gates without prompt parity**: the model should see the same
@@ -353,7 +383,11 @@ Before calling an Idiom harness change complete, check:
    reading the whole transcript?
 8. Did the change add regression coverage for the bad behavior and a valid
    allowed path?
-9. Did an independent reviewer check the root cause, north-star alignment, and
+9. For scripted answer tests, does the oracle require positive semantic content
+   and use a fixture that actually contains the concept under test?
+10. If behavior was removed or reverted, did a retention table prove that no
+   current live/scripted contract still depends on it?
+11. Did an independent reviewer check the root cause, north-star alignment, and
    rabbit-hole risk before the fix was finalized?
-10. Was the reviewer set minimal and matched to the failure signature, rather
+12. Was the reviewer set minimal and matched to the failure signature, rather
    than the full bench by default?
