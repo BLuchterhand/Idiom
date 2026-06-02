@@ -179,8 +179,8 @@ public class AppTest {
 		t.Fatalf("expected related files for 'helper'")
 	}
 
-	// Reverse edges: who imports Helper?
-	importers := index.WhoImports("Helper.java")
+	// Reverse edges: App.java imports Helper.java.
+	importers := index.Reverse["src/main/java/com/example/util/Helper.java"]
 	foundApp = false
 	for _, imp := range importers {
 		if strings.HasSuffix(imp, "App.java") {
@@ -189,7 +189,7 @@ public class AppTest {
 		}
 	}
 	if !foundApp {
-		t.Fatalf("App.java should transitively import Helper.java: %v", importers)
+		t.Fatalf("App.java should directly import Helper.java: %v", importers)
 	}
 }
 

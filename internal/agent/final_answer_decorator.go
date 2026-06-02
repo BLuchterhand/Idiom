@@ -88,12 +88,12 @@ func canonicalMutationBlockerFinalAnswer(brief workerruntime.WorkerRuntimeBrief,
 	// submitted" answer into a "Required edit paths remain unchanged"
 	// blocker because the planner phase has no changed_paths yet, even
 	// though the plan was submitted correctly.
-	if strings.TrimSpace(brief.TaskFamily) == "plan_then_execute_planner" && successfulSubmitPlanResultCount(results) > 0 {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) && successfulSubmitPlanResultCount(results) > 0 {
 		return "", false
 	}
 	changed := changedPathsFromToolResults(results)
 	missing := missingRequiredEditPaths(brief.RequiredEditPaths, changed)
-	if strings.TrimSpace(brief.TaskFamily) == "plan_then_execute_planner" &&
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) &&
 		PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, missing) &&
 		planThenExecuteSourceSatisfiedResultsCoverPaths(missing, results) {
 		return "", false
@@ -136,7 +136,13 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 	if exact, ok := presentableExactProbeAnswer(input.Brief, input.Results); ok {
 		return exact, true
 	}
-	if strings.TrimSpace(input.Brief.Contract) == "architecture_assessment" {
+	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, readOnlyEvidencePacketsFromResults(input.Results)); ok {
+		return answer, true
+	}
+	if answer, ok := presentableProseEvidenceAnswer(input.Brief, input.Results); ok {
+		return answer, true
+	}
+	if workerruntime.RuntimeContractIsArchitecture(input.Brief.Contract) {
 		if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
 			if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
 				return "", false
@@ -191,6 +197,9 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 			if sourceBody, ok := presentableReadFileSourceAnswer(brief, results, workspaceRoot); ok {
 				return sourceBody, true
 			}
+			if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
+				return prose, true
+			}
 		}
 		return synthesizeBriefConversationFallback(brief, results), true
 	}
@@ -242,6 +251,9 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	}
 	if sourceBody, ok := presentableEvidenceBodySourceAnswer(brief, results); ok {
 		return sourceBody, true
+	}
+	if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
+		return prose, true
 	}
 	paths := delegatedClosureEvidencePaths(brief.Objective, results, 4)
 	if len(paths) == 0 {
@@ -342,6 +354,212 @@ func presentableEvidenceBodySourceAnswer(brief workerruntime.WorkerRuntimeBrief,
 func presentableEvidenceBodyTool(tool string) bool {
 	_ = tool
 	return false
+}
+
+func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) || briefPrefersDelegatedPacketFallback(brief, results) {
+		return "", false
+	}
+	objective := strings.TrimSpace(delegatedDisplayQuestion(brief.Objective))
+	if objective == "" || !readOnlyClosureDecisionForResults(brief, results).Answerable() {
+		return "", false
+	}
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
+			continue
+		}
+		if strings.TrimSpace(result.Tool) != "read_file" {
+			continue
+		}
+		paths := readPathsFromToolResult(result)
+		if len(paths) == 0 {
+			continue
+		}
+		path := strings.TrimSpace(paths[0])
+		if !presentableProseEvidencePath(path) {
+			continue
+		}
+		lines := objectiveRelevantProseEvidenceLines(objective, result.Output, 4)
+		if len(lines) == 0 {
+			continue
+		}
+		return synthesizeProseEvidenceAnswer(objective, path, lines), true
+	}
+	return "", false
+}
+
+func presentableProseEvidencePath(path string) bool {
+	lower := strings.ToLower(strings.TrimSpace(path))
+	lower = strings.TrimPrefix(lower, "./")
+	if lower == "" || isNonSourceEvidenceArtifactPath(lower) {
+		return false
+	}
+	if strings.HasPrefix(lower, "docs/") || strings.HasPrefix(lower, ".codex/") {
+		return true
+	}
+	if lower == "readme" || strings.HasPrefix(lower, "readme.") {
+		return true
+	}
+	for _, suffix := range []string{".md", ".markdown", ".txt", ".rst", ".adoc"} {
+		if strings.HasSuffix(lower, suffix) {
+			return true
+		}
+	}
+	return false
+}
+
+type proseEvidenceScoredLine struct {
+	line  string
+	score int
+	index int
+}
+
+func objectiveRelevantProseEvidenceLines(objective string, output string, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	terms := recoveryObjectiveSearchWords(objective, 32)
+	if len(terms) == 0 {
+		return nil
+	}
+	termSet := make(map[string]struct{}, len(terms))
+	for _, term := range terms {
+		termSet[singularObjectiveWord(term)] = struct{}{}
+	}
+	var candidates []proseEvidenceScoredLine
+	for index, raw := range strings.Split(output, "\n") {
+		line := normalizeProseEvidenceLine(raw)
+		if line == "" {
+			continue
+		}
+		score := proseEvidenceLineObjectiveScore(line, termSet)
+		if score <= 0 {
+			continue
+		}
+		candidates = append(candidates, proseEvidenceScoredLine{line: line, score: score, index: index})
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	slices.SortFunc(candidates, func(a, b proseEvidenceScoredLine) int {
+		if a.score != b.score {
+			return b.score - a.score
+		}
+		return a.index - b.index
+	})
+	var selected []proseEvidenceScoredLine
+	for _, candidate := range candidates {
+		if proseEvidenceLineDuplicates(selected, candidate.line) {
+			continue
+		}
+		selected = append(selected, candidate)
+		if len(selected) >= max {
+			break
+		}
+	}
+	slices.SortFunc(selected, func(a, b proseEvidenceScoredLine) int {
+		return a.index - b.index
+	})
+	lines := make([]string, 0, len(selected))
+	for _, candidate := range selected {
+		lines = append(lines, candidate.line)
+	}
+	return lines
+}
+
+func normalizeProseEvidenceLine(line string) string {
+	line = stripSourceEvidenceLinePrefix(strings.TrimSpace(line))
+	if line == "" {
+		return ""
+	}
+	if strings.HasPrefix(line, "```") || strings.HasPrefix(line, "|") {
+		return ""
+	}
+	line = strings.TrimLeft(line, "#")
+	line = strings.TrimSpace(line)
+	for {
+		trimmed := strings.TrimSpace(line)
+		next := strings.TrimPrefix(trimmed, "- ")
+		next = strings.TrimPrefix(next, "* ")
+		next = strings.TrimPrefix(next, "+ ")
+		next = strings.TrimPrefix(next, "> ")
+		if next == trimmed {
+			break
+		}
+		line = next
+	}
+	line = strings.TrimSpace(line)
+	if line == "" || len(line) < 24 {
+		return ""
+	}
+	lower := strings.ToLower(line)
+	if strings.HasPrefix(lower, "package ") ||
+		strings.HasPrefix(lower, "import ") ||
+		strings.HasPrefix(lower, "func ") ||
+		strings.HasPrefix(lower, "type ") ||
+		strings.HasPrefix(lower, "const ") ||
+		strings.HasPrefix(lower, "var ") ||
+		strings.HasPrefix(lower, "return ") {
+		return ""
+	}
+	if len(line) > 220 {
+		line = strings.TrimSpace(line[:220])
+	}
+	return strings.Trim(line, "`*_ ")
+}
+
+func proseEvidenceLineObjectiveScore(line string, termSet map[string]struct{}) int {
+	lower := strings.ToLower(line)
+	words := strings.FieldsFunc(lower, func(r rune) bool {
+		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
+	})
+	score := 0
+	seen := map[string]struct{}{}
+	for _, word := range words {
+		word = singularObjectiveWord(word)
+		if len(word) < 4 {
+			continue
+		}
+		if _, ok := termSet[word]; ok {
+			if _, dup := seen[word]; !dup {
+				score += 2
+				seen[word] = struct{}{}
+			}
+		}
+	}
+	if score > 0 && containsAny(lower, "evidence", "contract", "source", "repo", "repository", "audit", "eval", "verification", "runtime brief", "harness") {
+		score++
+	}
+	return score
+}
+
+func proseEvidenceLineDuplicates(selected []proseEvidenceScoredLine, line string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(line))
+	for _, candidate := range selected {
+		existing := strings.ToLower(strings.TrimSpace(candidate.line))
+		if existing == normalized || strings.Contains(existing, normalized) || strings.Contains(normalized, existing) {
+			return true
+		}
+	}
+	return false
+}
+
+func synthesizeProseEvidenceAnswer(objective string, path string, lines []string) string {
+	var b strings.Builder
+	b.WriteString("For `")
+	b.WriteString(strings.TrimSpace(objective))
+	b.WriteString("`, `")
+	b.WriteString(strings.TrimSpace(path))
+	b.WriteString("` provides the grounded answer: ")
+	for i, line := range lines {
+		if i > 0 {
+			b.WriteString(" ")
+		}
+		b.WriteString(strings.TrimRight(strings.TrimSpace(line), "."))
+		b.WriteString(".")
+	}
+	return strings.TrimSpace(b.String())
 }
 
 func briefPrefersDelegatedPacketFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -1373,6 +1591,9 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 		}
 		if sourceBody, ok := presentableEvidenceBodySourceAnswer(brief, results); ok {
 			return sourceBody
+		}
+		if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
+			return prose
 		}
 	}
 	// Collect inspected paths for context.

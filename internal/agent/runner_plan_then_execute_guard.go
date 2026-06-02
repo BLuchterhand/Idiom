@@ -22,13 +22,13 @@ import (
 // writes go through submit_plan. The executor phase, which runs in a
 // separate process via the orchestrator in internal/planexecutecmd/plan_execute.go,
 // uses the workspace dispatch directly.
-const PlanThenExecutePlannerTaskFamily = "plan_then_execute_planner"
+const PlanThenExecutePlannerTaskFamily = string(workerruntime.TaskFamilyPlanThenExecutePlanner)
 
 // PlanThenExecuteReviewRepairTaskFamily marks the post-executor
 // action-capable review phase. It shares the submit_plan surface for
 // corrective edits, but unlike the planner phase it may also close with a
 // direct `Decision: pass` answer when the evidence checklist is satisfied.
-const PlanThenExecuteReviewRepairTaskFamily = "plan_then_execute_review_repair"
+const PlanThenExecuteReviewRepairTaskFamily = string(workerruntime.TaskFamilyPlanThenExecuteReview)
 
 const planThenExecuteResultCandidateSourceReady = "plan_then_execute.candidate_source_ready"
 
@@ -911,6 +911,9 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 		return "", "", false
 	}
 	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
+		return "", "", false
+	}
+	if len(planThenExecuteHistoryPendingPaths(brief, results, nil)) > 0 {
 		return "", "", false
 	}
 	if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
@@ -2338,6 +2341,18 @@ func planThenExecuteUnscopedEmptySubmitPlanRejected(brief workerruntime.WorkerRu
 	}
 	rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
 	return ok && planThenExecuteEmptySubmitPlanRejection(rejected)
+}
+
+func planThenExecuteUnscopedEmptySubmitPlanAttempt(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) bool {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily ||
+		strings.TrimSpace(req.Tool) != "submit_plan" {
+		return false
+	}
+	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 ||
+		len(normalizedRequiredEditPaths(brief.AllowedEditPaths)) > 0 {
+		return false
+	}
+	return len(planThenExecuteEffectiveSubmitPlanEdits(req)) == 0
 }
 
 // successfulSubmitPlanResultCount returns the number of successful

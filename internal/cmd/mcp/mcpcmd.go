@@ -1,4 +1,5 @@
 package mcp
+
 import (
 	"bufio"
 	"context"
@@ -14,10 +15,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/config"
 	mcppkg "idiom/internal/mcp"
 	"idiom/internal/telemetry"
-	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/workspace"
 )
 
@@ -72,10 +73,6 @@ type mcpResourceContent struct {
 
 type mcpResourceReadResult struct {
 	Contents []mcpResourceContent `json:"contents"`
-}
-
-func RunWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return RunWithTelemetryAndVersion(args, stdout, stderr, rec, defaultVersion)
 }
 
 func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, version string) int {

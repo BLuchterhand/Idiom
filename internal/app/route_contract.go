@@ -33,6 +33,7 @@ type routeContractProjection struct {
 	RequestedOutcome   string                 `json:"requested_outcome,omitempty"`
 	WriteIntent        string                 `json:"write_intent,omitempty"`
 	ReadOnlyConstraint bool                   `json:"read_only_constraint,omitempty"`
+	EvidenceIntent     string                 `json:"evidence_intent,omitempty"`
 	ContinuationTarget string                 `json:"continuation_target,omitempty"`
 }
 
@@ -58,6 +59,7 @@ func projectRouteContract(plan turnRoutePlan, mode agent.Mode) routeContractProj
 		RequestedOutcome:   strings.TrimSpace(plan.RequestedOutcome),
 		WriteIntent:        strings.TrimSpace(plan.WriteIntent),
 		ReadOnlyConstraint: plan.ReadOnlyConstraint,
+		EvidenceIntent:     strings.TrimSpace(plan.EvidenceIntent),
 		ContinuationTarget: strings.TrimSpace(plan.ContinuationTarget),
 	}
 }

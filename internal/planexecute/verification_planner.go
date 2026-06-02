@@ -145,22 +145,6 @@ func (p VerificationPlan) CommandStrings() []string {
 	return out
 }
 
-func VerificationCommandsForChangedPaths(commands []string, changedPaths []string) []string {
-	return PlanVerification(VerificationPlannerInput{
-		WorkspaceRoot:    ".",
-		ExplicitCommands: commands,
-		ChangedPaths:     changedPaths,
-	}).CommandStrings()
-}
-
-func VerificationCommandsForChangedPathsInRoot(root string, commands []string, changedPaths []string) []string {
-	return PlanVerification(VerificationPlannerInput{
-		WorkspaceRoot:    root,
-		ExplicitCommands: commands,
-		ChangedPaths:     changedPaths,
-	}).CommandStrings()
-}
-
 func InferredTouchedVerificationCommands(paths []string) []string {
 	plan := PlanVerification(VerificationPlannerInput{
 		WorkspaceRoot: ".",

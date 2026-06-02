@@ -129,17 +129,7 @@ func (m *Manager) javaPathFilter(path string) string {
 }
 
 func (m *Manager) javaPathFilterForRequest(req ToolRequest) (string, error) {
-	if strings.TrimSpace(req.Path) != "" {
-		return m.javaPathFilter(req.Path), nil
-	}
-	if strings.TrimSpace(req.ID) == "" {
-		return "", nil
-	}
-	path, err := m.pathForHandle(req.ID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.ToSlash(m.displayPath(path)), nil
+	return m.languagePathFilterForRequest(req, m.javaPathFilter)
 }
 
 func (m *Manager) javaHandleDisplay(rel string) (string, error) {

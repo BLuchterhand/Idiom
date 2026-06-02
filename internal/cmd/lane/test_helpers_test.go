@@ -1,4 +1,5 @@
 package lane
+
 import (
 	"encoding/json"
 	"fmt"
@@ -7,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"idiom/internal/cmdtelemetry"
+	"idiom/internal/cmd/telemetry"
 )
 
 func cliAssetPath(elem ...string) string {

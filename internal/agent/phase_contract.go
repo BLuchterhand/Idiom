@@ -330,9 +330,9 @@ func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state 
 	contract.Phase = firstPhaseString(state.Phase, "history_pending")
 	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_history_evidence_pending")
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
-	contract.RequiredNext = []string{"call history_range or history_symbol for the intended logic when git history is required, make one exact source read when a named edit-safety fact is still missing, submit_plan when the concrete edit is supported, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
-	contract.InvalidNext = []string{"per-edit write in planner phase", "verify/build/test in planner phase", "redundant source reads that do not target a named edit-safety fact"}
-	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.RequiredNext = []string{"call history_range or history_symbol for the intended logic when git history is required, make one exact source read when a named edit-safety fact is still missing, Decision: source-satisfied with per-path current-state evidence when no edit is needed, or <<QUESTION>> with the exact blocker"}
+	contract.InvalidNext = []string{"submit_plan before required git history evidence", "per-edit write in planner phase", "verify/build/test in planner phase", "redundant source reads that do not target a named edit-safety fact"}
+	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
@@ -340,7 +340,7 @@ func applyHistoryPending(contract *TurnPhaseContract, baseTools []string, state 
 		CallableToolNames:      filterPhaseTools(baseTools, state.CallableTools...),
 	}
 	contract.RuntimeCall.ParserContract = "source_refresh"
-	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 }
 
 func applyRequiredSource(contract *TurnPhaseContract, baseTools []string, state PlanExecutePlanningState) {
@@ -746,25 +746,25 @@ func removePhaseActionClass(classes []string, remove string) []string {
 }
 
 func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
 	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
 		return true
 	}
-	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return conversationEvidenceSatisfiedForObjective(brief, results)
 	}
 	return genericReadOnlyAnswerEvidenceReady(brief, results)
 }
 
 func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allowedTools []string, results []workspace.ToolResult) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-	isReadOnlyConversation := strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer")
+	isReadOnlyConversation := workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract)
 	if brief.Readiness == nil && !isReadOnlyConversation {
 		return false
 	}
@@ -1022,15 +1022,14 @@ func splitImplementationPathToken(token string) []string {
 }
 
 func guardedMutationBriefRequiresTargetSourceContract(brief workerruntime.WorkerRuntimeBrief) bool {
-	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
-	if family == "delegated_isolated_implementation" {
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedIsolatedImpl) {
 		return false
 	}
 	permission := strings.ToLower(strings.TrimSpace(brief.PermissionProfile))
-	return permission == "guarded_workspace_write" ||
+	return workerruntime.PermissionProfileMatches(permission, workerruntime.PermissionGuardedWorkspaceWrite) ||
 		permission == "workspace_write" ||
 		permission == "write_enabled" ||
-		strings.TrimSpace(brief.TaskFamily) == "implementation"
+		workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyImplementation)
 }
 
 func phaseContractBaseTools(input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief) []string {
@@ -1129,14 +1128,14 @@ func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contra
 	if strings.TrimSpace(contract.PhaseID) == turnPhaseHistoryPending {
 		return true
 	}
-	if !strings.EqualFold(strings.TrimSpace(contract.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(contract.PermissionProfile) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(input.Brief.Contract), "direct_answer") {
+	if !workerruntime.RuntimeContractIsDirectAnswer(input.Brief.Contract) {
 		return false
 	}
 	taskFamily := strings.TrimSpace(input.Brief.TaskFamily)
-	if !strings.EqualFold(taskFamily, "conversation") && !strings.EqualFold(taskFamily, "direct_answer") {
+	if !workerruntime.TaskFamilyIsConversation(taskFamily) && !workerruntime.TaskFamilyMatches(taskFamily, workerruntime.TaskFamilyDirectAnswer) {
 		return false
 	}
 	switch strings.TrimSpace(contract.Phase) {

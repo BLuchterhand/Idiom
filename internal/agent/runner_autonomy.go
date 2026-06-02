@@ -263,7 +263,7 @@ func runnerAutonomyCapabilities(brief workerruntime.WorkerRuntimeBrief) autonomy
 			forbiddenSet[capability] = struct{}{}
 		}
 	}
-	if strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		forbiddenSet[autonomy.CapabilitySourceEdit] = struct{}{}
 		forbiddenSet[autonomy.CapabilityApplyPatch] = struct{}{}
 		forbiddenSet[autonomy.CapabilityMutatingShell] = struct{}{}
@@ -404,7 +404,7 @@ func runnerAutonomyObligations(brief workerruntime.WorkerRuntimeBrief, policy Ru
 			Status:                 autonomy.ObligationOpen,
 			Owner:                  autonomy.OwnerHost,
 			RequiredBy:             "completion_gate",
-			FinalAnswerRequirement: util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "direct_answer"),
+			FinalAnswerRequirement: util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
 		},
 		autonomy.Obligation{
 			ObligationID: "obl-loop-fuse",
@@ -1981,10 +1981,6 @@ func runnerAutonomyPolicyPaths(req workspace.ToolRequest) []string {
 	default:
 		return writeRequestPaths(req)
 	}
-}
-
-func runnerAutonomySideEffectForRequest(req workspace.ToolRequest) autonomy.SideEffectClass {
-	return runnerAutonomySideEffectForBrief(workerruntime.WorkerRuntimeBrief{}, req)
 }
 
 func runnerAutonomySideEffectForBrief(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) autonomy.SideEffectClass {

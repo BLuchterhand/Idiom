@@ -137,8 +137,8 @@ export default function defaultGreet(): void {}
 		t.Fatalf("expected at least one caller of greet")
 	}
 
-	// WhoImports: greeter.ts is imported by index.ts
-	importers := idx.WhoImports("greeter.ts")
+	// Reverse import graph: greeter.ts is imported by index.ts
+	importers := idx.Reverse["src/greeter.ts"]
 	if len(importers) == 0 || !strings.Contains(strings.Join(importers, ","), "src/index.ts") {
 		t.Fatalf("expected greeter.ts to be imported by src/index.ts, got %v", importers)
 	}

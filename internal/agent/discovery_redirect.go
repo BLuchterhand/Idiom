@@ -488,10 +488,8 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 // discovery redirects should fire for this brief. Matches conversation
 // TaskFamily plus direct_answer and grounded_evidence_summary contracts.
 func conversationDiscoveryRedirectApplies(brief workerruntime.WorkerRuntimeBrief) bool {
-	tf := strings.TrimSpace(brief.TaskFamily)
-	contract := strings.TrimSpace(brief.Contract)
-	if strings.EqualFold(tf, "conversation") {
+	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
 		return true
 	}
-	return strings.EqualFold(contract, "direct_answer") || strings.EqualFold(contract, "grounded_evidence_summary")
+	return workerruntime.RuntimeContractIsConversationDiscovery(brief.Contract)
 }

@@ -3,7 +3,7 @@ package root
 import (
 	"io"
 
-	"idiom/internal/cmdruntime"
+	"idiom/internal/cmd/runtime"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 )

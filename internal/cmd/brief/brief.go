@@ -17,24 +17,12 @@ import (
 	"idiom/internal/telemetry"
 )
 
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runBriefMain(args, stdout, stderr)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return runBriefMainWithTelemetry(args, stdout, stderr, rec)
 }
 
-func RunPreload(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runBriefPreload(args, stdout, stderr)
-}
-
 func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return runBriefLint(args, stdout, stderr, rec)
-}
-
-func RunPreview(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runBriefPreview(args, stdout, stderr, rec)
 }
 
 func ParseLintFindings(briefPath, combined string) []LintFinding {
@@ -43,10 +31,6 @@ func ParseLintFindings(briefPath, combined string) []LintFinding {
 
 func WriteEmbeddedPreflight() (path string, cleanup func(), err error) {
 	return writeEmbeddedBriefPreflight()
-}
-
-func runBriefMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runBriefMainWithTelemetry(args, stdout, stderr, nil)
 }
 
 func runBriefMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

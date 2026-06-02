@@ -198,11 +198,11 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.PhaseID = turnPhaseHistoryPending
 		state.Phase = "history_pending"
 		state.DerivationReason = "plan_execute_history_evidence_pending"
-		state.ParserVisibleTools = []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"}
-		state.CallableTools = []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"}
-		state.AllowedActionClasses = []string{actionRead, actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+		state.ParserVisibleTools = []string{"read_file", "code_navigate", "history_range", "history_symbol"}
+		state.CallableTools = []string{"read_file", "code_navigate", "history_range", "history_symbol"}
+		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
-		state.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
 	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
 		state.PhaseID = turnPhaseSubmitReadyTextual
 		state.Phase = "submit_ready_textual"

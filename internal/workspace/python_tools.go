@@ -594,17 +594,7 @@ func (m *Manager) pythonPathFilter(path string) string {
 }
 
 func (m *Manager) pythonPathFilterForRequest(req ToolRequest) (string, error) {
-	if strings.TrimSpace(req.Path) != "" {
-		return m.pythonPathFilter(req.Path), nil
-	}
-	if strings.TrimSpace(req.ID) == "" {
-		return "", nil
-	}
-	path, err := m.pathForHandle(req.ID)
-	if err != nil {
-		return "", err
-	}
-	return filepath.ToSlash(m.displayPath(path)), nil
+	return m.languagePathFilterForRequest(req, m.pythonPathFilter)
 }
 
 func (m *Manager) pythonHandleDisplay(rel string) (string, error) {

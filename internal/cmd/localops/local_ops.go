@@ -1,4 +1,5 @@
 package localops
+
 import (
 	"encoding/json"
 	"flag"
@@ -7,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"idiom/internal/cmdconfig"
+	"idiom/internal/cmd/config"
 	"idiom/internal/config"
 	"idiom/internal/localops"
 	"idiom/internal/readiness"
@@ -32,10 +33,6 @@ type Dependencies struct {
 	Version    string
 	Commit     string
 	LoadConfig func(string) (config.Config, error)
-}
-
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return RunMainWithTelemetry(args, stdout, stderr, nil)
 }
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, depOverrides ...Dependencies) int {

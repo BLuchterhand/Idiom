@@ -175,9 +175,6 @@ func TestTargetNormalizer_PreservesLegacyCompatibility(t *testing.T) {
 	if !normalizer.Same("`internal\\labels/labels.go,`", "internal/labels/labels.go") {
 		t.Fatal("TargetNormalizer.Same should match legacy-normalized targets")
 	}
-	if !sameTarget("`internal\\labels/labels.go,`", "internal/labels/labels.go") {
-		t.Fatal("sameTarget should match legacy-normalized targets")
-	}
 }
 
 func mustFindClaim(t *testing.T, claims []AnswerClaim, kind ClaimKind) AnswerClaim {

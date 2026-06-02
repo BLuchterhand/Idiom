@@ -25,15 +25,6 @@ func NewCompletionGatePipeline(checks ...CompletionGateCheck) *CompletionGatePip
 	return &CompletionGatePipeline{checks: append([]CompletionGateCheck(nil), checks...)}
 }
 
-// Add appends a check to the pipeline. Checks added later can build on
-// decisions from earlier checks (ordering matters).
-func (p *CompletionGatePipeline) Add(check CompletionGateCheck) {
-	if p == nil {
-		return
-	}
-	p.checks = append(p.checks, check)
-}
-
 // Evaluate runs all checks in order and returns the first rejection.
 // Returns (zero ToolResult, false) when all checks pass.
 func (p *CompletionGatePipeline) Evaluate(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {

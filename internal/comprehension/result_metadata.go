@@ -390,21 +390,6 @@ func FreshnessGapForDecision(decision FreshnessDecision) string {
 	return strings.Join(parts, " ")
 }
 
-func FreshnessGapDetailForDecision(decision FreshnessDecision) GraphUnresolvedGap {
-	reason := util.FirstNonEmpty(strings.TrimSpace(decision.Reason), strings.TrimSpace(decision.Blocker), "freshness_blocker")
-	state := StaleEvidenceSafetyForFreshness(decision).State
-	return GraphUnresolvedGap{
-		Reason:           reason,
-		State:            state,
-		Scope:            strings.TrimSpace(decision.Scope),
-		IndexID:          strings.TrimSpace(decision.IndexID),
-		StalePathCount:   decision.StalePathCount,
-		MissingPathCount: decision.MissingPathCount,
-		StalePaths:       limitedStrings(decision.StalePaths, 5),
-		MissingPaths:     limitedStrings(decision.MissingPaths, 5),
-	}
-}
-
 func applyFreshnessStatusMetadata(decision *FreshnessDecision, status StatusReport) {
 	if decision == nil {
 		return

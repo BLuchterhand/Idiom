@@ -19,10 +19,6 @@ import (
 	"idiom/internal/telemetry"
 )
 
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runQueueMain(args, stdout, stderr)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return runQueueMainWithTelemetry(args, stdout, stderr, rec)
 }

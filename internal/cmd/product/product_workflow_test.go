@@ -1,4 +1,5 @@
 package product
+
 import (
 	"bytes"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"idiom/internal/cmdtelemetry"
+	"idiom/internal/cmd/telemetry"
 	"idiom/internal/productworkflow"
 	"idiom/internal/recovery"
 	"idiom/internal/telemetry"

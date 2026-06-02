@@ -210,6 +210,42 @@ func TestDecorateFinalAnswerSynthesizesReadOnlySourceReturnAnswer(t *testing.T) 
 	}
 }
 
+func TestFinalAnswerDecoratorComposesFromTypedDelegatedPacketWithoutProseHeadings(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you tell me how this harness uses subagents?",
+	}
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		SourceBodyPaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The parent runner invokes the `task` tool to delegate read-only work."},
+			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded child runner and returns its result."},
+		},
+		Confidence: "high",
+	})}
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     "Partial findings from this turn (the budget was reached before a full synthesis): internal packet available.",
+		StopReason: "rejection_retry_blocked",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{"task", "runChildTask", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
+		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
+			t.Fatalf("decorated typed packet answer missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"Partial findings", "Discovery packet", "Evidence used", "Inspected paths:", "Source-body evidence paths:", "Key findings:"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("decorated typed packet answer leaked %q:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestDecorateFinalAnswerBudgetStopDoesNotPreserveRetainedContextScaffold(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
@@ -804,6 +840,42 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	}
 	if !strings.Contains(got, "did not retain a concrete user-facing finding") {
 		t.Errorf("fallback should identify the actual failure class: %q", got)
+	}
+}
+
+func TestSynthesizeBriefConversationFallbackAnswersFromMarkdownEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What is the role of evidence in this harness? Where does it come from and what is it used for?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 docs/idiom-strategic-thesis.md lines 1-320",
+		Output: strings.Join([]string{
+			"1:# Idiom Strategic Thesis",
+			"5:Idiom sells the missing substrate: repo memory, freshness, contracts, audit, and evals.",
+			"20:Idiom is the local, evidence-first coding-agent harness for teams that need agents to do real work in real repositories.",
+			"21:The model owns strategy; the harness owns contracts, repository memory, verification, auditability, and the learning loop.",
+			"146:The harness decides whether that action is allowed, whether evidence is fresh enough, and whether readiness is satisfied.",
+			"287:Task-scoped repository evidence feeds the runtime brief, including tools, editable paths, evidence paths, verification, and budget.",
+		}, "\n"),
+	}}
+
+	got := synthesizeBriefConversationFallback(brief, results)
+	if strings.HasPrefix(got, "<<QUESTION>>") {
+		t.Fatalf("answerable markdown evidence should synthesize an answer, got:\n%s", got)
+	}
+	for _, forbidden := range []string{"did not retain a concrete user-facing finding", "func ", "No files were changed"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("prose answer leaked forbidden fallback text %q:\n%s", forbidden, got)
+		}
+	}
+	for _, want := range []string{"docs/idiom-strategic-thesis.md", "evidence-first", "contracts", "runtime brief"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("prose answer missing %q:\n%s", want, got)
+		}
 	}
 }
 

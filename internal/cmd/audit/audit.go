@@ -1,4 +1,5 @@
 package audit
+
 import (
 	"bufio"
 	"cmp"
@@ -17,7 +18,7 @@ import (
 	"time"
 
 	"idiom/internal/auditenum"
-	"idiom/internal/cmdconfig"
+	"idiom/internal/cmd/config"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"

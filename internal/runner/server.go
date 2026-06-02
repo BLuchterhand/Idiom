@@ -129,15 +129,6 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// ServeListener is the testable variant of Start. Tests pass an
-// in-process net.Listener (e.g. via net.Pipe or a temp socket) and
-// the server uses it directly. Production code uses Start.
-func (s *Server) ServeListener(ln net.Listener) {
-	s.listener = ln
-	s.wg.Add(1)
-	go s.serve()
-}
-
 // Stop closes the listener and waits for in-flight handlers to
 // drain. Holders of slots see their connections closed; from their
 // perspective the daemon disappeared and they should retry. Stop is
@@ -158,11 +149,6 @@ func (s *Server) Stop() {
 		_ = os.Remove(s.socketPath)
 	}
 }
-
-// SocketPath reports the path the server is bound to. Mostly useful
-// for tests that bind to a temp directory and want to hand the path
-// to a client.
-func (s *Server) SocketPath() string { return s.socketPath }
 
 func (s *Server) serve() {
 	defer s.wg.Done()

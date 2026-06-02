@@ -6,10 +6,10 @@ import (
 	"os"
 	"path/filepath"
 
-	"idiom/internal/cmdconfig"
+	"idiom/internal/cmd/config"
 	localopscmd "idiom/internal/cmd/localops"
-	"idiom/internal/productevidence"
 	toolcmd "idiom/internal/cmd/tool"
+	"idiom/internal/productevidence"
 )
 
 var p98RequiredMCPParityReadinessFields = productevidence.P98RequiredMCPParityReadinessFields()

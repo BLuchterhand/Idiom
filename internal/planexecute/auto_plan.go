@@ -100,6 +100,10 @@ func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) [
 	return pending
 }
 
+func PlanExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
+	return planExecutePendingAutoExactEdits(root, edits)
+}
+
 func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
 	path := normalizePlanExecutePath(edit.Path)
 	if path == "" {
@@ -120,6 +124,10 @@ func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string
 	return status
 }
 
+func PlanExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
+	return planExecuteAutoExactEditStatus(root, edit)
+}
+
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	var b strings.Builder
@@ -134,6 +142,10 @@ func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func PlanExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
+	return planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
 }
 
 func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
@@ -155,8 +167,16 @@ func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []
 	return scoped
 }
 
+func PlanExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
+	return planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
+}
+
 func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
 	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredEditPaths)
+}
+
+func PlanExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
+	return planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths)
 }
 
 func planExecuteAutoPlanScanTexts(prompt string) []string {

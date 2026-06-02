@@ -8,32 +8,32 @@ import (
 func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 	t.Run("artifact final answer", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily(ArtifactFinalAnswerTaskFamily)
-		if spec.TaskFamily != ArtifactFinalAnswerTaskFamily || spec.Contract != "artifact_final_answer" {
+		if spec.TaskFamily != TaskFamilyArtifactFinalAnswer || spec.Contract != ContractArtifactFinalAnswer {
 			t.Fatalf("unexpected artifact final-answer contract: %#v", spec)
 		}
 		if spec.PermissionProfile != "conversation_only" {
 			t.Fatalf("permission = %q, want conversation_only", spec.PermissionProfile)
 		}
-		if !slices.Contains(spec.FinalCritic, "no_tool_calls") {
+		if !runtimeLabelContains(spec.FinalCritic, "no_tool_calls") {
 			t.Fatalf("artifact contract should require no tool calls, got %#v", spec.FinalCritic)
 		}
 	})
 
 	t.Run("artifact distiller", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily(ArtifactDistillerTaskFamily)
-		if spec.TaskFamily != ArtifactDistillerTaskFamily || spec.Contract != "edit_intent_distillation" {
+		if spec.TaskFamily != TaskFamilyArtifactDistiller || spec.Contract != ContractEditIntentDistill {
 			t.Fatalf("unexpected artifact distiller contract: %#v", spec)
 		}
 		if spec.PermissionProfile != "conversation_only" || spec.ToolProfile != CapabilityArtifactDistiller {
 			t.Fatalf("artifact distiller must be tool-free/no-write, got %#v", spec)
 		}
 		for _, want := range []string{"raw_output_parser_failure", "active_mutation_contract", "required_edit_scope"} {
-			if !slices.Contains(spec.RequiredEvidence, want) {
+			if !runtimeLabelContains(spec.RequiredEvidence, want) {
 				t.Fatalf("artifact distiller missing evidence %q in %#v", want, spec.RequiredEvidence)
 			}
 		}
 		for _, want := range []string{"outputs_only_edit_intent_or_typed_blocker", "no_tool_calls", "no_write_authority", "no_submit_plan"} {
-			if !slices.Contains(spec.FinalCritic, want) {
+			if !runtimeLabelContains(spec.FinalCritic, want) {
 				t.Fatalf("artifact distiller missing critic %q in %#v", want, spec.FinalCritic)
 			}
 		}
@@ -41,23 +41,23 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 
 	t.Run("conversation", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("conversation")
-		if spec.TaskFamily != "conversation" || spec.ToolProfile != CapabilityConversationReadOnly {
+		if spec.TaskFamily != TaskFamilyConversation || spec.ToolProfile != CapabilityConversationReadOnly {
 			t.Fatalf("unexpected conversation contract: %#v", spec)
 		}
 		if spec.PermissionProfile != "read_only_workspace" {
 			t.Fatalf("permission = %q, want read_only_workspace", spec.PermissionProfile)
 		}
 		if len(spec.ReadinessGate) != 0 ||
-			!slices.Contains(spec.FinalCritic, "answers_actual_user_request") ||
-			!slices.Contains(spec.FinalCritic, "well_formatted_informative_on_topic") ||
-			!slices.Contains(spec.SearchPolicy, "answer_from_visible_context_when_sufficient") {
+			!runtimeLabelContains(spec.FinalCritic, "answers_actual_user_request") ||
+			!runtimeLabelContains(spec.FinalCritic, "well_formatted_informative_on_topic") ||
+			!runtimeLabelContains(spec.SearchPolicy, "answer_from_visible_context_when_sufficient") {
 			t.Fatalf("expected conversation contract to be answer-oriented and efficient, got %#v", spec)
 		}
 	})
 
 	t.Run("direct question alias", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("direct_question")
-		if spec.TaskFamily != "conversation" || spec.Contract != "direct_answer" || spec.PermissionProfile != "read_only_workspace" {
+		if spec.TaskFamily != TaskFamilyConversation || spec.Contract != ContractDirectAnswer || spec.PermissionProfile != PermissionReadOnlyWorkspace {
 			t.Fatalf("direct_question should normalize to conversation contract, got %#v", spec)
 		}
 	})
@@ -80,25 +80,25 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		if len(spec.ReadinessGate) == 0 || len(spec.FinalCritic) == 0 {
 			t.Fatalf("expected implementation contract to keep readiness/final critic, got %#v", spec)
 		}
-		if !slices.Contains(spec.RequiredEvidence, requiredEvidenceGitHistoryRationale) {
+		if !runtimeLabelContains(spec.RequiredEvidence, string(requiredEvidenceGitHistoryRationale)) {
 			t.Fatalf("implementation must require git history rationale before writes, got %#v", spec.RequiredEvidence)
 		}
 		if !slices.Contains(spec.RequiredTools, requiredToolGitHistoryLookup) {
 			t.Fatalf("implementation must require history lookup before writes, got %#v", spec.RequiredTools)
 		}
 		for _, want := range []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported"} {
-			if !slices.Contains(spec.SearchPolicy, want) {
+			if !runtimeLabelContains(spec.SearchPolicy, want) {
 				t.Fatalf("expected implementation search policy to include %q, got %#v", want, spec.SearchPolicy)
 			}
 		}
-		if !slices.Contains(spec.SearchPolicy, "history_required_before_writes") {
+		if !runtimeLabelContains(spec.SearchPolicy, "history_required_before_writes") {
 			t.Fatalf("expected implementation search policy to require history before writes, got %#v", spec.SearchPolicy)
 		}
 	})
 
 	t.Run("unknown family", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("unknown_family")
-		if spec.TaskFamily != "conversation" || spec.Contract != "direct_answer" {
+		if spec.TaskFamily != TaskFamilyConversation || spec.Contract != ContractDirectAnswer {
 			t.Fatalf("unexpected unknown-family fallback: %#v", spec)
 		}
 		if spec.PermissionProfile != "read_only_workspace" {
@@ -113,7 +113,7 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		// post-mutation gate cleanly.
 		for _, family := range []string{"docs_edit", "prompt_edit_security"} {
 			spec := RuntimeContractForTaskFamily(family)
-			if spec.VerificationContract != "not_required_for_text_mutations" {
+			if spec.VerificationContract != VerificationNotRequiredTextMutation {
 				t.Errorf("%s VerificationContract = %q, want not_required_for_text_mutations", family, spec.VerificationContract)
 			}
 		}
@@ -121,11 +121,20 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		// Code-producing families keep the verification requirement.
 		for _, family := range []string{"implementation", "test_authoring", "config_edit", "script_edit", "gdscript_edit", "failure_injection"} {
 			spec := RuntimeContractForTaskFamily(family)
-			if spec.VerificationContract != "tests_passed_or_failed_or_skipped_with_blocker" {
+			if spec.VerificationContract != VerificationTestsPassedFailedSkipped {
 				t.Errorf("%s VerificationContract = %q, want tests_passed_or_failed_or_skipped_with_blocker", family, spec.VerificationContract)
 			}
 		}
 	})
+}
+
+func runtimeLabelContains[T ~string](values []T, want string) bool {
+	for _, value := range values {
+		if string(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestRuntimeBriefForTaskFamilyFiltersAllowedToolsByProfile(t *testing.T) {

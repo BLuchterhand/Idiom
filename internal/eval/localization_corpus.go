@@ -536,10 +536,6 @@ func EvaluateLocalizationCorpusWithOptions(corpus LocalizationCorpus, root strin
 	return report
 }
 
-func EvaluateLocalizationCorpusFile(path string, root string) (LocalizationCorpusReport, error) {
-	return EvaluateLocalizationCorpusFileWithOptions(path, root, DefaultLocalizationBenchmarkOptions())
-}
-
 func EvaluateLocalizationCorpusFileWithOptions(path string, root string, options LocalizationBenchmarkOptions) (LocalizationCorpusReport, error) {
 	corpus, err := ReadLocalizationCorpus(path)
 	if err != nil {

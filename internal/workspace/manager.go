@@ -248,6 +248,8 @@ type ToolResult struct {
 	Error         string
 	PrecisionTier string             `json:"precision_tier,omitempty"`
 	Relationships []ToolRelationship `json:"relationships,omitempty"`
+	PayloadType   string             `json:"payload_type,omitempty"`
+	Payload       json.RawMessage    `json:"payload,omitempty"`
 }
 
 type ToolRelationship struct {

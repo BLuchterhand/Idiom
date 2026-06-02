@@ -259,8 +259,8 @@ func (s *runnerExecutionState) shouldConsumeDiscoveryBeforeMoreBroadDiscovery(re
 	if s == nil || !s.pendingDiscoveryConsumption {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") ||
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") ||
+	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) ||
+		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) ||
 		runnerBriefRequiresMutation(brief) ||
 		runnerVerificationRequired(brief) {
 		return false

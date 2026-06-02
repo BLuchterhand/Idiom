@@ -107,7 +107,30 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 		if tool == "task" {
+			if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+				sourcePaths := readOnlySourceLikePaths(packet.SourceBodyPaths, 8)
+				for _, path := range sourcePaths {
+					ledger.addItem(readOnlyEvidenceItem{
+						Kind:    readOnlyEvidenceSourceBody,
+						Tool:    tool,
+						Path:    path,
+						Summary: strings.TrimSpace(result.Summary),
+					})
+				}
+				ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
+				ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
+				if readOnlyEvidencePacketAnswerable(packet) {
+					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
+				}
+				ledger.CandidatePaths = mergeRunnerStateStrings(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths)
+				continue
+			}
 			sourcePaths := readOnlySourceLikePaths(sourceBodyEvidencePathsFromDelegatedPacket(result.Output), 8)
+			inspectedPathFallback := false
+			if len(sourcePaths) == 0 && delegatedTaskOutputHasFindingEvidence(result.Output) {
+				sourcePaths = readOnlySourceLikePaths(groundedChildPacketEvidencePaths(ledger.Objective, result.Output), 8)
+				inspectedPathFallback = len(sourcePaths) > 0
+			}
 			sourceBodyText := sanitizeDelegatedReadOnlyResultOutput(result)
 			for _, path := range sourcePaths {
 				ledger.addItem(readOnlyEvidenceItem{
@@ -119,6 +142,9 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				if sourceBodyHasStrongObjectiveToken(sourceBodyText, ledger.Objective) {
 					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, []string{path})
 				}
+			}
+			if inspectedPathFallback {
+				ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
 			}
 			ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
 			ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
@@ -182,6 +208,37 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results))
 	ledger.markRelevantSourceBodies(namedTargets)
 	return ledger
+}
+
+func delegatedTaskOutputHasFindingEvidence(output string) bool {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return false
+	}
+	lower := strings.ToLower(output)
+	if containsAny(lower,
+		"redirected to ",
+		"try: {\"tool\":",
+		"retry your original request and it will execute",
+	) {
+		return false
+	}
+	return containsAny(lower,
+		"grounded answer",
+		"core files:",
+		"primary files:",
+		"verified context:",
+		"inspected paths:",
+		"evidence used:",
+		"important flow:",
+		"key findings:",
+		"\n- read ",
+		"\n- found ",
+		"\n- located ",
+		"\n- calls ",
+		"\n- uses ",
+		"\n- references ",
+	)
 }
 
 func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
@@ -254,6 +311,9 @@ func (l readOnlyAnswerabilityLedger) sourceBodyPathRelevant(path string, candida
 		return true
 	}
 	if implementationSourcePathOverlapsObjective(path, l.Objective) || sourceEvidencePathSharesObjectiveTerm(path, l.Objective) {
+		return true
+	}
+	if readOnlyAnalysisPathMatchesObjectiveAlias(path, l.Objective) {
 		return true
 	}
 	return !fromTaskPacket && len(candidateSet) == 0 && len(namedSet) == 0 && !l.directConversationWithoutObjective()
@@ -428,8 +488,8 @@ func (l readOnlyAnswerabilityLedger) Answerable() bool {
 }
 
 func (l readOnlyAnswerabilityLedger) directConversationWithoutObjective() bool {
-	return strings.EqualFold(strings.TrimSpace(l.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(l.Contract), "direct_answer") &&
+	return workerruntime.TaskFamilyIsConversation(l.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(l.Contract) &&
 		strings.TrimSpace(l.Objective) == ""
 }
 
@@ -549,7 +609,7 @@ func readOnlyFallbackNeedsAnswerableEvidence(brief workerruntime.WorkerRuntimeBr
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
 	return isDeterministicFallbackAnswer(answer) ||

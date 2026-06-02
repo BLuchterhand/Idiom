@@ -155,6 +155,7 @@ func (r *Runner) Run(
 	delegatedReadOnlyAnswerReady := slices.Contains(r.RuntimeBrief.Constraints, "answer_readiness_reached")
 	delegatedReadOnlyPostReadyFollowups := 0
 	delegatedReadOnlyDiminishingNudgeStage := 0
+	postReadinessAllowedFollowups := 0
 	postChildPacketActive := false
 	postChildFollowupReads := 0
 	postChildDiminishingNudgeStage := 0
@@ -242,7 +243,7 @@ func (r *Runner) Run(
 		} else {
 			releaseHiddenTools(turnHiddenTools, implementationScopedHiddenTools)
 		}
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "read_only_verification_shell") && !executionState.verificationAttempted {
+		if workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) && !executionState.verificationAttempted {
 			filtered := make([]string, 0, 1)
 			for _, t := range allowed {
 				if t == "shell" {
@@ -307,12 +308,12 @@ func (r *Runner) Run(
 			allowed = filtered
 		}
 		var tools []llama.Tool
-		if len(allowed) > 0 || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
+		if len(allowed) > 0 || !workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile) {
 			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
 			// Conversation and read-only lanes may expose a harness-owned note
 			// tool. It writes only scratch metadata under .idiom/notes and is
 			// synchronized from the final schema into currentAllowedTools below.
-			if !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") &&
+			if !workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) &&
 				r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
 				tools = append(tools, noteToolDefinition())
 				if !slices.Contains(r.RuntimeBrief.AllowedTools, noteToolName) {
@@ -687,6 +688,9 @@ func (r *Runner) Run(
 			}
 			if answer, ok := r.modelErrorAfterReadOnlyEvidenceAnswer(err, collectedResults); ok {
 				r.emitEvent(RunEvent{Role: "model_error_after_grounded_evidence", Content: "model transport failed after grounded read-only evidence was collected; returning deterministic evidence fallback"})
+				if closeout, closeoutOK := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); closeoutOK {
+					answer = closeout
+				}
 				return finish(answer, nil, "model_error_after_grounded_evidence", false)
 			}
 			return finish("", err, "model_error", false)
@@ -1007,6 +1011,10 @@ func (r *Runner) Run(
 					r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
 				}
 				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
+					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						emitAcceptedAnswerSignalsOnce(answer)
+						return finish(answer, nil, "host_read_only_closeout", true)
+					}
 					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
 					blockerKind := r.completionGateRepeatedBlockerKind(collectedResults)
 					emitCompletionStatus("blocked", blockerKind, blockerKind, collectedResults, true)
@@ -1613,7 +1621,23 @@ func (r *Runner) Run(
 		historyRedirectAllowedTools := append(append([]string(nil), surfaceAllowedTools...), "history_range", "history_symbol")
 		if summary, errorText, reject := currentToolSurfaceRejection(req, surfaceAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
 			redirected := false
-			if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
+			if planThenExecuteUnscopedEmptySubmitPlanAttempt(r.RuntimeBrief, req) {
+				result := workspace.ToolResult{
+					Tool:    "submit_plan",
+					Code:    workspace.SubmitPlanEmptyEditsCode,
+					Summary: "submit_plan rejected",
+					Error:   "submit_plan requires at least one edit in the edits array",
+				}
+				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+				prompt := RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
+				refreshPlanThenExecuteTerminalSurface("submit_plan_rejected")
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+				rebuildTools()
+				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+				syncPlanThenExecuteRecoveryAllowedTools()
+				r.emitEvent(RunEvent{Role: "plan_then_execute_empty_submit_plan_recovery", Content: prompt})
+				continue
+			} else if redirectedReq, redirectedRaw, ok := r.submitPlanBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
 				submitReq := req
 				deferredGitHistorySubmitPlan = &submitReq
 				deferredGitHistorySubmitPlanRaw = raw
@@ -2013,6 +2037,10 @@ func (r *Runner) Run(
 					// User approved — reset the streak and let this call execute.
 					requestBudget.fingerprint.identicalRun = 0
 				} else {
+					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						emitAcceptedAnswerSignalsOnce(answer)
+						return finish(answer, nil, "host_read_only_closeout", true)
+					}
 					// User denied — feed a blocker result, then force a
 					// no-tools closeout from gathered evidence. Returning the
 					// raw rejectTool result can produce an empty final answer
@@ -2039,6 +2067,10 @@ func (r *Runner) Run(
 				)
 				if !done {
 					answer, err = controller.completeWithoutMoreToolsWithReason(doomLoopForcedCloseoutPrompt(req, identicalCallRun))
+				}
+				if closeout, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					emitAcceptedAnswerSignalsOnce(closeout)
+					return finish(closeout, nil, "host_read_only_closeout", true)
 				}
 				return finish(answer, err, "doom_loop_guard", true)
 			}
@@ -2095,8 +2127,21 @@ func (r *Runner) Run(
 		if scope := postReadinessGapScopeForBrief(r.agentName(), delegatedReadOnlyAnswerReady, postChildPacketActive, req, r.RuntimeBrief); scope != "" {
 			if gap := postReadinessGap(req); gap == "" {
 				if postReadinessRequestSelfDescribesExactProbe(req, collectedResults) {
+					if postReadinessAllowedFollowups >= postReadinessProbeBudget {
+						if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+							emitAcceptedAnswerSignalsOnce(answer)
+							return finish(answer, nil, "host_read_only_closeout", true)
+						}
+					}
 					r.emitPostReadinessGapDeclared(scope, req)
+					postReadinessAllowedFollowups++
 				} else {
+					if postReadinessAllowedFollowups > 0 || postReadinessReadFileAlreadyCovered(req, collectedResults) {
+						if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+							emitAcceptedAnswerSignalsOnce(answer)
+							return finish(answer, nil, "host_read_only_closeout", true)
+						}
+					}
 					requestBudget.postReadinessNoGapRejections++
 					// First miss explains the contract; repeated misses close
 					// the loop by forcing an answer from gathered evidence.
@@ -2104,6 +2149,10 @@ func (r *Runner) Run(
 					answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
 					if done {
 						return finish(answer, err, "post_readiness_gap_required", true)
+					}
+					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						emitAcceptedAnswerSignalsOnce(answer)
+						return finish(answer, nil, "host_read_only_closeout", true)
 					}
 					if requestBudget.postReadinessNoGapRejections >= 2 {
 						answer, err := controller.completeWithoutMoreToolsWithReason("Repeated post-readiness follow-up requests omitted `named_gap` and `why_not_answering`. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
@@ -2118,6 +2167,10 @@ func (r *Runner) Run(
 				if done {
 					return finish(answer, err, "post_readiness_gap_invalid", true)
 				}
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					emitAcceptedAnswerSignalsOnce(answer)
+					return finish(answer, nil, "host_read_only_closeout", true)
+				}
 				if requestBudget.postReadinessInvalidGapRejections >= 2 {
 					answer, err := controller.completeWithoutMoreToolsWithReason("Repeated post-readiness follow-up requests failed the exact-probe contract. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 					return finish(answer, err, "post_readiness_gap_invalid_budget_exhausted", true)
@@ -2125,6 +2178,7 @@ func (r *Runner) Run(
 				continue
 			}
 			r.emitPostReadinessGapDeclared(scope, req)
+			postReadinessAllowedFollowups++
 		}
 		if prompt, ok := closureSynthesisAfterIgnoredNudgePrompt(
 			r.agentName(),
@@ -2518,9 +2572,10 @@ func (r *Runner) Run(
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
 			if strings.TrimSpace(result.Error) == "" &&
-				strings.TrimSpace(r.RuntimeBrief.Contract) == "architecture_assessment" &&
+				workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract) &&
 				!runnerBriefRequiresMutation(r.RuntimeBrief) {
-				if answer, ok := synthesizeDelegatedReadOnlyAnswer(r.RuntimeBrief.Objective, collectedResults); ok {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					emitAcceptedAnswerSignalsOnce(answer)
 					return finish(answer, nil, "child_packet_synthesized_answer", false)
 				}
 			}
@@ -4294,14 +4349,14 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 		readiness.ReadyToAnswer = false
 		readiness.ReadyToVerify = true
 		addOpen("verification_result_missing")
-	} else if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") &&
+	} else if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) &&
 		readOnlyLedger.Answerable() {
 		readiness.ReadyToAnswer = true
 		addClosed("read_only_evidence_ready")
 		readiness.FurtherReadsRequire = "one exact missing claim and one exact bounded probe"
-	} else if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	} else if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
+		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		if len(readOnlyLedger.CandidatePaths) > 0 {
 			addOpen("read_only_source_body_evidence_pending")
 			readiness.FurtherReadsRequire = "one source-body read from a localized candidate, or one exact missing claim and bounded probe"
@@ -5121,7 +5176,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 		Result:                    result,
 		Constraints:               runnerGuidanceConstraints(agent, brief, results),
 		DeclarationMovesForbidden: declarationMovesForbidden,
-		Objective:                 brief.Objective,
+		EvidenceIntent:            brief.EvidenceIntent,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
 	})
 	state := runnerNextActionState{
@@ -5208,7 +5263,7 @@ func buildRunnerFailureFeedbackPacketWithAllowedTools(agent string, step int, re
 		EvidencePaths:             state.EvidencePaths,
 		Constraints:               state.Constraints,
 		DeclarationMovesForbidden: declarationMovesForbidden,
-		Objective:                 brief.Objective,
+		EvidenceIntent:            brief.EvidenceIntent,
 		WriteCapable:              runnerHasWorkspaceWriteCapability(brief, brief.AllowedTools),
 	})
 	if scratchpadFailedEvidenceFeedbackApplies(brief, req, result, results) {
@@ -5542,6 +5597,12 @@ func postChildPacketClosureReadyWithBrief(brief workerruntime.WorkerRuntimeBrief
 func postChildReadOnlyPacketAvailable(results []workspace.ToolResult) bool {
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			if readOnlyEvidencePacketAnswerable(packet) {
+				return true
+			}
 			continue
 		}
 		if childPacketContainsGroundedAnswerEvidence("", result.Output) {
@@ -6182,6 +6243,10 @@ func promptEvidencePathsFromToolResults(results []workspace.ToolResult, max int)
 	}
 	paths := make([]string, 0, max*2)
 	directPaths := directProbePathsFromToolResults(results, max)
+	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+		paths = append(paths, packet.SourceBodyPaths...)
+		paths = append(paths, packet.InspectedPaths...)
+	}
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*6)...)
@@ -6251,6 +6316,12 @@ func postChildClosureEvidencePaths(objective string, results []workspace.ToolRes
 	paths := make([]string, 0, max)
 	for _, result := range results {
 		if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			paths = append(paths, packet.SourceBodyPaths...)
+			paths = append(paths, packet.InspectedPaths...)
+			paths = append(paths, packet.CandidatePaths...)
 			continue
 		}
 		paths = append(paths, sourceBodyEvidencePathsFromDelegatedPacket(result.Output)...)
@@ -6347,7 +6418,7 @@ func postReadinessRequestSelfDescribesExactProbe(req workspace.ToolRequest, resu
 	case "code_navigate", "read_only_capability":
 		capability := strings.TrimSpace(util.FirstNonEmpty(req.Capability, req.Operation))
 		switch capability {
-		case "read_symbol", "extract_body", "find_definition":
+		case "read_symbol", "extract_body", "find_definition", "find_references":
 		default:
 			return false
 		}
@@ -6355,17 +6426,7 @@ func postReadinessRequestSelfDescribesExactProbe(req workspace.ToolRequest, resu
 			return false
 		}
 	case "read_file":
-		if req.StartLine <= 0 || req.EndLine < req.StartLine {
-			return false
-		}
-		if req.EndLine-req.StartLine+1 > 120 {
-			return false
-		}
-		for _, readRange := range readRangesForPathFromResults(results, path) {
-			if planThenExecuteRequestedRangeCoveredByRead(req.StartLine, req.EndLine, readRange) {
-				return false
-			}
-		}
+		return false
 	default:
 		if !isClosureExactProbeTool(tool) {
 			return false
@@ -6383,6 +6444,40 @@ func postReadinessRequestSelfDescribesExactProbe(req workspace.ToolRequest, resu
 	}
 	for _, evidencePath := range evidencePaths {
 		if normalizeDelegatedDiscoveryEvidencePath(evidencePath) == path {
+			return true
+		}
+	}
+	return false
+}
+
+func postReadinessReadFileAlreadyCovered(req workspace.ToolRequest, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(req.Tool) != "read_file" {
+		return false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" {
+		return false
+	}
+	ranges := readRangesForPathFromResults(results, path)
+	if len(ranges) == 0 {
+		return false
+	}
+	if req.StartLine > 0 || req.EndLine > 0 {
+		if req.StartLine <= 0 || req.EndLine < req.StartLine {
+			return false
+		}
+		for _, readRange := range ranges {
+			if readRange.total > 0 && (req.StartLine > readRange.total || req.EndLine > readRange.total) {
+				continue
+			}
+			if planThenExecuteRequestedRangeCoveredByRead(req.StartLine, req.EndLine, readRange) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, readRange := range ranges {
+		if readRange.start <= 1 && readRange.total > 0 && readRange.end >= readRange.total {
 			return true
 		}
 	}
@@ -6883,12 +6978,10 @@ func readOnlyAnswerReadyNudge(objective string, results []workspace.ToolResult, 
 }
 
 func postReadinessProbeBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) int {
-	switch strings.TrimSpace(brief.Contract) {
-	case "architecture_assessment", "review_findings":
+	if workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
 		return 1
-	default:
-		return delegatedReadOnlyProbeBudget
 	}
+	return delegatedReadOnlyProbeBudget
 }
 
 // postReadinessContinuationContract returns the generic block that discloses,
@@ -7116,6 +7209,11 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 
 func delegatedClosureEvidencePaths(objective string, results []workspace.ToolResult, max int) []string {
 	paths := make([]string, 0, max*2)
+	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+		paths = append(paths, packet.SourceBodyPaths...)
+		paths = append(paths, packet.InspectedPaths...)
+		paths = append(paths, packet.CandidatePaths...)
+	}
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*4)...)
@@ -7261,7 +7359,7 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{}, false
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return workspace.ToolResult{}, false
 	}
 	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
@@ -7298,7 +7396,7 @@ func (r *Runner) readOnlyNonSubstantiveCompletionRejection(reply string, results
 		return workspace.ToolResult{}, false
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return workspace.ToolResult{}, false
 	}
 	if !genericReadOnlyAnswerEvidenceReady(brief, results) {
@@ -7420,7 +7518,7 @@ func (r *Runner) readOnlySearchHitInventoryCompletionRejection(reply string, res
 		return workspace.ToolResult{}, false
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return workspace.ToolResult{}, false
 	}
 	// A tool-result transcript answer is garbage regardless of
@@ -7903,8 +8001,8 @@ func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult
 	brief.ToolManifest = runnerSanitizedToolManifest([]string{"submit_plan"})
 	brief.Constraints = mergeRunnerStateStrings(brief.Constraints, []string{"plan_then_execute_submit_plan_ready", "required_edit_paths_define_write_scope", "planner_owned_verification"})
 	brief.SearchPolicy = []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"}
-	brief.ReadinessGate = mergeRunnerStateStrings([]string{"submit_plan_or_source_satisfied_or_blocker_reported"}, brief.ReadinessGate)
-	brief.StopConditions = mergeRunnerStateStrings([]string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"}, brief.StopConditions)
+	brief.ReadinessGate = mergeRunnerStateStrings([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, brief.ReadinessGate)
+	brief.StopConditions = mergeRunnerStateStrings([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, brief.StopConditions)
 	brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"}
 	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
 	return workerruntime.NormalizeRuntimeBrief(brief)
@@ -8475,7 +8573,7 @@ func (r *Runner) sourceGroundingRejectionReason(answer string, results []workspa
 		return ""
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return ""
 	}
 	if !sourceGroundingGateApplies(brief) {
@@ -8588,12 +8686,10 @@ func sourceGroundingMentionedPaths(answer string) []string {
 }
 
 func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-	family := strings.TrimSpace(brief.TaskFamily)
-	contract := strings.TrimSpace(brief.Contract)
-	if strings.EqualFold(family, "conversation") && strings.EqualFold(contract, "direct_answer") {
+	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) && workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return true
 	}
 	lowerObjective := strings.ToLower(strings.Join(strings.Fields(brief.Objective), " "))
@@ -9547,7 +9643,7 @@ func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.To
 		return ""
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return ""
 	}
 	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
@@ -10231,6 +10327,9 @@ func (r *Runner) salvageVisibleToolRequestFromProse(reply string, results []work
 	if req, raw, ok := parseVisibleLineToolRequest(trimmed); ok && r.safeVisibleToolRequest(req, results) {
 		return req, raw, true
 	}
+	if req, raw, ok := parseMalformedVisibleReadOnlyToolJSONPrefix(trimmed); ok && r.safeVisibleToolRequest(req, results) {
+		return req, raw, true
+	}
 	start, end, ok := firstToolRequestShapedJSONObjectSpan(trimmed)
 	if !ok {
 		return workspace.ToolRequest{}, "", false
@@ -10253,6 +10352,92 @@ func (r *Runner) salvageVisibleToolRequestFromProse(reply string, results []work
 		return req, parsedRaw, true
 	}
 	return workspace.ToolRequest{}, "", false
+}
+
+func parseMalformedVisibleReadOnlyToolJSONPrefix(text string) (workspace.ToolRequest, string, bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	if _, _, ok := firstToolRequestShapedJSONObjectSpan(text); ok {
+		return workspace.ToolRequest{}, "", false
+	}
+	start := strings.Index(text, "{")
+	if start < 0 || markdownFenceOpenBefore(text, start) {
+		return workspace.ToolRequest{}, "", false
+	}
+	candidate := text[start:]
+	if !strings.Contains(candidate, `"tool"`) {
+		return workspace.ToolRequest{}, "", false
+	}
+	req := workspace.ToolRequest{
+		Tool:            firstJSONLikeStringField(candidate, "tool"),
+		Path:            firstJSONLikeStringField(candidate, "path"),
+		Pattern:         firstJSONLikeStringField(candidate, "pattern"),
+		Query:           firstJSONLikeStringField(candidate, "query"),
+		Glob:            firstJSONLikeStringField(candidate, "glob"),
+		Capability:      firstJSONLikeStringField(candidate, "capability"),
+		NamedGap:        firstJSONLikeStringField(candidate, "named_gap"),
+		WhyNotAnswering: firstJSONLikeStringField(candidate, "why_not_answering"),
+		Symbol:          firstJSONLikeStringField(candidate, "symbol"),
+	}
+	if v, ok := firstJSONLikeIntField(candidate, "start_line"); ok {
+		req.StartLine = v
+	}
+	if v, ok := firstJSONLikeIntField(candidate, "end_line"); ok {
+		req.EndLine = v
+	}
+	if v, ok := firstJSONLikeIntField(candidate, "limit"); ok {
+		req.Limit = v
+	}
+	if v, ok := firstJSONLikeIntField(candidate, "budget_tokens"); ok {
+		req.BudgetTokens = v
+	}
+	if strings.TrimSpace(req.Tool) == "" {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !malformedVisibleReadOnlyToolCanSalvage(req.Tool) {
+		return workspace.ToolRequest{}, "", false
+	}
+	raw := marshalToolRequestRaw(req)
+	return req, raw, true
+}
+
+func malformedVisibleReadOnlyToolCanSalvage(tool string) bool {
+	switch strings.TrimSpace(tool) {
+	case "read_file":
+		return true
+	case "search_content", "search_files", "context_pack", "context_query", "context_zoom", "discovery_query", "structural_search", "file_stats", "code_navigate":
+		return true
+	default:
+		return false
+	}
+}
+
+func firstJSONLikeStringField(text string, key string) string {
+	pattern := regexp.MustCompile(`(?s)"` + regexp.QuoteMeta(key) + `"\s*:\s*"((?:\\.|[^"\\])*)"`)
+	match := pattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return ""
+	}
+	decoded, err := strconv.Unquote(`"` + match[1] + `"`)
+	if err != nil {
+		return strings.TrimSpace(match[1])
+	}
+	return strings.TrimSpace(decoded)
+}
+
+func firstJSONLikeIntField(text string, key string) (int, bool) {
+	pattern := regexp.MustCompile(`(?s)"` + regexp.QuoteMeta(key) + `"\s*:\s*"?([0-9]+)"?`)
+	match := pattern.FindStringSubmatch(text)
+	if len(match) != 2 {
+		return 0, false
+	}
+	value, err := strconv.Atoi(match[1])
+	if err != nil {
+		return 0, false
+	}
+	return value, true
 }
 
 func (r *Runner) explicitVisibleToolJSONRecoveryAllowed(text string, fields map[string]json.RawMessage, results []workspace.ToolResult) bool {
@@ -10567,6 +10752,14 @@ func (r *Runner) safeReasoningToolRequest(req workspace.ToolRequest, results []w
 		return strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Glob) != ""
 	case "context_pack":
 		return strings.TrimSpace(req.Task) != "" && !contextPackUnavailableForRecovery(results)
+	case "context_query":
+		return strings.TrimSpace(req.Query) != ""
+	case "context_zoom":
+		return strings.TrimSpace(req.Handle) != ""
+	case "discovery_query":
+		return strings.TrimSpace(util.FirstNonEmpty(req.Purpose, req.Query, req.Pattern, req.Path)) != ""
+	case "structural_search":
+		return strings.TrimSpace(req.Pattern) != ""
 	case "code_navigate":
 		return visibleCodeNavigateCapability(req.Capability) &&
 			(strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Query) != "")
@@ -13313,10 +13506,205 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 	}
 	b.WriteString("\nMissing completion evidence: ")
 	b.WriteString(reason)
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		b.WriteString("\n\nRequired next evidence: state the supported concrete finding from the gathered source evidence, or name the exact missing claim and the one bounded probe that would resolve it.")
+	}
 	if plannerOwnsVerification(r.RuntimeBrief) && hasPendingVerificationAfterWrites(results, r.RuntimeBrief) {
 		b.WriteString("\n\nRequired next evidence: compiler-backed source-sanity or language diagnostics for source edits, one cheap non-build sanity check for non-source edits, or a concrete planner-owned verification blocker. `git diff --check` and generic source-sanity fallback are only patch hygiene for source edits.")
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult) (string, bool) {
+	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+		return "", false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) && !readOnlyExplanationGateApplies(r.RuntimeBrief) {
+		return "", false
+	}
+	closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
+	if !closure.Answerable() || !readOnlyHostCloseoutHasObjectiveRelevantEvidence(r.RuntimeBrief, results, closure.Evidence) {
+		return "", false
+	}
+	paths := readOnlyCloseoutEvidencePaths(r.RuntimeBrief, results, 12)
+	if len(paths) == 0 {
+		return "", false
+	}
+	if sourceBody, ok := presentableReadFileSourceAnswer(r.RuntimeBrief, results, runnerWorkspaceRoot(r)); ok {
+		return enrichHostReadOnlyCloseoutAnswer(r.RuntimeBrief.Objective, sourceBody, paths), true
+	}
+	if answer, ok := r.composedFinalAnswerFromEvidence(FinalAnswerDecorateInput{
+		Answer:     "",
+		StopReason: "host_read_only_closeout",
+		Brief:      r.RuntimeBrief,
+		Results:    results,
+		UserFacing: true,
+	}); ok {
+		return enrichHostReadOnlyCloseoutAnswer(r.RuntimeBrief.Objective, answer, paths), true
+	}
+	return fallbackHostReadOnlyCloseoutAnswer(r.RuntimeBrief.Objective, paths), true
+}
+
+func readOnlyHostCloseoutHasObjectiveRelevantEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, evidence readOnlyAnswerabilityLedger) bool {
+	if readOnlyAnalysisHasObjectiveRelevantSourceBody(brief, evidence) {
+		return true
+	}
+	objective := strings.ToLower(strings.TrimSpace(delegatedDisplayQuestion(brief.Objective)))
+	if objective == "" {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			for _, finding := range packet.Findings {
+				if textSharesObjectiveTerm(finding.Text, objective) {
+					return true
+				}
+			}
+		}
+		if strings.TrimSpace(result.Tool) == "task" {
+			if textSharesObjectiveTerm(stripDelegatedReadOnlyInternalPacket(result.Output), objective) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func textSharesObjectiveTerm(text string, objective string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	objective = strings.ToLower(strings.TrimSpace(objective))
+	if text == "" || objective == "" {
+		return false
+	}
+	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
+		term = singularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+		if len(term) < 4 {
+			continue
+		}
+		if strings.Contains(text, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func enrichHostReadOnlyCloseoutAnswer(objective string, answer string, paths []string) string {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return fallbackHostReadOnlyCloseoutAnswer(objective, paths)
+	}
+	var b strings.Builder
+	if question := delegatedDisplayQuestion(objective); question != "" && !strings.Contains(answer, question) {
+		b.WriteString("For the task `")
+		b.WriteString(question)
+		b.WriteString("`, ")
+		b.WriteString(lowercaseFirstSentence(answer))
+	} else {
+		b.WriteString(answer)
+	}
+	if len(paths) > 0 {
+		lower := strings.ToLower(b.String())
+		missingPath := false
+		for _, path := range limitRunnerStrings(paths, 4) {
+			if !strings.Contains(lower, strings.ToLower(path)) {
+				missingPath = true
+				break
+			}
+		}
+		if missingPath {
+			if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
+				b.WriteString(".")
+			}
+			b.WriteString(" Evidence paths: ")
+			b.WriteString(formatInlinePathList(paths, 4))
+			b.WriteString(".")
+		}
+	}
+	if aliases := normalizedObjectiveAliases(objective); len(aliases) > 0 {
+		b.WriteString(" Normalized task terms: ")
+		b.WriteString(strings.Join(aliases, ", "))
+		b.WriteString(".")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func fallbackHostReadOnlyCloseoutAnswer(objective string, paths []string) string {
+	question := delegatedDisplayQuestion(objective)
+	var b strings.Builder
+	if question != "" {
+		b.WriteString("For the task `")
+		b.WriteString(question)
+		b.WriteString("`, ")
+	} else {
+		b.WriteString("For this read-only task, ")
+	}
+	b.WriteString("the gathered evidence supports answering from ")
+	b.WriteString(formatInlinePathList(paths, 4))
+	b.WriteString(". The conclusion is bounded to these inspected or discovered anchors, and no workspace edits were made.")
+	if aliases := normalizedObjectiveAliases(objective); len(aliases) > 0 {
+		b.WriteString(" Normalized task terms: ")
+		b.WriteString(strings.Join(aliases, ", "))
+		b.WriteString(".")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func lowercaseFirstSentence(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	first := value[0]
+	if first >= 'A' && first <= 'Z' {
+		return string(first+'a'-'A') + value[1:]
+	}
+	return value
+}
+
+func normalizedObjectiveAliases(objective string) []string {
+	var aliases []string
+	for _, token := range strings.FieldsFunc(strings.ToLower(objective), func(r rune) bool {
+		return !((r >= 'a' && r <= 'z') || r == '-')
+	}) {
+		token = strings.Trim(token, "-")
+		if token == "" || !strings.Contains(token, "-") {
+			continue
+		}
+		alias := strings.ReplaceAll(token, "-", "")
+		if len(alias) < 5 || alias == token || slices.Contains(aliases, alias) {
+			continue
+		}
+		aliases = append(aliases, alias)
+		if len(aliases) >= 3 {
+			break
+		}
+	}
+	return aliases
+}
+
+func readOnlyCloseoutEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	paths := acceptedAnswerEvidencePaths("", results, brief)
+	paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResults(results, 24))
+	return closurePromptEvidencePaths(paths, max)
+}
+
+func mentionedEvidencePathsFromToolResults(results []workspace.ToolResult, max int) []string {
+	var paths []string
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) != "" && strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
+			continue
+		}
+		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Summary))
+		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Output))
+		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Error))
+		if len(paths) >= max {
+			break
+		}
+	}
+	return closurePromptEvidencePaths(paths, max)
 }
 
 // verificationContractSkipsGate reports whether the brief's
@@ -13339,38 +13727,30 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 // Adding a new "no verification needed" task family is now a one-line
 // catalog change instead of a runner patch.
 func verificationContractSkipsGate(contract string) bool {
-	c := strings.TrimSpace(contract)
-	if c == "" {
-		return false
-	}
-	if strings.HasPrefix(c, "not_required_for_") {
-		return true
-	}
-	return false
+	return workerruntime.VerificationContractSkipsGate(contract)
 }
 
 func readOnlyExplanationGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
 	contract := strings.TrimSpace(brief.Contract)
-	permission := strings.TrimSpace(brief.PermissionProfile)
+	readOnlyPermission := workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile)
 	family := strings.TrimSpace(brief.TaskFamily)
-	switch family {
-	case PlanThenExecuteReviewRepairTaskFamily:
+	if workerruntime.TaskFamilyIsPlanThenExecuteReview(family) {
 		return false
 	}
 	switch contract {
-	case "architecture_assessment":
-		return permission == "read_only_workspace" || family == "architecture"
-	case "review_findings":
-		return permission == "read_only_workspace" ||
+	case string(workerruntime.ContractArchitecture):
+		return readOnlyPermission || workerruntime.TaskFamilyIsArchitecture(family)
+	case string(workerruntime.ContractReviewFindings):
+		return readOnlyPermission ||
 			family == "review" ||
-			family == "security_review" ||
-			family == "performance_review"
+			family == string(workerruntime.TaskFamilySecurityReview) ||
+			family == string(workerruntime.TaskFamilyPerformanceReview)
 	}
-	if permission != "read_only_workspace" {
+	if !readOnlyPermission {
 		return false
 	}
 	switch family {
-	case "architecture", "review":
+	case string(workerruntime.TaskFamilyArchitecture), "review":
 		return true
 	default:
 		return false
@@ -15601,7 +15981,7 @@ func postChildReadBudgetForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return 3
 	}
-	if strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return 0
 	}
 	if runnerBriefThoroughness(brief) == "standard" {
@@ -16389,6 +16769,10 @@ func delegatedReadOnlySourceBodyEvidencePaths(results []workspace.ToolResult) []
 		if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Error) != "" {
 			continue
 		}
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			paths = append(paths, packet.SourceBodyPaths...)
+			continue
+		}
 		paths = append(paths, sourceBodyEvidencePathsFromDelegatedPacket(result.Output)...)
 	}
 	filtered := make([]string, 0, len(paths))
@@ -16596,20 +16980,26 @@ func augmentDelegatedReadOnlyPacket(answer string, objective string, results []w
 
 func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.ToolResult) (string, bool) {
 	useful := make([]workspace.ToolResult, 0, len(results))
+	answerabilityResults := make([]workspace.ToolResult, 0, len(results))
 	sanitizedResults := make([]workspace.ToolResult, 0, len(results))
 	for _, result := range results {
 		result = normalizeFallbackResult(result)
-		result.Output = sanitizeDelegatedReadOnlyResultOutput(result)
-		sanitizedResults = append(sanitizedResults, result)
-		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" || !isResultUsefulForFallback(result) {
+		answerabilityResults = append(answerabilityResults, result)
+		sanitizedResult := result
+		sanitizedResult.Output = sanitizeDelegatedReadOnlyResultOutput(result)
+		sanitizedResults = append(sanitizedResults, sanitizedResult)
+		if strings.TrimSpace(sanitizedResult.Error) != "" || strings.TrimSpace(sanitizedResult.Output) == "" || !isResultUsefulForFallback(sanitizedResult) {
 			continue
 		}
-		useful = append(useful, result)
+		useful = append(useful, sanitizedResult)
+	}
+	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, readOnlyEvidencePacketsFromResults(answerabilityResults)); ok {
+		return answer, true
 	}
 	answerability := readOnlyAnswerabilityForResults(workerruntime.WorkerRuntimeBrief{
 		Objective:         objective,
-		PermissionProfile: "read_only_workspace",
-	}, sanitizedResults)
+		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+	}, answerabilityResults)
 	sourceBodyPaths := answerability.RelevantSourceBodyPaths
 	if len(sourceBodyPaths) == 0 {
 		return "", false
@@ -17321,7 +17711,7 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		return
 	}
 	lane := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
-	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer")
+	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), string(workerruntime.ContractDirectAnswer))
 	evidencePaths := acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
 	if blockerKind, reason := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
 		r.emitEvent(marshalRunEvent("readiness_check", map[string]any{
@@ -17588,7 +17978,13 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 	}
 	if readOnlyExplanationGateApplies(brief) {
 		paths := mergeRunnerStateStrings(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
+		for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+			paths = mergeRunnerStateStrings(paths, packet.SourceBodyPaths, packet.InspectedPaths)
+		}
 		paths = mergeRunnerStateStrings(paths, delegatedReadOnlyInspectedImplementationPaths(results))
+		if len(paths) == 0 {
+			paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResults(results, 24))
+		}
 		paths = prioritizedClosureEvidencePaths(paths, results, 8)
 		paths = closurePromptEvidencePaths(paths, 8)
 		if len(paths) > 0 {
@@ -17596,6 +17992,9 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 		}
 	}
 	paths := mergeRunnerStateStrings(pinnedPathsFromToolResults(results, 8), pathparse.MentionedWorkspacePaths(answer))
+	for _, packet := range readOnlyEvidencePacketsFromResults(results) {
+		paths = mergeRunnerStateStrings(paths, packet.SourceBodyPaths, packet.InspectedPaths)
+	}
 	paths = delegatedDiscoveryAnswerEvidencePaths(brief.Objective, paths)
 	return closurePromptEvidencePaths(paths, 8)
 }
@@ -17707,7 +18106,7 @@ func (r *Runner) explorationDelegationNudge(readCallsSinceWrite int, results []w
 		minEvidenceResults = 1
 		threshold = 1
 	}
-	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
+	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
 		if hasConcreteReadOnlyInspectionEvidence(results) {
 			return ""
 		}
@@ -17727,7 +18126,7 @@ func prefersEarlyReadOnlyDelegation(brief workerruntime.WorkerRuntimeBrief) bool
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return false
 	}
 	for _, policy := range brief.SearchPolicy {
@@ -17773,14 +18172,14 @@ func (r *Runner) initialBootstrapInstruction() string {
 			"After any successful search hit, inspect that hit before doing another filename or content search.",
 			"Stop as soon as the delegated question is answered. Return concise grounded findings with inspected paths and confidence.",
 		}, "\n")
-	case family == "architecture" && strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "architecture_assessment"):
+	case workerruntime.TaskFamilyIsArchitecture(family) && workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract):
 		return strings.Join([]string{
 			"[architecture bootstrap]",
 			"Start broad architecture questions with delegated read-only discovery when the task tool is available.",
 			"The delegated packet should establish inspected paths, boundary evidence, confidence, and named gaps before local follow-up.",
 			"After a child packet, answer unless one exact missing claim needs one bounded probe.",
 		}, "\n")
-	case family == "verification_only" || strings.EqualFold(profile, "read_only_verification_shell"):
+	case workerruntime.TaskFamilyIsVerificationOnly(family) || workerruntime.PermissionProfileIsReadOnlyVerificationShell(profile):
 		cmd := "go test ./..."
 		if len(r.RuntimeBrief.VerificationPlan) > 0 && strings.TrimSpace(r.RuntimeBrief.VerificationPlan[0]) != "" {
 			cmd = strings.TrimSpace(r.RuntimeBrief.VerificationPlan[0])
@@ -17815,7 +18214,7 @@ func (r *Runner) verificationBootstrapRequest() (workspace.ToolRequest, bool) {
 	if r == nil {
 		return workspace.ToolRequest{}, false
 	}
-	if !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "read_only_verification_shell") {
+	if !workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) {
 		return workspace.ToolRequest{}, false
 	}
 	cmd := "go test ./..."
@@ -18648,7 +19047,7 @@ func (r *Runner) controlRails(messages []llama.ChatMessage) runnerControlRails {
 func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) runnerControlRails {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	allowedTools := []string(nil)
-	if strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "conversation_only") {
+	if workerruntime.PermissionProfileIsConversationOnly(brief.PermissionProfile) {
 		allowedTools = nil
 	} else if len(brief.AllowedTools) > 0 {
 		allowedTools = append([]string(nil), brief.AllowedTools...)
@@ -18667,15 +19066,15 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 	profile := strings.TrimSpace(brief.PermissionProfile)
 	if profile == "" {
 		if len(allowedTools) == 0 {
-			profile = "conversation_only"
+			profile = string(workerruntime.PermissionConversationOnly)
 		} else {
-			profile = "read_only_workspace"
+			profile = string(workerruntime.PermissionReadOnlyWorkspace)
 		}
 	}
 	rails := runnerControlRails{
 		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), r.agentName()),
-		Contract:             util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "direct_answer"),
-		TaskFamily:           util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "direct_answer"),
+		Contract:             util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractDirectAnswer)),
+		TaskFamily:           util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(workerruntime.TaskFamilyDirectAnswer)),
 		PermissionProfile:    profile,
 		RequiredEditPaths:    append([]string(nil), brief.RequiredEditPaths...),
 		RequiredEvidence:     append([]string(nil), brief.RequiredEvidence...),
@@ -18684,34 +19083,34 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 		ForbiddenTools:       append([]string(nil), brief.ForbiddenTools...),
 		ReadinessGate:        append([]string(nil), brief.ReadinessGate...),
 		SearchPolicy:         append([]string(nil), brief.SearchPolicy...),
-		VerificationContract: util.FirstNonEmpty(strings.TrimSpace(brief.VerificationContract), "not_required_for_conversation"),
+		VerificationContract: util.FirstNonEmpty(strings.TrimSpace(brief.VerificationContract), string(workerruntime.VerificationNotRequiredConversation)),
 		StopConditions:       append([]string(nil), brief.StopConditions...),
 		FinalCritic:          append([]string(nil), brief.FinalCritic...),
 		DynamicInstructions:  r.InstructionAttacher != nil,
 	}
 	if len(rails.RequiredEvidence) == 0 {
-		rails.RequiredEvidence = []string{"answer_addresses_user_request"}
+		rails.RequiredEvidence = []string{string(workerruntime.RequiredEvidenceAnswerAddressesUserRequest)}
 	}
 	if len(rails.StopConditions) == 0 {
-		rails.StopConditions = []string{"answered_user_request", "blocked_by_missing_information"}
+		rails.StopConditions = []string{string(workerruntime.StopAnsweredUserRequest), string(workerruntime.StopBlockedByMissingInformation)}
 	}
 	if runnerBriefRequiresMutation(brief) {
 		rails.Lane = util.FirstNonEmpty(strings.TrimSpace(brief.Lane), "main")
-		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "implementation_result")
-		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "implementation")
-		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "guarded_workspace_write")
+		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractImplementationResult))
+		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(workerruntime.TaskFamilyImplementation))
+		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionGuardedWorkspaceWrite))
 		if planThenExecutePlannerBrief(brief) {
-			rails.RequiredEvidence = mergeRunnerStateStrings([]string{"plan_submitted_or_source_satisfied_or_blocker"}, rails.RequiredEvidence)
+			rails.RequiredEvidence = mergeRunnerStateStrings([]string{string(workerruntime.RequiredEvidencePlanSubmittedOrSourceSatisfied)}, rails.RequiredEvidence)
 			rails.RequiredTools = mergeRunnerStateStrings([]string{"submit_plan"}, rails.RequiredTools)
 			rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "unbounded_write")
-			rails.ReadinessGate = mergeRunnerStateStrings([]string{"submit_plan_or_source_satisfied_or_blocker_reported"}, rails.ReadinessGate)
+			rails.ReadinessGate = mergeRunnerStateStrings([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, rails.ReadinessGate)
 			rails.SearchPolicy = mergeRunnerStateStrings([]string{"consume_target_packet_first", "trust_preloaded_current_state_anchors_for_scope_not_source_body", "required_existing_paths_need_source_body_before_submit_plan", "submit_plan_when_edit_set_is_supported", "source_satisfied_when_current_state_already_matches", "do_not_call_per_edit_writes"}, rails.SearchPolicy)
-			rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_text_mutations")
-			rails.StopConditions = mergeRunnerStateStrings([]string{"submit_plan_returned_ok_or_source_satisfied_or_blocker_reported", "blocked_by_missing_permission_or_information"}, rails.StopConditions)
+			rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationNotRequiredTextMutation))
+			rails.StopConditions = mergeRunnerStateStrings([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, rails.StopConditions)
 			rails.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"}
 			return rails
 		}
-		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{"changed_paths_or_noop_reason", "verification_status"})
+		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceChangedPathsOrNoopReason), string(workerruntime.RequiredEvidenceVerificationStatus)})
 		if implementationPreWriteToolSurfaceActive(brief, nil) {
 			rails.RequiredTools = []string{"edit_file_or_apply_patch"}
 		} else if implementationScopedEditSurfaceActive(brief, nil) {
@@ -18720,21 +19119,21 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 			rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"edit_file_or_apply_patch", "source_sanity_or_verification_shell"})
 		}
 		rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "unbounded_write")
-		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"changed_paths_reported", "verification_status_reported"})
+		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{string(workerruntime.ReadinessChangedPathsReported), string(workerruntime.ReadinessVerificationStatusReported)})
 		rails.SearchPolicy = defaultRunnerStateSlice(rails.SearchPolicy, []string{"consume_target_packet_first", "prefer_small_bounded_edits", "verify_changed_surface"})
-		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), "tests_passed_or_failed_or_skipped_with_blocker")
-		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{"change_verified", "blocked_with_failed_verification_or_scope"})
+		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationTestsPassedFailedSkipped))
+		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{string(workerruntime.StopChangeVerified), string(workerruntime.StopBlockedWithFailedVerificationOrScope)})
 		rails.FinalCritic = []string{"answers_actual_user_request", "changed_paths_reported", "verification_status_reported"}
 		return rails
 	}
 	if runnerAllowsTool(rails.AllowedTools, "shell") && !runnerHasWorkspaceWriteCapability(brief, rails.AllowedTools) && runnerVerificationRequired(brief) {
 		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "verification")
-		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), "grounded_explanation")
-		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), "read_only_verification_shell")
-		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{"verification_command", "pass_fail_status"})
+		rails.Contract = util.FirstNonEmpty(strings.TrimSpace(brief.Contract), string(workerruntime.ContractGroundedExplanation))
+		rails.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(brief.PermissionProfile), string(workerruntime.PermissionReadOnlyVerificationShell))
+		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceVerificationCommand), string(workerruntime.RequiredEvidencePassFailStatus)})
 		rails.RequiredTools = defaultRunnerStateSlice(rails.RequiredTools, []string{"shell"})
 		rails.ForbiddenTools = appendRunnerTools(rails.ForbiddenTools, "edit_file", "write_file", "append_file", "mkdir", "mutating_shell")
-		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"verification_status_reported"})
+		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{string(workerruntime.ReadinessVerificationStatusReported)})
 		rails.SearchPolicy = defaultRunnerStateSlice(rails.SearchPolicy, []string{"run_requested_check", "capture_failure_output", "do_not_edit"})
 		rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
 		return rails
@@ -18746,27 +19145,27 @@ func (r *Runner) controlRailsForBrief(brief workerruntime.WorkerRuntimeBrief) ru
 			rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
 		}
 	}
-	if rails.Contract == "architecture_assessment" {
+	if rails.Contract == string(workerruntime.ContractArchitecture) {
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"inspected_paths_reported", "architecture_boundary_evidence_supported_or_uncertainty_declared"})
 		if len(rails.FinalCritic) == 0 {
 			rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
 		}
 	}
-	if rails.Contract == "review_findings" {
+	if rails.Contract == string(workerruntime.ContractReviewFindings) {
 		rails.ReadinessGate = defaultRunnerStateSlice(rails.ReadinessGate, []string{"inspected_paths_reported", "bounded_findings_or_no_finding_supported"})
 		if len(rails.FinalCritic) == 0 {
 			rails.FinalCritic = []string{"answers_actual_user_request", "required_evidence_cited"}
 		}
 	}
-	if rails.Contract == "direct_answer" {
-		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), "direct_answer")
+	if rails.Contract == string(workerruntime.ContractDirectAnswer) {
+		rails.TaskFamily = util.FirstNonEmpty(strings.TrimSpace(brief.TaskFamily), string(workerruntime.TaskFamilyDirectAnswer))
 		if len(rails.AllowedTools) == 0 {
-			rails.PermissionProfile = "conversation_only"
+			rails.PermissionProfile = string(workerruntime.PermissionConversationOnly)
 			rails.ForbiddenTools = util.AppendUnique(rails.ForbiddenTools, "shell")
 		}
-		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{"answer_addresses_prompt"})
-		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), "not_required_for_read_only_lane")
-		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{"required_evidence_satisfied"})
+		rails.RequiredEvidence = defaultRunnerStateSlice(rails.RequiredEvidence, []string{string(workerruntime.RequiredEvidenceAnswerAddressesPrompt)})
+		rails.VerificationContract = util.FirstNonEmpty(strings.TrimSpace(rails.VerificationContract), string(workerruntime.VerificationNotRequiredReadOnlyLane))
+		rails.StopConditions = defaultRunnerStateSlice(rails.StopConditions, []string{string(workerruntime.StopRequiredEvidenceSatisfied)})
 		if runnerUsesSoftReadOnlyShapingOnly(brief, rails) {
 			rails.ReadinessGate = nil
 			rails.FinalCritic = nil
@@ -18787,14 +19186,14 @@ func runnerUsesSoftReadOnlyShapingOnly(brief workerruntime.WorkerRuntimeBrief, r
 		return false
 	}
 	switch strings.TrimSpace(rails.Contract) {
-	case "architecture_assessment", "review_findings":
+	case string(workerruntime.ContractArchitecture), string(workerruntime.ContractReviewFindings):
 		return false
 	}
 	if runnerVerificationRequired(brief) {
 		return false
 	}
 	switch strings.TrimSpace(rails.PermissionProfile) {
-	case "read_only_workspace":
+	case string(workerruntime.PermissionReadOnlyWorkspace):
 		return true
 	default:
 		return false
@@ -19224,7 +19623,7 @@ func shouldPreferDeterministicNoToolsAnswer(agentName string, brief workerruntim
 	if strings.HasPrefix(agentName, "child:") {
 		return true
 	}
-	return strings.TrimSpace(brief.PermissionProfile) == "read_only_workspace" &&
+	return workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
 		readOnlyClosureDecisionForResults(brief, results).Answerable()
 }
 
@@ -19265,7 +19664,7 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 	if strings.HasPrefix(agentName, "child:") {
 		return true
 	}
-	return strings.TrimSpace(brief.PermissionProfile) == "read_only_workspace" && postChildPacketClosureReadyWithBrief(brief, results)
+	return workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) && postChildPacketClosureReadyWithBrief(brief, results)
 }
 
 func runnerBriefAllowsExternalToolAppend(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -19274,7 +19673,7 @@ func runnerBriefAllowsExternalToolAppend(brief workerruntime.WorkerRuntimeBrief)
 		return false
 	}
 	switch strings.TrimSpace(brief.PermissionProfile) {
-	case "plan_submission_review", "read_only_verification_shell":
+	case string(workerruntime.PermissionPlanSubmissionReview), string(workerruntime.PermissionReadOnlyVerificationShell):
 		return false
 	}
 	switch strings.TrimSpace(brief.TaskFamily) {
@@ -19290,7 +19689,7 @@ func (r *Runner) advertisedAllowedTools(base []string) []string {
 		strings.TrimSpace(r.RuntimeBrief.Contract) == "artifact_final_answer" {
 		return nil
 	}
-	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
+	if workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile) {
 		// Even in conversation_only mode, expose project-defined external
 		// tools so the model can call host-registered discovery commands
 		// (e.g. project_search, api_access). Built-in mutating tools
@@ -19390,11 +19789,11 @@ func readOnlyEvidenceAvailableTerminalVisibleOutput(brief workerruntime.WorkerRu
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) || artifactFinalAnswerBrief(brief) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") ||
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) ||
+		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return false
 	}
 	return genericReadOnlyEvidenceReady(brief, results)
@@ -19402,13 +19801,13 @@ func readOnlyEvidenceAvailableTerminalVisibleOutput(brief workerruntime.WorkerRu
 
 func textOnlyMaxTokensForBrief(brief workerruntime.WorkerRuntimeBrief) int {
 	switch strings.TrimSpace(brief.Contract) {
-	case "artifact_final_answer":
+	case string(workerruntime.ContractArtifactFinalAnswer):
 		return 8192
-	case "direct_answer":
+	case string(workerruntime.ContractDirectAnswer):
 		return 1024
-	case "grounded_explanation", "grounded_evidence_summary", "locate_targets":
+	case string(workerruntime.ContractGroundedExplanation), string(workerruntime.ContractGroundedEvidence), string(workerruntime.ContractLocateTargets):
 		return 1536
-	case "architecture_assessment", "review_findings":
+	case string(workerruntime.ContractArchitecture), string(workerruntime.ContractReviewFindings):
 		return 2048
 	default:
 		return 768
@@ -20696,7 +21095,7 @@ func buildRejectionRecoveryNudge(req workspace.ToolRequest, results []workspace.
 }
 
 func verificationOnlyShellRecoveryNudge(in recoveryNudgeInputs) (string, bool) {
-	if !strings.EqualFold(strings.TrimSpace(in.brief.PermissionProfile), "read_only_verification_shell") {
+	if !workerruntime.PermissionProfileIsReadOnlyVerificationShell(in.brief.PermissionProfile) {
 		return "", false
 	}
 	cmd := "go test ./..."
@@ -21099,10 +21498,10 @@ func sanitizeFallbackResultOutput(result workspace.ToolResult) string {
 // lanes with no mutation obligations). The harness can verify structural
 // completeness but not whether the answer addresses the user's question.
 func conversationLaneWithoutSemanticEval(brief workerruntime.WorkerRuntimeBrief) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") {
+	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return true
 	}
 	return false
@@ -21276,17 +21675,17 @@ func looksLikeSourceEchoOnlyAnswer(answer string) bool {
 // a check that returns true when the obligation is met. Labels that
 // require semantic evaluation (e.g. answer_addresses_user_request) are
 // excluded — the harness cannot evaluate answer quality.
-var requiredEvidenceCheck = map[string]func(answer string, results []workspace.ToolResult) bool{
-	"target_location": func(answer string, results []workspace.ToolResult) bool {
+var requiredEvidenceCheck = map[workerruntime.EvidenceRequirementID]func(answer string, results []workspace.ToolResult) bool{
+	workerruntime.RequiredEvidenceTargetLocation: func(answer string, results []workspace.ToolResult) bool {
 		if len(pathparse.MentionedWorkspacePaths(answer)) > 0 {
 			return true
 		}
 		return len(changedPathsFromToolResults(results)) > 0
 	},
-	"changed_paths": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceChangedPaths: func(answer string, results []workspace.ToolResult) bool {
 		return len(changedPathsFromToolResults(results)) > 0
 	},
-	"changed_paths_or_noop_reason": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceChangedPathsOrNoopReason: func(answer string, results []workspace.ToolResult) bool {
 		if len(changedPathsFromToolResults(results)) > 0 {
 			return true
 		}
@@ -21296,7 +21695,7 @@ var requiredEvidenceCheck = map[string]func(answer string, results []workspace.T
 			strings.Contains(lower, "no changes") ||
 			strings.Contains(lower, "noop")
 	},
-	"verification_status": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceVerificationStatus: func(answer string, results []workspace.ToolResult) bool {
 		lower := strings.ToLower(answer)
 		if strings.Contains(lower, "verification:") ||
 			strings.Contains(lower, "tests passed") ||
@@ -21312,7 +21711,7 @@ var requiredEvidenceCheck = map[string]func(answer string, results []workspace.T
 		}
 		return false
 	},
-	"verification_command": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceVerificationCommand: func(answer string, results []workspace.ToolResult) bool {
 		for _, r := range results {
 			if isVerificationToolResult(r) {
 				return true
@@ -21320,20 +21719,20 @@ var requiredEvidenceCheck = map[string]func(answer string, results []workspace.T
 		}
 		return false
 	},
-	"pass_fail_status": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidencePassFailStatus: func(answer string, results []workspace.ToolResult) bool {
 		lower := strings.ToLower(answer)
 		return strings.Contains(lower, "pass") || strings.Contains(lower, "fail") ||
 			strings.Contains(lower, "error") || strings.Contains(lower, "exit code")
 	},
-	"plan_submitted_or_source_satisfied_or_blocker": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidencePlanSubmittedOrSourceSatisfied: func(answer string, results []workspace.ToolResult) bool {
 		return successfulSubmitPlanResultCount(results) > 0 ||
 			strings.Contains(strings.ToLower(answer), "source-satisfied") ||
 			strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>")
 	},
-	requiredEvidenceGitHistoryRationale: func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceGitHistoryRationale: func(answer string, results []workspace.ToolResult) bool {
 		return successfulGitHistoryEvidenceSeen(results) || answerHasGitHistoryNoopOrBlocker(answer)
 	},
-	"inspected_paths": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceInspectedPaths: func(answer string, results []workspace.ToolResult) bool {
 		if len(pathparse.MentionedWorkspacePaths(answer)) > 0 {
 			return true
 		}
@@ -21346,10 +21745,10 @@ var requiredEvidenceCheck = map[string]func(answer string, results []workspace.T
 		}
 		return false
 	},
-	"exact_workspace_path": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceExactWorkspacePath: func(answer string, results []workspace.ToolResult) bool {
 		return len(pathparse.MentionedWorkspacePaths(answer)) > 0
 	},
-	"artifact_body_or_typed_blocker": func(answer string, results []workspace.ToolResult) bool {
+	workerruntime.RequiredEvidenceArtifactBodyOrTypedBlocker: func(answer string, results []workspace.ToolResult) bool {
 		trimmed := strings.TrimSpace(answer)
 		return len(trimmed) > 40 || strings.HasPrefix(trimmed, "<<QUESTION>>")
 	},
@@ -21362,13 +21761,14 @@ var requiredEvidenceCheck = map[string]func(answer string, results []workspace.T
 func missingRequiredEvidence(evidence []string, answer string, results []workspace.ToolResult) []string {
 	var missing []string
 	for _, label := range evidence {
-		check, ok := requiredEvidenceCheck[label]
+		trimmed := strings.TrimSpace(label)
+		check, ok := requiredEvidenceCheck[workerruntime.EvidenceRequirementID(trimmed)]
 		if !ok {
 			// Non-deterministic label — skip (model guidance only)
 			continue
 		}
 		if !check(answer, results) {
-			missing = append(missing, label)
+			missing = append(missing, trimmed)
 		}
 	}
 	return missing

@@ -1,4 +1,5 @@
 package product
+
 import (
 	"bytes"
 	"encoding/json"
@@ -20,54 +21,6 @@ type briefLintReport = briefcmd.LintReport
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return runProductMainWithTelemetry(args, stdout, stderr, rec)
-}
-
-func RunLint(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductLint(args, stdout, stderr, rec)
-}
-
-func RunAudit(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductAudit(args, stdout, stderr, rec)
-}
-
-func RunEfforts(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductEfforts(args, stdout, stderr, rec)
-}
-
-func RunStatus(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductStatus(args, stdout, stderr, rec)
-}
-
-func RunStatusMigration(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductStatusMigration(args, stdout, stderr, rec)
-}
-
-func RunResearch(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductResearch(args, stdout, stderr, rec)
-}
-
-func RunPRD(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductPRD(args, stdout, stderr, rec)
-}
-
-func RunADR(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductADR(args, stdout, stderr, rec)
-}
-
-func RunTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductTDD(args, stdout, stderr, rec)
-}
-
-func RunBrief(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductBrief(args, stdout, stderr, rec)
-}
-
-func RunFeedback(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductFeedback(args, stdout, stderr, rec)
-}
-
-func RunValidateArtifact(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
-	return runProductValidateArtifact(args, stdout, stderr, rec)
 }
 
 func runProductMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {

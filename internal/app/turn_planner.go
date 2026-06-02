@@ -25,6 +25,7 @@ type turnRoutePlan struct {
 	RequestedOutcome   string      `json:"requested_outcome,omitempty"`
 	WriteIntent        string      `json:"write_intent,omitempty"`
 	ReadOnlyConstraint bool        `json:"read_only_constraint,omitempty"`
+	EvidenceIntent     string      `json:"evidence_intent,omitempty"`
 	ContinuationTarget string      `json:"continuation_target,omitempty"`
 	ReasonCodes        []string    `json:"reason_codes,omitempty"`
 	RouteSource        routeSource `json:"-"`
@@ -66,10 +67,11 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Return strict JSON only.",
 				"Choose the best family from this enum:",
 				"conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
-				"Also return initial_lane, optional followup_lane, reason, contract, optional thoroughness, requested_outcome, write_intent, read_only_constraint, continuation_target, and reason_codes.",
+				"Also return initial_lane, optional followup_lane, reason, contract, optional thoroughness, requested_outcome, write_intent, read_only_constraint, evidence_intent, continuation_target, and reason_codes.",
 				"Use coarse OpenCode-shaped routing: conversation for normal question-answer turns, read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
 				"Classify the requested outcome first. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate.",
 				"write_intent enum: yes, no, ambiguous. Use yes only when the requested outcome is to edit files, repair behavior, add tests/docs/config, or otherwise change the workspace. Use no for explanation, how-to, status, and read-only investigation.",
+				"evidence_intent enum: generic, relation_trace, refactor. Use relation_trace for read-only questions asking how symbols call, use, reference, delegate, dispatch, or hand off to each other. Use refactor for move, extract, split, rename, reshape, or reorganization work.",
 				"continuation_target enum: prior_change, current_prompt_only, none. A post-completion defect report like 'that did not fix it' or 'it still fails' targets prior_change.",
 				"Explicit read-only constraints such as 'do not edit', 'just explain', 'without changing files', or 'diagnose only' set read_only_constraint=true and keep the route read-only even if the topic mentions a possible change.",
 				"Prefer conversation by default for questions, status requests, how-to requests, and lightweight repo questions. Conversation may use efficient read-only workspace tools when the answer depends on code or logs.",
@@ -149,6 +151,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 		"requested_outcome":    plan.RequestedOutcome,
 		"write_intent":         plan.WriteIntent,
 		"read_only_constraint": plan.ReadOnlyConstraint,
+		"evidence_intent":      plan.EvidenceIntent,
 		"continuation_target":  plan.ContinuationTarget,
 		"reason_codes":         plan.ReasonCodes,
 	})
@@ -175,7 +178,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 				"Choose family from: conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
 				"Use contracts from: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
 				"Use lanes from: main, explore, verification, locate, review, architecture, implement.",
-				"Include requested_outcome, write_intent, read_only_constraint, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. continuation_target enum: prior_change, current_prompt_only, none. Use conversation for read-only diagnosis and log inspection; do not route normal user prompts to debug_logs.",
+				"Include requested_outcome, write_intent, read_only_constraint, evidence_intent, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. evidence_intent enum: generic, relation_trace, refactor. continuation_target enum: prior_change, current_prompt_only, none. Use conversation for read-only diagnosis and log inspection; do not route normal user prompts to debug_logs.",
 			}, "\n"),
 		},
 		{
@@ -223,6 +226,7 @@ func (m *Model) logTurnRouteCorrection(before, after turnRoutePlan) {
 		"requested_outcome":    after.RequestedOutcome,
 		"write_intent":         after.WriteIntent,
 		"read_only_constraint": after.ReadOnlyConstraint,
+		"evidence_intent":      after.EvidenceIntent,
 		"continuation_target":  after.ContinuationTarget,
 		"reason_codes":         after.ReasonCodes,
 	}
@@ -239,6 +243,7 @@ func routePlanCorrectionChanged(before, after turnRoutePlan) bool {
 		before.RequestedOutcome != after.RequestedOutcome ||
 		before.WriteIntent != after.WriteIntent ||
 		before.ReadOnlyConstraint != after.ReadOnlyConstraint ||
+		before.EvidenceIntent != after.EvidenceIntent ||
 		before.ContinuationTarget != after.ContinuationTarget
 }
 
@@ -355,6 +360,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	plan.Thoroughness = normalizeRouteValue(plan.Thoroughness)
 	plan.RequestedOutcome = normalizeRouteOutcome(plan.RequestedOutcome)
 	plan.WriteIntent = normalizeRouteWriteIntent(plan.WriteIntent)
+	plan.EvidenceIntent = normalizeRouteEvidenceIntent(plan.EvidenceIntent)
 	plan.ContinuationTarget = normalizeRouteContinuationTarget(plan.ContinuationTarget)
 	plan.ReasonCodes = normalizeRouteReasonCodes(plan.ReasonCodes)
 	plan.RouteSource = source
@@ -470,6 +476,17 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 
 func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent.Mode) turnRoutePlan {
 	normalized := normalizeTurnRoutePlan(plan, mode)
+	if promptRequestsRepositoryArchitectureEvidence(prompt) && !isImplementationLikeFamily(normalized.Family) {
+		normalized.Family = "architecture"
+		normalized.InitialLane = "architecture"
+		normalized.FollowupLane = ""
+		normalized.Contract = "architecture_assessment"
+		normalized.WriteIntent = "no"
+		normalized.ReadOnlyConstraint = true
+		normalized.Reason = util.FirstNonEmpty(normalized.Reason, "route_prompt_requests_architecture_evidence")
+		normalized.ReasonCodes = appendUniqueBriefStrings(normalized.ReasonCodes, "route_prompt_requests_architecture_evidence")
+		normalized = normalizeTurnRoutePlan(normalized, mode)
+	}
 	if promptRequestsReadOnlyEvidenceReport(prompt) {
 		normalized.RequestedOutcome = "diagnose"
 		normalized.WriteIntent = "no"
@@ -485,6 +502,51 @@ func correctTurnRoutePlanForPrompt(plan turnRoutePlan, prompt string, mode agent
 		normalized = corrected
 	}
 	return normalized
+}
+
+func promptRequestsRepositoryArchitectureEvidence(prompt string) bool {
+	words := plannerWordText(prompt)
+	if words == " " || plannerPromptHasExplicitMutationIntent(words) {
+		return false
+	}
+	if plannerWordsContainAnyWholePhrase(words,
+		"how do i run",
+		"how do we run",
+		"how to run",
+		"run the tests",
+		"run tests",
+	) {
+		return false
+	}
+	internalSurface := plannerWordsContainAny(words,
+		"answer composer",
+		"control rail",
+		"control rails",
+		"debug log",
+		"debug logs",
+		"discovery tool",
+		"discovery tools",
+		"harness",
+		"runner",
+		"subagent",
+		"subagents",
+		"sub agent",
+		"sub agents",
+	)
+	if !internalSurface {
+		return false
+	}
+	return plannerWordsContainAny(words,
+		"architecture",
+		"boundary",
+		"how",
+		"overall usefulness",
+		"usefulness",
+		"uses",
+		"what can we add",
+		"what does",
+		"works",
+	)
 }
 
 func routePlanCorrectedByOutcomeContract(plan turnRoutePlan, mode agent.Mode) (turnRoutePlan, bool) {
@@ -782,6 +844,19 @@ func normalizeRouteWriteIntent(value string) string {
 	}
 }
 
+func normalizeRouteEvidenceIntent(value string) string {
+	switch normalizeRouteValue(value) {
+	case "relation_trace", "relation", "trace", "calls", "call_trace", "reference_trace", "handoff_trace", "usage_trace":
+		return "relation_trace"
+	case "refactor", "refactoring", "move", "extract", "split", "rename", "reshape", "reorganize":
+		return "refactor"
+	case "generic", "general", "none", "unknown":
+		return "generic"
+	default:
+		return ""
+	}
+}
+
 func normalizeRouteContinuationTarget(value string) string {
 	switch normalizeRouteValue(value) {
 	case "prior_change", "previous_change", "last_change", "previous_fix", "prior_fix":
@@ -932,6 +1007,9 @@ func renderTurnRoutePlan(plan turnRoutePlan) string {
 	if plan.ReadOnlyConstraint {
 		parts = append(parts, "read_only_constraint=true")
 	}
+	if plan.EvidenceIntent != "" {
+		parts = append(parts, "evidence_intent="+plan.EvidenceIntent)
+	}
 	if plan.ContinuationTarget != "" {
 		parts = append(parts, "continuation_target="+plan.ContinuationTarget)
 	}
@@ -950,6 +1028,10 @@ func turnRoutePlanRuntimeBrief(plan turnRoutePlan, mode agent.Mode, workspaceAll
 	if plan.Thoroughness != "" {
 		brief.Constraints = append(brief.Constraints, "thoroughness="+plan.Thoroughness)
 	}
+	brief.RequestedOutcome = plan.RequestedOutcome
+	brief.WriteIntent = plan.WriteIntent
+	brief.ReadOnlyConstraint = plan.ReadOnlyConstraint
+	brief.EvidenceIntent = plan.EvidenceIntent
 	return workerruntime.NormalizeRuntimeBrief(brief)
 }
 

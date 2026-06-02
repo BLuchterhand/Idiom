@@ -514,11 +514,53 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 			t.Fatalf("history-pending protocol should preserve callable planner tool %s: %#v", tool, protocol.CallableTools)
 		}
 	}
+	if slices.Contains(protocol.VisibleTools, "submit_plan") || slices.Contains(protocol.CallableTools, "submit_plan") {
+		t.Fatalf("history-pending protocol must not expose submit_plan before history evidence, visible=%#v callable=%#v", protocol.VisibleTools, protocol.CallableTools)
+	}
+	if slices.Contains(protocol.StructuredSchemaNames, "submit_plan") {
+		t.Fatalf("history-pending protocol must not expose submit_plan schema before history evidence: %#v", protocol.StructuredSchemaNames)
+	}
 	if slices.Contains(protocol.CallableActionClasses, "history") {
 		t.Fatalf("history-pending protocol should not expose non-canonical history action class: %#v", protocol.CallableActionClasses)
 	}
 	if slices.Contains(protocol.InvalidActionClasses, actionRead) {
 		t.Fatalf("history-pending protocol should not invalidate read action class: %#v", protocol.InvalidActionClasses)
+	}
+}
+
+func TestPlanExecuteRequiredSourceModelProtocolDoesNotLeakSubmitPlan(t *testing.T) {
+	runner := &Runner{}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+	}
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	if phase.PhaseID != turnPhaseRequiredSource {
+		t.Fatalf("phase = %q, want %q", phase.PhaseID, turnPhaseRequiredSource)
+	}
+	protocol, ok := runner.compileModelProtocolProjection(brief, nil, phase, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("expected required-source model protocol projection to compile")
+	}
+	if slices.Contains(protocol.VisibleTools, "submit_plan") || slices.Contains(protocol.CallableTools, "submit_plan") {
+		t.Fatalf("required-source protocol must not expose submit_plan before source evidence, visible=%#v callable=%#v", protocol.VisibleTools, protocol.CallableTools)
+	}
+	if slices.Contains(protocol.StructuredSchemaNames, "submit_plan") {
+		t.Fatalf("required-source protocol must not expose submit_plan schema before source evidence: %#v", protocol.StructuredSchemaNames)
+	}
+	for _, want := range []string{"read_file", "code_navigate"} {
+		if !slices.Contains(protocol.VisibleTools, want) || !slices.Contains(protocol.CallableTools, want) {
+			t.Fatalf("required-source protocol missing read tool %s, visible=%#v callable=%#v", want, protocol.VisibleTools, protocol.CallableTools)
+		}
 	}
 }
 

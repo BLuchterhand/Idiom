@@ -535,7 +535,54 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
 		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
 	}
+	if route.Family == agent.PlanThenExecutePlannerTaskFamily && !m.workspaceHasGitMetadata() {
+		brief = runtimeBriefWithoutGitHistoryRequirement(brief)
+	}
 	return brief
+}
+
+const (
+	runtimeBriefGitHistoryEvidence = "git_history_rationale_for_intended_logic"
+	runtimeBriefGitHistoryTool     = "history_range_or_history_symbol"
+)
+
+func (m *Model) workspaceHasGitMetadata() bool {
+	if m == nil || m.workspace == nil {
+		return false
+	}
+	root := strings.TrimSpace(m.workspace.Root())
+	if root == "" {
+		return false
+	}
+	if _, err := os.Stat(filepath.Join(root, ".git")); err == nil {
+		return true
+	}
+	return false
+}
+
+func runtimeBriefWithoutGitHistoryRequirement(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
+	brief.RequiredEvidence = filterBriefStrings(brief.RequiredEvidence, func(value string) bool {
+		return strings.TrimSpace(value) != runtimeBriefGitHistoryEvidence
+	})
+	brief.RequiredTools = filterBriefStrings(brief.RequiredTools, func(value string) bool {
+		return strings.TrimSpace(value) != runtimeBriefGitHistoryTool
+	})
+	brief.SearchPolicy = filterBriefStrings(brief.SearchPolicy, func(value string) bool {
+		lower := strings.ToLower(strings.TrimSpace(value))
+		return !strings.Contains(lower, "history_required_before_submit_plan") &&
+			!strings.Contains(lower, "read_commit_descriptions_for_intended_logic_before_submit_plan")
+	})
+	return brief
+}
+
+func filterBriefStrings(values []string, keep func(string) bool) []string {
+	out := values[:0]
+	for _, value := range values {
+		if keep(value) {
+			out = append(out, value)
+		}
+	}
+	return out
 }
 
 func runtimeBriefWithPlanExecuteEditSetObligations(brief workerruntime.WorkerRuntimeBrief, obligations planexecute.EditSetObligations) workerruntime.WorkerRuntimeBrief {

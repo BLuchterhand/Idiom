@@ -2,13 +2,11 @@ package workspace
 
 import (
 	"bufio"
-	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"idiom/internal/semantic"
@@ -245,218 +243,19 @@ func (m *Manager) rustLSPCharacter(abs string, match semantic.RustSymbolMatch) (
 // -- Formatting -------------------------------------------------------------
 
 func (m *Manager) formatRALocations(locations []raLocation, pathFilter string, limit int, includeLineText bool) string {
-	type entry struct {
-		path string
-		line int
-		col  int
-		text string
-	}
-	entries := make([]entry, 0, len(locations))
-	seen := make(map[string]struct{})
-	for _, location := range locations {
-		abs, err := raPathFromURI(location.URI)
-		if err != nil {
-			continue
-		}
-		if !m.pathWithinWorkspace(abs) {
-			continue
-		}
-		displayPath := filepath.ToSlash(m.displayPath(abs))
-		if pathFilter != "" && !pathMatchesFilter(displayPath, pathFilter) {
-			continue
-		}
-		line := location.Range.Start.Line + 1
-		col := location.Range.Start.Character + 1
-		key := fmt.Sprintf("%s:%d:%d", abs, line, col)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		seen[key] = struct{}{}
-		text := ""
-		if includeLineText {
-			text = m.sourceLineText(abs, line)
-		}
-		entries = append(entries, entry{path: abs, line: line, col: col, text: text})
-	}
-	slices.SortFunc(entries, func(a, b entry) int {
-		if c := cmp.Compare(a.path, b.path); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.line, b.line); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.col, b.col)
-	})
-	if limit > 0 && len(entries) > limit {
-		entries = entries[:limit]
-	}
-	lines := make([]string, 0, len(entries))
-	for _, item := range entries {
-		handle := m.rememberPath(item.path)
-		display := m.displayPath(item.path)
-		if item.text != "" {
-			lines = append(lines, fmt.Sprintf("%s %s:%d:%s", handle, display, item.line, item.text))
-			continue
-		}
-		lines = append(lines, fmt.Sprintf("%s %s:%d", handle, display, item.line))
-	}
-	return strings.Join(lines, "\n")
+	return m.formatLSPLocations(locations, pathFilter, limit, includeLineText, raPathFromURI)
 }
 
 func (m *Manager) formatRAWorkspaceSymbols(symbols []raSymbolInfo, pathFilter string, limit int) string {
-	type entry struct {
-		path          string
-		line          int
-		name          string
-		containerName string
-		kind          int
-	}
-	entries := make([]entry, 0, len(symbols))
-	for _, symbol := range symbols {
-		abs, err := raPathFromURI(symbol.Location.URI)
-		if err != nil {
-			continue
-		}
-		if !m.pathWithinWorkspace(abs) {
-			continue
-		}
-		displayPath := filepath.ToSlash(m.displayPath(abs))
-		if pathFilter != "" && !pathMatchesFilter(displayPath, pathFilter) {
-			continue
-		}
-		entries = append(entries, entry{
-			path:          abs,
-			line:          symbol.Location.Range.Start.Line + 1,
-			name:          symbol.Name,
-			containerName: symbol.ContainerName,
-			kind:          symbol.Kind,
-		})
-	}
-	slices.SortFunc(entries, func(a, b entry) int {
-		if c := cmp.Compare(a.path, b.path); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.line, b.line); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.name, b.name)
-	})
-	if limit > 0 && len(entries) > limit {
-		entries = entries[:limit]
-	}
-	lines := make([]string, 0, len(entries))
-	for _, item := range entries {
-		handle := m.handleDisplay(item.path)
-		kind := raSymbolKindName(item.kind)
-		qualified := item.name
-		if strings.TrimSpace(item.containerName) != "" {
-			qualified = item.containerName + "::" + item.name
-		}
-		lines = append(lines, fmt.Sprintf("%s:%d %s %s", handle, item.line, kind, qualified))
-	}
-	return strings.Join(lines, "\n")
+	return m.formatLSPWorkspaceSymbols(symbols, pathFilter, limit, raPathFromURI, raSymbolKindName, "::")
 }
 
 func (m *Manager) formatRAIncomingCalls(calls []raIncomingCall, pathFilter string, target semantic.RustSymbolMatch) callHierarchyResult {
-	type entry struct {
-		path string
-		line int
-		name string
-	}
-	entries := make([]entry, 0, len(calls))
-	for _, call := range calls {
-		abs, err := raPathFromURI(call.From.URI)
-		if err != nil {
-			continue
-		}
-		if !m.pathWithinWorkspace(abs) {
-			continue
-		}
-		displayPath := filepath.ToSlash(m.displayPath(abs))
-		if pathFilter != "" && !pathMatchesFilter(displayPath, pathFilter) {
-			continue
-		}
-		line := call.From.SelectionRange.Start.Line + 1
-		entries = append(entries, entry{path: abs, line: line, name: call.From.Name})
-	}
-	slices.SortFunc(entries, func(a, b entry) int {
-		if c := cmp.Compare(a.path, b.path); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.line, b.line); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.name, b.name)
-	})
-	lines := make([]string, 0, len(entries))
-	relationships := make([]ToolRelationship, 0, len(entries))
-	targetAbs, _ := m.resolvePath(target.Path, "")
-	for _, item := range entries {
-		line := fmt.Sprintf("%s:%d %s", m.handleDisplay(item.path), item.line, item.name)
-		lines = append(lines, line)
-		if targetAbs != "" {
-			relationships = append(relationships, m.callRelationshipFromAbs(item.path, item.line, item.name, targetAbs, target.Line, target.Name, line))
-		}
-		if len(lines) >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
+	return m.formatLSPIncomingCalls(calls, pathFilter, lspCallTarget{Path: target.Path, Line: target.Line, Name: target.Name}, raPathFromURI)
 }
 
 func (m *Manager) formatRAOutgoingCalls(callerPath string, callerName string, calls []raOutgoingCall, pathFilter string) callHierarchyResult {
-	type entry struct {
-		callsitePath string
-		callsiteLine int
-		targetPath   string
-		targetLine   int
-		name         string
-	}
-	entries := make([]entry, 0, len(calls))
-	for _, call := range calls {
-		targetAbs, err := raPathFromURI(call.To.URI)
-		if err != nil {
-			continue
-		}
-		if !m.pathWithinWorkspace(targetAbs) {
-			continue
-		}
-		displayPath := filepath.ToSlash(m.displayPath(targetAbs))
-		if pathFilter != "" && !pathMatchesFilter(displayPath, pathFilter) {
-			continue
-		}
-		callsiteLine := call.To.SelectionRange.Start.Line + 1
-		if len(call.FromRanges) > 0 {
-			callsiteLine = call.FromRanges[0].Start.Line + 1
-		}
-		entries = append(entries, entry{
-			callsitePath: callerPath,
-			callsiteLine: callsiteLine,
-			targetPath:   targetAbs,
-			targetLine:   call.To.SelectionRange.Start.Line + 1,
-			name:         call.To.Name,
-		})
-	}
-	slices.SortFunc(entries, func(a, b entry) int {
-		if c := cmp.Compare(a.callsitePath, b.callsitePath); c != 0 {
-			return c
-		}
-		if c := cmp.Compare(a.callsiteLine, b.callsiteLine); c != 0 {
-			return c
-		}
-		return cmp.Compare(a.name, b.name)
-	})
-	lines := make([]string, 0, len(entries))
-	relationships := make([]ToolRelationship, 0, len(entries))
-	for _, item := range entries {
-		line := fmt.Sprintf("%s:%d -> %s in %s:%d", m.handleDisplay(item.callsitePath), item.callsiteLine, item.name, m.handleDisplay(item.targetPath), item.targetLine)
-		lines = append(lines, line)
-		relationships = append(relationships, m.callRelationshipFromAbs(item.callsitePath, item.callsiteLine, callerName, item.targetPath, item.targetLine, item.name, line))
-		if len(lines) >= m.cfg.MaxDirectoryEntries {
-			break
-		}
-	}
-	return callHierarchyResult{Output: strings.Join(lines, "\n"), Relationships: relationships}
+	return m.formatLSPOutgoingCalls(callerPath, callerName, calls, pathFilter, raPathFromURI)
 }
 
 func raSymbolKindName(kind int) string {

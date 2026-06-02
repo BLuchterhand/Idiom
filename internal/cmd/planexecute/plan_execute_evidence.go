@@ -202,7 +202,7 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 		if current == edit.NewText {
 			return "applied", "whole-file content matches submitted new_text"
 		}
-		if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && current == repaired {
+		if repaired := planexecute.TrimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && current == repaired {
 			return "applied", "whole-file content matches submitted new_text after mechanical trailing-whitespace repair"
 		}
 		return "pending", "whole-file content does not match submitted new_text"
@@ -217,7 +217,7 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 		if strings.Contains(current, edit.NewText) {
 			return "applied", "submitted new_text is present"
 		}
-		if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.Contains(current, repaired) {
+		if repaired := planexecute.TrimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.Contains(current, repaired) {
 			return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 		}
 		if strings.Contains(current, edit.OldText) {
@@ -234,7 +234,7 @@ func submittedPlanEditStatus(current string, edit workspace.PlanEdit) (string, s
 	if strings.TrimSpace(edit.NewText) != "" && strings.Contains(current, edit.NewText) {
 		return "applied", "submitted new_text is present"
 	}
-	if repaired := trimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.TrimSpace(repaired) != "" && strings.Contains(current, repaired) {
+	if repaired := planexecute.TrimTrailingWhitespaceEveryLine(edit.NewText); repaired != edit.NewText && strings.TrimSpace(repaired) != "" && strings.Contains(current, repaired) {
 		return "applied", "submitted new_text is present after mechanical trailing-whitespace repair"
 	}
 	return "unknown", "submitted edit shape has no deterministic postcondition"
@@ -556,44 +556,7 @@ func phaseEvidenceTelemetryTestCommands(tests []phaseEvidenceTest, limit int) []
 }
 
 func phaseEvidenceTelemetryChecks(checks []phaseEvidenceCheck, limit int) []map[string]string {
-	out := make([]map[string]string, 0, phaseEvidenceMinInt(limit, len(checks)))
-	for _, check := range checks {
-		entry := map[string]string{
-			"kind":   strings.TrimSpace(check.Kind),
-			"path":   strings.TrimSpace(check.Path),
-			"status": strings.TrimSpace(check.Status),
-		}
-		if command := strings.TrimSpace(check.Command); command != "" {
-			entry["command"] = phaseEvidenceTruncate(command, 240)
-		}
-		if workingDir := strings.TrimSpace(check.WorkingDir); workingDir != "" {
-			entry["working_dir"] = phaseEvidenceTruncate(workingDir, 240)
-		}
-		if summary := strings.TrimSpace(check.Summary); summary != "" {
-			entry["summary"] = phaseEvidenceTruncate(summary, 240)
-		}
-		if errText := strings.TrimSpace(check.Error); errText != "" {
-			entry["error"] = phaseEvidenceTruncate(errText, 240)
-		}
-		out = append(out, entry)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out
-}
-
-func phaseEvidenceTruncate(text string, limit int) string {
-	text = strings.TrimSpace(text)
-	if limit <= 0 || len(text) <= limit {
-		return text
-	}
-	for i := range text {
-		if i >= limit {
-			return text[:i] + "...(truncated)"
-		}
-	}
-	return text
+	return planexecute.PhaseEvidenceTelemetryChecks(toSharedPhaseEvidenceChecks(checks), limit)
 }
 
 func cappedStrings(values []string, limit int) []string {

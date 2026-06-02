@@ -62,32 +62,6 @@ func LoadBundle(dir string) (Bundle, error) {
 	return bundle, nil
 }
 
-func AppendEvent(dir string, event Event) error {
-	if strings.TrimSpace(dir) == "" {
-		return fmt.Errorf("feature planner event dir is empty")
-	}
-	if err := validateStoredEvent(event); err != nil {
-		return err
-	}
-	path := filepath.Join(dir, DefaultEventLogName)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return fmt.Errorf("mkdir feature planner event dir: %w", err)
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return fmt.Errorf("open feature planner event log: %w", err)
-	}
-	defer file.Close()
-	line, err := json.Marshal(event)
-	if err != nil {
-		return fmt.Errorf("marshal feature planner event: %w", err)
-	}
-	if _, err := file.Write(append(line, '\n')); err != nil {
-		return fmt.Errorf("append feature planner event: %w", err)
-	}
-	return nil
-}
-
 func AppendEvents(root string, sessionID string, events []Event) (string, error) {
 	if len(events) == 0 {
 		_, relPath, err := EventLogPath(root, sessionID)

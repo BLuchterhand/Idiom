@@ -4497,17 +4497,23 @@ func TestPlanExecuteTextualAllowedToolsKeepsHistoryWhenCandidateReadyNeedsHistor
 	}
 
 	allowed := runnerPlanExecuteTextualAllowedTools([]string{"history_range", "history_symbol", "submit_plan"}, brief, results)
-	for _, want := range []string{"history_range", "history_symbol", "submit_plan"} {
+	for _, want := range []string{"history_range", "history_symbol"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("candidate-ready history-pending surface missing %s: %#v", want, allowed)
 		}
 	}
+	if slices.Contains(allowed, "submit_plan") {
+		t.Fatalf("candidate-ready history-pending surface must hold submit_plan until history evidence is present: %#v", allowed)
+	}
 
 	narrowed := runnerPlanExecuteTextualAllowedTools([]string{"submit_plan"}, brief, results)
-	for _, want := range []string{"history_range", "history_symbol", "submit_plan"} {
+	for _, want := range []string{"history_range", "history_symbol"} {
 		if !slices.Contains(narrowed, want) {
 			t.Fatalf("candidate-ready history-pending surface should restore %s after submit-only narrowing: %#v", want, narrowed)
 		}
+	}
+	if slices.Contains(narrowed, "submit_plan") {
+		t.Fatalf("candidate-ready history-pending surface must not preserve submit-only narrowing before history evidence: %#v", narrowed)
 	}
 }
 
@@ -4533,10 +4539,13 @@ func TestPlanExecuteTextualAllowedToolsKeepsReadToolsWhenHistoryPending(t *testi
 	}
 
 	allowed := runnerPlanExecuteTextualAllowedTools([]string{"history_range", "history_symbol", "submit_plan"}, brief, results)
-	for _, want := range []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"} {
+	for _, want := range []string{"read_file", "code_navigate", "history_range", "history_symbol"} {
 		if !slices.Contains(allowed, want) {
 			t.Fatalf("history-pending surface should preserve %s for exact missing edit-safety evidence: %#v", want, allowed)
 		}
+	}
+	if slices.Contains(allowed, "submit_plan") {
+		t.Fatalf("history-pending surface must hold submit_plan until history evidence is present: %#v", allowed)
 	}
 }
 
@@ -4924,6 +4933,107 @@ func TestPlanExecuteRunnerReopensCandidateSurfaceAfterEmptySubmitPlan(t *testing
 	if chatRequestMessagesContain(afterEmptyRecovery, "# Terminal Plan-Execute Native Tool Surface") ||
 		chatRequestMessagesContain(afterEmptyRecovery, "# Terminal Plan-Execute Textual Tool Surface") {
 		t.Fatalf("empty-plan recovery request retained stale terminal surface scaffolding")
+	}
+	if !strings.Contains(answer, "Plan submitted") {
+		t.Fatalf("expected final non-empty submit_plan to be accepted, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteRunnerRecordsUnavailableEmptySubmitPlanBeforeHistory(t *testing.T) {
+	root := t.TempDir()
+	writeRunnerTestFile(t, root, "a.go", "package a\n\nfunc Label() string { return \"Long descriptive label\" }\n")
+	writeRunnerTestFile(t, root, "a_test.go", "package a\n\nfunc TestLabel(t *testing.T) {}\n")
+	initRunnerTestGitRepo(t, root)
+
+	replies := []string{
+		`{"tool":"context_pack","task":"shorten the label returned by a.go and keep tests aligned","mode":"plan","limit":4}`,
+		`{"tool":"read_file","path":"a.go","start_line":1,"end_line":20}`,
+		`{"tool":"submit_plan","rationale":"empty draft before history should still be typed as empty submit recovery","edits":[]}`,
+		`{"tool":"read_file","path":"a_test.go","start_line":1,"end_line":20,"named_gap":"check adjacent test expectation before finalizing the edit"}`,
+		`{"tool":"submit_plan","rationale":"Shorten the label using current source evidence.","edits":[{"path":"a.go","old_text":"return \"Long descriptive label\"","new_text":"return \"Short label\"","purpose":"shorten the user-visible label"}]}`,
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode chat request: %v", err)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawEmptyRecovery bool
+	var sawEmptyRejection bool
+	var sawPostEmptyRead bool
+	var sawHistoryBeforeSubmit bool
+	var sawAcceptedSubmit bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "plan_then_execute_empty_submit_plan_recovery" {
+				sawEmptyRecovery = true
+			}
+		},
+	}
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "shorten the label and keep tests aligned"}},
+		llama.ChatOptions{MaxTokens: 2048},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Request.Tool == "submit_plan" && event.Result.Code == workspace.SubmitPlanEmptyEditsCode {
+				sawEmptyRejection = true
+			}
+			if sawEmptyRejection && event.Request.Tool == "read_file" && event.Request.Path == "a_test.go" && strings.TrimSpace(event.Result.Error) == "" {
+				sawPostEmptyRead = true
+			}
+			if event.Request.Tool == "history_range" && strings.TrimSpace(event.Result.Error) == "" {
+				sawHistoryBeforeSubmit = true
+			}
+			if event.Request.Tool == "submit_plan" && strings.TrimSpace(event.Result.Error) == "" {
+				sawAcceptedSubmit = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected full empty-plan recovery sequence, got %d request(s)", requests)
+	}
+	if !sawEmptyRecovery {
+		t.Fatal("runner did not emit empty submit_plan recovery event")
+	}
+	if !sawPostEmptyRead {
+		t.Fatal("runner did not execute a bounded candidate read after empty submit_plan rejection")
+	}
+	if !sawHistoryBeforeSubmit {
+		t.Fatal("non-empty submit_plan should be redirected through git history before acceptance")
+	}
+	if !sawAcceptedSubmit {
+		t.Fatal("expected final non-empty submit_plan to be accepted")
 	}
 	if !strings.Contains(answer, "Plan submitted") {
 		t.Fatalf("expected final non-empty submit_plan to be accepted, got:\n%s", answer)
@@ -10097,8 +10207,8 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	if state.Mode != PlanExecutePlanningModeHistoryPending {
 		t.Fatalf("mode = %q, want history_pending", state.Mode)
 	}
-	if !slices.Contains(state.ParserVisibleTools, "submit_plan") {
-		t.Fatalf("history-pending phase should keep submit_plan visible for the runtime history guard: %#v", state.ParserVisibleTools)
+	if slices.Contains(state.ParserVisibleTools, "submit_plan") {
+		t.Fatalf("history-pending phase must not advertise submit_plan before git history evidence: %#v", state.ParserVisibleTools)
 	}
 	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
 		if !slices.Contains(state.ParserVisibleTools, want) {
@@ -10123,16 +10233,16 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	if contract.PhaseID != turnPhaseHistoryPending {
 		t.Fatalf("phase = %q, want %q", contract.PhaseID, turnPhaseHistoryPending)
 	}
-	if !slices.Contains(contract.AllowedTools, "submit_plan") {
-		t.Fatalf("history-pending contract should keep submit_plan visible for the runtime history guard: %#v", contract.AllowedTools)
+	if slices.Contains(contract.AllowedTools, "submit_plan") {
+		t.Fatalf("history-pending contract must not advertise submit_plan before git history evidence: %#v", contract.AllowedTools)
 	}
 	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
 		if !slices.Contains(contract.AllowedTools, want) {
 			t.Fatalf("history-pending contract missing %s: %#v", want, contract.AllowedTools)
 		}
 	}
-	if !slices.Contains(contract.TerminalOutcomes, "submit_plan") {
-		t.Fatalf("history-pending contract should list submit_plan as a terminal outcome: %#v", contract.TerminalOutcomes)
+	if slices.Contains(contract.TerminalOutcomes, "submit_plan") {
+		t.Fatalf("history-pending contract must not list submit_plan as a terminal outcome: %#v", contract.TerminalOutcomes)
 	}
 	if !slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) {
 		t.Fatalf("history-pending contract should expose history tools as read actions: %#v", contract.ActionPolicy.AllowedActionClasses)
@@ -10150,10 +10260,13 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
-	for _, want := range []string{"read_file", "history_range", "history_symbol", "submit_plan"} {
+	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
 		if !slices.Contains(textualContract.AllowedTools, want) {
 			t.Fatalf("textual history-pending contract missing %s: %#v", want, textualContract.AllowedTools)
 		}
+	}
+	if slices.Contains(textualContract.AllowedTools, "submit_plan") {
+		t.Fatalf("textual history-pending contract must hide submit_plan before git history evidence: %#v", textualContract.AllowedTools)
 	}
 
 	withHistory := append(results, workspace.ToolResult{
@@ -10190,6 +10303,29 @@ func TestPlanExecutePostReadinessAllowsRequiredHistoryRead(t *testing.T) {
 
 	if summary, errText, reject := planThenExecutePostReadinessDiscoveryRejection(req, brief, results); reject {
 		t.Fatalf("history read after source evidence should remain allowed, got %q: %s", summary, errText)
+	}
+}
+
+func TestPlanExecutePostReadinessDoesNotForceSubmitBeforeHistory(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	}}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "a.go",
+		StartLine: 1,
+		EndLine:   10,
+	}
+
+	if summary, errText, reject := planThenExecutePostReadinessDiscoveryRejection(req, brief, results); reject {
+		t.Fatalf("source-ready but history-pending phase should not force submit_plan yet, got %q: %s", summary, errText)
 	}
 }
 

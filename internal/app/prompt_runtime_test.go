@@ -20,6 +20,7 @@ import (
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
 	"idiom/internal/promptstack"
+	"idiom/internal/workspace"
 )
 
 func TestSystemPromptSkipsModePromptFilesAlreadyInPromptStack(t *testing.T) {
@@ -1484,6 +1485,40 @@ func TestRuntimeBriefCapturesHostCurrentStateAnchorEvidence(t *testing.T) {
 	}
 	if !slices.Contains(brief.TargetPacket, "prompt_context:verified_current_state") {
 		t.Fatalf("expected verified-current-state marker, got %#v", brief.TargetPacket)
+	}
+}
+
+func TestPlanExecuteRuntimeBriefHistoryRequirementFollowsGitMetadata(t *testing.T) {
+	nonGitRoot := t.TempDir()
+	nonGit := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: nonGitRoot}},
+		workspace:     workspace.NewManager(config.Workspace{Root: nonGitRoot, CWD: nonGitRoot}),
+		agentModeName: "build",
+	}
+	prompt := "Use plan-execute to update pkg/a.go.\n\nrequired_edit_paths: pkg/a.go"
+	brief := nonGit.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, agent.BuildMode(), prompt)
+	if slices.Contains(brief.RequiredEvidence, runtimeBriefGitHistoryEvidence) {
+		t.Fatalf("non-git workspace must not require git history evidence: %#v", brief.RequiredEvidence)
+	}
+	if slices.Contains(brief.RequiredTools, runtimeBriefGitHistoryTool) {
+		t.Fatalf("non-git workspace must not require git history tools: %#v", brief.RequiredTools)
+	}
+
+	gitRoot := t.TempDir()
+	if err := os.Mkdir(filepath.Join(gitRoot, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	gitModel := &Model{
+		cfg:           config.Config{Chat: config.Chat{ProjectRoot: gitRoot}},
+		workspace:     workspace.NewManager(config.Workspace{Root: gitRoot, CWD: gitRoot}),
+		agentModeName: "build",
+	}
+	gitBrief := gitModel.runtimeBriefForRouteMode(turnRoutePlan{Family: agent.PlanThenExecutePlannerTaskFamily}, agent.BuildMode(), prompt)
+	if !slices.Contains(gitBrief.RequiredEvidence, runtimeBriefGitHistoryEvidence) {
+		t.Fatalf("git workspace should retain git history evidence: %#v", gitBrief.RequiredEvidence)
+	}
+	if !slices.Contains(gitBrief.RequiredTools, runtimeBriefGitHistoryTool) {
+		t.Fatalf("git workspace should retain git history tool requirement: %#v", gitBrief.RequiredTools)
 	}
 }
 

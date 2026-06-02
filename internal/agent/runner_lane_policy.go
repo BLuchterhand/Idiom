@@ -45,7 +45,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		Raw:             input.Raw,
 	}
 
-	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
+	if workerruntime.PermissionProfileIsConversationOnly(r.RuntimeBrief.PermissionProfile) {
 		// Project-defined external tools are allowed even in conversation
 		// mode — they're opaque shell invocations the host project
 		// registered specifically so the agent could use them. Built-in
@@ -113,7 +113,7 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 		decision.Raw = marshalToolRequestRaw(redirected)
 	}
 
-	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "read_only_verification_shell") &&
+	if workerruntime.PermissionProfileIsReadOnlyVerificationShell(r.RuntimeBrief.PermissionProfile) &&
 		!isVerificationRequest(decision.Request) {
 		if !input.VerificationAttempted {
 			if redirected, ok := r.verificationBootstrapRequest(); ok {
@@ -183,8 +183,8 @@ func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePr
 }
 
 func (r *Runner) conversationRepeatedBroadDiscoveryAfterGate(req workspace.ToolRequest, results []workspace.ToolResult) (summary string, errorText string, reject bool) {
-	if r == nil || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") ||
-		!strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") ||
+	if r == nil || !workerruntime.TaskFamilyIsConversation(r.RuntimeBrief.TaskFamily) ||
+		!workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) ||
 		runnerBriefRequiresMutation(r.RuntimeBrief) ||
 		runnerVerificationRequired(r.RuntimeBrief) {
 		return "", "", false
@@ -287,8 +287,8 @@ func conversationBroadDiscoveryRejectionRecorded(results []workspace.ToolResult)
 }
 
 func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") ||
-		!strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
+	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) ||
+		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return false
 	}
 	return readOnlyClosureDecisionForResults(brief, results).Answerable()
@@ -401,6 +401,9 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 	if mainReadOnlyDelegationBootstrapEvidenceSeen(results) || !prefersEarlyReadOnlyDelegation(r.RuntimeBrief) || strings.TrimSpace(req.Tool) == "task" || !isReadClassTool(req) {
 		return workspace.ToolRequest{}, false
 	}
+	if !mainReadOnlyObjectiveShouldDelegate(r.RuntimeBrief.Objective) {
+		return workspace.ToolRequest{}, false
+	}
 	if !shouldDelegateMainReadOnlyBootstrapRequest(req) {
 		return workspace.ToolRequest{}, false
 	}
@@ -417,6 +420,36 @@ func (r *Runner) mainReadOnlyDelegationBootstrapRequest(results []workspace.Tool
 		Mode:   "read_only",
 		Prompt: prompt,
 	}, true
+}
+
+func mainReadOnlyObjectiveShouldDelegate(objective string) bool {
+	lower := strings.ToLower(delegatedDisplayQuestion(objective))
+	if lower == "" {
+		return false
+	}
+	if mainReadOnlyObjectiveIsConcreteFeatureQuestion(lower) {
+		return false
+	}
+	return containsAny(lower,
+		"architecture", "boundary", "boundaries", "flow", "handoff", "lifecycle", "orchestration",
+		"how does", "how this", "explain how", "trace", "call", "calls", "invoked", "invoke",
+		"subagent", "sub-agent", "sub agent", "child task", "child runner",
+		"discovery tool", "discovery tools", "tool surface", "increase", "improve", "improvement", "usefulness", "what can we add",
+	)
+}
+
+func mainReadOnlyObjectiveIsConcreteFeatureQuestion(lower string) bool {
+	lower = strings.TrimSpace(lower)
+	if lower == "" {
+		return false
+	}
+	if strings.Contains(lower, "what can we add") || strings.Contains(lower, "improve") || strings.Contains(lower, "usefulness") {
+		return false
+	}
+	if strings.HasPrefix(lower, "what does ") || strings.HasPrefix(lower, "where is ") || strings.HasPrefix(lower, "where does ") {
+		return true
+	}
+	return containsAny(lower, " mode do", " feature do")
 }
 
 func mainReadOnlyDelegationBootstrapEvidenceSeen(results []workspace.ToolResult) bool {
@@ -725,7 +758,7 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 
 func delegatedReadOnlyBootstrapPattern(objective string) string {
 	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) {
-		return "discovery|context[-_ ]?pack|context[-_ ]?query|answer[-_ ]?composer|runner"
+		return "discovery[-_ ]?query|discovery[-_ ]?tool|context[-_ ]?pack|context[-_ ]?query|context[-_ ]?graph|comprehension|frontier|workspace|tool[-_ ]?surface"
 	}
 	terms := make([]string, 0, 6)
 	for _, line := range strings.Split(objective, "\n") {
@@ -760,7 +793,22 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 			terms = util.AppendUnique(terms, normalized)
 		}
 	}
+	for _, term := range delegatedReadOnlySubagentAliasTerms(objective) {
+		terms = util.AppendUnique(terms, term)
+	}
 	return strings.Join(terms, "|")
+}
+
+func delegatedReadOnlySubagentAliasTerms(objective string) []string {
+	lower := strings.ToLower(delegatedDisplayQuestion(objective))
+	if !containsAny(lower, "subagent", "sub-agent", "sub agent", "child task", "child runner", "delegated child") {
+		return nil
+	}
+	terms := []string{"runChildTask", "delegat", "sub[-_ ]?agent"}
+	if containsAny(lower, "uses subagent", "uses sub-agent", "uses sub agent", "child task", "child runner", "task tool") {
+		terms = append(terms, "child[-_ ]?task", "task[-_ ]?tool")
+	}
+	return terms
 }
 
 func delegatedObjectiveIsDiscoveryToolUsefulness(objective string) bool {
@@ -1152,9 +1200,42 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 	exactProbes := readOnlyAnalysisExactProbeCount(results)
 	evidencePaths := promptEvidencePathsFromToolResults(results, 6)
 	if delegatedReadOnlyHasCompositeDiscoveryPacket(results) {
-		return exactProbes >= 1 && len(evidencePaths) >= 2
+		closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
+		return exactProbes >= 1 && closure.Answerable() && readOnlyAnalysisHasObjectiveRelevantSourceBody(r.RuntimeBrief, closure.Evidence)
 	}
-	return exactProbes >= 2 && len(evidencePaths) >= 1
+	closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
+	return exactProbes >= 2 && len(evidencePaths) >= 1 && closure.Answerable() && readOnlyAnalysisHasObjectiveRelevantSourceBody(r.RuntimeBrief, closure.Evidence)
+}
+
+func readOnlyAnalysisHasObjectiveRelevantSourceBody(brief workerruntime.WorkerRuntimeBrief, evidence readOnlyAnswerabilityLedger) bool {
+	if len(evidence.SourceBodyObjectivePaths) > 0 {
+		return true
+	}
+	for _, path := range evidence.SourceBodyPaths {
+		if implementationSourcePathOverlapsObjective(path, brief.Objective) ||
+			sourceEvidencePathSharesObjectiveTerm(path, brief.Objective) ||
+			readOnlyAnalysisPathMatchesObjectiveAlias(path, brief.Objective) {
+			return true
+		}
+	}
+	return false
+}
+
+func readOnlyAnalysisPathMatchesObjectiveAlias(path string, objective string) bool {
+	path = strings.ToLower(normalizeRunnerPath(path))
+	lower := strings.ToLower(delegatedDisplayQuestion(objective))
+	if path == "" || lower == "" {
+		return false
+	}
+	if containsAny(lower, "subagent", "sub-agent", "sub agent") &&
+		containsAny(path, "runner_child_tasks", "child_task", "child_tasks") {
+		return true
+	}
+	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) &&
+		containsAny(path, "discovery", "comprehension", "context", "frontier", "workspace") {
+		return true
+	}
+	return false
 }
 
 func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
@@ -1175,8 +1256,8 @@ func readOnlyAnalysisExactProbeCount(results []workspace.ToolResult) int {
 				count++
 			}
 		case "code_navigate":
-			if strings.Contains(result.Output, "capability: file_outline") ||
-				strings.Contains(result.Output, "capability: find_symbol") {
+			if routedSourceReadOutputHasBody(result.Output) &&
+				!strings.Contains(result.Output, "capability: file_outline") {
 				count++
 			}
 		case "go_read_symbol", "go_extract_body",

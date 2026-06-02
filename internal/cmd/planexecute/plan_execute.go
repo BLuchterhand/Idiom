@@ -2,29 +2,19 @@ package planexecute
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
 	"os"
-	"os/exec"
-	"path/filepath"
-	"slices"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
 	"idiom/internal/agent"
-	"idiom/internal/backends"
-	atomcmd "idiom/internal/cmd/atom"
-	"idiom/internal/cmdruntime"
-	"idiom/internal/comprehension"
+	"idiom/internal/cmd/route"
+	"idiom/internal/cmd/runtime"
 	"idiom/internal/config"
-	"idiom/internal/frontier/pathparse"
 	"idiom/internal/plancontract"
 	"idiom/internal/planexecute"
 	"idiom/internal/recovery"
@@ -34,52 +24,7 @@ import (
 )
 
 // planExecuteOptions configures `idiom plan-execute`.
-type planExecuteOptions struct {
-	ConfigPath         string
-	Prompt             string
-	PromptFile         string
-	Model              string
-	Resume             string
-	ReviewSessionID    string
-	JSONEvents         bool
-	DisableThinking    bool
-	MaxTokens          int
-	RequiredEditPaths  planexecute.MultiFlag
-	AllowedEditPaths   planexecute.MultiFlag
-	EditSetObligations planexecute.EditSetObligations
-	ScopeContract      planexecute.PlanScopeContract
-	// PlannerOwnedVerification is accepted for compatibility with
-	// `idiom implement` invocations that pass the flag. Plan-execute
-	// always treats verification as planner-owned (the executor phase
-	// is deterministic dispatch, not a verifier), so the flag is a
-	// no-op here — keeping it lets existing lane scripts swap
-	// `implement` for `plan-execute` without flag rewrites.
-	PlannerOwnedVerification bool
-	// AllowBuildTests is accepted for compatibility. Plan-execute extracts
-	// explicit go test acceptance commands from the prompt and runs those
-	// bounded commands after deterministic executor writes; this flag does
-	// not expand that surface.
-	AllowBuildTests bool
-	// SkipReviewRepair disables the post-execute review-repair gate.
-	// The default is to run one generic, action-capable review pass
-	// after deterministic executor writes so obvious behavioral or
-	// diff-level defects can be corrected before the lane reports done.
-	SkipReviewRepair bool
-}
-
-type cliWriterRouteOptions struct {
-	Mode              writerroute.WriterMode
-	Lane              string
-	TaskFamily        string
-	PlannerModel      string
-	ExecutorModel     string
-	ReviewerModel     string
-	ClassifierModel   string
-	RequiredEditPaths []string
-	ReasonCodes       []string
-	VerificationOwner string
-	RoleAliases       map[string]string
-}
+type planExecuteOptions = planexecute.Options
 
 // RunMain is the CLI entry point for `idiom plan-execute`.
 //
@@ -196,7 +141,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		"edit_set_obligations":      editSetObligations,
 		"edit_set_obligation_count": len(editSetObligations),
 	})
-	decision := buildCLIWriterRouteDecision(cfg, cliWriterRouteOptions{
+	decision := cmdroute.BuildDecision(cfg, cmdroute.Options{
 		Mode:              writerroute.ModePlanSubmission,
 		Lane:              "plan-execute",
 		TaskFamily:        agent.PlanThenExecutePlannerTaskFamily,
@@ -898,177 +843,39 @@ func truncatePlanExecuteProgressReason(reason string) string {
 }
 
 func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
-	var opts planExecuteOptions
-	fs := flag.NewFlagSet("idiom plan-execute", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.StringVar(&opts.ConfigPath, "config", "config.json", "path to config file")
-	fs.StringVar(&opts.Prompt, "prompt", "", "implementation prompt")
-	fs.StringVar(&opts.PromptFile, "prompt-file", "", "read implementation prompt from a file")
-	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
-	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id before running")
-	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
-	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this planner run")
-	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override planner max_tokens for this run; 0 uses the shape-aware plan-execute default")
-	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "compatibility flag: plan-execute always treats verification as planner-owned; this is a no-op")
-	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: plan-execute does not run builds or tests; this is a no-op")
-	fs.BoolVar(&opts.SkipReviewRepair, "skip-review-repair", false, "skip the post-execute review-repair planner pass")
-	fs.Var(&opts.RequiredEditPaths, "required-edit-path", "workspace-relative required edit path for this plan-execute run; repeatable and augments prompt extraction")
-	fs.Var(&opts.AllowedEditPaths, "allowed-edit-path", "workspace-relative candidate edit path for this plan-execute run; repeatable and augments prompt extraction without requiring coverage")
-	if err := fs.Parse(args); err != nil {
-		return planExecuteOptions{}, err
-	}
-	if fs.NArg() > 0 {
-		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
-			return planExecuteOptions{}, fmt.Errorf("positional prompt cannot be combined with --prompt or --prompt-file")
-		}
-		opts.Prompt = strings.Join(fs.Args(), " ")
-	}
-	if strings.TrimSpace(opts.Prompt) == "" && strings.TrimSpace(opts.PromptFile) == "" {
-		return planExecuteOptions{}, fmt.Errorf("provide --prompt, --prompt-file, or a positional prompt")
-	}
-	return opts, nil
+	return planexecute.ParseOptions(args, stderr)
 }
 
 func planExecutePrompt(opts planExecuteOptions) (string, error) {
-	hasPrompt := strings.TrimSpace(opts.Prompt) != ""
-	hasFile := strings.TrimSpace(opts.PromptFile) != ""
-	if hasPrompt && hasFile {
-		return "", fmt.Errorf("--prompt and --prompt-file are mutually exclusive")
-	}
-	if hasPrompt {
-		return opts.Prompt, nil
-	}
-	data, err := os.ReadFile(opts.PromptFile)
-	if err != nil {
-		return "", fmt.Errorf("read prompt file: %w", err)
-	}
-	prompt := strings.TrimSpace(string(data))
-	if prompt == "" {
-		return "", fmt.Errorf("prompt file %q is empty", opts.PromptFile)
-	}
-	return prompt, nil
+	return planexecute.PlanExecutePrompt(opts)
 }
 
 func planExecuteRequiredEditPaths(opts planExecuteOptions, prompt string) []string {
-	return planExecuteScopeContract(opts, prompt).RequiredCoveragePaths
+	return planexecute.PlanExecuteRequiredEditPaths(opts, prompt)
 }
 
 func planExecuteAllowedEditPaths(opts planExecuteOptions, prompt string) []string {
-	return planExecuteScopeContract(opts, prompt).AllowedCandidatePaths
+	return planexecute.PlanExecuteAllowedEditPaths(opts, prompt)
 }
 
 func planExecuteScopeContract(opts planExecuteOptions, prompt string) planexecute.PlanScopeContract {
-	scope := opts.ScopeContract
-	required := append([]string(nil), scope.RequiredCoveragePaths...)
-	required = append(required, []string(opts.RequiredEditPaths)...)
-	required = append(required, planexecute.RequiredEditPathsFromPrompt(prompt)...)
-	allowed := append([]string(nil), scope.AllowedCandidatePaths...)
-	allowed = append(allowed, []string(opts.AllowedEditPaths)...)
-	allowed = append(allowed, planexecute.AllowedEditPathsFromPrompt(prompt)...)
-	obligations := planexecute.MergeEditSetObligations(
-		scope.EditSetObligations.WithDefaultSource("scope_contract"),
-		opts.EditSetObligations.WithDefaultSource("options"),
-	)
-	return planexecute.NewPlanScopeContract(required, allowed, obligations)
+	return planexecute.PlanExecuteScopeContract(opts, prompt)
 }
 
 func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
-	if plan == nil || strings.TrimSpace(plan.PackID) != "" {
-		return ""
-	}
-	packID := extractPlanExecutePromptPackID(prompt)
-	if packID == "" {
-		return ""
-	}
-	plan.PackID = packID
-	if strings.TrimSpace(plan.Packet.PackID) == "" {
-		plan.Packet.PackID = packID
-	}
-	if status := strings.TrimSpace(plan.Packet.Status); status == "" || status == "not_provided" {
-		plan.Packet.Status = "provided"
-	}
-	return packID
+	return planexecute.InheritPlanExecutePromptPackID(plan, prompt)
 }
 
 func extractPlanExecutePromptPackID(prompt string) string {
-	for _, rawLine := range strings.Split(prompt, "\n") {
-		line := strings.TrimSpace(rawLine)
-		lower := strings.ToLower(line)
-		if !strings.Contains(lower, "pack") {
-			continue
-		}
-		for _, token := range strings.FieldsFunc(line, func(r rune) bool {
-			return !((r >= 'a' && r <= 'z') ||
-				(r >= 'A' && r <= 'Z') ||
-				(r >= '0' && r <= '9'))
-		}) {
-			token = strings.ToLower(strings.TrimSpace(token))
-			if isPlanExecutePackID(token) {
-				return token
-			}
-		}
-	}
-	return ""
+	return planexecute.ExtractPlanExecutePromptPackID(prompt)
 }
 
 func isPlanExecutePackID(value string) bool {
-	if len(value) != 16 {
-		return false
-	}
-	for _, r := range value {
-		if !((r >= 'a' && r <= 'f') || (r >= '0' && r <= '9')) {
-			return false
-		}
-	}
-	return true
+	return planexecute.IsPlanExecutePackID(value)
 }
 
 func patchPlanArtifactPackID(path string, packID string) error {
-	packID = strings.TrimSpace(packID)
-	if path == "" || packID == "" {
-		return nil
-	}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return err
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return err
-	}
-	encodedPackID, err := json.Marshal(packID)
-	if err != nil {
-		return err
-	}
-	raw["pack_id"] = encodedPackID
-	var packet map[string]json.RawMessage
-	if body, ok := raw["packet"]; ok {
-		_ = json.Unmarshal(body, &packet)
-	}
-	if packet == nil {
-		packet = map[string]json.RawMessage{}
-	}
-	if current, ok := packet["pack_id"]; !ok || strings.Trim(strings.TrimSpace(string(current)), `"`) == "" {
-		packet["pack_id"] = encodedPackID
-	}
-	if current, ok := packet["status"]; !ok || strings.Trim(strings.TrimSpace(string(current)), `"`) == "" || strings.Trim(strings.TrimSpace(string(current)), `"`) == "not_provided" {
-		encodedStatus, err := json.Marshal("provided")
-		if err != nil {
-			return err
-		}
-		packet["status"] = encodedStatus
-	}
-	encodedPacket, err := json.Marshal(packet)
-	if err != nil {
-		return err
-	}
-	raw["packet"] = encodedPacket
-	updated, err := json.MarshalIndent(raw, "", "  ")
-	if err != nil {
-		return err
-	}
-	updated = append(updated, '\n')
-	return os.WriteFile(path, updated, 0o644)
+	return planexecute.PatchPlanArtifactPackID(path, packID)
 }
 
 // planExecutePlannerSystemAddendum is prepended to the brief in the
@@ -1176,400 +983,31 @@ func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEd
 }
 
 func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
-	var pending []workspace.PlanEdit
-	for _, edit := range edits {
-		if planExecuteAutoExactEditStatus(root, edit) == "pending" {
-			pending = append(pending, edit)
-		}
-	}
-	return pending
+	return planexecute.PlanExecutePendingAutoExactEdits(root, edits)
 }
 
 func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
-	path := normalizePlanExecutePath(edit.Path)
-	if path == "" {
-		return "unknown"
-	}
-	fullPath := path
-	if !filepath.IsAbs(fullPath) {
-		fullPath = filepath.Join(strings.TrimSpace(root), filepath.FromSlash(path))
-	}
-	body, err := os.ReadFile(filepath.Clean(fullPath))
-	if err != nil {
-		if os.IsNotExist(err) && edit.ReplaceAll && strings.TrimSpace(edit.OldText) == "" && strings.TrimSpace(edit.NewText) != "" {
-			return "pending"
-		}
-		return "unknown"
-	}
-	status, _ := submittedPlanEditStatus(string(body), edit)
-	return status
+	return planexecute.PlanExecuteAutoExactEditStatus(root, edit)
 }
 
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
-	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
-	var b strings.Builder
-	b.WriteString("Decision: source-satisfied\n")
-	b.WriteString("The requested final state is already present in the current workspace for every required edit path.")
-	if len(paths) > 0 {
-		b.WriteString("\n\nRequired edit paths:\n")
-		for _, path := range paths {
-			b.WriteString("- ")
-			b.WriteString(path)
-			b.WriteByte('\n')
-		}
-	}
-	return strings.TrimSpace(b.String())
+	return planexecute.PlanExecuteAutoSourceSatisfiedAnswer(requiredEditPaths)
 }
 
 func planExecuteSourceSatisfiedEvidencePaths(answer string, requiredEditPaths []string, allowedEditPaths []string) []string {
-	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
-	if len(paths) > 0 {
-		return paths
-	}
-	evidencePaths := planExecuteUniqueRequiredPaths(plancontract.SourceSatisfiedEvidencePaths(answer))
-	allowed := planExecutePathSet(allowedEditPaths)
-	if len(allowed) == 0 {
-		return evidencePaths
-	}
-	var scoped []string
-	for _, path := range evidencePaths {
-		if _, ok := allowed[path]; ok {
-			scoped = append(scoped, path)
-		}
-	}
-	return scoped
+	return planexecute.PlanExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
 }
 
 func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
-	return plancontract.SourceSatisfiedMissingCoveragePaths(answer, requiredEditPaths)
+	return planexecute.PlanExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths)
 }
 
 func planExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
-	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, "")
+	return planexecute.PlanExecuteExactPlanEdits(prompt, requiredEditPaths)
 }
 
 func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
-	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
-	if len(required) == 0 {
-		return nil, "no required_edit_paths"
-	}
-	section := ""
-	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
-		for _, heading := range []string{"required edits", "edits to apply", "edits"} {
-			if candidate := atomcmd.MarkdownSectionByHeading(candidatePrompt, heading); strings.TrimSpace(candidate) != "" {
-				section = candidate
-				break
-			}
-		}
-		if strings.TrimSpace(section) != "" {
-			break
-		}
-	}
-	if strings.TrimSpace(section) == "" {
-		return planExecuteImplicitNewFileBodyEdits(prompt, required, workspaceRoot)
-	}
-
-	edits, reason := planExecuteExactPlanEditsFromSection(section, required, workspaceRoot)
-	if len(edits) > 0 {
-		return edits, ""
-	}
-	if implicit, implicitReason := planExecuteImplicitNewFileBodyEdits(prompt, required, workspaceRoot); len(implicit) > 0 {
-		return implicit, ""
-	} else if strings.TrimSpace(implicitReason) != "" && reason == "no parseable exact old_text/new_text pairs" {
-		reason = reason + "; " + implicitReason
-	}
-	return nil, reason
-}
-
-func planExecuteExactPlanEditsFromSection(section string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
-	type pendingOldBlock struct {
-		paths []string
-		text  string
-	}
-	var edits []workspace.PlanEdit
-	var pending pendingOldBlock
-	var current []string
-	var currentPaths []string
-	var blockPaths []string
-	blockKind := ""
-	previousNonEmpty := ""
-	fence := ""
-	for _, rawLine := range strings.Split(section, "\n") {
-		trimmed := strings.TrimSpace(rawLine)
-		if fence == "" {
-			if marker, _, ok := atomcmd.MarkdownFenceOpen(trimmed); ok {
-				fence = marker
-				current = nil
-				blockPaths = append([]string(nil), currentPaths...)
-				blockKind = planExecuteExactEditBlockKind(previousNonEmpty)
-				continue
-			}
-			if trimmed != "" {
-				if paths := atomcmd.RequiredEditPathsFromLabel(trimmed, required); len(paths) > 0 {
-					currentPaths = paths
-				}
-				previousNonEmpty = trimmed
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, fence) {
-			block := strings.TrimSpace(strings.Join(current, "\n"))
-			switch blockKind {
-			case "old":
-				pending = pendingOldBlock{paths: append([]string(nil), blockPaths...), text: block}
-			case "new":
-				paths := pending.paths
-				if len(paths) == 0 {
-					paths = blockPaths
-				}
-				if len(paths) == 0 && len(required) == 1 {
-					paths = required
-				}
-				if len(paths) == 0 {
-					paths = planExecuteInferPathsForOldText(workspaceRoot, required, pending.text)
-				}
-				for _, path := range paths {
-					path = strings.TrimSpace(path)
-					if path == "" || strings.TrimSpace(pending.text) == "" {
-						continue
-					}
-					edits = append(edits, workspace.PlanEdit{
-						Path:    path,
-						OldText: pending.text,
-						NewText: block,
-						Purpose: "Apply the exact old_text/new_text edit from the Required Edits packet.",
-					})
-				}
-				pending = pendingOldBlock{}
-			case "replace_all":
-				paths := blockPaths
-				if len(paths) == 0 && len(required) == 1 {
-					paths = required
-				}
-				for _, path := range paths {
-					path = strings.TrimSpace(path)
-					if path == "" || strings.TrimSpace(block) == "" {
-						continue
-					}
-					edits = append(edits, workspace.PlanEdit{
-						Path:       path,
-						OldText:    "",
-						NewText:    block,
-						ReplaceAll: true,
-						Purpose:    "Create or replace the full file body from the Required Edits packet.",
-					})
-				}
-			}
-			fence = ""
-			current = nil
-			blockPaths = nil
-			blockKind = ""
-			previousNonEmpty = ""
-			continue
-		}
-		current = append(current, rawLine)
-	}
-	if len(edits) == 0 {
-		return nil, "no parseable exact old_text/new_text pairs"
-	}
-	missing := planExecuteMissingEditPaths(required, edits)
-	if len(missing) > 0 {
-		return nil, "exact old_text/new_text pairs do not cover required path(s): " + strings.Join(missing, ", ")
-	}
-	return edits, ""
-}
-
-func planExecuteImplicitNewFileBodyEdits(prompt string, required []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
-	for _, candidatePrompt := range planExecuteAutoPlanScanTexts(prompt) {
-		section := atomcmd.MarkdownSectionByHeading(candidatePrompt, "required behavior")
-		if strings.TrimSpace(section) == "" {
-			continue
-		}
-		edits := planExecuteImplicitNewFileBodyEditsFromSection(section, required, workspaceRoot)
-		if len(edits) == 0 {
-			continue
-		}
-		if missing := planExecuteMissingEditPaths(required, edits); len(missing) > 0 {
-			return nil, "implicit new-file bodies do not cover required path(s): " + strings.Join(missing, ", ")
-		}
-		return edits, ""
-	}
-	return nil, "no exact-edit section"
-}
-
-func planExecuteImplicitNewFileBodyEditsFromSection(section string, required []string, workspaceRoot string) []workspace.PlanEdit {
-	var edits []workspace.PlanEdit
-	var recent []string
-	var current []string
-	var blockPaths []string
-	capture := false
-	fence := ""
-	for _, rawLine := range strings.Split(section, "\n") {
-		trimmed := strings.TrimSpace(rawLine)
-		if fence == "" {
-			if marker, _, ok := atomcmd.MarkdownFenceOpen(trimmed); ok {
-				fence = marker
-				current = nil
-				contextText := strings.Join(recent, "\n")
-				blockPaths = planExecuteImplicitBodyBoundPaths(recent, required)
-				capture = len(blockPaths) > 0 &&
-					planExecuteImplicitNewFileBodyContext(contextText) &&
-					planExecuteAllPathsMissing(workspaceRoot, blockPaths)
-				continue
-			}
-			if trimmed != "" {
-				recent = append(recent, trimmed)
-				if len(recent) > 8 {
-					recent = recent[len(recent)-8:]
-				}
-			}
-			continue
-		}
-		if strings.HasPrefix(trimmed, fence) {
-			block := strings.TrimSpace(strings.Join(current, "\n"))
-			if capture {
-				for _, path := range blockPaths {
-					if planExecuteImplicitBodyLooksSafeForPath(path, block) {
-						edits = append(edits, workspace.PlanEdit{
-							Path:       path,
-							OldText:    "",
-							NewText:    block,
-							ReplaceAll: true,
-							Purpose:    "Create the full file body from the refined design-doc atom.",
-						})
-					}
-				}
-			}
-			fence = ""
-			current = nil
-			blockPaths = nil
-			capture = false
-			continue
-		}
-		current = append(current, rawLine)
-	}
-	return edits
-}
-
-func planExecuteImplicitBodyBoundPaths(recent []string, required []string) []string {
-	for i := len(recent) - 1; i >= 0; i-- {
-		line := strings.TrimSpace(recent[i])
-		if len(pathparse.MentionedWorkspacePaths(line)) == 0 {
-			continue
-		}
-		return atomcmd.RequiredEditPathsFromLabel(line, required)
-	}
-	return atomcmd.RequiredEditPathsFromLabel(strings.Join(recent, "\n"), required)
-}
-
-func planExecuteAutoPlanScanTexts(prompt string) []string {
-	texts := []string{prompt}
-	unquoted := planExecuteUnquoteMarkdown(prompt)
-	if unquoted != prompt {
-		texts = append(texts, unquoted)
-	}
-	return texts
-}
-
-func planExecuteUnquoteMarkdown(text string) string {
-	lines := strings.Split(text, "\n")
-	changed := false
-	for i, line := range lines {
-		trimmed := strings.TrimLeft(line, " \t")
-		if !strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-		trimmed = strings.TrimPrefix(trimmed, ">")
-		trimmed = strings.TrimPrefix(trimmed, " ")
-		lines[i] = trimmed
-		changed = true
-	}
-	if !changed {
-		return text
-	}
-	return strings.Join(lines, "\n")
-}
-
-func planExecuteImplicitNewFileBodyContext(contextText string) bool {
-	lower := strings.ToLower(contextText)
-	return strings.Contains(lower, "create ") ||
-		strings.Contains(lower, "new file") ||
-		strings.Contains(lower, "full file body") ||
-		strings.Contains(lower, "following content")
-}
-
-func planExecuteAllPathsMissing(workspaceRoot string, paths []string) bool {
-	workspaceRoot = strings.TrimSpace(workspaceRoot)
-	if workspaceRoot == "" || len(paths) == 0 {
-		return false
-	}
-	for _, path := range paths {
-		path = normalizePlanExecutePath(path)
-		if path == "" {
-			return false
-		}
-		if _, err := os.Stat(filepath.Join(workspaceRoot, filepath.FromSlash(path))); err == nil {
-			return false
-		} else if !os.IsNotExist(err) {
-			return false
-		}
-	}
-	return true
-}
-
-func planExecuteImplicitBodyLooksSafeForPath(path string, body string) bool {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return false
-	}
-	switch strings.ToLower(filepath.Ext(path)) {
-	case ".go":
-		return strings.HasPrefix(body, "package ")
-	default:
-		return true
-	}
-}
-
-func planExecuteInferPathsForOldText(workspaceRoot string, required []string, oldText string) []string {
-	workspaceRoot = strings.TrimSpace(workspaceRoot)
-	oldText = strings.TrimSpace(oldText)
-	if workspaceRoot == "" || oldText == "" {
-		return nil
-	}
-	var matches []string
-	for _, requiredPath := range required {
-		path := normalizePlanExecutePath(requiredPath)
-		if path == "" {
-			continue
-		}
-		body, err := os.ReadFile(filepath.Join(workspaceRoot, filepath.FromSlash(path)))
-		if err != nil {
-			continue
-		}
-		if strings.Count(string(body), oldText) == 1 {
-			matches = append(matches, path)
-		}
-	}
-	if len(matches) != 1 {
-		return nil
-	}
-	return matches
-}
-
-func planExecuteExactEditBlockKind(label string) string {
-	normalized := strings.Trim(strings.ToLower(strings.TrimSpace(label)), ":. ")
-	normalized = strings.ReplaceAll(normalized, "-", "_")
-	normalized = strings.ReplaceAll(normalized, " ", "_")
-	switch {
-	case strings.HasPrefix(normalized, "old_text"), strings.HasPrefix(normalized, "old"):
-		return "old"
-	case strings.HasPrefix(normalized, "new_text"), strings.HasPrefix(normalized, "new"):
-		return "new"
-	case strings.HasPrefix(normalized, "replace_all"):
-		return "replace_all"
-	default:
-		return ""
-	}
+	return planexecute.PlanExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, workspaceRoot)
 }
 
 func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
@@ -1580,28 +1018,6 @@ func UniqueRequiredPaths(requiredEditPaths []string) []string {
 	return planExecuteUniqueRequiredPaths(requiredEditPaths)
 }
 
-func planExecuteMissingEditPaths(required []string, edits []workspace.PlanEdit) []string {
-	covered := make(map[string]struct{}, len(edits))
-	for _, edit := range edits {
-		path := strings.TrimSpace(edit.Path)
-		if path != "" {
-			covered[path] = struct{}{}
-		}
-	}
-	var missing []string
-	for _, path := range required {
-		if _, ok := covered[path]; !ok {
-			missing = append(missing, path)
-		}
-	}
-	return missing
-}
-
-// findLatestPlanArtifact returns the most recently written plan
-// artifact in <root>/.idiom/plans/ whose mtime is at or after
-// notBefore. The notBefore guard scopes the lookup to the current
-// session's planner output — without it, a planner failure silently
-// falls back to a stale artifact from an unrelated prior session.
 // planExecuteAcquireQueueSlot delegates to the shared plan-execute queue
 // admission helper so the CLI and TUI in-process paths keep the same
 // best-effort gate behavior.
@@ -1690,202 +1106,7 @@ type executorHandoffPacket struct {
 }
 
 func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) executorHandoffPacket {
-	handoff := executorHandoffPacket{
-		State:                   executorHandoffStateMissing,
-		Reason:                  "missing_packet_id",
-		PlanID:                  sanitizePlanExecuteEventID(plan.PlanID),
-		HandoffID:               sanitizePlanExecuteEventID(plan.Handoff.ID),
-		HandoffStatus:           sanitizePlanExecuteEventToken(plan.Handoff.Status),
-		ApprovalScopeID:         sanitizePlanExecuteEventID(plan.Approval.ScopeID),
-		ApprovalStatus:          sanitizePlanExecuteEventToken(plan.Approval.Status),
-		ApprovalPermission:      sanitizePlanExecuteEventToken(plan.Approval.ExecutionPermission),
-		ArtifactPacketStatus:    sanitizePlanExecuteEventToken(plan.Packet.Status),
-		ArtifactPacketFreshness: sanitizePlanExecuteEventToken(plan.Packet.Freshness),
-		IndexID:                 sanitizePlanExecuteEventToken(plan.Packet.IndexID),
-		ApprovedPathCount:       len(plan.Approval.ApprovedPaths),
-		PendingPathCount:        len(plan.Approval.PendingPaths),
-	}
-	topLevelPackID, topLevelValid := normalizePlanExecuteEventPackID(plan.PackID)
-	declaredPackID, declaredValid := normalizePlanExecuteEventPackID(plan.Packet.PackID)
-	rawTopLevelPackID := strings.TrimSpace(plan.PackID)
-	rawDeclaredPackID := strings.TrimSpace(plan.Packet.PackID)
-	if rawTopLevelPackID != "" && !topLevelValid {
-		handoff.Reason = "invalid_pack_id"
-		return handoff
-	}
-	if rawDeclaredPackID != "" && !declaredValid {
-		handoff.Reason = "invalid_declared_packet_id"
-		if topLevelPackID == "" {
-			return handoff
-		}
-	}
-	effectivePackID := firstNonEmptyString(topLevelPackID, declaredPackID)
-	handoff.PackID = effectivePackID
-	handoff.DeclaredPackID = declaredPackID
-	if effectivePackID == "" {
-		return handoff
-	}
-	overridden := topLevelPackID != "" && declaredPackID != "" && topLevelPackID != declaredPackID
-	if overridden || (topLevelPackID != "" && rawDeclaredPackID != "" && !declaredValid) {
-		handoff.State = executorHandoffStateOverridden
-		handoff.Reason = "packet_id_override"
-	}
-	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, effectivePackID)
-	if err != nil {
-		if handoff.State != executorHandoffStateOverridden {
-			handoff.State = executorHandoffStateMissing
-			handoff.Reason = "cache_load_error"
-		}
-		return handoff
-	}
-	switch viewStatus.State {
-	case comprehension.ViewLoadStateFresh:
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = executorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-		} else if view.Fresh {
-			handoff.State = executorHandoffStateInherited
-			handoff.Reason = "fresh_graph_view"
-		} else {
-			handoff.State = executorHandoffStateStale
-			handoff.Reason = "stale_graph_view"
-		}
-		return handoff
-	case comprehension.ViewLoadStateStale:
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = executorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-		} else {
-			handoff.State = executorHandoffStateStale
-			handoff.Reason = "stale_graph_view"
-		}
-		return handoff
-	}
-	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, effectivePackID)
-	if artifactErr != nil {
-		if handoff.State != executorHandoffStateOverridden {
-			handoff.State = executorHandoffStateMissing
-			handoff.Reason = "artifact_load_error"
-		}
-		return handoff
-	}
-	if artifactHit {
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = executorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-			return handoff
-		}
-		handoff.State = executorHandoffStateStale
-		handoff.Reason = "legacy_artifact_fallback"
-		handoff.Fresh = false
-		return handoff
-	}
-	if handoff.State != executorHandoffStateOverridden {
-		handoff.State = executorHandoffStateMissing
-		handoff.Reason = "cache_miss"
-	}
-	return handoff
-}
-
-func applyExecutorHandoffView(handoff executorHandoffPacket, view comprehension.PackResult) executorHandoffPacket {
-	handoff.PackID = firstNonEmptyString(normalizePlanExecutePackID(view.PackID), handoff.PackID)
-	handoff.IndexID = sanitizePlanExecuteEventToken(firstNonEmptyString(view.IndexID, handoff.IndexID))
-	handoff.Fresh = view.Fresh
-	handoff.CandidateFiles = len(view.CandidateFiles)
-	handoff.CandidateSymbols = len(view.CandidateSymbols)
-	handoff.Tests = len(view.Tests)
-	return handoff
-}
-
-func normalizePlanExecuteEventPackID(value string) (string, bool) {
-	raw := strings.TrimSpace(value)
-	normalized := normalizePlanExecutePackID(raw)
-	if normalized == "" {
-		return "", raw == ""
-	}
-	return normalized, true
-}
-
-func normalizePlanExecutePackID(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if isPlanExecutePackID(value) {
-		return value
-	}
-	return ""
-}
-
-func sanitizePlanExecuteEventID(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if planExecuteEventTextLooksSensitive(value) {
-		return "redacted:" + planExecuteEventHash(value)
-	}
-	return sanitizePlanExecuteEventToken(value)
-}
-
-func sanitizePlanExecuteEventToken(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" || planExecuteEventTextLooksSensitive(value) {
-		return ""
-	}
-	var b strings.Builder
-	lastUnderscore := false
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			b.WriteRune(r)
-			lastUnderscore = false
-		case r == '-' || r == '_' || r == '.' || r == ':':
-			if !lastUnderscore {
-				b.WriteRune('_')
-				lastUnderscore = true
-			}
-		}
-		if b.Len() >= 120 {
-			break
-		}
-	}
-	return strings.Trim(b.String(), "_")
-}
-
-func planExecuteEventTextLooksSensitive(value string) bool {
-	lower := strings.ToLower(value)
-	markers := []string{
-		"raw_prompt", "raw prompt", "raw_body", "raw body", "raw_content", "raw content",
-		"prompt_body", "prompt body", "transcript", "file_body", "file body", "file-body",
-		"private key", "secret", "token=", "token:", "access_token", "api token",
-		"secret=", "api_key", "api-key", "password=", "bearer ", "customer-",
-		"customer_", "secrets/", "/secrets/", "\\secrets\\",
-	}
-	for _, marker := range markers {
-		if strings.Contains(lower, marker) {
-			return true
-		}
-	}
-	for _, token := range strings.FieldsFunc(lower, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9')
-	}) {
-		if token == "token" || token == "tokens" || token == "customer" || token == "customers" {
-			return true
-		}
-	}
-	normalized := strings.ReplaceAll(lower, "\\", "/")
-	for _, marker := range []string{"/users/", "/home/", "/volumes/", "/private/", "c:/users/"} {
-		if strings.Contains(normalized, marker) {
-			return true
-		}
-	}
-	return false
-}
-
-func planExecuteEventHash(value string) string {
-	sum := sha256.Sum256([]byte(value))
-	return hex.EncodeToString(sum[:])[:12]
+	return fromSharedExecutorHandoffPacket(planexecute.ClassifyExecutorHandoffPacket(root, plan))
 }
 
 type reviewRepairPhaseReport struct {
@@ -2195,6 +1416,19 @@ func toSharedReviewRepairEvidence(evidence reviewRepairEvidence) planexecute.Rev
 	return shared
 }
 
+func fromSharedReviewRepairEvidence(evidence planexecute.ReviewRepairEvidence) reviewRepairEvidence {
+	out := reviewRepairEvidence{
+		Diff:          evidence.Diff,
+		DiffCheck:     evidence.DiffCheck,
+		DiffCheckExit: evidence.DiffCheckExit,
+	}
+	data, err := json.Marshal(evidence.PhaseEvidence)
+	if err == nil {
+		_ = json.Unmarshal(data, &out.PhaseEvidence)
+	}
+	return out
+}
+
 func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
 	reason = strings.TrimSpace(reason)
 	if reason == "" {
@@ -2216,345 +1450,25 @@ func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason st
 }
 
 func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRepairBaseline) reviewRepairEvidence {
+	var sharedBaseline *planexecute.ReviewRepairBaseline
 	if baseline != nil {
-		diff := collectReviewRepairDiffFromBaseline(root, paths, *baseline)
-		check, exit := reviewRepairWhitespaceCheck(diff)
-		return reviewRepairEvidence{Diff: diff, DiffCheck: check, DiffCheckExit: exit}
+		converted := toSharedReviewRepairBaseline(*baseline)
+		sharedBaseline = &converted
 	}
-	return reviewRepairEvidence{
-		Diff:          runGitEvidence(root, append([]string{"diff", "--"}, paths...)...),
-		DiffCheck:     runGitEvidence(root, append([]string{"diff", "--check", "--"}, paths...)...),
-		DiffCheckExit: runGitEvidenceExit(root, append([]string{"diff", "--check", "--"}, paths...)...),
-	}
+	return fromSharedReviewRepairEvidence(planexecute.CollectReviewRepairEvidence(root, paths, sharedBaseline))
 }
 
 func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence reviewRepairEvidence) (patchHygieneAutoRepairReport, error) {
-	if evidence.DiffCheckExit != 1 {
-		return patchHygieneAutoRepairReport{}, nil
-	}
-	trailingWhitespace := reviewRepairTrailingWhitespaceLines(evidence.Diff)
-	if len(trailingWhitespace) == 0 {
-		return patchHygieneAutoRepairReport{}, nil
-	}
-	changedSet := planExecutePathSet(changedPaths)
-	paths := make([]string, 0, len(trailingWhitespace))
-	for path := range trailingWhitespace {
-		normalized := normalizePlanExecutePath(path)
-		if _, ok := changedSet[normalized]; !ok {
-			return patchHygieneAutoRepairReport{}, nil
-		}
-		paths = append(paths, normalized)
-	}
-	slices.Sort(paths)
-
-	report := patchHygieneAutoRepairReport{Repaired: true, Paths: paths}
-	for _, path := range paths {
-		fullPath, err := planExecuteWorkspaceFile(root, path)
-		if err != nil {
-			return patchHygieneAutoRepairReport{}, err
-		}
-		body, err := os.ReadFile(fullPath)
-		if err != nil {
-			return patchHygieneAutoRepairReport{}, fmt.Errorf("read %s for patch hygiene repair: %w", path, err)
-		}
-		repaired, lines := trimTrailingWhitespaceOnLines(string(body), trailingWhitespace[path])
-		if lines == 0 {
-			continue
-		}
-		if err := os.WriteFile(fullPath, []byte(repaired), 0o644); err != nil {
-			return patchHygieneAutoRepairReport{}, fmt.Errorf("write %s for patch hygiene repair: %w", path, err)
-		}
-		report.Lines += lines
-	}
-	if report.Lines == 0 {
-		return patchHygieneAutoRepairReport{}, nil
-	}
-	return report, nil
+	report, err := planexecute.AutoRepairReviewPatchHygiene(root, changedPaths, toSharedReviewRepairEvidence(evidence))
+	return patchHygieneAutoRepairReport{
+		Repaired: report.Repaired,
+		Paths:    append([]string(nil), report.Paths...),
+		Lines:    report.Lines,
+	}, err
 }
 
 func captureReviewRepairBaseline(root string, paths []string) reviewRepairBaseline {
-	baseline := reviewRepairBaseline{Files: map[string]reviewRepairFileSnapshot{}}
-	for _, path := range mergePlanExecutePaths(paths) {
-		full := path
-		if !filepath.IsAbs(full) {
-			full = filepath.Join(root, path)
-		}
-		data, err := os.ReadFile(filepath.Clean(full))
-		if err != nil {
-			baseline.Files[path] = reviewRepairFileSnapshot{Exists: false}
-			continue
-		}
-		baseline.Files[path] = reviewRepairFileSnapshot{Before: string(data), Exists: true}
-	}
-	return baseline
-}
-
-func collectReviewRepairDiffFromBaseline(root string, paths []string, baseline reviewRepairBaseline) string {
-	var b strings.Builder
-	for _, path := range mergePlanExecutePaths(paths) {
-		snapshot, ok := baseline.Files[path]
-		if !ok {
-			snapshot = reviewRepairFileSnapshot{Exists: false}
-		}
-		full := path
-		if !filepath.IsAbs(full) {
-			full = filepath.Join(root, path)
-		}
-		var after string
-		afterData, err := os.ReadFile(filepath.Clean(full))
-		afterExists := err == nil
-		if err == nil {
-			after = string(afterData)
-		} else if !os.IsNotExist(err) {
-			fmt.Fprintf(&b, "# %s: current content unavailable: %v\n", path, err)
-			continue
-		}
-		if !snapshot.Exists && !afterExists {
-			continue
-		}
-		diff := planexecute.UnifiedDiff(path, snapshot.Before, after)
-		if strings.TrimSpace(diff) == "" {
-			continue
-		}
-		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
-			b.WriteByte('\n')
-		}
-		fmt.Fprintf(&b, "diff --git a/%s b/%s\n", path, path)
-		b.WriteString(diff)
-		if !strings.HasSuffix(diff, "\n") {
-			b.WriteByte('\n')
-		}
-	}
-	return b.String()
-}
-
-func reviewRepairWhitespaceCheck(diff string) (string, int) {
-	findings := reviewRepairTrailingWhitespaceFindings(diff)
-	if len(findings) == 0 {
-		return "", 0
-	}
-	return strings.Join(findings, "\n"), 1
-}
-
-func reviewRepairTrailingWhitespaceFindings(diff string) []string {
-	var findings []string
-	path := ""
-	newLine := 0
-	inHunk := false
-	for _, raw := range strings.Split(diff, "\n") {
-		line := strings.TrimSuffix(raw, "\r")
-		switch {
-		case strings.HasPrefix(line, "+++ b/"):
-			path = strings.TrimSpace(strings.TrimPrefix(line, "+++ b/"))
-			inHunk = false
-			newLine = 0
-			continue
-		case strings.HasPrefix(line, "@@ "):
-			newLine = parseReviewRepairHunkNewStart(line)
-			inHunk = true
-			continue
-		case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- "):
-			inHunk = false
-			newLine = 0
-			continue
-		}
-		if !inHunk || line == "" || strings.HasPrefix(line, "\\ ") {
-			continue
-		}
-		switch line[0] {
-		case '+':
-			if strings.HasPrefix(line, "+++") {
-				continue
-			}
-			content := line[1:]
-			if strings.TrimRight(content, " \t") != content {
-				loc := path
-				if newLine > 0 {
-					loc = fmt.Sprintf("%s:%d", firstNonEmptyString(path, "(unknown)"), newLine)
-				}
-				findings = append(findings, fmt.Sprintf("%s: trailing whitespace.\n%s", loc, line))
-			}
-			if newLine > 0 {
-				newLine++
-			}
-		case ' ':
-			if newLine > 0 {
-				newLine++
-			}
-		case '-':
-			// Removal lines do not advance the new-file cursor.
-		}
-	}
-	return findings
-}
-
-func reviewRepairTrailingWhitespaceLines(diff string) map[string]map[int]struct{} {
-	out := make(map[string]map[int]struct{})
-	path := ""
-	newLine := 0
-	inHunk := false
-	for _, raw := range strings.Split(diff, "\n") {
-		line := strings.TrimSuffix(raw, "\r")
-		switch {
-		case strings.HasPrefix(line, "+++ b/"):
-			path = normalizePlanExecutePath(strings.TrimSpace(strings.TrimPrefix(line, "+++ b/")))
-			inHunk = false
-			newLine = 0
-			continue
-		case strings.HasPrefix(line, "@@ "):
-			newLine = parseReviewRepairHunkNewStart(line)
-			inHunk = true
-			continue
-		case strings.HasPrefix(line, "diff --git ") || strings.HasPrefix(line, "--- "):
-			inHunk = false
-			newLine = 0
-			continue
-		}
-		if !inHunk || line == "" || strings.HasPrefix(line, "\\ ") {
-			continue
-		}
-		switch line[0] {
-		case '+':
-			if strings.HasPrefix(line, "+++") {
-				continue
-			}
-			content := line[1:]
-			if path != "" && newLine > 0 && strings.TrimRight(content, " \t") != content {
-				if _, ok := out[path]; !ok {
-					out[path] = make(map[int]struct{})
-				}
-				out[path][newLine] = struct{}{}
-			}
-			if newLine > 0 {
-				newLine++
-			}
-		case ' ':
-			if newLine > 0 {
-				newLine++
-			}
-		case '-':
-			// Removal lines do not advance the new-file cursor.
-		}
-	}
-	return out
-}
-
-func trimTrailingWhitespaceOnLines(text string, targetLines map[int]struct{}) (string, int) {
-	if len(targetLines) == 0 {
-		return text, 0
-	}
-	var b strings.Builder
-	b.Grow(len(text))
-	changed := 0
-	lineNo := 1
-	for start := 0; start < len(text); lineNo++ {
-		end := start
-		for end < len(text) && text[end] != '\n' {
-			end++
-		}
-		line := text[start:end]
-		newline := ""
-		if end < len(text) && text[end] == '\n' {
-			newline = "\n"
-			end++
-		}
-		if _, ok := targetLines[lineNo]; ok {
-			repaired := trimTrailingWhitespaceBeforeLineEnding(line)
-			if repaired != line {
-				changed++
-				line = repaired
-			}
-		}
-		b.WriteString(line)
-		b.WriteString(newline)
-		start = end
-	}
-	return b.String(), changed
-}
-
-func trimTrailingWhitespaceEveryLine(text string) string {
-	var b strings.Builder
-	b.Grow(len(text))
-	for start := 0; start < len(text); {
-		end := start
-		for end < len(text) && text[end] != '\n' {
-			end++
-		}
-		line := text[start:end]
-		newline := ""
-		if end < len(text) && text[end] == '\n' {
-			newline = "\n"
-			end++
-		}
-		b.WriteString(trimTrailingWhitespaceBeforeLineEnding(line))
-		b.WriteString(newline)
-		start = end
-	}
-	return b.String()
-}
-
-func trimTrailingWhitespaceBeforeLineEnding(line string) string {
-	if strings.HasSuffix(line, "\r") {
-		return strings.TrimRight(line[:len(line)-1], " \t") + "\r"
-	}
-	return strings.TrimRight(line, " \t")
-}
-
-func planExecuteWorkspaceFile(root string, path string) (string, error) {
-	normalized := normalizePlanExecutePath(path)
-	if normalized == "" {
-		return "", fmt.Errorf("empty workspace path")
-	}
-	if filepath.IsAbs(normalized) {
-		return "", fmt.Errorf("workspace path must be relative: %s", normalized)
-	}
-	cleanRoot := filepath.Clean(strings.TrimSpace(root))
-	fullPath := filepath.Clean(filepath.Join(cleanRoot, filepath.FromSlash(normalized)))
-	rel, err := filepath.Rel(cleanRoot, fullPath)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, "../") || strings.HasPrefix(rel, `..\`) {
-		return "", fmt.Errorf("workspace path escapes root: %s", normalized)
-	}
-	return fullPath, nil
-}
-
-func parseReviewRepairHunkNewStart(line string) int {
-	plus := strings.Index(line, " +")
-	if plus < 0 {
-		return 0
-	}
-	rest := line[plus+2:]
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	if end == 0 {
-		return 0
-	}
-	value, err := strconv.Atoi(rest[:end])
-	if err != nil {
-		return 0
-	}
-	return value
-}
-
-func runGitEvidence(root string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	out, err := cmd.CombinedOutput()
-	if err != nil && len(out) == 0 {
-		return err.Error()
-	}
-	return string(out)
-}
-
-func runGitEvidenceExit(root string, args ...string) int {
-	cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			return exitErr.ExitCode()
-		}
-		return 127
-	}
-	return 0
+	return fromSharedReviewRepairBaseline(planexecute.CaptureReviewRepairBaseline(root, paths))
 }
 
 func planChangedPaths(plan workspace.PlanArtifact) []string {
@@ -2668,35 +1582,12 @@ func planEditPreflightMismatchFromPackage(mismatch *planexecute.PlanEditPrefligh
 	}
 }
 
-func planExecutePathSet(paths []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(paths))
-	for _, path := range paths {
-		if normalized := normalizePlanExecutePath(path); normalized != "" {
-			out[normalized] = struct{}{}
-		}
-	}
-	return out
-}
-
 func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *planEditPreflightMismatch {
 	return planEditPreflightMismatchFromPackage(planexecute.PreflightPlanUnsupportedProofClaims(plan))
 }
 
 func normalizePlanExecutePath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.ReplaceAll(path, "\\", "/")
-	for strings.HasPrefix(path, "./") {
-		path = strings.TrimPrefix(path, "./")
-	}
-	if path == "" || path == "." || path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, "../") {
-		return ""
-	}
-	for _, part := range strings.Split(path, "/") {
-		if part == "" || part == "." || part == ".." {
-			return ""
-		}
-	}
-	return path
+	return planexecute.NormalizePlanExecutePath(path)
 }
 
 // preflightPlanEdits validates every plan edit's old_text against the
@@ -2779,83 +1670,6 @@ func emitPlanExecuteSyntheticTurnSummary(stdout io.Writer, jsonEvents bool, stop
 
 func planExecuteDeterministicCleanReviewEnabled() bool {
 	return strings.EqualFold(strings.TrimSpace(os.Getenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW")), "true")
-}
-
-func buildCLIWriterRouteDecision(cfg config.Config, opts cliWriterRouteOptions) writerroute.Decision {
-	aliases := opts.RoleAliases
-	if len(aliases) == 0 {
-		aliases = cliWriterRouteRoleAliases(cfg.Workspace.Root, "")
-	}
-	plannerModel := strings.TrimSpace(opts.PlannerModel)
-	if plannerModel == "" {
-		plannerModel = cliWriterRouteModelForRole(cfg, aliases, backends.RolePlanner)
-	}
-	executorModel := strings.TrimSpace(opts.ExecutorModel)
-	if executorModel == "" {
-		executorModel = cliWriterRouteModelForRole(cfg, aliases, backends.RoleExecutor)
-	}
-	classifierModel := strings.TrimSpace(opts.ClassifierModel)
-	if classifierModel == "" {
-		classifierModel = cliWriterRouteModelForRole(cfg, aliases, backends.RoleClassifier)
-	}
-	reviewerModel := strings.TrimSpace(opts.ReviewerModel)
-	if reviewerModel == "" {
-		reviewerModel = executorModel
-	}
-	return writerroute.NewDecisionFromParams(writerroute.DecisionParams{
-		Mode:              opts.Mode,
-		Lane:              opts.Lane,
-		PlannerModel:      plannerModel,
-		ExecutorModel:     executorModel,
-		ReviewerModel:     reviewerModel,
-		ClassifierModel:   classifierModel,
-		RoleAliases:       aliases,
-		VerificationOwner: strings.TrimSpace(opts.VerificationOwner),
-		RequiredEditPaths: opts.RequiredEditPaths,
-		ReasonCodes:       opts.ReasonCodes,
-		TaskFamily:        opts.TaskFamily,
-	})
-}
-
-func cliWriterRouteRoleAliases(projectRoot string, profileName string) map[string]string {
-	file, ok, err := backends.LoadFromProjectRoot(projectRoot)
-	if err != nil || !ok {
-		return nil
-	}
-	profile, found := file.Profile(profileName)
-	if !found {
-		return nil
-	}
-	aliases := make(map[string]string, 3)
-	for _, role := range []string{backends.RolePlanner, backends.RoleExecutor, backends.RoleClassifier} {
-		if alias, ok := profile.AliasForRole(role); ok && strings.TrimSpace(alias) != "" {
-			aliases[role] = strings.TrimSpace(alias)
-		}
-	}
-	if len(aliases) == 0 {
-		return nil
-	}
-	return aliases
-}
-
-func cliWriterRouteModelForRole(cfg config.Config, aliases map[string]string, role string) string {
-	if alias := strings.TrimSpace(aliases[role]); alias != "" {
-		return alias
-	}
-	switch role {
-	case backends.RoleExecutor:
-		if cfg.Implementer != nil && strings.TrimSpace(cfg.Implementer.Model) != "" {
-			return strings.TrimSpace(cfg.Implementer.Model)
-		}
-		return strings.TrimSpace(cfg.LlamaServer.Model)
-	case backends.RoleClassifier:
-		if strings.TrimSpace(cfg.RouteClassifier.Model) != "" {
-			return strings.TrimSpace(cfg.RouteClassifier.Model)
-		}
-		return strings.TrimSpace(cfg.LlamaServer.Model)
-	default:
-		return strings.TrimSpace(cfg.LlamaServer.Model)
-	}
 }
 
 func firstNonEmptyString(values ...string) string {

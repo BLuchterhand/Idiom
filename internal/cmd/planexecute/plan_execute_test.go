@@ -15,7 +15,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/app"
-	"idiom/internal/cmdruntime"
+	"idiom/internal/cmd/runtime"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"

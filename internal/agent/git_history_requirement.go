@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	requiredEvidenceGitHistoryRationale = "git_history_rationale_for_intended_logic"
+	requiredEvidenceGitHistoryRationale = string(workerruntime.RequiredEvidenceGitHistoryRationale)
 	requiredToolGitHistoryLookup        = "history_range_or_history_symbol"
 )
 
@@ -48,7 +48,7 @@ func gitHistoryEvidenceTool(tool string) bool {
 func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) bool {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	for _, label := range brief.RequiredEvidence {
-		if strings.TrimSpace(label) == requiredEvidenceGitHistoryRationale {
+		if workerruntime.EvidenceRequirementMatches(label, workerruntime.RequiredEvidenceGitHistoryRationale) {
 			return true
 		}
 	}

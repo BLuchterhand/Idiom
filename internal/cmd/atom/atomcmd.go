@@ -1079,10 +1079,6 @@ func atomRequiredEditPathsFromLabel(label string, scopePaths []string) []string 
 	return out
 }
 
-func RequiredEditPathsFromLabel(label string, scopePaths []string) []string {
-	return atomRequiredEditPathsFromLabel(label, scopePaths)
-}
-
 func atomMarkdownSectionByHeading(markdown string, headingName string) string {
 	want := atomNormalizeMarkdownHeadingText(headingName)
 	lines := strings.Split(markdown, "\n")
@@ -1186,10 +1182,6 @@ func atomMarkdownFenceOpen(line string) (marker string, info string, ok bool) {
 	default:
 		return "", "", false
 	}
-}
-
-func MarkdownFenceOpen(line string) (marker string, info string, ok bool) {
-	return atomMarkdownFenceOpen(line)
 }
 
 func atomSkipRequiredEditCodeBlock(label string, info string) bool {

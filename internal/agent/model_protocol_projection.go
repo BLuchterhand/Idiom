@@ -42,6 +42,25 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 	visibleTools := modelProtocolVisibleTools(phase)
 	callableTools := modelProtocolProjectionTools(phase.ActionPolicy.CallableToolNames)
 	allowedTools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
+	if phaseSpecified && (len(visibleTools) == 0 || len(callableTools) == 0) {
+		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{
+			TextualToolParser: strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "textual") ||
+				strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ParserContract), "source_refresh"),
+			SupportsNativeTools: strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native"),
+			ForceNativeTools:    strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolTransportMode), "native") && strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ToolChoice), "required"),
+			ResponseFormatJSON:  strings.EqualFold(strings.TrimSpace(phase.RuntimeCall.ResponseFormat), "json"),
+			EffectiveMaxTokens:  phase.RuntimeCall.MaxTokens,
+		})
+		if len(visibleTools) == 0 {
+			visibleTools = modelProtocolProjectionTools(state.ParserVisibleTools)
+		}
+		if len(callableTools) == 0 {
+			callableTools = modelProtocolProjectionTools(state.CallableTools)
+		}
+		if len(allowedTools) == 0 {
+			allowedTools = modelProtocolProjectionTools(visibleTools, callableTools)
+		}
+	}
 	if !phaseSpecified && len(allowedTools) == 0 {
 		allowedTools = modelProtocolProjectionTools(brief.AllowedTools)
 	}
@@ -198,7 +217,7 @@ func modelProtocolRequiredTools(required []string, phase TurnPhaseContract) []st
 func modelProtocolVisibleTools(phase TurnPhaseContract) []string {
 	tools := modelProtocolProjectionTools(phase.AllowedTools, phase.ActionPolicy.CallableToolNames)
 	if containsPhaseString(phase.ActionPolicy.TerminalResponseShapes, "submit_plan") ||
-		containsPhaseString(phase.ActionPolicy.InvalidActionClasses, actionSubmitPlan) {
+		containsPhaseString(phase.ActionPolicy.CallableToolNames, "submit_plan") {
 		tools = append(tools, "submit_plan")
 	}
 	return uniquePhaseStrings(tools)

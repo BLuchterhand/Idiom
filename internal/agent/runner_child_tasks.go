@@ -47,7 +47,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 	prompt = normalizeReadOnlyChildPrompt(prompt)
 	prompt = r.augmentReadOnlyChildPrompt(prompt)
 	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6, MaxDuration: 90 * time.Second}
-	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
+	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
 		childPolicy.MaxToolSteps = 4
 		childPolicy.MaxModelCalls = 6
 		childPolicy.MaxDuration = 45 * time.Second
@@ -122,18 +122,29 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 			Error:   err.Error(),
 		}
 	}
-	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); blockerKind != "" {
+	if blockerKind, _ := child.finalAnswerBlockerKind(answer, childResults); strings.TrimSpace(answer) == "" || blockerKind != "" {
 		if synthesized, ok := synthesizeDelegatedReadOnlyAnswer(prompt, childResults); ok {
-			answer = synthesized
+			if blockerKind, _ := child.finalAnswerBlockerKind(synthesized, childResults); blockerKind == "" {
+				answer = synthesized
+			}
+		} else if fallback, ok := deterministicNoToolsAnswer(child.agentName(), child.RuntimeBrief, childResults); ok {
+			if blockerKind, _ := child.finalAnswerBlockerKind(fallback, childResults); blockerKind == "" {
+				answer = fallback
+			}
 		}
 	}
 	answer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)
 	answer = normalizeDelegatedReadOnlyPacket(answer)
-	return workspace.ToolResult{
+	result := workspace.ToolResult{
 		Tool:    "task",
 		Summary: "Child task completed",
 		Output:  strings.TrimSpace(answer),
 	}
+	if packet, ok := buildReadOnlyEvidencePacket(prompt, answer, childResults); ok {
+		result.Output = renderReadOnlyEvidencePacketForToolOutput(packet, answer)
+		result = readOnlyEvidencePacketToolResult(result, packet)
+	}
+	return result
 }
 
 func normalizeReadOnlyChildPrompt(prompt string) string {

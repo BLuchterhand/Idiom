@@ -378,10 +378,6 @@ func TryLoadPlanExecuteFailureRecord(root string, sessionID string) (FailureReco
 	return TryLoadFailureRecord(root, PlanExecuteFailureID(strings.TrimSpace(sessionID)))
 }
 
-func TryLoadImplementFailureRecord(root string, sessionID string) (FailureRecord, string, bool, error) {
-	return TryLoadFailureRecord(root, ImplementFailureID(strings.TrimSpace(sessionID)))
-}
-
 func TryLoadFailureRecordForSession(root string, sessionID string) (FailureRecord, string, bool, error) {
 	for _, failureID := range FailureIDCandidatesForSession(sessionID) {
 		record, path, found, err := TryLoadFailureRecord(root, failureID)
@@ -412,10 +408,6 @@ func TryLoadFailureRecord(root string, failureID string) (FailureRecord, string,
 		return FailureRecord{}, relPath, false, fmt.Errorf("unsupported recovery failure record schema %q in %s", record.SchemaVersion, relPath)
 	}
 	return record, relPath, true, nil
-}
-
-func PlanExecuteFailureRecordPath(root string, sessionID string) (string, string, error) {
-	return FailureRecordPath(root, PlanExecuteFailureID(strings.TrimSpace(sessionID)))
 }
 
 func FailureRecordPath(root string, failureID string) (string, string, error) {

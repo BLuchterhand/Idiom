@@ -174,49 +174,6 @@ func (idx *TsIndex) FindCallsInto(pattern string, limit int) []TsCallMatch {
 	return out
 }
 
-// Dependencies returns the transitive closure of imports starting from the
-// files whose path matches the given pattern.
-func (idx *TsIndex) Dependencies(pattern string) []string {
-	targets := idx.findFiles(pattern)
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, target := range targets {
-		for _, dep := range transitiveStringClosure(idx.Forward, target) {
-			if _, ok := seen[dep]; ok {
-				continue
-			}
-			seen[dep] = struct{}{}
-			out = append(out, dep)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// WhoImports is the reverse of Dependencies.
-func (idx *TsIndex) WhoImports(pattern string) []string {
-	targets := idx.findFiles(pattern)
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, target := range targets {
-		for _, dep := range transitiveStringClosure(idx.Reverse, target) {
-			if _, ok := seen[dep]; ok {
-				continue
-			}
-			seen[dep] = struct{}{}
-			out = append(out, dep)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 func scoreTsSymbolMatch(pattern string, file TsFile, symbol TsSymbol) int {
 	nameLower := strings.ToLower(symbol.Name)
 	qualifiedLower := strings.ToLower(firstTsQualified(symbol))

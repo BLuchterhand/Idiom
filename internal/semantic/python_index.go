@@ -686,13 +686,6 @@ func isPythonPath(path string) bool {
 	return ok
 }
 
-// IsPythonExtension reports whether ext (with leading dot) is a Python
-// source extension. Exported mirror of isCppExtension's role.
-func IsPythonExtension(ext string) bool {
-	_, ok := pythonFileExtensions[strings.ToLower(strings.TrimSpace(ext))]
-	return ok
-}
-
 func looksLikePythonTestPath(path string) bool {
 	p := strings.ToLower(filepath.ToSlash(path))
 	base := strings.ToLower(filepath.Base(path))

@@ -27,7 +27,7 @@ func TestRuntimeContractForTaskFamilyRecognizesPlanThenExecutePlanner(t *testing
 	if !planThenExecuteToolListContains(spec.RequiredTools, requiredToolGitHistoryLookup) {
 		t.Fatalf("planner phase must require git history lookup before submit_plan, got %v", spec.RequiredTools)
 	}
-	if !planThenExecuteToolListContains(spec.RequiredEvidence, requiredEvidenceGitHistoryRationale) {
+	if !planThenExecuteToolListContains(spec.RequiredEvidence, string(requiredEvidenceGitHistoryRationale)) {
 		t.Fatalf("planner phase must require git history rationale evidence, got %v", spec.RequiredEvidence)
 	}
 	if !planThenExecuteToolListContains(spec.SearchPolicy, "required_existing_paths_need_source_body_before_submit_plan") {
@@ -183,9 +183,9 @@ func TestBuiltInToolNamesDoNotLookExternal(t *testing.T) {
 	}
 }
 
-func planThenExecuteToolListContains(haystack []string, needle string) bool {
+func planThenExecuteToolListContains[T ~string](haystack []T, needle string) bool {
 	for _, s := range haystack {
-		if s == needle {
+		if string(s) == needle {
 			return true
 		}
 	}

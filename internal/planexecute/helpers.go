@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -28,6 +29,42 @@ import (
 	"idiom/internal/workspace"
 )
 
+func ParseOptions(args []string, stderr io.Writer) (Options, error) {
+	var opts Options
+	fs := flag.NewFlagSet("idiom plan-execute", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	fs.StringVar(&opts.ConfigPath, "config", "config.json", "path to config file")
+	fs.StringVar(&opts.Prompt, "prompt", "", "implementation prompt")
+	fs.StringVar(&opts.PromptFile, "prompt-file", "", "read implementation prompt from a file")
+	fs.BoolVar(&opts.JSONEvents, "json", false, "emit structured JSONL events to stdout")
+	fs.StringVar(&opts.Resume, "resume", "", "resume a prior session by id before running")
+	fs.StringVar(&opts.Model, "model", "", "override llama_server.model from config")
+	fs.BoolVar(&opts.DisableThinking, "no-thinking", false, "force request-level Qwen thinking off for this planner run")
+	fs.IntVar(&opts.MaxTokens, "max-tokens", 0, "override planner max_tokens for this run; 0 uses the shape-aware plan-execute default")
+	fs.BoolVar(&opts.PlannerOwnedVerification, "planner-owned-verification", false, "compatibility flag: plan-execute always treats verification as planner-owned; this is a no-op")
+	fs.BoolVar(&opts.AllowBuildTests, "allow-build-tests", false, "compatibility flag: plan-execute does not run builds or tests; this is a no-op")
+	fs.BoolVar(&opts.SkipReviewRepair, "skip-review-repair", false, "skip the post-execute review-repair planner pass")
+	fs.Var(&opts.RequiredEditPaths, "required-edit-path", "workspace-relative required edit path for this plan-execute run; repeatable and augments prompt extraction")
+	fs.Var(&opts.AllowedEditPaths, "allowed-edit-path", "workspace-relative candidate edit path for this plan-execute run; repeatable and augments prompt extraction without requiring coverage")
+	if err := fs.Parse(args); err != nil {
+		return Options{}, err
+	}
+	if fs.NArg() > 0 {
+		if strings.TrimSpace(opts.Prompt) != "" || strings.TrimSpace(opts.PromptFile) != "" {
+			return Options{}, fmt.Errorf("positional prompt cannot be combined with --prompt or --prompt-file")
+		}
+		opts.Prompt = strings.Join(fs.Args(), " ")
+	}
+	if strings.TrimSpace(opts.Prompt) == "" && strings.TrimSpace(opts.PromptFile) == "" {
+		return Options{}, fmt.Errorf("provide --prompt, --prompt-file, or a positional prompt")
+	}
+	return opts, nil
+}
+
+func PlanExecutePrompt(opts Options) (string, error) {
+	return planExecutePrompt(opts)
+}
+
 func planExecutePrompt(opts Options) (string, error) {
 	hasPrompt := strings.TrimSpace(opts.Prompt) != ""
 	hasFile := strings.TrimSpace(opts.PromptFile) != ""
@@ -48,12 +85,24 @@ func planExecutePrompt(opts Options) (string, error) {
 	return prompt, nil
 }
 
+func PlanExecuteRequiredEditPaths(opts Options, prompt string) []string {
+	return planExecuteRequiredEditPaths(opts, prompt)
+}
+
 func planExecuteRequiredEditPaths(opts Options, prompt string) []string {
 	return planExecuteScopeContract(opts, prompt).RequiredCoveragePaths
 }
 
+func PlanExecuteAllowedEditPaths(opts Options, prompt string) []string {
+	return planExecuteAllowedEditPaths(opts, prompt)
+}
+
 func planExecuteAllowedEditPaths(opts Options, prompt string) []string {
 	return planExecuteScopeContract(opts, prompt).AllowedCandidatePaths
+}
+
+func PlanExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
+	return planExecuteScopeContract(opts, prompt)
 }
 
 func inheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
@@ -107,6 +156,10 @@ func isPlanExecutePackID(value string) bool {
 	return true
 }
 
+func IsPlanExecutePackID(value string) bool {
+	return isPlanExecutePackID(value)
+}
+
 func patchPlanArtifactPackID(path string, packID string) error {
 	packID = strings.TrimSpace(packID)
 	if path == "" || packID == "" {
@@ -153,6 +206,10 @@ func patchPlanArtifactPackID(path string, packID string) error {
 	}
 	updated = append(updated, '\n')
 	return os.WriteFile(path, updated, 0o644)
+}
+
+func PatchPlanArtifactPackID(path string, packID string) error {
+	return patchPlanArtifactPackID(path, packID)
 }
 
 func planExecutePlannerSystemAddendum(requiredEditPaths []string, allowedEditPaths []string) string {
@@ -373,6 +430,10 @@ func PlanExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 	return planExecuteUniqueRequiredPaths(requiredEditPaths)
 }
 
+func NormalizePlanExecutePath(path string) string {
+	return normalizePlanExecutePath(path)
+}
+
 func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 	var out []string
 	seen := make(map[string]struct{}, len(requiredEditPaths))
@@ -390,16 +451,16 @@ func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 	return out
 }
 
-func PlanExecutePlannerSystemAddendum(requiredEditPaths []string) string {
-	return planExecutePlannerSystemAddendum(requiredEditPaths, nil)
-}
-
 func PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations EditSetObligations) string {
 	return planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, obligations)
 }
 
 func PlanExecuteExactPlanEdits(prompt string, requiredEditPaths []string) ([]workspace.PlanEdit, string) {
 	return planExecuteExactPlanEdits(prompt, requiredEditPaths)
+}
+
+func PlanExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []string, workspaceRoot string) ([]workspace.PlanEdit, string) {
+	return planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, workspaceRoot)
 }
 
 func InheritPlanExecutePromptPackID(plan *workspace.PlanArtifact, prompt string) string {
@@ -422,14 +483,6 @@ func AutoRepairReviewPatchHygiene(root string, changedPaths []string, evidence R
 	return autoRepairReviewPatchHygiene(root, changedPaths, evidence)
 }
 
-func CollectPlanExecutePhaseEvidence(root string, phase string, plan workspace.PlanArtifact, changedPaths []string, requiredPaths []string, allowedPaths []string, reviewEvidence ReviewRepairEvidence, executorReport ExecutorPhaseReport) PhaseEvidenceBundle {
-	return collectPlanExecutePhaseEvidence(root, phase, plan, changedPaths, requiredPaths, allowedPaths, reviewEvidence, executorReport)
-}
-
-func LoadPlanExecutePacketEvidence(root string, packID string) PhaseEvidencePacket {
-	return loadPlanExecutePacketEvidence(root, packID)
-}
-
 func PlanExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArtifact, changedPaths []string, allowedRepairPaths []string, evidence ReviewRepairEvidence) string {
 	return planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
 }
@@ -442,8 +495,8 @@ func PlanExecutePathLooksLikeTest(path string) bool {
 	return planExecutePathLooksLikeTest(path)
 }
 
-func PhaseEvidenceTelemetry(bundle PhaseEvidenceBundle) map[string]any {
-	return phaseEvidenceTelemetry(bundle)
+func PhaseEvidenceTelemetryChecks(checks []PhaseEvidenceCheck, limit int) []map[string]string {
+	return phaseEvidenceTelemetryChecks(checks, limit)
 }
 
 func PreflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
@@ -648,6 +701,10 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 		handoff.Reason = "cache_miss"
 	}
 	return handoff
+}
+
+func ClassifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) ExecutorHandoffPacket {
+	return classifyExecutorHandoffPacket(root, plan)
 }
 
 func applyExecutorHandoffView(handoff ExecutorHandoffPacket, view comprehension.PackResult) ExecutorHandoffPacket {
@@ -1434,6 +1491,10 @@ func trimTrailingWhitespaceEveryLine(text string) string {
 		start = end
 	}
 	return b.String()
+}
+
+func TrimTrailingWhitespaceEveryLine(text string) string {
+	return trimTrailingWhitespaceEveryLine(text)
 }
 
 func trimTrailingWhitespaceBeforeLineEnding(line string) string {
@@ -2537,10 +2598,6 @@ func executorEditOutcome(result workspace.ToolResult) string {
 		return "FAILED: " + result.Error
 	}
 	return "ok"
-}
-
-func EmitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
-	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, fields)
 }
 
 func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {

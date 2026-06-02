@@ -9,9 +9,9 @@ import (
 	implementcmd "idiom/internal/cmd/implement"
 	planexecutecmd "idiom/internal/cmd/planexecute"
 	refinecmd "idiom/internal/cmd/refine"
+	"idiom/internal/cmd/route"
+	"idiom/internal/cmd/runtime"
 	toolcmd "idiom/internal/cmd/tool"
-	"idiom/internal/cmdroute"
-	"idiom/internal/cmdruntime"
 	"idiom/internal/config"
 	"idiom/internal/lanehistory"
 	"idiom/internal/readiness"
@@ -34,10 +34,6 @@ type laneRefineOptions = refinecmd.Options
 type refineDispatchFn = refinecmd.DispatchFunc
 type cliWriterRouteOptions = cmdroute.Options
 
-func RunMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runLaneMain(args, stdout, stderr)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder) int {
 	return runLaneMainWithTelemetry(args, stdout, stderr, rec)
 }
@@ -46,16 +42,8 @@ func runPromptOnce(cfg config.Config, prompt string, opts runOptions, stdout io.
 	return cmdruntime.RunPromptOnce(cfg, prompt, opts, stdout)
 }
 
-func runPlanExecuteMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
-	return planexecutecmd.RunMain(args, stdout, stderr, promptRun)
-}
-
 func runPlanExecuteMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {
 	return planexecutecmd.RunMainWithTelemetry(args, stdout, stderr, promptRun, rec)
-}
-
-func runImplementMain(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int {
-	return implementcmd.RunMain(args, stdout, stderr, promptRun)
 }
 
 func runImplementMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner, rec *telemetry.Recorder) int {

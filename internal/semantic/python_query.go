@@ -167,50 +167,6 @@ func (idx *PythonIndex) FindCallsInto(pattern string, limit int) []PythonCallMat
 	return out
 }
 
-// Dependencies returns the transitive set of workspace files imported
-// by files matching pattern.
-func (idx *PythonIndex) Dependencies(pattern string) []string {
-	targets := idx.findFiles(pattern)
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, target := range targets {
-		for _, dep := range transitiveStringClosure(idx.Forward, target) {
-			if _, ok := seen[dep]; ok {
-				continue
-			}
-			seen[dep] = struct{}{}
-			out = append(out, dep)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// WhoImports returns the transitive set of workspace files that import
-// files matching pattern.
-func (idx *PythonIndex) WhoImports(pattern string) []string {
-	targets := idx.findFiles(pattern)
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, target := range targets {
-		for _, dep := range transitiveStringClosure(idx.Reverse, target) {
-			if _, ok := seen[dep]; ok {
-				continue
-			}
-			seen[dep] = struct{}{}
-			out = append(out, dep)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 // Implementations returns subclass symbols of classes whose name
 // matches pattern. Useful as a lightweight, AST-free implementations
 // query before a real LSP responds.

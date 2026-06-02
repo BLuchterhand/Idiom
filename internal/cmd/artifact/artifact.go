@@ -35,10 +35,6 @@ type PromptRunner func(config.Config, string, RunOptions, io.Writer) (string, er
 type runOptions = RunOptions
 type promptRunner = PromptRunner
 
-func RunMain(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner) int {
-	return runArtifactMain(args, stdout, stderr, promptRun)
-}
-
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun PromptRunner, rec *telemetry.Recorder) int {
 	return runArtifactMainWithTelemetry(args, stdout, stderr, promptRun, rec)
 }

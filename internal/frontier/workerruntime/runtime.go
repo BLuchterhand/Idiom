@@ -30,6 +30,10 @@ type WorkerRuntimeBrief struct {
 	TaskFamily           string                `json:"task_family,omitempty"`
 	Contract             string                `json:"contract,omitempty"`
 	Objective            string                `json:"objective,omitempty"`
+	RequestedOutcome     string                `json:"requested_outcome,omitempty"`
+	WriteIntent          string                `json:"write_intent,omitempty"`
+	ReadOnlyConstraint   bool                  `json:"read_only_constraint,omitempty"`
+	EvidenceIntent       string                `json:"evidence_intent,omitempty"`
 	PermissionProfile    string                `json:"permission_profile,omitempty"`
 	TargetRefs           []string              `json:"target_refs,omitempty"`
 	RequiredEditPaths    []string              `json:"required_edit_paths,omitempty"`
@@ -83,13 +87,7 @@ type ActionGuidanceInput struct {
 	DeclarationMovesForbidden  bool
 	ApprovedTargetScopePresent bool
 	WriteCapable               bool
-	// Objective is the current user ask for this turn, pulled verbatim
-	// from the latest user message. When it contains relational verbs
-	// like "calls"/"uses"/"references"/"delegates", BuildActionGuidance
-	// promotes the language symbol/reference tools ahead of the generic
-	// read-file suggestion — those are the right answer for "how does X
-	// hand off to Y" questions, which the generic nudges don't surface.
-	Objective string
+	EvidenceIntent             string
 }
 
 type ActionGuidance struct {
@@ -104,6 +102,10 @@ type RunState struct {
 	Contract             string              `json:"contract,omitempty"`
 	Phase                string              `json:"phase,omitempty"`
 	Objective            string              `json:"objective,omitempty"`
+	RequestedOutcome     string              `json:"requested_outcome,omitempty"`
+	WriteIntent          string              `json:"write_intent,omitempty"`
+	ReadOnlyConstraint   bool                `json:"read_only_constraint,omitempty"`
+	EvidenceIntent       string              `json:"evidence_intent,omitempty"`
 	Step                 int                 `json:"step,omitempty"`
 	Permission           string              `json:"permission_profile,omitempty"`
 	TargetRefs           []string            `json:"target_refs,omitempty"`
@@ -151,7 +153,7 @@ type RecoveryInput struct {
 	EvidencePaths             []string
 	Constraints               []string
 	DeclarationMovesForbidden bool
-	Objective                 string
+	EvidenceIntent            string
 	WriteCapable              bool
 }
 
@@ -326,7 +328,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		switch tool {
 		case "go_file_outline", "cpp_overview":
 			if strings.TrimSpace(input.Result.Error) == "" {
-				if objectiveImpliesRefactor(input.Objective) {
+				if input.EvidenceIntent == "refactor" {
 					// Refactoring objective — outline's built-in
 					// go_move_declarations hint is the right next step.
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "declaration-move write capability for a tagged group of declarations")
@@ -351,7 +353,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "answer if the inspected body already resolves the question")
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "if one exact missing claim remains, request one exact symbol, reference, or narrow range capability that would resolve it")
 				}
-				if input.WriteCapable && (input.ApprovedTargetScopePresent || objectiveImpliesRefactor(input.Objective) || writeReadyPacket) {
+				if input.WriteCapable && (input.ApprovedTargetScopePresent || input.EvidenceIntent == "refactor" || writeReadyPacket) {
 					guidance.ValidNext = appendUnique(guidance.ValidNext, "write capability using the inspected evidence")
 				}
 				if writeReadyPacket {
@@ -399,7 +401,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "answer from the current evidence if it already resolves the task")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "otherwise take one exact tool-shaped follow-up tied to a concrete missing claim")
 	}
-	if !closureActive && objectiveImpliesRelation(input.Objective) && isDiscoveryTool(tool) {
+	if !closureActive && input.EvidenceIntent == "relation_trace" && isDiscoveryTool(tool) {
 		// Promote semantic navigation ahead of the generic
 		// "read a hit" advice. The generic nudges are tuned for "find a
 		// file and read it"; a relational question ("how does X call Y")
@@ -553,54 +555,6 @@ func filterClosureGuidanceNext(values []string, scope string) []string {
 	return prefixed
 }
 
-// relationalObjectiveVerbs enumerates the words that signal "find how X
-// reaches Y" queries. Deliberately small and lowercase — false
-// positives here downgrade a single next_valid_actions row, not safety.
-var relationalObjectiveVerbs = []string{
-	"calls", "call site", "called by", "uses", "used by",
-	"invokes", "invoked", "references", "referenced",
-	"delegates", "delegate to", "hands off", "handoff", "hand off",
-	"dispatches", "dispatched", "subclasses", "implements",
-	"who calls", "who uses",
-}
-
-func objectiveImpliesRelation(objective string) bool {
-	lowered := strings.ToLower(strings.TrimSpace(objective))
-	if lowered == "" {
-		return false
-	}
-	for _, needle := range relationalObjectiveVerbs {
-		if strings.Contains(lowered, needle) {
-			return true
-		}
-	}
-	return false
-}
-
-// refactorObjectiveVerbs signals "move/reshape code" intent, which is
-// when the outline tool's built-in go_move_declarations next-action
-// hint is actually the right follow-up. Kept narrow on purpose —
-// over-matching here suppresses the go_read_symbol nudge that almost
-// every explanatory question actually wants.
-var refactorObjectiveVerbs = []string{
-	"move ", "relocate", "extract to", "split ", "split-up", "split out",
-	"refactor", "rename ", "reshape", "reorganize",
-	"pull out", "pull up", "push down", "hoist",
-}
-
-func objectiveImpliesRefactor(objective string) bool {
-	lowered := strings.ToLower(strings.TrimSpace(objective))
-	if lowered == "" {
-		return false
-	}
-	for _, needle := range refactorObjectiveVerbs {
-		if strings.Contains(lowered, needle) {
-			return true
-		}
-	}
-	return false
-}
-
 // isDiscoveryTool reports whether the just-finished tool was an
 // orientation/search step — the only moment it's worth re-ranking the
 // suggested next actions. We deliberately exclude edit/write tools
@@ -621,7 +575,7 @@ func BuildRecoveryPlan(input RecoveryInput) RecoveryPlan {
 		Result:                    input.Result,
 		Constraints:               input.Constraints,
 		DeclarationMovesForbidden: input.DeclarationMovesForbidden,
-		Objective:                 input.Objective,
+		EvidenceIntent:            input.EvidenceIntent,
 		WriteCapable:              input.WriteCapable,
 	})
 	tool := strings.TrimSpace(input.Request.Tool)
@@ -845,7 +799,7 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 	if len(state.EvidenceContract) > 0 {
 		directive += " Evidence contract / exit criteria are summarized in current_state.evidence_contract; use them before contract fulfillment while you judge whether inspected evidence directly resolves the user's request."
 	}
-	if strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") && strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
+	if TaskFamilyIsConversation(state.TaskFamily) && RuntimeContractIsDirectAnswer(state.Contract) {
 		directive += " Conversation lane: every response must either (a) contain tool calls that investigate the codebase, or (b) deliver a final prose answer to the user. Answer the user's actual specific question — do not begin new investigation on neighboring topics once you have the evidence to answer. For factual or yes/no questions, answer directly from the evidence gathered; for explanatory questions, investigate until you can support the answer with file:line evidence from at least one inspected source location. Prefer answering after 5-15 targeted tool calls over exhaustive exploration. Use context_pack to localize, context_query for graph questions, code_navigate for symbol bodies, read_file for bounded source reads, search_content for literal text. Use the note tool to capture key findings (file paths, function names, mechanism descriptions) as you discover them — notes persist across context compactions and help you build your answer scaffold. When ready, name the evidence paths and file:line citations you inspected. Do not return raw tool summaries, function signatures, or JSON envelopes."
 	}
 	if readOnlyWorkspaceEvidencePendingState(state) {
@@ -875,8 +829,8 @@ func BuildInitialStepInstruction(brief WorkerRuntimeBrief) StepInstruction {
 		!state.Readiness.ReadyToVerify &&
 		!implementationStateHasRequiredPathsForMutation(state) &&
 		!genericGuardedMutationNeedsTargetContract(state) &&
-		!strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") &&
-		!strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") {
+		!TaskFamilyIsConversation(state.TaskFamily) &&
+		!RuntimeContractIsDirectAnswer(state.Contract) {
 		directive += " The readiness state says answering is supported; continue only for one exact missing claim and one exact probe."
 	}
 	return StepInstruction{
@@ -907,36 +861,21 @@ func initialEvidenceContract(state RunState) []string {
 }
 
 func conversationDirectAnswerReadOnlyState(state RunState) bool {
-	return strings.EqualFold(strings.TrimSpace(state.TaskFamily), "conversation") &&
-		strings.EqualFold(strings.TrimSpace(state.Contract), "direct_answer") &&
-		strings.EqualFold(strings.TrimSpace(state.Permission), "read_only_workspace")
+	return ConversationDirectAnswerReadOnly(state.TaskFamily, state.Contract, state.Permission)
 }
 
 func planThenExecutePlannerState(state RunState) bool {
-	return strings.EqualFold(strings.TrimSpace(state.TaskFamily), "plan_then_execute_planner")
+	return TaskFamilyIsPlanThenExecutePlanner(state.TaskFamily)
 }
 
 func initialActionContractApplies(state RunState) bool {
-	permission := strings.ToLower(strings.TrimSpace(state.Permission))
-	contract := strings.ToLower(strings.TrimSpace(state.Contract))
-	family := strings.ToLower(strings.TrimSpace(state.TaskFamily))
-	switch permission {
-	case "guarded_workspace_write", "isolated_workbranch_write", "analysis_read_only_then_guarded_writes":
-		return true
-	}
-	switch contract {
-	case "implementation_result", "patch_summary_with_verification", "repair_summary_with_verification":
-		return true
-	}
-	switch family {
-	case "implementation", "implementation_repair", "delegated_isolated_implementation", "docs_edit":
-		return true
-	}
-	return false
+	return PermissionProfileAllowsInitialActionContract(state.Permission) ||
+		RuntimeContractRequiresInitialAction(state.Contract) ||
+		TaskFamilyRequiresInitialActionContract(state.TaskFamily)
 }
 
 func readOnlyWorkspaceEvidencePendingState(state RunState) bool {
-	if !strings.EqualFold(strings.TrimSpace(state.Permission), "read_only_workspace") {
+	if !PermissionProfileIsReadOnlyWorkspace(state.Permission) {
 		return false
 	}
 	if state.Readiness == nil || state.Readiness.ReadyToAnswer {
@@ -995,54 +934,6 @@ func genericGuardedMutationContract() string {
 	return "For guarded workspace mutation without required_edit_paths, select the target before writing and get source-body evidence for that target first. The next visible action must be parser-readable: write when the exact target and edit shape are known, otherwise use bounded discovery/read with a named_gap for the missing target or edit-safety fact, or answer with <<QUESTION>>/no-op and concrete evidence. After a write, verify or report the concrete verification blocker before claiming completion."
 }
 
-// MergeRuntimeBriefIntoStateDelta is a slimmed-down variant of
-// MergeRuntimeBriefIntoState that keeps only the fields that can change
-// turn-to-turn (evidence paths, changed paths, constraints, next/invalid
-// actions, budget). It DROPS the static scaffolding — tool_manifest,
-// allowed/forbidden tools, required tools, readiness gate, search policy,
-// stop conditions, final critic, target packet. Once a model has seen
-// those fields three times, repeating them burns tokens for no benefit.
-// The runner uses this variant after step 3 of a turn.
-func MergeRuntimeBriefIntoStateDelta(brief WorkerRuntimeBrief, state RunState) RunState {
-	brief = NormalizeRuntimeBrief(brief)
-	if state.Lane == "" {
-		state.Lane = brief.Lane
-	}
-	if state.TaskFamily == "" {
-		state.TaskFamily = brief.TaskFamily
-	}
-	if state.Contract == "" {
-		state.Contract = brief.Contract
-	}
-	if state.Objective == "" {
-		state.Objective = brief.Objective
-	}
-	if state.Permission == "" {
-		state.Permission = brief.PermissionProfile
-	}
-	if len(state.TargetRefs) == 0 {
-		state.TargetRefs = append([]string(nil), brief.TargetRefs...)
-	}
-	if len(state.RequiredEditPaths) == 0 {
-		state.RequiredEditPaths = append([]string(nil), brief.RequiredEditPaths...)
-	}
-	if len(state.AllowedEditPaths) == 0 {
-		state.AllowedEditPaths = append([]string(nil), brief.AllowedEditPaths...)
-	}
-	state.EvidencePaths = mergeStrings(state.EvidencePaths, brief.EvidencePaths)
-	state.ChangedPaths = mergeStrings(state.ChangedPaths, brief.ChangedPaths)
-	state.Constraints = mergeStrings(state.Constraints, brief.Constraints)
-	if state.Readiness == nil {
-		state.Readiness = cloneReadinessState(brief.Readiness)
-	}
-	if state.Budget == (BudgetBrief{}) {
-		state.Budget = brief.Budget
-	}
-	state.NextActions = mergeStrings(state.NextActions, brief.RequiredNext)
-	state.InvalidActions = mergeStrings(state.InvalidActions, brief.InvalidActions)
-	return state
-}
-
 func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunState {
 	brief = NormalizeRuntimeBrief(brief)
 	if state.Lane == "" {
@@ -1056,6 +947,18 @@ func MergeRuntimeBriefIntoState(brief WorkerRuntimeBrief, state RunState) RunSta
 	}
 	if state.Objective == "" {
 		state.Objective = brief.Objective
+	}
+	if state.RequestedOutcome == "" {
+		state.RequestedOutcome = brief.RequestedOutcome
+	}
+	if state.WriteIntent == "" {
+		state.WriteIntent = brief.WriteIntent
+	}
+	if !state.ReadOnlyConstraint {
+		state.ReadOnlyConstraint = brief.ReadOnlyConstraint
+	}
+	if state.EvidenceIntent == "" {
+		state.EvidenceIntent = brief.EvidenceIntent
 	}
 	if state.Permission == "" {
 		state.Permission = brief.PermissionProfile
@@ -1133,6 +1036,9 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.TaskFamily = strings.TrimSpace(brief.TaskFamily)
 	brief.Contract = strings.TrimSpace(brief.Contract)
 	brief.Objective = truncate(strings.TrimSpace(brief.Objective), 500)
+	brief.RequestedOutcome = strings.TrimSpace(brief.RequestedOutcome)
+	brief.WriteIntent = strings.TrimSpace(brief.WriteIntent)
+	brief.EvidenceIntent = strings.TrimSpace(brief.EvidenceIntent)
 	brief.PermissionProfile = strings.TrimSpace(brief.PermissionProfile)
 	brief.VerificationContract = strings.TrimSpace(brief.VerificationContract)
 	brief.TargetRefs = uniqueNonEmpty(brief.TargetRefs)
@@ -1159,7 +1065,7 @@ func NormalizeRuntimeBrief(brief WorkerRuntimeBrief) WorkerRuntimeBrief {
 	brief.InvalidActions = uniqueNonEmpty(brief.InvalidActions)
 	brief.Readiness = NormalizeReadinessState(brief.Readiness)
 	brief.ToolManifest = workspace.SanitizeToolManifestRequests(brief.ToolManifest)
-	if strings.EqualFold(brief.PermissionProfile, "conversation_only") {
+	if PermissionProfileIsConversationOnly(brief.PermissionProfile) {
 		brief.AllowedTools = nil
 		brief.RequiredTools = nil
 		brief.ToolManifest = nil
@@ -1439,6 +1345,10 @@ func RuntimeBriefHasContent(brief WorkerRuntimeBrief) bool {
 		brief.TaskFamily != "" ||
 		brief.Contract != "" ||
 		brief.Objective != "" ||
+		brief.RequestedOutcome != "" ||
+		brief.WriteIntent != "" ||
+		brief.ReadOnlyConstraint ||
+		brief.EvidenceIntent != "" ||
 		len(brief.TargetRefs) > 0 ||
 		len(brief.RequiredEditPaths) > 0 ||
 		len(brief.AllowedEditPaths) > 0 ||
@@ -1463,26 +1373,6 @@ func RenderFailureFeedbackPacket(packet any) string {
 		"This packet reports recovery state. `required_next` lists hard requirements; `valid_next` lists safe options. Do not repeat invalid actions from this packet.",
 		string(data),
 	}, "\n")
-}
-
-func SummarizeToolResult(result workspace.ToolResult) ToolResultSummary {
-	return ToolResultSummary{
-		Tool:        strings.TrimSpace(result.Tool),
-		Summary:     truncate(result.Summary, 220),
-		Error:       truncate(result.Error, 260),
-		OutputChars: len(result.Output),
-	}
-}
-
-func SummarizeToolResults(results []workspace.ToolResult, limit int) []ToolResultSummary {
-	if limit > 0 && len(results) > limit {
-		results = results[len(results)-limit:]
-	}
-	out := make([]ToolResultSummary, 0, len(results))
-	for _, result := range results {
-		out = append(out, SummarizeToolResult(result))
-	}
-	return out
 }
 
 func recoveryStateSummary(reason string, tool string, target string, result workspace.ToolResult, evidencePaths []string) string {

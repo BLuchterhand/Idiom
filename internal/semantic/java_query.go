@@ -250,49 +250,6 @@ func (idx *JavaIndex) Implementations(pattern string, limit int) []JavaSymbolMat
 	return out
 }
 
-// Dependencies returns files that `pattern`'s files (transitively)
-// import from, following in-workspace FQN edges only.
-func (idx *JavaIndex) Dependencies(pattern string) []string {
-	targets := idx.findFiles(pattern)
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, target := range targets {
-		for _, dep := range transitiveStringClosure(idx.Forward, target) {
-			if _, ok := seen[dep]; ok {
-				continue
-			}
-			seen[dep] = struct{}{}
-			out = append(out, dep)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
-// WhoImports is the reverse of Dependencies.
-func (idx *JavaIndex) WhoImports(pattern string) []string {
-	targets := idx.findFiles(pattern)
-	if len(targets) == 0 {
-		return nil
-	}
-	out := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, target := range targets {
-		for _, dep := range transitiveStringClosure(idx.Reverse, target) {
-			if _, ok := seen[dep]; ok {
-				continue
-			}
-			seen[dep] = struct{}{}
-			out = append(out, dep)
-		}
-	}
-	slices.Sort(out)
-	return out
-}
-
 func scoreJavaSymbolMatch(pattern string, file JavaFile, sym JavaSymbol) int {
 	nameLower := strings.ToLower(sym.Name)
 	qualifiedLower := strings.ToLower(firstJavaQualified(sym))

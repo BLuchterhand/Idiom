@@ -1,8 +1,9 @@
 package lane
+
 import (
 	"strings"
 
-	"idiom/internal/cmdtelemetry"
+	"idiom/internal/cmd/telemetry"
 	"idiom/internal/config"
 )
 

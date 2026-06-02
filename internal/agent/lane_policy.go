@@ -103,25 +103,31 @@ type LanePolicy interface {
 
 type DefaultLanePolicy struct{}
 
-func (p DefaultLanePolicy) Name() string                             { return "default" }
-func (p DefaultLanePolicy) SkipDurationBudget() bool                 { return false }
-func (p DefaultLanePolicy) SkipModelCallBudget() bool                { return false }
-func (p DefaultLanePolicy) SkipFingerprintHardBlock() bool           { return false }
-func (p DefaultLanePolicy) SkipSynthesisNudge() bool                 { return false }
-func (p DefaultLanePolicy) SkipExplorationDelegationNudge() bool     { return false }
-func (p DefaultLanePolicy) ShouldForceAnswerAfterRejection() bool    { return true }
-func (p DefaultLanePolicy) CallCountMilestones(_ int) (int, int)     { return 0, 0 }
-func (p DefaultLanePolicy) AutoCaptureFindings() bool                { return false }
-func (p DefaultLanePolicy) ShouldHaveNoteTool(_ string) bool         { return false }
-func (p DefaultLanePolicy) ShouldSkipRecoveryNudge() bool { return false }
-func (p DefaultLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string { return "" }
-func (p DefaultLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string { return "" }
-func (p DefaultLanePolicy) ConfidenceCap() string                    { return "" }
+func (p DefaultLanePolicy) Name() string                          { return "default" }
+func (p DefaultLanePolicy) SkipDurationBudget() bool              { return false }
+func (p DefaultLanePolicy) SkipModelCallBudget() bool             { return false }
+func (p DefaultLanePolicy) SkipFingerprintHardBlock() bool        { return false }
+func (p DefaultLanePolicy) SkipSynthesisNudge() bool              { return false }
+func (p DefaultLanePolicy) SkipExplorationDelegationNudge() bool  { return false }
+func (p DefaultLanePolicy) ShouldForceAnswerAfterRejection() bool { return true }
+func (p DefaultLanePolicy) CallCountMilestones(_ int) (int, int)  { return 0, 0 }
+func (p DefaultLanePolicy) AutoCaptureFindings() bool             { return false }
+func (p DefaultLanePolicy) ShouldHaveNoteTool(_ string) bool      { return false }
+func (p DefaultLanePolicy) ShouldSkipRecoveryNudge() bool         { return false }
+func (p DefaultLanePolicy) RejectionRecoveryNudge(_ workerruntime.WorkerRuntimeBrief, _ workspace.ToolRequest, _ []workspace.ToolResult) string {
+	return ""
+}
+func (p DefaultLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.WorkerRuntimeBrief) string {
+	return ""
+}
+func (p DefaultLanePolicy) ConfidenceCap() string { return "" }
 
 func (p DefaultLanePolicy) EvidenceSufficientForObjective(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	return false
 }
-func (p DefaultLanePolicy) NamedEvidencePaths(_ workerruntime.WorkerRuntimeBrief) []string { return nil }
+func (p DefaultLanePolicy) NamedEvidencePaths(_ workerruntime.WorkerRuntimeBrief) []string {
+	return nil
+}
 func (p DefaultLanePolicy) EvidenceSatisfiedForceAnswerReady(_ workerruntime.WorkerRuntimeBrief, _ []workspace.ToolResult) bool {
 	return false
 }
@@ -138,7 +144,7 @@ func (p ConversationLanePolicy) SkipSynthesisNudge() bool              { return 
 func (p ConversationLanePolicy) SkipExplorationDelegationNudge() bool  { return true }
 func (p ConversationLanePolicy) ShouldForceAnswerAfterRejection() bool { return false }
 func (p ConversationLanePolicy) AutoCaptureFindings() bool             { return true }
-func (p ConversationLanePolicy) ShouldHaveNoteTool(_ string) bool     { return true }
+func (p ConversationLanePolicy) ShouldHaveNoteTool(_ string) bool      { return true }
 func (p ConversationLanePolicy) ConfidenceCap() string                 { return "medium" }
 
 func (p ConversationLanePolicy) CallCountMilestones(ctxSize int) (int, int) {
@@ -179,13 +185,17 @@ func (p DelegatedReadOnlyLanePolicy) SkipExplorationDelegationNudge() bool  { re
 func (p DelegatedReadOnlyLanePolicy) ShouldForceAnswerAfterRejection() bool { return true }
 func (p DelegatedReadOnlyLanePolicy) CallCountMilestones(_ int) (int, int)  { return 0, 0 }
 func (p DelegatedReadOnlyLanePolicy) AutoCaptureFindings() bool             { return false }
-func (p DelegatedReadOnlyLanePolicy) ShouldHaveNoteTool(contract string) bool { return strings.EqualFold(contract, "grounded_evidence_summary") }
-func (p DelegatedReadOnlyLanePolicy) ConfidenceCap() string                 { return "" }
+func (p DelegatedReadOnlyLanePolicy) ShouldHaveNoteTool(contract string) bool {
+	return strings.EqualFold(contract, "grounded_evidence_summary")
+}
+func (p DelegatedReadOnlyLanePolicy) ConfidenceCap() string { return "" }
 
 func (p DelegatedReadOnlyLanePolicy) EvidenceSufficientForObjective(_ workerruntime.WorkerRuntimeBrief, _ []workspace.ToolResult) bool {
 	return false
 }
-func (p DelegatedReadOnlyLanePolicy) NamedEvidencePaths(_ workerruntime.WorkerRuntimeBrief) []string { return nil }
+func (p DelegatedReadOnlyLanePolicy) NamedEvidencePaths(_ workerruntime.WorkerRuntimeBrief) []string {
+	return nil
+}
 func (p DelegatedReadOnlyLanePolicy) EvidenceSatisfiedForceAnswerReady(_ workerruntime.WorkerRuntimeBrief, _ []workspace.ToolResult) bool {
 	return false
 }
@@ -202,14 +212,11 @@ func (p DelegatedReadOnlyLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.W
 // --- LanePolicyForBrief selects the appropriate policy from a RuntimeBrief ---
 
 func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
-	tf := strings.TrimSpace(brief.TaskFamily)
-
-	if strings.EqualFold(tf, "conversation") {
+	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
 		return ConversationLanePolicy{}
 	}
-	if strings.EqualFold(tf, "delegated_read_only") {
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) {
 		return DelegatedReadOnlyLanePolicy{}
 	}
 	return DefaultLanePolicy{}
 }
-

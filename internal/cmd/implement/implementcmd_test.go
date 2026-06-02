@@ -1,4 +1,5 @@
 package implement
+
 import (
 	"bytes"
 	"encoding/json"
@@ -9,7 +10,7 @@ import (
 	"testing"
 
 	"idiom/internal/app"
-	"idiom/internal/cmdruntime"
+	"idiom/internal/cmd/runtime"
 	"idiom/internal/config"
 	"idiom/internal/runner"
 	"idiom/internal/telemetry"

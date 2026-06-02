@@ -543,10 +543,10 @@ func TestBuildActionGuidanceClosureOmitsTextSearchFallbackAfterReadSuccess(t *te
 
 func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
-		Reason:      "tool_result",
-		Request:     workspace.ToolRequest{Tool: "go_file_outline", Path: "internal/agent/runner.go"},
-		Constraints: []string{"child_packet_available"},
-		Objective:   "Explain how this harness uses subagents.",
+		Reason:         "tool_result",
+		Request:        workspace.ToolRequest{Tool: "go_file_outline", Path: "internal/agent/runner.go"},
+		Constraints:    []string{"child_packet_available"},
+		EvidenceIntent: "relation_trace",
 		Result: workspace.ToolResult{
 			Tool:    "go_file_outline",
 			Summary: "Outlined 12 top-level declaration(s) in internal/agent/runner.go.",
@@ -575,9 +575,9 @@ func TestBuildActionGuidanceClosureOmitsOutlineFollowupMenu(t *testing.T) {
 
 func TestBuildActionGuidanceReadSuccessOmitsEditSuggestionForExplanationObjective(t *testing.T) {
 	guidance := BuildActionGuidance(ActionGuidanceInput{
-		Reason:    "tool_result",
-		Request:   workspace.ToolRequest{Tool: "go_read_symbol", Path: "internal/agent/runner_child_tasks.go", Pattern: "Runner.runChildTask"},
-		Objective: "Explain how this harness utilizes sub-agents.",
+		Reason:         "tool_result",
+		Request:        workspace.ToolRequest{Tool: "go_read_symbol", Path: "internal/agent/runner_child_tasks.go", Pattern: "Runner.runChildTask"},
+		EvidenceIntent: "generic",
 		Result: workspace.ToolResult{
 			Tool:    "go_read_symbol",
 			Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-131",
@@ -1322,7 +1322,7 @@ func TestBuildToolManifestSuppressesWorkspacePlaceholderRequests(t *testing.T) {
 
 func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 	spec := RoleSpecFor("workbranch_write")
-	if spec.Name != "child_write" || spec.PermissionProfile != "isolated_workbranch_write" {
+	if spec.Name != RoleChildWrite || spec.PermissionProfile != PermissionIsolatedWorkbranchWrite {
 		t.Fatalf("unexpected child write role: %#v", spec)
 	}
 	for _, want := range []string{"edit_file", "apply_patch", "go_move_declarations", "shell"} {
@@ -1343,7 +1343,7 @@ func TestRoleSpecForChildWriteCarriesIsolatedContract(t *testing.T) {
 
 func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 	spec := RoleSpecFor("child_read_only")
-	if spec.Name != "child_read_only" || spec.PermissionProfile != "read_only_workspace" {
+	if spec.Name != RoleChildReadOnly || spec.PermissionProfile != PermissionReadOnlyWorkspace {
 		t.Fatalf("unexpected child read-only role: %#v", spec)
 	}
 	for _, forbidden := range []string{"task", "list_files"} {
@@ -1357,7 +1357,7 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 		}
 	}
 	for _, want := range []string{"answer_when_evidence_is_sufficient", "if_not_answering_name_one_exact_missing_claim_and_probe", "prefer_symbol_or_handle_probes_over_raw_path_reads"} {
-		if !slices.Contains(spec.SearchPolicy, want) {
+		if !runtimeLabelContains(spec.SearchPolicy, want) {
 			t.Fatalf("expected child read-only search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
@@ -1366,7 +1366,7 @@ func TestRoleSpecForChildReadOnlyOmitsNestedTaskDelegation(t *testing.T) {
 func TestRoleSpecForImplementTrustsPreloadedAnchors(t *testing.T) {
 	spec := RoleSpecFor("implement")
 	for _, want := range []string{"consume_target_packet_first", "trust_preloaded_current_state_anchors", "write_once_edit_location_is_supported"} {
-		if !slices.Contains(spec.SearchPolicy, want) {
+		if !runtimeLabelContains(spec.SearchPolicy, want) {
 			t.Fatalf("expected implement search policy to include %q, got %#v", want, spec.SearchPolicy)
 		}
 	}
@@ -1374,7 +1374,7 @@ func TestRoleSpecForImplementTrustsPreloadedAnchors(t *testing.T) {
 
 func TestRoleSpecForMainUsesConversationOnlyFallback(t *testing.T) {
 	spec := RoleSpecFor("main")
-	if spec.Name != "main" || spec.PermissionProfile != "conversation_only" {
+	if spec.Name != RoleMain || spec.PermissionProfile != PermissionConversationOnly {
 		t.Fatalf("unexpected main role: %#v", spec)
 	}
 	if len(spec.AllowedTools) != 0 {

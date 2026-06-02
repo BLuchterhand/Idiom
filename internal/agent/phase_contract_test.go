@@ -297,7 +297,7 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 			}},
 			wantMode:    PlanExecutePlanningModeHistoryPending,
 			wantPhaseID: turnPhaseHistoryPending,
-			wantTools:   []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+			wantTools:   []string{"read_file", "code_navigate", "history_range", "history_symbol"},
 		},
 		{
 			name: "submit-ready",

@@ -1,4 +1,5 @@
 package tool
+
 import (
 	"context"
 	"encoding/json"
@@ -264,10 +265,6 @@ func toolManifestExample(toolName string) (workspace.ToolManifestEntry, bool) {
 		}
 	}
 	return workspace.ToolManifestEntry{}, false
-}
-
-func RunList(stdout io.Writer) int {
-	return RunListWithConfig(stdout, "config.json", workspace.ToolProfileDefault)
 }
 
 func RunListWithConfig(stdout io.Writer, configPath string, profile string) int {

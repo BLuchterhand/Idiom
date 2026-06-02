@@ -67,29 +67,6 @@ type DecisionParams struct {
 	TaskFamily         string
 }
 
-// NewDecision creates a new Decision with the schema version and computes a stable RouteID.
-func NewDecision(mode WriterMode, lane string, plannerModel string, executorModel string, reviewerModel string, classifierModel string, riskTier string, costTier string, scopeTier string, verificationOwner string, reviewPolicy string, requiredEditPaths []string, evidencePacketIDs []string, reasonCodes []string, escalationTriggers []string, userOverride bool, taskFamily string) Decision {
-	return NewDecisionFromParams(DecisionParams{
-		Mode:               mode,
-		Lane:               lane,
-		PlannerModel:       plannerModel,
-		ExecutorModel:      executorModel,
-		ReviewerModel:      reviewerModel,
-		ClassifierModel:    classifierModel,
-		RiskTier:           riskTier,
-		CostTier:           costTier,
-		ScopeTier:          scopeTier,
-		VerificationOwner:  verificationOwner,
-		ReviewPolicy:       reviewPolicy,
-		RequiredEditPaths:  requiredEditPaths,
-		EvidencePacketIDs:  evidencePacketIDs,
-		ReasonCodes:        reasonCodes,
-		EscalationTriggers: escalationTriggers,
-		UserOverride:       userOverride,
-		TaskFamily:         taskFamily,
-	})
-}
-
 // NewDecisionFromParams creates a normalized report-only writer route decision.
 func NewDecisionFromParams(params DecisionParams) Decision {
 	normalizedRequiredEditPaths := normalizeAndSort(params.RequiredEditPaths)

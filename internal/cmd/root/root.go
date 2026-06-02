@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"io"
 
+	"idiom/internal/cmd/telemetry"
 	toolcmd "idiom/internal/cmd/tool"
-	"idiom/internal/cmdtelemetry"
 	"idiom/internal/telemetry"
 )
 

@@ -1,4 +1,5 @@
 package lane
+
 import (
 	"context"
 	"encoding/json"
@@ -17,9 +18,9 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/app"
-	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/backends"
 	"idiom/internal/cliassets"
+	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/config"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
@@ -53,9 +54,9 @@ const (
 // (Phase 7), not the executor's per-lane rules block.
 var canonicalRuleNames = cliassets.CanonicalLaneRuleNames()
 
-// laneSubcommandRunner is the function shape both runImplementMain
-// and runPlanExecuteMain expose. Capturing it as a type lets tests
-// inject fakes that record what the lane wrapper forwarded.
+// laneSubcommandRunner is the function shape the lane wrapper uses
+// for implement and plan-execute dispatch. Capturing it as a type
+// lets tests inject fakes that record what the lane wrapper forwarded.
 type laneSubcommandRunner func(args []string, stdout io.Writer, stderr io.Writer, promptRun promptRunner) int
 
 // laneDeps groups the lane wrapper's external dependencies so tests
@@ -135,18 +136,6 @@ var laneGitDiff = func(projectRoot string) ([]byte, error) {
 	cmd := exec.Command("git", "diff")
 	cmd.Dir = projectRoot
 	return cmd.Output()
-}
-
-// runLaneMain is the production entry point for `idiom lane <mode>`.
-// It loads config from disk and forwards to runLaneMainWithTelemetry.
-func runLaneMain(args []string, stdout io.Writer, stderr io.Writer) int {
-	return runLaneMainWithDeps(args, stdout, stderr, laneDeps{
-		loadConfig:       config.Load,
-		runPlanExecute:   runPlanExecuteMain,
-		runImplement:     runImplementMain,
-		defaultPromptRun: runPromptOnce,
-		buildContextPack: buildLaneContextPackSection,
-	})
 }
 
 // runLaneMainWithTelemetry is the variant the top-level dispatcher

@@ -18,6 +18,15 @@ func readOnlyConversationBriefForTest(objective string) workerruntime.WorkerRunt
 	}
 }
 
+func typedReadOnlyTaskResult(packet ReadOnlyEvidencePacket) workspace.ToolResult {
+	result := workspace.ToolResult{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output:  "Grounded answer:\nThe child reported a concise answer without legacy packet section headings.",
+	}
+	return readOnlyEvidencePacketToolResult(result, packet)
+}
+
 func TestReadOnlyAnswerabilityContextPacketOnlyLocalizes(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Explain runner answer readiness.")
 	results := []workspace.ToolResult{{
@@ -168,6 +177,131 @@ func TestReadOnlyAnswerabilityOutlinesAndGeneratedArtifactsDoNotAnswer(t *testin
 	}
 	if !ledger.HasKind(readOnlyEvidenceGeneratedArtifact) {
 		t.Fatalf("expected generated artifact evidence item, got %#v", ledger.Items)
+	}
+}
+
+func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Question: Can you tell me how this harness uses subagents?",
+			"Source: delegated read-only evidence packet.",
+			"",
+			"Inspected paths:",
+			"- `internal/agent/runner.go`",
+			"- `internal/agent/runner_child_tasks.go`",
+			"",
+			"Key findings:",
+			"- The harness uses the `task` tool in internal/agent/runner.go to launch a child runner implemented by internal/agent/runner_child_tasks.go.",
+		}, "\n"),
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if !ledger.Answerable() {
+		t.Fatalf("grounded delegated inspected-path packet should be answerable: %#v", ledger)
+	}
+	for _, want := range []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"} {
+		if !slices.Contains(ledger.RelevantSourceBodyPaths, want) {
+			t.Fatalf("expected delegated packet path %q to be relevant, got %#v", want, ledger.RelevantSourceBodyPaths)
+		}
+	}
+	answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results)
+	if !ok {
+		t.Fatal("expected deterministic synthesis from grounded delegated packet")
+	}
+	for _, want := range []string{"task", "child runner", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
+		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
+			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+}
+
+func TestReadOnlyAnswerabilityAcceptsTypedDelegatedEvidencePacket(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		Question:        brief.Objective,
+		SourceBodyPaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
+		InspectedPaths:  []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go", ".idiom/discovery/queries/query.json"},
+		CandidatePaths:  []string{".idiom/discovery/queries/query.json"},
+		Confidence:      "high",
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The parent runner uses the `task` tool to delegate read-only exploration."},
+			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded child runner and returns its packet to the parent."},
+		},
+	})}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if !ledger.Answerable() {
+		t.Fatalf("typed delegated source-body packet should be answerable: %#v", ledger)
+	}
+	for _, want := range []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"} {
+		if !slices.Contains(ledger.RelevantSourceBodyPaths, want) {
+			t.Fatalf("expected typed packet path %q to be relevant, got %#v", want, ledger.RelevantSourceBodyPaths)
+		}
+	}
+	if slices.Contains(ledger.CandidatePaths, ".idiom/discovery/queries/query.json") ||
+		slices.Contains(ledger.SourceBodyPaths, ".idiom/discovery/queries/query.json") {
+		t.Fatalf("generated artifacts must not survive packet normalization: %#v", ledger)
+	}
+	answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results)
+	if !ok {
+		t.Fatal("expected deterministic synthesis from typed delegated packet")
+	}
+	for _, want := range []string{"task", "runChildTask", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
+		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
+			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"Inspected paths:", "Source-body evidence paths:", "Key findings:"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("typed synthesis should not depend on legacy heading %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsDelegatedArtifactOnlyPacket(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Explain runner answer readiness.")
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Inspected paths:",
+			"- `.idiom/discovery/queries/query.json`",
+			"",
+			"Key findings:",
+			"- The context cache was inspected.",
+		}, "\n"),
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("artifact-only delegated packet must not satisfy answerability: %#v", ledger)
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsTypedDelegatedArtifactOnlyPacket(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Explain runner answer readiness.")
+	result := typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:      brief.Objective,
+		InspectedPaths: []string{".idiom/discovery/queries/query.json"},
+		CandidatePaths: []string{".idiom/discovery/queries/query.json"},
+		Confidence:     "medium",
+		Findings:       []ReadOnlyEvidenceFinding{{Text: "The context cache was inspected."}},
+	})
+	results := []workspace.ToolResult{result}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("artifact-only typed packet must not satisfy answerability: %#v", ledger)
+	}
+	if postChildReadOnlyPacketAvailable(results) {
+		t.Fatalf("artifact-only typed packet must not activate child packet closure")
+	}
+	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+		t.Fatalf("artifact-only typed packet should not synthesize an answer, got:\n%s", answer)
 	}
 }
 

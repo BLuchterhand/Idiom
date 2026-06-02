@@ -181,19 +181,3 @@ func IsReadTool(name string) bool {
 	c := ClassifyTool(name)
 	return c == CategoryRead || c == CategorySearch || c == CategoryDiscovery
 }
-
-// IsWriteTool reports whether name is a write tool.
-func IsWriteTool(name string) bool {
-	return ClassifyTool(name) == CategoryWrite
-}
-
-// IsSearchTool reports whether name is a search tool.
-func IsSearchTool(name string) bool {
-	return ClassifyTool(name) == CategorySearch
-}
-
-// IsDiscoveryTool reports whether name is a discovery tool.
-func IsDiscoveryTool(name string) bool {
-	return ClassifyTool(name) == CategoryDiscovery
-}
-

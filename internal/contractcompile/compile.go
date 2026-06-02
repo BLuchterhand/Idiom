@@ -157,7 +157,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		protocol.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	}
 	protocol.SafeAlternatives = compileProtocolSafeAlternatives(protocol.TerminalResponseShapes, protocol.CallableActionClasses)
-	if len(protocol.StructuredSchemaNames) == 0 {
+	if len(protocol.StructuredSchemaNames) == 0 && protocolAllowsSubmitPlan(protocol) {
 		protocol.StructuredSchemaNames = []string{"submit_plan"}
 	}
 	if protocol.MalformedOutputPolicy == "" {
@@ -175,6 +175,25 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	}
 	protocol.ProtocolHash = stableHashID("protocol", protocol)
 	return protocol, nil
+}
+
+func protocolAllowsSubmitPlan(protocol ModelProtocolProjection) bool {
+	return containsProtocolString(protocol.TerminalResponseShapes, string(autonomy.ActionClassSubmitPlan)) ||
+		containsProtocolString(protocol.CallableActionClasses, string(autonomy.ActionClassSubmitPlan)) ||
+		containsProtocolString(protocol.CallableTools, "submit_plan")
+}
+
+func containsProtocolString(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func compileProtocolPathRoleSummary(roles []autonomy.PathRole) []string {

@@ -191,14 +191,6 @@ func planExecuteTrimVerificationSentence(text string) string {
 	return text
 }
 
-func planExecuteVerificationCommands(commands []string) []string {
-	return PlanVerification(VerificationPlannerInput{ExplicitCommands: commands}).CommandStrings()
-}
-
-func VerificationCommands(commands []string) []string {
-	return planExecuteVerificationCommands(commands)
-}
-
 func planExecuteVerificationCommandAllowed(command string) bool {
 	_, ok := VerificationCommandArgs(command)
 	return ok

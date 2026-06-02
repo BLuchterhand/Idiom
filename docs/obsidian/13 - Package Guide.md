@@ -75,7 +75,7 @@ MCP serve (`internal/mcpcmd`), doctor (`internal/doctorcmd`), probe
 | `internal/backends` | Backend profiles, role aliases, launcher, status, and proxy management |
 | `internal/llama` | llama.cpp/local model integration |
 | `internal/config` | Project and runtime configuration |
-| `internal/cmdconfig` | Shared CLI configuration |
+| `internal/cmd/config` | Shared CLI configuration |
 | `internal/util` | Shared utility helpers: string, exec, IO, JSON, and generic pointer functions |
 | `internal/autodetect` | Host, model, backend, and toolchain discovery helpers |
 

@@ -120,10 +120,6 @@ func MentionedWorkspaceFilesInInlineList(text string) []string {
 	return FilterWorkspaceFilePaths(MentionedWorkspacePathsInInlineList(text))
 }
 
-func MentionedWorkspaceFilesInMarkdownTableFirstCell(line string) []string {
-	return FilterWorkspaceFilePaths(MentionedWorkspacePathsInMarkdownTableFirstCell(line))
-}
-
 func FilterWorkspaceFilePaths(paths []string) []string {
 	if len(paths) == 0 {
 		return nil
@@ -490,57 +486,4 @@ func QuotedFragments(text string) []string {
 		i = end
 	}
 	return fragments
-}
-
-func PrimaryLocateLiteral(prompt string) string {
-	for _, fragment := range QuotedFragments(prompt) {
-		trimmed := strings.TrimSpace(fragment)
-		if trimmed == "" || LooksLikeWorkspacePathToken(trimmed) {
-			continue
-		}
-		return trimmed
-	}
-
-	lower := strings.ToLower(prompt)
-	for _, marker := range []string{"shows ", "showing ", "says ", "text ", "label "} {
-		idx := strings.Index(lower, marker)
-		if idx < 0 {
-			continue
-		}
-		candidate := TrimLocateLiteralTail(prompt[idx+len(marker):])
-		if candidate != "" {
-			return candidate
-		}
-	}
-	return ""
-}
-
-func TrimLocateLiteralTail(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if trimmed == "" {
-		return ""
-	}
-	stopWords := map[string]struct{}{
-		"and":    {},
-		"but":    {},
-		"please": {},
-		"so":     {},
-		"that":   {},
-		"which":  {},
-	}
-	parts := make([]string, 0, 4)
-	for _, field := range strings.Fields(trimmed) {
-		word := strings.Trim(field, "`'\"()[]{}<>,:;!?")
-		if word == "" {
-			continue
-		}
-		if _, stop := stopWords[strings.ToLower(word)]; stop {
-			break
-		}
-		parts = append(parts, word)
-		if len(parts) >= 4 {
-			break
-		}
-	}
-	return strings.TrimSpace(strings.Join(parts, " "))
 }

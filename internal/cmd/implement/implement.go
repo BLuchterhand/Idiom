@@ -1,4 +1,5 @@
 package implement
+
 import (
 	"context"
 	"encoding/json"
@@ -9,14 +10,14 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/cmdroute"
-	"idiom/internal/cmdruntime"
-	"idiom/internal/cmdtelemetry"
-	"idiom/internal/config"
 	planexecutecmd "idiom/internal/cmd/planexecute"
+	"idiom/internal/cmd/route"
+	"idiom/internal/cmd/runtime"
+	"idiom/internal/cmd/telemetry"
+	toolcmd "idiom/internal/cmd/tool"
+	"idiom/internal/config"
 	"idiom/internal/runner"
 	"idiom/internal/telemetry"
-	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/writerroute"
 )
 
@@ -39,10 +40,6 @@ type implementOptions struct {
 	// deliverable inside the same generation budget (#96).
 	MaxTokens       int
 	DisableThinking bool
-}
-
-func RunMain(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner) int {
-	return runImplementMain(args, stdout, stderr, promptRun)
 }
 
 func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, promptRun cmdruntime.PromptRunner, rec *telemetry.Recorder) int {

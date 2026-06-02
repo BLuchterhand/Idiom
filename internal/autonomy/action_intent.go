@@ -247,18 +247,6 @@ func ActionFromIntent(intent ToolIntent) NormalizedAction {
 	})
 }
 
-func DecisionFromAction(action NormalizedAction, decision ToolPolicyDecision, reasonCode string) ActionDecision {
-	action = CanonicalizeNormalizedAction(action)
-	return CanonicalizeActionDecision(ActionDecision{
-		Decision:    decision,
-		ActionClass: action.ActionClass,
-		Capability:  action.Capability,
-		SideEffect:  action.SideEffect,
-		ReasonCode:  reasonCode,
-		Source:      action.Source,
-	})
-}
-
 func CanonicalToolTransport(value ToolTransport) ToolTransport {
 	switch canonicalToken(string(value)) {
 	case "", "unknown":

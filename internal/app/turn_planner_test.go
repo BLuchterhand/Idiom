@@ -2990,12 +2990,12 @@ func TestRouteClassifierChatClientFallsBackToPlannerWhenClassifierUnreachable(t 
 	}
 }
 
-func TestCorrectTurnRoutePlanKeepsConceptualDebugLogQuestionOnStandardReadLane(t *testing.T) {
+func TestCorrectTurnRoutePlanCorrectsConceptualDebugLogQuestionToArchitecture(t *testing.T) {
 	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "debug_logs"}, "What does the debug log redacted mode do?", agent.BuildMode())
-	if plan.Family != "conversation" {
-		t.Fatalf("family = %q, want conversation", plan.Family)
+	if plan.Family != "architecture" {
+		t.Fatalf("family = %q, want architecture", plan.Family)
 	}
-	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+	if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
@@ -3038,7 +3038,7 @@ func TestCorrectTurnRoutePlanKeepsArchitectureForProjectFeatureQuestion(t *testi
 	}
 }
 
-func TestCorrectTurnRoutePlanTrustsClassifierForRepoInternalQuestions(t *testing.T) {
+func TestCorrectTurnRoutePlanCorrectsRepoInternalQuestionsToArchitecture(t *testing.T) {
 	prompts := []string{
 		"What does the debug log redacted mode do?",
 		"Can you tell me how this harness uses subagents?",
@@ -3046,12 +3046,22 @@ func TestCorrectTurnRoutePlanTrustsClassifierForRepoInternalQuestions(t *testing
 	}
 	for _, prompt := range prompts {
 		plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, prompt, agent.BuildMode())
-		if plan.Family != "conversation" {
-			t.Fatalf("family for %q = %q, want conversation", prompt, plan.Family)
+		if plan.Family != "architecture" {
+			t.Fatalf("family for %q = %q, want architecture", prompt, plan.Family)
 		}
-		if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		if plan.InitialLane != "architecture" || plan.Contract != "architecture_assessment" {
 			t.Fatalf("unexpected plan for %q: %#v", prompt, plan)
 		}
+	}
+}
+
+func TestCorrectTurnRoutePlanKeepsOperationalHowToQuestionReadOnly(t *testing.T) {
+	plan := correctTurnRoutePlanForPrompt(turnRoutePlan{Family: "direct_question"}, "How do I run plan-execute without changing files?", agent.BuildMode())
+	if plan.Family != "conversation" {
+		t.Fatalf("family = %q, want conversation", plan.Family)
+	}
+	if plan.InitialLane != "main" || plan.Contract != "direct_answer" {
+		t.Fatalf("unexpected plan: %#v", plan)
 	}
 }
 
@@ -6238,6 +6248,7 @@ func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T
 		"Classify the requested outcome first",
 		"requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate",
 		"write_intent enum: yes, no, ambiguous",
+		"evidence_intent enum: generic, relation_trace, refactor",
 		"continuation_target enum: prior_change, current_prompt_only, none",
 		"Question-shaped wording is not a lane signal by itself",
 		"Classify by requested outcome",
@@ -6248,6 +6259,26 @@ func TestRouteClassifierPromptDoesNotTreatQuestionShapeAsLaneSignal(t *testing.T
 		if !strings.Contains(requestText, want) {
 			t.Fatalf("classifier prompt missing %q:\n%s", want, requestText)
 		}
+	}
+}
+
+func TestTurnRoutePlanCarriesEvidenceIntent(t *testing.T) {
+	plan := normalizeTurnRoutePlan(turnRoutePlan{
+		Family:           "conversation",
+		RequestedOutcome: "answer",
+		WriteIntent:      "no",
+		EvidenceIntent:   "calls",
+	}, agent.BuildMode())
+
+	if plan.EvidenceIntent != "relation_trace" {
+		t.Fatalf("evidence intent = %q, want relation_trace", plan.EvidenceIntent)
+	}
+	if rendered := renderTurnRoutePlan(plan); !strings.Contains(rendered, "evidence_intent=relation_trace") {
+		t.Fatalf("rendered route missing evidence intent: %q", rendered)
+	}
+	brief := turnRoutePlanRuntimeBrief(plan, agent.BuildMode(), []string{"context_pack", "code_navigate", "read_file"})
+	if brief.EvidenceIntent != "relation_trace" || brief.RequestedOutcome != "answer" || brief.WriteIntent != "no" {
+		t.Fatalf("runtime brief did not preserve typed route intent: %#v", brief)
 	}
 }
 

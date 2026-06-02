@@ -83,16 +83,6 @@ type ImpactPacket struct {
 	VerificationRecipe []string `json:"verification_recipe,omitempty"`
 }
 
-// ContextPath returns the absolute path to the generated prompt-facing
-// context digest for a project root.
-func ContextPath(root string) string {
-	root = strings.TrimSpace(root)
-	if root == "" {
-		return ""
-	}
-	return filepath.Join(root, filepath.FromSlash(contextRel))
-}
-
 // Ensure regenerates the hidden project-local discovery artifacts when the
 // project fingerprint changes. Returns the context path even when generation
 // is a no-op because the existing artifacts are still current.
