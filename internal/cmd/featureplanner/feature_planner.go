@@ -11,7 +11,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -156,234 +155,53 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 	if strings.TrimSpace(effortRoot) == "" {
 		return nil, nil
 	}
-	root := filepath.Clean(effortRoot)
-
-	// Load workflow_state.json
-	stateData, err := os.ReadFile(filepath.Join(root, "workflow_state.json"))
+	handoff, err := productworkflow.LoadImplementationHandoff(effortRoot)
 	if err != nil {
-		return nil, fmt.Errorf("load workflow state: %w", err)
+		return nil, err
 	}
-	workflowState, err := productworkflow.ParseWorkflowStateJSON(stateData)
-	if err != nil {
-		return nil, fmt.Errorf("parse workflow state: %w", err)
-	}
+	return productWorkflowBriefFromHandoff(handoff), nil
+}
 
-	// Load PRD
-	prdData, err := os.ReadFile(filepath.Join(root, "prd.md"))
-	if err != nil {
-		return nil, fmt.Errorf("load prd.md: %w", err)
-	}
-	prd, err := productworkflow.ParsePRDMarkdown(prdData)
-	if err != nil {
-		return nil, fmt.Errorf("parse prd.md: %w", err)
-	}
-
-	// Load TDD ledger
-	tddData, err := os.ReadFile(filepath.Join(root, "tdd.json"))
-	if err != nil {
-		return nil, fmt.Errorf("load tdd.json: %w", err)
-	}
-	tdd, err := productworkflow.ParseTDDLedgerJSON(tddData)
-	if err != nil {
-		return nil, fmt.Errorf("parse tdd.json: %w", err)
-	}
-
-	// Load ADR index
-	adrIndexData, err := os.ReadFile(filepath.Join(root, "adrs", "index.json"))
-	var adrIndex productworkflow.ADRIndex
-	var parsedADRs []productworkflow.ParsedADR
-	if err == nil {
-		adrIndex, err = productworkflow.ParseADRIndexJSON(adrIndexData)
-		if err != nil {
-			return nil, fmt.Errorf("parse adrs/index.json: %w", err)
-		}
-		for _, entry := range adrIndex.ADRs {
-			if entry.Status != "accepted" || strings.TrimSpace(entry.Path) == "" {
-				continue
-			}
-			adrData, adrErr := os.ReadFile(filepath.Join(root, "adrs", entry.Path))
-			if adrErr != nil {
-				continue
-			}
-			adrDoc, adrErr := productworkflow.ParseADRMarkdown(adrData)
-			if adrErr != nil {
-				continue
-			}
-			parsedADRs = append(parsedADRs, productworkflow.ParsedADR{
-				Doc:         adrDoc,
-				RelPath:     filepath.Join("adrs", entry.Path),
-				RawMarkdown: string(adrData),
-			})
-		}
-	}
-
-	// Load traceability matrix
-	var traceability productworkflow.TraceabilityMatrix
-	matrixData, matrixErr := os.ReadFile(filepath.Join(root, "evidence", "traceability_matrix.json"))
-	if matrixErr == nil {
-		traceability, _ = productworkflow.ParseTraceabilityMatrixJSON(matrixData)
-	}
-	var implementationRecords []productworkflow.ImplementationLedgerRecord
-	if data, ledgerErr := os.ReadFile(filepath.Join(root, "implementation_ledger.jsonl")); ledgerErr == nil {
-		implementationRecords, _ = productworkflow.ParseImplementationLedgerJSONL(data)
-	}
-
-	// Evaluate coverage gate
-	knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(tdd, implementationRecords, prd.FrontMatter.TaskID)
-	coverage := productworkflow.EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability, knownTDDIDs)
-
-	// Build the brief
+func productWorkflowBriefFromHandoff(handoff productworkflow.ImplementationHandoff) *featureplanner.ProductWorkflowBrief {
 	brief := &featureplanner.ProductWorkflowBrief{
-		EffortID:             workflowState.EffortID,
-		TaskID:               workflowState.TaskID,
-		EffortRoot:           effortRoot,
-		CoverageTier:         tdd.CoverageTier,
-		CoverageGatePassed:   coverage.Status == "pass",
-		ArtifactRootPath:     effortRoot,
-		ContextEvidencePaths: append([]string{}, workflowState.Context.ReferencedPaths...),
+		EffortID:             handoff.EffortID,
+		TaskID:               handoff.TaskID,
+		EffortRoot:           handoff.EffortRoot,
+		CoverageTier:         handoff.CoverageTier,
+		CoverageGatePassed:   handoff.CoverageGatePassed,
+		CoverageBlockers:     append([]string{}, handoff.CoverageBlockers...),
+		FilesToModify:        append([]string{}, handoff.FilesToModify...),
+		ContextEvidencePaths: append([]string{}, handoff.ContextEvidencePaths...),
+		RequiredBehavior:     append([]string{}, handoff.RequiredBehavior...),
+		Tests:                append([]string{}, handoff.Tests...),
+		Acceptance:           append([]string{}, handoff.Acceptance...),
+		Constraints:          append([]string{}, handoff.Constraints...),
+		Decisions:            append([]string{}, handoff.Decisions...),
+		Blockers:             append([]string{}, handoff.Blockers...),
+		ArtifactRootPath:     handoff.ArtifactRootPath,
 	}
-	for _, finding := range productworkflow.ImplementationAffectingClaimFindings(prd, parsedADRs) {
-		brief.Blockers = appendUniqueFeaturePlannerStrings(brief.Blockers, finding.Message)
-	}
-	for _, finding := range productworkflow.ImplementationAffectingClaimEvidenceFindings(prd, parsedADRs, productworkflow.TraceabilityEvidenceIDs(traceability)) {
-		brief.Blockers = appendUniqueFeaturePlannerStrings(brief.Blockers, finding.Message)
-	}
-
-	for _, req := range prd.Requirements {
-		id := strings.TrimSpace(req.ID)
-		if id == "" {
-			continue
-		}
+	for _, req := range handoff.PRDRequirements {
 		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{
-			ID:          id,
-			Priority:    strings.TrimSpace(req.Priority),
-			Statement:   strings.TrimSpace(req.Statement),
-			Testability: strings.TrimSpace(req.Testability),
-			Metric:      strings.TrimSpace(req.Metric),
-			Obligations: append([]string{}, req.TDDObligations...),
+			ID:          req.ID,
+			Priority:    req.Priority,
+			Statement:   req.Statement,
+			Testability: req.Testability,
+			Metric:      req.Metric,
+			Obligations: append([]string{}, req.Obligations...),
 		})
-		if strings.TrimSpace(req.Statement) != "" {
-			brief.RequiredBehavior = appendUniqueFeaturePlannerStrings(brief.RequiredBehavior, fmt.Sprintf("%s: %s", id, strings.TrimSpace(req.Statement)))
-		}
-		if strings.TrimSpace(req.Testability) != "" {
-			brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, fmt.Sprintf("%s testability: %s", id, strings.TrimSpace(req.Testability)))
-		}
-		if strings.TrimSpace(req.Metric) != "" {
-			brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, fmt.Sprintf("%s metric: %s", id, strings.TrimSpace(req.Metric)))
-		}
 	}
-
-	for _, entry := range adrIndex.ADRs {
-		if entry.Status != "accepted" {
-			continue
-		}
-		brief.AcceptedADRIDs = append(brief.AcceptedADRIDs, entry.ADRID)
-		brief.AcceptedADRPaths = append(brief.AcceptedADRPaths, filepath.Join("adrs", entry.Path))
-	}
-
-	for _, obl := range tdd.Obligations {
-		id := strings.TrimSpace(obl.ID)
-		if id == "" {
-			continue
-		}
+	brief.AcceptedADRIDs = append([]string{}, handoff.AcceptedADRIDs...)
+	brief.AcceptedADRPaths = append([]string{}, handoff.AcceptedADRPaths...)
+	for _, obl := range handoff.TDDObligations {
 		brief.TDDObligations = append(brief.TDDObligations, featureplanner.TDDObligationBrief{
-			ID:             id,
-			Behavior:       strings.TrimSpace(obl.Behavior),
-			Command:        strings.TrimSpace(obl.Command),
-			RequiredBefore: strings.TrimSpace(obl.RequiredBefore),
-			Status:         strings.TrimSpace(obl.Status),
+			ID:             obl.ID,
+			Behavior:       obl.Behavior,
+			Command:        obl.Command,
+			RequiredBefore: obl.RequiredBefore,
+			Status:         obl.Status,
 		})
-		if strings.TrimSpace(obl.Behavior) != "" {
-			brief.RequiredBehavior = appendUniqueFeaturePlannerStrings(brief.RequiredBehavior, fmt.Sprintf("%s: %s", id, strings.TrimSpace(obl.Behavior)))
-		}
-		if strings.TrimSpace(obl.Command) != "" {
-			brief.Tests = appendUniqueFeaturePlannerStrings(brief.Tests, strings.TrimSpace(obl.Command))
-			brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, fmt.Sprintf("%s passes before implementation dispatch", strings.TrimSpace(obl.Command)))
-		}
 	}
-
-	for _, b := range coverage.Blockers {
-		brief.CoverageBlockers = append(brief.CoverageBlockers, b.Message)
-	}
-	for _, adr := range parsedADRs {
-		adrID := strings.TrimSpace(adr.Doc.FrontMatter.ADRID)
-		if adrID == "" {
-			continue
-		}
-		if decision := productWorkflowSectionExcerpt(adr.Doc.BodyMarkdown, "Decision"); decision != "" {
-			brief.Decisions = appendUniqueFeaturePlannerStrings(brief.Decisions, fmt.Sprintf("%s (%s): %s", adrID, adr.RelPath, decision))
-		}
-	}
-	brief.Constraints = appendUniqueFeaturePlannerStrings(brief.Constraints,
-		"Preserve accepted PRD requirements and ADR decisions unless a new accepted ADR supersedes them.",
-		"Do not mutate product workflow artifacts while implementing the feature atom.",
-	)
-	if len(implementationRecords) > 0 {
-		gen := productworkflow.GenerateImplementationBrief(productworkflow.BriefGenerationInput{
-			EffortRoot:            root,
-			ArtifactRootPath:      root,
-			WorkflowState:         workflowState,
-			PRD:                   prd,
-			ADRIndex:              adrIndex,
-			ADRs:                  parsedADRs,
-			TDD:                   tdd,
-			Traceability:          traceability,
-			ImplementationRecords: implementationRecords,
-			CoverageEvaluation:    coverage,
-		})
-		brief.FilesToModify = appendUniqueFeaturePlannerStrings(brief.FilesToModify, gen.FilesToModify...)
-		brief.RequiredBehavior = appendUniqueFeaturePlannerStrings(brief.RequiredBehavior, gen.RequiredBehavior...)
-		brief.Tests = appendUniqueFeaturePlannerStrings(brief.Tests, gen.Tests...)
-		brief.Acceptance = appendUniqueFeaturePlannerStrings(brief.Acceptance, gen.Acceptance...)
-		brief.Constraints = appendUniqueFeaturePlannerStrings(brief.Constraints, gen.Constraints...)
-		brief.Decisions = appendUniqueFeaturePlannerStrings(brief.Decisions, gen.Decisions...)
-		brief.Blockers = appendUniqueFeaturePlannerStrings(brief.Blockers, gen.Blockers...)
-	}
-
-	return brief, nil
-}
-
-func appendUniqueFeaturePlannerStrings(dst []string, values ...string) []string {
-	seen := map[string]bool{}
-	out := make([]string, 0, len(dst)+len(values))
-	for _, value := range append(dst, values...) {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
-}
-
-func productWorkflowSectionExcerpt(markdown string, section string) string {
-	markdown = strings.TrimSpace(markdown)
-	section = strings.TrimSpace(section)
-	if markdown == "" || section == "" {
-		return ""
-	}
-	lines := strings.Split(markdown, "\n")
-	inSection := false
-	var parts []string
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "## ") {
-			if inSection {
-				break
-			}
-			inSection = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(trimmed, "## ")), section)
-			continue
-		}
-		if inSection && trimmed != "" {
-			parts = append(parts, trimmed)
-		}
-	}
-	joined := strings.Join(parts, " ")
-	if len(joined) <= 220 {
-		return joined
-	}
-	return strings.TrimSpace(joined[:220]) + "..."
+	return brief
 }
 
 func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {

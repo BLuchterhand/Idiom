@@ -68,6 +68,12 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 			continue
 		}
 		out.RequiredBehavior = append(out.RequiredBehavior, fmt.Sprintf("%s: %s", reqID, strings.TrimSpace(req.Statement)))
+		if testability := strings.TrimSpace(req.Testability); testability != "" {
+			out.Acceptance = append(out.Acceptance, fmt.Sprintf("%s testability: %s", reqID, testability))
+		}
+		if metric := strings.TrimSpace(req.Metric); metric != "" {
+			out.Acceptance = append(out.Acceptance, fmt.Sprintf("%s metric: %s", reqID, metric))
+		}
 	}
 	for _, finding := range ImplementationAffectingClaimFindings(input.PRD, input.ADRs) {
 		out.Blockers = append(out.Blockers, finding.Message)
@@ -85,8 +91,20 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 		"Preserve privacy: do not store raw prompts, raw transcripts, file bodies, secrets, generated brief bodies, or customer-identifying data in durable reports.",
 		"Stop and report a blocker if accepted PRD, accepted ADR, TDD, traceability, coverage, or exact source evidence contradicts the brief.",
 	)
-	for _, adrID := range collectAcceptedADRIDs(input.ADRs) {
+	for _, adr := range input.ADRs {
+		if !isAcceptedArtifact(adr.Doc.FrontMatter.Status) {
+			continue
+		}
+		adrID := strings.TrimSpace(adr.Doc.FrontMatter.ADRID)
+		if adrID == "" {
+			continue
+		}
 		out.Decisions = append(out.Decisions, fmt.Sprintf("%s is accepted and must be preserved unless superseded by a new accepted ADR.", adrID))
+		if decision := markdownSectionExcerpt(adr.Doc.BodyMarkdown, "Decision"); strings.TrimSpace(decision) != "" {
+			out.Decisions = append(out.Decisions, fmt.Sprintf("%s decision: %s", adrID, strings.TrimSpace(decision)))
+		} else if decision := markdownSectionExcerpt(adr.RawMarkdown, "Decision"); strings.TrimSpace(decision) != "" {
+			out.Decisions = append(out.Decisions, fmt.Sprintf("%s decision: %s", adrID, strings.TrimSpace(decision)))
+		}
 	}
 	if len(out.Decisions) == 0 {
 		out.Blockers = append(out.Blockers, "no accepted ADRs were found")

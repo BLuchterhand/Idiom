@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"idiom/internal/agent"
+	"idiom/internal/autonomy"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/failures"
@@ -436,20 +437,7 @@ func NormalizePlanExecutePath(path string) string {
 }
 
 func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
-	var out []string
-	seen := make(map[string]struct{}, len(requiredEditPaths))
-	for _, path := range requiredEditPaths {
-		path = normalizePlanExecutePath(path)
-		if path == "" {
-			continue
-		}
-		if _, ok := seen[path]; ok {
-			continue
-		}
-		seen[path] = struct{}{}
-		out = append(out, path)
-	}
-	return out
+	return plancontract.UniqueScopePaths(requiredEditPaths)
 }
 
 func PlanExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string, allowedEditPaths []string, obligations EditSetObligations) string {
@@ -934,6 +922,21 @@ func RunReviewRepairPhase(
 		"edit_set_obligation_count": len(editSetObligations),
 		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
 	})
+	if planExecuteDeterministicCleanReviewEnabled() {
+		reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
+		if reason == "" {
+			reason = editSetObligations.RejectionReason(changedPaths)
+		}
+		if reason == "" && len(evidence.PhaseEvidence.OpenObligations) == 0 {
+			emitPlanExecuteSyntheticTurnSummary(stdout, opts.JSONEvents, "review_repair_deterministic_pass")
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
+				"status":        "pass",
+				"repairs":       0,
+				"deterministic": true,
+			})
+			return ReviewRepairPhaseReport{Status: "pass (deterministic evidence)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
+		}
+	}
 	prompt := planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
 	reviewMaxTokens := opts.MaxTokens
 	if reviewMaxTokens <= 0 {
@@ -1103,6 +1106,10 @@ func phaseEvidencePassRejectionReason(bundle PhaseEvidenceBundle) string {
 		}
 	}
 	return ""
+}
+
+func planExecuteDeterministicCleanReviewEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW")), "true")
 }
 
 func findOptionalReviewPlanArtifact(root string, notBefore time.Time, sessionID string) (string, bool, error) {
@@ -1704,93 +1711,19 @@ func reviewLineContainsMissingCommandEvidenceClaim(line string) bool {
 }
 
 func planExecuteChangedPathsIncludeTest(paths []string) bool {
-	for _, path := range paths {
-		if planExecutePathLooksLikeTest(path) {
-			return true
-		}
-	}
-	return false
+	return plancontract.ChangedPathsIncludeTest(paths)
 }
 
 func planExecuteChangedPathsIncludeImplementation(paths []string) bool {
-	for _, path := range paths {
-		if planExecutePathLooksLikeImplementation(path) {
-			return true
-		}
-	}
-	return false
+	return plancontract.ChangedPathsIncludeImplementation(paths)
 }
 
 func planExecutePathLooksLikeImplementation(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-	if lower == "" || planExecutePathLooksLikeTest(lower) {
-		return false
-	}
-	base := filepath.Base(lower)
-	ext := filepath.Ext(base)
-	if strings.HasPrefix(lower, "docs/") ||
-		strings.Contains(lower, "/docs/") ||
-		strings.HasPrefix(lower, "doc/") ||
-		strings.Contains(lower, "/doc/") ||
-		strings.HasPrefix(lower, "examples/") ||
-		strings.Contains(lower, "/examples/") {
-		return false
-	}
-	switch strings.ToLower(base) {
-	case "readme.md", "changelog.md", "license", "license.md":
-		return false
-	}
-	switch ext {
-	case ".go", ".py", ".ts", ".tsx", ".js", ".jsx", ".rs", ".java", ".kt", ".swift",
-		".c", ".cc", ".cpp", ".h", ".hpp", ".cs", ".rb", ".php", ".sh", ".bash",
-		".zsh", ".sql", ".proto", ".graphql", ".gd", ".mjs", ".cjs", ".kts",
-		".css", ".scss", ".sass", ".html", ".vue", ".svelte":
-		return true
-	case ".md":
-		return strings.HasPrefix(lower, "prompts/") ||
-			strings.Contains(lower, "/prompts/") ||
-			strings.Contains(lower, "/lanes/") ||
-			strings.Contains(lower, "/profiles/") ||
-			strings.Contains(lower, "/rules/")
-	default:
-		return false
-	}
+	return plancontract.PathLooksLikeImplementation(path)
 }
 
 func planExecutePathLooksLikeTest(path string) bool {
-	lower := strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
-	if lower == "" {
-		return false
-	}
-	base := filepath.Base(lower)
-	switch {
-	case strings.HasSuffix(base, "_test.go"),
-		strings.HasPrefix(base, "test_") && strings.HasSuffix(base, ".py"),
-		strings.HasSuffix(base, "_test.py"),
-		strings.HasSuffix(base, ".test.py"),
-		strings.HasSuffix(base, "_test.gd"),
-		strings.HasSuffix(base, ".test.gd"),
-		strings.HasSuffix(base, ".test.ts"),
-		strings.HasSuffix(base, ".test.tsx"),
-		strings.HasSuffix(base, ".test.js"),
-		strings.HasSuffix(base, ".test.jsx"),
-		strings.HasSuffix(base, ".spec.ts"),
-		strings.HasSuffix(base, ".spec.tsx"),
-		strings.HasSuffix(base, ".spec.js"),
-		strings.HasSuffix(base, ".spec.jsx"):
-		return true
-	case strings.HasPrefix(lower, "test/"),
-		strings.HasPrefix(lower, "tests/"),
-		strings.HasPrefix(lower, "testdata/"),
-		strings.HasPrefix(lower, "fixtures/"),
-		strings.Contains(lower, "/test/"),
-		strings.Contains(lower, "/tests/"),
-		strings.Contains(lower, "/testdata/"),
-		strings.Contains(lower, "/fixtures/"):
-		return true
-	default:
-		return false
-	}
+	return plancontract.PathLooksLikeTest(path)
 }
 
 func reviewLineIsPlannerOwnedPending(line string) bool {
@@ -2369,24 +2302,32 @@ func planScopeDriftEventFields(handoff ExecutorHandoffPacket, mismatch *PlanEdit
 }
 
 func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
-	requiredSet := make(map[string]struct{}, len(required))
-	for _, path := range required {
-		normalized := normalizePlanExecutePath(path)
-		if normalized != "" {
-			requiredSet[normalized] = struct{}{}
-		}
+	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		RequiredEditPaths: required,
+		Source:            "planexecute.required_preflight",
+	})
+	if err != nil {
+		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
-	if len(requiredSet) == 0 {
+	if len(coverage.RequiredCoveragePaths) == 0 {
 		return nil
 	}
-	planned := make(map[string]struct{}, len(plan.Edits))
+	candidatePaths, invalid := preflightPlanCandidatePaths(plan)
+	if invalid != nil {
+		return invalid
+	}
+	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		RequiredEditPaths:      coverage.RequiredCoveragePaths,
+		CandidateCoveragePaths: candidatePaths,
+		Source:                 "planexecute.required_preflight",
+	})
+	if err != nil {
+		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
+	}
+	coverageByPath := planScopeCandidateCoverageByPath(coverage.CandidateCoverage)
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
-		if path == "" {
-			return &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
-		}
-		planned[path] = struct{}{}
-		if _, ok := requiredSet[path]; !ok {
+		if !coverageByPath[path].SatisfiesRequiredCoverage {
 			return &PlanEditPreflightMismatch{
 				Index:  i,
 				Path:   path,
@@ -2394,39 +2335,43 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 			}
 		}
 	}
-	for _, path := range required {
-		normalized := normalizePlanExecutePath(path)
-		if normalized == "" {
-			continue
-		}
-		if _, ok := planned[normalized]; !ok {
-			return &PlanEditPreflightMismatch{
-				Index:  -1,
-				Path:   normalized,
-				Reason: "plan does not include an edit for this required_edit_paths entry",
-			}
+	for _, path := range coverage.MissingRequiredCoveragePaths {
+		return &PlanEditPreflightMismatch{
+			Index:  -1,
+			Path:   path,
+			Reason: "plan does not include an edit for this required_edit_paths entry",
 		}
 	}
 	return nil
 }
 
 func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
-	allowedSet := make(map[string]struct{}, len(allowed))
-	for _, path := range allowed {
-		normalized := normalizePlanExecutePath(path)
-		if normalized != "" {
-			allowedSet[normalized] = struct{}{}
-		}
+	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		AllowedCandidatePaths: allowed,
+		Source:                "planexecute.allowed_preflight",
+	})
+	if err != nil {
+		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
 	}
-	if len(allowedSet) == 0 {
+	if len(coverage.AllowedCandidatePaths) == 0 {
 		return nil
 	}
+	candidatePaths, invalid := preflightPlanCandidatePaths(plan)
+	if invalid != nil {
+		return invalid
+	}
+	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		AllowedCandidatePaths:  coverage.AllowedCandidatePaths,
+		CandidateCoveragePaths: candidatePaths,
+		Source:                 "planexecute.allowed_preflight",
+	})
+	if err != nil {
+		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
+	}
+	coverageByPath := planScopeCandidateCoverageByPath(coverage.CandidateCoverage)
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
-		if path == "" {
-			return &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
-		}
-		if _, ok := allowedSet[path]; !ok {
+		if !coverageByPath[path].WithinAllowedCandidatePath {
 			return &PlanEditPreflightMismatch{
 				Index:  i,
 				Path:   path,
@@ -2435,6 +2380,26 @@ func preflightPlanAllowedEditPaths(allowed []string, plan workspace.PlanArtifact
 		}
 	}
 	return nil
+}
+
+func preflightPlanCandidatePaths(plan workspace.PlanArtifact) ([]string, *PlanEditPreflightMismatch) {
+	var paths []string
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if path == "" {
+			return nil, &PlanEditPreflightMismatch{Index: i, Reason: "edit has no path"}
+		}
+		paths = append(paths, path)
+	}
+	return paths, nil
+}
+
+func planScopeCandidateCoverageByPath(coverage []autonomy.PlanScopePathRoleCoverage) map[string]autonomy.PlanScopePathRoleCoverage {
+	out := make(map[string]autonomy.PlanScopePathRoleCoverage, len(coverage))
+	for _, item := range coverage {
+		out[item.Path] = item
+	}
+	return out
 }
 
 func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
@@ -2448,20 +2413,7 @@ func preflightPlanUnsupportedProofClaims(plan workspace.PlanArtifact) *PlanEditP
 }
 
 func normalizePlanExecutePath(path string) string {
-	path = strings.TrimSpace(path)
-	path = strings.ReplaceAll(path, "\\", "/")
-	for strings.HasPrefix(path, "./") {
-		path = strings.TrimPrefix(path, "./")
-	}
-	if path == "" || path == "." || path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, "../") {
-		return ""
-	}
-	for _, part := range strings.Split(path, "/") {
-		if part == "" || part == "." || part == ".." {
-			return ""
-		}
-	}
-	return path
+	return plancontract.NormalizeScopePath(path)
 }
 
 func preflightPlanEdits(workspaceRoot string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
@@ -2621,6 +2573,36 @@ func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType strin
 		"ts":   time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	maps.Copy(payload, fields)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	fmt.Fprintln(stdout, string(body))
+}
+
+func emitPlanExecuteSyntheticTurnSummary(stdout io.Writer, jsonEvents bool, stopReason string) {
+	if !jsonEvents {
+		return
+	}
+	payload := map[string]any{
+		"type":                       "turn_summary",
+		"ts":                         time.Now().UTC().Format(time.RFC3339Nano),
+		"lane":                       "plan-execute",
+		"used_model_calls":           0,
+		"max_model_calls":            0,
+		"used_tool_results":          0,
+		"max_tool_steps":             0,
+		"prompt_tokens":              0,
+		"completion_tokens":          0,
+		"total_tokens":               0,
+		"progress_turns":             0,
+		"rejected_actions":           0,
+		"completion_gate_rejections": 0,
+		"context_compactions":        0,
+		"duration_ms":                0,
+		"stop_reason":                strings.TrimSpace(stopReason),
+		"budget_exhausted":           false,
+	}
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return

@@ -1,30 +1,39 @@
 package planexecute
 
-import "strings"
+import (
+	"strings"
 
-type EditSetObligationKind string
-
-const (
-	EditSetObligationKindTestEdit           EditSetObligationKind = "test_edit_required"
-	EditSetObligationKindImplementationEdit EditSetObligationKind = "implementation_edit_required"
-
-	EditSetFailureMissingRequestedTestEdit           = "missing_requested_test_edit"
-	EditSetFailureMissingRequestedImplementationEdit = "missing_requested_implementation_edit"
+	"idiom/internal/plancontract"
 )
 
-type EditSetObligation struct {
-	Kind   EditSetObligationKind `json:"kind"`
-	Source string                `json:"source,omitempty"`
-}
+type EditSetObligationKind = plancontract.EditSetObligationKind
 
-type EditSetObligations []EditSetObligation
+const (
+	EditSetObligationKindTestEdit           = plancontract.EditSetObligationKindTestEdit
+	EditSetObligationKindImplementationEdit = plancontract.EditSetObligationKindImplementationEdit
+
+	EditSetFailureMissingRequestedTestEdit           = plancontract.EditSetFailureMissingRequestedTestEdit
+	EditSetFailureMissingRequestedImplementationEdit = plancontract.EditSetFailureMissingRequestedImplementationEdit
+)
+
+type EditSetObligation = plancontract.EditSetObligation
+
+type EditSetObligations = plancontract.EditSetObligations
 
 func EditSetObligationsFromPrompt(prompt string) EditSetObligations {
-	return nil
+	return plancontract.EditSetObligationsFromPrompt(prompt)
 }
 
 func planExecuteEditSetObligations(opts Options, prompt string) EditSetObligations {
 	return planExecuteScopeContract(opts, prompt).EditSetObligations
+}
+
+func MergeEditSetObligations(groups ...EditSetObligations) EditSetObligations {
+	return plancontract.MergeEditSetObligations(groups...)
+}
+
+func EditSetObligationFailureMessage(reason string) string {
+	return plancontract.EditSetObligationFailureMessage(reason)
 }
 
 func ExtractRequestedVerificationCommands(prompt string) []string {
@@ -253,111 +262,4 @@ func planExecuteVerificationCommandArgs(command string) ([]string, bool) {
 		args = append(args, b.String())
 	}
 	return args, len(args) > 0
-}
-
-func (obligations EditSetObligations) Has(kind EditSetObligationKind) bool {
-	for _, obligation := range obligations {
-		if obligation.Kind == kind {
-			return true
-		}
-	}
-	return false
-}
-
-func (obligations EditSetObligations) Kinds() []string {
-	out := make([]string, 0, len(obligations))
-	for _, obligation := range obligations.Normalized() {
-		if obligation.Kind == "" {
-			continue
-		}
-		out = append(out, string(obligation.Kind))
-	}
-	return out
-}
-
-func (obligations EditSetObligations) Normalized() EditSetObligations {
-	return obligations.normalizedWithDefaultSource("typed")
-}
-
-func (obligations EditSetObligations) WithDefaultSource(defaultSource string) EditSetObligations {
-	return obligations.normalizedWithDefaultSource(defaultSource)
-}
-
-func (obligations EditSetObligations) normalizedWithDefaultSource(defaultSource string) EditSetObligations {
-	var out EditSetObligations
-	for _, obligation := range obligations {
-		kind := obligation.Kind
-		switch kind {
-		case EditSetObligationKindTestEdit, EditSetObligationKindImplementationEdit:
-		default:
-			continue
-		}
-		source := strings.TrimSpace(obligation.Source)
-		if source == "" {
-			source = strings.TrimSpace(defaultSource)
-			if source == "" {
-				source = "prompt"
-			}
-		}
-		out = out.with(kind, source)
-	}
-	return out
-}
-
-func MergeEditSetObligations(groups ...EditSetObligations) EditSetObligations {
-	var out EditSetObligations
-	for _, group := range groups {
-		for _, obligation := range group.Normalized() {
-			out = out.with(obligation.Kind, obligation.Source)
-		}
-	}
-	return out.Normalized()
-}
-
-func (obligations EditSetObligations) With(kind EditSetObligationKind, source string) EditSetObligations {
-	return obligations.with(kind, source).Normalized()
-}
-
-func (obligations EditSetObligations) RejectionReason(changedPaths []string) string {
-	if obligations.Has(EditSetObligationKindTestEdit) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		return EditSetFailureMissingRequestedTestEdit
-	}
-	if obligations.Has(EditSetObligationKindImplementationEdit) && !planExecuteChangedPathsIncludeImplementation(changedPaths) {
-		return EditSetFailureMissingRequestedImplementationEdit
-	}
-	return ""
-}
-
-func (obligations EditSetObligations) MissingOpenObligations(changedPaths []string) []string {
-	var out []string
-	if obligations.Has(EditSetObligationKindTestEdit) && !planExecuteChangedPathsIncludeTest(changedPaths) {
-		out = append(out, "requested_test_edit_missing")
-	}
-	if obligations.Has(EditSetObligationKindImplementationEdit) && !planExecuteChangedPathsIncludeImplementation(changedPaths) {
-		out = append(out, "requested_implementation_edit_missing")
-	}
-	return out
-}
-
-func EditSetObligationFailureMessage(reason string) string {
-	switch reason {
-	case EditSetFailureMissingRequestedTestEdit:
-		return reason + ": typed test-edit obligation is unsatisfied because submitted evidence changed no test path"
-	case EditSetFailureMissingRequestedImplementationEdit:
-		return reason + ": typed implementation-edit obligation is unsatisfied because submitted evidence changed only test paths"
-	default:
-		return reason
-	}
-}
-
-func (obligations EditSetObligations) with(kind EditSetObligationKind, source string) EditSetObligations {
-	for i := range obligations {
-		if obligations[i].Kind == kind {
-			if strings.TrimSpace(obligations[i].Source) == "" {
-				obligations[i].Source = source
-			}
-			return obligations
-		}
-	}
-	return append(obligations, EditSetObligation{Kind: kind, Source: source})
 }

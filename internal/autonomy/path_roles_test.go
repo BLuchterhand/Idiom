@@ -15,6 +15,7 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 		decision  ToolPolicyDecision
 	}{
 		{role: PathRoleRequiredEdit, invariant: InvariantRequiredEditPath, decision: PolicyAllow},
+		{role: PathRoleAllowedEdit, invariant: InvariantAllowedCandidate, decision: PolicyAllow},
 		{role: PathRoleEvidenceReadonly, invariant: InvariantEvidenceReadonly, decision: PolicyObserve},
 		{role: PathRoleProtected, invariant: InvariantProtectedPath, decision: PolicyDeny},
 		{role: PathRoleForbidden, invariant: InvariantForbiddenPath, decision: PolicyDeny},
@@ -40,13 +41,15 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 	protected, _ := PathInvariantForRole(PathRoleProtected)
 	sideEffect, _ := PathInvariantForRole(PathRoleExternalEffect)
 	required, _ := PathInvariantForRole(PathRoleRequiredEdit)
+	allowed, _ := PathInvariantForRole(PathRoleAllowedEdit)
 	evidence, _ := PathInvariantForRole(PathRoleEvidenceReadonly)
 	if !(forbidden.Precedence > protected.Precedence &&
 		protected.Precedence > sideEffect.Precedence &&
 		sideEffect.Precedence > required.Precedence &&
-		required.Precedence > evidence.Precedence) {
-		t.Fatalf("unexpected precedence order: forbidden=%d protected=%d side-effect=%d required=%d evidence=%d",
-			forbidden.Precedence, protected.Precedence, sideEffect.Precedence, required.Precedence, evidence.Precedence)
+		required.Precedence > allowed.Precedence &&
+		allowed.Precedence > evidence.Precedence) {
+		t.Fatalf("unexpected precedence order: forbidden=%d protected=%d side-effect=%d required=%d allowed=%d evidence=%d",
+			forbidden.Precedence, protected.Precedence, sideEffect.Precedence, required.Precedence, allowed.Precedence, evidence.Precedence)
 	}
 
 	invariants := NamedPathInvariants()
@@ -54,6 +57,41 @@ func TestNamedPathInvariantsCoverCorePathRoles(t *testing.T) {
 	invariant, ok := PathInvariantForRole(PathRoleForbidden)
 	if !ok || invariant.InvariantID != InvariantForbiddenPath {
 		t.Fatalf("NamedPathInvariants returned aliased mutable state: %#v", invariant)
+	}
+}
+
+func TestResolvePlanScopePathRoleObligationsSeparatesRequiredAndAllowedCandidates(t *testing.T) {
+	coverage, err := ResolvePlanScopePathRoleObligations(PlanScopePathRoleObligationInput{
+		RequiredEditPaths:      []string{" ./pkg/required.go ", "pkg/required.go", "../escape.go"},
+		AllowedCandidatePaths:  []string{"pkg/candidate.go", "/tmp/outside.go"},
+		CandidateCoveragePaths: []string{"pkg/candidate.go"},
+		Source:                 "test",
+	})
+	if err != nil {
+		t.Fatalf("ResolvePlanScopePathRoleObligations returned error: %v", err)
+	}
+
+	if want := []string{"pkg/required.go"}; !slices.Equal(coverage.RequiredCoveragePaths, want) {
+		t.Fatalf("required coverage paths = %#v, want %#v", coverage.RequiredCoveragePaths, want)
+	}
+	if want := []string{"pkg/candidate.go"}; !slices.Equal(coverage.AllowedCandidatePaths, want) {
+		t.Fatalf("allowed candidate paths = %#v, want %#v", coverage.AllowedCandidatePaths, want)
+	}
+	if want := []string{"pkg/required.go"}; !slices.Equal(coverage.MissingRequiredCoveragePaths, want) {
+		t.Fatalf("candidate path must not satisfy required coverage, missing=%#v want %#v", coverage.MissingRequiredCoveragePaths, want)
+	}
+	if want := []string{"pkg/candidate.go"}; !slices.Equal(coverage.CandidatePathsOutsideRequired, want) {
+		t.Fatalf("candidate outside required = %#v, want %#v", coverage.CandidatePathsOutsideRequired, want)
+	}
+	if len(coverage.CandidateCoverage) != 1 {
+		t.Fatalf("candidate coverage = %#v", coverage.CandidateCoverage)
+	}
+	candidate := coverage.CandidateCoverage[0]
+	if candidate.SatisfiesRequiredCoverage || !candidate.WithinAllowedCandidatePath {
+		t.Fatalf("allowed candidate must remain scope-only, got %#v", candidate)
+	}
+	if !slices.Contains(candidate.Roles, PathRoleAllowedEdit) || slices.Contains(candidate.Roles, PathRoleRequiredEdit) {
+		t.Fatalf("candidate roles should be allowed-only, got %#v", candidate.Roles)
 	}
 }
 

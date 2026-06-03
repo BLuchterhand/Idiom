@@ -23,6 +23,7 @@ type runnerAutonomyRecorder struct {
 	runner             *Runner
 	brief              workerruntime.WorkerRuntimeBrief
 	contract           autonomy.AutonomyContract
+	activeAuthority    contractcompile.ActiveAuthorityBinding
 	plannerCompile     contractcompile.CompileResult
 	hasPlannerCompile  bool
 	sequence           int64
@@ -86,6 +87,7 @@ func newRunnerAutonomyRecorder(r *Runner, policy RunPolicy, brief workerruntime.
 		runner:            r,
 		brief:             workerruntime.NormalizeRuntimeBrief(brief),
 		contract:          compiled.contract,
+		activeAuthority:   compiled.activeAuthority,
 		plannerCompile:    compiled.plannerCompile,
 		hasPlannerCompile: compiled.hasPlannerCompile,
 		occurredAt:        time.Now().UTC(),
@@ -98,6 +100,7 @@ func newRunnerAutonomyRecorder(r *Runner, policy RunPolicy, brief workerruntime.
 type runnerAutonomyContractBuild struct {
 	contract          autonomy.AutonomyContract
 	obligations       []autonomy.Obligation
+	activeAuthority   contractcompile.ActiveAuthorityBinding
 	plannerCompile    contractcompile.CompileResult
 	hasPlannerCompile bool
 }
@@ -111,6 +114,7 @@ func buildRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntim
 		return runnerAutonomyContractBuild{
 			contract:          compiled.Contract,
 			obligations:       append([]autonomy.Obligation(nil), compiled.Contract.Obligations...),
+			activeAuthority:   compiled.ActiveAuthority,
 			plannerCompile:    compiled,
 			hasPlannerCompile: true,
 		}, true
@@ -120,8 +124,9 @@ func buildRunnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntim
 		return runnerAutonomyContractBuild{}, false
 	}
 	return runnerAutonomyContractBuild{
-		contract:    contract,
-		obligations: obligations,
+		contract:        contract,
+		obligations:     obligations,
+		activeAuthority: runnerLegacyActiveAuthorityBinding(contract),
 	}, true
 }
 
@@ -144,14 +149,91 @@ func compileRunnerPlanExecutePlannerContract(r *Runner, policy RunPolicy, brief 
 	return compiled, true
 }
 
-func (a *runnerAutonomyRecorder) contractIDForTurnPhase() string {
+func runnerLegacyActiveAuthorityBinding(contract autonomy.AutonomyContract) contractcompile.ActiveAuthorityBinding {
+	return contractcompile.ActiveAuthorityBinding{
+		ContractID:        contract.ContractID,
+		RuntimeContractID: strings.TrimSpace(contract.Scope.RuntimeContract),
+		ActiveInvariantID: contractcompile.InvariantActiveAuthority,
+	}
+}
+
+func (a *runnerAutonomyRecorder) activeAuthorityContractID() string {
 	if a == nil {
 		return ""
 	}
-	if a.hasPlannerCompile && strings.TrimSpace(a.plannerCompile.Contract.ContractID) != "" {
-		return a.plannerCompile.Contract.ContractID
+	if a.hasPlannerCompile && strings.TrimSpace(a.activeAuthority.ContractID) != "" {
+		return a.activeAuthority.ContractID
 	}
 	return a.contract.ContractID
+}
+
+func (a *runnerAutonomyRecorder) contractIDForTurnPhase() string {
+	return a.activeAuthorityContractID()
+}
+
+func (a *runnerAutonomyRecorder) activeAuthorityInvariantID() string {
+	if a == nil {
+		return contractcompile.InvariantActiveAuthority
+	}
+	if strings.TrimSpace(a.activeAuthority.ActiveInvariantID) != "" {
+		return a.activeAuthority.ActiveInvariantID
+	}
+	return contractcompile.InvariantActiveAuthority
+}
+
+func (a *runnerAutonomyRecorder) activeAuthorityForProtocol(protocol contractcompile.ModelProtocolProjection) contractcompile.ActiveAuthorityBinding {
+	if a == nil {
+		return contractcompile.ActiveAuthorityBinding{}
+	}
+	binding := a.activeAuthority
+	if strings.TrimSpace(binding.ContractID) == "" {
+		binding.ContractID = a.contract.ContractID
+	}
+	if strings.TrimSpace(binding.RuntimeContractID) == "" {
+		binding.RuntimeContractID = strings.TrimSpace(a.contract.Scope.RuntimeContract)
+	}
+	if a.hasPlannerCompile {
+		if strings.TrimSpace(binding.ProtocolHash) == "" {
+			binding.ProtocolHash = protocol.ProtocolHash
+		}
+		if strings.TrimSpace(binding.ActiveInvariantID) == "" {
+			binding.ActiveInvariantID = util.FirstNonEmpty(strings.TrimSpace(protocol.ActiveInvariantID), contractcompile.InvariantActiveAuthority)
+		}
+		return binding
+	}
+	if strings.TrimSpace(protocol.ContractID) != "" {
+		binding.ContractID = protocol.ContractID
+	}
+	if strings.TrimSpace(protocol.ProtocolHash) != "" {
+		binding.ProtocolHash = protocol.ProtocolHash
+	}
+	if strings.TrimSpace(protocol.ActiveInvariantID) != "" {
+		binding.ActiveInvariantID = protocol.ActiveInvariantID
+	}
+	if strings.TrimSpace(binding.ActiveInvariantID) == "" {
+		binding.ActiveInvariantID = contractcompile.InvariantActiveAuthority
+	}
+	return binding
+}
+
+func (a *runnerAutonomyRecorder) bindModelProtocolProjection(protocol contractcompile.ModelProtocolProjection) contractcompile.ModelProtocolProjection {
+	if a == nil {
+		return protocol
+	}
+	return protocolWithActiveAuthority(protocol, a.activeAuthorityForProtocol(protocol))
+}
+
+func protocolWithActiveAuthority(protocol contractcompile.ModelProtocolProjection, binding contractcompile.ActiveAuthorityBinding) contractcompile.ModelProtocolProjection {
+	if strings.TrimSpace(binding.ContractID) != "" {
+		protocol.ContractID = binding.ContractID
+	}
+	if strings.TrimSpace(binding.ProtocolHash) != "" {
+		protocol.ProtocolHash = binding.ProtocolHash
+	}
+	if strings.TrimSpace(binding.ActiveInvariantID) != "" {
+		protocol.ActiveInvariantID = binding.ActiveInvariantID
+	}
+	return protocol
 }
 
 func runnerAutonomyContract(r *Runner, policy RunPolicy, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (autonomy.AutonomyContract, []autonomy.Obligation, bool) {
@@ -517,6 +599,14 @@ func (a *runnerAutonomyRecorder) emitContractStarted(brief workerruntime.WorkerR
 	}
 	a.ensureObligationState()
 	compiledEvent, compiledErr := autonomy.NewContractCompiledEvent(a.contract, a.nextTime(), a.nextSequence())
+	if a.hasPlannerCompile && compiledEvent.Lifecycle != nil {
+		compiledEvent.Lifecycle.InvariantID = a.activeAuthorityInvariantID()
+		compiledEvent.Lifecycle.ProtocolHash = strings.TrimSpace(a.activeAuthority.ProtocolHash)
+		compiledEvent.Lifecycle.StateDelta = append(compiledEvent.Lifecycle.StateDelta,
+			"runtime_contract_id:"+strings.TrimSpace(a.activeAuthority.RuntimeContractID),
+			"active_invariant:"+a.activeAuthorityInvariantID(),
+		)
+	}
 	a.emitNewEvent(compiledEvent, compiledErr)
 	for _, obligation := range a.obligations {
 		opened := obligation
@@ -556,10 +646,15 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContrac
 		return
 	}
 	a.lastTurnPhase = contract
+	binding := a.activeAuthorityForProtocol(protocol)
+	protocol = protocolWithActiveAuthority(protocol, binding)
 	a.lastModelProtocol = protocol
 	a.lastModelPresented = false
 	payload := contract.autonomyEventPayload()
 	protocolPayload := modelProtocolEventPayload(protocol)
+	if strings.TrimSpace(binding.ContractID) != "" {
+		payload.ContractID = binding.ContractID
+	}
 	if strings.TrimSpace(protocolPayload.ProtocolHash) != "" {
 		payload.ProtocolHash = protocolPayload.ProtocolHash
 	}
@@ -576,6 +671,7 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContrac
 		RequiredEvidence:     append([]string(nil), contract.EvidenceState.AcceptanceRefs...),
 		ReadinessGate:        contract.Phase,
 		VerificationContract: contract.EvidenceState.VerificationStatus,
+		InvariantID:          binding.ActiveInvariantID,
 		RemainingObligations: a.openObligationIDs(),
 		TurnPhaseContract:    &payload,
 		SurfaceSummaries: []autonomy.TurnPhaseSurfaceSummaryEvent{
@@ -591,6 +687,11 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContrac
 func (a *runnerAutonomyRecorder) markModelProtocolPresented(protocol contractcompile.ModelProtocolProjection) {
 	if a == nil || strings.TrimSpace(protocol.ProtocolHash) == "" {
 		return
+	}
+	binding := a.activeAuthorityForProtocol(protocol)
+	protocol = protocolWithActiveAuthority(protocol, binding)
+	if !a.hasPlannerCompile {
+		a.activeAuthority = binding
 	}
 	a.lastModelProtocol = protocol
 	a.lastModelPresented = true
@@ -610,7 +711,7 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseSurfaceSummary(surface autonomy.Tu
 		return
 	}
 	if strings.TrimSpace(phase.ContractID) == "" {
-		phase.ContractID = a.contract.ContractID
+		phase.ContractID = a.activeAuthorityContractID()
 	}
 	if strings.TrimSpace(phase.ModelCallID) == "" {
 		phase.ModelCallID = a.lastTurnPhaseEvent.ModelCallID
@@ -625,7 +726,7 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseSurfaceSummary(surface autonomy.Tu
 		phasePayload.ProtocolHash = a.lastTurnPhaseEvent.ProtocolHash
 	}
 	if strings.TrimSpace(surface.ContractID) == "" {
-		surface.ContractID = a.contract.ContractID
+		surface.ContractID = a.activeAuthorityContractID()
 	}
 	if strings.TrimSpace(surface.ModelCallID) == "" {
 		surface.ModelCallID = phasePayload.ModelCallID
@@ -642,6 +743,7 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseSurfaceSummary(surface autonomy.Tu
 		Reason:            "turn_phase_surface_summary",
 		StateDelta:        []string{surface.SurfaceID, surface.PhaseID},
 		ProtocolHash:      surface.ProtocolHash,
+		InvariantID:       a.activeAuthorityInvariantID(),
 		TurnPhaseContract: &phasePayload,
 		SurfaceSummaries: []autonomy.TurnPhaseSurfaceSummaryEvent{
 			surface,
@@ -654,10 +756,14 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 	if a == nil {
 		return
 	}
+	invariantID := strings.TrimSpace(input.InvariantID)
+	if invariantID == "" && a.hasPlannerCompile {
+		invariantID = a.activeAuthorityInvariantID()
+	}
 	gate := autonomy.ContractGateEvent{
 		Gate:                  input.Gate,
 		Decision:              input.Decision,
-		InvariantID:           input.InvariantID,
+		InvariantID:           invariantID,
 		ProtocolHash:          a.currentModelProtocolHash(),
 		ReasonCode:            input.ReasonCode,
 		ToolCallID:            input.ToolCallID,

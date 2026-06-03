@@ -49,6 +49,63 @@ func TestRunPlanExecuteMainForwardsThinkingAndMaxTokens(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T) {
+	configPath := writePlanExecuteConfig(t)
+	var stdout, stderr bytes.Buffer
+	var gotCfg config.Config
+	var gotOpts cmdruntime.RunOptions
+	var gotPrompt string
+
+	code := RunMain(
+		[]string{
+			"-config", configPath,
+			"-prompt", "plan adapter delegation",
+			"-required-edit-path", "internal/cmd/planexecute/plan_execute.go",
+			"-json",
+			"-model", "planner-override",
+			"-no-thinking",
+			"-max-tokens", "3072",
+		},
+		&stdout,
+		&stderr,
+		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			gotCfg = cfg
+			gotPrompt = prompt
+			gotOpts = opts
+			return "no plan", nil
+		},
+	)
+
+	if code != 1 {
+		t.Fatalf("expected planner-without-artifact exit 1, got %d stderr=%s", code, stderr.String())
+	}
+	if gotCfg.LlamaServer.Model != "planner-override" {
+		t.Fatalf("model override = %q, want planner-override", gotCfg.LlamaServer.Model)
+	}
+	if strings.TrimSpace(gotCfg.Workspace.SessionID) == "" {
+		t.Fatal("delegated run should stamp workspace session id before planner call")
+	}
+	if !strings.Contains(gotPrompt, "plan adapter delegation") {
+		t.Fatalf("planner prompt should include original prompt, got:\n%s", gotPrompt)
+	}
+	if !gotOpts.JSONEvents || !gotOpts.DisableThinking {
+		t.Fatalf("planner options should forward json/no-thinking flags, got %#v", gotOpts)
+	}
+	if gotOpts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !gotOpts.PlannerOwnedVerification {
+		t.Fatalf("planner options should carry plan-execute planner contract, got %#v", gotOpts)
+	}
+	if gotOpts.MaxTokensOverride != 3072 {
+		t.Fatalf("MaxTokensOverride = %d, want 3072", gotOpts.MaxTokensOverride)
+	}
+	if gotOpts.ScopeContract.ContractID == "" || len(gotOpts.ScopeContract.RequiredCoveragePaths) != 1 {
+		t.Fatalf("planner options should carry resolved scope contract, got %#v", gotOpts.ScopeContract)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.plan_artifact_missing"); !ok {
+		t.Fatalf("delegated planner failure should preserve JSON event, got %s", stdout.String())
+	}
+}
+
 func TestRunPlanExecuteMainUsesSharedExistingFilePlannerTokenBudget(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	var stdout, stderr bytes.Buffer

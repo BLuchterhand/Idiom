@@ -217,10 +217,9 @@ func TestFileModelByAliasSearchesAllProfiles(t *testing.T) {
 	}
 }
 
-// TestCoderAliasPrefersExplicitDefaultCoder is the load-bearing
-// resolver test for the lane wrapper's plan-execute auto-route. A
-// project that explicitly sets proxy.default_coder gets exactly
-// that alias regardless of how its model list looks.
+// TestCoderAliasPrefersExplicitDefaultCoder guards the legacy wrapper
+// spelling: a project that explicitly sets proxy.default_coder gets
+// exactly that alias regardless of how its model list looks.
 func TestCoderAliasPrefersExplicitDefaultCoder(t *testing.T) {
 	prof := Profile{
 		Models: []Model{{Alias: "model-a"}, {Alias: "model-b-coder"}},
@@ -231,11 +230,8 @@ func TestCoderAliasPrefersExplicitDefaultCoder(t *testing.T) {
 	}
 }
 
-// TestCoderAliasFallsBackToCoderHeuristic verifies that absent an
-// explicit default_coder, the resolver picks the first model whose
-// alias contains "coder". This covers projects that haven't set the
-// new field but still have a coder backend in their model list —
-// they should keep working without a config change.
+// TestCoderAliasFallsBackToCoderHeuristic verifies that the legacy
+// wrapper still uses the shared executor heuristic.
 func TestCoderAliasFallsBackToCoderHeuristic(t *testing.T) {
 	prof := Profile{Models: []Model{
 		{Alias: "qwen3.6-35b"},
@@ -246,14 +242,23 @@ func TestCoderAliasFallsBackToCoderHeuristic(t *testing.T) {
 	}
 }
 
-// TestCoderAliasReturnsEmptyWhenNoCoderPresent verifies the "no
-// answer" path: a profile with no coder backend declared returns ""
-// so the lane wrapper falls back to its hardcoded default rather
-// than guessing.
+// TestCoderAliasReturnsEmptyWhenNoCoderPresent verifies the legacy
+// no-lone-model behavior retained by the wrapper.
 func TestCoderAliasReturnsEmptyWhenNoCoderPresent(t *testing.T) {
 	prof := Profile{Models: []Model{{Alias: "qwen3.6-35b"}, {Alias: "llama-7b"}}}
 	if got := prof.CoderAlias(); got != "" {
 		t.Fatalf("empty result expected when no coder exists, got %q", got)
+	}
+}
+
+func TestCoderAliasCompatibilitySkipsLoneModelFallback(t *testing.T) {
+	prof := Profile{Models: []Model{{Alias: "only-model"}}}
+	if got := prof.CoderAlias(); got != "" {
+		t.Fatalf("CoderAlias must retain no-lone-model compatibility, got %q", got)
+	}
+	resolution := prof.ResolveRoleAlias(RoleExecutor)
+	if !resolution.OK || resolution.Alias != "only-model" || resolution.Source != RoleAliasSourceLoneModel {
+		t.Fatalf("ResolveRoleAlias executor = %#v, want lone model resolution", resolution)
 	}
 }
 
@@ -342,6 +347,57 @@ func TestAliasForRolePrefersExplicitDefaults(t *testing.T) {
 		if !ok || got != want {
 			t.Fatalf("AliasForRole(%q) = (%q,%v), want (%q,true)", role, got, ok, want)
 		}
+	}
+}
+
+func TestResolveRoleAliasReportsSelectionSource(t *testing.T) {
+	cases := []struct {
+		name string
+		prof Profile
+		role string
+		want RoleAliasResolution
+	}{
+		{
+			name: "proxy default",
+			prof: Profile{
+				Models: []Model{{Alias: "tagged-executor", Roles: []string{RoleExecutor}}},
+				Proxy:  Proxy{DefaultExecutor: "explicit-executor"},
+			},
+			role: RoleExecutor,
+			want: RoleAliasResolution{Role: RoleExecutor, Alias: "explicit-executor", Source: RoleAliasSourceProxyDefault, OK: true},
+		},
+		{
+			name: "role tag",
+			prof: Profile{Models: []Model{{Alias: "planner", Roles: []string{RolePlanner}}}},
+			role: RolePlanner,
+			want: RoleAliasResolution{Role: RolePlanner, Alias: "planner", Source: RoleAliasSourceRoleTag, OK: true},
+		},
+		{
+			name: "lone model",
+			prof: Profile{Models: []Model{{Alias: "solo"}}},
+			role: RoleClassifier,
+			want: RoleAliasResolution{Role: RoleClassifier, Alias: "solo", Source: RoleAliasSourceLoneModel, OK: true},
+		},
+		{
+			name: "executor coder heuristic",
+			prof: Profile{Models: []Model{{Alias: "base"}, {Alias: "qwen3-coder-30b"}}},
+			role: RoleExecutor,
+			want: RoleAliasResolution{Role: RoleExecutor, Alias: "qwen3-coder-30b", Source: RoleAliasSourceExecutorCoderHeuristic, OK: true},
+		},
+		{
+			name: "miss",
+			prof: Profile{Models: []Model{{Alias: "base"}, {Alias: "helper"}}},
+			role: RoleExecutor,
+			want: RoleAliasResolution{Role: RoleExecutor},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := tc.prof.ResolveRoleAlias(tc.role)
+			if got != tc.want {
+				t.Fatalf("ResolveRoleAlias(%q) = %#v, want %#v", tc.role, got, tc.want)
+			}
+		})
 	}
 }
 

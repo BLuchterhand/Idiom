@@ -15,10 +15,18 @@ const (
 )
 
 type CompileResult struct {
-	SchemaVersion string                    `json:"schema_version"`
-	Contract      autonomy.AutonomyContract `json:"contract"`
-	Runtime       RuntimeEnvelope           `json:"runtime_envelope"`
-	Protocol      ModelProtocolProjection   `json:"model_protocol"`
+	SchemaVersion   string                    `json:"schema_version"`
+	Contract        autonomy.AutonomyContract `json:"contract"`
+	Runtime         RuntimeEnvelope           `json:"runtime_envelope"`
+	Protocol        ModelProtocolProjection   `json:"model_protocol"`
+	ActiveAuthority ActiveAuthorityBinding    `json:"active_authority"`
+}
+
+type ActiveAuthorityBinding struct {
+	ContractID        string `json:"contract_id"`
+	RuntimeContractID string `json:"runtime_contract_id"`
+	ProtocolHash      string `json:"protocol_hash"`
+	ActiveInvariantID string `json:"active_invariant_id"`
 }
 
 type ToolVocabularyEntry = autonomy.PlanExecutePlannerToolMetadata

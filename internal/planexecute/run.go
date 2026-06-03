@@ -12,7 +12,6 @@ import (
 	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
-	"idiom/internal/writerroute"
 )
 
 type RunResult struct {
@@ -109,18 +108,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		"edit_set_obligations":      editSetObligations,
 		"edit_set_obligation_count": len(editSetObligations),
 	})
-	decision := writerroute.NewDecisionFromParams(writerroute.DecisionParams{
-		Mode:              writerroute.ModePlanSubmission,
-		Lane:              "plan-execute",
-		PlannerModel:      cfg.LlamaServer.Model,
-		ExecutorModel:     cfg.LlamaServer.Model,
-		ReviewerModel:     cfg.LlamaServer.Model,
-		ClassifierModel:   cfg.RouteClassifier.Model,
-		VerificationOwner: "planner_owned",
-		RequiredEditPaths: requiredEditPaths,
-		ReasonCodes:       []string{"route.multi_file_plan_execute"},
-		TaskFamily:        agent.PlanThenExecutePlannerTaskFamily,
-	})
+	decision := planExecuteWriterRouteDecision(cfg, requiredEditPaths)
 	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "writer_route_decision", decision.EventFields())
 	if resumeState != nil {
 		return runResumeReviewRepair(cfg, opts, prompt, *resumeState, resumeStatePath, promptRun, rec, stdout, stderr)

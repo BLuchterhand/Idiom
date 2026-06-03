@@ -94,6 +94,27 @@ const (
 	RoleClassifier = "classifier"
 )
 
+// RoleAliasSource identifies the rule that selected an alias for a
+// harness role. It makes role resolution inspectable without forcing
+// callers to duplicate the lookup sequence.
+type RoleAliasSource string
+
+const (
+	RoleAliasSourceProxyDefault           RoleAliasSource = "proxy_default"
+	RoleAliasSourceRoleTag                RoleAliasSource = "role_tag"
+	RoleAliasSourceLoneModel              RoleAliasSource = "lone_model"
+	RoleAliasSourceExecutorCoderHeuristic RoleAliasSource = "executor_coder_heuristic"
+)
+
+// RoleAliasResolution is the typed result of resolving one harness
+// role to a backend model alias.
+type RoleAliasResolution struct {
+	Role   string
+	Alias  string
+	Source RoleAliasSource
+	OK     bool
+}
+
 // Load reads and parses a backends.json file. Returns the parsed
 // File or an error describing the failure. Callers who can tolerate
 // "no backends file" should call LoadOptional instead.
@@ -188,36 +209,14 @@ func (f File) ModelByAlias(alias string) (Model, bool) {
 	return Model{}, false
 }
 
-// CoderAlias is the legacy "does this profile have a coder?" resolver.
-// It deliberately does NOT use the lone-model fallback: a profile
-// with a single encoder/llama model returns "" because the project
-// hasn't declared a coder. Callers that want the more permissive
-// "what alias should the executor role use?" semantic (including the
-// lone-model fallback for single-model setups) should call
-// AliasForRole(RoleExecutor) instead.
-//
-// Lookup order:
-//  1. Profile.Proxy.DefaultCoder / DefaultExecutor (explicit)
-//  2. The first Model whose Roles contains RoleExecutor
-//  3. The first Model whose alias matches the coder heuristic
-//  4. ""
+// CoderAlias is the legacy "does this profile have a coder?" spelling.
+// It remains as a compatibility wrapper for callers that still need
+// the historical no-lone-model behavior. New callers should use
+// ResolveRoleAlias(RoleExecutor) or AliasForRole(RoleExecutor).
 func (p Profile) CoderAlias() string {
-	if alias := strings.TrimSpace(p.proxyDefaultForRole(RoleExecutor)); alias != "" {
-		return alias
-	}
-	for _, m := range p.Models {
-		for _, r := range m.Roles {
-			if strings.ToLower(strings.TrimSpace(r)) == RoleExecutor {
-				if alias := strings.TrimSpace(m.Alias); alias != "" {
-					return alias
-				}
-			}
-		}
-	}
-	for _, m := range p.Models {
-		if isHyphenBoundedToken(strings.ToLower(m.Alias), "coder") {
-			return m.Alias
-		}
+	resolution := p.resolveRoleAlias(RoleExecutor, roleAliasOptions{allowLoneModel: false})
+	if resolution.OK {
+		return resolution.Alias
 	}
 	return ""
 }
@@ -242,35 +241,54 @@ func (p Profile) CoderAlias() string {
 // role with a recognizable name token; planner/classifier rely on
 // explicit Default<Role> or role tags.
 func (p Profile) AliasForRole(role string) (string, bool) {
-	role = strings.ToLower(strings.TrimSpace(role))
-	if role == "" {
+	resolution := p.ResolveRoleAlias(role)
+	if !resolution.OK {
 		return "", false
 	}
+	return resolution.Alias, true
+}
+
+// ResolveRoleAlias resolves the alias the harness should use for a
+// role and reports the rule that selected it. This method is the
+// active authority for Profile role-to-alias resolution.
+func (p Profile) ResolveRoleAlias(role string) RoleAliasResolution {
+	return p.resolveRoleAlias(role, roleAliasOptions{allowLoneModel: true})
+}
+
+type roleAliasOptions struct {
+	allowLoneModel bool
+}
+
+func (p Profile) resolveRoleAlias(role string, opts roleAliasOptions) RoleAliasResolution {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "" {
+		return RoleAliasResolution{}
+	}
 	if alias := strings.TrimSpace(p.proxyDefaultForRole(role)); alias != "" {
-		return alias, true
+		return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceProxyDefault, OK: true}
 	}
 	for _, m := range p.Models {
 		for _, r := range m.Roles {
 			if strings.ToLower(strings.TrimSpace(r)) == role {
 				if alias := strings.TrimSpace(m.Alias); alias != "" {
-					return alias, true
+					return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceRoleTag, OK: true}
 				}
 			}
 		}
 	}
-	if len(p.Models) == 1 {
+	if opts.allowLoneModel && len(p.Models) == 1 {
 		if alias := strings.TrimSpace(p.Models[0].Alias); alias != "" {
-			return alias, true
+			return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceLoneModel, OK: true}
 		}
 	}
 	if role == RoleExecutor {
 		for _, m := range p.Models {
-			if isHyphenBoundedToken(strings.ToLower(m.Alias), "coder") {
-				return m.Alias, true
+			if alias := strings.TrimSpace(m.Alias); alias != "" && isHyphenBoundedToken(strings.ToLower(alias), "coder") {
+				return RoleAliasResolution{Role: role, Alias: alias, Source: RoleAliasSourceExecutorCoderHeuristic, OK: true}
 			}
 		}
 	}
-	return "", false
+	return RoleAliasResolution{Role: role}
 }
 
 // proxyDefaultForRole returns the Proxy.Default<Role> field value for a

@@ -52,6 +52,41 @@ func TestRunEmitsQueueAdmissionBeforePlanner(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteWriterRouteDecisionUsesBackendRoleAliases(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	backendsJSON := `{
+  "profiles": {
+    "default": {
+      "models": [
+        {"alias": "plan-model", "roles": ["planner"]},
+        {"alias": "exec-model", "roles": ["executor"]},
+        {"alias": "classify-model", "roles": ["classifier"]}
+      ]
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.LlamaServer.Model = "planner-default"
+	cfg.RouteClassifier.Model = "classifier-default"
+	cfg.Implementer = &config.LlamaServer{Model: "implementer-default"}
+
+	decision := planExecuteWriterRouteDecision(cfg, []string{"internal/planexecute/run.go"})
+
+	if decision.PlannerModel != "plan-model" || decision.ExecutorModel != "exec-model" || decision.ReviewerModel != "exec-model" || decision.ClassifierModel != "classify-model" {
+		t.Fatalf("decision did not use backend role aliases: %#v", decision)
+	}
+	if decision.RoleAliases["planner"] != "plan-model" || decision.RoleAliases["executor"] != "exec-model" || decision.RoleAliases["classifier"] != "classify-model" {
+		t.Fatalf("role aliases missing from decision: %#v", decision.RoleAliases)
+	}
+}
+
 func TestPreflightPlanEditsRejectsEscapingPathBeforeRead(t *testing.T) {
 	root := t.TempDir()
 	outside := filepath.Join(filepath.Dir(root), "outside.txt")
@@ -98,6 +133,40 @@ func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
 	}
 	if !strings.Contains(got.Reason, "anchor provenance stale") || !strings.Contains(got.Reason, "file fingerprint changed") {
 		t.Fatalf("mismatch should report stale provenance, got %q", got.Reason)
+	}
+}
+
+func TestPreflightCandidatePathDoesNotSatisfyRequiredCoverage(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/candidate.go", OldText: "old", NewText: "new"},
+		},
+	}
+
+	got := preflightPlanRequiredEditPaths([]string{"pkg/required.go"}, plan)
+	if got == nil {
+		t.Fatalf("candidate edit path should not satisfy required coverage")
+	}
+	if got.Path != "pkg/candidate.go" || got.Reason != "plan edit path is outside required_edit_paths allowlist" {
+		t.Fatalf("unexpected required preflight mismatch: %#v", got)
+	}
+}
+
+func TestPreflightAllowedCandidateScopeDoesNotCreateRequiredCoverage(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "pkg/candidate.go", OldText: "old", NewText: "new"},
+		},
+	}
+
+	if got := preflightPlanAllowedEditPaths([]string{"pkg/candidate.go"}, plan); got != nil {
+		t.Fatalf("allowed candidate path should pass allowed preflight, got %#v", got)
+	}
+	got := preflightPlanRequiredEditPaths([]string{"pkg/required.go"}, plan)
+	if got == nil || got.Path != "pkg/candidate.go" {
+		t.Fatalf("allowed candidate must not satisfy required preflight, got %#v", got)
 	}
 }
 
@@ -917,6 +986,59 @@ func TestRunReviewRepairPhaseForcesVisibleTerminalContract(t *testing.T) {
 	}
 	if !gotOpts.DisableThinking {
 		t.Fatal("review-repair must force visible no-thinking output for its terminal contract")
+	}
+}
+
+func TestRunReviewRepairPhaseDeterministicCleanReviewSkipsPrompt(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW", "true")
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("bad\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	baseline := CaptureReviewRepairBaseline(root, []string{"a.txt"})
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("good\n"), 0o644); err != nil {
+		t.Fatalf("seed executor result: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "bad", NewText: "good", Purpose: "seed changed path"},
+		},
+	}
+	var stdout bytes.Buffer
+	report, err := RunReviewRepairPhase(
+		cfg,
+		"Review behavior.",
+		plan,
+		nil,
+		&baseline,
+		ExecutorPhaseReport{},
+		Options{JSONEvents: true},
+		&stdout,
+		func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+			t.Fatal("deterministic clean review must not call the review model")
+			return "", nil
+		},
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("deterministic clean review should pass: %v", err)
+	}
+	if report.Status != "pass (deterministic evidence)" || !report.ChecklistFound {
+		t.Fatalf("unexpected deterministic report: %#v", report)
+	}
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	summary, ok := planExecuteEventByTypeForRunTest(events, "turn_summary")
+	if !ok || summary["stop_reason"] != "review_repair_deterministic_pass" || summary["used_model_calls"] != float64(0) {
+		t.Fatalf("expected deterministic zero-call turn summary, got %#v in %s", summary, stdout.String())
+	}
+	complete, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.review_repair_complete")
+	if !ok || complete["deterministic"] != true {
+		t.Fatalf("expected deterministic completion event, got %#v in %s", complete, stdout.String())
 	}
 }
 

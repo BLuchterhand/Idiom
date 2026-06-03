@@ -658,6 +658,7 @@ func (r *Runner) Run(
 		})
 		modelProtocol, hasModelProtocol := r.compileModelProtocolProjection(r.RuntimeBrief, collectedResults, phaseContract, policy, terminalSubmitPlanNativeTools())
 		if autonomyRecorder != nil {
+			modelProtocol = autonomyRecorder.bindModelProtocolProjection(modelProtocol)
 			autonomyRecorder.emitTurnPhaseContract(phaseContract, modelProtocol)
 		}
 		modelStart := time.Now()

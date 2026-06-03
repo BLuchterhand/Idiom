@@ -1,11 +1,11 @@
 // Package mcp implements the smallest viable subset of the Model Context
 // Protocol client surface that idiom needs: stdio and HTTP/SSE transports,
-// tool discovery via tools/list, and tool execution via tools/call. No
-// resources, no prompts, no sampling, no notifications. Fix 8 from
-// docs/opencode-fixes-design.md §8 landed the stdio piece; the HTTP
-// transport (StartHTTP, see http.go) is documented in
-// docs/web-search-tool-design.md and is what hosted servers like
-// https://mcp.exa.ai/mcp use.
+// tool discovery via tools/list, tool execution via tools/call, and metadata
+// resource discovery via resources/list and resources/read. No prompts,
+// sampling, or notifications beyond initialized. Fix 8 from
+// docs/opencode-fixes-design.md §8 landed the stdio piece; the HTTP transport
+// (StartHTTP, see http.go) is documented in docs/web-search-tool-design.md and
+// is what hosted servers like https://mcp.exa.ai/mcp use.
 package mcp
 
 import (
@@ -36,27 +36,6 @@ type Tool struct {
 type ToolCallResult struct {
 	Content []json.RawMessage `json:"content,omitempty"`
 	IsError bool              `json:"isError,omitempty"`
-}
-
-// Resource describes a metadata entry exposed by resources/list.
-type Resource struct {
-	URI         string          `json:"uri"`
-	Name        string          `json:"name,omitempty"`
-	Description string          `json:"description,omitempty"`
-	MimeType    string          `json:"mimeType,omitempty"`
-	Meta        json.RawMessage `json:"_meta,omitempty"`
-}
-
-// ResourceContent is one metadata/content item returned by resources/read.
-type ResourceContent struct {
-	URI      string `json:"uri"`
-	MimeType string `json:"mimeType,omitempty"`
-	Text     string `json:"text,omitempty"`
-}
-
-// ResourceReadResult is the decoded resources/read response.
-type ResourceReadResult struct {
-	Contents []ResourceContent `json:"contents"`
 }
 
 // rawRequest and rawResponse are the JSON-RPC 2.0 envelopes used by MCP.
@@ -272,7 +251,7 @@ func (c *Client) ListResources(ctx context.Context) ([]Resource, error) {
 // ReadResource fetches a resource by URI. Servers may return metadata-only
 // payloads; this client preserves the protocol shape without interpreting it.
 func (c *Client) ReadResource(ctx context.Context, uri string) (ResourceReadResult, error) {
-	raw, err := c.call(ctx, "resources/read", map[string]any{"uri": uri})
+	raw, err := c.call(ctx, "resources/read", ResourceReadParams{URI: uri})
 	if err != nil {
 		return ResourceReadResult{}, err
 	}

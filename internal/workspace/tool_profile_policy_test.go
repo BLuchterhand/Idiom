@@ -53,11 +53,20 @@ func TestToolRequestAllowedForDiscoveryProfileRequiresReportOnlyGraphReads(t *te
 	}
 }
 
-func TestToolAllowedForDiscoveryProfileDeniesContextToolsThatWriteArtifacts(t *testing.T) {
+func TestToolAllowedForDiscoveryProfileDeniesDescriptorLocalArtifactTools(t *testing.T) {
 	for _, tool := range []string{"context_pack", "context_impact", "discovery_query"} {
+		if !discoveryProfileToolWritesLocalContextArtifacts(tool) {
+			t.Fatalf("%s must remain descriptor-declared as a local artifact writer", tool)
+		}
+	}
+	localArtifactTools := builtInToolSurfaceDiscoveryLocalArtifactTools()
+	if len(localArtifactTools) == 0 {
+		t.Fatal("test setup expected at least one descriptor-declared local artifact tool")
+	}
+	for _, tool := range localArtifactTools {
 		decision := ToolAllowedForProfile(tool, ToolProfileDiscovery)
 		if decision.Allowed {
-			t.Fatalf("%s should be denied for discovery profile because it writes local artifacts", tool)
+			t.Fatalf("%s should be denied for discovery profile because descriptor metadata says it writes local artifacts", tool)
 		}
 		if decision.Code != "profile_denied" || !strings.Contains(decision.Reason, "context artifacts") {
 			t.Fatalf("%s denial should name local artifact writes, got %#v", tool, decision)
@@ -65,8 +74,20 @@ func TestToolAllowedForDiscoveryProfileDeniesContextToolsThatWriteArtifacts(t *t
 	}
 }
 
-func TestToolAllowedForMCPDiscoveryProfileAllowsContextToolsThatWriteArtifacts(t *testing.T) {
-	for _, tool := range []string{"context_pack", "context_impact", "discovery_query"} {
+func TestDiscoveryProfileLocalArtifactQueryProjectsToolSurfaceMetadata(t *testing.T) {
+	for _, spec := range builtInToolSurfaceSpecs {
+		if got := discoveryProfileToolWritesLocalContextArtifacts(spec.Tool); got != spec.DiscoveryLocalArtifacts {
+			t.Fatalf("%s local artifact query = %v, want descriptor metadata %v", spec.Tool, got, spec.DiscoveryLocalArtifacts)
+		}
+	}
+}
+
+func TestToolAllowedForMCPDiscoveryProfileAllowsDescriptorLocalArtifactTools(t *testing.T) {
+	localArtifactTools := builtInToolSurfaceDiscoveryLocalArtifactTools()
+	if len(localArtifactTools) == 0 {
+		t.Fatal("test setup expected at least one descriptor-declared local artifact tool")
+	}
+	for _, tool := range localArtifactTools {
 		decision := ToolAllowedForProfile(tool, ToolProfileMCPDiscovery)
 		if !decision.Allowed {
 			t.Fatalf("%s should be allowed for mcp_discovery profile, got %#v", tool, decision)

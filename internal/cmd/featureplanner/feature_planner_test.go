@@ -343,6 +343,54 @@ func TestLoadProductWorkflowBriefCarriesClaimBlockersWithoutImplementationRecord
 	if err := os.WriteFile(filepath.Join(root, "prd.md"), []byte(productworkflow.RenderPRDMarkdown(prd)), 0o644); err != nil {
 		t.Fatalf("write prd: %v", err)
 	}
+	adrIndex := productworkflow.ADRIndex{
+		SchemaVersion: "idiom.adr_index.v1",
+		EffortID:      "effort-headless",
+		ADRs: []productworkflow.ADRIndexEntry{{
+			ADRID:   "ADR-HEADLESS",
+			Status:  "accepted",
+			Path:    "001-headless.md",
+			PRDRefs: []string{"REQ-HEADLESS"},
+		}},
+	}
+	writeJSONFile(t, filepath.Join(root, "adrs", "index.json"), adrIndex)
+	adr := productworkflow.ADRDocument{
+		FrontMatter: productworkflow.ADRFrontMatter{
+			SchemaVersion:     "idiom.adr.v1",
+			ADRID:             "ADR-HEADLESS",
+			Status:            "accepted",
+			PRDRefs:           []string{"REQ-HEADLESS"},
+			EvidenceRefs:      []string{"EV-MISSING"},
+			TDDObligations:    []string{"TDD-HEADLESS"},
+			CoverageTier:      "unit",
+			AcceptedAt:        "2026-05-31T00:02:00Z",
+			AcceptedBy:        "test",
+			AcceptanceProfile: "human-review",
+		},
+		BodyMarkdown: strings.Join([]string{
+			"## Context",
+			"Headless dispatch needs product authority.",
+			"## Decision",
+			"Keep the ExampleCloud platform requirement visible to implementation planners.",
+			"## Alternatives Considered",
+			"Drop ADR details at CLI load time.",
+			"## Evidence",
+			"EV-MISSING",
+			"## Consequences",
+			"Feature planner sees accepted decisions.",
+			"## Compatibility and Migration",
+			"Existing product brief DTO remains stable.",
+			"## TDD Obligations",
+			"TDD-HEADLESS",
+			"## Rollback",
+			"Restore prior feature-planner loading behavior.",
+			"## Open Questions",
+			"None.",
+		}, "\n\n"),
+	}
+	if err := os.WriteFile(filepath.Join(root, "adrs", "001-headless.md"), []byte(productworkflow.RenderADRMarkdown(adr)), 0o644); err != nil {
+		t.Fatalf("write adr: %v", err)
+	}
 	tdd := productworkflow.TDDLedger{
 		SchemaVersion: "idiom.tdd_ledger.v1",
 		EffortID:      "effort-headless",
@@ -370,6 +418,16 @@ func TestLoadProductWorkflowBriefCarriesClaimBlockersWithoutImplementationRecord
 	}
 	if !strings.Contains(strings.Join(brief.Blockers, "\n"), `implementation-affecting claim in PRD requirement REQ-HEADLESS references unresolved evidence "EV-MISSING"`) {
 		t.Fatalf("expected implementation claim blocker without implementation records, got %#v", brief.Blockers)
+	}
+	prompt := featureplanner.BuildPlannerPrompt("plan headless task", featureplanner.NewState("session", "plan", "", 3, time.Unix(1, 0).UTC()), brief)
+	for _, want := range []string{
+		"Keep the ExampleCloud platform requirement visible to implementation planners.",
+		"REQ-HEADLESS testability: go test",
+		"REQ-HEADLESS metric: claim is backed before dispatch",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing product handoff fact %q:\n%s", want, prompt)
+		}
 	}
 }
 

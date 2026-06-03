@@ -86,6 +86,34 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 	}
 }
 
+func TestReadOnlyCapabilityEvidenceCapabilitiesProjectResolverVocabulary(t *testing.T) {
+	want := []string{
+		"inspect_file",
+		"inspect_symbol",
+		"find_symbol",
+		"find_definition",
+		"find_references",
+		"calls_from",
+		"calls_into",
+		"related_files",
+	}
+	got := ReadOnlyCapabilityEvidenceCapabilities()
+	if !slices.Equal(got, want) {
+		t.Fatalf("read-only evidence capability projection = %#v, want %#v", got, want)
+	}
+
+	got[0] = "mutated"
+	if next := ReadOnlyCapabilityEvidenceCapabilities(); !slices.Equal(next, want) {
+		t.Fatalf("projection should return an isolated slice, got %#v", next)
+	}
+
+	for _, tool := range []string{"code_navigate", readOnlyCapabilityToolName} {
+		if got := EvidenceCapabilitiesForTool(tool); !slices.Equal(got, want) {
+			t.Fatalf("%s evidence capabilities = %#v, want resolver projection %#v", tool, got, want)
+		}
+	}
+}
+
 func TestReadOnlyCapabilityResolverCanBeDisabled(t *testing.T) {
 	t.Setenv(readOnlyCapabilityResolverEnv, "0")
 	registry := BuildReadOnlyCapabilityRegistry()
@@ -955,6 +983,31 @@ func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
 		}
 		if got := CapabilityClassificationForTool(spec.Tool); got == "" {
 			t.Fatalf("supplemental language tool %s should expose capability classification", spec.Tool)
+		}
+	}
+}
+
+func TestReadOnlyCapabilityEvidenceCapabilityDrivesAuditNormalization(t *testing.T) {
+	cases := []struct {
+		capability string
+		want       string
+	}{
+		{capability: string(ReadOnlyCapabilityFileOutline), want: "inspect_file"},
+		{capability: string(ReadOnlyCapabilityInspectSymbol), want: "inspect_symbol"},
+		{capability: string(ReadOnlyCapabilitySymbolLookup), want: "find_symbol"},
+		{capability: "inspect_symbol", want: "inspect_symbol"},
+		{capability: string(ReadOnlyCapabilityDefinition), want: "find_definition"},
+		{capability: string(ReadOnlyCapabilityReferences), want: "find_references"},
+		{capability: string(ReadOnlyCapabilityCallsFrom), want: "calls_from"},
+		{capability: string(ReadOnlyCapabilityCallsInto), want: "calls_into"},
+		{capability: string(ReadOnlyCapabilityRelatedFiles), want: "related_files"},
+	}
+	for _, tc := range cases {
+		if got := ReadOnlyCapabilityEvidenceCapability(tc.capability); got != tc.want {
+			t.Fatalf("ReadOnlyCapabilityEvidenceCapability(%q) = %q, want %q", tc.capability, got, tc.want)
+		}
+		if got := auditObservedCapabilityForToolCapability(readOnlyCapabilityToolName, tc.capability); got != tc.want {
+			t.Fatalf("auditObservedCapabilityForToolCapability(%q) = %q, want %q", tc.capability, got, tc.want)
 		}
 	}
 }

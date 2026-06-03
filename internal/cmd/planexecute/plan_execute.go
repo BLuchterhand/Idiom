@@ -6,22 +6,15 @@ import (
 	"fmt"
 	"io"
 	"maps"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
-	"idiom/internal/agent"
-	"idiom/internal/cmd/route"
 	"idiom/internal/cmd/runtime"
 	"idiom/internal/config"
-	"idiom/internal/failures"
-	"idiom/internal/plancontract"
 	"idiom/internal/planexecute"
-	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
-	"idiom/internal/writerroute"
 )
 
 // planExecuteOptions configures `idiom plan-execute`.
@@ -51,651 +44,42 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
-	defer planexecute.CleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
 	if strings.TrimSpace(opts.Model) != "" {
 		cfg.LlamaServer.Model = opts.Model
 	}
-	planexecute.CleanupStalePlanArtifacts(cfg.Workspace.Root, 7*24*time.Hour, stderr)
-	prompt, err := planExecutePrompt(opts)
-	if err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	var resumeState *planexecute.ProgressState
-	resumeStatePath := ""
-	if strings.TrimSpace(opts.Resume) != "" {
-		state, statePath, found, err := planexecute.TryLoadProgressState(cfg.Workspace.Root, opts.Resume)
-		if err != nil {
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
-		if !found {
-			fmt.Fprintln(stderr, fmt.Errorf("plan-execute progress state %s does not exist", statePath))
-			return 1
-		}
-		if found {
-			resumeState = &state
-			resumeStatePath = statePath
-		}
-	}
-	// Capture session start time + a fresh session UUID so the
-	// executor phase only loads plan artifacts produced by THIS
-	// planner run. Without these guards, a planner failure (budget
-	// exhaustion, EOF, etc.) silently falls back to the most recent
-	// plan on disk — which may be from an unrelated prior session
-	// (or a CONCURRENT session running in the same workspace) and
-	// dispatches the wrong edits. The sessionStart filter is a
-	// belt-and-suspenders backup; the SessionID filter is the
-	// strict attribution.
-	sessionStart := time.Now().Add(-1 * time.Second)
-	sessionID := newPlanExecuteSessionID()
-	if resumeState != nil && strings.TrimSpace(resumeState.SessionID) != "" {
-		sessionID = resumeState.SessionID
-	}
-	cfg.Workspace.SessionID = sessionID
-	planexecute.LogCLIPhase(rec, "plan_execute_start", map[string]any{
-		"json_events": opts.JSONEvents,
-		"session_id":  sessionID,
-		"resume":      resumeState != nil,
-	})
+	result := planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr)
+	return result.ExitCode
+}
 
-	// Queue gate: if a `idiom queue serve` daemon is reachable, acquire
-	// a lease for the model's pool BEFORE the planner phase starts so
-	// concurrent dispatches don't both hammer the MLX backend at once
-	// (Metal command-buffer pressure crashes 47781 under simultaneous
-	// load — observed on 2026-05-10). The gate is best-effort: when no
-	// daemon is running, MaybeAcquire returns a no-op release function
-	// and we proceed un-gated, matching legacy behavior.
-	queueRelease := planExecuteAcquireQueueSlot(cfg, opts, sessionID, rec, stdout, stderr)
-	defer queueRelease()
-
-	scopeContract := planExecuteScopeContract(opts, prompt)
-	requiredEditPaths := scopeContract.RequiredCoveragePaths
-	allowedEditPaths := scopeContract.AllowedCandidatePaths
-	editSetObligations := scopeContract.EditSetObligations
-	verificationPlan := planexecute.PlanVerification(planexecute.VerificationPlannerInput{
-		WorkspaceRoot: cfg.Workspace.Root,
-		Prompt:        prompt,
-	})
-	verificationCommands := verificationPlan.CommandStrings()
-	opts.ScopeContract = scopeContract
-	opts.EditSetObligations = editSetObligations
-	promptRequiredEditPaths := planexecute.RequiredEditPathsFromPrompt(prompt)
-	explicitRequiredEditPaths := planExecuteUniqueRequiredPaths([]string(opts.RequiredEditPaths))
-	planexecute.LogCLIPhase(rec, "plan_execute_required_edit_paths", map[string]any{
-		"count":                     len(requiredEditPaths),
-		"explicit_count":            len(explicitRequiredEditPaths),
-		"prompt_count":              len(promptRequiredEditPaths),
-		"allowed_count":             len(allowedEditPaths),
-		"scope_contract_id":         scopeContract.ContractID,
-		"edit_set_obligation_count": len(editSetObligations),
-	})
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "required_edit_paths_resolved", map[string]any{
-		"count":                     len(requiredEditPaths),
-		"explicit_count":            len(explicitRequiredEditPaths),
-		"prompt_count":              len(promptRequiredEditPaths),
-		"allowed_count":             len(allowedEditPaths),
-		"required_edit_paths":       requiredEditPaths,
-		"allowed_edit_paths":        allowedEditPaths,
-		"verification_commands":     verificationCommands,
-		"scope_contract_id":         scopeContract.ContractID,
-		"edit_set_obligations":      editSetObligations,
-		"edit_set_obligation_count": len(editSetObligations),
-	})
-	decision := cmdroute.BuildDecision(cfg, cmdroute.Options{
-		Mode:              writerroute.ModePlanSubmission,
-		Lane:              "plan-execute",
-		TaskFamily:        agent.PlanThenExecutePlannerTaskFamily,
-		PlannerModel:      cfg.LlamaServer.Model,
-		ExecutorModel:     cfg.LlamaServer.Model,
-		ReviewerModel:     cfg.LlamaServer.Model,
-		RequiredEditPaths: requiredEditPaths,
-		ReasonCodes:       []string{"route.multi_file_plan_execute"},
-		VerificationOwner: "planner_owned",
-	})
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "writer_route_decision", decision.EventFields())
-	if resumeState != nil {
-		return runPlanExecuteResumeReviewRepair(cfg, opts, prompt, requiredEditPaths, *resumeState, resumeStatePath, stdout, stderr, promptRun, rec)
-	}
-
-	progress := planexecute.NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
-	progress.EditSetObligations = editSetObligations
-	if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-
-	// Phase 1: planner. The planner runs as an implementation lane
-	// with the plan-then-execute system addendum that swaps per-edit
-	// writes for submit_plan. We reuse the existing implement runner
-	// because that lane already has the right read-side guards and
-	// brief audit; only the tool surface differs.
-	plannerBrief := planExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
-	plannerPrompt := planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, editSetObligations) + "\n\n" + plannerBrief
-	plannerMaxTokens := planExecutePlannerMaxTokens(cfg.Workspace.Root, prompt, requiredEditPaths, allowedEditPaths)
-	if opts.MaxTokens > 0 {
-		plannerMaxTokens = opts.MaxTokens
-	}
-	answer := ""
-	executorRequiredEditPaths := requiredEditPaths
-	autoExactScopePaths := requiredEditPaths
-	if len(autoExactScopePaths) == 0 {
-		autoExactScopePaths = allowedEditPaths
-	}
-	autoExact := planExecuteTryAutoExactPlan(cfg, prompt, autoExactScopePaths)
-	if autoExact.SourceSatisfied {
-		if reason := editSetObligations.RejectionReason(autoExact.AppliedPaths); reason != "" {
-			message := planexecute.EditSetObligationFailureMessage(reason)
-			progress.Status = planexecute.ProgressStatusFailed
-			progress.FailureKind = reason
-			progress.FailureReason = truncatePlanExecuteProgressReason(message)
-			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
-				"reason":                          reason,
-				"applied_paths":                   autoExact.AppliedPaths,
-				"source_satisfied_evidence_paths": autoExact.AppliedPaths,
-				"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
-				"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths), requiredEditPaths),
-				"edit_set_obligations":            editSetObligations,
-				"edit_set_obligation_count":       len(editSetObligations),
-			})
-			fmt.Fprintln(stderr, message)
-			return 1
-		}
-		answer = planExecuteAutoSourceSatisfiedAnswer(autoExactScopePaths)
-		progress.Phase = planexecute.ProgressPhaseComplete
-		progress.Status = planexecute.ProgressStatusCompleted
-		_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_source_satisfied", map[string]any{
-			"edits":                           autoExact.EditCount,
-			"applied":                         autoExact.AppliedCount,
-			"required_edit_paths":             requiredEditPaths,
-			"allowed_edit_paths":              allowedEditPaths,
-			"edit_set_obligations":            editSetObligations,
-			"edit_set_obligation_count":       len(editSetObligations),
-			"applied_paths":                   autoExact.AppliedPaths,
-			"source_satisfied_evidence_paths": autoExact.AppliedPaths,
-			"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
-			"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
-			"reason":                          autoExact.Reason,
-		})
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
-			"required_edit_paths":             requiredEditPaths,
-			"allowed_edit_paths":              allowedEditPaths,
-			"source_satisfied_evidence_paths": autoExact.AppliedPaths,
-			"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(autoExact.AppliedPaths),
-			"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
-			"edit_set_obligations":            editSetObligations,
-			"edit_set_obligation_count":       len(editSetObligations),
-			"reason":                          autoExact.Reason,
-		})
-		if !opts.JSONEvents {
-			fmt.Fprintln(stdout, answer)
-			fmt.Fprintln(stdout, "")
-			fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
-			fmt.Fprintln(stdout, "source-satisfied: executor skipped because every exact edit already matched the current workspace.")
-		}
-		return 0
-	}
-	if autoExact.Submitted {
-		answer = autoExact.Result.Summary
-		if len(autoExact.PendingPaths) > 0 {
-			executorRequiredEditPaths = autoExact.PendingPaths
-		}
-		emitPlanExecuteSyntheticTurnSummary(stdout, opts.JSONEvents, "auto_exact_plan_submitted")
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_submitted", map[string]any{
-			"edits":         autoExact.EditCount,
-			"applied":       autoExact.AppliedCount,
-			"pending":       autoExact.PendingCount,
-			"applied_paths": autoExact.AppliedPaths,
-			"pending_paths": autoExact.PendingPaths,
-			"reason":        autoExact.Reason,
-		})
-		if autoExact.AppliedCount > 0 {
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_partially_satisfied", map[string]any{
-				"applied":       autoExact.AppliedCount,
-				"pending":       autoExact.PendingCount,
-				"applied_paths": autoExact.AppliedPaths,
-				"pending_paths": autoExact.PendingPaths,
-			})
-		}
-	} else {
-		if strings.TrimSpace(autoExact.Reason) != "" {
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "auto_exact_plan_skipped", map[string]any{
-				"reason":        autoExact.Reason,
-				"error":         autoExact.Result.Error,
-				"applied":       autoExact.AppliedCount,
-				"pending":       autoExact.PendingCount,
-				"unknown":       autoExact.UnknownCount,
-				"applied_paths": autoExact.AppliedPaths,
-				"pending_paths": autoExact.PendingPaths,
-				"unknown_paths": autoExact.UnknownPaths,
-			})
-		}
-		answer, err = promptRun(cfg, plannerPrompt, cmdruntime.RunOptions{
-			JSONEvents:               opts.JSONEvents,
-			Resume:                   opts.Resume,
-			TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
-			PlannerOwnedVerification: true,
-			// max_tokens for the planner phase is sized by edit shape.
-			//
-			// Originally 4096 ("planner emits one submit_plan + short answer,
-			// 4096 is plenty"). That assumption broke when submit_plan's
-			// `new_text` field carried the full content of NEW FILE edits —
-			// a 400-line Go file plus structure overhead easily exceeds
-			// 4096 tokens, and the response truncates silently mid-JSON
-			// (manifesting as "completion gate rejected, no write present"
-			// because the truncated JSON failed to parse as a valid tool
-			// call). See task-64b for the failure repro.
-			//
-			// submit_plan now spills large persisted bodies into sidecar refs.
-			// Existing-file plans can still require enough visible budget for a
-			// multi-file executable JSON artifact before submit_plan can spill
-			// large bodies. Keep the budget aligned with the shared
-			// internal/planexecute runner; prompt/validation contracts, not a
-			// smaller token ceiling, keep edit bodies bounded.
-			MaxTokensOverride: plannerMaxTokens,
-			DisableThinking:   opts.DisableThinking,
-			Telemetry:         rec,
-			ScopeContract:     scopeContract,
+func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunner {
+	return func(cfg config.Config, prompt string, opts planexecute.RunOptions, stdout io.Writer) (string, error) {
+		return promptRun(cfg, prompt, cmdruntime.RunOptions{
+			JSONEvents:                  opts.JSONEvents,
+			Resume:                      opts.Resume,
+			TaskFamily:                  opts.TaskFamily,
+			PlannerOwnedVerification:    opts.PlannerOwnedVerification,
+			MaxTokensOverride:           opts.MaxTokensOverride,
+			DisableThinking:             opts.DisableThinking,
+			ReviewRepairOpenObligations: opts.ReviewRepairOpenObligations,
+			Telemetry:                   opts.Telemetry,
+			ScopeContract:               opts.ScopeContract,
 		}, stdout)
-		if err != nil {
-			progress.Status = planexecute.ProgressStatusFailed
-			progress.FailureKind = "planner_failed"
-			progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
-			if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
-				fmt.Fprintln(stderr, saveErr)
-			}
-			fmt.Fprintln(stderr, err)
-			return 1
-		}
 	}
-
-	// Phase 2: executor. Locate the plan artifact written by THIS
-	// session's planner phase and dispatch its edits in order.
-	planPath, err := findLatestPlanArtifact(cfg.Workspace.Root, sessionStart, sessionID)
-	if err != nil {
-		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
-		if plancontract.SourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
-			if reason := editSetObligations.RejectionReason(sourceSatisfiedPaths); reason != "" {
-				message := planexecute.EditSetObligationFailureMessage(reason)
-				progress.Status = planexecute.ProgressStatusFailed
-				progress.FailureKind = reason
-				progress.FailureReason = truncatePlanExecuteProgressReason(message)
-				if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
-					fmt.Fprintln(stderr, saveErr)
-				}
-				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
-					"reason":                          reason,
-					"required_edit_paths":             requiredEditPaths,
-					"allowed_edit_paths":              allowedEditPaths,
-					"source_satisfied_evidence_paths": sourceSatisfiedPaths,
-					"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
-					"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
-					"edit_set_obligations":            editSetObligations,
-					"edit_set_obligation_count":       len(editSetObligations),
-				})
-				fmt.Fprintln(stderr, message)
-				return 1
-			}
-			progress.Phase = planexecute.ProgressPhaseComplete
-			progress.Status = planexecute.ProgressStatusCompleted
-			_, _ = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied", map[string]any{
-				"required_edit_paths":             requiredEditPaths,
-				"allowed_edit_paths":              allowedEditPaths,
-				"source_satisfied_evidence_paths": sourceSatisfiedPaths,
-				"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
-				"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
-				"edit_set_obligations":            editSetObligations,
-				"edit_set_obligation_count":       len(editSetObligations),
-				"reason":                          "planner reported requested final state already present",
-			})
-			if !opts.JSONEvents {
-				fmt.Fprintln(stdout, answer)
-				fmt.Fprintln(stdout, "")
-				fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
-				fmt.Fprintln(stdout, "source-satisfied: executor skipped because the planner reported the requested final state already present in every required path.")
-			}
-			return 0
-		}
-		if planExecuteAnswerDeclaresBlocker(answer) {
-			progress.Status = planexecute.ProgressStatusFailed
-			progress.FailureKind = planexecute.RunFailurePlannerBlocked
-			progress.FailureReason = planExecuteBlockerSummary(answer)
-			if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
-				fmt.Fprintln(stderr, saveErr)
-			}
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_blocked", map[string]any{
-				"reason":  err.Error(),
-				"blocker": planExecuteBlockerSummary(answer),
-			})
-			fmt.Fprintln(stderr, fmt.Errorf("planner phase reported a blocker before submitting a plan: %s", planExecuteBlockerSummary(answer)))
-			if !opts.JSONEvents {
-				fmt.Fprintln(stdout, answer)
-			}
-			return 1
-		}
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_missing", map[string]any{
-			"reason": err.Error(),
-		})
-		fmt.Fprintln(stderr, fmt.Errorf("planner phase did not produce a plan artifact: %w", err))
-		// Still print the planner answer so the caller can see what
-		// happened — this is a recoverable failure (the planner may
-		// have stopped with a typed blocker).
-		if !opts.JSONEvents {
-			fmt.Fprintln(stdout, answer)
-		}
-		progress.Status = planexecute.ProgressStatusFailed
-		progress.FailureKind = "plan_artifact_missing"
-		progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
-		if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
-			fmt.Fprintln(stderr, saveErr)
-		}
-		return 1
-	}
-	plan, err := workspace.LoadPlanArtifact(planPath)
-	if err != nil {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_invalid", map[string]any{
-			"path":   planPath,
-			"reason": err.Error(),
-		})
-		fmt.Fprintln(stderr, fmt.Errorf("read plan artifact %q: %w", planPath, err))
-		progress.Status = planexecute.ProgressStatusFailed
-		progress.FailureKind = "plan_artifact_invalid"
-		progress.FailureReason = truncatePlanExecuteProgressReason(err.Error())
-		if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
-			fmt.Fprintln(stderr, saveErr)
-		}
-		return 1
-	}
-	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, prompt); inheritedPackID != "" {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_pack_inherited", map[string]any{
-			"path":    planPath,
-			"pack_id": inheritedPackID,
-		})
-		if err := patchPlanArtifactPackID(planPath, inheritedPackID); err != nil {
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_pack_inherit_persist_failed", map[string]any{
-				"path":    planPath,
-				"pack_id": inheritedPackID,
-				"reason":  err.Error(),
-			})
-		}
-	}
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_loaded", map[string]any{
-		"path":    planPath,
-		"edits":   len(plan.Edits),
-		"pack_id": strings.TrimSpace(plan.PackID),
-	})
-	changedPaths := planChangedPaths(plan)
-	verificationPlan = planexecute.PlanVerification(planexecute.VerificationPlannerInput{
-		WorkspaceRoot: cfg.Workspace.Root,
-		Prompt:        prompt,
-		ChangedPaths:  changedPaths,
-	})
-	verificationCommands = verificationPlan.CommandStrings()
-	if reason := editSetObligations.RejectionReason(changedPaths); reason != "" {
-		message := planexecute.EditSetObligationFailureMessage(reason)
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
-			"path":                      planPath,
-			"reason":                    reason,
-			"changed_paths":             changedPaths,
-			"edit_set_obligations":      editSetObligations,
-			"edit_set_obligation_count": len(editSetObligations),
-		})
-		progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, planexecute.ReviewRepairBaseline{})
-		progress.Status = planexecute.ProgressStatusFailed
-		progress.FailureKind = reason
-		progress.FailureReason = truncatePlanExecuteProgressReason(message)
-		if _, saveErr := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
-			fmt.Fprintln(stderr, saveErr)
-		}
-		fmt.Fprintln(stderr, message)
-		return 1
-	}
-	reviewBaseline := captureReviewRepairBaseline(cfg.Workspace.Root, changedPaths)
-	progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, toSharedReviewRepairBaseline(reviewBaseline))
-	if _, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	var progressSaveErr error
-	progressCallback := func(step, total int, path string, succeeded bool) {
-		progress.MarkEditProgress(step, total, path, succeeded)
-		if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); err != nil && progressSaveErr == nil {
-			progressSaveErr = err
-		}
-	}
-	report, runErr := runExecutorPhaseScopedWithVerificationPlan(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationPlan, opts.JSONEvents, stdout, progressCallback)
-	if runErr == nil && progressSaveErr != nil {
-		runErr = progressSaveErr
-	}
-	sourceSanityRepairRequired := planexecute.ExecutorSourceSanityFailed(toSharedExecutorPhaseReport(report), runErr)
-	verificationRepairRequired := planexecute.ExecutorVerificationFailed(toSharedExecutorPhaseReport(report), runErr)
-	progress.MarkExecutorComplete(toSharedExecutorPhaseReport(report), runErr)
-	_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved", (sourceSanityRepairRequired || verificationRepairRequired) && !opts.SkipReviewRepair)
-	if err != nil && runErr == nil {
-		runErr = err
-	}
-	if sourceSanityRepairRequired {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "executor_verification_repair_required", map[string]any{
-			"failure_kind": planexecute.RunFailureSourceSanityFailed,
-			"reason":       truncatePlanExecuteProgressReason(runErr.Error()),
-		})
-	} else if verificationRepairRequired {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "executor_verification_repair_required", map[string]any{
-			"failure_kind":          planexecute.RunFailureVerificationRequired,
-			"reason":                truncatePlanExecuteProgressReason(runErr.Error()),
-			"verification_commands": verificationCommands,
-		})
-	}
-	_ = sessionStart // findLatestPlanArtifact already filtered; keep referenced.
-	reviewReport := reviewRepairPhaseReport{Skipped: opts.SkipReviewRepair}
-	var reviewErr error
-	if (runErr == nil || sourceSanityRepairRequired || verificationRepairRequired) && !opts.SkipReviewRepair {
-		reviewSessionID := newPlanExecuteSessionID()
-		progress.MarkReviewStarted(reviewSessionID)
-		_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
-		if err != nil {
-			reviewErr = err
-		} else {
-			reviewOpts := opts
-			reviewOpts.ReviewSessionID = reviewSessionID
-			reviewReport, reviewErr = runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)
-		}
-		progress.MarkReviewComplete(toSharedReviewRepairPhaseReport(reviewReport), reviewErr)
-		if (sourceSanityRepairRequired || verificationRepairRequired) && reviewErr == nil {
-			if planexecute.ReviewRepairResolvedVerificationFailure(toSharedReviewRepairPhaseReport(reviewReport)) {
-				if verificationRepairRequired {
-					_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
-					report.Verification = verificationEvidence
-					progress.Executor.Verification = toSharedPhaseEvidenceChecks(verificationEvidence)
-					if verificationErr != nil {
-						runErr = verificationErr
-						progress.Status = planexecute.ProgressStatusFailed
-						progress.FailureKind = planexecute.RunFailureVerificationRequired
-						progress.FailureReason = truncatePlanExecuteProgressReason(verificationErr.Error())
-					} else {
-						runErr = nil
-						verificationRepairRequired = false
-					}
-				} else {
-					runErr = nil
-				}
-				sourceSanityRepairRequired = false
-			} else {
-				progress.Status = planexecute.ProgressStatusFailed
-				if verificationRepairRequired {
-					progress.FailureKind = planexecute.RunFailureVerificationRequired
-				} else {
-					progress.FailureKind = planexecute.RunFailureSourceSanityFailed
-				}
-				progress.FailureReason = truncatePlanExecuteProgressReason(runErr.Error())
-			}
-		}
-		_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
-		if err != nil && reviewErr == nil {
-			reviewErr = err
-		}
-	} else if runErr == nil && opts.SkipReviewRepair {
-		progress.MarkSkippedReview()
-		_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
-		if err != nil {
-			runErr = err
-		}
-	}
-	if !opts.JSONEvents {
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
-		fmt.Fprintln(stdout, report)
-		fmt.Fprintln(stdout, reviewReport)
-	}
-	if runErr != nil {
-		fmt.Fprintln(stderr, runErr)
-		return 1
-	}
-	if reviewErr != nil {
-		fmt.Fprintln(stderr, reviewErr)
-		return 1
-	}
-	return 0
 }
 
 func runPlanExecuteResumeReviewRepair(
 	cfg config.Config,
 	opts planExecuteOptions,
-	prompt string,
-	requiredEditPaths []string,
-	state planexecute.ProgressState,
-	statePath string,
+	_ string,
+	_ []string,
+	_ planexecute.ProgressState,
+	_ string,
 	stdout io.Writer,
 	stderr io.Writer,
 	promptRun cmdruntime.PromptRunner,
 	rec *telemetry.Recorder,
 ) int {
-	sessionID := strings.TrimSpace(state.SessionID)
-	if sessionID == "" {
-		sessionID = strings.TrimSpace(opts.Resume)
-	}
-	if !state.PromptMatches(prompt) {
-		fmt.Fprintln(stderr, fmt.Errorf("plan-execute resume state %s was created for a different prompt; pass the same --prompt or --prompt-file used by session %s", statePath, sessionID))
-		return 1
-	}
-	if !state.ReviewResumeReady() {
-		fmt.Fprintln(stderr, fmt.Errorf("plan-execute resume state %s is not review-resumable (phase=%s status=%s executor_status=%s)", statePath, state.Phase, state.Status, state.Executor.Status))
-		return 1
-	}
-	planPath := state.ResolvedPlanPath(cfg.Workspace.Root)
-	plan, err := workspace.LoadPlanArtifact(planPath)
-	if err != nil {
-		fmt.Fprintln(stderr, fmt.Errorf("read resumed plan artifact %q: %w", planPath, err))
-		return 1
-	}
-	if len(state.RequiredEditPaths) > 0 {
-		requiredEditPaths = append([]string(nil), state.RequiredEditPaths...)
-	}
-	allowedEditPaths := mergePlanExecutePaths(state.AllowedEditPaths, planExecuteAllowedEditPaths(opts, prompt))
-	if len(state.EditSetObligations) == 0 {
-		state.EditSetObligations = planExecuteScopeContract(opts, prompt).EditSetObligations
-	}
-	state.EditSetObligations = state.EditSetObligations.Normalized()
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "resume_state_loaded", planexecute.ProgressStateEventFields(state, statePath))
-	reviewSessionID := newPlanExecuteSessionID()
-	state.MarkReviewStarted(reviewSessionID)
-	if _, err := savePlanExecuteProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved"); err != nil {
-		fmt.Fprintln(stderr, err)
-		return 1
-	}
-	reviewOpts := opts
-	reviewOpts.ReviewSessionID = reviewSessionID
-	reviewOpts.RequiredEditPaths = planexecute.MultiFlag(requiredEditPaths)
-	reviewOpts.AllowedEditPaths = planexecute.MultiFlag(allowedEditPaths)
-	reviewOpts.EditSetObligations = state.EditSetObligations
-	reviewOpts.ScopeContract = planexecute.NewPlanScopeContract(requiredEditPaths, allowedEditPaths, state.EditSetObligations)
-	reviewBaseline := fromSharedReviewRepairBaseline(state.ReviewBaseline)
-	executorReport := fromSharedExecutorPhaseReport(state.ExecutorPhaseReport())
-	reviewReport, reviewErr := runReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, executorReport, reviewOpts, stdout, promptRun, rec)
-	state.MarkReviewComplete(toSharedReviewRepairPhaseReport(reviewReport), reviewErr)
-	if reviewErr == nil && planexecute.ExecutorVerificationFailed(state.ExecutorPhaseReport(), fmt.Errorf("verification failed")) && planexecute.ReviewRepairResolvedVerificationFailure(toSharedReviewRepairPhaseReport(reviewReport)) {
-		verificationPlan := planexecute.PlanVerification(planexecute.VerificationPlannerInput{
-			WorkspaceRoot: cfg.Workspace.Root,
-			Prompt:        prompt,
-			ChangedPaths:  planChangedPaths(plan),
-		})
-		_, verificationEvidence, verificationErr := runPlanExecuteVerificationPlan(cfg.Workspace.Root, verificationPlan, opts.JSONEvents, stdout)
-		state.Executor.Verification = toSharedPhaseEvidenceChecks(verificationEvidence)
-		if verificationErr != nil {
-			reviewErr = verificationErr
-			state.Status = planexecute.ProgressStatusFailed
-			state.FailureKind = planexecute.RunFailureVerificationRequired
-			state.FailureReason = truncatePlanExecuteProgressReason(verificationErr.Error())
-		}
-	}
-	_, err = savePlanExecuteProgressState(cfg.Workspace.Root, &state, opts.JSONEvents, stdout, "resume_state_saved")
-	if err != nil && reviewErr == nil {
-		reviewErr = err
-	}
-	if !opts.JSONEvents {
-		fmt.Fprintln(stdout, "")
-		fmt.Fprintln(stdout, "--- plan-then-execute summary ---")
-		fmt.Fprintln(stdout, executorReport)
-		fmt.Fprintln(stdout, reviewReport)
-	}
-	if reviewErr != nil {
-		fmt.Fprintln(stderr, reviewErr)
-		return 1
-	}
-	return 0
-}
-
-func savePlanExecuteProgressState(root string, state *planexecute.ProgressState, jsonEvents bool, stdout io.Writer, eventType string, suppressRecovery ...bool) (string, error) {
-	statePath, err := planexecute.SaveProgressState(root, state)
-	if err != nil {
-		return statePath, err
-	}
-	emitPlanExecuteJSONEvent(stdout, jsonEvents, eventType, planexecute.ProgressStateEventFields(*state, statePath))
-	if state.Status == planexecute.ProgressStatusFailed && !(len(suppressRecovery) > 0 && suppressRecovery[0]) {
-		now := time.Now().UTC()
-		record, recordPath, err := recovery.WritePlanExecuteFailureRecord(root, planexecute.RecoveryInputFromProgress(*state, statePath), now)
-		if err != nil {
-			emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_failed", map[string]any{
-				"session_id": state.SessionID,
-				"state_path": statePath,
-				"reason":     err.Error(),
-			})
-			return statePath, err
-		}
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_failure_record_written", map[string]any{
-			"session_id":        state.SessionID,
-			"failure_id":        record.FailureID,
-			"failure_class":     record.Failure.Class,
-			"failure_kind":      record.Failure.Kind,
-			"record_path":       recordPath,
-			"next_valid_action": record.NextAction,
-		})
-		packet, packetPath, err := recovery.WriteDecompositionPacketForFailureRecord(root, record, now)
-		if err != nil {
-			emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_decomposition_packet_failed", map[string]any{
-				"session_id":  state.SessionID,
-				"failure_id":  record.FailureID,
-				"record_path": recordPath,
-				"reason":      err.Error(),
-			})
-			return statePath, err
-		}
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "recovery_decomposition_packet_written", map[string]any{
-			"session_id":        state.SessionID,
-			"failure_id":        record.FailureID,
-			"packet_id":         packet.PacketID,
-			"packet_path":       packetPath,
-			"candidate_atoms":   len(packet.CandidateAtoms),
-			"next_valid_action": packet.NextAction,
-		})
-		if !jsonEvents {
-			fmt.Fprintf(stdout, "recovery: failure_record=%s packet=%s next_valid_action=%s\n", recordPath, packetPath, packet.NextAction)
-		}
-	}
-	return statePath, nil
+	return planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr).ExitCode
 }
 
 func toSharedReviewRepairBaseline(baseline reviewRepairBaseline) planexecute.ReviewRepairBaseline {
@@ -782,6 +166,26 @@ func toSharedReviewRepairPhaseReport(report reviewRepairPhaseReport) planexecute
 	}
 }
 
+func fromSharedReviewRepairPhaseReport(report planexecute.ReviewRepairPhaseReport) reviewRepairPhaseReport {
+	return reviewRepairPhaseReport{
+		Skipped:        report.Skipped,
+		Status:         report.Status,
+		Repairs:        report.Repairs,
+		AutoRepairs:    report.AutoRepairs,
+		ReviewPlan:     report.ReviewPlan,
+		ChecklistFound: report.ChecklistFound,
+		ReasonClass:    report.ReasonClass,
+	}
+}
+
+func toSharedReviewRepairBaselinePtr(baseline *reviewRepairBaseline) *planexecute.ReviewRepairBaseline {
+	if baseline == nil {
+		return nil
+	}
+	shared := toSharedReviewRepairBaseline(*baseline)
+	return &shared
+}
+
 func toSharedExecutorHandoffPacket(handoff executorHandoffPacket) planexecute.ExecutorHandoffPacket {
 	return planexecute.ExecutorHandoffPacket{
 		State:                   handoff.State,
@@ -828,19 +232,6 @@ func fromSharedExecutorHandoffPacket(handoff planexecute.ExecutorHandoffPacket) 
 		ApprovedPathCount:       handoff.ApprovedPathCount,
 		PendingPathCount:        handoff.PendingPathCount,
 	}
-}
-
-func truncatePlanExecuteProgressReason(reason string) string {
-	reason = strings.TrimSpace(recovery.RedactRecoveryText(reason))
-	if len(reason) <= 2000 {
-		return reason
-	}
-	for i := range reason {
-		if i >= 2000 {
-			return strings.TrimSpace(reason[:i]) + fmt.Sprintf(" [truncated %d bytes]", len(reason)-i)
-		}
-	}
-	return reason
 }
 
 func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
@@ -1174,240 +565,19 @@ func runReviewRepairPhase(
 	promptRun cmdruntime.PromptRunner,
 	rec *telemetry.Recorder,
 ) (reviewRepairPhaseReport, error) {
-	changedPaths := planChangedPaths(plan)
-	if len(changedPaths) == 0 {
-		return reviewRepairPhaseReport{Status: "skipped (no changed paths)"}, nil
-	}
-	allowedRepairPaths := mergePlanExecutePaths(changedPaths, requiredEditPaths)
-	evidence := collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
-	autoRepair, autoRepairErr := autoRepairReviewPatchHygiene(cfg.Workspace.Root, changedPaths, evidence)
-	if autoRepairErr != nil {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_auto_patch_hygiene_failed", map[string]any{
-			"reason": autoRepairErr.Error(),
-		})
-		return reviewRepairPhaseReport{Status: "failed"}, fmt.Errorf("review-repair auto patch hygiene failed: %w", autoRepairErr)
-	}
-	if autoRepair.Repaired {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_auto_patch_hygiene", map[string]any{
-			"paths": autoRepair.Paths,
-			"lines": autoRepair.Lines,
-		})
-		evidence = collectReviewRepairEvidence(cfg.Workspace.Root, changedPaths, baseline)
-	}
-	evidence.PhaseEvidence = collectPlanExecutePhaseEvidence(cfg.Workspace.Root, "review_repair", plan, changedPaths, requiredEditPaths, allowedRepairPaths, evidence, executorReport)
-	editSetObligations := planExecuteScopeContract(opts, originalPrompt).EditSetObligations
-	evidence.PhaseEvidence.EditSetObligations = editSetObligations
-	evidence.PhaseEvidence.OpenObligations = append(evidence.PhaseEvidence.OpenObligations, editSetObligations.MissingOpenObligations(changedPaths)...)
-	reviewSessionID := strings.TrimSpace(opts.ReviewSessionID)
-	if reviewSessionID == "" {
-		reviewSessionID = newPlanExecuteSessionID()
-	}
-	reviewCfg := cfg
-	reviewCfg.Workspace.SessionID = reviewSessionID
-	reviewStart := time.Now().Add(-1 * time.Second)
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_start", map[string]any{
-		"session_id":                reviewSessionID,
-		"changed_paths":             changedPaths,
-		"allowed_paths":             allowedRepairPaths,
-		"edit_set_obligations":      editSetObligations,
-		"edit_set_obligation_count": len(editSetObligations),
-		"phase_evidence":            phaseEvidenceTelemetry(evidence.PhaseEvidence),
-	})
-	if planExecuteDeterministicCleanReviewEnabled() {
-		reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
-		if reason == "" {
-			reason = editSetObligations.RejectionReason(changedPaths)
-		}
-		if reason == "" && len(evidence.PhaseEvidence.OpenObligations) == 0 {
-			emitPlanExecuteSyntheticTurnSummary(stdout, opts.JSONEvents, "review_repair_deterministic_pass")
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
-				"status":        "pass",
-				"repairs":       0,
-				"deterministic": true,
-			})
-			return reviewRepairPhaseReport{Status: "pass (deterministic evidence)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
-		}
-	}
-	prompt := planExecuteReviewRepairPrompt(originalPrompt, plan, changedPaths, allowedRepairPaths, evidence)
-	reviewMaxTokens := opts.MaxTokens
-	if reviewMaxTokens <= 0 {
-		reviewMaxTokens = 8192
-	}
-	var planPath string
-	var found bool
-	for attempt := 0; ; attempt++ {
-		answer, err := promptRun(reviewCfg, prompt, cmdruntime.RunOptions{
-			JSONEvents:                  opts.JSONEvents,
-			TaskFamily:                  agent.PlanThenExecuteReviewRepairTaskFamily,
-			PlannerOwnedVerification:    true,
-			MaxTokensOverride:           reviewMaxTokens,
-			DisableThinking:             true,
-			ReviewRepairOpenObligations: append([]string(nil), evidence.PhaseEvidence.OpenObligations...),
-			Telemetry:                   rec,
-		}, stdout)
-		if err != nil {
-			reasonClass := reviewRepairDegradedReasonClass(err)
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_degraded", map[string]any{
-				"status":        "review_unavailable",
-				"reason_class":  reasonClass,
-				"changed_paths": changedPaths,
-				"allowed_paths": allowedRepairPaths,
-			})
-			return reviewRepairPhaseReport{
-				Status:      "degraded (review unavailable)",
-				AutoRepairs: autoRepair.Lines,
-				ReasonClass: reasonClass,
-			}, nil
-		}
-		planPath, found, err = findOptionalReviewPlanArtifact(cfg.Workspace.Root, reviewStart, reviewSessionID)
-		if err != nil {
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_failed", map[string]any{
-				"reason": err.Error(),
-			})
-			return reviewRepairPhaseReport{Status: "failed"}, err
-		}
-		if found {
-			break
-		}
-		if plancontract.ReviewRepairAnswerDeclaresPass(answer) && plancontract.ReviewRepairTextHasChecklist(answer) {
-			reason := phaseEvidencePassRejectionReason(evidence.PhaseEvidence)
-			if reason == "" {
-				reason = reviewAnswerPassContradictionReason(answer)
-			}
-			if reason == "" {
-				reason = editSetObligations.RejectionReason(changedPaths)
-			}
-			if reason != "" {
-				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_pass_rejected", map[string]any{
-					"reason":                    reason,
-					"edit_set_obligations":      editSetObligations,
-					"edit_set_obligation_count": len(editSetObligations),
-					"retry_available":           attempt == 0,
-				})
-				if attempt == 0 {
-					emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_retry", map[string]any{
-						"reason": reason,
-					})
-					prompt = planExecuteReviewRepairRejectedPassRetryPrompt(prompt, reason)
-					continue
-				}
-				return reviewRepairPhaseReport{Status: "failed", ChecklistFound: true}, fmt.Errorf("review-repair phase rejected contradictory `Decision: pass`: %s", reason)
-			}
-			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
-				"status":  "pass",
-				"repairs": 0,
-			})
-			return reviewRepairPhaseReport{Status: "pass (no corrective edits)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
-		}
-		if reviewAnswerDeclaresBlocker(answer) {
-			return reviewRepairPhaseReport{Status: "blocked"}, fmt.Errorf("review-repair phase reported a blocker without a corrective plan")
-		}
-		return reviewRepairPhaseReport{Status: "inconclusive"}, fmt.Errorf("review-repair phase produced no corrective plan and no `Decision: pass` with `Verification Checklist`")
-	}
-	repairPlan, err := workspace.LoadPlanArtifact(planPath)
-	if err != nil {
-		return reviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("read review-repair plan artifact %q: %w", planPath, err)
-	}
-	if !plancontract.ReviewRepairTextHasChecklist(repairPlan.Rationale) {
-		return reviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath}, fmt.Errorf("review-repair plan %q is missing `Verification Checklist` in submit_plan rationale", planPath)
-	}
-	repairPaths := planChangedPaths(repairPlan)
-	combinedPaths := mergePlanExecutePaths(changedPaths, repairPaths)
-	if reason := editSetObligations.RejectionReason(combinedPaths); reason != "" {
-		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_plan_rejected", map[string]any{
-			"reason":                    reason,
-			"review_plan":               planPath,
-			"changed_paths":             changedPaths,
-			"repair_paths":              repairPaths,
-			"combined_paths":            combinedPaths,
-			"edit_set_obligations":      editSetObligations,
-			"edit_set_obligation_count": len(editSetObligations),
-		})
-		return reviewRepairPhaseReport{Status: "failed", ReviewPlan: planPath, ChecklistFound: true}, fmt.Errorf("review-repair phase rejected corrective plan: %s", reason)
-	}
-	repairReport, err := runExecutorPhaseScoped(cfg, repairPlan, nil, allowedRepairPaths, opts.JSONEvents, stdout)
-	if err != nil {
-		return reviewRepairPhaseReport{
-			Status:         "failed",
-			Repairs:        repairReport.Succeeded,
-			AutoRepairs:    autoRepair.Lines,
-			ReviewPlan:     planPath,
-			ChecklistFound: true,
-		}, fmt.Errorf("review-repair executor failed: %w", err)
-	}
-	emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_complete", map[string]any{
-		"status":        "repaired",
-		"repairs":       repairReport.Succeeded,
-		"review_plan":   planPath,
-		"changed_paths": allowedRepairPaths,
-	})
-	return reviewRepairPhaseReport{
-		Status:         "repaired",
-		Repairs:        repairReport.Succeeded,
-		AutoRepairs:    autoRepair.Lines,
-		ReviewPlan:     planPath,
-		ChecklistFound: true,
-	}, nil
-}
-
-func reviewRepairDegradedReasonClass(err error) string {
-	if err == nil {
-		return ""
-	}
-	switch failures.CodeOf(err) {
-	case failures.Canceled:
-		return "backend_canceled"
-	case failures.DeadlineExceeded:
-		return "backend_timeout"
-	case failures.Unavailable, failures.NotFound:
-		return "backend_unreachable"
-	case failures.Unauthenticated, failures.PermissionDenied, failures.ResourceExhausted, failures.InvalidArgument, failures.Internal, failures.DataLoss:
-		return "review_model_error"
-	}
-	reason := strings.ToLower(strings.TrimSpace(err.Error()))
-	switch {
-	case reason == "":
-		return "review_model_error"
-	case strings.Contains(reason, "eof"):
-		return "backend_eof"
-	case strings.Contains(reason, "connection refused"), strings.Contains(reason, "connect: connection"):
-		return "backend_unreachable"
-	case strings.Contains(reason, "context deadline"), strings.Contains(reason, "timeout"), strings.Contains(reason, "deadline exceeded"):
-		return "backend_timeout"
-	case strings.Contains(reason, "context canceled"), strings.Contains(reason, "cancelled"):
-		return "backend_canceled"
-	default:
-		return "review_model_error"
-	}
-}
-
-func findOptionalReviewPlanArtifact(root string, notBefore time.Time, sessionID string) (string, bool, error) {
-	path, err := findLatestPlanArtifact(root, notBefore, sessionID)
-	if err == nil {
-		return path, true, nil
-	}
-	text := err.Error()
-	if strings.Contains(text, "no plan artifacts under") || strings.Contains(text, "plan dir") {
-		return "", false, nil
-	}
-	return "", false, err
-}
-
-func phaseEvidencePassRejectionReason(bundle phaseEvidenceBundle) string {
-	for _, obligation := range bundle.OpenObligations {
-		obligation = strings.TrimSpace(obligation)
-		switch {
-		case obligation == "patch_hygiene_failed":
-			return "patch_hygiene_failed"
-		case strings.HasPrefix(obligation, "source_sanity_failed:"),
-			strings.HasPrefix(obligation, "source_sanity_error:"),
-			strings.HasPrefix(obligation, "verification_failed:"),
-			strings.HasPrefix(obligation, "verification_error:"),
-			strings.HasPrefix(obligation, "submitted_edit_failed:"):
-			return planexecute.RunFailureVerificationRequired
-		}
-	}
-	return ""
+	report, err := planexecute.RunReviewRepairPhase(
+		cfg,
+		originalPrompt,
+		plan,
+		requiredEditPaths,
+		toSharedReviewRepairBaselinePtr(baseline),
+		toSharedExecutorPhaseReport(executorReport),
+		opts,
+		stdout,
+		adaptPromptRunner(promptRun),
+		rec,
+	)
+	return fromSharedReviewRepairPhaseReport(report), err
 }
 
 func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArtifact, changedPaths []string, allowedRepairPaths []string, evidence reviewRepairEvidence) string {
@@ -1647,40 +817,6 @@ func emitPlanExecuteJSONEvent(stdout io.Writer, jsonEvents bool, eventType strin
 		return
 	}
 	fmt.Fprintln(stdout, string(body))
-}
-
-func emitPlanExecuteSyntheticTurnSummary(stdout io.Writer, jsonEvents bool, stopReason string) {
-	if !jsonEvents {
-		return
-	}
-	payload := map[string]any{
-		"type":                       "turn_summary",
-		"ts":                         time.Now().UTC().Format(time.RFC3339Nano),
-		"lane":                       "plan-execute",
-		"used_model_calls":           0,
-		"max_model_calls":            0,
-		"used_tool_results":          0,
-		"max_tool_steps":             0,
-		"prompt_tokens":              0,
-		"completion_tokens":          0,
-		"total_tokens":               0,
-		"progress_turns":             0,
-		"rejected_actions":           0,
-		"completion_gate_rejections": 0,
-		"context_compactions":        0,
-		"duration_ms":                0,
-		"stop_reason":                strings.TrimSpace(stopReason),
-		"budget_exhausted":           false,
-	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return
-	}
-	fmt.Fprintln(stdout, string(body))
-}
-
-func planExecuteDeterministicCleanReviewEnabled() bool {
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW")), "true")
 }
 
 func firstNonEmptyString(values ...string) string {

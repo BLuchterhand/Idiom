@@ -46,41 +46,27 @@ func Build(root string, packetPath string) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	status := PacketStatus(packet)
-	nextAction := packet.NextAction
-	residualWork := sanitizeResidualWork(packet.ResidualWork)
-	candidateAtoms := packet.CandidateAtoms
 	var reconciliationRef *recovery.Reconciliation
-	var reconciliationFindings []recovery.ReconciliationValidationFinding
 	reconciliationDisplayPath := ""
 	if reconciliationFound {
 		reconciliationRef = &reconciliation
 		reconciliationDisplayPath = relDisplayPath(root, reconciliationPath)
-		reconciliationFindings = recovery.ValidateReconciliation(packet, reconciliation)
-		if len(reconciliationFindings) == 0 {
-			status = packetStatusWithReconciliation(packet, reconciliation)
-			nextAction = reconciliation.NextAction
-			candidateAtoms = remainingCandidateAtoms(packet, reconciliation)
-			residualWork = sanitizeResidualWork(remainingResidualWork(packet, candidateAtoms))
-		} else {
-			status = "blocked"
-			nextAction = recovery.NextActionInspectFailure
-		}
 	}
+	projection := recovery.ProjectPacketStatus(packet, reconciliationRef)
 	return Report{
 		Type:               ReportType,
-		Status:             status,
+		Status:             string(projection.Status),
 		PacketPath:         relDisplayPath(root, relPath),
 		ReconciliationPath: reconciliationDisplayPath,
 		FailureID:          packet.FailureID,
 		PacketID:           packet.PacketID,
 		PartialState:       packet.PartialState,
 		ProductLinks:       packet.ProductLinks,
-		Blockers:           packetBlockersWithReconciliation(packet, reconciliationRef, reconciliationFindings),
-		ResidualWork:       residualWork,
-		CandidateAtoms:     candidateAtoms,
-		Reconciliation:     reconciliationRef,
-		NextAction:         nextAction,
+		Blockers:           projection.Blockers,
+		ResidualWork:       sanitizeResidualWork(projection.ResidualWork),
+		CandidateAtoms:     projection.CandidateAtoms,
+		Reconciliation:     projection.Reconciliation,
+		NextAction:         projection.NextAction,
 	}, nil
 }
 
@@ -156,95 +142,6 @@ func EvidenceRefLabels(refs []recovery.EvidenceRef) []string {
 		labels = append(labels, label)
 	}
 	return labels
-}
-
-func PacketStatus(packet recovery.DecompositionPacket) string {
-	if packet.NextAction != recovery.NextActionReviewDecomposition {
-		return "blocked"
-	}
-	if len(packet.CandidateAtoms) == 0 {
-		return "needs_inspection"
-	}
-	return "ready"
-}
-
-func packetStatusWithReconciliation(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) string {
-	if reconciliation.Status == recovery.ReconciliationStatusRecovered && reconciliation.NextAction == recovery.NextActionNone {
-		return "recovered"
-	}
-	if reconciliation.Status == recovery.ReconciliationStatusPartial {
-		return "partial"
-	}
-	return PacketStatus(packet)
-}
-
-func packetBlockers(packet recovery.DecompositionPacket) []string {
-	var blockers []string
-	if packet.NextAction != recovery.NextActionReviewDecomposition {
-		blockers = append(blockers, "packet next action is "+packet.NextAction)
-	}
-	if len(packet.CandidateAtoms) == 0 {
-		blockers = append(blockers, "packet has no candidate recovery atoms")
-	}
-	if packet.PartialState.DirtyStatus == recovery.DirtyStatusDirtyOutScope {
-		blockers = append(blockers, "workspace has out-of-scope dirty state")
-	}
-	return blockers
-}
-
-func packetBlockersWithReconciliation(packet recovery.DecompositionPacket, reconciliation *recovery.Reconciliation, findings []recovery.ReconciliationValidationFinding) []string {
-	if reconciliation != nil && len(findings) == 0 && reconciliation.Status == recovery.ReconciliationStatusRecovered {
-		return nil
-	}
-	blockers := packetBlockers(packet)
-	for _, finding := range findings {
-		blockers = append(blockers, finding.Code+": "+finding.Message)
-	}
-	if reconciliation != nil {
-		blockers = append(blockers, reconciliation.Blockers...)
-	}
-	return blockers
-}
-
-func remainingCandidateAtoms(packet recovery.DecompositionPacket, reconciliation recovery.Reconciliation) []recovery.CandidateAtom {
-	if len(reconciliation.CompletedAtoms) == 0 {
-		return packet.CandidateAtoms
-	}
-	completed := map[string]bool{}
-	for _, atom := range reconciliation.CompletedAtoms {
-		completed[atom.ID] = true
-	}
-	remaining := make([]recovery.CandidateAtom, 0, len(packet.CandidateAtoms))
-	for _, atom := range packet.CandidateAtoms {
-		if !completed[atom.ID] {
-			remaining = append(remaining, atom)
-		}
-	}
-	return remaining
-}
-
-func remainingResidualWork(packet recovery.DecompositionPacket, atoms []recovery.CandidateAtom) []recovery.ResidualWork {
-	if len(atoms) == 0 {
-		return nil
-	}
-	needed := map[string]bool{}
-	for _, atom := range atoms {
-		for _, id := range atom.ResidualWorkIDs {
-			if id = strings.TrimSpace(id); id != "" {
-				needed[id] = true
-			}
-		}
-	}
-	if len(needed) == 0 {
-		return nil
-	}
-	remaining := make([]recovery.ResidualWork, 0, len(packet.ResidualWork))
-	for _, residual := range packet.ResidualWork {
-		if needed[residual.ID] {
-			remaining = append(remaining, residual)
-		}
-	}
-	return remaining
 }
 
 func sanitizeResidualWork(residuals []recovery.ResidualWork) []recovery.ResidualWork {

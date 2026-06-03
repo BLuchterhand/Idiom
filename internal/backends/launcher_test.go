@@ -316,6 +316,7 @@ func TestStopSIGTERMCleanExitDoesNotEscalate(t *testing.T) {
 			}
 			return nil
 		},
+		IsAlive:      func(int) bool { return false },
 		GraceTimeout: 200 * time.Millisecond,
 	}
 	res := Stop(prof, opts)

@@ -281,6 +281,7 @@ func TestRunnerAutonomyRecorderEmitsTurnPhaseContractPresentation(t *testing.T) 
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+	modelProtocol = recorder.bindModelProtocolProjection(modelProtocol)
 	recorder.emitTurnPhaseContract(contract, modelProtocol)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
@@ -341,6 +342,13 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 	if !recorder.hasPlannerCompile {
 		t.Fatal("plan-execute planner recorder should retain compiled contractcompile result")
 	}
+	binding := recorder.activeAuthority
+	if binding.ContractID != recorder.plannerCompile.ActiveAuthority.ContractID ||
+		binding.RuntimeContractID != recorder.plannerCompile.ActiveAuthority.RuntimeContractID ||
+		binding.ProtocolHash != recorder.plannerCompile.ActiveAuthority.ProtocolHash ||
+		binding.ActiveInvariantID != contractcompile.InvariantActiveAuthority {
+		t.Fatalf("recorder should expose compile result active authority, got %#v want %#v", binding, recorder.plannerCompile.ActiveAuthority)
+	}
 	if recorder.contract.Scope.InvocationKind != autonomy.InvocationPhase ||
 		recorder.contract.Scope.TaskFamily != contractcompile.InvocationPlanExecutePlanner ||
 		recorder.contract.Scope.Phase != contractcompile.DefaultPlannerPhase {
@@ -349,8 +357,8 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 	recorder.emitContractStarted(brief)
 
 	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
-		ContractID:         recorder.contractIDForTurnPhase(),
-		ModelCallID:        recorder.contractIDForTurnPhase() + ":model_call_1",
+		ContractID:         binding.ContractID,
+		ModelCallID:        binding.ContractID + ":model_call_1",
 		Step:               1,
 		Brief:              brief,
 		Results:            results,
@@ -362,6 +370,7 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+	protocol = recorder.bindModelProtocolProjection(protocol)
 	if protocol.ContractID != recorder.contract.ContractID {
 		t.Fatalf("model protocol should cite compiled recorder contract %q, got %q", recorder.contract.ContractID, protocol.ContractID)
 	}
@@ -370,7 +379,7 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
 
 	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
-	var compiledID, presentedID, presentedProtocolID, presentedProtocolHash, gateID, gateProtocolHash string
+	var compiledID, compiledRuntimeID, compiledProtocolHash, compiledInvariantID, presentedID, presentedProtocolID, presentedProtocolHash, presentedInvariantID, gateID, gateProtocolHash, gateInvariantID string
 	for _, event := range events {
 		switch event.Type {
 		case autonomy.EventContractCompiled:
@@ -378,21 +387,35 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 			if event.Lifecycle == nil || event.Lifecycle.Summary == nil || event.Lifecycle.Summary.ContractID != recorder.contract.ContractID {
 				t.Fatalf("contract_compiled summary should carry compiled contract id: %#v", event.Lifecycle)
 			}
+			compiledProtocolHash = event.Lifecycle.ProtocolHash
+			compiledInvariantID = event.Lifecycle.InvariantID
+			for _, source := range event.Lifecycle.Summary.AuthoritySources {
+				if source == binding.RuntimeContractID {
+					compiledRuntimeID = source
+				}
+			}
 		case autonomy.EventContractPresented:
 			if event.Lifecycle != nil && event.Lifecycle.ModelProtocol != nil {
 				presentedID = event.ContractID
 				presentedProtocolID = event.Lifecycle.ModelProtocol.ContractID
 				presentedProtocolHash = event.Lifecycle.ModelProtocol.ProtocolHash
+				presentedInvariantID = event.Lifecycle.ModelProtocol.ActiveInvariantID
 			}
 		case autonomy.EventGateDecision:
 			if event.Gate != nil && event.Gate.Gate == autonomy.GateCompletion {
 				gateID = event.ContractID
 				gateProtocolHash = event.Gate.ProtocolHash
+				gateInvariantID = event.Gate.InvariantID
 			}
 		}
 	}
 	if compiledID == "" || presentedID == "" || gateID == "" {
 		t.Fatalf("missing compiled/presented/gate events: compiled=%q presented=%q gate=%q events=%#v", compiledID, presentedID, gateID, events)
+	}
+	if compiledRuntimeID != binding.RuntimeContractID ||
+		compiledProtocolHash != binding.ProtocolHash ||
+		compiledInvariantID != binding.ActiveInvariantID {
+		t.Fatalf("contract_started did not expose active authority binding: runtime=%q protocol=%q invariant=%q binding=%#v", compiledRuntimeID, compiledProtocolHash, compiledInvariantID, binding)
 	}
 	for label, got := range map[string]string{
 		"contract_compiled":        compiledID,
@@ -404,8 +427,85 @@ func TestRunnerAutonomyPlannerContractProtocolAndGatesShareCompiledAuthority(t *
 			t.Fatalf("%s contract id = %q, want compiled recorder id %q", label, got, recorder.contract.ContractID)
 		}
 	}
-	if presentedProtocolHash == "" || gateProtocolHash != presentedProtocolHash || gateProtocolHash != protocol.ProtocolHash {
-		t.Fatalf("gate protocol hash should match presented protocol hash %q, got gate=%q protocol=%q", presentedProtocolHash, gateProtocolHash, protocol.ProtocolHash)
+	if presentedProtocolHash == "" ||
+		compiledProtocolHash != presentedProtocolHash ||
+		gateProtocolHash != presentedProtocolHash ||
+		gateProtocolHash != protocol.ProtocolHash {
+		t.Fatalf("protocol hash drift: compiled=%q presented=%q gate=%q protocol=%q", compiledProtocolHash, presentedProtocolHash, gateProtocolHash, protocol.ProtocolHash)
+	}
+	if presentedInvariantID != binding.ActiveInvariantID || gateInvariantID == "" {
+		t.Fatalf("model protocol/gate events should carry active authority invariant, presented=%q gate=%q binding=%#v", presentedInvariantID, gateInvariantID, binding)
+	}
+}
+
+func TestRunnerAutonomyPlannerAuthorityIgnoresStalePhaseContractID(t *testing.T) {
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"read_file", "submit_plan"},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"}}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+	staleID := "contract_stale_phase"
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         staleID,
+		ModelCallID:        staleID + ":model_call_1",
+		Step:               1,
+		Brief:              brief,
+		Results:            results,
+		BaseAllowedTools:   []string{"submit_plan"},
+		TextualToolParser:  true,
+		VerificationStatus: "not_required",
+	})
+	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("expected model protocol projection")
+	}
+	protocol = recorder.bindModelProtocolProjection(protocol)
+	recorder.emitTurnPhaseContract(phase, protocol)
+	recorder.markModelProtocolPresented(protocol)
+	recorder.emitCompletionGate(autonomy.PolicyReject, "required_obligations_open", results)
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	for _, event := range events {
+		switch event.Type {
+		case autonomy.EventContractPresented:
+			if event.ContractID != recorder.contract.ContractID {
+				t.Fatalf("presented event adopted stale contract id %q, want %q", event.ContractID, recorder.contract.ContractID)
+			}
+			if event.Lifecycle == nil || event.Lifecycle.ModelProtocol == nil {
+				continue
+			}
+			if event.Lifecycle.ModelProtocol.ContractID != recorder.contract.ContractID {
+				t.Fatalf("model protocol adopted stale contract id %q, want %q", event.Lifecycle.ModelProtocol.ContractID, recorder.contract.ContractID)
+			}
+			if event.Lifecycle.ModelProtocol.ProtocolHash != recorder.activeAuthority.ProtocolHash {
+				t.Fatalf("model protocol hash = %q, want compiled binding %q", event.Lifecycle.ModelProtocol.ProtocolHash, recorder.activeAuthority.ProtocolHash)
+			}
+		case autonomy.EventGateDecision:
+			if event.Gate != nil && event.Gate.Gate == autonomy.GateCompletion {
+				if event.ContractID != recorder.contract.ContractID {
+					t.Fatalf("gate event adopted stale contract id %q, want %q", event.ContractID, recorder.contract.ContractID)
+				}
+				if event.Gate.ProtocolHash != recorder.activeAuthority.ProtocolHash {
+					t.Fatalf("gate protocol hash = %q, want compiled binding %q", event.Gate.ProtocolHash, recorder.activeAuthority.ProtocolHash)
+				}
+			}
+		}
 	}
 }
 
@@ -445,6 +545,7 @@ func TestRunnerAutonomyRecorderEmitsNextActionSurfaceSummary(t *testing.T) {
 	if !ok {
 		t.Fatal("expected model protocol projection")
 	}
+	protocol = recorder.bindModelProtocolProjection(protocol)
 	recorder.emitTurnPhaseContract(phase, protocol)
 	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
 		Lane:   "main",

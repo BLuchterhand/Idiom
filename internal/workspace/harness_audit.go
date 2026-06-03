@@ -2990,22 +2990,10 @@ func auditObservedCapabilityForToolCapability(tool, capability string) string {
 		return mapped
 	}
 	if tool == "read_only_capability" {
-		normalized := normalizeReadOnlyCapabilityID(capability)
-		switch normalized {
-		case "file-outline":
-			return "inspect_file"
-		case "inspect-symbol", "symbol-lookup":
-			return "inspect_symbol"
-		case "definition":
-			return "find_definition"
-		case "references":
-			return "find_references"
-		case "calls-from":
-			return "calls_from"
-		case "calls-into":
-			return "calls_into"
-		case "related-files":
-			return "related_files"
+		if mapped := ReadOnlyCapabilityEvidenceCapability(capability); mapped != "" {
+			return mapped
+		}
+		switch normalizeReadOnlyCapabilityID(capability) {
 		case "source-sanity":
 			return "source_diagnostics"
 		}

@@ -26,7 +26,7 @@ const sampleBackendsForCLI = `{
 // TestRunBackendListPrintsProfilesFromProjectRoot is the canonical
 // "happy path" for the visibility command: a project with a valid
 // backends.json gets a deterministic dump of profiles, models, and
-// the resolved coder alias the lane wrapper would pick. Stable
+// the resolved executor role alias the lane wrapper would pick. Stable
 // ordering matters because operators copy this output into bug
 // reports — randomized map iteration would noise that signal.
 func TestRunBackendListPrintsProfilesFromProjectRoot(t *testing.T) {
@@ -46,14 +46,62 @@ func TestRunBackendListPrintsProfilesFromProjectRoot(t *testing.T) {
 	out := stdout.String()
 	for _, marker := range []string{
 		`profile "qwen-pair"`,
+		`proxy listen=47680 default="qwen3.6-35b" default_coder="qwen3-coder-30b"`,
 		`coder_alias="qwen3-coder-30b"`,
 		`alias="qwen3.6-35b"`,
 		`alias="qwen3-coder-30b"`,
-		`listen=47680`,
 	} {
 		if !strings.Contains(out, marker) {
 			t.Fatalf("backend list missing %q; full output:\n%s", marker, out)
 		}
+	}
+}
+
+func TestRunBackendListUsesExecutorRoleResolver(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	body := `{"profiles":{"single":{"models":[{"alias":"solo-model","binary":"llama-server","port":47780}]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	want := `coder_alias="solo-model"`
+	if !strings.Contains(stdout.String(), want) {
+		t.Fatalf("backend list must use shared executor resolver; want %q in:\n%s", want, stdout.String())
+	}
+}
+
+func TestRunBackendListKeepsProxyLineShapeForDefaultExecutor(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	body := `{"profiles":{"pair":{"proxy":{"listen":47770,"default_alias":"base","default_executor":"exec"},"models":[{"alias":"base"},{"alias":"exec"}]}}}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(body), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	var stdout, stderr bytes.Buffer
+	code := Run([]string{"list", "--project-root", root}, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("backend list expected exit 0, got %d (stderr=%s)", code, stderr.String())
+	}
+	out := stdout.String()
+	if !strings.Contains(out, `proxy listen=47770 default="base" default_coder=""`) {
+		t.Fatalf("backend list must keep legacy proxy line shape, got:\n%s", out)
+	}
+	if strings.Contains(out, "default_executor") {
+		t.Fatalf("backend list must not emit default_executor in compatibility output, got:\n%s", out)
+	}
+	if !strings.Contains(out, `coder_alias="exec"`) {
+		t.Fatalf("backend list must still resolve default_executor through coder_alias compatibility, got:\n%s", out)
 	}
 }
 

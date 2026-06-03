@@ -220,6 +220,42 @@ type ReadOnlyCapabilityCoverage struct {
 	DeferredAdapters           []ReadOnlyCapabilityDeferredAdapterSpec `json:"deferred_adapters,omitempty"`
 }
 
+func ReadOnlyCapabilityEvidenceCapabilities() []string {
+	return []string{
+		"inspect_file",
+		"inspect_symbol",
+		"find_symbol",
+		"find_definition",
+		"find_references",
+		"calls_from",
+		"calls_into",
+		"related_files",
+	}
+}
+
+func ReadOnlyCapabilityEvidenceCapability(capability string) string {
+	switch normalizeReadOnlyCapabilityID(capability) {
+	case string(ReadOnlyCapabilityFileOutline):
+		return evidenceCapabilityForLanguageCapability(CapFileOutline)
+	case string(ReadOnlyCapabilityInspectSymbol):
+		return evidenceCapabilityForLanguageCapability(CapReadSymbol)
+	case string(ReadOnlyCapabilitySymbolLookup):
+		return evidenceCapabilityForLanguageCapability(CapFindSymbol)
+	case string(ReadOnlyCapabilityDefinition):
+		return evidenceCapabilityForLanguageCapability(CapDefinition)
+	case string(ReadOnlyCapabilityReferences):
+		return evidenceCapabilityForLanguageCapability(CapReferences)
+	case string(ReadOnlyCapabilityCallsFrom):
+		return evidenceCapabilityForLanguageCapability(CapCallsFrom)
+	case string(ReadOnlyCapabilityCallsInto):
+		return evidenceCapabilityForLanguageCapability(CapCallsInto)
+	case string(ReadOnlyCapabilityRelatedFiles):
+		return evidenceCapabilityForLanguageCapability(CapRelatedFiles)
+	default:
+		return ""
+	}
+}
+
 func BuildReadOnlyCapabilityRegistry() ReadOnlyCapabilityRegistry {
 	return ReadOnlyCapabilityRegistry{
 		SchemaVersion:          readOnlyCapabilitySchemaVersion,

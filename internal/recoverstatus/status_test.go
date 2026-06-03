@@ -127,6 +127,58 @@ func TestBuildUsesValidSiblingReconciliationForRemainingStatus(t *testing.T) {
 	}
 }
 
+func TestBuildReportsInvalidSiblingReconciliationAsBlocked(t *testing.T) {
+	root := t.TempDir()
+	packet := recoverStatusTestPacket(t)
+	if _, _, err := recovery.WriteDecompositionPacket(root, packet, "nested/packet.json"); err != nil {
+		t.Fatalf("WriteDecompositionPacket: %v", err)
+	}
+	reconciliation, err := recovery.BuildReconciliation(packet, recovery.ReconciliationOptions{
+		Now:              time.Date(2026, 5, 18, 13, 0, 0, 0, time.UTC),
+		CompletedAtomIDs: []string{"recovery-001"},
+		Verification: recovery.ReconciliationVerification{
+			Status: recovery.ReconciliationVerificationPass,
+			Commands: []recovery.ReconciliationCommandResult{{
+				Command:  "go test ./internal/recoverstatus",
+				Status:   recovery.ReconciliationVerificationPass,
+				ExitCode: 0,
+			}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("BuildReconciliation: %v", err)
+	}
+	reconciliation.PacketDigest = "sha256:stale"
+	body, err := json.MarshalIndent(reconciliation, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal reconciliation: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "nested", "reconciliation.json"), append(body, '\n'), 0o644); err != nil {
+		t.Fatalf("write reconciliation: %v", err)
+	}
+
+	report, err := Build(root, "nested/packet.json")
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if report.Status != "blocked" || report.NextAction != recovery.NextActionInspectFailure {
+		t.Fatalf("expected blocked invalid reconciliation report, got %#v", report)
+	}
+	if report.ReconciliationPath != "nested/reconciliation.json" || report.Reconciliation == nil {
+		t.Fatalf("expected reconciliation identity to remain visible, got %#v", report)
+	}
+	foundDigestMismatch := false
+	for _, blocker := range report.Blockers {
+		if strings.Contains(blocker, "recovery_reconciliation_packet_digest_mismatch") {
+			foundDigestMismatch = true
+			break
+		}
+	}
+	if !foundDigestMismatch {
+		t.Fatalf("expected packet digest mismatch blocker, got %#v", report.Blockers)
+	}
+}
+
 func TestBuildRejectsPacketOutsideWorkspaceRoot(t *testing.T) {
 	root := t.TempDir()
 	outsideRoot := t.TempDir()

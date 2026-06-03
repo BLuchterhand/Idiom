@@ -173,7 +173,7 @@ func buildRecoverDecomposeReport(root string, opts recoverDecomposeOptions) (rec
 	}
 	return recoverDecomposeReport{
 		Type:           "idiom.recover.decompose.v1",
-		Status:         recoverstatus.PacketStatus(packet),
+		Status:         string(recovery.StatusForPacket(packet)),
 		SessionID:      inspectReport.SessionID,
 		FailureID:      packet.FailureID,
 		PacketID:       packet.PacketID,

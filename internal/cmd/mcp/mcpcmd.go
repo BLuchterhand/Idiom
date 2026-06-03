@@ -61,20 +61,6 @@ type mcpToolCallParams struct {
 	Meta      json.RawMessage `json:"_meta,omitempty"`
 }
 
-type mcpResourceReadParams struct {
-	URI string `json:"uri"`
-}
-
-type mcpResourceContent struct {
-	URI      string `json:"uri"`
-	MimeType string `json:"mimeType,omitempty"`
-	Text     string `json:"text,omitempty"`
-}
-
-type mcpResourceReadResult struct {
-	Contents []mcpResourceContent `json:"contents"`
-}
-
 func RunWithTelemetryAndVersion(args []string, stdout io.Writer, stderr io.Writer, rec *telemetry.Recorder, version string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		printMCPUsage(stderr)
@@ -342,27 +328,27 @@ func (s *DiscoveryServer) mcpResources() []map[string]any {
 	}
 }
 
-func (s *DiscoveryServer) readResource(params json.RawMessage) (mcpResourceReadResult, error) {
-	var req mcpResourceReadParams
+func (s *DiscoveryServer) readResource(params json.RawMessage) (mcppkg.ResourceReadResult, error) {
+	var req mcppkg.ResourceReadParams
 	if len(params) == 0 {
-		return mcpResourceReadResult{}, fmt.Errorf("resources/read params are required")
+		return mcppkg.ResourceReadResult{}, fmt.Errorf("resources/read params are required")
 	}
 	if err := json.Unmarshal(params, &req); err != nil {
-		return mcpResourceReadResult{}, fmt.Errorf("invalid resources/read params")
+		return mcppkg.ResourceReadResult{}, fmt.Errorf("invalid resources/read params")
 	}
 	uri := strings.TrimSpace(req.URI)
 	if uri == "" {
-		return mcpResourceReadResult{}, fmt.Errorf("resources/read uri is required")
+		return mcppkg.ResourceReadResult{}, fmt.Errorf("resources/read uri is required")
 	}
 	payload, err := s.resourcePayload(uri)
 	if err != nil {
-		return mcpResourceReadResult{}, err
+		return mcppkg.ResourceReadResult{}, err
 	}
 	text, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
-		return mcpResourceReadResult{}, fmt.Errorf("encode resource metadata")
+		return mcppkg.ResourceReadResult{}, fmt.Errorf("encode resource metadata")
 	}
-	return mcpResourceReadResult{Contents: []mcpResourceContent{{
+	return mcppkg.ResourceReadResult{Contents: []mcppkg.ResourceContent{{
 		URI:      canonicalMCPResourceURI(uri),
 		MimeType: "application/json",
 		Text:     s.redactText(string(text)),

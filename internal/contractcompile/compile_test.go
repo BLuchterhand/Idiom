@@ -45,6 +45,12 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	if result.Protocol.ContractID != result.Contract.ContractID {
 		t.Fatalf("protocol contract id = %q, want %q", result.Protocol.ContractID, result.Contract.ContractID)
 	}
+	if result.ActiveAuthority.ContractID != result.Contract.ContractID ||
+		result.ActiveAuthority.RuntimeContractID != result.Runtime.RuntimeContractID ||
+		result.ActiveAuthority.ProtocolHash != result.Protocol.ProtocolHash ||
+		result.ActiveAuthority.ActiveInvariantID != InvariantActiveAuthority {
+		t.Fatalf("active authority binding did not mirror compiled ids: %#v", result.ActiveAuthority)
+	}
 	if result.Protocol.ProtocolHash == "" {
 		t.Fatal("protocol hash is empty")
 	}
@@ -125,19 +131,27 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	}
 }
 
-func TestCompilePlanExecutePlannerProtocolUsesActiveParentContractID(t *testing.T) {
+func TestCompilePlanExecutePlannerParentIDIsCorrelationOnly(t *testing.T) {
 	input := plannerFixtureInput()
-	input.ParentID = "contract_active_runner"
+	input.ParentID = "contract_parent_runner"
 
 	result, err := CompilePlanExecutePlanner(input)
 	if err != nil {
 		t.Fatalf("CompilePlanExecutePlanner failed: %v", err)
 	}
-	if result.Protocol.ContractID != input.ParentID {
-		t.Fatalf("protocol contract id = %q, want active parent %q", result.Protocol.ContractID, input.ParentID)
+	if result.Contract.ParentID != input.ParentID {
+		t.Fatalf("compiled contract parent id = %q, want %q", result.Contract.ParentID, input.ParentID)
 	}
-	if result.Contract.ContractID == "" {
-		t.Fatal("compiled child contract id is empty")
+	if result.Protocol.ContractID != result.Contract.ContractID {
+		t.Fatalf("protocol contract id = %q, want compiled contract %q", result.Protocol.ContractID, result.Contract.ContractID)
+	}
+	if result.ActiveAuthority.ContractID != result.Contract.ContractID {
+		t.Fatalf("active authority contract id = %q, want compiled contract %q", result.ActiveAuthority.ContractID, result.Contract.ContractID)
+	}
+	if result.ActiveAuthority.RuntimeContractID != result.Runtime.RuntimeContractID ||
+		result.ActiveAuthority.ProtocolHash != result.Protocol.ProtocolHash ||
+		result.ActiveAuthority.ActiveInvariantID != InvariantActiveAuthority {
+		t.Fatalf("active authority binding did not carry runtime/protocol invariant ids: %#v", result.ActiveAuthority)
 	}
 	if result.Protocol.ProtocolHash == "" {
 		t.Fatal("protocol hash is empty")

@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"idiom/internal/contractcompile"
 	"idiom/internal/workspace"
 )
 
@@ -34,6 +35,50 @@ func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {
 	joined := strings.Join(guidance.ValidNext, "\n")
 	if !strings.Contains(joined, "approved-target write capability") || !strings.Contains(joined, "narrow range read") {
 		t.Fatalf("missing expected valid next actions: %#v", guidance.ValidNext)
+	}
+}
+
+func TestRenderActiveProtocolCardUsesCompiledProjection(t *testing.T) {
+	rendered := RenderActiveProtocolCard(contractcompile.ModelProtocolProjection{
+		ContractID:              "contract-1",
+		ProtocolHash:            "hash-123",
+		PhaseID:                 "required_source",
+		VisibleTools:            []string{"submit_plan", "read_file", "read_file", "code_navigate"},
+		CallableTools:           []string{"submit_plan", "code_navigate"},
+		TerminalResponseShapes:  []string{"submit_plan", "<<QUESTION>>:", "Decision: source-satisfied"},
+		InvalidActionClasses:    []string{"submit_plan", "generic_probe"},
+		RequiredEditCoverage:    []string{"internal/a.go"},
+		SourceBodyObligations:   []string{"internal/a.go"},
+		PathRoleSummary:         []string{"required_edit_path: internal/a.go"},
+		VerificationObligations: []string{"go test ./..."},
+		SafeAlternatives:        []string{"generic_probe", "<<QUESTION>>:"},
+	})
+
+	for _, want := range []string{
+		"[active contract protocol]",
+		"Active contract: contract-1 / protocol_hash=hash-123",
+		"Phase: required_source",
+		"Visible tools: [submit_plan, code_navigate, read_file]",
+		"Callable tools now: [submit_plan, code_navigate]",
+		"Valid terminal outcomes: Decision: source-satisfied; <<QUESTION>>:",
+		"Invalid now: submit_plan, generic_probe",
+		"Path roles: required_edit_paths=[internal/a.go]; source_body_obligations=[internal/a.go]; roles=[required_edit_path: internal/a.go]",
+		"Verification: go test ./...",
+		"Safe alternatives: <<QUESTION>>:; generic_probe",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %q in rendered protocol card:\n%s", want, rendered)
+		}
+	}
+
+	if strings.Contains(rendered, "submit_plan; Decision: source-satisfied") {
+		t.Fatalf("terminal outcomes should suppress submit_plan when submit_plan is invalid:\n%s", rendered)
+	}
+}
+
+func TestRenderActiveProtocolCardOmitsEmptyProjection(t *testing.T) {
+	if rendered := RenderActiveProtocolCard(contractcompile.ModelProtocolProjection{ContractID: "contract-1"}); rendered != "" {
+		t.Fatalf("empty protocol hash should not render card, got %q", rendered)
 	}
 }
 

@@ -13,6 +13,7 @@ type PathInvariantID string
 
 const (
 	InvariantRequiredEditPath   PathInvariantID = "path.required_edit"
+	InvariantAllowedCandidate   PathInvariantID = "path.allowed_candidate"
 	InvariantEvidenceReadonly   PathInvariantID = "path.evidence_readonly"
 	InvariantProtectedPath      PathInvariantID = "path.protected"
 	InvariantForbiddenPath      PathInvariantID = "path.forbidden"
@@ -56,6 +57,46 @@ type PathRoleResolutionSet struct {
 	EvidenceRefs  []string                 `json:"evidence_refs,omitempty"`
 	Metadata      ContractMetadata         `json:"metadata,omitempty"`
 	Invariants    map[string]PathInvariant `json:"invariants,omitempty"`
+}
+
+// PlanScopePathRoleObligationInput is the plan-scope bridge into autonomy's
+// path-role vocabulary. Required edit paths are write obligations; allowed
+// candidate paths are scope only and never satisfy required coverage.
+type PlanScopePathRoleObligationInput struct {
+	WorkspaceRoot          string
+	RequiredEditPaths      []string
+	AllowedCandidatePaths  []string
+	CandidateCoveragePaths []string
+	Source                 string
+}
+
+// PlanScopePathRoleObligationCoverage is a typed coverage view for plan-scope
+// required and allowed path roles. It keeps legacy path lists available while
+// making the coverage decision explicit.
+type PlanScopePathRoleObligationCoverage struct {
+	RequiredCoveragePaths         []string                    `json:"required_coverage_paths,omitempty"`
+	AllowedCandidatePaths         []string                    `json:"allowed_candidate_paths,omitempty"`
+	CandidateCoverage             []PlanScopePathRoleCoverage `json:"candidate_coverage,omitempty"`
+	MissingRequiredCoveragePaths  []string                    `json:"missing_required_coverage_paths,omitempty"`
+	CandidatePathsOutsideRequired []string                    `json:"candidate_paths_outside_required,omitempty"`
+	CandidatePathsOutsideAllowed  []string                    `json:"candidate_paths_outside_allowed,omitempty"`
+	Resolutions                   PathRoleResolutionSet       `json:"resolutions,omitempty"`
+	Invariants                    map[string]PathInvariant    `json:"invariants,omitempty"`
+	RoleCounts                    map[string]int              `json:"role_counts,omitempty"`
+	Metadata                      ContractMetadata            `json:"metadata,omitempty"`
+}
+
+// PlanScopePathRoleCoverage records how one candidate path resolves against
+// required-edit and allowed-candidate roles.
+type PlanScopePathRoleCoverage struct {
+	Path                       string             `json:"path,omitempty"`
+	OriginalPath               string             `json:"original_path,omitempty"`
+	Roles                      []PathRoleKind     `json:"roles,omitempty"`
+	EffectiveRole              PathRoleKind       `json:"effective_role,omitempty"`
+	EffectiveInvariantID       PathInvariantID    `json:"effective_invariant_id,omitempty"`
+	Decision                   ToolPolicyDecision `json:"decision,omitempty"`
+	SatisfiesRequiredCoverage  bool               `json:"satisfies_required_coverage,omitempty"`
+	WithinAllowedCandidatePath bool               `json:"within_allowed_candidate_path,omitempty"`
 }
 
 // PathRoleResolution records both the canonical path identity and every matched
@@ -128,6 +169,88 @@ func PathInvariantForRole(role PathRoleKind) (PathInvariant, bool) {
 	}
 	invariant, ok := pathInvariantMap[invariantID]
 	return invariant, ok
+}
+
+// ResolvePlanScopePathRoleObligations resolves required-edit and
+// allowed-candidate path roles, then evaluates optional candidate coverage paths
+// against those typed roles. Allowed candidates are reported as candidate scope
+// only; they do not satisfy required coverage.
+func ResolvePlanScopePathRoleObligations(input PlanScopePathRoleObligationInput) (PlanScopePathRoleObligationCoverage, error) {
+	required := uniquePlanScopeObligationPaths(input.RequiredEditPaths)
+	allowed := uniquePlanScopeObligationPaths(input.AllowedCandidatePaths)
+	candidates := uniquePlanScopeObligationPaths(input.CandidateCoveragePaths)
+
+	roles := make([]PathRole, 0, len(required)+len(allowed))
+	for _, path := range required {
+		roles = append(roles, PathRole{
+			Role:        PathRoleRequiredEdit,
+			PathPattern: path,
+			Reason:      "required edit path coverage",
+		})
+	}
+	for _, path := range allowed {
+		roles = append(roles, PathRole{
+			Role:        PathRoleAllowedEdit,
+			PathPattern: path,
+			Reason:      "allowed candidate path scope",
+		})
+	}
+
+	resolvePaths := compactStrings(append(append(append([]string(nil), required...), allowed...), candidates...))
+	resolutions, err := ResolvePathRoles(PathRoleResolverInput{
+		WorkspaceRoot: input.WorkspaceRoot,
+		PathRoles:     roles,
+		Source:        strings.TrimSpace(input.Source),
+	}, resolvePaths...)
+	if err != nil {
+		return PlanScopePathRoleObligationCoverage{}, err
+	}
+
+	coverage := PlanScopePathRoleObligationCoverage{
+		RequiredCoveragePaths: required,
+		AllowedCandidatePaths: allowed,
+		Resolutions:           resolutions,
+		Invariants:            namedPathInvariantsByString(),
+		RoleCounts:            copyStringIntMap(resolutions.RoleCounts),
+		Metadata:              copyMetadata(resolutions.Metadata),
+	}
+	if len(candidates) == 0 {
+		return coverage, nil
+	}
+
+	coveredRequired := make(map[string]struct{}, len(candidates))
+	for _, candidate := range candidates {
+		resolution := pathRoleResolutionByPath(resolutions, candidate)
+		item := planScopePathRoleCoverage(candidate, resolution)
+		coverage.CandidateCoverage = append(coverage.CandidateCoverage, item)
+		if item.SatisfiesRequiredCoverage {
+			for _, role := range resolution.Roles {
+				if role.Role != PathRoleRequiredEdit {
+					continue
+				}
+				for _, pattern := range role.MatchedPatterns {
+					coveredRequired[pattern] = struct{}{}
+				}
+			}
+		} else if len(required) > 0 {
+			coverage.CandidatePathsOutsideRequired = append(coverage.CandidatePathsOutsideRequired, item.Path)
+		}
+		if len(allowed) > 0 && !item.WithinAllowedCandidatePath {
+			coverage.CandidatePathsOutsideAllowed = append(coverage.CandidatePathsOutsideAllowed, item.Path)
+		}
+	}
+	for _, path := range required {
+		if _, ok := coveredRequired[path]; !ok {
+			coverage.MissingRequiredCoveragePaths = append(coverage.MissingRequiredCoveragePaths, path)
+		}
+	}
+	coverage.CandidatePathsOutsideRequired = compactStrings(coverage.CandidatePathsOutsideRequired)
+	coverage.CandidatePathsOutsideAllowed = compactStrings(coverage.CandidatePathsOutsideAllowed)
+	coverage.MissingRequiredCoveragePaths = compactStrings(coverage.MissingRequiredCoveragePaths)
+	slices.SortFunc(coverage.CandidateCoverage, func(a, b PlanScopePathRoleCoverage) int {
+		return cmp.Compare(a.Path, b.Path)
+	})
+	return coverage, nil
 }
 
 // ResolveContractPathRoles resolves paths against an AutonomyContract's path
@@ -205,6 +328,15 @@ var pathInvariantMap = map[PathInvariantID]PathInvariant{
 		ReasonCode:  "required_edit_path",
 		Description: "path is inside the required write contract",
 	},
+	InvariantAllowedCandidate: {
+		InvariantID: InvariantAllowedCandidate,
+		Role:        PathRoleAllowedEdit,
+		Precedence:  150,
+		Decision:    PolicyAllow,
+		SideEffect:  SideEffectAdditive,
+		ReasonCode:  "allowed_candidate_path",
+		Description: "path is candidate edit scope but not required write coverage",
+	},
 	InvariantEvidenceReadonly: {
 		InvariantID: InvariantEvidenceReadonly,
 		Role:        PathRoleEvidenceReadonly,
@@ -247,6 +379,7 @@ var pathInvariantMap = map[PathInvariantID]PathInvariant{
 
 var pathInvariantByRole = map[PathRoleKind]PathInvariantID{
 	PathRoleRequiredEdit:     InvariantRequiredEditPath,
+	PathRoleAllowedEdit:      InvariantAllowedCandidate,
 	PathRoleEvidenceReadonly: InvariantEvidenceReadonly,
 	PathRoleProtected:        InvariantProtectedPath,
 	PathRoleForbidden:        InvariantForbiddenPath,
@@ -443,6 +576,74 @@ func normalizeResolverPath(path string, workspaceRoot string) (normalizedResolve
 	candidate.absolutePath = filepath.ToSlash(candidate.absolutePath)
 	candidate.matchCandidates = compactStrings([]string{candidate.path, candidate.relativePath, candidate.absolutePath})
 	return candidate, nil
+}
+
+func uniquePlanScopeObligationPaths(paths []string) []string {
+	var out []string
+	seen := make(map[string]struct{}, len(paths))
+	for _, path := range paths {
+		path = normalizePlanScopeObligationPath(path)
+		if path == "" {
+			continue
+		}
+		if _, ok := seen[path]; ok {
+			continue
+		}
+		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func normalizePlanScopeObligationPath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.ReplaceAll(path, "\\", "/")
+	for strings.HasPrefix(path, "./") {
+		path = strings.TrimPrefix(path, "./")
+	}
+	if path == "" || path == "." || path == ".." || filepath.IsAbs(path) || strings.HasPrefix(path, "../") {
+		return ""
+	}
+	for _, part := range strings.Split(path, "/") {
+		if part == "" || part == "." || part == ".." {
+			return ""
+		}
+	}
+	return path
+}
+
+func pathRoleResolutionByPath(set PathRoleResolutionSet, path string) PathRoleResolution {
+	normalized := normalizePlanScopeObligationPath(path)
+	for _, resolution := range set.Resolutions {
+		if resolution.Path == normalized || resolution.RelativePath == normalized || resolution.AbsolutePath == normalized {
+			return resolution
+		}
+	}
+	return PathRoleResolution{OriginalPath: path, Path: normalized}
+}
+
+func planScopePathRoleCoverage(path string, resolution PathRoleResolution) PlanScopePathRoleCoverage {
+	item := PlanScopePathRoleCoverage{
+		Path:                 path,
+		OriginalPath:         resolution.OriginalPath,
+		EffectiveRole:        resolution.EffectiveRole,
+		EffectiveInvariantID: resolution.EffectiveInvariantID,
+		Decision:             resolution.Decision,
+	}
+	if item.OriginalPath == "" {
+		item.OriginalPath = path
+	}
+	for _, role := range resolution.Roles {
+		item.Roles = append(item.Roles, role.Role)
+		switch role.Role {
+		case PathRoleRequiredEdit:
+			item.SatisfiesRequiredCoverage = true
+		case PathRoleAllowedEdit:
+			item.WithinAllowedCandidatePath = true
+		}
+	}
+	slices.Sort(item.Roles)
+	return item
 }
 
 func relativeToWorkspace(path string, workspaceRoot string) (string, bool) {

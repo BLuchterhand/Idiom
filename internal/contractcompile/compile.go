@@ -22,11 +22,21 @@ func CompilePlanExecutePlanner(input PlanExecutePlannerInput) (CompileResult, er
 		return CompileResult{}, err
 	}
 	return CompileResult{
-		SchemaVersion: CompilerSchemaVersion,
-		Contract:      contract,
-		Runtime:       runtime,
-		Protocol:      protocol,
+		SchemaVersion:   CompilerSchemaVersion,
+		Contract:        contract,
+		Runtime:         runtime,
+		Protocol:        protocol,
+		ActiveAuthority: compileActiveAuthorityBinding(contract, runtime, protocol),
 	}, nil
+}
+
+func compileActiveAuthorityBinding(contract autonomy.AutonomyContract, runtime RuntimeEnvelope, protocol ModelProtocolProjection) ActiveAuthorityBinding {
+	return ActiveAuthorityBinding{
+		ContractID:        contract.ContractID,
+		RuntimeContractID: runtime.RuntimeContractID,
+		ProtocolHash:      protocol.ProtocolHash,
+		ActiveInvariantID: firstNonEmpty(protocol.ActiveInvariantID, runtime.ActiveInvariantID, InvariantActiveAuthority),
+	}
 }
 
 func compileAutonomyContract(input PlanExecutePlannerInput, runtime RuntimeEnvelope) (autonomy.AutonomyContract, error) {
@@ -91,9 +101,8 @@ func compileRuntimeEnvelope(input PlanExecutePlannerInput) RuntimeEnvelope {
 }
 
 func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnvelope, contract autonomy.AutonomyContract) (ModelProtocolProjection, error) {
-	activeContractID := firstNonEmpty(input.ParentID, contract.ContractID)
 	protocol := ModelProtocolProjection{
-		ContractID:              activeContractID,
+		ContractID:              contract.ContractID,
 		ContractVersion:         contract.SchemaVersion,
 		PhaseID:                 input.Protocol.PhaseID,
 		ParserMode:              firstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),

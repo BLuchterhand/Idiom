@@ -403,8 +403,8 @@ func formatBackendsList(stdout io.Writer, src string, file backends.File) {
 		if prof.Proxy.Listen != 0 || prof.Proxy.DefaultAlias != "" || prof.Proxy.DefaultCoder != "" {
 			fmt.Fprintf(stdout, "  proxy listen=%d default=%q default_coder=%q\n", prof.Proxy.Listen, prof.Proxy.DefaultAlias, prof.Proxy.DefaultCoder)
 		}
-		if coder := prof.CoderAlias(); coder != "" {
-			fmt.Fprintf(stdout, "  coder_alias=%q\n", coder)
+		if resolution := prof.ResolveRoleAlias(backends.RoleExecutor); resolution.OK {
+			fmt.Fprintf(stdout, "  coder_alias=%q\n", resolution.Alias)
 		}
 		for _, m := range prof.Models {
 			fmt.Fprintf(stdout, "  model alias=%q binary=%q port=%d max_tokens=%d\n", m.Alias, m.Binary, m.Port, m.MaxTokens)

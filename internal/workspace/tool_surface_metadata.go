@@ -26,17 +26,6 @@ type builtInToolSurfaceSpec struct {
 	RuntimeHistoryInspection bool
 }
 
-var sharedReadOnlyEvidenceCapabilities = []string{
-	"inspect_file",
-	"inspect_symbol",
-	"find_symbol",
-	"find_definition",
-	"find_references",
-	"calls_from",
-	"calls_into",
-	"related_files",
-}
-
 var (
 	policyBoundedRead       = []autonomy.Capability{autonomy.CapabilityBoundedRead}
 	policyLiteralSearch     = []autonomy.Capability{autonomy.CapabilityLiteralSearch}
@@ -67,8 +56,8 @@ var builtInToolSurfaceSpecs = []builtInToolSurfaceSpec{
 	{Tool: "grep", Category: CategorySearch},
 	{Tool: "read_file", Category: CategoryRead, DefaultManifest: true, EvidenceCapabilities: []string{"inspect_file"}, CapabilityClassification: CapabilityClassFallback, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
 	{Tool: "file_stats", Category: CategoryRead, DefaultManifest: true, PolicyCapabilities: policyBoundedRead, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: "code_navigate", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: sharedReadOnlyEvidenceCapabilities, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
-	{Tool: readOnlyCapabilityToolName, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: sharedReadOnlyEvidenceCapabilities, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
+	{Tool: "code_navigate", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: ReadOnlyCapabilityEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly, RuntimeSourceInspection: true},
+	{Tool: readOnlyCapabilityToolName, Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: ReadOnlyCapabilityEvidenceCapabilities(), CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
 	{Tool: "source_sanity", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"source_diagnostics", "verify_edit"}, CapabilityClassification: CapabilityClassDeferred, PolicyCapabilities: policyShellVerification, SideEffects: sideEffectReadOnlyUnknown, RuntimeSourceInspection: true},
 	{Tool: "harness_audit", Category: CategoryRead, DefaultManifest: true, Narrowing: true, EvidenceCapabilities: []string{"audit_behavior"}, CapabilityClassification: CapabilityClassRouted, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectReadOnly},
 	{Tool: "harness_feedback", Category: CategoryVerification, DefaultManifest: true, Narrowing: true, PolicyCapabilities: policySemanticDiscovery, SideEffects: sideEffectAdditive},
@@ -181,6 +170,16 @@ func builtInToolSurfaceMCPDiscoveryProfileTool(tool string) bool {
 func builtInToolSurfaceDiscoveryLocalArtifacts(tool string) bool {
 	spec, ok := builtInToolSurfaceMetadata(tool)
 	return ok && spec.DiscoveryLocalArtifacts
+}
+
+func builtInToolSurfaceDiscoveryLocalArtifactTools() []string {
+	var tools []string
+	for _, spec := range builtInToolSurfaceSpecs {
+		if spec.DiscoveryLocalArtifacts {
+			tools = append(tools, spec.Tool)
+		}
+	}
+	return tools
 }
 
 func builtInToolSurfaceStaleContextErrors(tool string) bool {
