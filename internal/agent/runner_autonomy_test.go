@@ -310,6 +310,7 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 	}
 
 	turnPhaseIndex := -1
+	contextPacketIndex := -1
 	modelCallIndex := -1
 	postModelIndex := -1
 	for i, event := range runEvents {
@@ -333,13 +334,19 @@ func TestRunnerRunEmitsTurnPhaseContractBeforeModelCallAndPolicyEvents(t *testin
 				turnPhaseIndex == -1 {
 				turnPhaseIndex = i
 			}
+			if decoded.Type == autonomy.EventModelExchange &&
+				decoded.ModelExchange != nil &&
+				decoded.ModelExchange.Kind == "context_packet" &&
+				contextPacketIndex == -1 {
+				contextPacketIndex = i
+			}
 		}
 	}
-	if turnPhaseIndex == -1 || modelCallIndex == -1 || postModelIndex == -1 {
-		t.Fatalf("missing expected event order markers: turn_phase=%d model_call=%d post_model=%d roles=%#v", turnPhaseIndex, modelCallIndex, postModelIndex, eventRolesFor(runEvents))
+	if turnPhaseIndex == -1 || contextPacketIndex == -1 || modelCallIndex == -1 || postModelIndex == -1 {
+		t.Fatalf("missing expected event order markers: turn_phase=%d context_packet=%d model_call=%d post_model=%d roles=%#v", turnPhaseIndex, contextPacketIndex, modelCallIndex, postModelIndex, eventRolesFor(runEvents))
 	}
-	if !(turnPhaseIndex < modelCallIndex && modelCallIndex < postModelIndex) {
-		t.Fatalf("expected turn phase before model_call before post-model events, got turn_phase=%d model_call=%d post_model=%d", turnPhaseIndex, modelCallIndex, postModelIndex)
+	if !(turnPhaseIndex < contextPacketIndex && contextPacketIndex < modelCallIndex && modelCallIndex < postModelIndex) {
+		t.Fatalf("expected turn phase/context packet before model_call before post-model events, got turn_phase=%d context_packet=%d model_call=%d post_model=%d", turnPhaseIndex, contextPacketIndex, modelCallIndex, postModelIndex)
 	}
 }
 
@@ -643,6 +650,242 @@ func TestRunnerAutonomyRecorderDeniedPolicyEmitsGuardFriction(t *testing.T) {
 		friction.FirstInvalidAction != "read_file" ||
 		friction.ModelContractVisible {
 		t.Fatalf("unexpected policy friction classification: %#v", friction)
+	}
+}
+
+func TestRunnerAutonomyRecorderEmitsModelExchangeByDefault(t *testing.T) {
+	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "plan-execute",
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "submit_plan",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+			AllowedTools:      []string{"read_file", "submit_plan"},
+			RequiredTools:     []string{"submit_plan"},
+		},
+	}
+	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read a.go lines 1-5"}}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, runner.RuntimeBrief, results)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(runner.RuntimeBrief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:         recorder.contract.ContractID,
+		ModelCallID:        recorder.contract.ContractID + ":model_call_1",
+		Step:               1,
+		Brief:              runner.RuntimeBrief,
+		Results:            results,
+		BaseAllowedTools:   []string{"submit_plan"},
+		TextualToolParser:  true,
+		VerificationStatus: "not_required",
+	})
+	protocol, ok := runner.compileModelProtocolProjection(runner.RuntimeBrief, results, phase, RunPolicy{MaxToolSteps: 2}, false)
+	if !ok {
+		t.Fatal("expected plan-execute model protocol projection")
+	}
+	recorder.emitTurnPhaseContract(phase, protocol)
+
+	_ = decodeRunnerAutonomyEventsForTest(t, runEvents)
+	exchange := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "context_packet")
+	packet := exchange.ModelExchange.ContextPacket
+	if exchange.ContractID != recorder.contract.ContractID ||
+		exchange.ModelExchange.ProtocolHash != protocol.ProtocolHash ||
+		exchange.ModelExchange.PhaseID != phase.PhaseID ||
+		exchange.ModelExchange.ModelCallID != phase.ModelCallID ||
+		packet == nil ||
+		packet.ContractID != recorder.contract.ContractID ||
+		packet.ProtocolHash != protocol.ProtocolHash {
+		t.Fatalf("context packet should cite active contract/protocol refs: %#v", exchange.ModelExchange)
+	}
+	if exchange.Effect != autonomy.EventEffectObserveOnly {
+		t.Fatalf("context packet should be observe-only: %#v", exchange)
+	}
+	if len(packet.SchemaNames) == 0 || len(packet.RedactionMarkers) == 0 {
+		t.Fatalf("context packet should carry compact schema/redaction refs: %#v", packet)
+	}
+}
+
+func TestRunnerAutonomyRecorderModelExchangeCanBeDisabledWithoutDisablingAutonomyEvents(t *testing.T) {
+	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "true")
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"read_file", "submit_plan"},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:       recorder.contract.ContractID,
+		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
+		Step:             1,
+		Brief:            brief,
+		BaseAllowedTools: []string{"submit_plan"},
+	})
+	recorder.emitTurnPhaseContract(phase, contractcompile.ModelProtocolProjection{})
+	recorder.emitPolicyResult(workspace.ToolRequest{Tool: "read_file", Path: "a.go"}, runnerAutonomyPolicyEventInput{
+		Decision:   autonomy.PolicyAllow,
+		ReasonCode: "permission_policy",
+		Result:     "no_approval_needed",
+		Source:     "runner_permission_policy",
+	})
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	if len(events) == 0 {
+		t.Fatal("expected existing autonomy events to remain enabled")
+	}
+	exchangeEvents := runnerAutonomyModelExchangeEventsForTest(t, runEvents)
+	if len(exchangeEvents) != 1 ||
+		exchangeEvents[0].ModelExchange == nil ||
+		exchangeEvents[0].ModelExchange.RollbackControl == nil ||
+		exchangeEvents[0].ModelExchange.RollbackControl.Decision != "model_exchange_disabled" {
+		t.Fatalf("rollback switch should emit only rollback control audit event: %#v", exchangeEvents)
+	}
+}
+
+func TestRunnerAutonomyRecorderModelExchangePermissionAndFailureRefs(t *testing.T) {
+	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+	root := t.TempDir()
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/agent/runner.go"},
+		AllowedTools:      []string{"read_file", "apply_patch"},
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:       recorder.contract.ContractID,
+		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
+		Step:             1,
+		Brief:            brief,
+		BaseAllowedTools: []string{"read_file", "apply_patch"},
+	})
+	recorder.emitTurnPhaseContract(phase, contractcompile.ModelProtocolProjection{ProtocolHash: "sha256:protocolref", PhaseID: phase.PhaseID})
+	recorder.emitPolicyResult(workspace.ToolRequest{Tool: "read_file", Path: ".git/config"}, runnerAutonomyPolicyEventInput{
+		Decision:    autonomy.PolicyDeny,
+		InvariantID: string(autonomy.InvariantProtectedPath),
+		ReasonCode:  "permission_policy",
+		Result:      "denied",
+		ErrorClass:  "permission_policy",
+		Source:      "runner_permission_policy",
+	})
+
+	events := decodeRunnerAutonomyEventsForTest(t, runEvents)
+	policyEvent := mustAutonomyPolicyEvent(t, events, autonomy.EventToolPolicyResult, "read_file", "denied")
+	snapshot := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "permission_snapshot")
+	intent := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "failure_delta")
+	for _, exchange := range []autonomy.Event{snapshot, intent} {
+		if exchange.ContractID != recorder.contract.ContractID ||
+			exchange.ModelExchange == nil ||
+			exchange.ModelExchange.InvariantID != string(autonomy.InvariantProtectedPath) ||
+			exchange.ModelExchange.SourceEventID != policyEvent.EventID {
+			t.Fatalf("model-exchange event should cite active policy refs: %#v policy=%#v", exchange.ModelExchange, policyEvent)
+		}
+	}
+	if intent.ModelExchange.FailureDelta == nil || intent.ModelExchange.FailureDelta.GeneratedBy != "harness" {
+		t.Fatalf("failure delta must be harness-generated typed payload: %#v", intent.ModelExchange)
+	}
+}
+
+func TestRunnerAutonomyRecorderModelExchangeClassifiesModelResponseAsNonAuthoritativeAndPrivacySafe(t *testing.T) {
+	t.Setenv(runnerAutonomyDisableModelExchangeEnv, "")
+	var runEvents []RunEvent
+	runner := &Runner{
+		AgentName: "main",
+		OnEvent: func(event RunEvent) {
+			runEvents = append(runEvents, event)
+		},
+	}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "implement",
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/agent/runner.go"},
+		AllowedTools:      []string{"apply_patch"},
+		Objective:         "Do not leak SECRET_CUSTOMER_123 or this raw prompt text.",
+	}
+	recorder := newRunnerAutonomyRecorder(runner, RunPolicy{MaxToolSteps: 2}, brief, nil)
+	if recorder == nil {
+		t.Fatal("newRunnerAutonomyRecorder returned nil")
+	}
+	recorder.emitContractStarted(brief)
+	recorder.emitTurnPhaseContract(deriveTurnPhaseContract(TurnPhaseContractInput{
+		ContractID:       recorder.contract.ContractID,
+		ModelCallID:      recorder.contract.ContractID + ":model_call_1",
+		Step:             1,
+		Brief:            brief,
+		BaseAllowedTools: []string{"apply_patch"},
+	}), contractcompile.ModelProtocolProjection{ProtocolHash: "sha256:protocolref", PhaseID: "phase-ref"})
+	recorder.emitPolicyResult(workspace.ToolRequest{
+		Tool:    "tool_parse",
+		Content: "SECRET_CUSTOMER_123 raw malformed transcript body",
+	}, runnerAutonomyPolicyEventInput{
+		Decision:      autonomy.PolicyReject,
+		InvariantID:   "parser.tool_request",
+		ReasonCode:    "malformed_tool_request",
+		ParserFailure: autonomy.ParserFailureMalformedJSON,
+		Result:        "rejected",
+		ErrorClass:    "tool_parse",
+		Source:        "runner_tool_parse",
+	})
+
+	observation := mustRunnerAutonomyModelExchangeForTest(t, runEvents, "validation_signal")
+	if observation.ModelExchange.ValidationSignal == nil ||
+		observation.ModelExchange.ValidationSignal.CapturedBy != "harness" ||
+		observation.ModelExchange.ValidationSignal.Status != "model_response_observed_non_authoritative" {
+		t.Fatalf("model response observation must be harness validation telemetry: %#v", observation.ModelExchange)
+	}
+	if observation.ContractID != recorder.contract.ContractID || observation.ModelExchange.ProtocolHash == "" || observation.ModelExchange.InvariantID != "parser.tool_request" {
+		t.Fatalf("observation should cite active contract/protocol refs: %#v", observation.ModelExchange)
+	}
+	for _, event := range runnerAutonomyModelExchangeEventsForTest(t, runEvents) {
+		for _, forbidden := range []string{"SECRET_CUSTOMER_123", "raw malformed transcript body", "raw prompt text"} {
+			data, err := json.Marshal(event)
+			if err != nil {
+				t.Fatalf("marshal event: %v", err)
+			}
+			if strings.Contains(string(data), forbidden) {
+				t.Fatalf("model-exchange payload leaked sensitive/raw text %q: %s", forbidden, string(data))
+			}
+		}
 	}
 }
 
@@ -1464,6 +1707,42 @@ func decodeRunnerAutonomyEventsForTest(t *testing.T, runEvents []RunEvent) []aut
 		t.Fatal("expected autonomy events")
 	}
 	return events
+}
+
+func runnerAutonomyModelExchangeEventsForTest(t *testing.T, runEvents []RunEvent) []autonomy.Event {
+	t.Helper()
+	var events []autonomy.Event
+	for _, runEvent := range runEvents {
+		if runEvent.Role != runnerAutonomyEventRole {
+			continue
+		}
+		var decoded autonomy.Event
+		if err := json.Unmarshal([]byte(runEvent.Content), &decoded); err != nil {
+			t.Fatalf("decode model-exchange event: %v\n%s", err, runEvent.Content)
+		}
+		if decoded.Type != autonomy.EventModelExchange {
+			continue
+		}
+		if decoded.Effect != autonomy.EventEffectObserveOnly ||
+			strings.TrimSpace(decoded.ContractID) == "" ||
+			decoded.ModelExchange == nil ||
+			strings.TrimSpace(decoded.ModelExchange.Kind) == "" {
+			t.Fatalf("invalid model-exchange event: %#v", decoded)
+		}
+		events = append(events, decoded)
+	}
+	return events
+}
+
+func mustRunnerAutonomyModelExchangeForTest(t *testing.T, runEvents []RunEvent, kind string) autonomy.Event {
+	t.Helper()
+	for _, event := range runnerAutonomyModelExchangeEventsForTest(t, runEvents) {
+		if event.ModelExchange != nil && event.ModelExchange.Kind == kind {
+			return event
+		}
+	}
+	t.Fatalf("missing model-exchange event kind=%q roles=%#v", kind, eventRolesFor(runEvents))
+	return autonomy.Event{}
 }
 
 func decodeRunnerAutonomyGatePayloadsForTest(t *testing.T, runEvents []RunEvent) []map[string]any {

@@ -405,6 +405,76 @@ func TestAuditEventsGroupsGuardFrictionWithoutFailingAllClear(t *testing.T) {
 	}
 }
 
+func TestAuditEventsReportsModelExchangeRollbackCoverage(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 6, 3, 14, 15, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	tracePolicy := mustAutonomyEvent(NewModelExchangeEvent(contract, ContractModelExchangeEvent{
+		Kind:         "trace_store_policy",
+		ContractID:   contract.ContractID,
+		ProtocolHash: "sha256:protocol",
+		TraceStorePolicy: &TraceStorePolicy{
+			ContractID:      contract.ContractID,
+			ProtocolHash:    "sha256:protocol",
+			RetentionRef:    "retention:test",
+			RedactionRef:    "redaction:metadata_only",
+			RedactionStatus: "pass",
+			AllowedFields:   []string{"event_id", "type", "contract_id", "protocol_hash"},
+			ForbiddenFields: []string{"raw_prompt", "raw_transcript", "file_body"},
+			StoreRefs:       []string{"role:autonomy_event"},
+			CapturedBy:      "harness",
+		},
+	}, occurredAt.Add(time.Second), 2))
+	rollback := mustAutonomyEvent(NewModelExchangeEvent(contract, ContractModelExchangeEvent{
+		Kind:         "rollback_control",
+		ContractID:   contract.ContractID,
+		ProtocolHash: "sha256:protocol",
+		RollbackControl: &RollbackControl{
+			ContractID:   contract.ContractID,
+			ProtocolHash: "sha256:protocol",
+			RollbackRef:  "env:IDIOM_DISABLE_RUNNER_MODEL_EXCHANGE_EVENTS",
+			Decision:     "model_exchange_disabled",
+			OperatorRef:  "operator:env",
+			Source:       "runner_autonomy",
+			PreviousMode: "observe_only_model_exchange",
+			NewMode:      "disabled",
+			Reason:       "rollback switch active",
+			GuardRefs:    []string{"guard:typed_autonomy_events_remain_enabled"},
+			AffectedPackIDs: []string{
+				string(ContractPackCompletionReadiness),
+				string(ContractPackWriteRequiredPaths),
+			},
+			AuthorizedBy: "harness",
+		},
+	}, occurredAt.Add(2*time.Second), 3))
+
+	report := AuditEvents([]Event{compiled, tracePolicy, rollback}, EventAuditOptions{})
+
+	coverage := report.ModelExchangeCoverage
+	if coverage.Total != 2 ||
+		coverage.TracePolicyEvents != 1 ||
+		coverage.RollbackControlEvents != 1 ||
+		!coverage.RollbackActive ||
+		!report.RollbackActive {
+		t.Fatalf("expected model-exchange rollback coverage, got %#v", coverage)
+	}
+	if coverage.KindCounts["trace_store_policy"] != 1 ||
+		coverage.KindCounts["rollback_control"] != 1 ||
+		coverage.PayloadCounts["trace_store_policy"] != 1 ||
+		coverage.PayloadCounts["rollback_control"] != 1 {
+		t.Fatalf("expected model-exchange kind/payload counts, got %#v", coverage)
+	}
+	if len(coverage.RollbackRefs) != 1 || coverage.RollbackRefs[0].Reference != "model_exchange_disabled" {
+		t.Fatalf("expected rollback ref, got %#v", coverage.RollbackRefs)
+	}
+	if coverage.RedactionStatusCounts["pass"] != 1 || report.PrivacyChecks.RedactionStatusCounts["pass"] != 1 {
+		t.Fatalf("expected redaction status coverage, audit=%#v privacy=%#v", coverage.RedactionStatusCounts, report.PrivacyChecks.RedactionStatusCounts)
+	}
+	if len(report.Contracts) != 1 || report.Contracts[0].ModelExchangeCounts[string(EventModelExchange)] != 2 {
+		t.Fatalf("expected per-contract model-exchange counts, got %#v", report.Contracts)
+	}
+}
+
 func TestAuditEventsOrdersRepeatedContractRunsByOccurrenceBeforeSequence(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	firstRun := time.Date(2026, 5, 13, 18, 55, 0, 0, time.UTC)
@@ -1102,6 +1172,52 @@ func TestAuditEventsAllClearCoverageCarriesClassificationAndProductSignals(t *te
 		if report.MetadataCoverage.ProductSignalCounts[string(want)] == 0 {
 			t.Fatalf("audit report missing product signal %q in %#v", want, report.MetadataCoverage.ProductSignalCounts)
 		}
+	}
+}
+
+func TestAuditEventsReportsReplayIntentMissingPayloadsAndPrivacy(t *testing.T) {
+	occurredAt := time.Date(2026, 5, 13, 20, 35, 0, 0, time.UTC)
+	missingPayload := Event{
+		SchemaVersion: EventSchemaVersion,
+		EventID:       "event-audit-missing-gate-payload",
+		Type:          EventGateDecision,
+		Effect:        EventEffectObserveOnly,
+		OccurredAt:    occurredAt,
+		Sequence:      1,
+		ContractID:    "contract-audit-intent",
+	}
+	rawMarker := Event{
+		SchemaVersion: EventSchemaVersion,
+		EventID:       "event-audit-raw-marker",
+		Type:          EventToolPolicyDecision,
+		Effect:        EventEffectObserveOnly,
+		OccurredAt:    occurredAt.Add(time.Second),
+		Sequence:      2,
+		ContractID:    "contract-audit-intent",
+		Policy: &ContractPolicyEvent{
+			ToolCallID:       "tool-raw-marker",
+			ToolName:         "search_content",
+			Capability:       CapabilityLiteralSearch,
+			Decision:         PolicyAllow,
+			ArgumentsSummary: "raw_prompt: customer-acme token=SECRET",
+		},
+	}
+
+	report := AuditEvents([]Event{missingPayload, rawMarker}, EventAuditOptions{})
+
+	if report.ReplayMetrics.MissingRequiredPayloadCounts["gate"] != 1 ||
+		report.ReplayClassification.MissingRequiredPayloadEvents != 1 {
+		t.Fatalf("expected missing gate payload count, classification=%#v metrics=%#v", report.ReplayClassification, report.ReplayMetrics)
+	}
+	if report.PrivacyChecks.ForbiddenFieldCount == 0 ||
+		report.PrivacyChecks.FieldCounts["policy.arguments_summary"] == 0 {
+		t.Fatalf("expected privacy forbidden-field detection, got %#v", report.PrivacyChecks)
+	}
+	if !hasEventAuditFinding(report, "contract_event_privacy_forbidden_raw_content") {
+		t.Fatalf("expected privacy finding, got %#v", report.Findings)
+	}
+	if report.ReplayClassification.Classification != ReplayClassificationNonReplayable {
+		t.Fatalf("privacy markers should make replay non-replayable, got %#v", report.ReplayClassification)
 	}
 }
 

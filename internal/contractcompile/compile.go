@@ -95,6 +95,7 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	protocol := ModelProtocolProjection{
 		ContractID:              activeContractID,
 		ContractVersion:         contract.SchemaVersion,
+		SchemaNames:             compileProtocolSchemaNames(input.Protocol.StructuredSchemaNames),
 		PhaseID:                 input.Protocol.PhaseID,
 		ParserMode:              firstNonEmpty(input.Protocol.ParserMode, runtime.ParserContract, runtime.ParserTransportMode),
 		ToolTransportMode:       runtime.ToolTransportMode,
@@ -160,6 +161,8 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 	if len(protocol.StructuredSchemaNames) == 0 {
 		protocol.StructuredSchemaNames = []string{"submit_plan"}
 	}
+	protocol.SchemaNames = compileProtocolSchemaNames(protocol.StructuredSchemaNames)
+	protocol.CompactPacket = compileCompactPacketProjection(input, contract, protocol)
 	if protocol.MalformedOutputPolicy == "" {
 		protocol.MalformedOutputPolicy = "recover_with_same_protocol_projection"
 	}
@@ -174,7 +177,54 @@ func compileProtocolProjection(input PlanExecutePlannerInput, runtime RuntimeEnv
 		return ModelProtocolProjection{}, err
 	}
 	protocol.ProtocolHash = stableHashID("protocol", protocol)
+	protocol.CompactPacket.ProtocolHash = protocol.ProtocolHash
 	return protocol, nil
+}
+
+func compileProtocolSchemaNames(structuredSchemas []string) []string {
+	return uniqueStrings(append([]string{
+		autonomy.ContractEnvelopeSchemaVersion,
+		autonomy.ContextPacketSchemaVersion,
+		autonomy.ModelResponseSchemaVersion,
+	}, structuredSchemas...))
+}
+
+func compileCompactPacketProjection(input PlanExecutePlannerInput, contract autonomy.AutonomyContract, protocol ModelProtocolProjection) autonomy.ContextPacket {
+	packet := autonomy.ContextPacket{
+		SchemaVersion:    autonomy.ContextPacketSchemaVersion,
+		ContractID:       protocol.ContractID,
+		TargetRefs:       uniqueStrings(append(append([]string(nil), input.TargetRefs...), input.TargetPacket...)),
+		PathRefs:         compileCompactPacketPathRefs(input),
+		EvidenceRefs:     compileCompactPacketEvidenceRefs(input, contract),
+		ObligationRefs:   obligationIDs(contract.Obligations),
+		SchemaNames:      compileProtocolSchemaNames(protocol.StructuredSchemaNames),
+		RedactionMarkers: []string{"metadata_only", "prompt_omitted", "transcript_omitted", "file_content_omitted", "secrets_omitted"},
+	}
+	packet.PacketID = stableHashID("context_packet", packet)
+	return packet
+}
+
+func compileCompactPacketPathRefs(input PlanExecutePlannerInput) []string {
+	paths := append([]string(nil), input.RequiredEditPaths...)
+	paths = append(paths, input.AllowedEditPaths...)
+	paths = append(paths, input.EvidencePaths...)
+	paths = append(paths, input.ChangedPaths...)
+	paths = append(paths, input.Protocol.SourceBodyObligations...)
+	return uniquePaths(paths)
+}
+
+func compileCompactPacketEvidenceRefs(input PlanExecutePlannerInput, contract autonomy.AutonomyContract) []string {
+	refs := append([]string(nil), input.RequiredEvidence...)
+	for _, evidence := range contract.Evidence {
+		refs = append(refs, evidence.EvidenceID)
+		if evidence.Handle != "" {
+			refs = append(refs, evidence.Handle)
+		}
+		if evidence.Path != "" {
+			refs = append(refs, evidence.Path)
+		}
+	}
+	return uniqueStrings(refs)
 }
 
 func compileProtocolPathRoleSummary(roles []autonomy.PathRole) []string {

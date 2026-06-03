@@ -20,16 +20,21 @@ type EventAuditReport struct {
 	SchemaVersion          string                         `json:"schema_version"`
 	TotalEvents            int                            `json:"total_events"`
 	AllClear               bool                           `json:"all_clear"`
+	RollbackActive         bool                           `json:"rollback_active"`
 	Contracts              []ContractEventCoverage        `json:"contracts,omitempty"`
 	LifecycleCoverage      LifecycleEventCoverage         `json:"lifecycle_coverage"`
 	PolicyCoverage         PolicyEventCoverage            `json:"policy_coverage"`
 	ObligationCoverage     ObligationEventCoverage        `json:"obligation_coverage"`
 	GateCoverage           GateEventCoverage              `json:"gate_coverage"`
 	GuardFrictionCoverage  GuardFrictionCoverage          `json:"guard_friction_coverage"`
+	ModelExchangeCoverage  ModelExchangeCoverage          `json:"model_exchange_coverage"`
 	TurnPhaseCoverage      TurnPhaseEventCoverage         `json:"turn_phase_coverage"`
 	ReferenceCoverage      ContractReferenceCoverage      `json:"reference_coverage"`
 	SidecarToolCorrelation SidecarToolCorrelationCoverage `json:"sidecar_tool_correlation"`
 	MetadataCoverage       ContractMetadataCoverage       `json:"metadata_coverage"`
+	ReplayClassification   ReplayClassificationReport     `json:"replay_classification"`
+	ReplayMetrics          ReplayMetrics                  `json:"replay_metrics"`
+	PrivacyChecks          ReplayPrivacyChecks            `json:"privacy_checks"`
 	Findings               []EventAuditFinding            `json:"findings,omitempty"`
 }
 
@@ -50,6 +55,7 @@ type ContractEventCoverage struct {
 	GateDecisionCounts     map[string]int `json:"gate_decision_counts,omitempty"`
 	GateKindCounts         map[string]int `json:"gate_kind_counts,omitempty"`
 	GuardFrictionCounts    map[string]int `json:"guard_friction_counts,omitempty"`
+	ModelExchangeCounts    map[string]int `json:"model_exchange_counts,omitempty"`
 	OpenObligations        []string       `json:"open_obligations,omitempty"`
 	ResolvedObligations    []string       `json:"resolved_obligations,omitempty"`
 	WaivedObligations      []string       `json:"waived_obligations,omitempty"`
@@ -143,6 +149,20 @@ type GuardFrictionSafeAlternativeCoverage struct {
 	SafeAlternativeCounts         map[string]int `json:"safe_alternative_counts,omitempty"`
 	VisibleActionClassCounts      map[string]int `json:"visible_action_class_counts,omitempty"`
 	VisibleToolCounts             map[string]int `json:"visible_tool_counts,omitempty"`
+}
+
+type ModelExchangeCoverage struct {
+	Total                       int             `json:"total"`
+	KindCounts                  map[string]int  `json:"kind_counts,omitempty"`
+	PayloadCounts               map[string]int  `json:"payload_counts,omitempty"`
+	ContractsWithModelExchange  []string        `json:"contracts_with_model_exchange,omitempty"`
+	TracePolicyEvents           int             `json:"trace_policy_events"`
+	RollbackControlEvents       int             `json:"rollback_control_events"`
+	RollbackActive              bool            `json:"rollback_active"`
+	RedactionStatusCounts       map[string]int  `json:"redaction_status_counts,omitempty"`
+	RollbackRefs                []EventAuditRef `json:"rollback_refs,omitempty"`
+	EventsMissingProtocolHash   []EventAuditRef `json:"events_missing_protocol_hash,omitempty"`
+	EventsMissingHarnessPayload []EventAuditRef `json:"events_missing_harness_payload,omitempty"`
 }
 
 type TurnPhaseEventCoverage struct {
@@ -284,6 +304,7 @@ func AuditEvents(events []Event, opts EventAuditOptions) EventAuditReport {
 		event.Normalize()
 		state.addEvent(event, rawGateFields)
 	}
+	state.report.ReplayClassification, state.report.ReplayMetrics, state.report.PrivacyChecks = replayIntentForEvents(ordered)
 	state.finish()
 	return state.report
 }
@@ -341,6 +362,8 @@ func (s *eventAuditState) addEvent(event Event, rawGateFields gateAuditFieldSnap
 		s.addGate(event, rawGateFields)
 	case EventGuardFriction:
 		s.addGuardFriction(event)
+	case EventModelExchange:
+		s.addModelExchange(event)
 	}
 }
 
@@ -692,6 +715,51 @@ func (s *eventAuditState) addGuardFriction(event Event) {
 	}
 }
 
+func (s *eventAuditState) addModelExchange(event Event) {
+	s.report.ModelExchangeCoverage.Total++
+	if event.ContractID != "" {
+		incrementContractMap(s.contractCoverage(event.ContractID), "model_exchange", string(EventModelExchange))
+	}
+	if event.ModelExchange == nil {
+		s.report.ModelExchangeCoverage.EventsMissingHarnessPayload = append(s.report.ModelExchangeCoverage.EventsMissingHarnessPayload, auditRef(event, "model_exchange", "model_exchange payload missing"))
+		return
+	}
+	exchange := *event.ModelExchange
+	incrementStringMap(&s.report.ModelExchangeCoverage.KindCounts, exchange.Kind)
+	if exchange.ProtocolHash == "" {
+		s.report.ModelExchangeCoverage.EventsMissingProtocolHash = append(s.report.ModelExchangeCoverage.EventsMissingProtocolHash, auditRef(event, "protocol_hash", "model_exchange missing protocol_hash"))
+	}
+	switch {
+	case exchange.ContextPacket != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "context_packet")
+	case exchange.PermissionSnapshot != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "permission_snapshot")
+	case exchange.FailureDelta != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "failure_delta")
+	case exchange.ModelResponse != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "model_response")
+	case exchange.ValidationSignal != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "validation_signal")
+	case exchange.TraceStorePolicy != nil:
+		s.report.ModelExchangeCoverage.TracePolicyEvents++
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "trace_store_policy")
+		incrementStringMap(&s.report.ModelExchangeCoverage.RedactionStatusCounts, exchange.TraceStorePolicy.RedactionStatus)
+	case exchange.ReplayClassification != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "replay_classification")
+	case exchange.PhaseGatePolicy != nil:
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "phase_gate_policy")
+	case exchange.RollbackControl != nil:
+		s.report.ModelExchangeCoverage.RollbackControlEvents++
+		incrementStringMap(&s.report.ModelExchangeCoverage.PayloadCounts, "rollback_control")
+		if exchange.RollbackControl.Decision != "" && exchange.RollbackControl.Decision != "not_required" {
+			s.report.ModelExchangeCoverage.RollbackActive = true
+			s.report.ModelExchangeCoverage.RollbackRefs = append(s.report.ModelExchangeCoverage.RollbackRefs, auditRef(event, exchange.RollbackControl.Decision, "rollback control active"))
+		}
+	default:
+		s.report.ModelExchangeCoverage.EventsMissingHarnessPayload = append(s.report.ModelExchangeCoverage.EventsMissingHarnessPayload, auditRef(event, "model_exchange", "model_exchange typed payload missing"))
+	}
+}
+
 func (s *eventAuditState) addMetadata(event Event) {
 	if len(event.Metadata.ClientClassifications) == 0 && len(event.Metadata.ProductSignals) == 0 {
 		return
@@ -773,6 +841,7 @@ func (s *eventAuditState) addSidecarIssue(event Event, toolCallID, toolName, rea
 }
 
 func (s *eventAuditState) finish() {
+	finishReplayIntentReport(&s.report.ReplayClassification, &s.report.ReplayMetrics, &s.report.PrivacyChecks)
 	for contractID := range s.expectedContracts {
 		if _, ok := s.referencedContracts[contractID]; !ok {
 			s.report.ReferenceCoverage.MissingExpectedContracts = append(s.report.ReferenceCoverage.MissingExpectedContracts, contractID)
@@ -811,6 +880,7 @@ func (s *eventAuditState) finish() {
 	s.report.PolicyCoverage.ContractsWithPolicy = s.contractsWithMap("policy")
 	s.report.ObligationCoverage.ContractsWithObligations = s.contractsWithMap("obligation")
 	s.report.GateCoverage.ContractsWithGateEvents = s.contractsWithMap("gate")
+	s.report.ModelExchangeCoverage.ContractsWithModelExchange = s.contractsWithMap("model_exchange")
 	s.report.LifecycleCoverage.LifecycleOnlyContracts = s.lifecycleOnlyContracts()
 	s.report.SidecarToolCorrelation.SidecarRequestIDs = sortedKeys(s.sidecarRequestIDs)
 	s.report.SidecarToolCorrelation.ToolCallIDs = sortedKeys(s.toolCallIDs)
@@ -820,6 +890,7 @@ func (s *eventAuditState) finish() {
 	s.report.MetadataCoverage.ClientClassifications = sortedMapKeys(s.report.MetadataCoverage.ClientClassificationCounts)
 	s.report.MetadataCoverage.ProductSignals = sortedMapKeys(s.report.MetadataCoverage.ProductSignalCounts)
 	s.report.GuardFrictionCoverage.TopContracts = sortedGuardFrictionContractCoverages(s.guardFrictionContracts)
+	s.report.RollbackActive = s.report.ModelExchangeCoverage.RollbackActive
 	s.report.Contracts = sortedContractCoverages(s.contracts)
 	sortObligationRefs(s.report.ObligationCoverage.OpenObligations)
 	sortObligationRefs(s.report.ObligationCoverage.UnresolvedObligations)
@@ -833,6 +904,10 @@ func (s *eventAuditState) finish() {
 	sortAuditRefs(s.report.GateCoverage.MissingEnforcementModeRefs)
 	sortAuditRefs(s.report.GateCoverage.MissingSafeAlternativesRefs)
 	sortAuditRefs(s.report.GuardFrictionCoverage.UnclassifiedRefs)
+	sortAuditRefs(s.report.ModelExchangeCoverage.RollbackRefs)
+	sortAuditRefs(s.report.ModelExchangeCoverage.EventsMissingProtocolHash)
+	sortAuditRefs(s.report.ModelExchangeCoverage.EventsMissingHarnessPayload)
+	sortPrivacyRefs(s.report.PrivacyChecks.Refs)
 	sortTurnPhaseContradictions(s.report.TurnPhaseCoverage.Contradictions)
 	slices.Sort(s.report.ReferenceCoverage.MissingExpectedContracts)
 	sortSidecarIssues(s.report.SidecarToolCorrelation.UnmatchedCorrelations)
@@ -945,6 +1020,33 @@ func (s *eventAuditState) addFindings() {
 			ContractIDs: contractIDsFromTurnPhaseContradictions(issues),
 		})
 	}
+	if refs := s.report.ModelExchangeCoverage.EventsMissingProtocolHash; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "model_exchange_missing_protocol_hash",
+			Severity:    "high",
+			Evidence:    fmt.Sprintf("%d model_exchange event(s) lack protocol_hash", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.ModelExchangeCoverage.EventsMissingHarnessPayload; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "model_exchange_missing_typed_payload",
+			Severity:    "high",
+			Evidence:    fmt.Sprintf("%d model_exchange event(s) lack a typed payload", len(refs)),
+			EventIDs:    eventIDsFromAuditRefs(refs),
+			ContractIDs: contractIDsFromAuditRefs(refs),
+		})
+	}
+	if refs := s.report.PrivacyChecks.Refs; len(refs) > 0 {
+		s.report.Findings = append(s.report.Findings, EventAuditFinding{
+			ID:          "contract_event_privacy_forbidden_raw_content",
+			Severity:    "high",
+			Evidence:    fmt.Sprintf("%d forbidden raw-content field(s) or value marker(s) in autonomy event metadata", len(refs)),
+			EventIDs:    eventIDsFromPrivacyRefs(refs),
+			ContractIDs: contractIDsFromPrivacyRefs(refs),
+		})
+	}
 }
 
 func (s *eventAuditState) contractCoverage(contractID string) *ContractEventCoverage {
@@ -1004,6 +1106,10 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 			if len(coverage.GuardFrictionCounts) > 0 {
 				set[contractID] = struct{}{}
 			}
+		case "model_exchange":
+			if len(coverage.ModelExchangeCounts) > 0 {
+				set[contractID] = struct{}{}
+			}
 		}
 	}
 	return sortedKeys(set)
@@ -1012,7 +1118,7 @@ func (s *eventAuditState) contractsWithMap(kind string) []string {
 func (s *eventAuditState) lifecycleOnlyContracts() []string {
 	set := make(map[string]struct{})
 	for contractID, coverage := range s.contracts {
-		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.GateEvents) == 0 && len(coverage.GuardFrictionCounts) == 0 {
+		if len(coverage.LifecycleEvents) > 0 && len(coverage.PolicyEvents) == 0 && len(coverage.ObligationEvents) == 0 && len(coverage.GateEvents) == 0 && len(coverage.GuardFrictionCounts) == 0 && len(coverage.ModelExchangeCounts) == 0 {
 			set[contractID] = struct{}{}
 		}
 	}
@@ -1029,6 +1135,8 @@ func incrementContractMap(coverage *ContractEventCoverage, kind string, key stri
 		incrementStringMap(&coverage.ObligationEvents, key)
 	case "gate":
 		incrementStringMap(&coverage.GateEvents, key)
+	case "model_exchange":
+		incrementStringMap(&coverage.ModelExchangeCounts, key)
 	}
 }
 
@@ -1331,6 +1439,21 @@ func sortTurnPhaseContradictions(issues []TurnPhaseContradiction) {
 	})
 }
 
+func sortPrivacyRefs(refs []ReplayPrivacyRef) {
+	slices.SortFunc(refs, func(a, b ReplayPrivacyRef) int {
+		if c := cmp.Compare(a.Sequence, b.Sequence); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.ContractID, b.ContractID); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(a.EventID, b.EventID); c != 0 {
+			return c
+		}
+		return cmp.Compare(a.Field, b.Field)
+	})
+}
+
 func eventIDsFromAuditRefs(refs []EventAuditRef) []string {
 	set := make(map[string]struct{})
 	for _, ref := range refs {
@@ -1405,6 +1528,26 @@ func eventIDsFromObligationRefs(refs []ObligationAuditRef) []string {
 }
 
 func contractIDsFromObligationRefs(refs []ObligationAuditRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.ContractID != "" {
+			set[ref.ContractID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func eventIDsFromPrivacyRefs(refs []ReplayPrivacyRef) []string {
+	set := make(map[string]struct{})
+	for _, ref := range refs {
+		if ref.EventID != "" {
+			set[ref.EventID] = struct{}{}
+		}
+	}
+	return sortedKeys(set)
+}
+
+func contractIDsFromPrivacyRefs(refs []ReplayPrivacyRef) []string {
 	set := make(map[string]struct{})
 	for _, ref := range refs {
 		if ref.ContractID != "" {
