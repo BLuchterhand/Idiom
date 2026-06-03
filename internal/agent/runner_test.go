@@ -4690,7 +4690,7 @@ func (r *Runner) runChildTask() string {
 	}
 }
 
-func TestRunnerGatesPostReadinessSourceToolWithoutExactProbeContract(t *testing.T) {
+func TestRunnerAllowsPostReadinessSourceToolWithoutExactProbeContract(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/agent/runner_child_tasks.go", "package agent\nfunc runChildTask() {}\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -4753,24 +4753,32 @@ func TestRunnerGatesPostReadinessSourceToolWithoutExactProbeContract(t *testing.
 		t.Fatalf("Run: %v", err)
 	}
 	if !strings.Contains(answer, "runChildTask") {
-		t.Fatalf("expected final answer after terminal gate, got %q", answer)
+		t.Fatalf("expected final answer after honoring follow-up read, got %q", answer)
 	}
-	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
-		t.Fatalf("expected one post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 0 {
+		t.Fatalf("expected no post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
+	successfulProbe := false
 	for _, result := range toolResults {
 		if result.Tool == "go_read_symbol" && strings.TrimSpace(result.Error) == "" {
-			t.Fatalf("gapless post-readiness source probe must not execute successfully, got results=%#v events=%s", toolResults, formatRunEventsForTest(events))
+			successfulProbe = true
 		}
 	}
+	if !successfulProbe {
+		t.Fatalf("gapless post-readiness source probe should execute through normal permissions, got results=%#v events=%s", toolResults, formatRunEventsForTest(events))
+	}
+	allowedProbe := false
 	for _, event := range events {
 		if event.Role == "permission_decision" && strings.Contains(event.Content, `"tool":"go_read_symbol"`) && strings.Contains(event.Content, `"decision":"allow"`) {
-			t.Fatalf("gapless post-readiness source probe reached permission allow: %s", event.Content)
+			allowedProbe = true
 		}
+	}
+	if !allowedProbe {
+		t.Fatalf("post-readiness source probe should reach permission allow; events=%s", formatRunEventsForTest(events))
 	}
 }
 
-func TestRunnerPostReadinessHostCloseoutFeedbackDoesNotCountAsRunnerRejection(t *testing.T) {
+func TestRunnerPostReadinessRepeatedReadDoesNotForceHostCloseout(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "internal/labels/labels.go", "package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"); err != nil {
 		t.Fatalf("write seed file: %v", err)
@@ -4782,6 +4790,7 @@ func TestRunnerPostReadinessHostCloseoutFeedbackDoesNotCountAsRunnerRejection(t 
 	replies := []string{
 		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
 		`{"tool":"read_file","path":"internal/labels/labels.go"}`,
+		"`ShortLabel` returns `Save changes` in `internal/labels/labels.go`.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -4828,22 +4837,22 @@ func TestRunnerPostReadinessHostCloseoutFeedbackDoesNotCountAsRunnerRejection(t 
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if requests != 2 {
-		t.Fatalf("expected repeated read to host-closeout after feedback, used %d replies", requests)
+	if requests != 3 {
+		t.Fatalf("expected repeated read to continue to model answer, used %d replies", requests)
 	}
 	if !strings.Contains(answer, "Save changes") || !strings.Contains(answer, "internal/labels/labels.go") {
-		t.Fatalf("expected host-owned answer from gathered evidence, got %q", answer)
+		t.Fatalf("expected model answer from gathered evidence, got %q", answer)
 	}
-	if got := countEventsByRole(events, "failure_feedback"); got != 1 {
-		t.Fatalf("expected diagnostic failure_feedback, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "failure_feedback"); got != 0 {
+		t.Fatalf("expected no forced-closeout failure feedback, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
-	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
-		t.Fatalf("expected one post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 0 {
+		t.Fatalf("expected no post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
 	for _, event := range events {
 		if event.Role == "budget_ledger" {
-			if !strings.Contains(event.Content, `"rejected_actions":0`) {
-				t.Fatalf("host closeout feedback must not count as runner rejection: %s", event.Content)
+			if !strings.Contains(event.Content, `"rejected_actions":0`) || !strings.Contains(event.Content, `"stop_reason":"model_final"`) {
+				t.Fatalf("post-readiness repeated read should not be a forced rejection/closeout: %s", event.Content)
 			}
 			return
 		}
@@ -4870,6 +4879,7 @@ func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSuffic
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":20}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":21,"end_line":40}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":41,"end_line":60}`,
+		"`Runner.Run` is defined in `internal/agent/runner.go`; the inspected source shows the runner struct and run/finish functions used by the control flow.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -4928,11 +4938,11 @@ func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSuffic
 	if !strings.Contains(answer, "Runner.Run") {
 		t.Fatalf("expected no-tools model synthesis answer, got %q", answer)
 	}
-	if requests >= len(replies) {
-		t.Fatalf("expected sufficient evidence to close before fallback synthesis, used %d/%d replies", requests, len(replies))
+	if requests != len(replies) {
+		t.Fatalf("expected all model-requested reads to be honored before answer, used %d/%d replies", requests, len(replies))
 	}
 	if budgetStop {
-		t.Fatal("expected host-owned read-only closeout before post-readiness budget exhaustion")
+		t.Fatal("post-readiness read followups should not stop at the old budget gate")
 	}
 }
 
@@ -4996,16 +5006,14 @@ func TestRunnerDoesNotAcceptFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "Save changes"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("expected deterministic source-backed answer to contain %q, got:\n%s", want, answer)
-		}
+	if !strings.HasPrefix(answer, "<<QUESTION>>") {
+		t.Fatalf("bad scripted final answer should be replaced by blocker, got:\n%s", answer)
 	}
 	if strings.Contains(answer, "BAD_FALLBACK_NOT_USED") {
-		t.Fatalf("bad scripted final answer was accepted:\n%s", answer)
+		t.Fatalf("bad scripted final answer surfaced:\n%s", answer)
 	}
-	if requests >= len(replies) {
-		t.Fatalf("expected deterministic closeout before scripted fallback answer, used %d requests", requests)
+	if requests != len(replies) {
+		t.Fatalf("expected requested reads and final bad answer attempt to run, used %d/%d requests", requests, len(replies))
 	}
 }
 
@@ -5028,6 +5036,7 @@ func TestRunnerAnswersAfterRepeatedInvalidPostReadinessFollowupsWhenEvidenceSuff
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":20}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":180,"named_gap":"Runner.Run branch in internal/agent/runner.go","why_not_answering":"need a broad source refresh"}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":180,"named_gap":"Runner.Run branch in internal/agent/runner.go","why_not_answering":"need a broad source refresh"}`,
+		"`Runner.Run` is visible in `internal/agent/runner.go`; the inspected source anchors the harness control flow in that file.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -5087,13 +5096,13 @@ func TestRunnerAnswersAfterRepeatedInvalidPostReadinessFollowupsWhenEvidenceSuff
 		t.Fatalf("expected no-tools model synthesis answer, got %q", answer)
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected sufficient evidence to close after invalid post-readiness retries without another model synthesis call, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected all requested reads to be honored before model answer, used %d/%d replies", requests, len(replies))
 	}
-	if rejected != 1 {
-		t.Fatalf("expected budget ledger to record two rejected invalid post-readiness actions, got %d matching ledgers", rejected)
+	if rejected != 0 {
+		t.Fatalf("expected no rejected invalid post-readiness actions, got %d matching ledgers", rejected)
 	}
-	if !budgetStop {
-		t.Fatal("expected budget ledger stop_reason post_readiness_gap_invalid_budget_exhausted")
+	if budgetStop {
+		t.Fatal("post-readiness read followups should not stop at the old invalid-gap budget")
 	}
 }
 
@@ -11364,7 +11373,7 @@ func TestRunnerDoesNotSalvageMalformedWriteJSONPrefixInReadOnlyMode(t *testing.T
 
 	replies := []string{
 		`{"tool":"edit_file","path":"README.md","old_text":"old","new_text":"new" - apply this edit`,
-		"Blocked by malformed write request.",
+		"<<QUESTION>>: Blocked by malformed write request.",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -11416,7 +11425,7 @@ func TestRunnerDoesNotSalvageMalformedWriteJSONPrefixInReadOnlyMode(t *testing.T
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if answer != "Blocked by malformed write request." {
+	if answer != "<<QUESTION>>: Blocked by malformed write request." {
 		t.Fatalf("unexpected answer %q", answer)
 	}
 	if toolParseResults != 1 {
@@ -15363,8 +15372,8 @@ func TestRunnerArchitectureReturnsChildPacketWithoutParentFollowups(t *testing.T
 			t.Fatalf("expected final acceptance signal %q, got roles %v", want, roles)
 		}
 	}
-	if requests != 4 {
-		t.Fatalf("expected parent to synthesize once after the child packet, used %d/%d replies", requests, len(replies))
+	if requests != 5 {
+		t.Fatalf("expected parent to honor follow-up reads before final answer, used %d/%d replies", requests, len(replies))
 	}
 }
 
@@ -16124,6 +16133,62 @@ func TestEmitAcceptedAnswerSignalsPrefersExactProbePathsOverNoisyPinnedPaths(t *
 	}
 }
 
+func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.",
+		},
+	}
+	events := map[string]map[string]any{}
+	runner.OnEvent = func(event RunEvent) {
+		switch event.Role {
+		case "readiness_check", "final_answer_critic":
+			var fields map[string]any
+			_ = json.Unmarshal([]byte(event.Content), &fields)
+			events[event.Role] = fields
+		}
+	}
+	runner.emitAcceptedAnswerSignals(
+		"The TUI chat input newline wrap and upward shift issue is in `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display.",
+		[]workspace.ToolResult{
+			{
+				Tool:    "context_pack",
+				Summary: "Context pack wrote packet",
+				Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read internal/app/rendering.go lines 1-9",
+				Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+			},
+		},
+	)
+
+	readiness := events["readiness_check"]
+	if readiness["acceptance_contract"] != finalAnswerAcceptanceSchema {
+		t.Fatalf("expected acceptance contract field, got %#v", readiness)
+	}
+	if readiness["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
+		readiness["action"] != "block" ||
+		readiness["blocker_kind"] != "answer_objective_unmet" ||
+		readiness["objective_relevance"] != "checked" {
+		t.Fatalf("expected blocked objective relevance readiness, got %#v", readiness)
+	}
+	if paths, _ := readiness["evidence_paths"].([]any); len(paths) != 0 {
+		t.Fatalf("direct_answer alias blocked telemetry must not fall back to unrelated evidence paths, got %#v", paths)
+	}
+	critic := events["final_answer_critic"]
+	if critic["acceptance_contract"] != finalAnswerAcceptanceSchema ||
+		critic["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
+		critic["blocker_kind"] != "answer_objective_unmet" {
+		t.Fatalf("expected final critic to carry rejected acceptance fields, got %#v", critic)
+	}
+}
+
 func TestEmitAcceptedAnswerSignalsImplementationEvidenceUsesChangedPaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -16277,6 +16342,70 @@ func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T
 	}
 }
 
+func TestReadOnlyEvidenceCompletionRejectionAppliesToDirectAnswerAliasWithoutReadiness(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "Find why the TUI chat input first wraps to a newline.",
+		},
+	}
+	result, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"I cannot determine from the available evidence why the TUI chat input first wraps to a newline.",
+		nil,
+	)
+	if !rejected {
+		t.Fatal("expected direct_answer alias without readiness/source evidence to be rejected")
+	}
+	if !strings.Contains(result.Error, "bounded codebase evidence") {
+		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionSkipsConversationWithoutReadiness(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        "conversation",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "In two short sentences, explain ordinary chat that does not ask for repository work.",
+		},
+	}
+	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"Ordinary chat should be handled as direct conversation without workspace tools.",
+		nil,
+	)
+	if rejected {
+		t.Fatal("conversation/direct_answer without readiness should not be forced through the alias evidence gate")
+	}
+}
+
+func TestReadOnlyEvidenceCompletionRejectionAllowsSourceBackedInsufficientEvidenceAlias(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "direct_answer",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"context_pack", "search_content", "read_file"},
+			Objective:         "Find why the TUI chat input first wraps to a newline.",
+		},
+	}
+	_, rejected := runner.readOnlyEvidenceCompletionRejection(
+		"I cannot determine from the available evidence why the TUI chat input first wraps to a newline.",
+		[]workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string { return strings.TrimSpace(rawTool) }\n",
+		}},
+	)
+	if rejected {
+		t.Fatal("source-backed insufficient-evidence direct_answer alias should reach final acceptance instead of completion-gate rejection")
+	}
+}
+
 func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -16312,7 +16441,7 @@ func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t 
 	}
 }
 
-func TestHostOwnedReadOnlyCloseoutUsesGatheredEvidence(t *testing.T) {
+func TestHostOwnedReadOnlyCloseoutDisabledForGatheredEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "architecture_assessment",
@@ -16341,16 +16470,8 @@ func TestHostOwnedReadOnlyCloseoutUsesGatheredEvidence(t *testing.T) {
 		},
 	}
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-	if !ok {
-		t.Fatal("expected host-owned read-only closeout from gathered evidence")
-	}
-	for _, want := range []string{"task", "subagent", "internal/agent/runner_child_tasks.go", "internal/agent/runner.go"} {
-		if !strings.Contains(answer, want) {
-			t.Fatalf("closeout answer missing %q:\n%s", want, answer)
-		}
-	}
-	if strings.HasPrefix(answer, "<<QUESTION>>") {
-		t.Fatalf("host-owned read-only closeout must answer, got blocker:\n%s", answer)
+	if ok {
+		t.Fatalf("host-owned read-only closeout must not synthesize final answers, got %q", answer)
 	}
 }
 
@@ -16373,7 +16494,7 @@ func TestHostOwnedReadOnlyCloseoutDoesNotUseCandidateOnlyEvidence(t *testing.T) 
 	}
 }
 
-func TestHostOwnedReadOnlyCloseoutIgnoresNoisyMentionedPaths(t *testing.T) {
+func TestHostOwnedReadOnlyCloseoutDisabledForNoisyMentionedPaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			Contract:          "architecture_assessment",
@@ -16395,16 +16516,8 @@ func TestHostOwnedReadOnlyCloseoutIgnoresNoisyMentionedPaths(t *testing.T) {
 		},
 	}
 	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
-	if !ok {
-		t.Fatal("expected host-owned closeout from accepted source evidence")
-	}
-	if !strings.Contains(answer, "internal/agent/runner_child_tasks.go") {
-		t.Fatalf("closeout answer missing accepted source evidence path:\n%s", answer)
-	}
-	for _, forbidden := range []string{".idiom/discovery/queries/query.json", "testdata/swe/generated-logs/direct.jsonl"} {
-		if strings.Contains(answer, forbidden) {
-			t.Fatalf("closeout answer used noisy mentioned path %q:\n%s", forbidden, answer)
-		}
+	if ok {
+		t.Fatalf("host-owned read-only closeout must not synthesize final answers from noisy evidence, got %q", answer)
 	}
 }
 
@@ -16793,6 +16906,7 @@ func TestReadOnlyEvidenceCompletionRejectionAllowsAnswerAfterEvidence(t *testing
 			TaskFamily:        "conversation",
 			PermissionProfile: "read_only_workspace",
 			AllowedTools:      []string{"search_content", "read_file"},
+			Objective:         "What does ShortLabel return in internal/labels/labels.go?",
 		},
 	}
 	_, rejected := runner.completionGateRejection(
@@ -16880,6 +16994,115 @@ func TestReadOnlyExplanationCompletionRejectionRejectsUnsupportedExtraDetail(t *
 	)
 	if !rejected {
 		t.Fatalf("expected unsupported extra symbol detail to be rejected")
+	}
+	if !strings.Contains(result.Error, "runWorkbranchChildTask") {
+		t.Fatalf("expected rejection to name unsupported detail, got %#v", result)
+	}
+}
+
+func TestReadOnlyExplanationCompletionRejectionAcceptsComplexSourceBackedDetail(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "go_read_symbol",
+			Summary: "Read Foo in internal/app/foo.go lines 10-20",
+			Output:  "func Foo() { return }",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/app/bar.go lines 1-8",
+			Output: strings.Join([]string{
+				"1:package app",
+				"2:type BarHandler struct{}",
+				"3:type DebugLoggerOptions struct{}",
+				"4:const system_prompt_digest = \"sha256:abc123\"",
+			}, "\n"),
+		},
+	}
+	_, rejected := runner.completionGateRejection(
+		"`Foo` is the inspected entry point, and the same inspected source body also defines `BarHandler`, `DebugLoggerOptions`, `system_prompt_digest`, and the `sha256:` digest marker.",
+		results,
+		1,
+		nil,
+		false,
+	)
+	if rejected {
+		t.Fatalf("complex source-backed answer was rejected")
+	}
+}
+
+func TestReadOnlyExplanationCompletionRejectionAcceptsRedactedModeDetailsFromInspectedBodies(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/transcript/debuglog.go lines 1-70",
+			Output: strings.Join([]string{
+				"19:DebugLogModeRedacted DebugLogMode = \"redacted\"",
+				"20:DebugLogModeFull DebugLogMode = \"full\"",
+				"23:type DebugLoggerOptions struct {",
+				"44:type DebugLogger struct {",
+				"59:SystemPrompt string `json:\"system_prompt,omitempty\"`",
+				"60:SystemPromptDigest string `json:\"system_prompt_digest,omitempty\"`",
+				"61:WorkspaceRoot string `json:\"workspace_root,omitempty\"`",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/transcript/debuglog_test.go lines 40-76",
+			Output: strings.Join([]string{
+				"40:if err := logger.LogMessage(\"user\", \"api_key=secret123 path=/tmp/workspace/config.json\"); err != nil {",
+				"51:if digest := records[0][\"system_prompt_digest\"]; digest == nil || !strings.HasPrefix(digest.(string), \"sha256:\") {",
+				"54:if records[0][\"workspace_root\"] != \".\" {",
+			}, "\n"),
+		},
+	}
+	_, rejected := runner.completionGateRejection(
+		"`DebugLogModeRedacted` is the redacted `DebugLogger` mode; the inspected source and tests show `DebugLoggerOptions`, `SystemPrompt`, `system_prompt`, `system_prompt_digest`, the `sha256:` marker, `workspace_root`, `secret123`, and the contrasting `DebugLogModeFull` mode.",
+		results,
+		1,
+		nil,
+		false,
+	)
+	if rejected {
+		t.Fatalf("redacted-mode details from inspected source bodies were rejected")
+	}
+}
+
+func TestReadOnlyExplanationCompletionRejectionDoesNotLetUncertaintyWaiveOtherUnsupportedDetails(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "architecture_assessment",
+			TaskFamily:        "architecture",
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "go_read_symbol",
+		Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-132",
+		Output:  "func (r *Runner) runChildTask(...) workspace.ToolResult { return workspace.ToolResult{} }",
+	}}
+	result, rejected := runner.completionGateRejection(
+		"`Runner.runChildTask` may include other setup. Separately, `Runner.runWorkbranchChildTask` applies the write-enabled variant.",
+		results,
+		1,
+		nil,
+		false,
+	)
+	if !rejected {
+		t.Fatalf("expected unsupported detail outside the uncertain claim to be rejected")
 	}
 	if !strings.Contains(result.Error, "runWorkbranchChildTask") {
 		t.Fatalf("expected rejection to name unsupported detail, got %#v", result)
@@ -18725,11 +18948,11 @@ func TestCorrectedNamedGapRetryIsAllowedOnce(t *testing.T) {
 	if foundMissingGapRejection {
 		t.Fatalf("discovery_query alone should not trigger readiness; read_file should not be rejected for missing named gap, roles=%v", eventRolesFor(events))
 	}
-	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
-		t.Fatalf("expected one post-readiness terminal gate decision, got %d; roles=%v", got, eventRolesFor(events))
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 0 {
+		t.Fatalf("expected no post-readiness terminal gate decision, got %d; roles=%v", got, eventRolesFor(events))
 	}
-	if got := countEventsByRole(events, "post_readiness_gap_declared"); got != 1 {
-		t.Fatalf("expected one declared post-readiness gap after full contract, got %d; roles=%v", got, eventRolesFor(events))
+	if got := countEventsByRole(events, "post_readiness_gap_declared"); got != 0 {
+		t.Fatalf("expected no declared post-readiness gap requirement, got %d; roles=%v", got, eventRolesFor(events))
 	}
 	if got := countEventsByRole(events, "rejection_retry_blocked"); got != 0 {
 		t.Fatalf("expected no rejection_retry_blocked, got %d; roles=%v", got, eventRolesFor(events))
@@ -20832,25 +21055,33 @@ func TestMissingRequiredEvidenceSkipsSemanticLabels(t *testing.T) {
 // confidence demotion.
 func TestConversationLaneWithoutSemanticEval(t *testing.T) {
 	cases := []struct {
-		family   string
-		contract string
-		want     bool
+		name       string
+		family     string
+		contract   string
+		permission string
+		objective  string
+		want       bool
 	}{
-		{"conversation", "direct_answer", true},
-		{"conversation", "implementation_result", false},
-		{"architecture", "direct_answer", false},
-		{"architecture", "architecture_assessment", false},
-		{"investigate_then_implement", "implementation_result", false},
+		{"legacy conversation without read-only permission", "conversation", "direct_answer", "", "Explain readiness.", true},
+		{"read-only conversation with relevance contract", "conversation", "direct_answer", "read_only_workspace", "Explain readiness.", false},
+		{"direct-answer alias with relevance contract", "direct_answer", "direct_answer", "read_only_workspace", "Explain readiness.", false},
+		{"empty objective cannot be semantically checked", "conversation", "direct_answer", "read_only_workspace", "", true},
+		{"conversation implementation result", "conversation", "implementation_result", "read_only_workspace", "Explain readiness.", false},
+		{"architecture direct answer", "architecture", "direct_answer", "read_only_workspace", "Explain readiness.", false},
+		{"architecture assessment", "architecture", "architecture_assessment", "read_only_workspace", "Explain readiness.", false},
+		{"implementation result", "investigate_then_implement", "implementation_result", "guarded_workspace_write", "Explain readiness.", false},
 	}
 	for _, c := range cases {
 		brief := workerruntime.WorkerRuntimeBrief{
-			TaskFamily: c.family,
-			Contract:   c.contract,
+			TaskFamily:        c.family,
+			Contract:          c.contract,
+			PermissionProfile: c.permission,
+			Objective:         c.objective,
 		}
 		got := conversationLaneWithoutSemanticEval(brief)
 		if got != c.want {
-			t.Errorf("conversationLaneWithoutSemanticEval(%q, %q) = %v, want %v",
-				c.family, c.contract, got, c.want)
+			t.Errorf("%s: conversationLaneWithoutSemanticEval(%q, %q, %q) = %v, want %v",
+				c.name, c.family, c.contract, c.permission, got, c.want)
 		}
 	}
 }

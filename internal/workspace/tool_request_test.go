@@ -1195,6 +1195,42 @@ func TestShouldClearBroadInspectionLockRequiresRelevantSuccessfulNarrowing(t *te
 	}
 }
 
+func TestStructuredNarrowingUsesSharedRegistryPredicate(t *testing.T) {
+	mgr := NewManager(testWorkspaceConfig())
+	for _, lang := range LanguageRegistry() {
+		for capability, tool := range lang.Tools {
+			req := ToolRequest{Tool: tool}
+			if !IsNarrowingRequest(req) {
+				t.Fatalf("%s tool %s for %s should be narrowing", lang.Name, tool, capability)
+			}
+			if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
+				t.Fatalf("%s tool %s for %s should clear broad inspection lock", lang.Name, tool, capability)
+			}
+		}
+	}
+
+	for _, spec := range supplementalLanguageToolSpecs {
+		tool := spec.Tool
+		req := ToolRequest{Tool: tool}
+		if !IsNarrowingRequest(req) {
+			t.Fatalf("legacy language helper %s should be narrowing", tool)
+		}
+		if !mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
+			t.Fatalf("legacy language helper %s should clear broad inspection lock", tool)
+		}
+	}
+
+	for _, tool := range []string{"mcp:semantic_search", "recovery_inspect", "context_unregistered"} {
+		req := ToolRequest{Tool: tool}
+		if IsNarrowingRequest(req) {
+			t.Fatalf("%s should not be narrowing", tool)
+		}
+		if mgr.ShouldClearBroadInspectionLock(req, ToolResult{Tool: tool, Summary: "ok"}) {
+			t.Fatalf("%s should not clear broad inspection lock", tool)
+		}
+	}
+}
+
 func TestScopedListFilesIsNarrowingNotBroadInspection(t *testing.T) {
 	if !IsBroadInspectionRequest(ToolRequest{Tool: "list_files", Path: "."}) {
 		t.Fatal("root list_files should be broad inspection")

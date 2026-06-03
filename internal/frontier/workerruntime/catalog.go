@@ -372,47 +372,16 @@ func toolManifestOptionsForProfile(profile ToolCapabilityProfile) workspace.Tool
 }
 
 func readOnlyDiscoveryToolNames() []string {
-	return []string{
-		"search_files",
-		"search_content",
-		"read_file",
-		"file_stats",
-		"code_navigate",
-		"read_only_capability",
-		"source_sanity",
-		"harness_audit",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"discovery_query",
-		"structural_search",
-		"task",
-		"note",
-	}
+	names := mergeStrings(workspace.RuntimeSourceInspectionToolNames(), []string{"read_only_capability", "harness_audit"})
+	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
+	return mergeStrings(names, []string{"task", "note"})
 }
 
 func planSubmissionReviewToolNames() []string {
-	return []string{
-		"read_file",
-		"file_stats",
-		"code_navigate",
-		"source_sanity",
-		"harness_audit",
-		"harness_feedback",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"discovery_query",
-		"structural_search",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"submit_plan",
-	}
+	names := mergeStrings([]string{"read_file", "file_stats", "code_navigate", "source_sanity"}, []string{"harness_audit", "harness_feedback"})
+	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
+	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
+	return mergeStrings(names, []string{"submit_plan"})
 }
 
 func planSubmissionPlannerToolNames() []string {
@@ -420,60 +389,23 @@ func planSubmissionPlannerToolNames() []string {
 }
 
 func guardedWriteToolNames() []string {
-	return []string{
-		"task_ledger",
-		"task",
-		"pwd",
-		"search_files",
-		"search_content",
-		"read_file",
-		"file_stats",
-		"code_navigate",
-		"source_sanity",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"discovery_query",
-		"structural_search",
-		"git_status",
-		"git_diff",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"shell",
-		"mkdir",
-		"edit_file",
-		"write_file",
-		"append_file",
-		"apply_patch",
-		"delegate_edit",
-		"submit_plan",
-		"go_move_declarations",
-	}
+	names := []string{"task_ledger", "task", "pwd"}
+	names = mergeStrings(names, workspace.RuntimeSourceInspectionToolNames())
+	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
+	names = mergeStrings(names, []string{"git_status", "git_diff"})
+	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
+	names = mergeStrings(names, []string{"shell"})
+	names = mergeStrings(names, workspace.WorkspaceWriteToolNames())
+	return mergeStrings(names, []string{"submit_plan"})
 }
 
 func implementationScopedEditToolNames() []string {
 	names := append([]string{}, workspace.WorkspaceWriteToolNames()...)
-	names = append(names,
-		"read_file",
-		"code_navigate",
-		"submit_plan",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"discovery_query",
-		"structural_search",
-		"dependency_graph",
-		"ctags_symbols",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"source_sanity",
-	)
+	names = mergeStrings(names, []string{"read_file", "code_navigate", "submit_plan"})
+	names = mergeStrings(names, workspace.RuntimeContextDiscoveryToolNames())
+	names = mergeStrings(names, []string{"dependency_graph", "ctags_symbols"})
+	names = mergeStrings(names, workspace.RuntimeHistoryInspectionToolNames())
+	names = mergeStrings(names, []string{"source_sanity"})
 	return names
 }
 

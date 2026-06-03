@@ -31,9 +31,9 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 		claims = append(claims, AnswerClaim{
 			Text:     line,
 			Kind:     ClaimCommandResult,
-			Target:   "verification",
+			Target:   TargetVerification,
 			Line:     lineNumber,
-			Severity: "blocking",
+			Severity: SeverityBlocking,
 			Reason:   "verification claim requires command_result evidence",
 		})
 	}
@@ -41,9 +41,9 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 		claims = append(claims, AnswerClaim{
 			Text:     line,
 			Kind:     Change,
-			Target:   "changed_path",
+			Target:   TargetChangedPath,
 			Line:     lineNumber,
-			Severity: "blocking",
+			Severity: SeverityBlocking,
 			Reason:   "change claim requires diff_write evidence",
 		})
 	}
@@ -55,7 +55,7 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 			Kind:     SourceLocation,
 			Target:   target,
 			Line:     startLine,
-			Severity: "blocking",
+			Severity: SeverityBlocking,
 			Reason:   "source location claim requires source_body or symbol_body evidence covering the cited line",
 		})
 		return claims
@@ -67,7 +67,7 @@ func extractClaimsFromLine(line string, lineNumber int) []AnswerClaim {
 			Kind:     Path,
 			Target:   target,
 			Line:     lineNumber,
-			Severity: "blocking",
+			Severity: SeverityBlocking,
 			Reason:   "path reference requires path or packet evidence",
 		})
 	}

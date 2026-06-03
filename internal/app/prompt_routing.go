@@ -392,6 +392,11 @@ func (m *Model) runtimeBriefForRoute(route turnRoutePlan, prompt string) workerr
 
 func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, prompt string) workerruntime.WorkerRuntimeBrief {
 	brief := turnRoutePlanRuntimeBrief(route, mode, m.workspaceAllowedTools())
+	if m != nil && m.planExecuteActive && strings.TrimSpace(m.forcedTaskFamily) == "direct_question" {
+		brief.PermissionProfile = "conversation_only"
+		brief.AllowedTools = nil
+		brief.RequiredEvidence = nil
+	}
 	brief.Objective = strings.TrimSpace(pathparse.ScopeToBriefBody(prompt))
 	if brief.Objective == "" {
 		brief.Objective = strings.TrimSpace(prompt)

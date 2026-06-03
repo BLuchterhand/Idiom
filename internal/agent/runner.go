@@ -321,16 +321,13 @@ func (r *Runner) Run(
 				}
 			}
 		}
-		// Schema-level enforcement of closure-biased contracts: once the
-		// lane has reached answer readiness, received a child packet, or
-		// is in a scoped required-path implementation packet, mark named_gap
-		// and why_not_answering as required on every read-class tool. Missing
-		// fields fail at the model's tool-call decoder instead of being
-		// chased only through prose rejections.
-		if delegatedReadOnlyAnswerReady || postChildPacketActive || writeReadyPacketReadContractActive(r.RuntimeBrief, collectedResults) || implementationScopedEditSurfaceActive(r.RuntimeBrief, collectedResults) {
-			// Strip broad discovery tools from the native transport array
-			// when the lane has reached answer readiness. The model should
-			// only have narrow, targeted reads available — not broad search.
+		// Mutation lanes can still enter an explicit write-ready surface
+		// where the contract, not answer readiness, constrains further reads.
+		// Read-only readiness and child packets are advisory evidence states;
+		// they must not hide or reshape discovery tools. If the model asks for
+		// more source evidence, normal tool permissions should honor that
+		// request unless the active lane explicitly forbids it.
+		if writeReadyPacketReadContractActive(r.RuntimeBrief, collectedResults) || implementationScopedEditSurfaceActive(r.RuntimeBrief, collectedResults) {
 			tools = stripPostReadinessBroadTools(tools)
 			tools = applyPostReadinessSchemaRequirements(tools)
 		}
@@ -453,20 +450,23 @@ func (r *Runner) Run(
 				}
 			}
 			value = decorated
-			if blockerKind, reason := r.finalAnswerBlockerKind(value, collectedResults); blockerKind == "non_answer_prose" &&
-				!strings.HasPrefix(strings.TrimSpace(value), "<<QUESTION>>") &&
-				(looksLikeMetaIntentRestatement(value) || finishShouldOverrideSourceEcho(value)) {
-				blockerResult := workspace.ToolResult{
-					Tool:    "completion_gate",
-					Summary: "Final answer rejected by blocker check",
-					Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, value, collectedResults),
+			if blockerKind, reason := r.finalAnswerBlockerKind(value, collectedResults); blockerKind != "" && !strings.HasPrefix(strings.TrimSpace(value), "<<QUESTION>>") {
+				shouldOverride := blockerKind != "non_answer_prose" ||
+					looksLikeMetaIntentRestatement(value) ||
+					finishShouldOverrideSourceEcho(value)
+				if shouldOverride {
+					blockerResult := workspace.ToolResult{
+						Tool:    "completion_gate",
+						Summary: "Final answer rejected by blocker check",
+						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, value, collectedResults),
+					}
+					value = r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
+					stopReason = blockerKind
+					r.emitEvent(RunEvent{
+						Role:    "final_answer_blocker_override",
+						Content: fmt.Sprintf("finish rejected a final answer that the %s blocker check rejected; replaced model text with deterministic blocker narrative", blockerKind),
+					})
 				}
-				value = r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
-				stopReason = blockerKind
-				r.emitEvent(RunEvent{
-					Role:    "final_answer_blocker_override",
-					Content: fmt.Sprintf("finish rejected a final answer that the %s blocker check marked non-user-facing; replaced model text with deterministic blocker narrative", blockerKind),
-				})
 			}
 			// Last-resort gate: no XML tool-call markup ever reaches
 			// the app layer as a final answer. Even if the upstream
@@ -760,27 +760,9 @@ func (r *Runner) Run(
 				r.emitToolRequestNormalizerEvent("requires_terminal_action", "deterministic_candidate_recovery", req, nil, "")
 				r.emitEvent(RunEvent{Role: "completion_recovery_auto_candidate", Content: fmt.Sprintf("completion recovery ignored non-terminal planner prose and issued %s for %s", req.Tool, planThenExecuteRequestTargetPath(req))})
 			} else if strings.TrimSpace(reply) == "" {
-				if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRequiredSourceRead(collectedResults); recovered {
+				if recoveredReq, recoveredRaw, event, recovered := r.deterministicEmptyReplyRecovery(collectedResults); recovered {
 					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing source read before another plan attempt", req.Path)})
-				} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationRequiredPathRead(collectedResults); recovered {
-					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing bounded read before another implementation attempt", req.Path)})
-				} else if recoveredReq, recoveredRaw, recovered := r.deterministicImplementationEvidencePathRead(collectedResults); recovered {
-					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_evidence_read", Content: fmt.Sprintf("completion recovery found single implementation evidence path %s; issuing bounded read before another implementation attempt", req.Path)})
-				} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryTargetRead(collectedResults); recovered {
-					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_target_read", Content: fmt.Sprintf("completion recovery found candidate target %s in the runtime brief; issuing bounded read before another plan attempt", req.Path)})
-				} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoverySearch(collectedResults); recovered {
-					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_search", Content: fmt.Sprintf("completion recovery found only context-packet candidates; issuing bounded literal search %q", req.Pattern)})
-				} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryUnreadCandidateRead(collectedResults); recovered {
-					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_read", Content: fmt.Sprintf("completion recovery found unread higher-confidence candidate path %s; issuing bounded read before another plan attempt", req.Path)})
-				} else if recoveredReq, recoveredRaw, recovered := r.deterministicNoWriteRecoveryRead(collectedResults); recovered {
-					req, raw, ok = recoveredReq, recoveredRaw, true
-					r.emitEvent(RunEvent{Role: "completion_recovery_auto_read", Content: fmt.Sprintf("completion recovery found candidate path %s after literal search; issuing bounded read before another final-answer attempt", req.Path)})
+					r.emitEvent(event)
 				}
 			}
 		}
@@ -4325,7 +4307,11 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) *workerruntime.ReadinessState {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	readiness := &workerruntime.ReadinessState{}
-	readOnlyLedger := readOnlyAnswerabilityForResults(brief, results)
+	readOnlyBrief := brief
+	if readOnlyDirectAnswerLane(brief) {
+		readOnlyBrief = readOnlyDirectAnswerAcceptanceLedgerBrief(brief)
+	}
+	readOnlyLedger := readOnlyAnswerabilityForResults(readOnlyBrief, results)
 	addClosed := func(values ...string) {
 		readiness.ClosedClaims = mergeRunnerStateStrings(readiness.ClosedClaims, values)
 	}
@@ -4485,14 +4471,11 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 		readiness.ReadyToAnswer = false
 		readiness.ReadyToVerify = true
 		addOpen("verification_result_missing")
-	} else if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
-		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) &&
-		readOnlyLedger.Answerable() {
+	} else if readOnlyDirectAnswerLane(brief) && readOnlyLedger.Answerable() {
 		readiness.ReadyToAnswer = true
 		addClosed("read_only_evidence_ready")
 		readiness.FurtherReadsRequire = "one exact missing claim and one exact bounded probe"
-	} else if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
-		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+	} else if readOnlyDirectAnswerLane(brief) {
 		if len(readOnlyLedger.CandidatePaths) > 0 {
 			addOpen("read_only_source_body_evidence_pending")
 			readiness.FurtherReadsRequire = "one source-body read from a localized candidate, or one exact missing claim and bounded probe"
@@ -6527,37 +6510,19 @@ func postReadinessGapScope(agent string, delegatedReadOnlyAnswerReady bool, post
 	return ""
 }
 
-// postReadinessGapScopeForBrief is the brief-aware variant used by
-// the main loop. The plain postReadinessGapScope returns
-// "answer_readiness_reached" or "child_packet_available" whenever a
-// delegated read-only child reported sufficient evidence (the former
-// when readiness propagated up directly, the latter after a `task`
-// tool returned a packet). Both gates were designed for parents
-// whose deliverable is an ANSWER from gathered evidence; they
-// punish post-readiness reads without a named_gap.
-//
-// For mutation parents (refine draft, refine patch, plan-execute,
-// etc.) the parent's deliverable is a WRITE, not an answer. The
-// child's evidence is consumed to commit the write — the parent
-// isn't done until RequiredEditPaths are satisfied. Suppressing
-// both gap scopes for mutation parents lets the completion gate
-// (which DOES check RequiredEditPaths) own the closure contract
-// instead.
-//
-// The child:* path is still gated normally — children that are
-// themselves read-only correctly answer-now.
+// postReadinessGapScopeForBrief is the brief-aware variant used by the main
+// loop. Read-only answer readiness is advisory: the model may still need
+// another source-body read before it can synthesize a valid answer. This helper
+// therefore suppresses post-readiness gap enforcement for read-only lanes and
+// mutation parents alike; only explicit mutation write-ready surfaces should
+// constrain discovery through the normal lane contract.
 func postReadinessGapScopeForBrief(agent string, delegatedReadOnlyAnswerReady bool, postChildPacketActive bool, req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) string {
 	scope := postReadinessGapScope(agent, delegatedReadOnlyAnswerReady, postChildPacketActive, req)
 	if scope == "" {
 		return scope
 	}
-	if runnerBriefRequiresMutation(brief) && !strings.HasPrefix(strings.TrimSpace(agent), "child:") {
-		// Parent is a mutation lane; child-readiness/packet scopes
-		// don't fulfill the parent's write contract. Defer to the
-		// normal completion gate.
-		return ""
-	}
-	return scope
+	_ = brief
+	return ""
 }
 
 func postReadinessGap(req workspace.ToolRequest) string {
@@ -7526,11 +7491,19 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
 		return workspace.ToolResult{}, false
 	}
-	if brief.Readiness == nil && !readOnlyExplanationGateApplies(brief) {
+	if brief.Readiness == nil &&
+		!readOnlyExplanationGateApplies(brief) &&
+		!workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) {
 		return workspace.ToolResult{}, false
 	}
 	if len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 {
 		return workspace.ToolResult{}, false
+	}
+	if readOnlyDirectAnswerLane(brief) && readOnlyAnswerReportsInsufficientEvidence(reply) {
+		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		if len(ledger.SourceBodyPaths) > 0 || ledger.DiagnosticEvidence {
+			return workspace.ToolResult{}, false
+		}
 	}
 	if genericReadOnlyAnswerEvidenceReady(brief, results) {
 		return workspace.ToolResult{}, false
@@ -8850,7 +8823,7 @@ func sourceGroundingGateApplies(brief workerruntime.WorkerRuntimeBrief) bool {
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) && workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+	if readOnlyDirectAnswerLane(brief) {
 		return true
 	}
 	lowerObjective := strings.ToLower(strings.Join(strings.Fields(brief.Objective), " "))
@@ -9717,7 +9690,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			readPaths = append(readPaths, path)
 		}
 		sort.Strings(readPaths)
-		candidatePaths := planThenExecuteCandidateScopePaths(r.RuntimeBrief, results, 4)
+		candidatePaths := candidateRecoveryScopePaths(r.RuntimeBrief, results, 4)
 		for _, path := range readPaths {
 			if !slices.Contains(candidatePaths, path) {
 				candidatePaths = append([]string{path}, candidatePaths...)
@@ -9736,12 +9709,12 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 				nextAction = "Read/search tools are hidden for this recovery turn because the planner already attempted to close after source evidence. Allowed/candidate paths are not coverage obligations. The next visible action must be one terminal planner outcome: call `submit_plan` using exact source anchors from the read output, answer `Decision: source-satisfied` with current-state evidence, or answer `<<QUESTION>>:` with the exact blocker."
 				hideReads = true
 			} else if gateRejected {
-				if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(r.RuntimeBrief, results, 8); len(unread) > 0 {
+				if unread := unreadCandidateRecoveryScopePathsForRecovery(r.RuntimeBrief, results, 8); len(unread) > 0 {
 					nextAction = "Allowed/candidate paths are not coverage obligations. If the read source is enough, call `submit_plan` using exact source anchors from the read output, answer `Decision: source-satisfied` with current-state evidence, or answer `<<QUESTION>>:` with the exact blocker. If the rejected answer was premature because one concrete edit-safety fact is still missing on another source/test surface, make exactly one bounded source read for a different unread candidate path with a named edit-safety fact: " + strings.Join(unread, ", ") + "."
 				} else {
 					nextAction = "Allowed/candidate paths are not coverage obligations. If the read source is enough, call `submit_plan` using exact source anchors from the read output, answer `Decision: source-satisfied` with current-state evidence, or answer `<<QUESTION>>:` with the exact blocker. If one concrete edit-safety fact is still missing, make exactly one bounded read/search request naming that missing fact instead of repeating the final-answer prose."
 				}
-			} else if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(r.RuntimeBrief, results, 4); len(unread) > 0 {
+			} else if unread := unreadCandidateRecoveryScopePathsForRecovery(r.RuntimeBrief, results, 4); len(unread) > 0 {
 				nextAction = "Allowed/candidate paths are not coverage obligations. Call `submit_plan` using exact source anchors from the read output when enough evidence exists. If source-satisfied closeout depends on another candidate path, read one different unread candidate path with a bounded `read_file` range now: " + strings.Join(unread, ", ") + ". Do not reread a candidate path that already has source evidence."
 			} else {
 				nextAction = "Read/search tools are hidden for this recovery turn because the surfaced candidate source has already been read. Allowed/candidate paths are not coverage obligations. Call `submit_plan` using exact source anchors from the read output, answer `Decision: source-satisfied` with current-state evidence, or answer `<<QUESTION>>:` with the exact blocker. Do not request another read."
@@ -10244,7 +10217,7 @@ func recoveryEvidencePathsForObjective(objective string, results []workspace.Too
 	return paths
 }
 
-func planThenExecuteCandidateScopePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+func candidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
 	if max <= 0 {
 		max = 4
 	}
@@ -10531,8 +10504,8 @@ func runnerEvidencePathIsTest(path string) bool {
 		strings.Contains(path, "/tests/")
 }
 
-func unreadPlanThenExecuteCandidateScopePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	candidates := planThenExecuteCandidateScopePaths(brief, results, max)
+func unreadCandidateRecoveryScopePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	candidates := candidateRecoveryScopePaths(brief, results, max)
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -10547,8 +10520,8 @@ func unreadPlanThenExecuteCandidateScopePaths(brief workerruntime.WorkerRuntimeB
 	return unread
 }
 
-func unreadPlanThenExecuteCandidateScopePathsForRecovery(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	candidates := planThenExecuteCandidateScopePaths(brief, results, max)
+func unreadCandidateRecoveryScopePathsForRecovery(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	candidates := candidateRecoveryScopePaths(brief, results, max)
 	if len(candidates) == 0 {
 		return nil
 	}
@@ -10559,7 +10532,7 @@ func unreadPlanThenExecuteCandidateScopePathsForRecovery(brief workerruntime.Wor
 		if normalized == "" {
 			continue
 		}
-		if planThenExecuteCandidatePathHasMissingFileEvidence(normalized, results) {
+		if candidateRecoveryScopePathHasMissingFileEvidence(normalized, results) {
 			continue
 		}
 		if _, ok := read[normalized]; ok {
@@ -10570,7 +10543,7 @@ func unreadPlanThenExecuteCandidateScopePathsForRecovery(brief workerruntime.Wor
 	return unread
 }
 
-func planThenExecuteCandidatePathHasMissingFileEvidence(path string, results []workspace.ToolResult) bool {
+func candidateRecoveryScopePathHasMissingFileEvidence(path string, results []workspace.ToolResult) bool {
 	normalized := normalizeRunnerPath(path)
 	if normalized == "" {
 		return false
@@ -11390,26 +11363,104 @@ func reasoningSubmitPlanEdits(req workspace.ToolRequest) []workspace.PlanEdit {
 	return append([]workspace.PlanEdit(nil), req.Edits...)
 }
 
-func (r *Runner) deterministicNoWriteRecoveryRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
-	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "search_content" {
-		return workspace.ToolRequest{}, "", false
+type deterministicEmptyReplyRecoveryStep struct {
+	recover  func([]workspace.ToolResult) (workspace.ToolRequest, string, bool)
+	runEvent func(workspace.ToolRequest) RunEvent
+}
+
+func (r *Runner) deterministicEmptyReplyRecovery(results []workspace.ToolResult) (workspace.ToolRequest, string, RunEvent, bool) {
+	for _, step := range r.deterministicEmptyReplyRecoverySteps() {
+		req, raw, ok := step.recover(results)
+		if !ok {
+			continue
+		}
+		return req, raw, step.runEvent(req), true
 	}
-	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
-		return workspace.ToolRequest{}, "", false
+	return workspace.ToolRequest{}, "", RunEvent{}, false
+}
+
+func (r *Runner) deterministicEmptyReplyRecoverySteps() []deterministicEmptyReplyRecoveryStep {
+	return []deterministicEmptyReplyRecoveryStep{
+		{
+			recover: r.deterministicPlanExecuteRequiredSourceRead,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing source read before another plan attempt", req.Path)}
+			},
+		},
+		{
+			recover: r.deterministicImplementationRequiredPathRead,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_required_read", Content: fmt.Sprintf("completion recovery found unread required edit path %s; issuing bounded read before another implementation attempt", req.Path)}
+			},
+		},
+		{
+			recover: r.deterministicImplementationEvidencePathRead,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_evidence_read", Content: fmt.Sprintf("completion recovery found single implementation evidence path %s; issuing bounded read before another implementation attempt", req.Path)}
+			},
+		},
+		{
+			recover: r.deterministicNoWriteRecoveryTargetRead,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_target_read", Content: fmt.Sprintf("completion recovery found candidate target %s in the runtime brief; issuing bounded read before another plan attempt", req.Path)}
+			},
+		},
+		{
+			recover: r.deterministicNoWriteRecoverySearch,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_search", Content: fmt.Sprintf("completion recovery found only context-packet candidates; issuing bounded literal search %q", req.Pattern)}
+			},
+		},
+		{
+			recover: r.deterministicNoWriteRecoveryUnreadCandidateRead,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_read", Content: fmt.Sprintf("completion recovery found unread higher-confidence candidate path %s; issuing bounded read before another plan attempt", req.Path)}
+			},
+		},
+		{
+			recover: r.deterministicNoWriteRecoveryRead,
+			runEvent: func(req workspace.ToolRequest) RunEvent {
+				return RunEvent{Role: "completion_recovery_auto_read", Content: fmt.Sprintf("completion recovery found candidate path %s after literal search; issuing bounded read before another final-answer attempt", req.Path)}
+			},
+		},
 	}
-	paths := planThenExecuteCandidateScopePaths(r.RuntimeBrief, results, 4)
-	if len(paths) == 0 || alreadyReadPath(results, paths[0]) {
+}
+
+func (r *Runner) noWriteRecoveryAllowed(results []workspace.ToolResult) bool {
+	return r != nil &&
+		r.unscopedNoWriteCompletionRecoveryApplies(results) &&
+		!r.unscopedImplementationWriteReadyAfterNoWriteGate(results)
+}
+
+func noWriteRecoveryReadRequest(path, namedGap, whyNotAnswering string) (workspace.ToolRequest, string, bool) {
+	path = strings.TrimSpace(filepath.ToSlash(path))
+	if path == "" {
 		return workspace.ToolRequest{}, "", false
 	}
 	req := workspace.ToolRequest{
 		Tool:            "read_file",
-		Path:            paths[0],
+		Path:            path,
 		StartLine:       1,
 		EndLine:         180,
-		NamedGap:        "exact current code needed before writing the requested implementation change",
-		WhyNotAnswering: "need current source before the write",
+		NamedGap:        namedGap,
+		WhyNotAnswering: whyNotAnswering,
 	}
 	return req, marshalToolRequestRaw(req), true
+}
+
+func (r *Runner) deterministicNoWriteRecoveryRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
+	if !r.noWriteRecoveryAllowed(results) || lastNonGateTool(results) != "search_content" {
+		return workspace.ToolRequest{}, "", false
+	}
+	paths := candidateRecoveryScopePaths(r.RuntimeBrief, results, 4)
+	if len(paths) == 0 || alreadyReadPath(results, paths[0]) {
+		return workspace.ToolRequest{}, "", false
+	}
+	return noWriteRecoveryReadRequest(
+		paths[0],
+		"exact current code needed before writing the requested implementation change",
+		"need current source before the write",
+	)
 }
 
 func (r *Runner) deterministicPlanExecuteRequiredSourceRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
@@ -12239,10 +12290,7 @@ func planThenExecutePathHasAnyToolEvidence(path string, results []workspace.Tool
 }
 
 func (r *Runner) deterministicNoWriteRecoveryUnreadCandidateRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
-	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) {
-		return workspace.ToolRequest{}, "", false
-	}
-	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+	if !r.noWriteRecoveryAllowed(results) {
 		return workspace.ToolRequest{}, "", false
 	}
 	if r.planThenExecutePlannerPhase() {
@@ -12254,22 +12302,18 @@ func (r *Runner) deterministicNoWriteRecoveryUnreadCandidateRead(results []works
 	if last := lastNonGateTool(results); last != "read_file" && last != "search_content" && last != "code_navigate" {
 		return workspace.ToolRequest{}, "", false
 	}
-	paths := unreadPlanThenExecuteCandidateScopePaths(r.RuntimeBrief, results, 4)
+	paths := unreadCandidateRecoveryScopePaths(r.RuntimeBrief, results, 4)
 	if completionGateResultSeen(results) {
-		paths = unreadPlanThenExecuteCandidateScopePathsForRecovery(r.RuntimeBrief, results, 4)
+		paths = unreadCandidateRecoveryScopePathsForRecovery(r.RuntimeBrief, results, 4)
 	}
 	if len(paths) == 0 {
 		return workspace.ToolRequest{}, "", false
 	}
-	req := workspace.ToolRequest{
-		Tool:            "read_file",
-		Path:            paths[0],
-		StartLine:       1,
-		EndLine:         180,
-		NamedGap:        "exact current code needed before writing the requested implementation change",
-		WhyNotAnswering: "need current source before the write",
-	}
-	return req, marshalToolRequestRaw(req), true
+	return noWriteRecoveryReadRequest(
+		paths[0],
+		"exact current code needed before writing the requested implementation change",
+		"need current source before the write",
+	)
 }
 
 func (r *Runner) deterministicPlanExecuteNonToolCandidateRecovery(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
@@ -12288,10 +12332,7 @@ func (r *Runner) deterministicPlanExecuteChainedSearchRecovery(req workspace.Too
 }
 
 func (r *Runner) deterministicNoWriteRecoveryTargetRead(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
-	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || lastNonGateTool(results) != "" {
-		return workspace.ToolRequest{}, "", false
-	}
-	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+	if !r.noWriteRecoveryAllowed(results) || lastNonGateTool(results) != "" {
 		return workspace.ToolRequest{}, "", false
 	}
 	for _, ref := range r.RuntimeBrief.TargetRefs {
@@ -12299,24 +12340,17 @@ func (r *Runner) deterministicNoWriteRecoveryTargetRead(results []workspace.Tool
 		if path == "" || !recoverySearchPathLooksEditableSource(path) || alreadyReadPath(results, path) {
 			continue
 		}
-		req := workspace.ToolRequest{
-			Tool:            "read_file",
-			Path:            path,
-			StartLine:       1,
-			EndLine:         180,
-			NamedGap:        "exact current code needed before submitting the requested plan",
-			WhyNotAnswering: "need current source before submit_plan can anchor the edit",
-		}
-		return req, marshalToolRequestRaw(req), true
+		return noWriteRecoveryReadRequest(
+			path,
+			"exact current code needed before submitting the requested plan",
+			"need current source before submit_plan can anchor the edit",
+		)
 	}
 	return workspace.ToolRequest{}, "", false
 }
 
 func (r *Runner) deterministicNoWriteRecoverySearch(results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
-	if r == nil || !r.unscopedNoWriteCompletionRecoveryApplies(results) || (lastNonGateTool(results) != "context_pack" && !lastNonGateAttemptWasUnavailableContextPack(results)) {
-		return workspace.ToolRequest{}, "", false
-	}
-	if r.unscopedImplementationWriteReadyAfterNoWriteGate(results) {
+	if !r.noWriteRecoveryAllowed(results) || (lastNonGateTool(results) != "context_pack" && !lastNonGateAttemptWasUnavailableContextPack(results)) {
 		return workspace.ToolRequest{}, "", false
 	}
 	if len(concreteRecoveryEvidencePaths(results, 1)) > 0 || successfulToolSeen(results, "search_content") {
@@ -12525,7 +12559,7 @@ func (r *Runner) planThenExecuteLoopBudgetRecoveryPrompt(req workspace.ToolReque
 	}
 	var unreadCandidatePaths []string
 	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) == 0 {
-		unreadCandidatePaths = unreadPlanThenExecuteCandidateScopePathsForRecovery(r.RuntimeBrief, results, 8)
+		unreadCandidatePaths = unreadCandidateRecoveryScopePathsForRecovery(r.RuntimeBrief, results, 8)
 	}
 	noBodyMissRecovery := planThenExecuteNoBodyMissRecoveryApplies(results)
 	if !planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results) &&
@@ -12643,7 +12677,7 @@ func (r *Runner) planThenExecuteCandidateRangeLessReadRedirect(req workspace.Too
 		return workspace.ToolRequest{}, "", false
 	}
 	candidateSet := make(map[string]struct{})
-	for _, path := range planThenExecuteCandidateScopePaths(r.RuntimeBrief, results, 8) {
+	for _, path := range candidateRecoveryScopePaths(r.RuntimeBrief, results, 8) {
 		candidateSet[normalizeRunnerPath(path)] = struct{}{}
 	}
 	if _, ok := candidateSet[target]; !ok {
@@ -13718,7 +13752,7 @@ func planThenExecuteRefreshScopePaths(brief workerruntime.WorkerRuntimeBrief, re
 	if len(required) > 0 {
 		return required
 	}
-	return planThenExecuteCandidateScopePaths(brief, results, 16)
+	return candidateRecoveryScopePaths(brief, results, 16)
 }
 
 func planThenExecuteRefreshScopePathsForRejectedPlan(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, refreshPaths map[string]struct{}) []string {
@@ -13802,7 +13836,7 @@ func planThenExecuteTerminalSubmitPlanAllowed(brief workerruntime.WorkerRuntimeB
 		allowed := normalizedRequiredEditPaths(brief.AllowedEditPaths)
 		return len(allowed) == 1 && len(state.SelectedEditPaths) > 0
 	}
-	if len(unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8)) > 0 {
+	if len(unreadCandidateRecoveryScopePathsForRecovery(brief, results, 8)) > 0 {
 		return false
 	}
 	return len(state.SelectedEditPaths) > 0
@@ -13832,7 +13866,7 @@ func planThenExecuteOpenCandidateSourceCanSubmit(brief workerruntime.WorkerRunti
 }
 
 func planThenExecuteCandidateScopeFullyRead(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) bool {
-	candidates := planThenExecuteCandidateScopePaths(brief, results, max)
+	candidates := candidateRecoveryScopePaths(brief, results, max)
 	if len(candidates) == 0 {
 		return true
 	}
@@ -14007,33 +14041,8 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 }
 
 func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult) (string, bool) {
-	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
-		return "", false
-	}
-	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(r.RuntimeBrief.PermissionProfile) && !readOnlyExplanationGateApplies(r.RuntimeBrief) {
-		return "", false
-	}
-	closure := readOnlyClosureDecisionForResults(r.RuntimeBrief, results)
-	if !closure.Answerable() || !readOnlyHostCloseoutHasObjectiveRelevantEvidence(r.RuntimeBrief, results, closure.Evidence) {
-		return "", false
-	}
-	paths := readOnlyCloseoutEvidencePaths(r.RuntimeBrief, results, 12)
-	if len(paths) == 0 {
-		return "", false
-	}
-	if sourceBody, ok := presentableReadFileSourceAnswer(r.RuntimeBrief, results, runnerWorkspaceRoot(r)); ok {
-		return enrichHostReadOnlyCloseoutAnswer(r.RuntimeBrief.Objective, sourceBody, paths), true
-	}
-	if answer, ok := r.composedFinalAnswerFromEvidence(FinalAnswerDecorateInput{
-		Answer:     "",
-		StopReason: "host_read_only_closeout",
-		Brief:      r.RuntimeBrief,
-		Results:    results,
-		UserFacing: true,
-	}); ok {
-		return enrichHostReadOnlyCloseoutAnswer(r.RuntimeBrief.Objective, answer, paths), true
-	}
-	return fallbackHostReadOnlyCloseoutAnswer(r.RuntimeBrief.Objective, paths), true
+	_ = results
+	return "", false
 }
 
 func readOnlyHostCloseoutHasObjectiveRelevantEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, evidence readOnlyAnswerabilityLedger) bool {
@@ -14321,7 +14330,7 @@ func readOnlyExplanationHasMechanismVerb(lower string) bool {
 
 func architectureUnsupportedExactDetail(reply string, results []workspace.ToolResult) []string {
 	exactSymbols := exactEvidenceSymbolSet(results)
-	if len(exactSymbols) == 0 || answerHasExplicitUncertainty(reply) {
+	if len(exactSymbols) == 0 {
 		return nil
 	}
 	mentioned := explicitAnswerCodeSymbols(reply)
@@ -14337,6 +14346,9 @@ func architectureUnsupportedExactDetail(reply string, results []workspace.ToolRe
 		if _, ok := exactSymbols[key]; ok {
 			continue
 		}
+		if answerSymbolHasExplicitUncertainty(reply, symbol) {
+			continue
+		}
 		unsupported = util.AppendUnique(unsupported, symbol)
 	}
 	return unsupported
@@ -14348,7 +14360,13 @@ func exactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} 
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
 		}
-		if candidateAnchorOnlyResult(result) || !presentableExactProbeResult(result) {
+		if candidateAnchorOnlyResult(result) {
+			continue
+		}
+		if concreteSourceEvidenceResult(result) {
+			addSourceBodyEvidenceSymbols(symbols, result.Output)
+		}
+		if !presentableExactProbeResult(result) {
 			continue
 		}
 		_, symbol := extractExactProbeAnchor(result)
@@ -14364,6 +14382,64 @@ func exactEvidenceSymbolSet(results []workspace.ToolResult) map[string]struct{} 
 		}
 	}
 	return symbols
+}
+
+func addSourceBodyEvidenceSymbols(symbols map[string]struct{}, output string) {
+	for _, line := range exactProbeSourceLines(output) {
+		for _, raw := range sourceBodyEvidenceSymbolCandidates(line) {
+			key := normalizedAnswerSymbol(raw)
+			if key != "" {
+				symbols[key] = struct{}{}
+			}
+		}
+	}
+}
+
+func sourceBodyEvidenceSymbolCandidates(line string) []string {
+	seen := map[string]struct{}{}
+	var out []string
+	add := func(raw string) {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			return
+		}
+		key := normalizedAnswerSymbol(raw)
+		if key == "" {
+			return
+		}
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		out = append(out, raw)
+	}
+	for _, match := range backtickedTokenPattern.FindAllStringSubmatch(line, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, match := range qualifiedIdentifierPattern.FindAllStringSubmatch(line, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
+		if len(match) > 1 {
+			add(match[1])
+		}
+	}
+	for _, token := range codeShapedTokenPattern.FindAllString(line, -1) {
+		add(token)
+	}
+	for _, token := range codeShapedSnakeCasePattern.FindAllString(line, -1) {
+		add(token)
+	}
+	for _, token := range strings.FieldsFunc(line, func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && r != '_'
+	}) {
+		add(token)
+	}
+	return out
 }
 
 func explicitAnswerCodeSymbols(reply string) []string {
@@ -14404,6 +14480,82 @@ func normalizedAnswerSymbol(raw string) string {
 		return ""
 	}
 	return strings.ToLower(candidate)
+}
+
+func answerSymbolHasExplicitUncertainty(reply string, symbol string) bool {
+	window := answerSymbolEvidenceWindow(reply, symbol, 180)
+	if window == "" {
+		return false
+	}
+	return answerHasExplicitUncertainty(window)
+}
+
+func answerSymbolEvidenceWindow(reply string, symbol string, radius int) string {
+	reply = strings.TrimSpace(reply)
+	symbol = strings.TrimSpace(symbol)
+	if reply == "" || symbol == "" {
+		return ""
+	}
+	candidates := []string{symbol}
+	if dot := strings.LastIndex(symbol, "."); dot >= 0 && dot+1 < len(symbol) {
+		candidates = append(candidates, strings.TrimSpace(symbol[dot+1:]))
+	}
+	lowerReply := strings.ToLower(reply)
+	idx := -1
+	length := 0
+	for _, candidate := range candidates {
+		candidate = strings.Trim(candidate, "`'\"()[]{}<>,.:;!?")
+		if candidate == "" {
+			continue
+		}
+		found := strings.Index(lowerReply, strings.ToLower(candidate))
+		if found >= 0 {
+			idx = found
+			length = len(candidate)
+			break
+		}
+	}
+	if idx < 0 {
+		return ""
+	}
+	if sentence := answerSentenceContainingIndex(reply, idx, length); sentence != "" {
+		return sentence
+	}
+	if radius <= 0 {
+		radius = 120
+	}
+	start := idx - radius
+	if start < 0 {
+		start = 0
+	}
+	end := idx + length + radius
+	if end > len(reply) {
+		end = len(reply)
+	}
+	return reply[start:end]
+}
+
+func answerSentenceContainingIndex(text string, idx int, length int) string {
+	if idx < 0 || idx >= len(text) {
+		return ""
+	}
+	start := 0
+	for i := idx - 1; i >= 0; i-- {
+		switch text[i] {
+		case '.', '!', '?', '\n':
+			start = i + 1
+			i = -1
+		}
+	}
+	end := len(text)
+	for i := idx + length; i < len(text); i++ {
+		switch text[i] {
+		case '.', '!', '?', '\n':
+			end = i + 1
+			i = len(text)
+		}
+	}
+	return strings.TrimSpace(text[start:end])
 }
 
 func answerHasExplicitUncertainty(reply string) bool {
@@ -15094,7 +15246,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 			return req, marshalToolRequestRaw(req), true
 		}
 	}
-	candidates := append([]string{}, planThenExecuteCandidateScopePaths(r.RuntimeBrief, results[rejectedAt+1:], 8)...)
+	candidates := append([]string{}, candidateRecoveryScopePaths(r.RuntimeBrief, results[rejectedAt+1:], 8)...)
 	candidates = appendUniqueRunnerPaths(candidates, contextPackCandidatePaths(results[rejectedAt+1:], 8)...)
 	read := readPathsFromResults(results[rejectedAt+1:])
 	if len(read) >= 4 {
@@ -15128,7 +15280,7 @@ func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply strin
 	if len(evidencePaths) == 0 {
 		return workspace.ToolRequest{}, "", false
 	}
-	candidateSet := normalizedRequiredEditPathSet(planThenExecuteCandidateScopePaths(r.RuntimeBrief, results, 16))
+	candidateSet := normalizedRequiredEditPathSet(candidateRecoveryScopePaths(r.RuntimeBrief, results, 16))
 	requiredSet := normalizedRequiredEditPathSet(r.requiredEditCoveragePaths())
 	for _, path := range evidencePaths {
 		normalized := normalizeRunnerPath(path)
@@ -18226,35 +18378,50 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 	}
 	lane := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
 	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), string(workerruntime.ContractDirectAnswer))
-	evidencePaths := acceptedAnswerEvidencePaths(answer, results, r.RuntimeBrief)
-	if blockerKind, reason := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
-		r.emitEvent(marshalRunEvent("readiness_check", map[string]any{
+	acceptance := r.evaluateFinalAnswerAcceptance(answer, results)
+	evidencePaths := acceptance.EvidencePaths
+	acceptanceFields := finalAnswerAcceptanceEventFields(acceptance)
+	if acceptance.BlockerKind != "" {
+		readiness := map[string]any{
 			"lane":           lane,
 			"ready":          false,
 			"confidence":     "blocked",
 			"action":         "block",
-			"reason":         reason,
+			"reason":         acceptance.Reason,
+			"blocker_kind":   acceptance.BlockerKind,
 			"evidence_paths": evidencePaths,
-		}))
-		r.emitEvent(marshalRunEvent("final_answer_critic", map[string]any{
+		}
+		for key, value := range acceptanceFields {
+			readiness[key] = value
+		}
+		r.emitEvent(marshalRunEvent("readiness_check", readiness))
+		critic := map[string]any{
 			"contract":       contract,
 			"passed":         false,
 			"action":         "block",
-			"reason":         reason,
-			"blocker_kind":   blockerKind,
+			"reason":         acceptance.Reason,
+			"blocker_kind":   acceptance.BlockerKind,
 			"evidence_paths": evidencePaths,
-		}))
-		r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
+		}
+		for key, value := range acceptanceFields {
+			critic[key] = value
+		}
+		r.emitEvent(marshalRunEvent("final_answer_critic", critic))
+		rails := map[string]any{
 			"lane":           lane,
 			"task_family":    util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
 			"contract":       contract,
 			"passed":         false,
 			"action":         "block",
-			"reason":         reason,
-			"blocker_kind":   blockerKind,
+			"reason":         acceptance.Reason,
+			"blocker_kind":   acceptance.BlockerKind,
 			"evidence_paths": evidencePaths,
-		}))
-		r.emitCompletionStatus("blocked", reason, blockerKind, results, true)
+		}
+		for key, value := range acceptanceFields {
+			rails[key] = value
+		}
+		r.emitEvent(marshalRunEvent("control_rails_enforcement", rails))
+		r.emitCompletionStatus("blocked", acceptance.Reason, acceptance.BlockerKind, results, true)
 		return
 	}
 	confidence := "medium"
@@ -18276,6 +18443,9 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		"reason":         "answer satisfies lane contract and evidence gate",
 		"evidence_paths": evidencePaths,
 	}
+	for key, value := range acceptanceFields {
+		readiness[key] = value
+	}
 	r.emitEvent(marshalRunEvent("readiness_check", readiness))
 	critic := map[string]any{
 		"contract":       contract,
@@ -18283,15 +18453,22 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
 	}
+	for key, value := range acceptanceFields {
+		critic[key] = value
+	}
 	r.emitEvent(marshalRunEvent("final_answer_critic", critic))
-	r.emitEvent(marshalRunEvent("control_rails_enforcement", map[string]any{
+	rails := map[string]any{
 		"lane":           lane,
 		"task_family":    util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.TaskFamily), contract),
 		"contract":       contract,
 		"passed":         true,
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
-	}))
+	}
+	for key, value := range acceptanceFields {
+		rails[key] = value
+	}
+	r.emitEvent(marshalRunEvent("control_rails_enforcement", rails))
 }
 
 func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, result workspace.ToolResult) bool {
@@ -18527,6 +18704,8 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 		return "the final answer looks like transport-level noise (tool-call markup, echoed user question, or tool-failure language) rather than an actual answer. Reply with substantive prose that addresses the user's request, or use <<QUESTION>>: to state a concrete blocker."
 	case "source_grounding_unmet":
 		return reason
+	case "answer_objective_unmet":
+		return reason
 	case "required_evidence_unmet":
 		if r != nil {
 			missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
@@ -18539,45 +18718,8 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 }
 
 func (r *Runner) finalAnswerBlockerKind(answer string, results []workspace.ToolResult) (string, string) {
-	// Plan-then-execute planner phase: a successful submit_plan IS the
-	// planner's deliverable; the executor phase (run by the orchestrator
-	// after this runner exits) is what produces the actual file
-	// changes. Without this exemption the post-answer blocker check
-	// sees zero changed_paths and overrides the model's final answer
-	// with a "required edit paths remaining" narrative, even though the
-	// plan was submitted correctly.
-	if r != nil && r.planThenExecutePlannerPhase() && successfulSubmitPlanResultCount(results) > 0 {
-		return "", ""
-	}
-	if r != nil && r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
-		return "", ""
-	}
-	if looksLikeUnexecutedToolRequestAnswer(answer) {
-		return "unexecuted_tool_request_final_answer", "unexecuted_tool_request_final_answer"
-	}
-	if r != nil && runnerBriefRequiresMutation(r.RuntimeBrief) {
-		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
-			return "required_edit_paths_remaining", "required_edit_paths_remaining"
-		}
-	}
-	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
-		return "user_visible_blocker", "user_visible_blocker"
-	}
-	if looksLikeNonAnswerProse(answer) {
-		return "non_answer_prose", "non_answer_prose"
-	}
-	if r != nil {
-		if reason := r.sourceGroundingRejectionReason(answer, results); reason != "" {
-			return "source_grounding_unmet", reason
-		}
-	}
-	if r != nil {
-		missing := missingRequiredEvidence(r.RuntimeBrief.RequiredEvidence, answer, results)
-		if len(missing) > 0 {
-			return "required_evidence_unmet", "required_evidence_unmet"
-		}
-	}
-	return "", ""
+	acceptance := r.evaluateFinalAnswerAcceptance(answer, results)
+	return acceptance.BlockerKind, acceptance.Reason
 }
 
 func (r *Runner) decoratedReadOnlyReplyForCompletionGate(reply string, results []workspace.ToolResult) string {
@@ -18611,6 +18753,9 @@ func acceptedAnswerEvidencePaths(answer string, results []workspace.ToolResult, 
 		if paths := acceptedImplementationEvidencePaths(results); len(paths) > 0 {
 			return paths
 		}
+	}
+	if readOnlyDirectAnswerAcceptanceApplies(brief) {
+		return acceptedReadOnlyDirectAnswerEvidencePaths(answer, brief, results)
 	}
 	if readOnlyExplanationGateApplies(brief) {
 		paths := mergeRunnerStateStrings(exactProbeEvidencePaths(results), pathparse.MentionedWorkspacePaths(answer))
@@ -20666,8 +20811,7 @@ func readOnlyEvidenceAvailableTerminalVisibleOutput(brief workerruntime.WorkerRu
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) ||
-		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+	if !readOnlyDirectAnswerLane(brief) {
 		return false
 	}
 	return genericReadOnlyEvidenceReady(brief, results)
@@ -22367,18 +22511,17 @@ func sanitizeFallbackResultOutput(result workspace.ToolResult) string {
 // brace-delimited object whose first content line starts with a quoted
 // key is treated as a metadata dump and dropped.
 
-// conversationLaneWithoutSemanticEval reports true when the lane contract
-// has no mechanism to evaluate answer relevance (conversation/direct_answer
-// lanes with no mutation obligations). The harness can verify structural
-// completeness but not whether the answer addresses the user's question.
+// conversationLaneWithoutSemanticEval reports true when the lane has no
+// deterministic final-answer relevance contract. Read-only direct-answer
+// lanes now have final_answer_acceptance.v1, so they no longer fall into
+// that bucket when the objective is explicit enough to check.
 func conversationLaneWithoutSemanticEval(brief workerruntime.WorkerRuntimeBrief) bool {
-	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !readOnlyDirectAnswerTaskFamily(brief.TaskFamily) ||
+		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
 		return false
 	}
-	if workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
-		return true
-	}
-	return false
+	return !readOnlyDirectAnswerLane(brief) || strings.TrimSpace(brief.Objective) == ""
 }
 
 // emptyAnswerRetryPrompt builds the retry system message when the model

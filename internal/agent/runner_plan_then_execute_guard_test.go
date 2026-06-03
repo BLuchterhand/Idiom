@@ -482,36 +482,6 @@ func TestDeterministicPlanExecuteGroundingRecoveryPrioritizesRejectedMissingSour
 	}
 }
 
-func TestDeterministicPlanExecuteChainedSearchRecoveryDoesNotOverrideModelStrategy(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily: PlanThenExecutePlannerTaskFamily,
-			Contract:   "implementation_result",
-			Objective:  "implement coverage gate authority reuse",
-		},
-	}
-	state := &runnerExecutionState{pendingSearchInspection: true}
-	req, _, ok := runner.deterministicPlanExecuteChainedSearchRecovery(
-		workspace.ToolRequest{Tool: "search_content", Pattern: "coverage_gate"},
-		[]workspace.ToolResult{
-			{
-				Tool:    "context_pack",
-				Summary: "Context pack wrote view",
-				Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go","role":"editable"},{"path":"cmd/idiom/product_workflow.go","role":"editable"}]}`,
-			},
-			{
-				Tool:    "search_content",
-				Summary: "Found 400 matching line(s) (showing first 50).",
-				Output:  "AGENTS.md:119:plan-execute prompt scaffolding",
-			},
-		},
-		state,
-	)
-	if ok {
-		t.Fatalf("chained-search recovery should not inject a host-chosen read request, got %#v", req)
-	}
-}
-
 func TestDeterministicPlanExecuteGroundingRecoveryDoesNotStealTerminalReply(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -4676,7 +4646,7 @@ func TestPlanExecuteUnreadCandidateRecoveryDropsMissingFileEvidence(t *testing.T
 		},
 	}
 
-	unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8)
+	unread := unreadCandidateRecoveryScopePathsForRecovery(brief, results, 8)
 	if slices.Contains(unread, "cmd/idiom/analysis_agents.go") {
 		t.Fatalf("missing candidate path should not stay in unread recovery list: %#v", unread)
 	}
@@ -6249,11 +6219,24 @@ func TestReadPathsFromResultsDoesNotCountRouteSummaryWithoutSourceBody(t *testin
 	}
 }
 
-const planExecuteStatusMigrationApplyTUIObjective = "We are continuing TDD completion work from docs/design-prd-adr-brief-research-workflow.md. Implement one bounded topic only: status migration apply must harden predictable temp-path writes against pre-existing symlinks. Focus on the existing product workflow status migration apply path. Add regression tests proving pre-existing workflow/index/events temp symlinks are rejected without partial durable mutation. Use repo discovery first, make the minimal code changes, and run the focused tests."
+const syntheticPolicyGuardApplyObjective = "We are continuing TDD completion work from docs/design-prd-adr-brief-research-workflow.md. Implement one bounded topic only: policy guard apply must reject predictable staging temp symlinks before durable writes. Focus on the policy guard apply path, not the surrounding workflow boilerplate. Add regression tests proving staging temp symlinks are rejected without partial mutation. Use repo discovery first, make the minimal code changes, and run the focused tests."
+
+func syntheticPolicyGuardApplyContextPackOutput() string {
+	return `{"candidate_files":[{"path":"internal/policy/guard.go"},{"path":"internal/policy/guard_apply.go"}]}`
+}
+
+func syntheticPolicyGuardApplySearchOutput() string {
+	return strings.Join([]string{
+		`internal/policy/guard.go:34: // policy guard planning metadata`,
+		`cmd/idiom/policy.go:65: idiom policy guard --apply updates workflow summaries`,
+		`internal/policy/guard_apply.go:88: tmpPath := stagingPath + ".tmp"`,
+		`internal/policy/guard_apply.go:92: if err := rejectSymlinkTempPath(tmpPath); err != nil {`,
+	}, "\n")
+}
 
 func TestLiteralRecoverySearchPatternPrioritizesTopicOverWorkflowBoilerplate(t *testing.T) {
-	got := literalRecoverySearchPattern(planExecuteStatusMigrationApplyTUIObjective)
-	for _, want := range []string{"status", "migration", "apply", "temp"} {
+	got := literalRecoverySearchPattern(syntheticPolicyGuardApplyObjective)
+	for _, want := range []string{"policy", "guard", "apply", "temp"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("recovery search pattern missing %q: %q", want, got)
 		}
@@ -6271,7 +6254,7 @@ func TestCompletionGateRecoveryPromptKeepsUnreadDiscoveredCandidateReadVisible(t
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
 			Contract:          "implementation_result",
 			PermissionProfile: "guarded_workspace_write",
-			Objective:         planExecuteStatusMigrationApplyTUIObjective,
+			Objective:         syntheticPolicyGuardApplyObjective,
 		},
 	}
 
@@ -6279,22 +6262,17 @@ func TestCompletionGateRecoveryPromptKeepsUnreadDiscoveredCandidateReadVisible(t
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/productworkflow/migration.go"},{"path":"internal/productworkflow/migration_apply.go"}]}`,
+			Output:  syntheticPolicyGuardApplyContextPackOutput(),
 		},
 		{
 			Tool:    "search_content",
 			Summary: "Found matching lines.",
-			Output: strings.Join([]string{
-				`internal/productworkflow/migration.go:34: // status migration planning metadata`,
-				`cmd/idiom/product_workflow.go:65: idiom product status-migration --apply updates workflow_state, events, and index`,
-				`internal/productworkflow/migration_apply.go:88: tmpPath := workflowPath + ".tmp"`,
-				`internal/productworkflow/migration_apply.go:92: if err := rejectSymlinkTempPath(tmpPath); err != nil {`,
-			}, "\n"),
+			Output:  syntheticPolicyGuardApplySearchOutput(),
 		},
 		{
 			Tool:    "read_file",
-			Summary: "Read f97 internal/productworkflow/migration.go lines 1-180 (total lines: 180)",
-			Output:  "type StatusMigrationPlan struct{}",
+			Summary: "Read f97 internal/policy/guard.go lines 1-180 (total lines: 180)",
+			Output:  "type PolicyGuardPlan struct{}",
 		},
 	}
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
@@ -6307,9 +6285,9 @@ func TestCompletionGateRecoveryPromptKeepsUnreadDiscoveredCandidateReadVisible(t
 	for _, want := range []string{
 		"Allowed/candidate paths are not coverage obligations",
 		"submit_plan",
-		"Read candidate path(s): internal/productworkflow/migration.go",
+		"Read candidate path(s): internal/policy/guard.go",
 		"read one different unread candidate path",
-		"internal/productworkflow/migration_apply.go",
+		"internal/policy/guard_apply.go",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("recovery prompt missing %q:\n%s", want, prompt)
@@ -6322,28 +6300,23 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadBetterCandidate(
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
 		PermissionProfile: "guarded_workspace_write",
-		Objective:         planExecuteStatusMigrationApplyTUIObjective,
+		Objective:         syntheticPolicyGuardApplyObjective,
 	}
 	results := []workspace.ToolResult{
 		{
 			Tool:    "context_pack",
 			Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-			Output:  `{"candidate_files":[{"path":"internal/productworkflow/migration.go"},{"path":"internal/productworkflow/migration_apply.go"}]}`,
+			Output:  syntheticPolicyGuardApplyContextPackOutput(),
 		},
 		{
 			Tool:    "search_content",
 			Summary: "Found matching lines.",
-			Output: strings.Join([]string{
-				`internal/productworkflow/migration.go:34: // status migration planning metadata`,
-				`cmd/idiom/product_workflow.go:65: idiom product status-migration --apply updates workflow_state, events, and index`,
-				`internal/productworkflow/migration_apply.go:88: tmpPath := workflowPath + ".tmp"`,
-				`internal/productworkflow/migration_apply.go:92: if err := rejectSymlinkTempPath(tmpPath); err != nil {`,
-			}, "\n"),
+			Output:  syntheticPolicyGuardApplySearchOutput(),
 		},
 		{
 			Tool:    "read_file",
-			Summary: "Read f97 internal/productworkflow/migration.go lines 1-180",
-			Output:  "type StatusMigrationPlan struct{}",
+			Summary: "Read f97 internal/policy/guard.go lines 1-180",
+			Output:  "type PolicyGuardPlan struct{}",
 		},
 	}
 	got := planThenExecuteReadyToSubmitNudge(brief, results)
@@ -6351,7 +6324,7 @@ func TestPlanExecuteCandidateScopeReadinessDoesNotDeferForUnreadBetterCandidate(
 		t.Fatal("unscoped candidate evidence should create submit-ready guidance without requiring every ranked candidate")
 	}
 	for _, want := range []string{
-		"internal/productworkflow/migration.go",
+		"internal/policy/guard.go",
 		"Allowed/candidate paths are not coverage obligations",
 		"One bounded source-read/search for a different candidate path",
 	} {
@@ -7446,24 +7419,19 @@ func TestDeterministicNoWriteRecoveryPrefersObjectiveSpecificApplyPath(t *testin
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
-			Objective:         planExecuteStatusMigrationApplyTUIObjective,
+			Objective:         syntheticPolicyGuardApplyObjective,
 			PermissionProfile: "guarded_workspace_write",
 		},
 	}
 	req, raw, ok := runner.deterministicNoWriteRecoveryRead([]workspace.ToolResult{{
 		Tool:    "search_content",
 		Summary: "Found matching lines.",
-		Output: strings.Join([]string{
-			`internal/productworkflow/migration.go:34: // status migration planning metadata`,
-			`cmd/idiom/product_workflow.go:65: idiom product status-migration --apply updates workflow_state, events, and index`,
-			`internal/productworkflow/migration_apply.go:88: tmpPath := workflowPath + ".tmp"`,
-			`internal/productworkflow/migration_apply.go:92: if err := rejectSymlinkTempPath(tmpPath); err != nil {`,
-		}, "\n"),
+		Output:  syntheticPolicyGuardApplySearchOutput(),
 	}})
 	if !ok {
 		t.Fatalf("expected deterministic read recovery")
 	}
-	if req.Tool != "read_file" || req.Path != "internal/productworkflow/migration_apply.go" {
+	if req.Tool != "read_file" || req.Path != "internal/policy/guard_apply.go" {
 		t.Fatalf("unexpected ranked recovery read request: %#v raw=%s", req, raw)
 	}
 }
@@ -7473,7 +7441,7 @@ func TestDeterministicNoWriteRecoveryDoesNotReadUnreadBetterCandidateAfterFirstR
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
 			Contract:          "implementation_result",
-			Objective:         planExecuteStatusMigrationApplyTUIObjective,
+			Objective:         syntheticPolicyGuardApplyObjective,
 			PermissionProfile: "guarded_workspace_write",
 		},
 	}
@@ -7481,17 +7449,12 @@ func TestDeterministicNoWriteRecoveryDoesNotReadUnreadBetterCandidateAfterFirstR
 		{
 			Tool:    "search_content",
 			Summary: "Found matching lines.",
-			Output: strings.Join([]string{
-				`internal/productworkflow/migration.go:34: // status migration planning metadata`,
-				`cmd/idiom/product_workflow.go:65: idiom product status-migration --apply updates workflow_state, events, and index`,
-				`internal/productworkflow/migration_apply.go:88: tmpPath := workflowPath + ".tmp"`,
-				`internal/productworkflow/migration_apply.go:92: if err := rejectSymlinkTempPath(tmpPath); err != nil {`,
-			}, "\n"),
+			Output:  syntheticPolicyGuardApplySearchOutput(),
 		},
 		{
 			Tool:    "read_file",
-			Summary: "Read f97 internal/productworkflow/migration.go lines 1-180",
-			Output:  "type StatusMigrationPlan struct{}",
+			Summary: "Read f97 internal/policy/guard.go lines 1-180",
+			Output:  "type PolicyGuardPlan struct{}",
 		},
 	}
 	req, raw, ok := runner.deterministicNoWriteRecoveryUnreadCandidateRead(results)
@@ -10904,26 +10867,7 @@ func TestPlanExecuteMissingTargetReadRedirectSkipsRequiredSourceScope(t *testing
 	}
 }
 
-func TestPlanExecuteNonToolCandidateRecoveryDoesNotReadContextPackCandidate(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        PlanThenExecutePlannerTaskFamily,
-			Contract:          "implementation_result",
-			PermissionProfile: "guarded_workspace_write",
-		},
-	}
-	results := []workspace.ToolResult{{
-		Tool:    "context_pack",
-		Summary: "Context pack wrote .idiom/comprehension/views/test.json with 2 candidate file(s)",
-		Output:  `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"},{"path":"cmd/idiom/audit.go"}]}`,
-	}}
-
-	if req, raw, ok := runner.deterministicPlanExecuteNonToolCandidateRecovery("I need to inspect the relevant source before planning.", results); ok {
-		t.Fatalf("non-terminal planner prose must not trigger a host-selected candidate read, req=%#v raw=%s", req, raw)
-	}
-}
-
-func TestPlanExecuteNonToolCandidateRecoveryLeavesNextCandidateModelOwned(t *testing.T) {
+func TestPlanExecuteNoWriteRecoveryLeavesNextCandidateModelOwned(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -10951,33 +10895,11 @@ func TestPlanExecuteNonToolCandidateRecoveryLeavesNextCandidateModelOwned(t *tes
 	if read := readPathsFromResults(results); len(read) == 0 {
 		t.Fatalf("fixture should expose code_navigate source-body evidence, got %#v", read)
 	}
-	if unread := unreadPlanThenExecuteCandidateScopePathsForRecovery(runner.RuntimeBrief, results, 4); len(unread) == 0 {
+	if unread := unreadCandidateRecoveryScopePathsForRecovery(runner.RuntimeBrief, results, 4); len(unread) == 0 {
 		t.Fatalf("fixture should expose an unread context-pack candidate, got none")
 	}
 	if req, raw, ok := runner.deterministicNoWriteRecoveryUnreadCandidateRead(results); ok {
 		t.Fatalf("plan-execute unread candidate recovery must not host-select the next path, req=%#v raw=%s", req, raw)
-	}
-
-	if req, raw, ok := runner.deterministicPlanExecuteNonToolCandidateRecovery("I need to inspect one more source surface before planning.", results); ok {
-		t.Fatalf("non-terminal planner prose must not trigger the next host-selected candidate read, req=%#v raw=%s", req, raw)
-	}
-}
-
-func TestPlanExecuteNonToolCandidateRecoverySkipsTerminalReply(t *testing.T) {
-	runner := &Runner{
-		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily:        PlanThenExecutePlannerTaskFamily,
-			Contract:          "implementation_result",
-			PermissionProfile: "guarded_workspace_write",
-		},
-	}
-	results := []workspace.ToolResult{{
-		Tool:   "context_pack",
-		Output: `{"candidate_files":[{"path":"internal/productworkflow/coverage_gate.go"}]}`,
-	}}
-
-	if req, raw, ok := runner.deterministicPlanExecuteNonToolCandidateRecovery("<<QUESTION>>: missing exact source evidence", results); ok {
-		t.Fatalf("terminal blocker reply must not be converted into a read, req=%#v raw=%s", req, raw)
 	}
 }
 

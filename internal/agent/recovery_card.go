@@ -194,6 +194,12 @@ func normalizeRecoveryRejectedAction(action RecoveryRejectedAction) RecoveryReje
 	action.ActionClass = strings.TrimSpace(action.ActionClass)
 	action.Target = strings.TrimSpace(action.Target)
 	action.Reason = strings.TrimSpace(action.Reason)
+	if action.Tool == "completion_gate" {
+		action.Tool = ""
+		if action.ActionClass == "" {
+			action.ActionClass = actionFinalAnswer
+		}
+	}
 	return action
 }
 

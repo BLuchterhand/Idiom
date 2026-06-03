@@ -2,16 +2,6 @@ package answergrounding
 
 type EvidenceKind string
 
-const (
-	SourceBody    EvidenceKind = "source_body"
-	SymbolBody    EvidenceKind = "symbol_body"
-	LogWindow     EvidenceKind = "log_window"
-	CommandResult EvidenceKind = "command_result"
-	DiffWrite     EvidenceKind = "diff_write"
-	PathSeen      EvidenceKind = "path_seen"
-	Packet        EvidenceKind = "packet"
-)
-
 type ClaimKind string
 
 const (
@@ -57,7 +47,7 @@ func Evaluate(answer string, receipts []EvidenceReceipt) AnswerGroundingResult {
 	validator := NewGroundingValidator(receipts)
 	for _, claim := range validator.Validate(extractor.Extract(answer)) {
 		result.Claims = append(result.Claims, claim)
-		if claim.Severity == "blocking" {
+		if claim.Severity == SeverityBlocking {
 			result.BlockingClaims = append(result.BlockingClaims, claim)
 		}
 	}

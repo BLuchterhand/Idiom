@@ -212,7 +212,7 @@ func (p DelegatedReadOnlyLanePolicy) ClosureReadyRecoveryNudge(_ workerruntime.W
 // --- LanePolicyForBrief selects the appropriate policy from a RuntimeBrief ---
 
 func LanePolicyForBrief(brief workerruntime.WorkerRuntimeBrief) LanePolicy {
-	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) {
+	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) || readOnlyDirectAnswerLane(brief) {
 		return ConversationLanePolicy{}
 	}
 	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) {

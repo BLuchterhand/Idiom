@@ -2,9 +2,10 @@
 
 idiom's Java support follows the same Capability-keyed shape used by
 Go and C/C++: a per-language `LanguageSupport` entry in
-`internal/workspace/language_registry.go`, a tree-walking semantic
+`internal/semantic/language/registry.go`, a tree-walking semantic
 index at `internal/semantic/java_index.go`, and a set of `java_*`
-tools exposed through the workspace manager.
+tools implemented under `internal/semantic/languagetools` and exposed
+through the workspace manager adapter.
 
 ## Capabilities
 
@@ -42,7 +43,7 @@ is true:
 Deep semantic operations (`java_definition`, `java_references`,
 `java_implementations`, `java_calls_from`, `java_calls_into`, the
 LSP-backed path of `java_workspace_symbol`) prefer jdtls when
-available. The client lives at `internal/workspace/jdtls_lsp.go`
+available. The client lives at `internal/semantic/languagetools/jdtls_lsp.go`
 and mirrors `clangd_lsp.go` — plain JSON-RPC over stdio with a
 longer initialize timeout (`jdtlsInitializeTimeout = 30s`) and a
 short post-initialize settle to account for project import.
@@ -109,12 +110,10 @@ type lookup, inference — is the job of jdtls.
 
 ## Caching
 
-Per-`Manager` index caching follows the `rustCache` pattern
-(`internal/workspace/rust_tools.go`): a package-level
-`map[*Manager]*javaCache` keyed by pointer, invalidated by the same
-git HEAD/dirty-status token (`currentGoIndexToken`) the other
-language caches use. This keeps the Manager struct in `manager.go`
-untouched.
+Per-language index caching lives on `internal/semantic/languagetools.Manager`
+and is invalidated by the same git HEAD/dirty-status token used by the
+other language caches. `internal/workspace` owns dispatch, request/response
+adaptation, and path/file host services, not language index state.
 
 ## Files
 
@@ -122,11 +121,13 @@ untouched.
 - `internal/semantic/java_query.go` — symbol queries, call queries,
   implementations, dependency closures
 - `internal/semantic/java_index_test.go` — index unit tests
-- `internal/workspace/java_tools.go` — `java_*` tool implementations
-  and per-Manager caching
-- `internal/workspace/java_tools_test.go` — tool tests (LSP-gated
-  tests skip via `t.Skip()` if jdtls is absent)
-- `internal/workspace/jdtls_lsp.go` — jdtls JSON-RPC client
+- `internal/semantic/languagetools/java_tools.go` — `java_*` tool
+  implementations and per-manager caching
+- `internal/semantic/languagetools/jdtls_lsp.go` — jdtls JSON-RPC client
+- `internal/workspace/language_tools_adapter.go` — workspace host adapter
+  and compatibility dispatch facade
+- `internal/semantic/languagetools/java_tools_test.go` — workspace-facade
+  integration tests (LSP-gated tests skip via `t.Skip()` if jdtls is absent)
 
 ## Integration points
 

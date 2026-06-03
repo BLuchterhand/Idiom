@@ -68,7 +68,7 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 		if !exportedToolSchemaHasProfile(tool, profile) {
 			continue
 		}
-		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) && !isToolSchemaProductWorkflowTool(tool.Name) {
+		if !exportedToolSchemaHasCapability(tool, autonomy.CapabilitySemanticDiscovery) && !builtInToolSurfaceMCPDiscoveryReadModelTool(tool.Name) {
 			continue
 		}
 		if profile == ToolProfileDiscovery && !mcpDiscoveryProfileTool(tool.Name) {
@@ -80,16 +80,7 @@ func BuildMCPDiscoveryToolSchemas(profile string) ([]ExportedToolSchema, error) 
 }
 
 func mcpDiscoveryProfileTool(tool string) bool {
-	return strings.HasPrefix(tool, "context_") || tool == "recovery_inspect" || tool == "recovery_status"
-}
-
-func isToolSchemaProductWorkflowTool(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "product_efforts", "product_status":
-		return true
-	default:
-		return false
-	}
+	return builtInToolSurfaceMCPDiscoveryProfileTool(tool)
 }
 
 func buildToolSchemaExportFromSources(manifest []ToolManifestEntry, defs []ToolDefinition, profiles map[string][]string) (ToolSchemaExport, error) {
@@ -235,26 +226,11 @@ func toolSchemaPolicyForTool(tool string) ToolSchemaPolicyExport {
 }
 
 func toolSchemaCapabilities(tool string) []autonomy.Capability {
+	if capabilities := builtInToolSurfacePolicyCapabilities(tool); len(capabilities) > 0 {
+		return capabilities
+	}
 	switch {
-	case tool == "read_file" || tool == "pwd" || tool == "list_files" || tool == "file_stats" || tool == "git_status" || tool == "git_diff":
-		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
-	case isToolSchemaProductWorkflowTool(tool):
-		return []autonomy.Capability{autonomy.CapabilityBoundedRead}
-	case tool == "search_files" || tool == "search_content":
-		return []autonomy.Capability{autonomy.CapabilityLiteralSearch}
-	case tool == "edit_file" || tool == "write_file" || tool == "append_file" || tool == "mkdir" || tool == "go_move_declarations":
-		return []autonomy.Capability{autonomy.CapabilitySourceEdit}
-	case tool == "apply_patch":
-		return []autonomy.Capability{autonomy.CapabilityApplyPatch}
-	case tool == "delegate_edit":
-		return []autonomy.Capability{autonomy.CapabilityDelegation, autonomy.CapabilitySourceEdit}
-	case tool == "task":
-		return []autonomy.Capability{autonomy.CapabilityDelegation}
-	case tool == "submit_plan":
-		return []autonomy.Capability{autonomy.CapabilityPlanSubmission}
-	case tool == "shell":
-		return []autonomy.Capability{autonomy.CapabilityShellVerification, autonomy.CapabilityMutatingShell}
-	case isToolSchemaDiagnosticTool(tool) || tool == "source_sanity" || tool == "context_trace_pack":
+	case isToolSchemaDiagnosticTool(tool):
 		return []autonomy.Capability{autonomy.CapabilityShellVerification}
 	case isToolSchemaSemanticDiscoveryTool(tool):
 		return []autonomy.Capability{autonomy.CapabilitySemanticDiscovery}
@@ -264,18 +240,11 @@ func toolSchemaCapabilities(tool string) []autonomy.Capability {
 }
 
 func toolSchemaSideEffects(tool string) []autonomy.SideEffectClass {
+	if sideEffects := builtInToolSurfaceSideEffects(tool); len(sideEffects) > 0 {
+		return sideEffects
+	}
 	switch {
-	case tool == "task_ledger" || tool == "harness_feedback" || tool == "context_index" || tool == "submit_plan" || tool == "recovery_decompose":
-		return []autonomy.SideEffectClass{autonomy.SideEffectAdditive}
-	case tool == "task":
-		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectAdditive}
-	case tool == "edit_file" || tool == "write_file" || tool == "append_file" || tool == "mkdir" || tool == "delegate_edit" || tool == "go_move_declarations":
-		return []autonomy.SideEffectClass{autonomy.SideEffectAdditive}
-	case tool == "apply_patch":
-		return []autonomy.SideEffectClass{autonomy.SideEffectAdditive, autonomy.SideEffectDestructive}
-	case tool == "shell" || tool == "context_trace_pack":
-		return []autonomy.SideEffectClass{autonomy.SideEffectUnknown}
-	case isToolSchemaDiagnosticTool(tool) || tool == "source_sanity":
+	case isToolSchemaDiagnosticTool(tool):
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectUnknown}
 	default:
 		return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}
@@ -315,34 +284,41 @@ func toolSchemaErrorClasses(tool string, sideEffects []autonomy.SideEffectClass)
 	if tool == readOnlyCapabilityToolName {
 		classes = append(classes, "capability_deferred", "capability_unmapped", "adapter_unavailable", "resolver_disabled", "route_disabled")
 	}
-	if strings.HasPrefix(tool, "context_") || tool == "discovery_query" || tool == "dependency_graph" || tool == "structural_search" {
+	if builtInToolSurfaceStaleContextErrors(tool) {
 		classes = append(classes, "backend_unavailable", "stale_context")
 	}
 	return compactToolExportStrings(classes)
 }
 
 func isToolSchemaSemanticDiscoveryTool(tool string) bool {
-	switch tool {
-	case "code_navigate", "read_only_capability", "harness_audit", "recovery_inspect", "recovery_status", "context_status", "context_query", "context_zoom",
-		"context_pack", "context_impact", "discovery_query", "structural_search", "dependency_graph",
-		"history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan":
-		return true
-	default:
-		return isToolSchemaLanguageTool(tool)
-	}
-}
-
-func isToolSchemaLanguageTool(tool string) bool {
-	for _, prefix := range []string{"go_", "cpp_", "python_", "ts_", "rust_", "java_"} {
-		if strings.HasPrefix(tool, prefix) {
+	for _, capability := range builtInToolSurfacePolicyCapabilities(tool) {
+		if capability == autonomy.CapabilitySemanticDiscovery {
 			return true
 		}
 	}
-	return false
+	return isToolSchemaLanguageTool(tool)
+}
+
+func isToolSchemaLanguageTool(tool string) bool {
+	return isLanguageToolName(tool)
 }
 
 func isToolSchemaDiagnosticTool(tool string) bool {
-	return strings.HasSuffix(tool, "_diagnostics")
+	tool = strings.ToLower(strings.TrimSpace(tool))
+	if !strings.HasSuffix(tool, "_diagnostics") {
+		return false
+	}
+	for _, lang := range LanguageRegistry() {
+		if strings.EqualFold(tool, strings.TrimSpace(lang.Tools[CapDiagnostics])) {
+			return true
+		}
+	}
+	switch tool {
+	case "go_diagnostics", "cpp_diagnostics":
+		return true
+	default:
+		return false
+	}
 }
 
 func hasToolSchemaSideEffect(values []autonomy.SideEffectClass, want autonomy.SideEffectClass) bool {

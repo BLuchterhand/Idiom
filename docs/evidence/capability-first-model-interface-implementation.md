@@ -38,7 +38,7 @@ Reviewer-requested tests:
 
 | Atom | State | Scope | Tests |
 | --- | --- | --- | --- |
-| `cap-iface-001-workspace-contract` | implemented | `internal/workspace/capabilities.go`, `internal/workspace/code_navigation.go`, `internal/workspace/tool_manifest.go`, `internal/workspace/tool_schema_export.go`, focused workspace tests | `go test ./internal/workspace -count=1` |
+| `cap-iface-001-workspace-contract` | implemented | `internal/workspace/capabilities.go`, `internal/semantic/languagetools/code_navigation.go`, `internal/workspace/tool_manifest.go`, `internal/workspace/tool_schema_export.go`, focused workspace and language-tools tests | `go test ./internal/workspace ./internal/semantic/languagetools -count=1` |
 | `cap-iface-002-runtime-brief` | implemented | `internal/frontier/workerruntime/catalog.go`, `internal/frontier/workerruntime/runtime.go`, focused runtime tests | `go test ./internal/frontier/workerruntime -count=1` |
 | `cap-iface-003-review-audit` | implemented | final review evidence and `harness_audit` validation | `go run ./cmd/idiom tool harness_audit --input '{"purpose":"tool_surface","limit":20}'` |
 

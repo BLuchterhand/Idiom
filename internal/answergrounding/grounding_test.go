@@ -108,7 +108,7 @@ func TestEvaluate_RejectsSourceLocationWithOnlyPathSeen(t *testing.T) {
 		t.Error("Expected source_location claim to be unsupported by only path_seen evidence")
 	}
 
-	if sourceClaim.Severity != "blocking" {
+	if sourceClaim.Severity != SeverityBlocking {
 		t.Error("Expected source_location claim to be blocking")
 	}
 }
@@ -159,7 +159,7 @@ func TestEvaluate_AcceptsBacktickedLiterals(t *testing.T) {
 	// The implementation should not generate blocking claims for literals.
 	// It might generate no claims or supported claims.
 	for _, c := range result.Claims {
-		if c.Severity == "blocking" {
+		if c.Severity == SeverityBlocking {
 			t.Errorf("Expected no blocking claims for literals, got: %s", c.Text)
 		}
 	}
@@ -191,7 +191,7 @@ func TestEvaluate_RejectsVerificationPassedWithoutCommandResult(t *testing.T) {
 		t.Error("Expected command_result claim to be unsupported without command_result receipt")
 	}
 
-	if cmdClaim.Severity != "blocking" {
+	if cmdClaim.Severity != SeverityBlocking {
 		t.Error("Expected command_result claim to be blocking")
 	}
 }
@@ -222,7 +222,7 @@ func TestEvaluate_RejectsChangeWithoutDiffWrite(t *testing.T) {
 		t.Error("Expected change claim to be unsupported without diff_write receipt")
 	}
 
-	if changeClaim.Severity != "blocking" {
+	if changeClaim.Severity != SeverityBlocking {
 		t.Error("Expected change claim to be blocking")
 	}
 }

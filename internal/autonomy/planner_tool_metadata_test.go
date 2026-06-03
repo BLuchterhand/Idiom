@@ -7,41 +7,48 @@ import (
 
 func TestPlanExecutePlannerToolMetadataNamesAllowedSurface(t *testing.T) {
 	allowed := PlanExecutePlannerToolNames()
-	for _, tool := range []string{
-		"search_files",
-		"search_content",
-		"read_file",
-		"file_stats",
-		"code_navigate",
-		"harness_feedback",
-		"recovery_inspect",
-		"recovery_status",
-		"product_efforts",
-		"product_status",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"discovery_query",
-		"structural_search",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"submit_plan",
+	for _, tc := range []struct {
+		tool       string
+		capability Capability
+		sideEffect SideEffectClass
+	}{
+		{tool: "search_files", capability: CapabilityLiteralSearch, sideEffect: SideEffectReadOnly},
+		{tool: "search_content", capability: CapabilityLiteralSearch, sideEffect: SideEffectReadOnly},
+		{tool: "read_file", capability: CapabilityBoundedRead, sideEffect: SideEffectReadOnly},
+		{tool: "file_stats", capability: CapabilityBoundedRead, sideEffect: SideEffectReadOnly},
+		{tool: "code_navigate", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "harness_feedback", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectAdditive},
+		{tool: "recovery_inspect", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "recovery_status", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "product_efforts", capability: CapabilityBoundedRead, sideEffect: SideEffectReadOnly},
+		{tool: "product_status", capability: CapabilityBoundedRead, sideEffect: SideEffectReadOnly},
+		{tool: "context_status", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "context_query", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "context_zoom", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "context_pack", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "context_impact", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "discovery_query", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "structural_search", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "history_range", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "history_symbol", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "blame_range", capability: CapabilitySemanticDiscovery, sideEffect: SideEffectReadOnly},
+		{tool: "submit_plan", capability: CapabilityPlanSubmission, sideEffect: SideEffectAdditive},
 	} {
-		if !slices.Contains(allowed, tool) {
-			t.Fatalf("planner allowed tool names missing %q: %#v", tool, allowed)
+		if !slices.Contains(allowed, tc.tool) {
+			t.Fatalf("planner allowed tool names missing %q: %#v", tc.tool, allowed)
 		}
-		entry, ok := LookupPlanExecutePlannerToolMetadata(tool)
+		entry, ok := LookupPlanExecutePlannerToolMetadata(tc.tool)
 		if !ok {
-			t.Fatalf("planner metadata missing allowed tool %q", tool)
+			t.Fatalf("planner metadata missing allowed tool %q", tc.tool)
 		}
 		if !entry.PlannerAllowed {
-			t.Fatalf("planner metadata marks allowed tool %q as forbidden: %#v", tool, entry)
+			t.Fatalf("planner metadata marks allowed tool %q as forbidden: %#v", tc.tool, entry)
 		}
-		if entry.SideEffect != SideEffectReadOnly {
-			t.Fatalf("planner allowed tool %q side effect = %q, want read_only", tool, entry.SideEffect)
+		if !slices.Equal(entry.Capabilities, []Capability{tc.capability}) {
+			t.Fatalf("planner allowed tool %q capabilities = %#v, want %q", tc.tool, entry.Capabilities, tc.capability)
+		}
+		if entry.SideEffect != tc.sideEffect {
+			t.Fatalf("planner allowed tool %q side effect = %q, want %q", tc.tool, entry.SideEffect, tc.sideEffect)
 		}
 	}
 }

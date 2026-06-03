@@ -2563,7 +2563,7 @@ func planThenExecuteSubmitPlanOnlyReady(brief workerruntime.WorkerRuntimeBrief, 
 		return false
 	}
 	if len(required) == 0 {
-		if len(unreadPlanThenExecuteCandidateScopePathsForRecovery(brief, results, 8)) > 0 {
+		if len(unreadCandidateRecoveryScopePathsForRecovery(brief, results, 8)) > 0 {
 			return false
 		}
 		if len(normalizedRequiredEditPaths(brief.AllowedEditPaths)) == 0 {
@@ -2707,7 +2707,7 @@ func planThenExecuteCandidateDifferentPathReadAllowed(req workspace.ToolRequest,
 		}
 	}
 	candidateSet := make(map[string]struct{})
-	for _, path := range planThenExecuteCandidateScopePaths(brief, results, 8) {
+	for _, path := range candidateRecoveryScopePaths(brief, results, 8) {
 		candidateSet[normalizeRunnerPath(path)] = struct{}{}
 	}
 	if _, ok := candidateSet[target]; !ok {
@@ -2776,7 +2776,7 @@ func planThenExecuteCandidateRejectedPlanSourceRefreshAllowed(req workspace.Tool
 	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) > 0 {
 		return false
 	}
-	return planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, planThenExecuteCandidateScopePaths(brief, results, 8), results)
+	return planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req, candidateRecoveryScopePaths(brief, results, 8), results)
 }
 
 func planThenExecuteCandidateRejectedPlanSourceRefreshTarget(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, target string) bool {
@@ -2791,7 +2791,7 @@ func planThenExecuteCandidateRejectedPlanSourceRefreshTarget(brief workerruntime
 	if _, invalidAnchor := submitPlanInvalidAnchorPaths(rejected)[target]; !invalidAnchor {
 		return false
 	}
-	scope := normalizedRequiredEditPathSet(planThenExecuteCandidateScopePaths(brief, results, 8))
+	scope := normalizedRequiredEditPathSet(candidateRecoveryScopePaths(brief, results, 8))
 	_, ok = scope[target]
 	return ok
 }

@@ -116,12 +116,7 @@ func discoveryProfileRequestAllowed(req ToolRequest) ToolProfileDecision {
 }
 
 func discoveryProfileToolWritesLocalContextArtifacts(tool string) bool {
-	switch strings.TrimSpace(tool) {
-	case "context_pack", "context_impact", "discovery_query":
-		return true
-	default:
-		return false
-	}
+	return builtInToolSurfaceDiscoveryLocalArtifacts(tool)
 }
 
 func discoveryProfileFreshnessPolicyCanRefresh(policy string) bool {

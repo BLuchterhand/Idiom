@@ -841,6 +841,124 @@ func TestHarnessAuditReportsCapabilityRegistryMetrics(t *testing.T) {
 	}
 }
 
+func TestToolCapabilityMetadataUsesOneStaticSource(t *testing.T) {
+	cases := []struct {
+		tool                string
+		wantCapabilities    []string
+		wantClassification  string
+		wantNoCapabilities  bool
+		mutateFirstCall     bool
+		wantFirstCapability string
+	}{
+		{
+			tool:                readOnlyCapabilityToolName,
+			wantCapabilities:    []string{"inspect_file", "inspect_symbol", "find_symbol", "find_definition", "find_references", "calls_from", "calls_into", "related_files"},
+			wantClassification:  CapabilityClassRouted,
+			mutateFirstCall:     true,
+			wantFirstCapability: "inspect_file",
+		},
+		{
+			tool:               "context_query",
+			wantCapabilities:   []string{"localize_change", "query_context"},
+			wantClassification: CapabilityClassRouted,
+		},
+		{
+			tool:               "context_trace_pack",
+			wantCapabilities:   []string{"verify_edit"},
+			wantClassification: CapabilityClassDeferred,
+		},
+		{
+			tool:               "read_file",
+			wantCapabilities:   []string{"inspect_file"},
+			wantClassification: CapabilityClassFallback,
+		},
+		{
+			tool:               "ctags_symbols",
+			wantCapabilities:   []string{"find_references", "inspect_symbol"},
+			wantClassification: CapabilityClassFallback,
+		},
+		{
+			tool:               "harness_audit",
+			wantCapabilities:   []string{"audit_behavior"},
+			wantClassification: CapabilityClassRouted,
+		},
+		{
+			tool:               "go_definition",
+			wantCapabilities:   []string{"find_definition"},
+			wantClassification: CapabilityClassCompatibilityAdapter,
+		},
+		{
+			tool:               "go_workspace_symbol",
+			wantCapabilities:   []string{"find_symbol"},
+			wantClassification: CapabilityClassCompatibilityAdapter,
+		},
+		{
+			tool:               "apply_patch",
+			wantClassification: CapabilityClassWriteSideEffect,
+			wantNoCapabilities: true,
+		},
+		{
+			tool:               "submit_plan",
+			wantClassification: CapabilityClassWriteSideEffect,
+			wantNoCapabilities: true,
+		},
+		{
+			tool:               "recovery_decompose",
+			wantClassification: CapabilityClassWriteSideEffect,
+			wantNoCapabilities: true,
+		},
+		{
+			tool:               "context_index",
+			wantClassification: CapabilityClassRouted,
+			wantNoCapabilities: true,
+		},
+		{
+			tool:               "context_unregistered",
+			wantClassification: "",
+			wantNoCapabilities: true,
+		},
+	}
+	for _, tc := range cases {
+		gotCapabilities := EvidenceCapabilitiesForTool(tc.tool)
+		if tc.wantNoCapabilities {
+			if len(gotCapabilities) != 0 {
+				t.Fatalf("%s capabilities = %#v, want none", tc.tool, gotCapabilities)
+			}
+		} else if !slices.Equal(gotCapabilities, tc.wantCapabilities) {
+			t.Fatalf("%s capabilities = %#v, want %#v", tc.tool, gotCapabilities, tc.wantCapabilities)
+		}
+		if got := CapabilityClassificationForTool(tc.tool); got != tc.wantClassification {
+			t.Fatalf("%s classification = %q, want %q", tc.tool, got, tc.wantClassification)
+		}
+		if tc.mutateFirstCall {
+			gotCapabilities[0] = "mutated"
+			next := EvidenceCapabilitiesForTool(tc.tool)
+			if len(next) == 0 || next[0] != tc.wantFirstCapability {
+				t.Fatalf("%s capabilities should be returned as a copy, got %#v", tc.tool, next)
+			}
+		}
+	}
+
+	for _, lang := range LanguageRegistry() {
+		for capability, tool := range lang.Tools {
+			if got := EvidenceCapabilitiesForTool(tool); len(got) == 0 {
+				t.Fatalf("%s tool %s for %s should expose evidence capabilities", lang.Name, tool, capability)
+			}
+			if got := CapabilityClassificationForTool(tool); got == "" {
+				t.Fatalf("%s tool %s for %s should expose capability classification", lang.Name, tool, capability)
+			}
+		}
+	}
+	for _, spec := range supplementalLanguageToolSpecs {
+		if got := EvidenceCapabilitiesForTool(spec.Tool); !slices.Equal(got, spec.EvidenceCapabilities) {
+			t.Fatalf("supplemental language tool %s capabilities = %#v, want %#v", spec.Tool, got, spec.EvidenceCapabilities)
+		}
+		if got := CapabilityClassificationForTool(spec.Tool); got == "" {
+			t.Fatalf("supplemental language tool %s should expose capability classification", spec.Tool)
+		}
+	}
+}
+
 func TestUnsafeReadOnlyCapabilityMappingsNameSchemaTruthViolations(t *testing.T) {
 	registry := ReadOnlyCapabilityRegistry{
 		Capabilities: []ReadOnlyCapabilitySpec{

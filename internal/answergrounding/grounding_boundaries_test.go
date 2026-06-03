@@ -14,12 +14,12 @@ func TestClaimExtractor_ExtractsClaimsWithoutReceipts(t *testing.T) {
 	if commandClaim.Supported || len(commandClaim.EvidenceIDs) != 0 {
 		t.Fatalf("command claim should be extracted without support: %#v", commandClaim)
 	}
-	if commandClaim.Severity != "blocking" {
+	if commandClaim.Severity != SeverityBlocking {
 		t.Fatalf("command claim severity = %q, want blocking", commandClaim.Severity)
 	}
 
 	changeClaim := mustFindClaim(t, claims, Change)
-	if changeClaim.Supported || changeClaim.Target != "changed_path" {
+	if changeClaim.Supported || changeClaim.Target != TargetChangedPath {
 		t.Fatalf("change claim = %#v, want unsupported changed_path claim", changeClaim)
 	}
 
@@ -88,7 +88,7 @@ func TestGroundingValidator_AppliesSupportTierRules(t *testing.T) {
 		Kind:     SourceLocation,
 		Target:   "internal/labels/labels.go",
 		Line:     3,
-		Severity: "blocking",
+		Severity: SeverityBlocking,
 		Reason:   "source location claim requires source_body or symbol_body evidence covering the cited line",
 	}
 	pathClaim := AnswerClaim{
@@ -96,7 +96,7 @@ func TestGroundingValidator_AppliesSupportTierRules(t *testing.T) {
 		Kind:     Path,
 		Target:   "internal/labels/labels.go",
 		Line:     1,
-		Severity: "blocking",
+		Severity: SeverityBlocking,
 		Reason:   "path reference requires path or packet evidence",
 	}
 	commandClaim := AnswerClaim{
@@ -104,7 +104,7 @@ func TestGroundingValidator_AppliesSupportTierRules(t *testing.T) {
 		Kind:     ClaimCommandResult,
 		Target:   "verification",
 		Line:     1,
-		Severity: "blocking",
+		Severity: SeverityBlocking,
 		Reason:   "verification claim requires command_result evidence",
 	}
 	changeClaim := AnswerClaim{
@@ -112,7 +112,7 @@ func TestGroundingValidator_AppliesSupportTierRules(t *testing.T) {
 		Kind:     Change,
 		Target:   "changed_path",
 		Line:     1,
-		Severity: "blocking",
+		Severity: SeverityBlocking,
 		Reason:   "change claim requires diff_write evidence",
 	}
 
@@ -212,7 +212,7 @@ func assertUnsupported(t *testing.T, claim AnswerClaim, kind ClaimKind) {
 	if claim.Supported {
 		t.Fatalf("claim should be unsupported: %#v", claim)
 	}
-	if claim.Severity != "blocking" {
+	if claim.Severity != SeverityBlocking {
 		t.Fatalf("claim severity = %q, want blocking: %#v", claim.Severity, claim)
 	}
 }

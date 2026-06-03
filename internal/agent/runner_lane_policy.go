@@ -364,11 +364,10 @@ func conversationBroadDiscoveryRejectionRecorded(results []workspace.ToolResult)
 }
 
 func conversationEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if !workerruntime.TaskFamilyIsConversation(brief.TaskFamily) ||
-		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+	if !readOnlyDirectAnswerLane(brief) {
 		return false
 	}
-	return readOnlyClosureDecisionForResults(brief, results).Answerable()
+	return readOnlyClosureDecisionForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results).Answerable()
 }
 
 func searchContentSummaryMatchCount(summary string) (int, bool) {

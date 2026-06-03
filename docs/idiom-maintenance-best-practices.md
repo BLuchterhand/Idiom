@@ -74,13 +74,13 @@ live/scripted contracts are covered by a better boundary.
   throughput tests for the implementation pipeline.
 - If a phase outcome is mechanically knowable, encode it in intake/preflight or
   the phase state machine. Prompt wording is secondary.
-- Treat read-only readiness as a terminal transport boundary, not only a
-  helpful nudge. After answer readiness or delegated packet closure, the exposed
-  action surface should be final answer, typed blocker, or one exact-probe
-  contract the active phase still allows, carrying the required `named_gap` and
-  `why_not_answering` fields. Any read/search request outside that contract
-  should be rejected before permission dispatch, with telemetry proving the
-  terminal gate fired before tool execution.
+- Treat read-only readiness as advisory evidence state, not a permission
+  boundary. After answer readiness or delegated packet closure, the model should
+  be nudged toward an answer, but a further read/search request should still
+  flow through normal lane/tool permissions unless an explicit lane contract,
+  protected path, configured tool rule, verification state, or loop invariant
+  forbids it. Do not require generic `named_gap` / `why_not_answering` fields or
+  synthesize host-owned closeout merely because readiness was observed.
 - If a phase only needs to generate one bounded scratchpad artifact, prefer an
   artifact-owned path (`idiom artifact --no-tools --output ...`) over asking an
   implementation lane to call `write_file`. Record output/report paths and a

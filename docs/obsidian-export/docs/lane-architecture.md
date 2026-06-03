@@ -317,7 +317,7 @@ Every language tool family in harness is loaded unconditionally:
 `cpp_*`, `go_*`, `python_*`, `ts_*`, `rust_*`, `java_*`. The
 workspace auto-detects which families are *active* for a given
 repo by walking the workspace root and matching against language-
-specific markers in `internal/workspace/language_registry.go`. The
+specific markers in `internal/semantic/language/registry.go`. The
 exact rules differ per language; representative examples:
 
 - Go — `go.mod` at any depth, or `*.go` source files

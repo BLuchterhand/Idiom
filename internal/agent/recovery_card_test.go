@@ -124,6 +124,25 @@ func TestRecoveryCardRendersCompletionGateStyleCard(t *testing.T) {
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, got)
 }
 
+func TestRecoveryCardDoesNotAdvertiseCompletionGateAsCallableTool(t *testing.T) {
+	got := RenderRecoveryCard(RecoveryCard{
+		RejectedAction: RecoveryRejectedAction{
+			Tool:   "completion_gate",
+			Reason: "unsupported detail",
+		},
+		CallableTools:         []string{"read_file", "code_navigate"},
+		CallableActionClasses: []string{actionFinalAnswer, actionRead, actionBlocker},
+	})
+
+	assertRecoveryCardContains(t, got,
+		"rejected action: action_class=final_answer reason=\"unsupported detail\"",
+		"currently callable tools: read_file, code_navigate",
+	)
+	if strings.Contains(got, "tool=completion_gate") {
+		t.Fatalf("model-facing recovery card must not advertise internal completion_gate as a tool:\n%s", got)
+	}
+}
+
 func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

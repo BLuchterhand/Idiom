@@ -144,13 +144,14 @@ failure patterns that have cost time in real Idiom/Colony runs.
   issue: unclear readiness, missing evidence, weak closeout nudges, or tool
   surfaces that keep offering discovery after the answer is known. Prefer
   readiness contracts and targeted recovery.
-- **Post-readiness tools escaping terminal transport**: after
-  `read_only_answer_ready` or delegated packet closure, the next action surface
-  is terminal: final answer, typed blocker, or a typed exact-probe contract the
-  active phase still permits. Read/search/verify requests must be hidden or
-  rejected by one terminal-action gate before normal permission dispatch. Do not
-  patch this boundary with follow-up counters, repeated closeout branches, or
-  tool-specific exceptions.
+- **Readiness mistaken for permission denial**: `read_only_answer_ready` or
+  delegated packet closure is advisory evidence state, not authority to deny
+  more source reads. If the model asks for another read/search, honor it through
+  the normal lane/tool permission policy unless an explicit lane contract,
+  protected path, configured tool rule, verification state, or loop invariant
+  forbids it. A read request after readiness usually means the prior evidence
+  was not sufficient for synthesis; do not force host closeout or require
+  `named_gap` / `why_not_answering` fields as a generic read gate.
 - **Tool results that prescribe strategy**: evidence tools should report facts,
   paths, symbols, counts, uncertainty, and provenance. Strategy guidance belongs
   in the runtime contract or a deterministic rejection message.

@@ -367,7 +367,7 @@
         "frozen-repo",
         "read-only",
         "information",
-        "grounded-answer",
+        "bad-answer-blocked",
         "json-normalization",
         "repeated-rejection",
         "rollback"
@@ -440,7 +440,7 @@
         "frozen-repo",
         "read-only",
         "information",
-        "grounded-answer",
+        "bad-answer-blocked",
         "repeated-rejection",
         "rollback"
       ],
@@ -452,9 +452,9 @@
           "source evidence"
         ],
         "final_assistant_contains": [
-          "internal/labels/labels.go",
-          "ShortLabel",
-          "Save changes"
+          "<<QUESTION>>",
+          "Completion gate rejected",
+          "does not address the user's objective"
         ],
         "forbid_final_assistant_contains": [
           "BAD_FALLBACK_NOT_USED",
@@ -483,7 +483,8 @@
           "idiom.live_contract.resolved_config",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
-          "failure_feedback",
+          "completion_status",
+          "final_answer_blocker_override",
           "turn_summary"
         ],
         "require_verification": "none",
@@ -495,12 +496,6 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
-        "groundedness": {
-          "min_score": 0.2,
-          "context_fragments": [
-            "internal/labels/labels.go package labels func ShortLabel string return Save changes"
-          ]
-        },
         "max_errors": 2,
         "max_duration_millis": 120000
       }
@@ -516,7 +511,7 @@
         "frozen-repo",
         "read-only",
         "information",
-        "grounded-answer",
+        "bad-answer-blocked",
         "repeated-rejection",
         "rollback"
       ],
@@ -528,9 +523,9 @@
           "source evidence"
         ],
         "final_assistant_contains": [
-          "internal/labels/labels.go",
-          "ShortLabel",
-          "Save changes"
+          "<<QUESTION>>",
+          "Completion gate rejected",
+          "does not address the user's objective"
         ],
         "forbid_final_assistant_contains": [
           "BAD_FALLBACK_NOT_USED",
@@ -559,7 +554,8 @@
           "idiom.live_contract.resolved_config",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
-          "failure_feedback",
+          "completion_status",
+          "final_answer_blocker_override",
           "turn_summary"
         ],
         "require_verification": "none",
@@ -571,12 +567,6 @@
         "require_no_shell": true,
         "require_clean_rollback": true,
         "require_no_timeout": true,
-        "groundedness": {
-          "min_score": 0.2,
-          "context_fragments": [
-            "internal/labels/labels.go package labels func ShortLabel string return Save changes"
-          ]
-        },
         "max_errors": 2,
         "max_duration_millis": 120000
       }

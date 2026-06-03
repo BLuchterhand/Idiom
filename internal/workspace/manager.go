@@ -786,7 +786,7 @@ func toolTimeoutFor(tool string) time.Duration {
 	switch tool {
 	// Indexing/build paths can legitimately take a couple of minutes on
 	// a cold repo or after a major refactor.
-	case "context_index", "context_build":
+	case "context_index":
 		return 5 * time.Minute
 	// Security scans are heavy by design.
 	case "semgrep_scan", "joern_scan":
@@ -1383,26 +1383,7 @@ func isLanguageToolName(tool string) bool {
 			}
 		}
 	}
-	if _, ok := supplementalLanguageDiscoveryTools[tool]; ok {
-		return true
-	}
-	return false
-}
-
-var supplementalLanguageDiscoveryTools = map[string]struct{}{
-	"go_find_function": {},
-	"go_find_type":     {},
-	"go_find_const":    {},
-	"go_find_package":  {},
-	"go_extract_body":  {},
-	"go_importers":     {},
-
-	"cpp_declaration":  {},
-	"cpp_extract_body": {},
-	"cpp_includes":     {},
-	"cpp_who_includes": {},
-	"cpp_blast_radius": {},
-	"cpp_dead_symbol":  {},
+	return isSupplementalLanguageToolName(tool)
 }
 
 func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
@@ -3388,37 +3369,24 @@ func IsScopedInspectionRequest(req ToolRequest) bool {
 	return path != "." && path != string(filepath.Separator)
 }
 
+func isStructuredNarrowingTool(tool string) bool {
+	tool = strings.TrimSpace(tool)
+	if metadata, ok := builtInToolSurfaceMetadata(tool); ok {
+		return metadata.Narrowing
+	}
+	return isLanguageToolName(tool)
+}
+
 func IsNarrowingRequest(req ToolRequest) bool {
 	switch strings.TrimSpace(req.Tool) {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
-	case "search_files", "search_content", "rg", "read_file",
-		"code_navigate", "read_only_capability", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
-		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
-		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
-		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
-		"go_definition", "go_references", "go_implementations",
-		"go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
-		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_read_symbol", "cpp_related_files",
-		"cpp_definition", "cpp_declaration", "cpp_implementations", "cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
-		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol", "cpp_workspace_symbol", "cpp_diagnostics",
-		"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol", "python_related_files",
-		"python_definition", "python_references", "python_implementations", "python_calls_from", "python_calls_into",
-		"python_workspace_symbol", "python_diagnostics", "python_file_outline",
-		"ts_overview", "ts_entrypoints", "ts_find_symbol", "ts_read_symbol", "ts_related_files",
-		"ts_definition", "ts_implementations", "ts_references", "ts_calls_from", "ts_calls_into",
-		"ts_workspace_symbol", "ts_diagnostics", "ts_file_outline",
-		"rust_overview", "rust_entrypoints", "rust_find_symbol", "rust_read_symbol", "rust_related_files",
-		"rust_definition", "rust_implementations", "rust_references", "rust_calls_from", "rust_calls_into",
-		"rust_workspace_symbol", "rust_diagnostics", "rust_file_outline",
-		"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files",
-		"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into",
-		"java_workspace_symbol", "java_diagnostics", "java_file_outline":
+	case "read_file":
 		return true
 	case "shell":
 		return isNarrowingShell(req.Command)
 	default:
-		return false
+		return isStructuredNarrowingTool(req.Tool)
 	}
 }
 
@@ -3430,28 +3398,6 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	switch strings.TrimSpace(req.Tool) {
 	case "list_files":
 		return IsScopedInspectionRequest(req)
-	case "search_files", "search_content", "rg",
-		"code_navigate", "read_only_capability", "source_sanity", "harness_audit", "harness_feedback", "idiom_feedback", "context_index", "context_status", "context_query", "context_zoom", "context_pack", "context_impact", "context_trace_pack", "discovery_query",
-		"structural_search", "dependency_graph", "history_range", "history_symbol", "blame_range", "ctags_symbols", "semgrep_scan", "joern_scan",
-		"go_overview", "go_entrypoints", "go_find_symbol", "go_find_type", "go_find_const", "go_file_outline", "go_read_symbol",
-		"go_find_package", "go_related_files", "go_importers", "go_workspace_symbol",
-		"go_definition", "go_references", "go_implementations", "go_calls_from", "go_calls_into", "go_extract_body", "go_diagnostics",
-		"cpp_overview", "cpp_entrypoints", "cpp_find_symbol", "cpp_read_symbol", "cpp_related_files",
-		"cpp_definition", "cpp_declaration", "cpp_implementations", "cpp_references", "cpp_calls_from", "cpp_calls_into", "cpp_extract_body",
-		"cpp_includes", "cpp_who_includes", "cpp_blast_radius", "cpp_dead_symbol", "cpp_workspace_symbol", "cpp_diagnostics",
-		"python_overview", "python_entrypoints", "python_find_symbol", "python_read_symbol", "python_related_files",
-		"python_definition", "python_references", "python_implementations", "python_calls_from", "python_calls_into",
-		"python_workspace_symbol", "python_diagnostics", "python_file_outline",
-		"ts_overview", "ts_entrypoints", "ts_find_symbol", "ts_read_symbol", "ts_related_files",
-		"ts_definition", "ts_implementations", "ts_references", "ts_calls_from", "ts_calls_into",
-		"ts_workspace_symbol", "ts_diagnostics", "ts_file_outline",
-		"rust_overview", "rust_entrypoints", "rust_find_symbol", "rust_read_symbol", "rust_related_files",
-		"rust_definition", "rust_implementations", "rust_references", "rust_calls_from", "rust_calls_into",
-		"rust_workspace_symbol", "rust_diagnostics", "rust_file_outline",
-		"java_overview", "java_entrypoints", "java_find_symbol", "java_read_symbol", "java_related_files",
-		"java_definition", "java_references", "java_implementations", "java_calls_from", "java_calls_into",
-		"java_workspace_symbol", "java_diagnostics", "java_file_outline":
-		return true
 	case "read_file":
 		path, _, err := m.resolveReadTarget(req)
 		if err != nil {
@@ -3461,7 +3407,7 @@ func (m *Manager) ShouldClearBroadInspectionLock(req ToolRequest, result ToolRes
 	case "shell":
 		return isNarrowingShell(req.Command)
 	default:
-		return false
+		return isStructuredNarrowingTool(req.Tool)
 	}
 }
 

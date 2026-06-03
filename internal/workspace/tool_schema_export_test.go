@@ -186,6 +186,64 @@ func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
 	}
 }
 
+func TestToolSchemaPolicyUsesToolSurfaceMetadata(t *testing.T) {
+	cases := []struct {
+		tool         string
+		capabilities []autonomy.Capability
+		sideEffects  []autonomy.SideEffectClass
+	}{
+		{
+			tool:         "read_file",
+			capabilities: []autonomy.Capability{autonomy.CapabilityBoundedRead},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectReadOnly},
+		},
+		{
+			tool:         "search_content",
+			capabilities: []autonomy.Capability{autonomy.CapabilityLiteralSearch},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectReadOnly},
+		},
+		{
+			tool:         "context_index",
+			capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectAdditive},
+		},
+		{
+			tool:         "context_trace_pack",
+			capabilities: []autonomy.Capability{autonomy.CapabilityShellVerification},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectUnknown},
+		},
+		{
+			tool:         "submit_plan",
+			capabilities: []autonomy.Capability{autonomy.CapabilityPlanSubmission},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectAdditive},
+		},
+		{
+			tool:         "recovery_decompose",
+			capabilities: []autonomy.Capability{autonomy.CapabilityExternalWrite},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectAdditive},
+		},
+		{
+			tool:         "go_definition",
+			capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectReadOnly},
+		},
+		{
+			tool:         "go_find_type",
+			capabilities: []autonomy.Capability{autonomy.CapabilitySemanticDiscovery},
+			sideEffects:  []autonomy.SideEffectClass{autonomy.SideEffectReadOnly},
+		},
+	}
+	for _, tc := range cases {
+		policy := toolSchemaPolicyForTool(tc.tool)
+		if !slices.Equal(policy.Capabilities, tc.capabilities) {
+			t.Fatalf("%s capabilities = %#v, want %#v", tc.tool, policy.Capabilities, tc.capabilities)
+		}
+		if !slices.Equal(policy.SideEffects, tc.sideEffects) {
+			t.Fatalf("%s side effects = %#v, want %#v", tc.tool, policy.SideEffects, tc.sideEffects)
+		}
+	}
+}
+
 func TestDiscoveryManifestToolsHaveEvidenceCapabilitiesOrExplicitExclusion(t *testing.T) {
 	excluded := map[string]string{
 		"context_index": "refreshes local context artifacts; freshness and index state are reported through context_status",

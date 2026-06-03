@@ -7,16 +7,11 @@ import (
 	"idiom/internal/workspace"
 )
 
-// TestPostReadinessGapScopeForBriefSuppressesAnswerReadyOnMutation
-// covers #101: when a child:explorer reports `answer_readiness_reached`
-// to a mutation-required parent (refine draft, plan-execute, etc.),
-// the parent's post-readiness gate must NOT fire. The parent's
-// deliverable is a WRITE; the child's read-readiness only means
-// the parent has enough evidence to commit the write, not that
-// the parent is done. Without this guard, the parent's next
-// targeted read trips post_readiness_no_gap and the lane wedges
-// at 39s with no draft produced.
-func TestPostReadinessGapScopeForBriefSuppressesAnswerReadyOnMutation(t *testing.T) {
+// TestPostReadinessGapScopeForBriefDoesNotBlockModelReads covers the core
+// discovery invariant: read-only readiness can nudge the model toward an
+// answer, but it cannot deny a read request. If the model asks for more source
+// evidence, the normal lane/tool permissions decide whether that read is legal.
+func TestPostReadinessGapScopeForBriefDoesNotBlockModelReads(t *testing.T) {
 	mutationBrief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -27,20 +22,19 @@ func TestPostReadinessGapScopeForBriefSuppressesAnswerReadyOnMutation(t *testing
 	}
 	req := workspace.ToolRequest{Tool: "read_file", Path: "x.go"}
 
-	// Mutation parent + delegated read-only answer ready → suppressed.
+	// Mutation parent + delegated read-only answer ready -> suppressed.
 	if scope := postReadinessGapScopeForBrief("main", true, false, req, mutationBrief); scope != "" {
 		t.Fatalf("mutation parent should suppress answer_readiness_reached scope; got %q", scope)
 	}
 
-	// Read-only parent + delegated read-only answer ready → still fires.
-	if scope := postReadinessGapScopeForBrief("main", true, false, req, readOnlyBrief); scope != "answer_readiness_reached" {
-		t.Fatalf("read-only parent should still trigger answer_readiness_reached; got %q", scope)
+	// Read-only parent + delegated read-only answer ready -> advisory only.
+	if scope := postReadinessGapScopeForBrief("main", true, false, req, readOnlyBrief); scope != "" {
+		t.Fatalf("read-only parent should not block post-readiness reads; got %q", scope)
 	}
 
-	// Child:* agent + read-only answer ready → delegated path still
-	// fires regardless of parent brief shape (child's own gate).
-	if scope := postReadinessGapScopeForBrief("child:explorer", true, false, req, mutationBrief); scope != "delegated_read_only_answer_ready" {
-		t.Fatalf("child:* agent should still trigger delegated path; got %q", scope)
+	// Child:* agent + read-only answer ready -> also advisory.
+	if scope := postReadinessGapScopeForBrief("child:explorer", true, false, req, mutationBrief); scope != "" {
+		t.Fatalf("child:* agent should not block post-readiness reads; got %q", scope)
 	}
 
 	// child_packet_available scope ALSO suppressed on mutation
@@ -50,14 +44,35 @@ func TestPostReadinessGapScopeForBriefSuppressesAnswerReadyOnMutation(t *testing
 		t.Fatalf("child_packet_available should also be suppressed on mutation parent; got %q", scope)
 	}
 
-	// But on a READ-ONLY parent, child_packet_available STILL fires.
-	if scope := postReadinessGapScopeForBrief("main", false, true, req, readOnlyBrief); scope != "child_packet_available" {
-		t.Fatalf("child_packet_available should fire on read-only parent; got %q", scope)
+	// Read-only parent + child packet -> advisory only.
+	if scope := postReadinessGapScopeForBrief("main", false, true, req, readOnlyBrief); scope != "" {
+		t.Fatalf("read-only child_packet_available should not block reads; got %q", scope)
 	}
 
-	// Write-class tool — neither scope fires regardless of brief.
+	// Write-class tool: neither scope fires regardless of brief.
 	writeReq := workspace.ToolRequest{Tool: "write_file", Path: "x.md"}
 	if scope := postReadinessGapScopeForBrief("main", true, false, writeReq, mutationBrief); scope != "" {
 		t.Fatalf("write-class tool should never trigger post-readiness scope; got %q", scope)
+	}
+}
+
+func TestPostReadinessReadRequestWithoutNamedGapRemainsDispatchable(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "What does the debug log redacted mode do?",
+	}
+	req := workspace.ToolRequest{
+		Tool:   "code_navigate",
+		Path:   "internal/transcript/debuglog.go",
+		Symbol: "DebugLogger.sanitizeValue",
+	}
+
+	if postReadinessExactProbeContractPresent(req) {
+		t.Fatal("test setup should omit named_gap and why_not_answering")
+	}
+	if scope := postReadinessGapScopeForBrief("main", true, false, req, brief); scope != "" {
+		t.Fatalf("post-readiness source read should remain dispatchable, got blocking scope %q", scope)
 	}
 }

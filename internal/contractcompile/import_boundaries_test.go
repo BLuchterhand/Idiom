@@ -21,26 +21,14 @@ type goPackage struct {
 func TestCoreContractPackagesKeepNarrowDirectImports(t *testing.T) {
 	packages := loadPackages(t)
 
-	assertDirectInternalImports(t, packages, "idiom/internal/autonomy", []string{
-		"idiom/internal/util",
-	})
-
-	assertDirectInternalImports(t, packages, "idiom/internal/contractcompile", []string{
-		"idiom/internal/autonomy",
-	})
-
-	assertDirectInternalImports(t, packages, "idiom/internal/plancontract", []string{
-		"idiom/internal/frontier/pathparse",
-	})
+	for importPath, allowed := range coreContractPackageDirectImports() {
+		assertDirectInternalImports(t, packages, importPath, allowed)
+	}
 }
 
 func TestCoreContractPackagesDoNotImportIOOrFrameworkDetails(t *testing.T) {
 	packages := loadPackages(t)
-	for _, importPath := range []string{
-		"idiom/internal/autonomy",
-		"idiom/internal/contractcompile",
-		"idiom/internal/plancontract",
-	} {
+	for importPath := range coreContractPackageDirectImports() {
 		assertNoDirectImports(t, packages, importPath, []string{
 			"database/sql",
 			"net/http",
@@ -55,37 +43,21 @@ func TestCoreContractPackagesDoNotImportIOOrFrameworkDetails(t *testing.T) {
 func TestCoreContractPackagesDoNotDependOnOuterLayers(t *testing.T) {
 	packages := loadPackages(t)
 
-	assertNoDependencyOn(t, packages, "idiom/internal/autonomy", []string{
-		"idiom/cmd/",
-		"idiom/internal/agent",
-		"idiom/internal/app",
-		"idiom/internal/backends",
-		"idiom/internal/comprehension",
-		"idiom/internal/eval",
-		"idiom/internal/frontier/workerruntime",
-		"idiom/internal/llama",
-		"idiom/internal/mcp",
-		"idiom/internal/planexecute",
-		"idiom/internal/productworkflow",
-		"idiom/internal/workspace",
-	})
+	for importPath := range coreContractPackageDirectImports() {
+		assertNoDependencyOn(t, packages, importPath, coreContractForbiddenOuterPackages())
+	}
+}
 
-	assertNoDependencyOn(t, packages, "idiom/internal/contractcompile", []string{
-		"idiom/cmd/",
-		"idiom/internal/agent",
-		"idiom/internal/app",
-		"idiom/internal/backends",
-		"idiom/internal/comprehension",
-		"idiom/internal/eval",
-		"idiom/internal/frontier/workerruntime",
-		"idiom/internal/llama",
-		"idiom/internal/mcp",
-		"idiom/internal/planexecute",
-		"idiom/internal/productworkflow",
-		"idiom/internal/workspace",
-	})
+func coreContractPackageDirectImports() map[string][]string {
+	return map[string][]string{
+		"idiom/internal/autonomy":        {"idiom/internal/util"},
+		"idiom/internal/contractcompile": {"idiom/internal/autonomy"},
+		"idiom/internal/plancontract":    {"idiom/internal/frontier/pathparse"},
+	}
+}
 
-	assertNoDependencyOn(t, packages, "idiom/internal/plancontract", []string{
+func coreContractForbiddenOuterPackages() []string {
+	return []string{
 		"idiom/cmd/",
 		"idiom/internal/agent",
 		"idiom/internal/app",
@@ -98,7 +70,7 @@ func TestCoreContractPackagesDoNotDependOnOuterLayers(t *testing.T) {
 		"idiom/internal/planexecute",
 		"idiom/internal/productworkflow",
 		"idiom/internal/workspace",
-	})
+	}
 }
 
 func TestRunnerAndWorkspaceDoNotDependOnSurfaces(t *testing.T) {

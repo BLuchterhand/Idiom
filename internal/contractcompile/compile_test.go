@@ -112,8 +112,13 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	if countObligationKind(result.Contract.Obligations, autonomy.ObligationWrite) != 0 {
 		t.Fatalf("planner compiler emitted write obligations: %#v", result.Contract.Obligations)
 	}
-	if slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
-		t.Fatalf("planner compiler allowed additive side effects: %#v", result.Contract.Capabilities.AllowedEffects)
+	if !slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
+		t.Fatalf("planner compiler should allow additive submit_plan/reporting effects: %#v", result.Contract.Capabilities.AllowedEffects)
+	}
+	for _, forbidden := range []autonomy.SideEffectClass{autonomy.SideEffectDestructive, autonomy.SideEffectOpenWorld} {
+		if slices.Contains(result.Contract.Capabilities.AllowedEffects, forbidden) {
+			t.Fatalf("planner compiler allowed forbidden effect %q: %#v", forbidden, result.Contract.Capabilities.AllowedEffects)
+		}
 	}
 	if !hasObligation(result.Contract.Obligations, autonomy.ObligationEvidence, autonomy.OwnerPlanner, "internal/agent/runner.go", "submit_plan_required_edit_coverage") {
 		t.Fatalf("planner required edit path was not represented as submit-plan coverage: %#v", result.Contract.Obligations)
@@ -287,8 +292,8 @@ func TestCompilePlanExecutePlannerAcceptsPlannerToolVocabulary(t *testing.T) {
 			t.Fatalf("callable tools missing %s: %#v", tool, result.Protocol.CallableTools)
 		}
 	}
-	if slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
-		t.Fatalf("planner vocabulary should not allow additive effects: %#v", result.Contract.Capabilities.AllowedEffects)
+	if !slices.Contains(result.Contract.Capabilities.AllowedEffects, autonomy.SideEffectAdditive) {
+		t.Fatalf("planner vocabulary should allow additive terminal/reporting effects: %#v", result.Contract.Capabilities.AllowedEffects)
 	}
 }
 

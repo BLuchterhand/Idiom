@@ -18,7 +18,6 @@ func TestToolTimeoutForKnownTools(t *testing.T) {
 		{"code_navigate", 30 * time.Second},
 		{"cpp_read_symbol", 30 * time.Second},
 		{"context_index", 5 * time.Minute},
-		{"context_build", 5 * time.Minute},
 		{"context_trace_pack", 5 * time.Minute},
 		{"semgrep_scan", 5 * time.Minute},
 		{"joern_scan", 5 * time.Minute},

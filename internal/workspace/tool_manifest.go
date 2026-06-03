@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"idiom/internal/autonomy"
-	"idiom/internal/semantic/languagetools"
 	"idiom/internal/util"
 )
 
@@ -47,154 +46,190 @@ func ToolManifestTools(opts ToolManifestToolOptions) []string {
 	if opts.IncludeTask {
 		tools = append(tools, "task")
 	}
-	tools = append(tools,
-		"pwd",
-		"list_files",
-		"search_files",
-		"search_content",
-		"read_file",
-		"file_stats",
-		"code_navigate",
-		"read_only_capability",
-		"source_sanity",
-		"harness_audit",
-		"harness_feedback",
-		"recovery_inspect",
-		"recovery_status",
-		"recovery_decompose",
-		"product_efforts",
-		"product_status",
-		"context_index",
-		"context_status",
-		"context_query",
-		"context_zoom",
-		"context_pack",
-		"context_impact",
-		"context_trace_pack",
-		"discovery_query",
-		"structural_search",
-		"dependency_graph",
-		"history_range",
-		"history_symbol",
-		"blame_range",
-		"ctags_symbols",
-		"semgrep_scan",
-		"joern_scan",
-		"git_status",
-		"git_diff",
-		"shell",
-	)
+	tools = append(tools, defaultToolManifestTools()...)
 	if opts.IncludeWriteTools && !opts.IncludePlanThenExecute {
-		tools = append(tools, "mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit")
+		tools = append(tools, workspaceWriteToolNamesWithoutLanguageSpecific()...)
 	}
 	if opts.IncludePlanThenExecute {
-		tools = append(tools, "submit_plan")
+		if metadata, ok := builtInToolSurfaceMetadata("submit_plan"); ok {
+			tools = append(tools, metadata.Tool)
+		}
 	}
 	if opts.IncludeGo {
-		tools = append(tools,
-			"go_overview",
-			"go_entrypoints",
-			"go_find_symbol",
-			"go_find_function",
-			"go_find_type",
-			"go_find_const",
-			"go_find_package",
-			"go_related_files",
-			"go_workspace_symbol",
-			"go_references",
-			"go_definition",
-			"go_implementations",
-			"go_calls_from",
-			"go_calls_into",
-			"go_read_symbol",
-			"go_extract_body",
-			"go_importers",
-			"go_diagnostics",
-			"go_file_outline",
-		)
+		tools = appendLanguageManifestTools(tools, "go")
 		if opts.IncludeWriteTools {
 			tools = append(tools, "go_move_declarations")
 		}
 	}
 	if opts.IncludeCpp {
-		tools = append(tools,
-			"cpp_overview",
-			"cpp_entrypoints",
-			"cpp_find_symbol",
-			"cpp_read_symbol",
-			"cpp_related_files",
-			"cpp_references",
-			"cpp_definition",
-			"cpp_declaration",
-			"cpp_implementations",
-			"cpp_calls_from",
-			"cpp_calls_into",
-			"cpp_extract_body",
-			"cpp_includes",
-			"cpp_who_includes",
-			"cpp_blast_radius",
-			"cpp_dead_symbol",
-			"cpp_workspace_symbol",
-			"cpp_diagnostics",
-			"cpp_file_outline",
-		)
+		tools = appendLanguageManifestTools(tools, "cpp")
 	}
 	if opts.IncludePython {
-		tools = append(tools,
-			"python_overview",
-			"python_entrypoints",
-			"python_find_symbol",
-			"python_read_symbol",
-			"python_related_files",
-			"python_references",
-			"python_definition",
-			"python_implementations",
-			"python_calls_from",
-			"python_calls_into",
-			"python_workspace_symbol",
-			"python_diagnostics",
-			"python_file_outline",
-		)
+		tools = appendLanguageManifestTools(tools, "python")
 	}
 	if opts.IncludeTypescript {
-		tools = append(tools,
-			"ts_overview",
-			"ts_entrypoints",
-			"ts_find_symbol",
-			"ts_read_symbol",
-			"ts_related_files",
-			"ts_definition",
-			"ts_implementations",
-			"ts_references",
-			"ts_calls_from",
-			"ts_calls_into",
-			"ts_workspace_symbol",
-			"ts_diagnostics",
-			"ts_file_outline",
-		)
+		tools = appendLanguageManifestTools(tools, "typescript")
 	}
 	if opts.IncludeRust {
-		tools = append(tools, languagetools.RustToolNames()...)
+		tools = appendLanguageManifestTools(tools, "rust")
 	}
 	if opts.IncludeJava {
-		tools = append(tools,
-			"java_overview",
-			"java_entrypoints",
-			"java_find_symbol",
-			"java_read_symbol",
-			"java_related_files",
-			"java_workspace_symbol",
-			"java_definition",
-			"java_references",
-			"java_implementations",
-			"java_calls_from",
-			"java_calls_into",
-			"java_diagnostics",
-			"java_file_outline",
-		)
+		tools = appendLanguageManifestTools(tools, "java")
 	}
 	if opts.PlanThenExecutePlannerSurface {
 		tools = filterManifestToolNames(tools, planThenExecutePlannerManifestToolNames()...)
+	}
+	return tools
+}
+
+type languageManifestToolToken struct {
+	Capability   Capability
+	Supplemental string
+}
+
+var defaultLanguageManifestToolOrder = []languageManifestToolToken{
+	{Capability: CapOverview},
+	{Capability: CapEntrypoints},
+	{Capability: CapFindSymbol},
+	{Capability: CapReadSymbol},
+	{Capability: CapRelatedFiles},
+	{Capability: CapDefinition},
+	{Capability: CapImplementations},
+	{Capability: CapReferences},
+	{Capability: CapCallsFrom},
+	{Capability: CapCallsInto},
+	{Capability: CapWorkspaceSymbol},
+	{Capability: CapDiagnostics},
+	{Capability: CapFileOutline},
+}
+
+var languageManifestToolOrders = map[string][]languageManifestToolToken{
+	"go": {
+		{Capability: CapOverview},
+		{Capability: CapEntrypoints},
+		{Capability: CapFindSymbol},
+		{Supplemental: "go_find_function"},
+		{Supplemental: "go_find_type"},
+		{Supplemental: "go_find_const"},
+		{Supplemental: "go_find_package"},
+		{Capability: CapRelatedFiles},
+		{Capability: CapWorkspaceSymbol},
+		{Capability: CapReferences},
+		{Capability: CapDefinition},
+		{Capability: CapImplementations},
+		{Capability: CapCallsFrom},
+		{Capability: CapCallsInto},
+		{Capability: CapReadSymbol},
+		{Supplemental: "go_extract_body"},
+		{Supplemental: "go_importers"},
+		{Capability: CapDiagnostics},
+		{Capability: CapFileOutline},
+	},
+	"cpp": {
+		{Capability: CapOverview},
+		{Capability: CapEntrypoints},
+		{Capability: CapFindSymbol},
+		{Capability: CapReadSymbol},
+		{Capability: CapRelatedFiles},
+		{Capability: CapReferences},
+		{Capability: CapDefinition},
+		{Supplemental: "cpp_declaration"},
+		{Capability: CapImplementations},
+		{Capability: CapCallsFrom},
+		{Capability: CapCallsInto},
+		{Supplemental: "cpp_extract_body"},
+		{Supplemental: "cpp_includes"},
+		{Supplemental: "cpp_who_includes"},
+		{Supplemental: "cpp_blast_radius"},
+		{Supplemental: "cpp_dead_symbol"},
+		{Capability: CapWorkspaceSymbol},
+		{Capability: CapDiagnostics},
+		{Capability: CapFileOutline},
+	},
+	"python": {
+		{Capability: CapOverview},
+		{Capability: CapEntrypoints},
+		{Capability: CapFindSymbol},
+		{Capability: CapReadSymbol},
+		{Capability: CapRelatedFiles},
+		{Capability: CapReferences},
+		{Capability: CapDefinition},
+		{Capability: CapImplementations},
+		{Capability: CapCallsFrom},
+		{Capability: CapCallsInto},
+		{Capability: CapWorkspaceSymbol},
+		{Capability: CapDiagnostics},
+		{Capability: CapFileOutline},
+	},
+	"typescript": {
+		{Capability: CapOverview},
+		{Capability: CapEntrypoints},
+		{Capability: CapFindSymbol},
+		{Capability: CapReadSymbol},
+		{Capability: CapRelatedFiles},
+		{Capability: CapDefinition},
+		{Capability: CapImplementations},
+		{Capability: CapReferences},
+		{Capability: CapCallsFrom},
+		{Capability: CapCallsInto},
+		{Capability: CapWorkspaceSymbol},
+		{Capability: CapDiagnostics},
+		{Capability: CapFileOutline},
+	},
+	"rust": {
+		{Capability: CapOverview},
+		{Capability: CapEntrypoints},
+		{Capability: CapFindSymbol},
+		{Capability: CapWorkspaceSymbol},
+		{Capability: CapReadSymbol},
+		{Capability: CapRelatedFiles},
+		{Capability: CapFileOutline},
+		{Capability: CapDefinition},
+		{Capability: CapReferences},
+		{Capability: CapCallsFrom},
+		{Capability: CapCallsInto},
+		{Capability: CapImplementations},
+		{Capability: CapDiagnostics},
+	},
+	"java": {
+		{Capability: CapOverview},
+		{Capability: CapEntrypoints},
+		{Capability: CapFindSymbol},
+		{Capability: CapReadSymbol},
+		{Capability: CapRelatedFiles},
+		{Capability: CapWorkspaceSymbol},
+		{Capability: CapDefinition},
+		{Capability: CapReferences},
+		{Capability: CapImplementations},
+		{Capability: CapCallsFrom},
+		{Capability: CapCallsInto},
+		{Capability: CapDiagnostics},
+		{Capability: CapFileOutline},
+	},
+}
+
+func appendLanguageManifestTools(tools []string, languageName string) []string {
+	lang, ok := LanguageForName(languageName)
+	if !ok {
+		return tools
+	}
+	order := defaultLanguageManifestToolOrder
+	if languageOrder := languageManifestToolOrders[lang.Name]; len(languageOrder) > 0 {
+		order = languageOrder
+	}
+	for _, token := range order {
+		switch {
+		case token.Capability != "":
+			if tool := strings.TrimSpace(lang.Tools[token.Capability]); tool != "" {
+				tools = append(tools, tool)
+			}
+		case token.Supplemental != "":
+			tool := strings.TrimSpace(token.Supplemental)
+			if !slices.Contains(supplementalLanguageToolsForManifest(lang.Name), tool) {
+				continue
+			}
+			tools = append(tools, tool)
+		}
 	}
 	return tools
 }
@@ -239,7 +274,11 @@ func toolManifestToolsAcrossBuiltInSurfaces() []string {
 }
 
 func WorkspaceWriteToolNames() []string {
-	return []string{"mkdir", "edit_file", "write_file", "append_file", "apply_patch", "delegate_edit", "go_move_declarations"}
+	return builtInToolSurfaceToolsByCategory(CategoryWrite)
+}
+
+func workspaceWriteToolNamesWithoutLanguageSpecific() []string {
+	return builtInToolSurfaceToolsByCategoryWithoutLanguageSpecific(CategoryWrite)
 }
 
 func IsWorkspaceWriteTool(tool string) bool {

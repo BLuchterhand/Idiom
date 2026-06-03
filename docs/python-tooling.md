@@ -5,8 +5,12 @@ Go and C/C++ surfaces. The shape mirrors `cpp_*` — deterministic
 capabilities for file outline, symbol lookup, references, call hierarchy,
 entrypoints, and diagnostics.
 
-All thirteen canonical capabilities from `internal/workspace/language_registry.go`
+All thirteen canonical capabilities from `internal/semantic/language/registry.go`
 are exposed under the `python_` prefix:
+
+The implementation lives in `internal/semantic/languagetools/python_tools.go`
+and `internal/semantic/languagetools/pylsp_lsp.go`; `internal/workspace`
+only adapts workspace paths, dispatch, and tool result contracts.
 
 | Capability         | Tool                      | Backing                             |
 | ------------------ | ------------------------- | ----------------------------------- |

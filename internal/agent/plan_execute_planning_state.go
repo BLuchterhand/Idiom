@@ -107,7 +107,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 
 	state.RequiredCoveragePaths = planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
 	state.RequiredPathStates = planThenExecuteRequiredPathStateSummaries(brief, results)
-	state.AllowedCandidatePaths = planThenExecuteCandidateScopePaths(brief, results, 16)
+	state.AllowedCandidatePaths = candidateRecoveryScopePaths(brief, results, 16)
 	state.EvidencePaths = sortedRunnerPathKeys(readPathsFromResults(results))
 	state.LastInvalidPaths = planThenExecuteLastInvalidSubmitPlanPaths(results)
 	state.TerminalOptions = []string{"source_satisfied", "blocker"}

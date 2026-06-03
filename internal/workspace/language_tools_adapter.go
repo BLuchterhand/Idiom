@@ -217,10 +217,6 @@ func goReadSymbolWindow(match semantic.SymbolMatch, requestedStart, requestedEnd
 	return languagetools.GoReadSymbolWindow(match, requestedStart, requestedEnd)
 }
 
-func RustToolNames() []string {
-	return languagetools.RustToolNames()
-}
-
 func (m *Manager) setGoplsBinaryForTesting(path string) {
 	if m.languageTools == nil {
 		m.languageTools = languagetools.NewManager(languageToolHost{manager: m})

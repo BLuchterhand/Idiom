@@ -114,13 +114,15 @@ func TestRunnerAutonomyPlanExecutePlannerPolicyEventsUseSharedToolMetadata(t *te
 		capability autonomy.Capability
 		effect     autonomy.SideEffectClass
 	}{
-		{tool: "submit_plan", capability: autonomy.CapabilityPlanSubmission, effect: autonomy.SideEffectReadOnly},
+		{tool: "submit_plan", capability: autonomy.CapabilityPlanSubmission, effect: autonomy.SideEffectAdditive},
 		{tool: "read_file", capability: autonomy.CapabilityBoundedRead, effect: autonomy.SideEffectReadOnly},
 		{tool: "search_content", capability: autonomy.CapabilityLiteralSearch, effect: autonomy.SideEffectReadOnly},
 		{tool: "context_status", capability: autonomy.CapabilitySemanticDiscovery, effect: autonomy.SideEffectReadOnly},
+		{tool: "harness_feedback", capability: autonomy.CapabilitySemanticDiscovery, effect: autonomy.SideEffectAdditive},
+		{tool: "product_status", capability: autonomy.CapabilityBoundedRead, effect: autonomy.SideEffectReadOnly},
 		{tool: "apply_patch", capability: autonomy.CapabilityApplyPatch, effect: autonomy.SideEffectAdditive},
 		{tool: "shell", capability: autonomy.CapabilityShellVerification, effect: autonomy.SideEffectUnknown},
-		{tool: "task", capability: autonomy.CapabilityDelegation, effect: autonomy.SideEffectUnknown},
+		{tool: "task", capability: autonomy.CapabilityDelegation, effect: autonomy.SideEffectAdditive},
 		{tool: "recovery_decompose", capability: autonomy.CapabilityExternalWrite, effect: autonomy.SideEffectAdditive},
 	}
 

@@ -346,7 +346,7 @@ func sideEffectForTool(tool string) autonomy.SideEffectClass {
 }
 
 func allowedEffects(input PlanExecutePlannerInput) []autonomy.SideEffectClass {
-	return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly}
+	return []autonomy.SideEffectClass{autonomy.SideEffectReadOnly, autonomy.SideEffectAdditive}
 }
 
 func forbiddenEffects(input PlanExecutePlannerInput) []autonomy.SideEffectClass {

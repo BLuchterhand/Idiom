@@ -415,3 +415,339 @@ func TestReadOnlyAnswerabilityRejectsScaffoldFinalEvenWithRelevantSourceBody(t *
 		t.Fatal("expected scaffold rejection reason")
 	}
 }
+
+func TestFinalAnswerAcceptanceRejectsOffObjectiveSourceBackedAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"},{"path":"internal/app/model.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+	answer := "The relevant code is `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("off-objective source-backed answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+	if !strings.Contains(reason, "does not establish the user's objective") {
+		t.Fatalf("blocker reason should describe objective mismatch, got %q", reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsObjectiveParrotWithWrongSource(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsCitationlessObjectiveParrotWithUnrelatedRead(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/app/rendering.go lines 1-9",
+		Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+	}}
+	answer := "The TUI chat input newline wrap and upward shift issue is caused by trimming the raw tool name before display."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("citationless objective-parroting unrelated read got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAppliesToDirectAnswerTaskFamilyAlias(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+	answer := "The relevant code is `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, _ := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("direct_answer task-family alias was not checked: got %q, want answer_objective_unmet", kind)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsAliasInsufficientEvidenceWithoutSourceBody(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote packet",
+		Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+	}}
+	answer := "I cannot determine from the available evidence why the TUI chat input first wraps to a newline."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("premature insufficient-evidence alias answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+	if !strings.Contains(reason, "before inspecting source-body or diagnostic evidence") {
+		t.Fatalf("expected source-body insufficiency reason, got %q", reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsAliasInsufficientEvidenceAfterSourceBody(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/app/rendering.go lines 1-9",
+		Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+	}}
+	answer := "I cannot determine from the available evidence why the TUI chat input first wraps to a newline."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("source-backed insufficient-evidence alias answer blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsAliasObjectiveParrotWithWrongSource(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+	answer := "The TUI chat input newline wrap and upward shift issue is in `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("alias objective-parroting wrong-source answer got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+}
+
+func TestGenericReadOnlyEvidenceReadyRejectsAliasWrongSource(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+
+	if genericReadOnlyAnswerEvidenceReady(brief, results) {
+		t.Fatal("direct_answer alias readiness should not close from an unrelated candidate source body")
+	}
+}
+
+func TestConversationEvidenceSatisfiedNormalizesDirectAnswerAlias(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+	if conversationEvidenceSatisfied(brief, results) {
+		t.Fatal("direct_answer alias should use objective-relevant source-body evidence, not any candidate body")
+	}
+
+	results[1] = workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read internal/app/chat_input.go lines 1-9",
+		Output:  "1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
+	}
+	if !conversationEvidenceSatisfied(brief, results) {
+		t.Fatal("direct_answer alias should be satisfied by objective-relevant source-body evidence")
+	}
+}
+
+func TestRunnerReadinessStateNormalizesDirectAnswerAlias(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack wrote packet",
+		Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+	}}
+
+	readiness := runnerReadinessState("main", brief, results)
+	if readiness.ReadyToAnswer {
+		t.Fatalf("direct_answer alias should not be answer-ready from localization only: %#v", readiness)
+	}
+	if !slices.Contains(readiness.OpenObligations, "read_only_source_body_evidence_pending") {
+		t.Fatalf("expected source-body obligation for direct_answer alias, got %#v", readiness.OpenObligations)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsObjectiveRelevantSourceBackedAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/app/chat_input.go lines 1-9",
+		Output:  "1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
+	}}
+	answer := "The chat input newline wrap issue is handled in `internal/app/chat_input.go`: `syncChatInputHeight` keeps the first existing line visible instead of letting it shift upward."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("objective-relevant source-backed answer blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsNamedFileContentAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("What is in internal/agent/runner.go?")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/agent/runner.go lines 1-20",
+		Output:  "1:package agent\n2:\n3:func RunExample() {}\n",
+	}}
+	answer := "runner.go contains package agent."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("named-file source-backed answer blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsFixturePurposeSummary(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Summarize what this fixture repository is for. Use repository evidence and do not edit files.")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 README.md lines 1-5 (total lines: 5)",
+		Output: strings.Join([]string{
+			"1:# Frozen label repo",
+			"2:",
+			"3:This fixture repository is used for deterministic Idiom scripted-contract tests.",
+			"4:It gives the harness a tiny real Git workspace for mutation, verification, and rollback.",
+			"5:Do not edit files for read-only summary requests.",
+		}, "\n"),
+	}}
+	answer := "This fixture repository exists for deterministic Idiom scripted-contract tests. It gives the harness a tiny real Git workspace where a fake model can drive the real binary through workspace mutation, verification, and rollback. I did not edit files or run shell commands."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("fixture purpose summary blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceRejectsNamedFileWhyAnswerWithUnrelatedBody(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why does the TUI chat input first wrap to a newline in internal/app/rendering.go?")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/app/rendering.go lines 1-9",
+		Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+	}}
+	answer := "`internal/app/rendering.go` contains `evidenceDisplayName`, which trims the raw tool name before display."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("named-file why answer with unrelated body got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+}
+
+func TestAcceptedAnswerEvidencePathsPreferObjectiveRelevantSourceBody(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go"},{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/chat_input.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func syncChatInputHeight() {\n4:\t// chat input newline wrap keeps the first existing line visible instead of shifting upward\n5:}\n",
+		},
+	}
+	answer := "The chat input newline wrap issue is in `internal/app/chat_input.go`, where the input height sync keeps the first existing line visible."
+
+	paths := acceptedAnswerEvidencePaths(answer, results, brief)
+	if len(paths) == 0 {
+		t.Fatal("expected evidence paths")
+	}
+	if paths[0] != "internal/app/chat_input.go" {
+		t.Fatalf("expected objective-relevant source body first, got %v", paths)
+	}
+}
+
+func TestAcceptedAnswerEvidencePathsAliasIgnoresUnrelatedCandidateBody(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.")
+	brief.TaskFamily = string(workerruntime.TaskFamilyDirectAnswer)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+		},
+	}
+	answer := "The TUI chat input newline wrap and upward shift issue is not established by the inspected source."
+
+	paths := acceptedAnswerEvidencePaths(answer, results, brief)
+	if len(paths) != 0 {
+		t.Fatalf("alias evidence paths should not report unrelated candidate source body, got %v", paths)
+	}
+}

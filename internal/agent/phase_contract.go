@@ -683,16 +683,17 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.ActionPolicy.InvalidActionClasses = []string{actionFinalAnswer}
 	}
 	if genericReadOnlyEvidenceReady(brief, results) {
+		evidenceTools := genericReadOnlyEvidenceTools(contract.AllowedTools)
 		contract.Phase = "read_only_evidence_available"
 		contract.DerivationReason = "read_only_workspace_evidence_available"
-		contract.AllowedTools = nil
-		contract.RequiredNext = []string{"final answer from the gathered evidence, or <<QUESTION>> with the exact unsupported claim and missing evidence source"}
-		contract.InvalidNext = []string{"workspace read/search after evidence is sufficient", "workspace write", "shell/mutating command", "repeated broad or identical read/search"}
+		contract.AllowedTools = evidenceTools
+		contract.RequiredNext = []string{"final answer from the gathered evidence, one bounded proof read for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
+		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "repeated broad or identical read/search", "broad rediscovery after evidence is sufficient"}
 		contract.ActionPolicy = TurnActionClassPolicy{
-			AllowedActionClasses:   []string{actionFinalAnswer, actionBlocker},
-			InvalidActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite, actionVerify, actionGenericProbe},
+			AllowedActionClasses:   uniquePhaseStrings(append([]string{actionFinalAnswer, actionBlocker}, genericAllowedActionClasses(evidenceTools)...)),
+			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify},
 			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
-			CallableToolNames:      nil,
+			CallableToolNames:      evidenceTools,
 		}
 		contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)
 		return
@@ -752,8 +753,7 @@ func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, result
 	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
 		return true
 	}
-	if workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
-		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) {
+	if readOnlyDirectAnswerLane(brief) {
 		return conversationEvidenceSatisfiedForObjective(brief, results)
 	}
 	return genericReadOnlyAnswerEvidenceReady(brief, results)
@@ -763,8 +763,7 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-	isReadOnlyConversation := workerruntime.TaskFamilyIsConversation(brief.TaskFamily) &&
-		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract)
+	isReadOnlyConversation := readOnlyDirectAnswerLane(brief)
 	if brief.Readiness == nil && !isReadOnlyConversation {
 		return false
 	}
@@ -784,6 +783,11 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 func genericReadOnlyAnswerEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
 	if conversationBroadDiscoveryRejectionRecorded(results) {
 		return true
+	}
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDirectAnswer) &&
+		workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) &&
+		strings.TrimSpace(brief.Objective) != "" {
+		brief = readOnlyDirectAnswerAcceptanceLedgerBrief(brief)
 	}
 	return readOnlyClosureDecisionForResults(brief, results).Answerable()
 }
@@ -1134,12 +1138,11 @@ func phaseContractKeepsTextualCallableTools(input TurnPhaseContractInput, contra
 	if !workerruntime.RuntimeContractIsDirectAnswer(input.Brief.Contract) {
 		return false
 	}
-	taskFamily := strings.TrimSpace(input.Brief.TaskFamily)
-	if !workerruntime.TaskFamilyIsConversation(taskFamily) && !workerruntime.TaskFamilyMatches(taskFamily, workerruntime.TaskFamilyDirectAnswer) {
+	if !readOnlyDirectAnswerTaskFamily(input.Brief.TaskFamily) {
 		return false
 	}
 	switch strings.TrimSpace(contract.Phase) {
-	case "generic", "read_only_evidence_pending":
+	case "generic", "read_only_evidence_pending", "read_only_evidence_available":
 		return true
 	default:
 		return false

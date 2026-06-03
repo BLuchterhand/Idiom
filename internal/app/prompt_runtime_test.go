@@ -842,6 +842,29 @@ func TestBuildPromptExecutionPlanCarriesObjectiveIntoRuntimeBrief(t *testing.T) 
 	}
 }
 
+func TestPlanExecutePromptRunnerDirectQuestionUsesConversationOnlyBrief(t *testing.T) {
+	root := t.TempDir()
+	model := &Model{
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: root},
+			Workspace: config.Workspace{Root: root, CWD: root},
+		},
+		agentModeName: "build",
+	}
+	restore := model.applyPlanExecutePromptRunnerState(config.Default(), planexecute.RunOptions{
+		TaskFamily: "direct_question",
+	}, io.Discard)
+	defer restore()
+
+	plan := model.buildPromptExecutionPlan(context.Background(), "answer directly")
+	if plan.runtimeBrief.PermissionProfile != "conversation_only" {
+		t.Fatalf("permission profile = %q, want conversation_only", plan.runtimeBrief.PermissionProfile)
+	}
+	if len(plan.runtimeBrief.AllowedTools) != 0 || len(plan.runtimeBrief.RequiredEvidence) != 0 {
+		t.Fatalf("direct-question prompt runner should not advertise workspace evidence gates, brief=%#v", plan.runtimeBrief)
+	}
+}
+
 func TestBuildPromptExecutionPlanScopesWrappedPlanExecuteObjective(t *testing.T) {
 	model := &Model{
 		cfg:           config.Config{Chat: config.Chat{ProjectRoot: t.TempDir()}},

@@ -312,38 +312,10 @@ func EvidenceCapabilitiesForTool(tool string) []string {
 	if capabilities := languageToolEvidenceCapabilities(tool); len(capabilities) > 0 {
 		return capabilities
 	}
-	switch tool {
-	case readOnlyCapabilityToolName:
-		return []string{"inspect_file", "inspect_symbol", "find_definition", "find_references", "calls_from", "calls_into", "related_files"}
-	case "code_navigate":
-		return []string{"inspect_file", "inspect_symbol", "find_definition", "find_references", "calls_from", "calls_into", "related_files"}
-	case "context_pack", "context_impact", "discovery_query":
-		return []string{"localize_change"}
-	case "context_query", "context_zoom", "context_status":
-		return []string{"localize_change", "query_context"}
-	case "read_file":
-		return []string{"inspect_file"}
-	case "search_files", "search_content", "structural_search":
-		return []string{"find_references"}
-	case "ctags_symbols":
-		return []string{"find_references", "inspect_symbol"}
-	case "dependency_graph":
-		return []string{"related_files"}
-	case "history_range", "history_symbol", "blame_range":
-		return []string{"history_context"}
-	case "semgrep_scan", "joern_scan":
-		return []string{"security_scan"}
-	case "source_sanity":
-		return []string{"source_diagnostics", "verify_edit"}
-	case "context_trace_pack":
-		return []string{"verify_edit"}
-	case "harness_audit":
-		return []string{"audit_behavior"}
-	case "shell":
-		return []string{"verify_edit"}
-	default:
-		return nil
+	if capabilities := builtInToolSurfaceEvidenceCapabilities(tool); len(capabilities) > 0 {
+		return capabilities
 	}
+	return nil
 }
 
 func CapabilityClassificationForTool(tool string) string {
@@ -351,27 +323,24 @@ func CapabilityClassificationForTool(tool string) string {
 	switch {
 	case tool == "":
 		return ""
-	case IsWorkspaceWriteTool(tool) || tool == "submit_plan":
+	case IsWorkspaceWriteTool(tool):
 		return CapabilityClassWriteSideEffect
-	case tool == "source_sanity" || tool == "context_trace_pack" || tool == "shell" || isToolSchemaDiagnosticTool(tool):
+	case isToolSchemaDiagnosticTool(tool):
 		return CapabilityClassDeferred
-	case tool == readOnlyCapabilityToolName || tool == "code_navigate" || strings.HasPrefix(tool, "context_") || tool == "discovery_query":
-		return CapabilityClassRouted
-	case len(languageToolEvidenceCapabilities(tool)) > 0:
-		return CapabilityClassCompatibilityAdapter
-	case slices.Contains([]string{
-		"read_file", "search_files", "search_content", "ctags_symbols", "structural_search", "dependency_graph",
-		"history_range", "history_symbol", "blame_range", "semgrep_scan", "joern_scan",
-	}, tool):
-		return CapabilityClassFallback
-	case tool == "harness_audit":
-		return CapabilityClassRouted
-	default:
-		return ""
 	}
+	if metadata, ok := builtInToolSurfaceMetadata(tool); ok && metadata.CapabilityClassification != "" {
+		return metadata.CapabilityClassification
+	}
+	if len(languageToolEvidenceCapabilities(tool)) > 0 {
+		return CapabilityClassCompatibilityAdapter
+	}
+	return ""
 }
 
 func languageToolEvidenceCapabilities(tool string) []string {
+	if capabilities := supplementalLanguageEvidenceCapabilities(tool); len(capabilities) > 0 {
+		return capabilities
+	}
 	for _, lang := range LanguageRegistry() {
 		for capability, candidate := range lang.Tools {
 			if candidate != tool {
@@ -389,6 +358,8 @@ func evidenceCapabilityForLanguageCapability(capability Capability) string {
 	switch capability {
 	case CapFileOutline:
 		return "inspect_file"
+	case CapFindSymbol, CapWorkspaceSymbol:
+		return "find_symbol"
 	case CapReadSymbol:
 		return "inspect_symbol"
 	case CapDefinition:
@@ -401,8 +372,12 @@ func evidenceCapabilityForLanguageCapability(capability Capability) string {
 		return "calls_into"
 	case CapRelatedFiles:
 		return "related_files"
+	case CapImplementations:
+		return "find_implementations"
 	case CapDiagnostics:
 		return "source_diagnostics"
+	case CapOverview, CapEntrypoints:
+		return "localize_change"
 	default:
 		return ""
 	}
