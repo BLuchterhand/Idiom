@@ -486,9 +486,15 @@ if turns_json_raw and turns_json_raw != "null":
         pass
 if not turns:
     prompt = open(prompt_file, encoding="utf-8").read().rstrip("\n")
-    if not prompt.lstrip().startswith("/feature-planner"):
+    if not prompt.lstrip().startswith("/"):
         prompt = "/feature-planner " + prompt
     turns = [prompt]
+
+def slash_command(turn):
+    stripped = str(turn).lstrip()
+    if not stripped.startswith("/"):
+        return ""
+    return stripped.split(None, 1)[0]
 
 cfg = json.load(open(config_path, encoding="utf-8"))
 debug_log_dir = pathlib.Path(cfg.get("chat", {}).get("debug_log_dir") or "")
@@ -505,7 +511,12 @@ proc = subprocess.Popen(
 )
 os.close(slave)
 out = bytearray()
-marker = b"feature-planner:"
+primary_command = slash_command(turns[0]) if turns else ""
+terminal_marker_by_command = {
+    "/product-create": [b"product create:"],
+    "/product-approve": [b"product workflow transition:"],
+}
+terminal_markers = terminal_marker_by_command.get(primary_command, [b"feature-planner:"])
 turn_index = 0
 deadline = time.time() + timeout
 completed = False
@@ -522,13 +533,20 @@ def debug_log_completed():
         text = logs[-1].read_text(encoding="utf-8", errors="replace")
     except OSError:
         return False
-    terminal_roles = (
-        "idiom.feature_planner.complete",
-        "idiom.feature_planner.recovery_open",
-        "idiom.feature_planner.question_open",
-        "idiom.feature_planner.planning_stuck",
-        "idiom.feature_planner.failed",
-        "idiom.feature_planner.terminal",
+    terminal_roles_by_command = {
+        "/product-create": ("idiom.product_workflow.create",),
+        "/product-approve": ("idiom.product_workflow.transition_applied",),
+    }
+    terminal_roles = terminal_roles_by_command.get(
+        primary_command,
+        (
+            "idiom.feature_planner.complete",
+            "idiom.feature_planner.recovery_open",
+            "idiom.feature_planner.question_open",
+            "idiom.feature_planner.planning_stuck",
+            "idiom.feature_planner.failed",
+            "idiom.feature_planner.terminal",
+        ),
     )
     return any(role in text for role in terminal_roles)
 
@@ -554,7 +572,7 @@ try:
             if not chunk:
                 break
             out.extend(chunk)
-            if marker in out and turn_index >= len(turns):
+            if any(marker in out for marker in terminal_markers) and turn_index >= len(turns):
                 completed = True
                 break
         if debug_log_completed():
@@ -581,7 +599,7 @@ finally:
             proc.wait(timeout=5)
     os.close(master)
 if not completed:
-    print("tui runner did not observe feature-planner completion marker", file=sys.stderr)
+    print("tui runner did not observe expected completion marker for " + (primary_command or "prompt"), file=sys.stderr)
     sys.exit(1)
 PY
   elif [[ "$runner_mode" == "feature-planner" ]] || { [[ "$runner_mode" == "auto" || -z "$runner_mode" ]] && [[ "${IDIOM_SWE_FAMILY:-}" == feature_planner* ]]; }; then

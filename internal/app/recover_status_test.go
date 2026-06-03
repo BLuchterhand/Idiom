@@ -10,6 +10,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/planexecute"
 	"idiom/internal/recoverstatus"
 	"idiom/internal/recovery"
 	"idiom/internal/workspace"
@@ -161,6 +162,124 @@ func TestFeaturePlannerSlashCommandRequiresObjective(t *testing.T) {
 	}
 	if model.status != "Usage: /feature-planner <objective>" {
 		t.Fatalf("status = %q", model.status)
+	}
+}
+
+func TestProductSlashCommandsStaySeparateFromFeaturePlanner(t *testing.T) {
+	model := &Model{}
+
+	if model.handleFeaturePlannerCommand("/product-create --effort-root docs/product-workflows/efforts/started/test") {
+		t.Fatal("product-create must not be consumed by the feature-planner command handler")
+	}
+	if model.handleFeaturePlannerCommand("/product-approve --effort-root docs/product-workflows/efforts/started/test") {
+		t.Fatal("product-approve must not be consumed by the feature-planner command handler")
+	}
+	for _, command := range []string{"/product-create", "/product-approve"} {
+		if _, ok := slashCommands[command]; !ok {
+			t.Fatalf("%s must remain an explicit product slash command", command)
+		}
+	}
+	if _, ok := slashCommands["/feature-planner"]; ok {
+		t.Fatal("/feature-planner should remain on the direct feature-planner handler, not the generic product slash map")
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionPreservesNestedDegradedStatus(t *testing.T) {
+	model := &Model{}
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion(strings.Join([]string{
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"review_model_error"}`,
+		`{"type":"message","content":"review unavailable"}`,
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	for _, want := range []string{
+		`"status":"degraded"`,
+		`"review_status":"review_unavailable"`,
+		`"failure_kind":"review_model_error"`,
+		`"completion_source":"tui_plan_execute_returned"`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in payload %s", want, payload)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionRequiresTypedNestedStatus(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_missing_status", "prompt", "", nil, nil, time.Now().UTC())
+	state.Phase = "planner"
+	state.Status = ""
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        0,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plain nested stdout without typed completion")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	for _, want := range []string{
+		`"status":"ambiguous"`,
+		`"failure_kind":"missing_nested_plan_execute_status"`,
+		`"progress_path":"` + statePath + `"`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in payload %s", want, payload)
+		}
+	}
+	if strings.Contains(payload, `"status":"completed"`) {
+		t.Fatalf("missing nested status must not default to completed: %s", payload)
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_model_error", "prompt", "", nil, nil, time.Now().UTC())
+	state.Phase = "review_repair"
+	state.Status = "failed"
+	state.FailureKind = "review_model_error"
+	state.FailureReason = "model returned malformed review"
+	state.Review.Status = "review_model_error"
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        1,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+			FailureKind:     "model_error",
+			FailureReason:   "plan-execute exited nonzero",
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute exited 1")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	for _, want := range []string{
+		`"tool":"plan_execute_completed"`,
+		`"status":"failed"`,
+		`"phase":"review_repair"`,
+		`"review_status":"review_model_error"`,
+		`"failure_kind":"model_error"`,
+		`"failure_reason":"plan-execute exited nonzero"`,
+		`"progress_path":"` + statePath + `"`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in payload %s", want, payload)
+		}
 	}
 }
 

@@ -1125,6 +1125,223 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsAnswerAfterEvidence(t *te
 	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 }
 
+func TestDeriveTurnPhaseContractInformationRequestClosesAfterEvidence(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "information_request",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 README.md lines 1-8 (total lines: 8)",
+			Output:  "This repository exists only for deterministic tests.",
+		}},
+	})
+
+	if contract.Phase != "read_only_evidence_ready" {
+		t.Fatalf("Phase = %q, want read_only_evidence_ready", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	if len(contract.AllowedTools) != 0 {
+		t.Fatalf("answer-ready information request must not advertise tools, got %#v", contract.AllowedTools)
+	}
+}
+
+func TestDeriveTurnPhaseContractCodingHelpRequiresEvidenceBeforeAnswer(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "coding_help",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"search_content", "read_file", "edit_file", "shell"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+		},
+	})
+
+	if contract.Phase != "read_only_evidence_pending" {
+		t.Fatalf("Phase = %q, want read_only_evidence_pending", contract.Phase)
+	}
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.AllowedTools, "read_file")
+	assertNotContains(t, contract.AllowedTools, "edit_file")
+	assertNotContains(t, contract.AllowedTools, "shell")
+}
+
+func TestDeriveTurnPhaseContractExcludesNonGroundedReadOnlyCloseoutLanes(t *testing.T) {
+	tests := []struct {
+		name   string
+		brief  workerruntime.WorkerRuntimeBrief
+		result workspace.ToolResult
+	}{
+		{
+			name: "architecture_assessment",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "architecture",
+				Contract:          "architecture_assessment",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"discovery_query", "read_file"},
+				Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"evidence"}},
+			},
+			result: workspace.ToolResult{Tool: "read_file", Summary: "Read f1 internal/agent/runner.go lines 1-20", Output: "package agent\n"},
+		},
+		{
+			name: "locate",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "locate",
+				Contract:          "locate_targets",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"search_content", "read_file"},
+				Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"target"}},
+			},
+			result: workspace.ToolResult{Tool: "read_file", Summary: "Read f1 internal/app/app.go lines 1-20", Output: "package app\n"},
+		},
+		{
+			name: "verification_only",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "verification_only",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_verification_shell",
+				AllowedTools:      []string{"shell"},
+				Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"verification"}},
+			},
+			result: workspace.ToolResult{Tool: "shell", Summary: "Command exited 0", Output: "ok"},
+		},
+		{
+			name: "direct_no_tool_chat",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "conversation",
+				Contract:          "direct_answer",
+				PermissionProfile: "conversation_only",
+				Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false, OpenObligations: []string{"answer"}},
+			},
+			result: workspace.ToolResult{Tool: "read_file", Summary: "Read f1 README.md lines 1-8", Output: "readme"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+				Brief:   tt.brief,
+				Results: []workspace.ToolResult{tt.result},
+			})
+			if contract.Phase == "read_only_evidence_ready" || contract.Phase == "read_only_evidence_pending" {
+				t.Fatalf("excluded lane projected read-only closeout phase %q: %#v", contract.Phase, contract)
+			}
+		})
+	}
+}
+
+func TestReadOnlyEvidenceCloseoutAppliesExplicitAllowlist(t *testing.T) {
+	evidence := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 README.md lines 1-8",
+		Output:  "readme",
+	}}
+	tests := []struct {
+		name  string
+		brief workerruntime.WorkerRuntimeBrief
+		want  bool
+	}{
+		{
+			name: "information_request",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "information_request",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"read_file"},
+			},
+			want: true,
+		},
+		{
+			name: "coding_help",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "coding_help",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"read_file"},
+			},
+			want: true,
+		},
+		{
+			name: "grounded_answer",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "grounded_answer",
+				Contract:          "grounded_evidence_summary",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"read_file"},
+			},
+			want: true,
+		},
+		{
+			name: "delegated_read_only",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "delegated_read_only",
+				Contract:          "grounded_evidence_summary",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"read_file"},
+			},
+		},
+		{
+			name: "direct_question",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "direct_question",
+				Contract:          "direct_answer",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"read_file"},
+			},
+		},
+		{
+			name: "plan_execute_planner",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        PlanThenExecutePlannerTaskFamily,
+				Contract:          "implementation_result",
+				PermissionProfile: "guarded_workspace_write",
+				AllowedTools:      []string{"read_file", "submit_plan"},
+			},
+		},
+		{
+			name: "review_repair",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+				Contract:          "review_findings",
+				PermissionProfile: "plan_submission_review",
+				AllowedTools:      []string{"read_file", "submit_plan"},
+			},
+		},
+		{
+			name: "mutation_parent",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "locate_then_implement",
+				Contract:          "implementation_result",
+				PermissionProfile: "analysis_read_only_then_guarded_writes",
+				AllowedTools:      []string{"read_file", "edit_file"},
+			},
+		},
+		{
+			name: "architecture_assessment",
+			brief: workerruntime.WorkerRuntimeBrief{
+				TaskFamily:        "architecture",
+				Contract:          "architecture_assessment",
+				PermissionProfile: "read_only_workspace",
+				AllowedTools:      []string{"read_file"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := readOnlyEvidenceCloseoutApplies(tt.brief, evidence); got != tt.want {
+				t.Fatalf("readOnlyEvidenceCloseoutApplies = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceReadyDoesNotAdvertiseTools(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -1335,6 +1552,38 @@ func TestNextActionStateSurfaceSummaryReconcilesWithPhaseContract(t *testing.T) 
 	}
 	if !foundInvalid {
 		t.Fatalf("expected invalid %s contradiction from rendered next-action state, got %#v", invalidActionClass, issues)
+	}
+}
+
+func TestReadOnlyEvidenceReadyContractAppliesToNextActionState(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content", "code_navigate"},
+		},
+		Results: []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)"}},
+	})
+	if contract.Phase != "read_only_evidence_ready" {
+		t.Fatalf("Phase = %q, want read_only_evidence_ready", contract.Phase)
+	}
+	state := applyTurnPhaseContractToNextActionState(runnerNextActionState{
+		Phase:            "evidence",
+		NextValidActions: []string{"one narrow range read or exact-text search only if a specific anchor is still missing"},
+		EvidencePaths:    []string{"internal/labels/labels.go"},
+	}, contract)
+	if strings.Contains(strings.Join(state.NextValidActions, "\n"), "range read") {
+		t.Fatalf("read-only evidence-ready state should replace stale read guidance, got %#v", state.NextValidActions)
+	}
+	summary := turnPhaseSurfaceSummaryFromNextActionState(state, contract)
+	if !slices.Contains(summary.AdvertisedActionClasses, actionFinalAnswer) {
+		t.Fatalf("summary should advertise final_answer, got %#v", summary.AdvertisedActionClasses)
+	}
+	for _, forbidden := range []string{actionRead, actionSearch} {
+		if slices.Contains(summary.AdvertisedActionClasses, forbidden) {
+			t.Fatalf("summary should not advertise %s after read-only evidence readiness, got %#v", forbidden, summary.AdvertisedActionClasses)
+		}
 	}
 }
 

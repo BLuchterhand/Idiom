@@ -420,11 +420,24 @@ func TestLintSWESuiteReportsWeakOracles(t *testing.T) {
 					RequireChangedFiles: []string{"target.txt"},
 				},
 			},
+			{
+				ID:     "live-errors-without-typed-recovery",
+				Family: "implementation",
+				Prompt: "Edit live.",
+				Tags:   []string{"live"},
+				Scenario: Scenario{
+					Name:           "live-errors-without-typed-recovery",
+					PromptContains: []string{"Edit live"},
+				},
+				Oracle: SWEOracle{
+					MaxErrors: intPtr(1),
+				},
+			},
 		},
 	}
 	findings := LintSWESuite(suite)
 	joined := strings.Join(findings, "\n")
-	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text", "env key \"IDIOM_SWE_LOG\" is reserved by the live runner", "runner_mode \"surprise\" is invalid"} {
+	for _, want := range []string{"read-only task must require no changed files", "direct implementation task must require changed files or approval", "tool-error task must bound errors", "negative-evidence task must require no changed files", "fixture path is invalid", "multi-turn task must require at least 2 user turns", "multi-turn task must require an assistant response for each user turn", "file content oracle path is invalid", "file content oracle for \"../README.md\" must assert required or forbidden text", "env key \"IDIOM_SWE_LOG\" is reserved by the live runner", "runner_mode \"surprise\" is invalid", "live task with max_errors > 0 must declare typed expected_recoveries"} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("expected lint finding %q, got %q", want, joined)
 		}
@@ -957,6 +970,202 @@ func TestEvaluateSWETaskRequiresNoRunnerRejections(t *testing.T) {
 	}
 }
 
+func TestEvaluateSWETaskExpectedRecoveryCanAccountForRunnerRejection(t *testing.T) {
+	maxErrors := 0
+	task := SWETask{
+		ID:       "typed-post-readiness-recovery",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "typed-post-readiness-recovery"},
+		Oracle: SWEOracle{
+			RequireNoRunnerRejections: true,
+			MaxErrors:                 &maxErrors,
+			ExpectedRecoveries: []SWEExpectedRecovery{{
+				Kind:                       "post_readiness_named_gap_recovery",
+				EventType:                  "tool_result",
+				Tool:                       "code_navigate",
+				SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
+				ErrorContains:              []string{"answer readiness has already been reached"},
+				AccountsForRunnerRejection: true,
+				MaxCount:                   intPtr(1),
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "code_navigate",
+			"summary": "Post-readiness follow-up missing named gap",
+			"error":   "answer readiness has already been reached for this read-only lane",
+		}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 1, "completion_gate_rejections": 0}},
+	}
+
+	report := EvaluateSWETask("typed-recovery.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected typed recovery to account for runner rejection, got %#v", report.Findings)
+	}
+
+	unexpected := append(records, Record{Type: "tool_result", Data: map[string]any{
+		"tool":    "shell",
+		"summary": "shell rejected",
+		"error":   "shell not in the current allowed tool surface",
+	}})
+	report = EvaluateSWETask("typed-recovery.jsonl", unexpected, task)
+	if report.Passed {
+		t.Fatal("expected unexpected runner rejection to fail")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "unexpected error event did not match expected_recoveries") {
+		t.Fatalf("expected unmatched recovery finding, got %q", joined)
+	}
+}
+
+func TestEvaluateSWETaskExpectedRecoveryDoesNotAccountForNonRejectionEvent(t *testing.T) {
+	maxErrors := 0
+	task := SWETask{
+		ID:       "typed-non-rejection-event",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "typed-non-rejection-event"},
+		Oracle: SWEOracle{
+			RequireNoRunnerRejections: true,
+			MaxErrors:                 &maxErrors,
+			ExpectedRecoveries: []SWEExpectedRecovery{{
+				Kind:                       "post_readiness_named_gap_recovery",
+				EventType:                  "tool_result",
+				Tool:                       "code_navigate",
+				SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
+				ErrorContains:              []string{"answer readiness has already been reached"},
+				AccountsForRunnerRejection: true,
+				MaxCount:                   intPtr(1),
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{
+			"tool":            "code_navigate",
+			"summary":         "Post-readiness follow-up missing named gap",
+			"error":           "answer readiness has already been reached for this read-only lane",
+			"runner_rejected": false,
+		}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 1, "completion_gate_rejections": 0}},
+	}
+
+	report := EvaluateSWETask("typed-non-rejection-event.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("matched expected_recoveries event without runner rejection flag must not account for aggregate rejected_actions")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "runner rejections were forbidden") {
+		t.Fatalf("expected unaccounted runner rejection finding, got %#v", report.Findings)
+	}
+}
+
+func TestEvaluateSWETaskExpectedRecoveryDoesNotDoubleAccountOverlappingMatcher(t *testing.T) {
+	maxErrors := 0
+	task := SWETask{
+		ID:       "typed-overlapping-recovery",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "typed-overlapping-recovery"},
+		Oracle: SWEOracle{
+			RequireNoRunnerRejections: true,
+			MaxErrors:                 &maxErrors,
+			ExpectedRecoveries: []SWEExpectedRecovery{
+				{
+					Kind:                       "post_readiness_named_gap_recovery",
+					EventType:                  "tool_result",
+					Tool:                       "code_navigate",
+					SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
+					ErrorContains:              []string{"answer readiness has already been reached"},
+					AccountsForRunnerRejection: true,
+					MaxCount:                   intPtr(1),
+				},
+				{
+					Kind:                       "broad_named_gap_recovery",
+					EventType:                  "tool_result",
+					Tool:                       "code_navigate",
+					ErrorContains:              []string{"answer readiness has already been reached"},
+					AccountsForRunnerRejection: true,
+					MaxCount:                   intPtr(1),
+				},
+			},
+		},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "code_navigate",
+			"summary": "Post-readiness follow-up missing named gap",
+			"error":   "answer readiness has already been reached for this read-only lane",
+		}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 2, "completion_gate_rejections": 0}},
+	}
+
+	report := EvaluateSWETask("typed-overlapping-recovery.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected one actual recovery event not to account for two aggregate runner rejections")
+	}
+	joined := strings.Join(report.Findings, "\n")
+	if !strings.Contains(joined, "runner rejections were forbidden but observed unexpected rejected_actions=1") {
+		t.Fatalf("expected overlapping matcher not to double-account, got %q", joined)
+	}
+}
+
+func TestEvaluateSWETaskExpectedRecoveryCanBoundGuardFamilyAcrossTools(t *testing.T) {
+	maxErrors := 0
+	task := SWETask{
+		ID:       "typed-cross-tool-recovery",
+		Family:   "direct_question",
+		Scenario: Scenario{Name: "typed-cross-tool-recovery"},
+		Oracle: SWEOracle{
+			RequireNoRunnerRejections: true,
+			MaxErrors:                 &maxErrors,
+			ExpectedRecoveries: []SWEExpectedRecovery{{
+				Kind:                       "post_readiness_named_gap_recovery",
+				EventType:                  "tool_result",
+				SummaryContains:            []string{"Post-readiness follow-up missing named gap"},
+				ErrorContains:              []string{"answer readiness has already been reached"},
+				AccountsForRunnerRejection: true,
+				MaxCount:                   intPtr(3),
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "read_file",
+			"summary": "Post-readiness follow-up missing named gap",
+			"error":   "answer readiness has already been reached for this read-only lane",
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "code_navigate",
+			"summary": "Post-readiness follow-up missing named gap",
+			"error":   "answer readiness has already been reached for this read-only lane",
+		}},
+		{Type: "tool_result", Data: map[string]any{
+			"tool":    "search_content",
+			"summary": "Post-readiness follow-up missing named gap",
+			"error":   "answer readiness has already been reached for this read-only lane",
+		}},
+		{Type: "turn_summary", Data: map[string]any{"rejected_actions": 3, "completion_gate_rejections": 0}},
+	}
+
+	report := EvaluateSWETask("typed-cross-tool-recovery.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("expected one typed recovery family to account across tools, got %#v", report.Findings)
+	}
+	tooMany := append([]Record{}, records...)
+	tooMany = append(tooMany[:len(tooMany)-1], Record{Type: "tool_result", Data: map[string]any{
+		"tool":    "search_content",
+		"summary": "Post-readiness follow-up missing named gap",
+		"error":   "answer readiness has already been reached for this read-only lane",
+	}}, tooMany[len(tooMany)-1])
+	tooMany[len(tooMany)-1] = Record{Type: "turn_summary", Data: map[string]any{"rejected_actions": 4, "completion_gate_rejections": 0}}
+
+	report = EvaluateSWETask("typed-cross-tool-recovery.jsonl", tooMany, task)
+	if report.Passed {
+		t.Fatal("expected typed recovery family maximum to reject excess guard friction")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "exceeded maximum") {
+		t.Fatalf("expected max-count finding, got %#v", report.Findings)
+	}
+}
+
 func TestEvaluateSWETaskRequiresTurnSummaryForNoRunnerRejections(t *testing.T) {
 	task := SWETask{
 		ID:       "no-rejections-summary",
@@ -1262,11 +1471,109 @@ func TestEvaluateSWETaskMaxErrorsUsesErrorEventsNotUniqueMessages(t *testing.T) 
 		t.Fatal("expected max_errors to fail on two identical error events")
 	}
 	joined := strings.Join(report.Findings, "\n")
-	if !strings.Contains(joined, "errors exceeded oracle limit: got 2 want <= 1") {
+	if !strings.Contains(joined, "unexpected errors exceeded oracle limit: got 2 want <= 1") {
 		t.Fatalf("expected error event count finding, got %q", joined)
 	}
 	if report.Metrics.ErrorCount != 2 || len(report.Metrics.Errors) != 1 {
 		t.Fatalf("expected event count plus deduplicated messages, got count=%d errors=%#v", report.Metrics.ErrorCount, report.Metrics.Errors)
+	}
+}
+
+func TestEvaluateSWETaskExpectedRecoveriesDoNotHideUnrelatedErrors(t *testing.T) {
+	maxErrors := 2
+	task := SWETask{
+		ID:       "typed-recoveries",
+		Family:   "implementation",
+		Scenario: Scenario{Name: "typed-recoveries"},
+		Oracle: SWEOracle{
+			MaxErrors: &maxErrors,
+			ExpectedRecoveries: []SWEExpectedRecovery{{
+				Kind:            "write_surface_rejection",
+				EventType:       "tool_result",
+				Tool:            "read_file",
+				SummaryContains: []string{"write-ready tool rejected"},
+				ErrorContains:   []string{"outside the target-write-ready surface"},
+				MaxCount:        intPtr(1),
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "read_file", "summary": "Implementation target write-ready tool rejected", "error": "read_file is outside the target-write-ready surface"}},
+		{Type: "tool_result", Data: map[string]any{"step": 2, "tool": "shell", "summary": "command failed", "error": "unexpected unrelated failure"}},
+	}
+
+	report := EvaluateSWETask("typed-recoveries.jsonl", records, task)
+	if report.Passed {
+		t.Fatal("expected unrelated error to fail despite max_errors allowance")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "unexpected error event did not match expected_recoveries") {
+		t.Fatalf("expected unrelated error finding, got %#v", report.Findings)
+	}
+
+	matched := EvaluateSWETask("typed-recoveries.jsonl", records[:1], task)
+	if !matched.Passed {
+		t.Fatalf("expected matching recovery error to pass, got %#v", matched.Findings)
+	}
+	if len(matched.Metrics.ErrorEvents) != 1 || matched.Metrics.ErrorEvents[0].Tool != "read_file" {
+		t.Fatalf("expected typed error event metrics, got %#v", matched.Metrics.ErrorEvents)
+	}
+}
+
+func TestEvaluateSWETaskExpectedRecoveriesDoNotConsumeMaxErrors(t *testing.T) {
+	maxErrors := 0
+	task := SWETask{
+		ID:       "typed-recovery-strict",
+		Family:   "implementation",
+		Scenario: Scenario{Name: "typed-recovery-strict"},
+		Oracle: SWEOracle{
+			MaxErrors: &maxErrors,
+			ExpectedRecoveries: []SWEExpectedRecovery{{
+				Kind:          "completion_gate_recovery",
+				EventType:     "tool_result",
+				Tool:          "completion_gate",
+				ErrorContains: []string{"verification required"},
+				MaxCount:      intPtr(1),
+			}},
+		},
+	}
+	records := []Record{
+		{Type: "tool_result", Data: map[string]any{"step": 1, "tool": "completion_gate", "summary": "completion rejected", "error": "verification required before final answer"}},
+	}
+
+	report := EvaluateSWETask("typed-recovery-strict.jsonl", records, task)
+	if !report.Passed {
+		t.Fatalf("typed expected recovery should not consume max_errors, got %#v", report.Findings)
+	}
+}
+
+func TestEvaluateSWETaskExpectedRecoveriesDefaultToRequired(t *testing.T) {
+	task := SWETask{
+		ID:       "typed-recovery-required",
+		Family:   "implementation",
+		Scenario: Scenario{Name: "typed-recovery-required"},
+		Oracle: SWEOracle{
+			ExpectedRecoveries: []SWEExpectedRecovery{{
+				Kind:          "completion_gate_recovery",
+				EventType:     "tool_result",
+				Tool:          "completion_gate",
+				ErrorContains: []string{"verification required"},
+				MaxCount:      intPtr(1),
+			}},
+		},
+	}
+	report := EvaluateSWETask("typed-recovery-required.jsonl", nil, task)
+	if report.Passed {
+		t.Fatal("expected missing recovery to fail by default")
+	}
+	if !strings.Contains(strings.Join(report.Findings, "\n"), "below minimum: got 0 want >= 1") {
+		t.Fatalf("expected missing recovery finding, got %#v", report.Findings)
+	}
+
+	optional := task
+	optional.Oracle.ExpectedRecoveries[0].MinCount = intPtr(0)
+	report = EvaluateSWETask("typed-recovery-optional.jsonl", nil, optional)
+	if !report.Passed {
+		t.Fatalf("explicit min_count=0 recovery should be optional, got %#v", report.Findings)
 	}
 }
 

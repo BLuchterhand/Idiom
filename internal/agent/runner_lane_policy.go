@@ -337,7 +337,6 @@ func conversationInspectedPathSummary(results []workspace.ToolResult) string {
 	return strings.Join(inspected, "; ")
 }
 
-
 // conversationMilestones derives context-window-aware timing for
 // conversation-lane auto-findings capture and call-count awareness nudges.
 // Returns (firstMilestone, nudgeInterval) in tool calls.
@@ -1110,11 +1109,15 @@ func (r *Runner) readOnlyAnalysisAnswerReadyAfterResult(req workspace.ToolReques
 	if strings.HasPrefix(r.agentName(), "child:") || strings.HasPrefix(r.agentName(), "child_write:") {
 		return false
 	}
-	if runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
+	if !readOnlyEvidenceCloseoutApplies(r.RuntimeBrief, results) {
 		return false
 	}
-	if !readOnlyExplanationGateApplies(r.RuntimeBrief) {
-		return false
+	if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.TaskFamily), "conversation") &&
+		strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
+		return conversationEvidenceSatisfiedForObjective(r.RuntimeBrief, results)
+	}
+	if genericReadOnlyAnswerEvidenceReady(results) {
+		return true
 	}
 	exactProbes := readOnlyAnalysisExactProbeCount(results)
 	evidencePaths := promptEvidencePathsFromToolResults(results, 6)

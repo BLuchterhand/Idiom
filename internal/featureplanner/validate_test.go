@@ -117,7 +117,7 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 		if taskFamily != "feature_planner_implementor" {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
-		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","summary":"go test ./internal/featureplanner passed"}`, nil
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","summary":"go test ./internal/featureplanner passed"}`, nil
 	})
 
 	if len(events) != 2 {
@@ -133,6 +133,9 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	complete := events[1]
 	if got := fmt.Sprint(complete.Fields["lane_family"]); got != "plan-execute" {
 		t.Fatalf("completion lane family = %q, want plan-execute; event=%+v", got, complete)
+	}
+	if got := fmt.Sprint(complete.Fields["nested_status"]); got != "completed" {
+		t.Fatalf("nested status = %q, want completed; event=%+v", got, complete)
 	}
 }
 
@@ -348,7 +351,7 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 		State:         "running",
 	}}
 
-	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":"Edited files and go test ./internal/featureplanner passed"}`)
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","review_status":"skipped","review_repair_skipped":true,"progress_path":".idiom/plan-execute/session/state.json","summary":"Edited files and go test ./internal/featureplanner passed"}`)
 
 	if atom.State != AtomStateComplete {
 		t.Fatalf("atom state = %q, want complete; blockers=%+v", atom.State, atom.Blockers)
@@ -361,6 +364,126 @@ func TestApplyImplementorOutputAcceptsObservedPlanExecuteCompletion(t *testing.T
 	}
 	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/session/state.json" {
 		t.Fatalf("progress_path = %q, want delegated plan-execute path", got)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_review_status"]); got != "skipped" {
+		t.Fatalf("nested review status = %q, want skipped", got)
+	}
+	if got := events[0].Fields["review_repair_skipped"]; got != true {
+		t.Fatalf("review_repair_skipped = %v, want true", got)
+	}
+}
+
+func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","plan_execute":{"lane_family":"plan-execute","status":"completed","phase":"review_repair","review_status":"completed","progress_path":".idiom/plan-execute/session/state.json"}}`)
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "completed" {
+		t.Fatalf("nested status = %q, want completed; fields=%+v", got, events[0].Fields)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_phase"]); got != "review_repair" {
+		t.Fatalf("nested phase = %q, want review_repair; fields=%+v", got, events[0].Fields)
+	}
+}
+
+func TestApplyImplementorOutputRejectsPlanExecuteCompletionWithoutNestedStatus(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","progress_path":".idiom/plan-execute/session/state.json","summary":"nested output without typed status"}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing required nested plan-execute status")
+	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "" {
+		t.Fatalf("nested_status = %q, want empty observable field", got)
+	}
+}
+
+func TestApplyImplementorOutputAcceptsDegradedPlanExecuteReview(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json","summary":"review repair degraded"}`)
+
+	if atom.State != AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "degraded" {
+		t.Fatalf("nested_status = %q, want degraded", got)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_review_status"]); got != "degraded" {
+		t.Fatalf("nested_review_status = %q, want degraded", got)
+	}
+}
+
+func TestApplyImplementorOutputRejectsPlanExecuteModelError(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"review_repair","review_status":"review_model_error","failure_kind":"review_model_error","failure_reason":"model returned malformed review"}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details")
+	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "review_model_error" {
+		t.Fatalf("nested_failure_kind = %q, want review_model_error", got)
+	}
+	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
+		t.Fatalf("model-error nested completion must not record completed atom: %+v", state.Continuation)
+	}
+}
+
+func TestApplyImplementorOutputRejectsImplicitSkippedReview(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","review_status":"skipped"}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute skipped review is not explicitly marked by design")
+}
+
+func implementingAtomForCompletionTest(t *testing.T) (FeatureState, *FeatureAtomState) {
+	t.Helper()
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
+	atom := &state.Atoms[0]
+	atom.State = AtomStateImplementing
+	atom.LastRunID = "atom-1-run-1"
+	state.Status = FeatureStateDispatching
+	state.ActiveRuns = []ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        atom.ID,
+		LaneSessionID: "atom-1-run-1",
+		LaneFamily:    "plan-execute",
+		State:         "running",
+	}}
+	return state, atom
+}
+
+func assertRejectedPlanExecuteCompletion(t *testing.T, state FeatureState, atom *FeatureAtomState, events []Event, wantMessage string) {
+	t.Helper()
+	if atom.State != AtomStateRecoveryOpen {
+		t.Fatalf("atom state = %q, want recovery-open; events=%+v", atom.State, events)
+	}
+	if state.Status != FeatureStateRecoveryOpen {
+		t.Fatalf("feature state = %q, want recovery-open", state.Status)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.plan_execute_completion_rejected" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if !strings.Contains(events[0].Message, wantMessage) {
+		t.Fatalf("message = %q, want %q", events[0].Message, wantMessage)
+	}
+	if len(state.ActiveRuns) != 0 {
+		t.Fatalf("active run should be folded after rejected completion: %+v", state.ActiveRuns)
+	}
+	if containsString(state.Continuation.CompletedAtoms, atom.ID) {
+		t.Fatalf("rejected atom must not be recorded complete: %+v", state.Continuation)
+	}
+	if !containsString(state.Continuation.BlockedAtoms, atom.ID) {
+		t.Fatalf("rejected atom should be blocked: %+v", state.Continuation)
 	}
 }
 

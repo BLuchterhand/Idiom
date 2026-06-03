@@ -1,4 +1,5 @@
 package planexecute
+
 import (
 	"bytes"
 	"encoding/json"
@@ -1000,6 +1001,55 @@ func TestRunPlanExecuteMainInheritsPackBeforeExecutor(t *testing.T) {
 	}
 }
 
+func TestRunPlanExecuteMainPreloadsContextPackForExecutorHandoff(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("IDIOM_QUEUE_SOCKET", filepath.Join(root, "missing-runner.sock"))
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	configPath := filepath.Join(root, "config.json")
+	body := fmt.Sprintf(`{"workspace":{"root":%q,"cwd":%q,"enable_writes":true}}`, root, root)
+	if err := os.WriteFile(configPath, []byte(body), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+	prompt := "Use plan-execute to update a.go so A returns beta.\n\nrequired_edit_paths:\n- a.go"
+	var stdout, stderr bytes.Buffer
+	code := RunMain(
+		[]string{"-config", configPath, "-json", "-skip-review-repair", "-prompt", prompt},
+		&stdout,
+		&stderr,
+		func(cfg config.Config, plannerPrompt string, _ cmdruntime.RunOptions, _ io.Writer) (string, error) {
+			if !strings.Contains(plannerPrompt, "## Context Pack") || !strings.Contains(plannerPrompt, "- Pack: `") {
+				t.Fatalf("planner prompt missing preloaded context pack:\n%s", plannerPrompt)
+			}
+			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
+				SchemaVersion: workspace.PlanArtifactSchemaVersion,
+				Created:       time.Now().UTC().Format(time.RFC3339Nano),
+				SessionID:     cfg.Workspace.SessionID,
+				Rationale:     "change marker",
+				Edits: []workspace.PlanEdit{
+					{Path: "a.go", OldText: "alpha", NewText: "beta", Purpose: "change marker"},
+				},
+			})
+			return "submitted", nil
+		},
+	)
+	if code != 0 {
+		t.Fatalf("RunMain exit=%d stderr=%s stdout=%s", code, stderr.String(), stdout.String())
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got:\n%s", stdout.String())
+	}
+	if handoff["packet_present"] != true || handoff["packet_freshness_state"] != "fresh" || handoff["packet_state"] != executorHandoffStateInherited {
+		t.Fatalf("expected fresh inherited packet from preloaded context, got %#v\nstdout=%s", handoff, stdout.String())
+	}
+}
+
 func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing.T) {
 	configPath := writePlanExecuteConfig(t)
 	root := filepath.Dir(configPath)
@@ -1272,11 +1322,75 @@ func TestRunExecutorPhaseEmitsExecutorInheritsPackEvent(t *testing.T) {
 	if handoff["packet_state"] != executorHandoffStateInherited || handoff["reason"] != "fresh_graph_view" {
 		t.Fatalf("expected inherited handoff packet, got %#v", handoff)
 	}
+	if handoff["packet_present"] != true || handoff["packet_freshness_state"] != "fresh" {
+		t.Fatalf("expected present fresh packet fields, got %#v", handoff)
+	}
 	if !strings.Contains(stdout.String(), `"pack_id":"`+key.ID()+`"`) {
 		t.Fatalf("expected pack_id %s in event, got: %s", key.ID(), stdout.String())
 	}
 	if !strings.Contains(stdout.String(), `"candidate_files":1`) {
 		t.Fatalf("expected candidate_files:1 in event, got: %s", stdout.String())
+	}
+}
+
+func TestRunExecutorPhaseTreatsScopedFreshPacketAsFreshHandoff(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	testPath := filepath.Join(root, "a_test.go")
+	if err := os.WriteFile(testPath, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("seed a_test.go: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "scoped fresh handoff", Mode: "plan"}
+	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+		PackID:  key.ID(),
+		IndexID: build.IndexID,
+		Root:    root,
+		Task:    "scoped fresh handoff",
+		Mode:    "plan",
+		Fresh:   false,
+		Freshness: &comprehension.FreshnessDecision{
+			Policy:        comprehension.FreshnessReadThrough,
+			Operation:     "context_pack",
+			IndexID:       build.IndexID,
+			FreshForScope: true,
+			GlobalFresh:   false,
+		},
+		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
+		Tests:          []comprehension.PackTest{{Command: "go test ./...", Path: "a_test.go"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { t.Helper() }\n"), 0o644); err != nil {
+		t.Fatalf("make advisory test stale: %v", err)
+	}
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PackID:        key.ID(),
+		Edits: []workspace.PlanEdit{
+			{Path: "a.go", OldText: "alpha", NewText: "ALPHA"},
+		},
+	}
+	cfg := config.Config{Workspace: config.Workspace{Root: root, CWD: root, EnableWrites: true}}
+	var stdout bytes.Buffer
+	if _, err := runExecutorPhase(cfg, plan, nil, true, &stdout); err != nil {
+		t.Fatalf("executor phase failed: %v", err)
+	}
+	events := planExecuteJSONEvents(t, stdout.String())
+	handoff, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_handoff_packet")
+	if !ok {
+		t.Fatalf("expected executor_handoff_packet event, got: %s", stdout.String())
+	}
+	if handoff["packet_state"] != executorHandoffStateInherited || handoff["packet_freshness_state"] != "fresh" || handoff["fresh"] != true {
+		t.Fatalf("expected scoped-fresh packet to be a fresh inherited handoff, got %#v\nstdout=%s", handoff, stdout.String())
 	}
 }
 
@@ -1333,6 +1447,9 @@ func TestRunExecutorPhaseEmitsMissingPacketHandoffWithoutPlanPacket(t *testing.T
 	}
 	if handoff["packet_state"] != executorHandoffStateMissing || handoff["reason"] != "missing_packet_id" {
 		t.Fatalf("expected missing packet state, got %#v", handoff)
+	}
+	if handoff["handoff_created"] != true || handoff["packet_present"] != false || handoff["packet_freshness_state"] != "missing" {
+		t.Fatalf("expected handoff-created missing-packet fields, got %#v", handoff)
 	}
 }
 
@@ -1435,6 +1552,9 @@ func TestRunExecutorPhaseEmitsStalePacketHandoff(t *testing.T) {
 	}
 	if handoff["packet_state"] != executorHandoffStateStale || handoff["reason"] != "legacy_artifact_fallback" || handoff["fresh"] != false {
 		t.Fatalf("expected stale packet state, got %#v", handoff)
+	}
+	if handoff["packet_present"] != true || handoff["packet_freshness_state"] != "stale" {
+		t.Fatalf("expected present stale packet fields, got %#v", handoff)
 	}
 	if _, ok := planExecuteEventByType(events, "idiom.plan_execute.executor_packet_stale"); !ok {
 		t.Fatalf("expected executor_packet_stale compatibility event, got %s", stdout.String())

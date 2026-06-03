@@ -10,6 +10,7 @@ import (
 
 	"idiom/internal/featureplanner"
 	"idiom/internal/llama"
+	"idiom/internal/planexecute"
 )
 
 func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
@@ -98,7 +99,10 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 
 	answer, err := m.runPlanExecuteCommandOnce(ctx, prompt)
 	if err != nil {
-		return "", err
+		if m.lastPlanExecuteRunResult == nil {
+			return "", err
+		}
+		answer = err.Error()
 	}
 	if body, err := json.Marshal(map[string]any{
 		"tool":        featureplanner.ToolPlanExecuteComplete,
@@ -106,19 +110,74 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 	}); err == nil {
 		m.logMessage("idiom.plan_execute.completed", string(body))
 	}
-	return encodeFeaturePlannerPlanExecuteCompletion(answer)
+	return m.encodeFeaturePlannerPlanExecuteCompletion(answer)
 }
 
-func encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
-	body, err := json.Marshal(map[string]any{
-		"tool":        featureplanner.ToolPlanExecuteComplete,
-		"lane_family": "plan-execute",
-		"summary":     strings.TrimSpace(summary),
-	})
+func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (string, error) {
+	fields := featureplanner.PlanExecuteCompletionFields(summary)
+	if m != nil {
+		overlayFeaturePlannerPlanExecuteRunResult(fields, m.cfg.Workspace.Root, m.lastPlanExecuteRunResult)
+	}
+	fields["tool"] = featureplanner.ToolPlanExecuteComplete
+	fields["lane_family"] = "plan-execute"
+	fields["summary"] = strings.TrimSpace(summary)
+	if featureplanner.CompletionFieldString(fields, "status") == "" {
+		fields["status"] = "ambiguous"
+		fields["failure_kind"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(fields, "failure_kind"), "missing_nested_plan_execute_status")
+		fields["failure_reason"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(fields, "failure_reason"), "nested plan-execute returned without typed completion status")
+	}
+	if featureplanner.CompletionFieldString(fields, "completion_source") == "" {
+		fields["completion_source"] = "tui_plan_execute_returned"
+	}
+	body, err := json.Marshal(fields)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root string, result *planexecute.RunResult) {
+	if fields == nil || result == nil {
+		return
+	}
+	if strings.TrimSpace(result.ResumeStatePath) != "" && featureplanner.CompletionFieldString(fields, "progress_path") == "" {
+		fields["progress_path"] = strings.TrimSpace(result.ResumeStatePath)
+	}
+	if strings.TrimSpace(result.FailureKind) != "" && featureplanner.CompletionFieldString(fields, "failure_kind") == "" {
+		fields["failure_kind"] = strings.TrimSpace(result.FailureKind)
+	}
+	if strings.TrimSpace(result.FailureReason) != "" && featureplanner.CompletionFieldString(fields, "failure_reason") == "" {
+		fields["failure_reason"] = strings.TrimSpace(result.FailureReason)
+	}
+	if result.ExitCode != 0 && featureplanner.CompletionFieldString(fields, "status") == "" {
+		fields["status"] = "failed"
+	}
+	if strings.TrimSpace(root) == "" || (strings.TrimSpace(result.SessionID) == "" && strings.TrimSpace(result.ResumeStatePath) == "") {
+		return
+	}
+	stateID := strings.TrimSpace(result.SessionID)
+	if stateID == "" {
+		stateID = strings.TrimSuffix(filepath.Base(filepath.ToSlash(strings.TrimSpace(result.ResumeStatePath))), ".json")
+	}
+	state, _, found, err := planexecute.TryLoadProgressState(root, stateID)
+	if err != nil || !found {
+		return
+	}
+	if strings.TrimSpace(state.Status) != "" {
+		fields["status"] = strings.TrimSpace(state.Status)
+	}
+	if strings.TrimSpace(state.Phase) != "" {
+		fields["phase"] = strings.TrimSpace(state.Phase)
+	}
+	if strings.TrimSpace(state.FailureKind) != "" && featureplanner.CompletionFieldString(fields, "failure_kind") == "" {
+		fields["failure_kind"] = strings.TrimSpace(state.FailureKind)
+	}
+	if strings.TrimSpace(state.FailureReason) != "" && featureplanner.CompletionFieldString(fields, "failure_reason") == "" {
+		fields["failure_reason"] = strings.TrimSpace(state.FailureReason)
+	}
+	if strings.TrimSpace(state.Review.Status) != "" {
+		fields["review_status"] = strings.TrimSpace(state.Review.Status)
+	}
 }
 
 func (m *Model) featurePlannerSessionID() string {

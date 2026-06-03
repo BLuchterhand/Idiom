@@ -1,4 +1,5 @@
 package sweeval
+
 import (
 	"bytes"
 	"os"
@@ -1140,11 +1141,77 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 	}
 }
 
+func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated(t *testing.T) {
+	suitePath := filepath.Join("..", "..", "..", "testdata", "scripted-contracts", "suite.json")
+	suite, err := eval.LoadSWESuite(suitePath)
+	if err != nil {
+		t.Fatalf("load scripted contract suite: %v", err)
+	}
+
+	taskByID := map[string]eval.SWETask{}
+	for _, task := range suite.Tasks {
+		taskByID[task.ID] = task
+	}
+	if _, ok := taskByID["scripted-feature-planner-tui-product-workflow-e2e"]; ok {
+		t.Fatal("plain /feature-planner product-workflow coverage task should be relabeled as direct plan-execute coverage")
+	}
+
+	direct, ok := taskByID["scripted-feature-planner-tui-direct-greeting-plan-execute"]
+	if !ok {
+		t.Fatal("direct /feature-planner nested plan-execute task missing")
+	}
+	assertTaskHasTags(t, direct, "feature-planner", "tui", "slash-command", "plan-execute")
+	assertTaskLacksTags(t, direct, "product-workflow", "prd", "adr")
+	if !strings.HasPrefix(direct.Prompt, "/feature-planner ") || !strings.Contains(direct.Prompt, "nested plan-execute") {
+		t.Fatalf("direct task prompt should remain plain /feature-planner nested plan-execute coverage, got %q", direct.Prompt)
+	}
+	assertTaskHasRunEvents(t, direct,
+		"idiom.feature_planner.start",
+		"idiom.feature_planner.atom_dispatched",
+		"internal_idiom.plan_execute.completed",
+		"idiom.feature_planner.complete",
+	)
+	for _, want := range []string{"atom-direct-greeting-package", "TDD-DirectGreetingHello", "SDD-DirectGreetingPackage"} {
+		if !slices.Contains(direct.Scenario.FinalAssistantContains, want) {
+			t.Fatalf("direct feature-planner task final assistant assertions must include %q, got %#v", want, direct.Scenario.FinalAssistantContains)
+		}
+	}
+
+	prd, ok := taskByID["scripted-product-create-tui-prd-workflow"]
+	if !ok {
+		t.Fatal("explicit /product-create PRD workflow task missing")
+	}
+	assertTaskHasTags(t, prd, "product-workflow", "tui", "prd", "slash-command")
+	assertTaskLacksTags(t, prd, "feature-planner", "plan-execute", "adr")
+	if !strings.HasPrefix(prd.Prompt, "/product-create ") {
+		t.Fatalf("PRD workflow coverage must use /product-create, got %q", prd.Prompt)
+	}
+
+	adr, ok := taskByID["scripted-product-approve-tui-adr-workflow"]
+	if !ok {
+		t.Fatal("explicit /product-approve ADR workflow task missing")
+	}
+	assertTaskHasTags(t, adr, "product-workflow", "tui", "prd", "adr", "slash-command")
+	assertTaskLacksTags(t, adr, "feature-planner", "plan-execute")
+	if !strings.HasPrefix(adr.Prompt, "/product-approve ") {
+		t.Fatalf("ADR workflow coverage must use /product-approve, got %q", adr.Prompt)
+	}
+}
+
 func assertTaskHasTags(t *testing.T, task eval.SWETask, tags ...string) {
 	t.Helper()
 	for _, tag := range tags {
 		if !slices.Contains(task.Tags, tag) {
 			t.Fatalf("%s missing tag %q in %#v", task.ID, tag, task.Tags)
+		}
+	}
+}
+
+func assertTaskLacksTags(t *testing.T, task eval.SWETask, tags ...string) {
+	t.Helper()
+	for _, tag := range tags {
+		if slices.Contains(task.Tags, tag) {
+			t.Fatalf("%s should not have tag %q in %#v", task.ID, tag, task.Tags)
 		}
 	}
 }

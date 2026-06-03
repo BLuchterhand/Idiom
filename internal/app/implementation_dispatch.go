@@ -3594,6 +3594,7 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 	var outBuf, errBuf bytes.Buffer
 	result := planexecute.Run(m.cfg, opts, promptRun, nil, &outBuf, &errBuf)
+	m.lastPlanExecuteRunResult = &result
 
 	m.logMessage("dispatch_result", fmt.Sprintf("plan-execute finished (code=%d session=%s state=%s stdout=%d stderr=%d)",
 		result.ExitCode, result.SessionID, result.ResumeStatePath, outBuf.Len(), errBuf.Len()))
@@ -3769,15 +3770,15 @@ func implementationDispatchPlanExecuteFailureCanUseRecovery(result planexecute.R
 }
 
 type implementationDispatchPlanExecuteFailure struct {
-	Prompt        string
-	Plan          promptExecutionPlan
-	Brief         string
-	Options       planexecute.Options
-	RequiredPaths []string
-	AllowedPaths  []string
-	Result        planexecute.RunResult
-	Stdout        string
-	Stderr        string
+	Prompt                   string
+	Plan                     promptExecutionPlan
+	Brief                    string
+	Options                  planexecute.Options
+	RequiredPaths            []string
+	AllowedPaths             []string
+	Result                   planexecute.RunResult
+	Stdout                   string
+	Stderr                   string
 	PlannerBlockedChainDepth int
 }
 

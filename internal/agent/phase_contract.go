@@ -482,7 +482,7 @@ func applyImplementationTargetSource(contract *TurnPhaseContract, baseTools []st
 	contract.Phase = "target_source_pending"
 	contract.DerivationReason = "guarded_mutation_target_source_pending"
 	contract.AllowedTools = implementationTargetSourceAllowedTools(baseTools)
-	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, make one parser-readable write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence"}
+	contract.RequiredNext = []string{"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, make one parser-readable write only after exact source-body evidence and replacement shape are known (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), or <<QUESTION>> with the exact blocker/no-op evidence"}
 	contract.InvalidNext = []string{"final answer before a successful write, no-op, or blocker", "write before exact source-body evidence and replacement shape", "verification before a successful write", "generic probe without a named missing target or edit-safety fact"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
@@ -504,7 +504,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.Phase = "target_write_ready"
 	contract.DerivationReason = "guarded_mutation_target_source_ready"
 	contract.AllowedTools = implementationTargetWriteReadyAllowedToolsForBrief(baseTools, brief, results)
-	contract.RequiredNext = []string{"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+	contract.RequiredNext = []string{"parser-readable write to the sourced target path (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 	contract.InvalidNext = []string{"additional read/search after source-body evidence", "verification before a successful write", "generic probe", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
@@ -517,7 +517,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	contract.RuntimeCall.ExpectedVisibleOutput = "parser_readable_write_or_blocker"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionPerEditWrite, actionBlocker}
 	if sourceRefresh {
-		contract.RequiredNext = []string{"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.RequiredNext = []string{"parser-readable write to the sourced target path (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 		contract.InvalidNext = []string{"broad read/search after source-body evidence", "read/search for already-sourced paths unless the request adds a bounded missing range or exact named_gap", "verification before a successful write", "generic probe", "prose-only final answer"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionSearch, actionPerEditWrite, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
@@ -530,7 +530,7 @@ func applyImplementationTargetWriteReady(contract *TurnPhaseContract, brief work
 	if len(pendingTools) > 0 {
 		pendingSummary := sourceEvidencePendingRedirectSummary(pending, 3)
 		pendingActionSummary := sourceEvidencePendingRedirectActionSummary(pending, 3)
-		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence"}
+		contract.RequiredNext = []string{"resolve the pending redirected source-body obligation (" + pendingActionSummary + "), then make one parser-readable write to a sourced target path (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), or <<QUESTION>> with the exact edit blocker/no-op evidence"}
 		contract.InvalidNext = []string{"broad read/search while a redirected source-body obligation is pending", "read/navigation for any path except the exact pending redirected source-body follow-up: " + pendingActionSummary, "verification before a successful write", "generic probe", "prose-only final answer"}
 		contract.ActionPolicy.AllowedActionClasses = []string{actionRead, actionPerEditWrite, actionBlocker}
 		contract.ActionPolicy.InvalidActionClasses = []string{actionSearch, actionVerify, actionGenericProbe, actionProseFinal, actionFinalAnswer}
@@ -688,7 +688,7 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 }
 
 func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+	if !readOnlyEvidenceCloseoutApplies(brief, results) {
 		return false
 	}
 	if slices.Contains(brief.Constraints, "answer_readiness_reached") {
@@ -698,14 +698,11 @@ func genericReadOnlyEvidenceReady(brief workerruntime.WorkerRuntimeBrief, result
 		strings.EqualFold(strings.TrimSpace(brief.Contract), "direct_answer") {
 		return conversationEvidenceSatisfiedForObjective(brief, results)
 	}
-	return false
+	return genericReadOnlyAnswerEvidenceReady(results)
 }
 
 func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allowedTools []string, results []workspace.ToolResult) bool {
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
-		return false
-	}
-	if brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
+	if !readOnlyEvidencePendingApplies(brief, results) || brief.Readiness == nil || brief.Readiness.ReadyToAnswer {
 		return false
 	}
 	if strings.EqualFold(strings.TrimSpace(brief.TaskFamily), "conversation") &&
@@ -717,6 +714,45 @@ func genericReadOnlyEvidencePending(brief workerruntime.WorkerRuntimeBrief, allo
 		return false
 	}
 	return len(genericReadOnlyEvidenceTools(allowedTools)) > 0
+}
+
+func readOnlyEvidencePendingApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if readOnlyEvidenceCloseoutApplies(brief, results) {
+		return true
+	}
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") ||
+		runnerBriefRequiresMutation(brief) ||
+		runnerVerificationRequired(brief) ||
+		len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 {
+		return false
+	}
+	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
+	contract := strings.ToLower(strings.TrimSpace(brief.Contract))
+	return contract == "direct_answer" && (family == "" || family == "conversation" || family == "direct_answer")
+}
+
+func readOnlyEvidenceCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
+		return false
+	}
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return false
+	}
+	if len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 && !genericReadOnlyAnswerEvidenceReady(results) {
+		return false
+	}
+	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
+	contract := strings.ToLower(strings.TrimSpace(brief.Contract))
+	switch family {
+	case "conversation", "information_request", "information", "coding_help":
+		return contract == "" || contract == "direct_answer"
+	case "delegated_read_only", "direct_question":
+		return false
+	default:
+		return contract == "grounded_evidence_summary"
+	}
 }
 
 func genericReadOnlyAnswerEvidenceReady(results []workspace.ToolResult) bool {

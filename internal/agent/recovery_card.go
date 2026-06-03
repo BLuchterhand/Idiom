@@ -344,19 +344,22 @@ func recoveryCardInvariantText(invariantID string, contract TurnPhaseContract) s
 }
 
 func recoveryCardSafeNextActionForRejectedAction(brief workerruntime.WorkerRuntimeBrief, contract TurnPhaseContract, results []workspace.ToolResult) string {
-	if contract.PhaseID != turnPhaseImplementationWriteReady {
+	if contract.PhaseID != turnPhaseImplementationWriteReady && contract.PhaseID != turnPhaseImplementationTargetSource {
 		return ""
 	}
 	if pending := sourceEvidencePendingRedirectsForBrief(brief, results); len(pending) > 0 {
 		if recoveryCardActionClassAllowed(contract, actionRead) {
 			callablePending := recoveryCardCallablePendingRedirects(contract, pending)
 			if summary := sourceEvidencePendingRedirectActionSummary(callablePending, 3); summary != "" {
-				return "Resolve the exact pending redirected source-body obligation (" + summary + "), then emit one parser-readable write to a sourced target path, or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
+				return "Resolve the exact pending redirected source-body obligation (" + summary + "), then emit one parser-readable write to a sourced target path. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
 			}
 		}
 	}
 	if sourcedSummary := implementationTargetWriteReadySourcedPathSummary(results, 3); sourcedSummary != "" {
-		return "Emit one parser-readable write to the already-sourced path(s): " + sourcedSummary + "; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
+		return "Emit one parser-readable write to the already-sourced path(s): " + sourcedSummary + ". For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
+	}
+	if contract.PhaseID == turnPhaseImplementationTargetSource {
+		return "Make one bounded source-body read for the concrete edit target with named_gap, then emit one parser-readable write. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence."
 	}
 	return ""
 }
@@ -381,6 +384,9 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 	case turnPhaseArtifactFinalAnswer:
 		return "Emit the active terminal outcome: " + next
 	default:
+		if contract.Phase == "read_only_evidence_ready" && recoveryCardActionClassesExactly(contract, actionFinalAnswer, actionBlocker) {
+			return "Answer from the gathered bounded evidence now, or answer <<QUESTION>> only with the exact unsupported claim."
+		}
 		return ""
 	}
 }

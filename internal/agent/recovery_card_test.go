@@ -167,6 +167,46 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, RenderRecoveryCard(card))
 }
 
+func TestBuildRecoveryCardNamesReadOnlyAnswerAsSafeNextAction(t *testing.T) {
+	contract := TurnPhaseContract{
+		ContractID:       "read-only",
+		PhaseID:          turnPhaseGeneric,
+		Phase:            "read_only_evidence_ready",
+		RequiredNext:     []string{"final answer from the gathered bounded evidence, or <<QUESTION>> with the exact unsupported claim"},
+		TerminalOutcomes: []string{"final answer", "<<QUESTION>>:"},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses:   []string{actionFinalAnswer, actionBlocker},
+			TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionFinalAnswer, actionBlocker},
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract: contract,
+		RejectedRequest: workspace.ToolRequest{
+			Tool: "read_file",
+			Path: "internal/labels/labels.go",
+		},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Post-readiness follow-up missing named gap",
+			Error:   "answer readiness has already been reached",
+		},
+		EvidenceRefs: []string{"internal/labels/labels.go"},
+	}))
+
+	assertRecoveryCardContains(t, got,
+		"phase_id=generic",
+		"currently callable tools: none",
+		"currently callable action classes: final_answer, blocker",
+		"deterministic safe next action: Answer from the gathered bounded evidence now, or answer <<QUESTION>> only with the exact unsupported claim.",
+	)
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("read-only evidence-ready recovery must not claim no safe next action:\n%s", got)
+	}
+}
+
 func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -199,7 +239,7 @@ func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) 
 	assertRecoveryCardContains(t, got,
 		"phase_id=implementation.write_ready",
 		"currently callable action classes: per_edit_write, blocker",
-		"deterministic safe next action: Emit one parser-readable write to the already-sourced path(s): internal/app/sessions_panel.go; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
+		"deterministic safe next action: Emit one parser-readable write to the already-sourced path(s): internal/app/sessions_panel.go. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("write-ready recovery card should not advertise no safe action, got:\n%s", got)
@@ -304,7 +344,7 @@ func TestRecoveryCardAdvertisesCallablePendingRedirect(t *testing.T) {
 
 	assertRecoveryCardContains(t, got,
 		"currently callable action classes: read, per_edit_write, blocker",
-		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/app/sessions_panel.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path, or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
+		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/app/sessions_panel.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
 }
 
@@ -356,7 +396,7 @@ func TestRecoveryCardScopesPendingRedirectsToActiveBrief(t *testing.T) {
 	}))
 
 	assertRecoveryCardContains(t, got,
-		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/app/sessions.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path, or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
+		"deterministic safe next action: Resolve the exact pending redirected source-body obligation (internal/app/sessions.go via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown), then emit one parser-readable write to a sourced target path. For textual write transport, use one visible JSON object or apply_patch envelope, not key/value edit-body notes; or answer <<QUESTION>> with the exact edit blocker/no-op evidence.",
 	)
 	if strings.Contains(got, "implementation_dispatch.go via code_navigate") {
 		t.Fatalf("recovery card must not reintroduce stale scoped-out pending redirect, got:\n%s", got)

@@ -1,4 +1,5 @@
 package planexecute
+
 import (
 	"context"
 	"crypto/rand"
@@ -20,10 +21,9 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/app"
-	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/backends"
+	atomcmd "idiom/internal/cmd/atom"
 	"idiom/internal/cmdruntime"
-	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/plancontract"
@@ -222,6 +222,14 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 	// because that lane already has the right read-side guards and
 	// brief audit; only the tool surface differs.
 	plannerBrief := planExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
+	contextPackSection := planexecute.BuildPromptContextPackSection(cfg, planexecute.PromptContextPackOptions{
+		Mode:              "plan",
+		Title:             prompt,
+		Brief:             plannerBrief,
+		ProjectRoot:       cfg.Workspace.Root,
+		RequiredEditPaths: requiredEditPaths,
+	}, stderr)
+	plannerBrief = planexecute.ComposePlannerPromptWithContextPack(plannerBrief, contextPackSection)
 	plannerPrompt := planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, editSetObligations) + "\n\n" + plannerBrief
 	plannerMaxTokens := planExecutePlannerMaxTokens(cfg.Workspace.Root, prompt, requiredEditPaths, allowedEditPaths)
 	if opts.MaxTokens > 0 {
@@ -459,7 +467,7 @@ func RunMainWithTelemetry(args []string, stdout io.Writer, stderr io.Writer, pro
 		}
 		return 1
 	}
-	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, prompt); inheritedPackID != "" {
+	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, plannerPrompt); inheritedPackID != "" {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_pack_inherited", map[string]any{
 			"path":    planPath,
 			"pack_id": inheritedPackID,
@@ -762,7 +770,7 @@ func toSharedExecutorPhaseReport(report executorPhaseReport) planexecute.Executo
 		Failures:     append([]string(nil), report.Failures...),
 		SourceSanity: toSharedPhaseEvidenceChecks(report.SourceSanity),
 		Verification: toSharedPhaseEvidenceChecks(report.Verification),
-		Handoff:      toSharedExecutorHandoffPacket(report.Handoff),
+		Handoff:      report.Handoff,
 	}
 }
 
@@ -774,7 +782,7 @@ func fromSharedExecutorPhaseReport(report planexecute.ExecutorPhaseReport) execu
 		Failures:     append([]string(nil), report.Failures...),
 		SourceSanity: fromSharedPhaseEvidenceChecks(report.SourceSanity),
 		Verification: fromSharedPhaseEvidenceChecks(report.Verification),
-		Handoff:      fromSharedExecutorHandoffPacket(report.Handoff),
+		Handoff:      report.Handoff,
 	}
 }
 
@@ -817,54 +825,6 @@ func toSharedReviewRepairPhaseReport(report reviewRepairPhaseReport) planexecute
 		ReviewPlan:     report.ReviewPlan,
 		ChecklistFound: report.ChecklistFound,
 		ReasonClass:    report.ReasonClass,
-	}
-}
-
-func toSharedExecutorHandoffPacket(handoff executorHandoffPacket) planexecute.ExecutorHandoffPacket {
-	return planexecute.ExecutorHandoffPacket{
-		State:                   handoff.State,
-		Reason:                  handoff.Reason,
-		PlanID:                  handoff.PlanID,
-		HandoffID:               handoff.HandoffID,
-		HandoffStatus:           handoff.HandoffStatus,
-		ApprovalScopeID:         handoff.ApprovalScopeID,
-		ApprovalStatus:          handoff.ApprovalStatus,
-		ApprovalPermission:      handoff.ApprovalPermission,
-		PackID:                  handoff.PackID,
-		DeclaredPackID:          handoff.DeclaredPackID,
-		ArtifactPacketStatus:    handoff.ArtifactPacketStatus,
-		ArtifactPacketFreshness: handoff.ArtifactPacketFreshness,
-		IndexID:                 handoff.IndexID,
-		Fresh:                   handoff.Fresh,
-		CandidateFiles:          handoff.CandidateFiles,
-		CandidateSymbols:        handoff.CandidateSymbols,
-		Tests:                   handoff.Tests,
-		ApprovedPathCount:       handoff.ApprovedPathCount,
-		PendingPathCount:        handoff.PendingPathCount,
-	}
-}
-
-func fromSharedExecutorHandoffPacket(handoff planexecute.ExecutorHandoffPacket) executorHandoffPacket {
-	return executorHandoffPacket{
-		State:                   handoff.State,
-		Reason:                  handoff.Reason,
-		PlanID:                  handoff.PlanID,
-		HandoffID:               handoff.HandoffID,
-		HandoffStatus:           handoff.HandoffStatus,
-		ApprovalScopeID:         handoff.ApprovalScopeID,
-		ApprovalStatus:          handoff.ApprovalStatus,
-		ApprovalPermission:      handoff.ApprovalPermission,
-		PackID:                  handoff.PackID,
-		DeclaredPackID:          handoff.DeclaredPackID,
-		ArtifactPacketStatus:    handoff.ArtifactPacketStatus,
-		ArtifactPacketFreshness: handoff.ArtifactPacketFreshness,
-		IndexID:                 handoff.IndexID,
-		Fresh:                   handoff.Fresh,
-		CandidateFiles:          handoff.CandidateFiles,
-		CandidateSymbols:        handoff.CandidateSymbols,
-		Tests:                   handoff.Tests,
-		ApprovedPathCount:       handoff.ApprovedPathCount,
-		PendingPathCount:        handoff.PendingPathCount,
 	}
 }
 
@@ -1836,197 +1796,31 @@ func (r executorPhaseReport) String() string {
 }
 
 const (
-	executorHandoffStateInherited  = "inherited"
-	executorHandoffStateMissing    = "missing"
-	executorHandoffStateStale      = "stale"
-	executorHandoffStateOverridden = "overridden"
+	executorHandoffStateInherited  = planexecute.ExecutorHandoffStateInherited
+	executorHandoffStateMissing    = planexecute.ExecutorHandoffStateMissing
+	executorHandoffStateStale      = planexecute.ExecutorHandoffStateStale
+	executorHandoffStateOverridden = planexecute.ExecutorHandoffStateOverridden
 )
 
-type executorHandoffPacket struct {
-	State                   string
-	Reason                  string
-	PlanID                  string
-	HandoffID               string
-	HandoffStatus           string
-	ApprovalScopeID         string
-	ApprovalStatus          string
-	ApprovalPermission      string
-	PackID                  string
-	DeclaredPackID          string
-	ArtifactPacketStatus    string
-	ArtifactPacketFreshness string
-	IndexID                 string
-	Fresh                   bool
-	CandidateFiles          int
-	CandidateSymbols        int
-	Tests                   int
-	ApprovedPathCount       int
-	PendingPathCount        int
-}
+const executorPacketFreshnessUnknown = planexecute.ExecutorPacketFreshnessUnknown
+
+type executorHandoffPacket = planexecute.ExecutorHandoffPacket
+type planEditPreflightMismatch = planexecute.PlanEditPreflightMismatch
 
 func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) executorHandoffPacket {
-	handoff := executorHandoffPacket{
-		State:                   executorHandoffStateMissing,
-		Reason:                  "missing_packet_id",
-		PlanID:                  sanitizePlanExecuteEventID(plan.PlanID),
-		HandoffID:               sanitizePlanExecuteEventID(plan.Handoff.ID),
-		HandoffStatus:           sanitizePlanExecuteEventToken(plan.Handoff.Status),
-		ApprovalScopeID:         sanitizePlanExecuteEventID(plan.Approval.ScopeID),
-		ApprovalStatus:          sanitizePlanExecuteEventToken(plan.Approval.Status),
-		ApprovalPermission:      sanitizePlanExecuteEventToken(plan.Approval.ExecutionPermission),
-		ArtifactPacketStatus:    sanitizePlanExecuteEventToken(plan.Packet.Status),
-		ArtifactPacketFreshness: sanitizePlanExecuteEventToken(plan.Packet.Freshness),
-		IndexID:                 sanitizePlanExecuteEventToken(plan.Packet.IndexID),
-		ApprovedPathCount:       len(plan.Approval.ApprovedPaths),
-		PendingPathCount:        len(plan.Approval.PendingPaths),
-	}
-	topLevelPackID, topLevelValid := normalizePlanExecuteEventPackID(plan.PackID)
-	declaredPackID, declaredValid := normalizePlanExecuteEventPackID(plan.Packet.PackID)
-	rawTopLevelPackID := strings.TrimSpace(plan.PackID)
-	rawDeclaredPackID := strings.TrimSpace(plan.Packet.PackID)
-	if rawTopLevelPackID != "" && !topLevelValid {
-		handoff.Reason = "invalid_pack_id"
-		return handoff
-	}
-	if rawDeclaredPackID != "" && !declaredValid {
-		handoff.Reason = "invalid_declared_packet_id"
-		if topLevelPackID == "" {
-			return handoff
-		}
-	}
-	effectivePackID := firstNonEmptyString(topLevelPackID, declaredPackID)
-	handoff.PackID = effectivePackID
-	handoff.DeclaredPackID = declaredPackID
-	if effectivePackID == "" {
-		return handoff
-	}
-	overridden := topLevelPackID != "" && declaredPackID != "" && topLevelPackID != declaredPackID
-	if overridden || (topLevelPackID != "" && rawDeclaredPackID != "" && !declaredValid) {
-		handoff.State = executorHandoffStateOverridden
-		handoff.Reason = "packet_id_override"
-	}
-	view, viewStatus, err := comprehension.LoadViewByIDStatus(root, effectivePackID)
-	if err != nil {
-		if handoff.State != executorHandoffStateOverridden {
-			handoff.State = executorHandoffStateMissing
-			handoff.Reason = "cache_load_error"
-		}
-		return handoff
-	}
-	switch viewStatus.State {
-	case comprehension.ViewLoadStateFresh:
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = executorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-		} else if view.Fresh {
-			handoff.State = executorHandoffStateInherited
-			handoff.Reason = "fresh_graph_view"
-		} else {
-			handoff.State = executorHandoffStateStale
-			handoff.Reason = "stale_graph_view"
-		}
-		return handoff
-	case comprehension.ViewLoadStateStale:
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = executorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-		} else {
-			handoff.State = executorHandoffStateStale
-			handoff.Reason = "stale_graph_view"
-		}
-		return handoff
-	}
-	view, artifactHit, artifactErr := loadPlanExecutePacketArtifact(root, effectivePackID)
-	if artifactErr != nil {
-		if handoff.State != executorHandoffStateOverridden {
-			handoff.State = executorHandoffStateMissing
-			handoff.Reason = "artifact_load_error"
-		}
-		return handoff
-	}
-	if artifactHit {
-		handoff = applyExecutorHandoffView(handoff, view)
-		if overridden {
-			handoff.State = executorHandoffStateOverridden
-			handoff.Reason = "packet_id_override"
-			return handoff
-		}
-		handoff.State = executorHandoffStateStale
-		handoff.Reason = "legacy_artifact_fallback"
-		handoff.Fresh = false
-		return handoff
-	}
-	if handoff.State != executorHandoffStateOverridden {
-		handoff.State = executorHandoffStateMissing
-		handoff.Reason = "cache_miss"
-	}
-	return handoff
-}
-
-func applyExecutorHandoffView(handoff executorHandoffPacket, view comprehension.PackResult) executorHandoffPacket {
-	handoff.PackID = firstNonEmptyString(normalizePlanExecutePackID(view.PackID), handoff.PackID)
-	handoff.IndexID = sanitizePlanExecuteEventToken(firstNonEmptyString(view.IndexID, handoff.IndexID))
-	handoff.Fresh = view.Fresh
-	handoff.CandidateFiles = len(view.CandidateFiles)
-	handoff.CandidateSymbols = len(view.CandidateSymbols)
-	handoff.Tests = len(view.Tests)
-	return handoff
+	return planexecute.ClassifyExecutorHandoffPacket(root, plan)
 }
 
 func emitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff executorHandoffPacket) {
-	fields := executorHandoffPacketEventFields(handoff)
-	emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_handoff_packet", fields)
-	switch handoff.State {
-	case executorHandoffStateInherited:
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_inherits_pack", fields)
-		if !jsonEvents && handoff.PackID != "" {
-			fmt.Fprintf(stdout, "  executor inherits planner pack %s (%d files, %d symbols, %d tests)\n",
-				handoff.PackID, handoff.CandidateFiles, handoff.CandidateSymbols, handoff.Tests)
-		}
-	case executorHandoffStateMissing:
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_pack_miss", fields)
-	case executorHandoffStateStale:
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_packet_stale", fields)
-	case executorHandoffStateOverridden:
-		emitPlanExecuteJSONEvent(stdout, jsonEvents, "executor_packet_overridden", fields)
-	}
+	planexecute.EmitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
 }
 
 func executorHandoffPacketEventFields(handoff executorHandoffPacket) map[string]any {
-	fields := map[string]any{
-		"packet_state": handoff.State,
-		"reason":       handoff.Reason,
-		"fresh":        handoff.Fresh,
-	}
-	addPlanExecuteEventString(fields, "plan_id", handoff.PlanID)
-	addPlanExecuteEventString(fields, "handoff_id", handoff.HandoffID)
-	addPlanExecuteEventString(fields, "handoff_status", handoff.HandoffStatus)
-	addPlanExecuteEventString(fields, "approval_scope_id", handoff.ApprovalScopeID)
-	addPlanExecuteEventString(fields, "approval_status", handoff.ApprovalStatus)
-	addPlanExecuteEventString(fields, "approval_execution_permission", handoff.ApprovalPermission)
-	addPlanExecuteEventString(fields, "pack_id", handoff.PackID)
-	addPlanExecuteEventString(fields, "declared_pack_id", handoff.DeclaredPackID)
-	addPlanExecuteEventString(fields, "artifact_packet_status", handoff.ArtifactPacketStatus)
-	addPlanExecuteEventString(fields, "artifact_packet_freshness", handoff.ArtifactPacketFreshness)
-	addPlanExecuteEventString(fields, "index_id", handoff.IndexID)
-	if handoff.ApprovedPathCount > 0 {
-		fields["approved_path_count"] = handoff.ApprovedPathCount
-	}
-	if handoff.PendingPathCount > 0 {
-		fields["pending_path_count"] = handoff.PendingPathCount
-	}
-	if handoff.CandidateFiles > 0 {
-		fields["candidate_files"] = handoff.CandidateFiles
-	}
-	if handoff.CandidateSymbols > 0 {
-		fields["candidate_symbols"] = handoff.CandidateSymbols
-	}
-	if handoff.Tests > 0 {
-		fields["tests"] = handoff.Tests
-	}
-	return fields
+	return planexecute.ExecutorHandoffPacketEventFields(handoff)
+}
+
+func planScopeDriftEventFields(handoff executorHandoffPacket, mismatch *planEditPreflightMismatch) map[string]any {
+	return planexecute.PlanScopeDriftEventFields(handoff, mismatch)
 }
 
 func addPlanExecuteEventString(fields map[string]any, key string, value string) {
@@ -3196,16 +2990,6 @@ func planExecuteVerificationStatus(evidence []phaseEvidenceCheck) string {
 	return "passed"
 }
 
-// planEditPreflightMismatch describes the first edit whose old_text
-// does not appear in its target file. Used by preflightPlanEdits to
-// abort the executor phase before any edit lands when a plan would
-// otherwise partially-apply.
-type planEditPreflightMismatch struct {
-	Index  int
-	Path   string
-	Reason string
-}
-
 func preflightPlanApprovalAndScope(plan workspace.PlanArtifact) *planEditPreflightMismatch {
 	if strings.TrimSpace(plan.Handoff.ID) == "" {
 		return &planEditPreflightMismatch{Index: -1, Reason: "handoff id is missing"}
@@ -3330,20 +3114,6 @@ func planExecuteApprovalPartial(status string) bool {
 	default:
 		return false
 	}
-}
-
-func planScopeDriftEventFields(handoff executorHandoffPacket, mismatch *planEditPreflightMismatch) map[string]any {
-	fields := map[string]any{
-		"edit_index":        mismatch.Index,
-		"reason":            mismatch.Reason,
-		"packet_state":      handoff.State,
-		"handoff_id":        handoff.HandoffID,
-		"approval_scope_id": handoff.ApprovalScopeID,
-	}
-	if path := sanitizePlanExecuteEventPath(mismatch.Path); path != "" {
-		fields["path"] = path
-	}
-	return fields
 }
 
 // preflightPlanRequiredEditPaths validates the executor's plan

@@ -131,6 +131,14 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 
 	plannerBrief := appendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
+	contextPackSection := BuildPromptContextPackSection(cfg, PromptContextPackOptions{
+		Mode:              "plan",
+		Title:             prompt,
+		Brief:             plannerBrief,
+		ProjectRoot:       cfg.Workspace.Root,
+		RequiredEditPaths: requiredEditPaths,
+	}, stderr)
+	plannerBrief = ComposePlannerPromptWithContextPack(plannerBrief, contextPackSection)
 	plannerPrompt := planExecutePlannerSystemAddendumWithObligations(requiredEditPaths, allowedEditPaths, editSetObligations) + "\n\n" + plannerBrief
 	plannerMaxTokens := 16384
 	if opts.MaxTokens > 0 {
@@ -383,7 +391,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		}
 		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
 	}
-	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, prompt); inheritedPackID != "" {
+	if inheritedPackID := inheritPlanExecutePromptPackID(&plan, plannerPrompt); inheritedPackID != "" {
 		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "plan_artifact_pack_inherited", map[string]any{
 			"path":    planPath,
 			"pack_id": inheritedPackID,

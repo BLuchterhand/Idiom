@@ -1,0 +1,17 @@
+{
+  "schema_version": "idiom.adr_index.v1",
+  "effort_id": "scripted-adr-workflow",
+  "adrs": [
+    {
+      "adr_id": "ADR-SCRIPTED-APPROVAL",
+      "title": "Scripted Approval Fixture",
+      "status": "accepted",
+      "path": "ADR-0001-scripted-approval.md",
+      "coverage_tier": "unit",
+      "prd_refs": [
+        "REQ-SCRIPTED-APPROVAL"
+      ],
+      "created_at": "2026-06-03T00:00:00Z"
+    }
+  ]
+}

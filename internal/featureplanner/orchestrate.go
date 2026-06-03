@@ -302,17 +302,14 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	}
 	trimmed := strings.TrimSpace(raw)
 	if strings.HasPrefix(trimmed, "{") {
-		var envelope struct {
-			Tool            string `json:"tool"`
-			LaneFamily      string `json:"lane_family"`
-			Summary         string `json:"summary"`
-			ProgressPath    string `json:"progress_path"`
-			QuestionSummary string `json:"question_summary"`
-			BlockingClaim   string `json:"blocking_claim"`
-		}
+		var envelope implementorOutputEnvelope
 		_ = json.Unmarshal([]byte(trimmed), &envelope)
 		if strings.TrimSpace(envelope.Tool) == ToolPlanExecuteComplete {
-			return completeAtomFromPlanExecute(state, atom, envelope.Summary, envelope.LaneFamily, envelope.ProgressPath)
+			completion := planExecuteCompletionFromEnvelope(envelope)
+			if ok, reason := planExecuteCompletionIsSuccess(completion); !ok {
+				return rejectPlanExecuteCompletion(state, atom, completion, reason)
+			}
+			return completeAtomFromPlanExecute(state, atom, completion)
 		}
 		questionShaped := strings.TrimSpace(envelope.Tool) == ToolQuestionForPlanner ||
 			(strings.TrimSpace(envelope.Tool) == "" &&
@@ -417,7 +414,163 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	}}
 }
 
-func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, summary string, laneFamily string, progressPath string) []Event {
+type implementorOutputEnvelope struct {
+	Tool                string                       `json:"tool"`
+	LaneFamily          string                       `json:"lane_family"`
+	Summary             string                       `json:"summary"`
+	ProgressPath        string                       `json:"progress_path"`
+	Status              string                       `json:"status"`
+	Phase               string                       `json:"phase"`
+	ReviewStatus        string                       `json:"review_status"`
+	FailureKind         string                       `json:"failure_kind"`
+	FailureReason       string                       `json:"failure_reason"`
+	CompletionSource    string                       `json:"completion_source"`
+	ReviewRepairSkipped bool                         `json:"review_repair_skipped"`
+	PlanExecute         *nestedPlanExecuteCompletion `json:"plan_execute,omitempty"`
+	Nested              *nestedPlanExecuteCompletion `json:"nested,omitempty"`
+	QuestionSummary     string                       `json:"question_summary"`
+	BlockingClaim       string                       `json:"blocking_claim"`
+}
+
+type nestedPlanExecuteCompletion struct {
+	LaneFamily          string `json:"lane_family"`
+	Summary             string `json:"summary"`
+	ProgressPath        string `json:"progress_path"`
+	Status              string `json:"status"`
+	Phase               string `json:"phase"`
+	ReviewStatus        string `json:"review_status"`
+	FailureKind         string `json:"failure_kind"`
+	FailureReason       string `json:"failure_reason"`
+	CompletionSource    string `json:"completion_source"`
+	ReviewRepairSkipped bool   `json:"review_repair_skipped"`
+}
+
+type planExecuteCompletion struct {
+	LaneFamily          string
+	Summary             string
+	ProgressPath        string
+	Status              string
+	Phase               string
+	ReviewStatus        string
+	FailureKind         string
+	FailureReason       string
+	CompletionSource    string
+	ReviewRepairSkipped bool
+}
+
+func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planExecuteCompletion {
+	completion := planExecuteCompletion{
+		LaneFamily:          envelope.LaneFamily,
+		Summary:             envelope.Summary,
+		ProgressPath:        envelope.ProgressPath,
+		Status:              envelope.Status,
+		Phase:               envelope.Phase,
+		ReviewStatus:        envelope.ReviewStatus,
+		FailureKind:         envelope.FailureKind,
+		FailureReason:       envelope.FailureReason,
+		CompletionSource:    envelope.CompletionSource,
+		ReviewRepairSkipped: envelope.ReviewRepairSkipped,
+	}
+	if envelope.PlanExecute != nil {
+		completion.overlay(*envelope.PlanExecute)
+	}
+	if envelope.Nested != nil {
+		completion.overlay(*envelope.Nested)
+	}
+	return completion.normalized()
+}
+
+func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteCompletion) {
+	completion.LaneFamily = firstNonEmpty(nested.LaneFamily, completion.LaneFamily)
+	completion.Summary = firstNonEmpty(nested.Summary, completion.Summary)
+	completion.ProgressPath = firstNonEmpty(nested.ProgressPath, completion.ProgressPath)
+	completion.Status = firstNonEmpty(nested.Status, completion.Status)
+	completion.Phase = firstNonEmpty(nested.Phase, completion.Phase)
+	completion.ReviewStatus = firstNonEmpty(nested.ReviewStatus, completion.ReviewStatus)
+	completion.FailureKind = firstNonEmpty(nested.FailureKind, completion.FailureKind)
+	completion.FailureReason = firstNonEmpty(nested.FailureReason, completion.FailureReason)
+	completion.CompletionSource = firstNonEmpty(nested.CompletionSource, completion.CompletionSource)
+	completion.ReviewRepairSkipped = completion.ReviewRepairSkipped || nested.ReviewRepairSkipped
+}
+
+func (completion planExecuteCompletion) normalized() planExecuteCompletion {
+	completion.LaneFamily = strings.TrimSpace(completion.LaneFamily)
+	if completion.LaneFamily == "" {
+		completion.LaneFamily = "plan-execute"
+	}
+	completion.Summary = strings.TrimSpace(completion.Summary)
+	completion.ProgressPath = strings.TrimSpace(completion.ProgressPath)
+	completion.Status = strings.TrimSpace(completion.Status)
+	completion.Phase = strings.TrimSpace(completion.Phase)
+	completion.ReviewStatus = strings.TrimSpace(completion.ReviewStatus)
+	completion.FailureKind = strings.TrimSpace(completion.FailureKind)
+	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
+	completion.CompletionSource = strings.TrimSpace(completion.CompletionSource)
+	return completion
+}
+
+func planExecuteCompletionIsSuccess(completion planExecuteCompletion) (bool, string) {
+	status := canonicalPlanExecuteStatus(completion.Status)
+	if status == "" {
+		return false, "missing required nested plan-execute status"
+	}
+	if completion.FailureKind != "" || completion.FailureReason != "" {
+		return false, "nested plan-execute reported failure details"
+	}
+	if containsBlockingPlanExecuteSignal(status) ||
+		containsBlockingPlanExecuteSignal(completion.Phase) ||
+		containsBlockingPlanExecuteSignal(completion.ReviewStatus) {
+		return false, "nested plan-execute status is not success-shaped"
+	}
+	if status == "skipped" && !completion.ReviewRepairSkipped {
+		return false, "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design"
+	}
+	if canonicalPlanExecuteStatus(completion.ReviewStatus) == "skipped" && !completion.ReviewRepairSkipped {
+		return false, "nested plan-execute skipped review is not explicitly marked by design"
+	}
+	switch status {
+	case "completed", "success", "succeeded", "degraded":
+		return true, ""
+	case "skipped":
+		return true, ""
+	default:
+		return false, fmt.Sprintf("ambiguous nested plan-execute status %q", completion.Status)
+	}
+}
+
+func canonicalPlanExecuteStatus(status string) string {
+	status = strings.TrimSpace(strings.ToLower(status))
+	status = strings.ReplaceAll(status, "_", "-")
+	switch status {
+	case "complete":
+		return "completed"
+	case "successful":
+		return "success"
+	default:
+		return status
+	}
+}
+
+func containsBlockingPlanExecuteSignal(value string) bool {
+	value = canonicalPlanExecuteStatus(value)
+	for _, signal := range []string{
+		"failed",
+		"failure",
+		"model-error",
+		"review-model-error",
+		"recovery-open",
+		"blocked",
+		"blocker",
+		"running",
+	} {
+		if strings.Contains(value, signal) {
+			return true
+		}
+	}
+	return false
+}
+
+func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion) []Event {
 	atomFrom := atom.State
 	atom.State = AtomStateComplete
 	atom.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -429,16 +582,26 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, su
 		featureTo = FeatureStateComplete
 	}
 	fields := map[string]any{
-		"lane_family": strings.TrimSpace(laneFamily),
+		"lane_family":   completion.LaneFamily,
+		"nested_status": completion.Status,
 	}
-	if strings.TrimSpace(progressPath) != "" {
-		fields["progress_path"] = strings.TrimSpace(progressPath)
+	if completion.Phase != "" {
+		fields["nested_phase"] = completion.Phase
 	}
-	if strings.TrimSpace(summary) != "" {
-		fields["summary"] = strings.TrimSpace(summary)
+	if completion.ReviewStatus != "" {
+		fields["nested_review_status"] = completion.ReviewStatus
 	}
-	if fields["lane_family"] == "" {
-		fields["lane_family"] = "plan-execute"
+	if completion.ProgressPath != "" {
+		fields["progress_path"] = completion.ProgressPath
+	}
+	if completion.Summary != "" {
+		fields["summary"] = completion.Summary
+	}
+	if completion.CompletionSource != "" {
+		fields["completion_source"] = completion.CompletionSource
+	}
+	if completion.ReviewRepairSkipped {
+		fields["review_repair_skipped"] = true
 	}
 	return []Event{{
 		Type:       "idiom.feature_planner.atom_completed",
@@ -455,13 +618,22 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, su
 			BeforeState:   "running",
 			AfterState:    AtomStateComplete,
 			ResultSource:  "plan-execute",
-			ProgressPath:  strings.TrimSpace(progressPath),
+			ProgressPath:  completion.ProgressPath,
 		}},
 		Fields: fields,
 	}}
 }
 
+func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
+	fields := planExecuteCompletionFields(completion)
+	return recoverAtom(state, atom, reason, "repair_nested_plan_execute_completion", "idiom.feature_planner.plan_execute_completion_rejected", fields)
+}
+
 func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, reason string) []Event {
+	return recoverAtom(state, atom, reason, "repair_unverified_completion", "idiom.feature_planner.unverified_completion_rejected", nil)
+}
+
+func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, resumeAction string, eventType string, fields map[string]any) []Event {
 	atomFrom := atom.State
 	featureFrom := state.Status
 	atom.State = AtomStateRecoveryOpen
@@ -470,11 +642,14 @@ func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, rea
 	state.Blockers = appendUnique(state.Blockers, reason)
 	state.Continuation.BlockedAtoms = appendUnique(state.Continuation.BlockedAtoms, atom.ID)
 	state.Continuation.ResumeAtomID = atom.ID
-	state.Continuation.ResumeAction = "repair_unverified_completion"
+	state.Continuation.ResumeAction = resumeAction
 	state.Continuation.ResumeReason = reason
 	foldActiveRun(state, atom.ID, atom.LastRunID)
+	if fields == nil {
+		fields = map[string]any{}
+	}
 	return []Event{{
-		Type:        "idiom.feature_planner.unverified_completion_rejected",
+		Type:        eventType,
 		SessionID:   state.SessionID,
 		FeatureFrom: featureFrom,
 		FeatureTo:   FeatureStateRecoveryOpen,
@@ -490,7 +665,40 @@ func rejectUnverifiedCompletion(state *FeatureState, atom *FeatureAtomState, rea
 			AfterState:    AtomStateRecoveryOpen,
 		}},
 		Message: reason,
+		Fields:  fields,
 	}}
+}
+
+func planExecuteCompletionFields(completion planExecuteCompletion) map[string]any {
+	fields := map[string]any{
+		"lane_family":   completion.LaneFamily,
+		"nested_status": completion.Status,
+	}
+	if completion.Phase != "" {
+		fields["nested_phase"] = completion.Phase
+	}
+	if completion.ReviewStatus != "" {
+		fields["nested_review_status"] = completion.ReviewStatus
+	}
+	if completion.FailureKind != "" {
+		fields["nested_failure_kind"] = completion.FailureKind
+	}
+	if completion.FailureReason != "" {
+		fields["nested_failure_reason"] = completion.FailureReason
+	}
+	if completion.ProgressPath != "" {
+		fields["progress_path"] = completion.ProgressPath
+	}
+	if completion.Summary != "" {
+		fields["summary"] = completion.Summary
+	}
+	if completion.CompletionSource != "" {
+		fields["completion_source"] = completion.CompletionSource
+	}
+	if completion.ReviewRepairSkipped {
+		fields["review_repair_skipped"] = true
+	}
+	return fields
 }
 
 func claimsUnverifiedEditOrTestEvidence(raw string) bool {

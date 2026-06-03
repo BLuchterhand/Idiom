@@ -1,0 +1,1 @@
+{"card_id":"EV-SCRIPTED-APPROVAL","kind":"fixture","source_handle":"scripted-product-approve-tui-adr-workflow","claim":"The scripted fixture is already in human_verification and can be approved for implementation.","confidence":"high","freshness":"fixture","evidence_refs":["workflow_state.json"],"researcher_id":"scripted-fixture","timestamp":"2026-06-03T00:00:00Z"}

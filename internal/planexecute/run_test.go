@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"idiom/internal/agent"
+	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/recovery"
@@ -49,6 +50,55 @@ func TestRunEmitsQueueAdmissionBeforePlanner(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "idiom.plan_execute.queue_acquired") {
 		t.Fatalf("missing daemon should not be reported as acquired, stdout=%s", stdout.String())
+	}
+}
+
+func TestClassifyExecutorHandoffTreatsScopedFreshPacketAsFresh(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/planexec\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatalf("seed go.mod: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "a.go"), []byte("package pkg\n\nfunc A() string { return \"alpha\" }\n"), 0o644); err != nil {
+		t.Fatalf("seed a.go: %v", err)
+	}
+	testPath := filepath.Join(root, "a_test.go")
+	if err := os.WriteFile(testPath, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {}\n"), 0o644); err != nil {
+		t.Fatalf("seed a_test.go: %v", err)
+	}
+	build, err := comprehension.Build(t.Context(), comprehension.BuildOptions{Root: root, Language: "go"})
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	key := comprehension.ViewKey{IndexID: build.IndexID, Task: "scoped fresh shared handoff", Mode: "plan"}
+	if err := comprehension.SaveView(root, key, comprehension.PackResult{
+		PackID:  key.ID(),
+		IndexID: build.IndexID,
+		Root:    root,
+		Task:    "scoped fresh shared handoff",
+		Mode:    "plan",
+		Fresh:   false,
+		Freshness: &comprehension.FreshnessDecision{
+			Policy:        comprehension.FreshnessReadThrough,
+			Operation:     "context_pack",
+			IndexID:       build.IndexID,
+			FreshForScope: true,
+			GlobalFresh:   false,
+		},
+		CandidateFiles: []comprehension.PackFile{{Path: "a.go", Role: "editable"}},
+		Tests:          []comprehension.PackTest{{Command: "go test ./...", Path: "a_test.go"}},
+	}); err != nil {
+		t.Fatalf("SaveView: %v", err)
+	}
+	if err := os.WriteFile(testPath, []byte("package pkg\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) { t.Helper() }\n"), 0o644); err != nil {
+		t.Fatalf("make advisory test stale: %v", err)
+	}
+
+	handoff := classifyExecutorHandoffPacket(root, workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		PackID:        key.ID(),
+	})
+	if handoff.State != ExecutorHandoffStateInherited || handoff.PacketFreshnessState != ExecutorPacketFreshnessFresh || !handoff.Fresh {
+		t.Fatalf("expected scoped-fresh packet to classify as fresh inherited handoff, got %#v", handoff)
 	}
 }
 

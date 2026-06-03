@@ -170,9 +170,9 @@ type Model struct {
 	composedPromptCacheKey         string
 	activeProfiles                 []string
 	streaming                      bool
-	turnEvidence       *turnEvidence
-	pastTurnContainers []completedEvidence
-	lastBudget         *budgetData
+	turnEvidence                   *turnEvidence
+	pastTurnContainers             []completedEvidence
+	lastBudget                     *budgetData
 	bootingServer                  bool
 	serverUp                       bool
 	managedServer                  bool
@@ -193,6 +193,7 @@ type Model struct {
 	forcedTaskFamily               string
 	suppressPromptTranscript       bool
 	plannerOwnedVerification       bool
+	lastPlanExecuteRunResult       *planexecute.RunResult
 	maxTokensOverride              int
 	disableThinkingOverride        bool
 	forcedReadinessOpenObligations []string

@@ -1,0 +1,1 @@
+{"record_type":"verification_completed","task_id":"scripted-adr-workflow","effort_id":"scripted-adr-workflow","timestamp":"2026-06-03T00:00:00Z","actor":"scripted-fixture","commands":["go test ./internal/productworkflow"],"status":"passed","tdd_obligations_satisfied":["TDD-SCRIPTED-APPROVAL"]}

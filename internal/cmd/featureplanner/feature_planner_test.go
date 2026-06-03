@@ -1,4 +1,5 @@
 package featureplanner
+
 import (
 	"bytes"
 	"context"
@@ -144,9 +145,11 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 			t.Fatalf("plan-execute prompt missing atom contract: %s", prompt)
 		}
 		body, _ := json.Marshal(map[string]any{
-			"tool":        featureplanner.ToolPlanExecuteComplete,
-			"lane_family": "plan-execute",
-			"summary":     "plan-execute wrote docs/feature-planner-plan-execute.txt and ran go test ./internal/featureplanner",
+			"tool":              featureplanner.ToolPlanExecuteComplete,
+			"lane_family":       "plan-execute",
+			"status":            "completed",
+			"completion_source": "test_plan_execute_adapter",
+			"summary":           "plan-execute wrote docs/feature-planner-plan-execute.txt and ran go test ./internal/featureplanner",
 		})
 		return string(body), nil
 	}
@@ -177,15 +180,119 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 
 func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T) {
 	output := strings.Join([]string{
-		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/first/state.json"}`,
+		`{"type":"idiom.plan_execute.resume_state_saved","phase":"executor","status":"running","state_path":".idiom/plan-execute/first/state.json"}`,
 		`not json`,
-		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/final/state.json"}`,
+		`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","state_path":".idiom/plan-execute/final/state.json"}`,
 		`{"type":"message","state_path":"ignored"}`,
 	}, "\n")
 
-	if got := featurePlannerPlanExecuteProgressPath(output); got != ".idiom/plan-execute/final/state.json" {
+	fields := featurePlannerPlanExecuteCompletionFields(output)
+	if got := featureplanner.CompletionFieldString(fields, "progress_path"); got != ".idiom/plan-execute/final/state.json" {
 		t.Fatalf("progress path = %q", got)
 	}
+	if got := fmt.Sprint(fields["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["phase"]); got != "complete" {
+		t.Fatalf("phase = %q, want complete; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["review_status"]); got != "skipped" {
+		t.Fatalf("review_status = %q, want skipped; fields=%+v", got, fields)
+	}
+}
+
+func TestFeaturePlannerPlanExecuteCompletionFieldsMarksReviewDegradedWithoutStatePath(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"review_model_error"}`,
+		`{"type":"message","content":"review unavailable"}`,
+	}, "\n")
+
+	fields := featurePlannerPlanExecuteCompletionFields(output)
+
+	if got := fmt.Sprint(fields["status"]); got != "degraded" {
+		t.Fatalf("status = %q, want degraded; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["review_status"]); got != "review_unavailable" {
+		t.Fatalf("review_status = %q, want review_unavailable; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
+		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteReturnsTypedSkippedReviewCompletion(t *testing.T) {
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
+				if !testContainsString(args, "-skip-review-repair") {
+					t.Fatalf("expected explicit skipped review flag, args=%+v", args)
+				}
+				_, _ = stdout.Write([]byte(strings.Join([]string{
+					`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","state_path":".idiom/plan-execute/session/state.json"}`,
+					`{"type":"message","content":"done"}`,
+				}, "\n")))
+				return 0
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+	if got := fmt.Sprint(envelope["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
+	}
+	if got := fmt.Sprint(envelope["review_status"]); got != "skipped" {
+		t.Fatalf("review_status = %q, want skipped; envelope=%+v", got, envelope)
+	}
+	if got := envelope["review_repair_skipped"]; got != true {
+		t.Fatalf("review_repair_skipped = %v, want true; envelope=%+v", got, envelope)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteReturnsTypedFailureCompletion(t *testing.T) {
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"review_repair","status":"degraded","review_status":"degraded","state_path":".idiom/plan-execute/session/state.json"}`))
+				_, _ = stderr.Write([]byte("review repair degraded"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("typed nested failure should be returned to feature planner, got error: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+	if got := fmt.Sprint(envelope["status"]); got != "degraded" {
+		t.Fatalf("status = %q, want degraded; envelope=%+v", got, envelope)
+	}
+	if got := fmt.Sprint(envelope["failure_reason"]); !strings.Contains(got, "exit 1") {
+		t.Fatalf("failure_reason = %q, want exit status; envelope=%+v", got, envelope)
+	}
+}
+
+func testContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func featurePlannerPlanExecuteDispatchPlanJSON() string {
@@ -272,7 +379,6 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 	}
 	return path
 }
-
 
 func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 	// Verify that ProductWorkflowBrief can be constructed from fixture data

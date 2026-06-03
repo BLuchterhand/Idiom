@@ -106,7 +106,6 @@ func (r *Runner) supportsNativeTools() bool {
 	return r == nil || r.Client == nil || r.Client.SupportsNativeTools()
 }
 
-
 // lanePolicy returns the lane-specific behavioral policy, falling back
 // to LanePolicyForBrief when the Runner.LanePolicy field is nil.
 func (r *Runner) lanePolicy() LanePolicy {
@@ -229,9 +228,9 @@ func (r *Runner) Run(
 		}
 		setCurrentAllowedTools(currentAllowedTools)
 	}
-		// Sync currentAllowedTools from opts.Tools so synthetic
-		// tools (note) added by this closure are recognized.
-		syncCurrentAllowedToolsFromOptions()
+	// Sync currentAllowedTools from opts.Tools so synthetic
+	// tools (note) added by this closure are recognized.
+	syncCurrentAllowedToolsFromOptions()
 	rebuildTools := func() {
 		if r.Workspace == nil {
 			return
@@ -315,38 +314,38 @@ func (r *Runner) Run(
 		var tools []llama.Tool
 		if len(allowed) > 0 || !strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.PermissionProfile), "conversation_only") {
 			tools = buildLlamaTools(r.Workspace.BuildToolDefinitions(allowed))
-		// Conversation and read-only lanes: expose a "note" tool that
-		// lets the model capture intermediate findings while investigating.
-		// Without a synthesis scaffold, the model accumulates raw evidence
-		// but has nowhere to put what it learned — forcing every answer to
-		// be composed in a single step from raw context.
-		// Skip the note tool for direct_answer contracts: the model is only
-		// allowed blocker or final_answer actions, and a visible tool in the
-		// prompt causes some backends (e.g. Qwen via MLX textual transport)
-		// to emit tool-call-like prose that the parser misinterprets.
-		if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
-			// bypass note injection — direct_answer contract with
-			// textual transport (e.g. Qwen/MLX) misparses the note
-			// tool schema as tool-call prose.
-		} else if r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
-			tools = append(tools, llama.Tool{
-				Type: "function",
-				Function: llama.ToolFunction{
-					Name:        "note",
-					Description: "Record an intermediate finding while investigating. Use this to build an answer scaffold: capture key facts, file paths, function names, and relationships as you discover them. Notes are saved to .idiom/notes/ and can be referenced when synthesizing your final answer.",
-					Parameters:  json.RawMessage(`{"type":"object","properties":{"key":{"type":"string","description":"A short identifier for this finding (e.g. 'implement-lane-gate', 'source-sanity-call-chain')"},"content":{"type":"string","description":"What you learned. Include file paths, function names, line numbers, and a brief description of the mechanism or relationship."}},"required":["key","content"]}`),
-				},
-			})
-			// Also inject note into the RuntimeBrief's AllowedTools so it
-			// appears in control_rails / visibleRuntimeBrief. opts.Tools
-			// (LLM schema) and currentAllowedTools (runner tracking) get
-			// the note tool, but visibleRuntimeBrief reads from a separate
-			// source — the RuntimeBrief's AllowedTools field.
-			// Append note to RuntimeBrief.AllowedTools if not already present.
-			if !slices.Contains(r.RuntimeBrief.AllowedTools, "note") {
-				r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, "note")
+			// Conversation and read-only lanes: expose a "note" tool that
+			// lets the model capture intermediate findings while investigating.
+			// Without a synthesis scaffold, the model accumulates raw evidence
+			// but has nowhere to put what it learned — forcing every answer to
+			// be composed in a single step from raw context.
+			// Skip the note tool for direct_answer contracts: the model is only
+			// allowed blocker or final_answer actions, and a visible tool in the
+			// prompt causes some backends (e.g. Qwen via MLX textual transport)
+			// to emit tool-call-like prose that the parser misinterprets.
+			if strings.EqualFold(strings.TrimSpace(r.RuntimeBrief.Contract), "direct_answer") {
+				// bypass note injection — direct_answer contract with
+				// textual transport (e.g. Qwen/MLX) misparses the note
+				// tool schema as tool-call prose.
+			} else if r.lanePolicy().ShouldHaveNoteTool(r.RuntimeBrief.Contract) {
+				tools = append(tools, llama.Tool{
+					Type: "function",
+					Function: llama.ToolFunction{
+						Name:        "note",
+						Description: "Record an intermediate finding while investigating. Use this to build an answer scaffold: capture key facts, file paths, function names, and relationships as you discover them. Notes are saved to .idiom/notes/ and can be referenced when synthesizing your final answer.",
+						Parameters:  json.RawMessage(`{"type":"object","properties":{"key":{"type":"string","description":"A short identifier for this finding (e.g. 'implement-lane-gate', 'source-sanity-call-chain')"},"content":{"type":"string","description":"What you learned. Include file paths, function names, line numbers, and a brief description of the mechanism or relationship."}},"required":["key","content"]}`),
+					},
+				})
+				// Also inject note into the RuntimeBrief's AllowedTools so it
+				// appears in control_rails / visibleRuntimeBrief. opts.Tools
+				// (LLM schema) and currentAllowedTools (runner tracking) get
+				// the note tool, but visibleRuntimeBrief reads from a separate
+				// source — the RuntimeBrief's AllowedTools field.
+				// Append note to RuntimeBrief.AllowedTools if not already present.
+				if !slices.Contains(r.RuntimeBrief.AllowedTools, "note") {
+					r.RuntimeBrief.AllowedTools = append(r.RuntimeBrief.AllowedTools, "note")
+				}
 			}
-		}
 
 		}
 		// Schema-level enforcement of closure-biased contracts: once the
@@ -720,7 +719,17 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "submit_plan_stringified_edits_repaired", Content: "repaired submit_plan.edits from a quoted JSON string into a typed edits array before validation"})
 		}
 		if !ok && parseErr == nil {
-			if intentReq, intentRaw, compiled := r.compilePlanIntentToolRequest(reply); compiled {
+			if recoveredReq, recoveredRaw, prompt, recovered := r.deterministicUnsafeTextualEditRecovery(normalization, collectedResults); recovered {
+				if strings.TrimSpace(recoveredReq.Tool) != "" {
+					req, raw, ok = recoveredReq, recoveredRaw, true
+					r.emitToolRequestNormalizerEvent("requires_terminal_action", "unsafe_textual_edit_recovery", req, nil, "")
+					r.emitEvent(RunEvent{Role: "unsafe_textual_edit_recovery", Content: fmt.Sprintf("unsafe textual edit markup named %s; issuing bounded source read before write retry", req.Path)})
+				} else {
+					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+					r.emitEvent(RunEvent{Role: "unsafe_textual_edit_recovery", Content: prompt})
+					continue
+				}
+			} else if intentReq, intentRaw, compiled := r.compilePlanIntentToolRequest(reply); compiled {
 				req, raw, ok = intentReq, intentRaw, true
 			} else if salvagedReq, salvagedRaw, salvaged := r.salvageVisibleToolRequestFromProse(reply, collectedResults); salvaged {
 				req, raw, ok = salvagedReq, salvagedRaw, true
@@ -2021,12 +2030,12 @@ func (r *Runner) Run(
 		} else if res.shouldContinue {
 			continue
 		}
-			if !r.planThenExecutePlannerPhase() &&
-		// The synthesis nudge uses generic "answer now" language that
-		// contradicts the conversation lane's evidence requirement
-		// (file:line from at least one inspected source location).
-		// The conversation lane has its own evidence-aligned nudge.
-		!r.lanePolicy().SkipSynthesisNudge() {
+		if !r.planThenExecutePlannerPhase() &&
+			// The synthesis nudge uses generic "answer now" language that
+			// contradicts the conversation lane's evidence requirement
+			// (file:line from at least one inspected source location).
+			// The conversation lane has its own evidence-aligned nudge.
+			!r.lanePolicy().SkipSynthesisNudge() {
 			if res := requestBudget.synthesisDecision(policy, metrics.ToolCalls, runnerBriefRequiresMutation(r.RuntimeBrief)).apply(budgetDecisionContext{
 				controller: &controller, stepNumber: stepNumber, activeToolCall: activeToolCall, req: req,
 			}); res.shouldFinish {
@@ -3542,7 +3551,6 @@ func (r *Runner) emitThinkingTrace(step int, reason string, message llama.ChatMe
 	r.OnEvent(RunEvent{Role: "thinking_trace", Content: string(data)})
 }
 
-
 // stripOrphanedToolCalls returns a copy of messages with any assistant
 // messages removed that have tool_calls but no matching role:"tool"
 // responses. When the budget gate or post-readiness nudge continues
@@ -3849,7 +3857,7 @@ func runnerReadinessState(agent string, brief workerruntime.WorkerRuntimeBrief, 
 		readiness.ReadyToAnswer = false
 		readiness.ReadyToVerify = true
 		addOpen("verification_result_missing")
-	} else if readOnlyAnalysisReadyFromEvidence(results) {
+	} else if readOnlyEvidenceCloseoutApplies(brief, results) && readOnlyAnalysisReadyFromEvidence(results) {
 		readiness.ReadyToAnswer = true
 		addClosed("read_only_evidence_ready")
 		readiness.FurtherReadsRequire = "one exact missing claim and one exact bounded probe"
@@ -4482,11 +4490,11 @@ func implementationTargetWriteReadyRuntimeBrief(brief workerruntime.WorkerRuntim
 	brief.RequiredTools = []string{"edit_file_or_apply_patch"}
 	brief.Constraints = mergeRunnerStateStrings([]string{"implementation_target_write_ready"}, brief.Constraints)
 	brief.RequiredNext = mergeRunnerStateStrings([]string{
-		"parser-readable write to the sourced target path, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+		"parser-readable write to the sourced target path (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), or <<QUESTION>> with the exact edit blocker/no-op evidence",
 	}, brief.RequiredNext)
 	if sourceRefresh {
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"parser-readable write to the sourced target path, bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
+			"parser-readable write to the sourced target path (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), bounded read_file/search_content source refresh with named_gap for a precise edit-safety fact, or <<QUESTION>> with the exact edit blocker/no-op evidence",
 		}, brief.RequiredNext)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
 			"broad read/search after source-body evidence",
@@ -4551,7 +4559,7 @@ func implementationTargetSourceRuntimeBrief(brief workerruntime.WorkerRuntimeBri
 	brief.RequiredTools = []string{"bounded_workspace_evidence_tool", "edit_file_or_apply_patch"}
 	brief.Constraints = mergeRunnerStateStrings([]string{"implementation_target_source_pending"}, brief.Constraints)
 	brief.RequiredNext = mergeRunnerStateStrings([]string{
-		"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, write only after exact source-body evidence and replacement shape are known, or <<QUESTION>> with the exact blocker/no-op evidence",
+		"localize the concrete edit target, read bounded source-body evidence with named_gap for the missing edit-safety fact, write only after exact source-body evidence and replacement shape are known (textual write transport is one visible JSON object or apply_patch envelope, not key/value edit-body notes), or <<QUESTION>> with the exact blocker/no-op evidence",
 	}, brief.RequiredNext)
 	brief.InvalidActions = mergeRunnerStateStrings([]string{
 		"final answer before a successful write, no-op, or blocker",
@@ -5688,7 +5696,6 @@ func scoreMessageForRetention(msg llama.ChatMessage, result *workspace.ToolResul
 	return score
 }
 
-
 func tailToolResults(results []workspace.ToolResult, max int) []workspace.ToolResult {
 	if max <= 0 || len(results) <= max {
 		return results
@@ -6797,16 +6804,16 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{}, false
 	}
 	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !strings.EqualFold(strings.TrimSpace(brief.PermissionProfile), "read_only_workspace") {
-		return workspace.ToolResult{}, false
-	}
-	if brief.Readiness != nil && brief.Readiness.ReadyToAnswer {
-		return workspace.ToolResult{}, false
-	}
-	if brief.Readiness == nil && !readOnlyExplanationGateApplies(brief) {
+	if !readOnlyEvidenceCloseoutApplies(brief, results) || (brief.Readiness != nil && brief.Readiness.ReadyToAnswer) {
 		return workspace.ToolResult{}, false
 	}
 	if len(genericReadOnlyEvidenceTools(brief.AllowedTools)) == 0 {
+		return workspace.ToolResult{}, false
+	}
+	if !readOnlyEvidenceCompletionGateApplies(brief, results) {
+		return workspace.ToolResult{}, false
+	}
+	if readOnlyVerificationBlockedByUnavailableShell(reply, results) {
 		return workspace.ToolResult{}, false
 	}
 	if genericReadOnlyAnswerEvidenceReady(results) {
@@ -6820,6 +6827,40 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		Summary: "Read-only completion gate rejected final answer",
 		Error:   "read-only workspace answers require bounded codebase evidence before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact blocker.",
 	}, true
+}
+
+func readOnlyEvidenceCompletionGateApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	family := strings.ToLower(strings.TrimSpace(brief.TaskFamily))
+	contract := strings.ToLower(strings.TrimSpace(brief.Contract))
+	switch family {
+	case "information_request", "information", "coding_help":
+		return true
+	case "conversation":
+		return contract == "direct_answer" && (len(conversationNamedEvidencePaths(brief)) > 0 || len(results) > 0)
+	default:
+		return contract == "grounded_evidence_summary"
+	}
+}
+
+func readOnlyVerificationBlockedByUnavailableShell(reply string, results []workspace.ToolResult) bool {
+	lowerReply := strings.ToLower(strings.TrimSpace(reply))
+	if !(strings.Contains(lowerReply, "cannot run shell verification") ||
+		strings.Contains(lowerReply, "shell tool is not exposed") ||
+		strings.Contains(lowerReply, "shell verification") && strings.Contains(lowerReply, "not available")) {
+		return false
+	}
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "shell" {
+			continue
+		}
+		lowerError := strings.ToLower(strings.TrimSpace(result.Error))
+		if strings.Contains(lowerError, "not in the current allowed tool surface") ||
+			strings.Contains(lowerError, "not available") ||
+			strings.Contains(lowerError, "not exposed") {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *Runner) readOnlyNonSubstantiveCompletionRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -6899,7 +6940,6 @@ func unresolvedProcessIntentCompletionRejection(reply string) (workspace.ToolRes
 		Error:   "the reply describes an intended future search/read/inspection instead of completing the answer. Issue the needed tool call now, answer from gathered evidence, or state a concrete blocker.",
 	}, true
 }
-
 
 // looksLikeToolResultTranscript returns true when the reply looks like
 // a raw tool result transcript (e.g. "The inspected source in X contains
@@ -10066,6 +10106,38 @@ func (r *Runner) deterministicImplementationRejectedRequiredPathRead(reply strin
 		return workspace.ToolRequest{}, "", false
 	}
 	return r.deterministicImplementationRequiredPathRead(results)
+}
+
+func (r *Runner) deterministicUnsafeTextualEditRecovery(normalization toolRequestSyntaxNormalization, results []workspace.ToolResult) (workspace.ToolRequest, string, string, bool) {
+	if r == nil || normalization.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || r.planThenExecutePlannerPhase() {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	req := normalization.Request
+	if strings.TrimSpace(req.Tool) != "edit_file" || strings.TrimSpace(req.Path) == "" || !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" {
+		return workspace.ToolRequest{}, "", "", false
+	}
+	if !implementationTargetSourceWriteTargetsHaveEvidence(req, results) {
+		read := workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         220,
+			NamedGap:        "exact current source needed before retrying rejected textual edit",
+			WhyNotAnswering: "key/value edit bodies are not executable write requests",
+		}
+		return read, marshalToolRequestRaw(read), "", true
+	}
+	prompt := strings.Join([]string{
+		"The previous visible action looked like an `edit_file` request, but it used key/value or function-call edit-body markup. Idiom does not execute that shape for workspace writes because edit bodies must be typed, parser-readable JSON or a patch envelope.",
+		fmt.Sprintf("Target path with source evidence: `%s`.", path),
+		"Your next visible message must be exactly one executable write action and no prose. For textual tool transport, emit one JSON object with top-level `tool`, `path`, `old_text`, `new_text`, and `description`, or emit one JSON `apply_patch` request with a valid patch. Do not use `tool: edit_file` line notes, XML tags, markdown fences, or prose around the action.",
+		"For `edit_file`, copy `old_text` exactly from the gathered current source and make `new_text` the complete replacement text. If no write is valid, answer `<<QUESTION>>:` with the exact edit blocker/no-op evidence.",
+	}, "\n\n")
+	return workspace.ToolRequest{}, "", prompt, true
 }
 
 func implementationRejectedTextCanAdvanceRequiredRead(reply string) bool {
@@ -19374,7 +19446,7 @@ func (r *Runner) ensureNonEmptyAnswer(
 		}, opts))
 	}
 	retryMessages = append(retryMessages, llama.ChatMessage{
-		Role: "system",
+		Role:    "system",
 		Content: emptyAnswerRetryPrompt(r.RuntimeBrief),
 	})
 
@@ -20243,7 +20315,6 @@ func isVerificationToolResult(result workspace.ToolResult) bool {
 	}
 	return false
 }
-
 
 func stripFallbackJSONArtifacts(output string) string {
 	if !strings.Contains(output, "{") {

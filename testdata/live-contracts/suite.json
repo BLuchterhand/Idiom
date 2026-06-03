@@ -28,6 +28,7 @@
       "no_approval",
       "clean_rollback",
       "max_errors",
+      "expected_recoveries",
       "no_runner_rejections",
       "no_timeout",
       "executor_handoff"
@@ -88,6 +89,21 @@
         "require_no_runner_rejections": true,
         "require_no_timeout": true,
         "max_errors": 0,
+        "expected_recoveries": [
+          {
+            "kind": "post_readiness_named_gap_recovery",
+            "event_type": "tool_result",
+            "summary_contains": [
+              "Post-readiness follow-up missing named gap"
+            ],
+            "error_contains": [
+              "answer readiness has already been reached"
+            ],
+            "accounts_for_runner_rejection": true,
+            "min_count": 0,
+            "max_count": 3
+          }
+        ],
         "max_duration_millis": 300000
       }
     },
@@ -130,6 +146,20 @@
         "require_clean_rollback": true,
         "require_no_timeout": true,
         "max_errors": 2,
+        "expected_recoveries": [
+          {
+            "kind": "write_surface_rejection",
+            "event_type": "tool_result",
+            "summary_contains": [
+              "write-ready tool rejected"
+            ],
+            "error_contains": [
+              "outside the target-write-ready surface"
+            ],
+            "min_count": 0,
+            "max_count": 2
+          }
+        ],
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
@@ -170,8 +200,10 @@
         "require_plan_execution": {
           "require_handoff_id": true,
           "require_no_drift": true,
-          "require_packet_states": [
-            "missing"
+          "require_packet_present": true,
+          "require_packet_fresh": true,
+          "require_packet_freshness_states": [
+            "fresh"
           ],
           "require_execution_permissions": [
             "execute_all"
@@ -232,8 +264,10 @@
         "require_plan_execution": {
           "require_handoff_id": true,
           "require_no_drift": true,
-          "require_packet_states": [
-            "missing"
+          "require_packet_present": true,
+          "require_packet_fresh": true,
+          "require_packet_freshness_states": [
+            "fresh"
           ],
           "require_execution_permissions": [
             "execute_all"
@@ -252,6 +286,18 @@
         "require_executor_handoff": true,
         "require_no_timeout": true,
         "max_errors": 1,
+        "expected_recoveries": [
+          {
+            "kind": "submit_plan_recovery",
+            "event_type": "tool_result",
+            "tool": "submit_plan",
+            "error_contains": [
+              "submit_plan"
+            ],
+            "min_count": 0,
+            "max_count": 1
+          }
+        ],
         "max_duration_millis": 900000
       }
     }

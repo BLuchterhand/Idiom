@@ -1,4 +1,5 @@
 package planexecute
+
 import (
 	"encoding/json"
 	"fmt"
@@ -51,6 +52,10 @@ type phaseEvidencePacket struct {
 type phaseEvidenceHandoff struct {
 	PacketState      string `json:"packet_state"`
 	Reason           string `json:"reason,omitempty"`
+	HandoffCreated   bool   `json:"handoff_created,omitempty"`
+	PacketPresent    bool   `json:"packet_present,omitempty"`
+	PacketNotUsed    bool   `json:"packet_not_used_by_design,omitempty"`
+	PacketFreshness  string `json:"packet_freshness_state,omitempty"`
 	PlanID           string `json:"plan_id,omitempty"`
 	HandoffID        string `json:"handoff_id,omitempty"`
 	HandoffStatus    string `json:"handoff_status,omitempty"`
@@ -148,6 +153,10 @@ func phaseEvidenceHandoffFromExecutor(handoff executorHandoffPacket) phaseEviden
 	return phaseEvidenceHandoff{
 		PacketState:      firstNonEmptyString(strings.TrimSpace(handoff.State), executorHandoffStateMissing),
 		Reason:           strings.TrimSpace(handoff.Reason),
+		HandoffCreated:   handoff.HandoffCreated,
+		PacketPresent:    handoff.PacketPresent,
+		PacketNotUsed:    handoff.PacketNotUsedByDesign,
+		PacketFreshness:  firstNonEmptyString(strings.TrimSpace(handoff.PacketFreshnessState), executorPacketFreshnessUnknown),
 		PlanID:           strings.TrimSpace(handoff.PlanID),
 		HandoffID:        strings.TrimSpace(handoff.HandoffID),
 		HandoffStatus:    strings.TrimSpace(handoff.HandoffStatus),
@@ -486,7 +495,14 @@ func renderPlanExecutePhaseEvidence(bundle phaseEvidenceBundle) string {
 		fmt.Fprintf(&b, " summary=%s", summary)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s", bundle.ExecutorHandoff.PacketState, bundle.ExecutorHandoff.Reason)
+	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s handoff_created=%t packet_present=%t packet_not_used_by_design=%t packet_freshness_state=%s",
+		bundle.ExecutorHandoff.PacketState,
+		bundle.ExecutorHandoff.Reason,
+		bundle.ExecutorHandoff.HandoffCreated,
+		bundle.ExecutorHandoff.PacketPresent,
+		bundle.ExecutorHandoff.PacketNotUsed,
+		bundle.ExecutorHandoff.PacketFreshness,
+	)
 	if bundle.ExecutorHandoff.PackID != "" {
 		fmt.Fprintf(&b, " pack_id=%s", bundle.ExecutorHandoff.PackID)
 	}
@@ -564,6 +580,10 @@ func phaseEvidenceTelemetry(bundle phaseEvidenceBundle) map[string]any {
 		"executor_packet_state":     bundle.ExecutorHandoff.PacketState,
 		"executor_packet_reason":    bundle.ExecutorHandoff.Reason,
 		"executor_handoff_id":       bundle.ExecutorHandoff.HandoffID,
+		"handoff_created":           bundle.ExecutorHandoff.HandoffCreated,
+		"packet_present":            bundle.ExecutorHandoff.PacketPresent,
+		"packet_not_used_by_design": bundle.ExecutorHandoff.PacketNotUsed,
+		"packet_freshness_state":    bundle.ExecutorHandoff.PacketFreshness,
 		"candidate_files":           len(bundle.Packet.CandidateFiles),
 		"candidate_file_paths":      phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
 		"candidate_symbols":         len(bundle.Packet.CandidateSymbols),

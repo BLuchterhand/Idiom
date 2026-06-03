@@ -37,7 +37,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			{ID: "REQ-001", Priority: "P0", Statement: "Users can authenticate with email.",
 				EvidenceRefs: []string{"E1"}, TDDObligations: []string{"TDD-001"},
 				OwnerAlignment: "Product", Testability: "Login test passes",
-				Metric: "Success rate > 99%",
+				Metric:        "Success rate > 99%",
 				OpenQuestions: []string{"MFA?"}, OpenQuestionsPresent: true},
 		},
 	}
@@ -73,7 +73,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	adr := ADRDocument{
 		FrontMatter: ADRFrontMatter{
 			SchemaVersion: "idiom.adr.v1", ADRID: "ADR-001",
-			Status: string(ArtifactStateDraft),
+			Status:  string(ArtifactStateDraft),
 			PRDRefs: []string{"REQ-001"}, EvidenceRefs: []string{"E1"},
 			TDDObligations: []string{"TDD-001"}, CoverageTier: "unit",
 		},
@@ -123,7 +123,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	os.WriteFile(filepath.Join(root, "tdd.json"), append(tddJSON, '\n'), 0o644)
 	os.WriteFile(filepath.Join(root, "implementation_ledger.jsonl"), []byte(
 		`{"record_type":"atom_planned","task_id":"E2E-001","effort_id":"E2E-001","timestamp":"2026-05-29T00:00:00Z","complexity_tier":"C1","context_pack_id":"cp-1","implementor":{"id":"impl-1","runtime":"local","model":"qwen","command":"make"},"reviewer":{"id":"rev-1","model":"qwen","reasoning_effort":"high","runtime":"local","status":"pending"},"scope":{"expected_files":["auth.go"],"forbidden":["secrets/"]},"required_verification":["go test ./auth/..."],"report_paths":{"implementation":"reports/impl.json","review":"reports/review.json","investigation":"reports/invest.json"}}`+"\n"+
-		`{"record_type":"verification_completed","task_id":"E2E-001","effort_id":"E2E-001","timestamp":"2026-05-29T00:00:00Z","tdd_obligations_satisfied":["TDD-001"],"verification_status":"pass","verification_commands_run":["go test ./auth/..."],"actor":"verifier"}`+"\n",
+			`{"record_type":"verification_completed","task_id":"E2E-001","effort_id":"E2E-001","timestamp":"2026-05-29T00:00:00Z","tdd_obligations_satisfied":["TDD-001"],"verification_status":"pass","verification_commands_run":["go test ./auth/..."],"actor":"verifier"}`+"\n",
 	), 0o644)
 
 	// Lint must pass.
@@ -174,7 +174,6 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	ledgerData, _ := os.ReadFile(filepath.Join(root, "implementation_ledger.jsonl"))
 	ledgerRecords, _ := ParseImplementationLedgerJSONL(ledgerData)
 	knownTDDIDs := BuildKnownTDDObligationIDs(diskTDD, ledgerRecords, "E2E-001")
-
 
 	var matrix TraceabilityMatrix
 	matrixData, _ := os.ReadFile(filepath.Join(root, "evidence", "traceability_matrix.json"))
@@ -273,16 +272,16 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	// ── Feature-planner: Run with mock runner ──
 
 	mockPlan := map[string]any{
-		"tool":          "submit_feature_plan",
+		"tool":           "submit_feature_plan",
 		"schema_version": "idiom.feature_plan.v2",
-		"feature_id":    "FEAT-E2E-001",
+		"feature_id":     "FEAT-E2E-001",
 		"source_task": map[string]any{
 			"kind":    "operator_prompt",
 			"summary": "Implement email authentication",
 		},
 		"summary": "Implement email-based authentication flow.",
 		"top_level_scope": map[string]any{
-			"objective":         "Add email authentication",
+			"objective":        "Add email authentication",
 			"success_criteria": []string{"Users can log in with email and password"},
 		},
 		"sdd_contract": map[string]any{
@@ -291,9 +290,9 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			"acceptance":           []string{"Login acceptance test passes"},
 		},
 		"tdd_contract": map[string]any{
-			"coverage_tier":                "unit",
+			"coverage_tier":                  "unit",
 			"required_before_implementation": true,
-			"coverage_gate_event_id":       "evt-cov-1",
+			"coverage_gate_event_id":         "evt-cov-1",
 			"obligations": []map[string]any{
 				{"id": "TDD-001", "behavior": "Email login flow", "command": "go test ./auth/...", "required_before": "implementation"},
 			},
@@ -310,21 +309,21 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 				"tdd_obligations":     []string{"TDD-001"},
 				"required_tests":      []string{"go test ./auth/..."},
 				"test_first": map[string]any{
-					"obligation_refs":              []string{"TDD-001"},
-					"commands":                     []string{"go test ./auth/..."},
-					"baseline_required":            true,
-					"test_artifact_paths":          []string{"auth/login_test.go"},
-					"pre_execution_event_ids":      []string{"evt-tdd-1"},
+					"obligation_refs":               []string{"TDD-001"},
+					"commands":                      []string{"go test ./auth/..."},
+					"baseline_required":             true,
+					"test_artifact_paths":           []string{"auth/login_test.go"},
+					"pre_execution_event_ids":       []string{"evt-tdd-1"},
 					"expected_pre_execution_result": "red-confirmed",
-					"coverage_gate_event_id":       "evt-cov-1",
+					"coverage_gate_event_id":        "evt-cov-1",
 				},
 				"planned_tdd_snapshot": map[string]any{
-					"snapshot_id":                    "snap-tdd-1",
-					"snapshot_digest":                "sha256:abc123",
-					"obligation_ids":                 []string{"TDD-001"},
-					"test_commands":                  []string{"go test ./auth/..."},
-					"test_artifact_paths":            []string{"auth/login_test.go"},
-					"expected_pre_execution_results": []string{"red-confirmed"},
+					"snapshot_id":                      "snap-tdd-1",
+					"snapshot_digest":                  "sha256:abc123",
+					"obligation_ids":                   []string{"TDD-001"},
+					"test_commands":                    []string{"go test ./auth/..."},
+					"test_artifact_paths":              []string{"auth/login_test.go"},
+					"expected_pre_execution_results":   []string{"red-confirmed"},
 					"created_before_dispatch_event_id": "evt-tdd-1",
 				},
 				"prompt": "Implement email authentication endpoint.",
@@ -337,7 +336,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			return string(mockJSON), nil
 		}
 		if taskFamily == "feature_planner_implementor" {
-			return `{"tool":"plan_execute_complete","summary":"atom-1 implemented","status":"pass"}`, nil
+			return fmt.Sprintf(`{"tool":%q,"summary":"atom-1 implemented","status":"completed","review_status":"skipped","review_repair_skipped":true}`, featureplanner.ToolPlanExecuteComplete), nil
 		}
 		return "", fmt.Errorf("unknown task family: %s", taskFamily)
 	}

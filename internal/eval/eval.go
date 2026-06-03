@@ -264,21 +264,31 @@ type Scenario struct {
 
 type PlanExecutionExpectation struct {
 	RequireHandoffID            bool     `json:"require_handoff_id,omitempty"`
+	RequireHandoffCreated       bool     `json:"require_handoff_created,omitempty"`
 	RequireApprovalScopeID      bool     `json:"require_approval_scope_id,omitempty"`
 	RequireNoDrift              bool     `json:"require_no_drift,omitempty"`
 	RequireDrift                bool     `json:"require_drift,omitempty"`
 	RequireDriftReasons         []string `json:"require_drift_reasons,omitempty"`
+	RequirePacketPresent        bool     `json:"require_packet_present,omitempty"`
+	RequirePacketFresh          bool     `json:"require_packet_fresh,omitempty"`
+	RequirePacketNotUsed        bool     `json:"require_packet_not_used_by_design,omitempty"`
 	RequirePacketStates         []string `json:"require_packet_states,omitempty"`
+	RequirePacketFreshnessState []string `json:"require_packet_freshness_states,omitempty"`
 	RequireExecutionPermissions []string `json:"require_execution_permissions,omitempty"`
 }
 
 type PlanExecutionHandoffSnapshot struct {
 	PlanID              string `json:"plan_id,omitempty"`
 	HandoffID           string `json:"handoff_id,omitempty"`
+	HandoffCreated      bool   `json:"handoff_created,omitempty"`
 	ApprovalScopeID     string `json:"approval_scope_id,omitempty"`
 	ApprovalStatus      string `json:"approval_status,omitempty"`
 	ExecutionPermission string `json:"approval_execution_permission,omitempty"`
+	PackID              string `json:"pack_id,omitempty"`
 	PacketState         string `json:"packet_state,omitempty"`
+	PacketPresent       bool   `json:"packet_present,omitempty"`
+	PacketNotUsed       bool   `json:"packet_not_used_by_design,omitempty"`
+	PacketFreshness     string `json:"packet_freshness_state,omitempty"`
 	Reason              string `json:"reason,omitempty"`
 }
 
@@ -286,8 +296,12 @@ type PlanExecutionDriftSnapshot struct {
 	Path            string `json:"path,omitempty"`
 	Reason          string `json:"reason,omitempty"`
 	HandoffID       string `json:"handoff_id,omitempty"`
+	HandoffCreated  bool   `json:"handoff_created,omitempty"`
 	ApprovalScopeID string `json:"approval_scope_id,omitempty"`
 	PacketState     string `json:"packet_state,omitempty"`
+	PacketPresent   bool   `json:"packet_present,omitempty"`
+	PacketNotUsed   bool   `json:"packet_not_used_by_design,omitempty"`
+	PacketFreshness string `json:"packet_freshness_state,omitempty"`
 }
 
 type PhaseSnapshot struct {
@@ -608,6 +622,17 @@ type Metrics struct {
 	RecordTypes               map[string]int                  `json:"record_types,omitempty"`
 	ErrorCount                int                             `json:"error_count,omitempty"`
 	Errors                    []string                        `json:"errors,omitempty"`
+	ErrorEvents               []ErrorEventSnapshot            `json:"error_events,omitempty"`
+}
+
+type ErrorEventSnapshot struct {
+	EventType              string `json:"event_type,omitempty"`
+	Tool                   string `json:"tool,omitempty"`
+	Summary                string `json:"summary,omitempty"`
+	Error                  string `json:"error,omitempty"`
+	Reason                 string `json:"reason,omitempty"`
+	RunnerRejected         bool   `json:"runner_rejected,omitempty"`
+	CompletionGateRejected bool   `json:"completion_gate_rejected,omitempty"`
 }
 
 type LiveContractRollbackSnapshot struct {

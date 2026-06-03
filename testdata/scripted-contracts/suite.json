@@ -3810,10 +3810,10 @@
       }
     },
     {
-      "id": "scripted-feature-planner-tui-product-workflow-e2e",
+      "id": "scripted-feature-planner-tui-direct-greeting-plan-execute",
       "family": "feature_planner",
       "runner_mode": "tui",
-      "prompt": "/feature-planner Add an internal/greeting package with Hello function",
+      "prompt": "/feature-planner Add an internal/greeting package with Hello function through nested plan-execute.",
       "tags": [
         "deterministic",
         "fake-model",
@@ -3823,23 +3823,21 @@
         "tdd",
         "sdd",
         "slash-command",
-        "product-workflow",
-        "prd",
-        "adr",
+        "plan-execute",
         "rollback"
       ],
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {
-        "name": "scripted-feature-planner-tui-product-workflow-e2e",
+        "name": "scripted-feature-planner-tui-direct-greeting-plan-execute",
         "prompt_contains": [
           "/feature-planner",
-          "greeting package"
+          "nested plan-execute"
         ],
         "final_assistant_contains": [
           "feature-planner: complete",
-          "atom-add-greeting",
-          "TDD-001",
-          "REQ-001"
+          "atom-direct-greeting-package",
+          "TDD-DirectGreetingHello",
+          "SDD-DirectGreetingPackage"
         ],
         "require_changed_files": [
           "internal/greeting/greeting.go",
@@ -3848,6 +3846,10 @@
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
           "idiom.feature_planner.start",
+          "idiom.feature_planner.tdd_pre_execution_checked",
+          "idiom.feature_planner.plan_accepted",
+          "idiom.feature_planner.atom_dispatched",
+          "internal_idiom.plan_execute.completed",
           "idiom.feature_planner.atom_completed",
           "idiom.feature_planner.complete",
           "idiom.live_contract.rollback"
@@ -3866,6 +3868,97 @@
         "require_no_timeout": true,
         "max_errors": 0,
         "max_duration_millis": 180000
+      }
+    },
+    {
+      "id": "scripted-product-create-tui-prd-workflow",
+      "family": "product_workflow",
+      "runner_mode": "tui",
+      "prompt": "/product-create --effort-root docs/product-workflows/efforts/started/scripted-prd-workflow",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "product-workflow",
+        "tui",
+        "prd",
+        "slash-command",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-product-create-tui-prd-workflow",
+        "prompt_contains": [
+          "/product-create",
+          "scripted-prd-workflow"
+        ],
+        "require_changed_files": [
+          "docs/product-workflows/efforts/started/scripted-prd-workflow/workflow_state.json"
+        ],
+        "require_run_events": [
+          "idiom.product_workflow.create",
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "docs/product-workflows/efforts/started/scripted-prd-workflow/workflow_state.json"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    },
+    {
+      "id": "scripted-product-approve-tui-adr-workflow",
+      "family": "product_workflow",
+      "runner_mode": "tui",
+      "prompt": "/product-approve --effort-root docs/product-workflows/efforts/started/scripted-adr-workflow",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "product-workflow",
+        "tui",
+        "prd",
+        "adr",
+        "slash-command",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-product-approve-tui-adr-workflow",
+        "prompt_contains": [
+          "/product-approve",
+          "scripted-adr-workflow"
+        ],
+        "require_changed_files": [
+          "docs/product-workflows/efforts/started/scripted-adr-workflow/workflow_state.json"
+        ],
+        "require_run_events": [
+          "idiom.product_workflow.transition_applied",
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.rollback"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_changed_files": [
+          "docs/product-workflows/efforts/started/scripted-adr-workflow/workflow_state.json"
+        ],
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_errors": 1,
+        "max_duration_millis": 120000
       }
     }
   ]

@@ -47,7 +47,7 @@ func (r *Runner) deriveCurrentTurnPhaseContract(input runnerTurnPhaseContractInp
 }
 
 func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contract TurnPhaseContract) runnerNextActionState {
-	if contract.PhaseID == "" || contract.PhaseID == turnPhaseGeneric {
+	if !turnPhaseContractShouldApplyToNextActionState(contract) {
 		return state
 	}
 	if strings.TrimSpace(contract.Phase) != "" {
@@ -67,6 +67,21 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 	state.Constraints = mergeRunnerStateStrings(state.Constraints, contract.Constraints)
 	state.StateSummary = runnerStateSummary(state)
 	return state
+}
+
+func turnPhaseContractShouldApplyToNextActionState(contract TurnPhaseContract) bool {
+	if contract.PhaseID == "" {
+		return false
+	}
+	if contract.PhaseID != turnPhaseGeneric {
+		return true
+	}
+	switch contract.Phase {
+	case "read_only_evidence_ready":
+		return true
+	default:
+		return false
+	}
 }
 
 func turnPhaseSurfaceSummaryFromNextActionState(state runnerNextActionState, contract TurnPhaseContract) autonomy.TurnPhaseSurfaceSummaryEvent {

@@ -407,52 +407,38 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	if req.JSONEvents && stdout != nil {
 		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 	}
+	completion := featurePlannerPlanExecuteCompletionFields(planStdout.String())
+	completion["tool"] = featureplanner.ToolPlanExecuteComplete
+	completion["lane_family"] = "plan-execute"
+	completion["summary"] = strings.TrimSpace(planStdout.String())
+	completion["review_repair_skipped"] = true
+	if featureplanner.CompletionFieldString(completion, "completion_source") == "" {
+		completion["completion_source"] = "headless_skip_review_repair"
+	}
 	if code != 0 {
-		return "", fmt.Errorf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))
+		completion["status"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "status"), "failed")
+		completion["failure_reason"] = strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String())))
+		body, err := json.Marshal(completion)
+		if err != nil {
+			return "", err
+		}
+		return string(body), nil
 	}
+	completion["status"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "status"), "completed")
 	if req.JSONEvents && stdout != nil {
-		emitFeaturePlannerInternalJSONEvent(stdout, "internal_idiom.plan_execute.completed", map[string]any{
-			"session_id":    req.SessionID,
-			"tool":          featureplanner.ToolPlanExecuteComplete,
-			"lane_family":   "plan-execute",
-			"summary":       strings.TrimSpace(planStdout.String()),
-			"progress_path": featurePlannerPlanExecuteProgressPath(planStdout.String()),
-		})
+		eventFields := map[string]any{"session_id": req.SessionID}
+		maps.Copy(eventFields, completion)
+		emitFeaturePlannerInternalJSONEvent(stdout, "internal_idiom.plan_execute.completed", eventFields)
 	}
-	payload := map[string]any{
-		"tool":        featureplanner.ToolPlanExecuteComplete,
-		"lane_family": "plan-execute",
-		"summary":     strings.TrimSpace(planStdout.String()),
-	}
-	if progressPath := featurePlannerPlanExecuteProgressPath(planStdout.String()); progressPath != "" {
-		payload["progress_path"] = progressPath
-	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(completion)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
 }
 
-func featurePlannerPlanExecuteProgressPath(output string) string {
-	var progressPath string
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		var record struct {
-			Type      string `json:"type"`
-			StatePath string `json:"state_path"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			continue
-		}
-		if strings.HasPrefix(record.Type, "idiom.plan_execute.") && strings.TrimSpace(record.StatePath) != "" {
-			progressPath = strings.TrimSpace(record.StatePath)
-		}
-	}
-	return progressPath
+func featurePlannerPlanExecuteCompletionFields(output string) map[string]any {
+	return featureplanner.PlanExecuteCompletionFields(output)
 }
 
 func emitFeaturePlannerMessage(stdout io.Writer, jsonEvents bool, role string, content string, sessionID string) {

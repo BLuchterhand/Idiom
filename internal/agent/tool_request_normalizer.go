@@ -406,6 +406,14 @@ func normalizeKeyValueToolRequestSyntax(text string) toolRequestSyntaxNormalizat
 		}
 		return toolRequestSyntaxNormalization{}
 	}
+	if unsafe || unsafeInferredEditFileBody(req) {
+		return toolRequestSyntaxNormalization{
+			Request:        req,
+			Raw:            marshalToolRequestRaw(req),
+			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			EventTransport: toolRequestNormalizerTransportKeyValue,
+		}
+	}
 	raw := marshalToolRequestRaw(req)
 	result := toolRequestSyntaxNormalization{
 		Request:        req,
@@ -429,6 +437,14 @@ func normalizeKeyValueArgsToolRequestSyntax(text string) toolRequestSyntaxNormal
 		}
 		return toolRequestSyntaxNormalization{}
 	}
+	if unsafeInferredEditFileBody(req) {
+		return toolRequestSyntaxNormalization{
+			Request:        req,
+			Raw:            marshalToolRequestRaw(req),
+			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			EventTransport: toolRequestNormalizerTransportKeyValueArgs,
+		}
+	}
 	result := toolRequestSyntaxNormalization{
 		Request:        req,
 		Raw:            raw,
@@ -445,6 +461,9 @@ func parseKeyValueArgsToolRequestSyntax(text string) (workspace.ToolRequest, str
 	trimmed := strings.TrimSpace(text)
 	if trimmed == "" || !strings.Contains(trimmed, "{") || !strings.Contains(strings.ToLower(trimmed), "args:") {
 		return workspace.ToolRequest{}, "", false, false
+	}
+	if strings.Contains(strings.ToLower(trimmed), "tool_call:") {
+		return workspace.ToolRequest{}, "", false, true
 	}
 	tool, argsStart, ok := keyValueArgsToolAndBodyStart(trimmed)
 	if !ok {
@@ -552,6 +571,14 @@ func normalizeFunctionCallToolRequestSyntax(text string) toolRequestSyntaxNormal
 		}
 		return toolRequestSyntaxNormalization{}
 	}
+	if unsafe || unsafeInferredEditFileBody(req) {
+		return toolRequestSyntaxNormalization{
+			Request:        req,
+			Raw:            marshalToolRequestRaw(req),
+			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			EventTransport: toolRequestNormalizerTransportFunctionCall,
+		}
+	}
 	raw := marshalToolRequestRaw(req)
 	result := toolRequestSyntaxNormalization{
 		Request:        req,
@@ -562,6 +589,13 @@ func normalizeFunctionCallToolRequestSyntax(text string) toolRequestSyntaxNormal
 	}
 	normalizeParsedToolRequestSyntax(&result)
 	return result
+}
+
+func unsafeInferredEditFileBody(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "edit_file" {
+		return false
+	}
+	return req.OldText != "" || req.NewText != "" || req.Content != "" || req.ReplaceAll
 }
 
 func normalizeParsedToolRequestSyntax(result *toolRequestSyntaxNormalization) {
@@ -620,14 +654,14 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 
 func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return workspace.ToolRequest{}, false, true
+	if trimmed == "" {
+		return workspace.ToolRequest{}, false, false
 	}
 	if strings.Contains(trimmed, "\n") {
-		if strings.Contains(trimmed, "(") && keyValueLikeText(trimmed) {
-			return workspace.ToolRequest{}, false, false
-		}
 		return workspace.ToolRequest{}, false, false
+	}
+	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
+		return workspace.ToolRequest{}, false, true
 	}
 	key, body, ok := strings.Cut(trimmed, ":")
 	if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
@@ -646,7 +680,7 @@ func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, boo
 		return workspace.ToolRequest{}, false, true
 	}
 	args := strings.TrimSpace(body[open+1 : len(body)-1])
-	values, ok := parseFunctionCallToolArguments(args)
+	values, unsafe, ok := parseFunctionCallToolArguments(args)
 	if !ok {
 		return workspace.ToolRequest{}, false, true
 	}
@@ -654,37 +688,38 @@ func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, boo
 	if !ok {
 		return workspace.ToolRequest{}, false, true
 	}
-	return req, true, false
+	return req, true, unsafe
 }
 
-func parseFunctionCallToolArguments(args string) (map[string]string, bool) {
+func parseFunctionCallToolArguments(args string) (map[string]string, bool, bool) {
 	values := map[string]string{}
 	if strings.TrimSpace(args) == "" {
-		return values, true
+		return values, false, true
 	}
+	unsafe := false
 	for _, part := range splitFunctionCallArguments(args) {
 		part = strings.TrimSpace(part)
 		if part == "" {
-			return nil, false
+			return nil, false, false
 		}
 		key, value, ok := strings.Cut(part, "=")
 		if !ok {
-			return nil, false
+			return nil, false, false
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
 		if functionCallToolRequestFieldUnsafe(key) {
-			return nil, false
+			unsafe = true
 		}
 		if !keyValueToolRequestFieldAllowed(key) {
-			return nil, false
+			return nil, false, false
 		}
 		decoded, ok := decodeFunctionCallArgumentValue(value)
 		if !ok || decoded == "" {
-			return nil, false
+			return nil, false, false
 		}
 		values[key] = decoded
 	}
-	return values, true
+	return values, unsafe, true
 }
 
 func splitFunctionCallArguments(args string) []string {
@@ -765,7 +800,7 @@ func toolRequestSyntaxIdentifier(value string) bool {
 
 func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, bool) {
 	trimmed := strings.TrimSpace(text)
-	if trimmed == "" || strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
+	if trimmed == "" || strings.Contains(trimmed, "```") {
 		return workspace.ToolRequest{}, false, true
 	}
 	// Scan for the first tool: line, skipping leading prose.
@@ -836,7 +871,7 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		return workspace.ToolRequest{}, false, true
 	}
 	if keyValueToolRequestUnsafeEditBody(req) {
-		return workspace.ToolRequest{}, false, true
+		return req, true, true
 	}
 	return req, true, false
 }

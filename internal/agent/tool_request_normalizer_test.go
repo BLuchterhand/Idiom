@@ -84,6 +84,34 @@ func TestNormalizeToolRequestSyntaxTextualJSONEditFile(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxNativeJSONEditFile(t *testing.T) {
+	rawArgs := `{"path":"internal/labels/labels.go","old_text":"	return \"Save changes\"","new_text":"	return \"Save\"","description":"Update ShortLabel"}`
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		ToolCalls: []llama.ToolCall{{
+			Function: llama.ToolCallFunc{
+				Name:      "edit_file",
+				Arguments: rawArgs,
+			},
+		}},
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatalf("expected native edit_file JSON tool request to normalize: %#v", result)
+	}
+	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.Request.OldText != "\treturn \"Save changes\"" || result.Request.NewText != "\treturn \"Save\"" {
+		t.Fatalf("unexpected replacement text: old=%q new=%q", result.Request.OldText, result.Request.NewText)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportNative {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxBareToolJSONObject(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: strings.Join([]string{
@@ -148,7 +176,7 @@ func TestNormalizeToolRequestSyntaxKeyValue(t *testing.T) {
 	}
 }
 
-func TestNormalizeToolRequestSyntaxKeyValueEditFile(t *testing.T) {
+func TestNormalizeToolRequestSyntaxRejectsKeyValueEditFile(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "tool: edit_file\npath: internal/labels/labels.go\nold_text: \treturn \"Save changes\"\nnew_text: \treturn \"Save\"\ndescription: Update ShortLabel return value to \"Save\"",
 	})
@@ -156,19 +184,52 @@ func TestNormalizeToolRequestSyntaxKeyValueEditFile(t *testing.T) {
 	if result.ParseErr != nil {
 		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
 	}
-	if !result.OK {
-		t.Fatalf("expected key/value edit_file tool request to normalize: %#v", result)
+	if result.OK {
+		t.Fatalf("key/value edit body with description must not normalize: %#v", result.Request)
 	}
 	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
-		t.Fatalf("unexpected request: %#v", result.Request)
+		t.Fatalf("unsafe key/value edit should retain target metadata for recovery, got %#v", result.Request)
 	}
-	if result.Request.OldText != `return "Save changes"` || result.Request.NewText != `return "Save"` {
-		t.Fatalf("unexpected replacement text: old=%q new=%q", result.Request.OldText, result.Request.NewText)
+	if result.Request.OldText != "return \"Save changes\"" || result.Request.NewText != "return \"Save\"" {
+		t.Fatalf("unsafe key/value edit should retain replacement metadata for diagnostics, old=%q new=%q", result.Request.OldText, result.Request.NewText)
 	}
-	if result.Request.Description != `Update ShortLabel return value to "Save"` {
-		t.Fatalf("unexpected description: %q", result.Request.Description)
+	if !strings.Contains(result.Raw, `"tool":"edit_file"`) || !strings.Contains(result.Raw, `"path":"internal/labels/labels.go"`) {
+		t.Fatalf("unsafe key/value edit should retain canonical raw metadata, got %q", result.Raw)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxRejectsMultilineKeyValueEditWithBraces(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: edit_file",
+			"path: internal/labels/labels.go",
+			"old_text: package labels",
+			"",
+			"func ShortLabel() string {",
+			"\treturn \"Save changes\"",
+			"}",
+			"new_text: package labels",
+			"",
+			"func ShortLabel() string {",
+			"\treturn \"Save\"",
+			"}",
+			"description: Update ShortLabel return value to Save",
+		}, "\n"),
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if result.OK {
+		t.Fatalf("multiline key/value edit body must not normalize: %#v", result.Request)
+	}
+	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
+		t.Fatalf("unsafe multiline key/value edit should retain target metadata for recovery, got %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -321,7 +382,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSON(t *testing.T) {
 	if result.OK {
 		t.Fatalf("function-call-like multi-line text should not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -334,7 +395,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSONRejectsToolMismatch(t *testin
 	if result.OK {
 		t.Fatalf("mismatched key/value args request must not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -408,11 +469,20 @@ func TestNormalizeToolRequestSyntaxFunctionCallActionAlias(t *testing.T) {
 
 func TestNormalizeToolRequestSyntaxRejectsUnsafeFunctionCallFields(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
-		Content: `tool: edit_file(path="README.md", old_text="old", new_text="new")`,
+		Content: `tool: edit_file(path="README.md", old_text="old", new_text="new", description="update readme")`,
 	})
 
 	if result.OK {
 		t.Fatalf("function-call edit body shape must not normalize: %#v", result.Request)
+	}
+	if result.Request.Tool != "edit_file" || result.Request.Path != "README.md" {
+		t.Fatalf("unsafe function-call edit should retain target metadata for recovery, got %#v", result.Request)
+	}
+	if result.Request.OldText != "old" || result.Request.NewText != "new" || result.Request.Description != "update readme" {
+		t.Fatalf("unsafe function-call edit should retain edit metadata for diagnostics, got %#v", result.Request)
+	}
+	if !strings.Contains(result.Raw, `"tool":"edit_file"`) || !strings.Contains(result.Raw, `"path":"README.md"`) {
+		t.Fatalf("unsafe function-call edit should retain canonical raw metadata, got %q", result.Raw)
 	}
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
@@ -598,6 +668,19 @@ func TestNormalizeToolRequestSyntaxRejectsUnsafeKeyValueFields(t *testing.T) {
 
 	if result.OK {
 		t.Fatalf("key/value edit body shape must not normalize: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxRejectsKeyValueEditBodyWithDescription(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: edit_file\npath: README.md\ncontent: hello\ndescription: replace greeting",
+	})
+
+	if result.OK {
+		t.Fatalf("key/value edit body with description must not normalize: %#v", result.Request)
 	}
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
