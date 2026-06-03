@@ -672,6 +672,9 @@ func parseFunctionCallToolArguments(args string) (map[string]string, bool) {
 			return nil, false
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
+		if functionCallToolRequestFieldUnsafe(key) {
+			return nil, false
+		}
 		if !keyValueToolRequestFieldAllowed(key) {
 			return nil, false
 		}
@@ -809,7 +812,7 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 		}
 		sawKeyValue = true
 		key = strings.ToLower(strings.TrimSpace(key))
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
+		value = trimKeyValueToolRequestValue(value)
 		if key == "" || value == "" {
 			return workspace.ToolRequest{}, false, true
 		}
@@ -832,7 +835,42 @@ func parseKeyValueToolRequestSyntax(text string) (workspace.ToolRequest, bool, b
 	if !ok {
 		return workspace.ToolRequest{}, false, true
 	}
+	if keyValueToolRequestUnsafeEditBody(req) {
+		return workspace.ToolRequest{}, false, true
+	}
 	return req, true, false
+}
+
+func functionCallToolRequestFieldUnsafe(key string) bool {
+	switch strings.TrimSpace(key) {
+	case "old_text", "new_text", "content", "replace_all":
+		return true
+	default:
+		return false
+	}
+}
+
+func keyValueToolRequestUnsafeEditBody(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "edit_file" {
+		return false
+	}
+	hasEditBody := strings.TrimSpace(req.OldText) != "" ||
+		strings.TrimSpace(req.NewText) != "" ||
+		strings.TrimSpace(req.Content) != "" ||
+		req.ReplaceAll
+	return hasEditBody && strings.TrimSpace(req.Description) == ""
+}
+
+func trimKeyValueToolRequestValue(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) >= 2 {
+		first := value[0]
+		last := value[len(value)-1]
+		if (first == '"' || first == '\'') && first == last {
+			return strings.TrimSpace(value[1 : len(value)-1])
+		}
+	}
+	return value
 }
 
 func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspace.ToolRequest, bool) {
@@ -857,6 +895,8 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		Command:         values["command"],
 		Description:     values["description"],
 		Content:         values["content"],
+		OldText:         values["old_text"],
+		NewText:         values["new_text"],
 		Prompt:          values["prompt"],
 		Agent:           values["agent"],
 		Workdir:         values["workdir"],
@@ -933,6 +973,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		"include_source":   func(v bool) { req.IncludeSource = v },
 		"include_files":    func(v bool) { req.IncludeFiles = v },
 		"refresh":          func(v bool) { req.Refresh = v },
+		"replace_all":      func(v bool) { req.ReplaceAll = v },
 	} {
 		if raw := strings.TrimSpace(values[key]); raw != "" {
 			v, err := strconv.ParseBool(raw)
@@ -967,8 +1008,8 @@ func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
 	case "tool", "id", "path", "file", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
 		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
-		"include_evidence", "include_source", "include_files", "refresh", "lines",
-		"purpose", "command", "description", "content", "prompt", "agent", "workdir", "handle", "root", "destination", "status",
+		"include_evidence", "include_source", "include_files", "refresh", "replace_all", "lines",
+		"purpose", "command", "description", "content", "old_text", "new_text", "prompt", "agent", "workdir", "handle", "root", "destination", "status",
 		"packet_path", "output_path", "component", "category", "session_id", "confidence", "severity", "suggested_fix",
 		"expected", "observed", "workaround", "impact", "task_id", "recursive":
 		return true

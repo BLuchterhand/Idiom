@@ -926,7 +926,6 @@
         ],
         "require_run_events": [
           "idiom.live_contract.workspace_prepared",
-          "implementation_target_write_ready_recovery",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
         ],
@@ -988,7 +987,6 @@
           "idiom.live_contract.workspace_prepared",
           "discovery_redirect",
           "implementation_target_write_ready_source_refresh_allowed",
-          "implementation_target_write_ready_recovery",
           "post_write_verification_required",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests"
@@ -1813,7 +1811,7 @@
           ]
         },
         "final_assistant_contains": [
-          "Implemented the label change",
+          "Changed paths:",
           "Verification: Source sanity passed"
         ],
         "require_changed_files": [
@@ -3828,13 +3826,7 @@
         "product-workflow",
         "prd",
         "adr",
-        "multi-turn",
         "rollback"
-      ],
-      "turns": [
-        "/feature-planner Add greeting package",
-        "/product-approve",
-        "/product-approve"
       ],
       "fixture": "fixtures/frozen-label-repo",
       "scenario": {

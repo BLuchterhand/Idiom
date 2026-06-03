@@ -41,12 +41,12 @@ var exploreBlockedTools = map[string]string{
 // Manager coordinates workspace tool dispatch. It is intentionally being
 // decomposed into smaller capability-specific types:
 //
-//   ToolSurface   — tool manifest, classification, and allowed-tools computation
-//                   (see tool_class.go, tool_manifest.go, capabilities.go)
-//   PathTracker   — file handle assignment, path observation, and handle resolution
-//   LanguageIndex — per-language LSP index management (goIndex, cppIndex, goplsPath)
-//   ExternalTools — MCP registry and external tool registration
-//   EditRecovery  — edit-recovery state tracking
+//	ToolSurface   — tool manifest, classification, and allowed-tools computation
+//	                (see tool_class.go, tool_manifest.go, capabilities.go)
+//	PathTracker   — file handle assignment, path observation, and handle resolution
+//	LanguageIndex — per-language LSP index management (goIndex, cppIndex, goplsPath)
+//	ExternalTools — MCP registry and external tool registration
+//	EditRecovery  — edit-recovery state tracking
 //
 // The ToolSurface extraction has started (ToolCategory and classification moved
 // from internal/util to workspace/tool_class.go). Future work should continue
@@ -2965,10 +2965,14 @@ func qwenXMLUnclosedPrefixedToolBody(body string) string {
 // standard Qwen call-envelope fields ("tool", "name", "arguments").
 //
 // This prevents false positives where Qwen writes prose like
-//   <tool_note>{"key":"evidence","content":"found X"}</tool_note>
+//
+//	<tool_note>{"key":"evidence","content":"found X"}</tool_note>
+//
 // where the JSON describes what a tool does rather than invoking one,
 // while still accepting legitimate prefixed Qwen tool calls like
-//   <tool_code_navigate>{"path":"foo.go","capability":"read_symbol","symbol":"Bar"}</tool_code_navigate>
+//
+//	<tool_code_navigate>{"path":"foo.go","capability":"read_symbol","symbol":"Bar"}</tool_code_navigate>
+//
 // where the JSON carries tool parameters even though the tool name
 // comes from the XML tag.
 func qwenXMLObjectLooksLikeToolCall(object string) bool {
@@ -4916,7 +4920,7 @@ func goPackagesForDiagnosticFiles(files []string) []string {
 func goPackageForDiagnosticFile(file string) (string, bool) {
 	file = filepath.ToSlash(strings.TrimSpace(file))
 	if !strings.HasSuffix(strings.ToLower(filepath.Base(file)), ".go") {
-	return "", false
+		return "", false
 	}
 	dir := filepath.ToSlash(filepath.Dir(file))
 	if dir == "" || dir == "." {
@@ -5776,29 +5780,35 @@ func filterCallMatches(matches []semantic.CallMatch, pathFilter string) []semant
 }
 
 func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
-	index, err := m.getGoIndex()
-	if err != nil {
-		return nil, err
-	}
-
-	resolveTarget := func(path string) ([]string, error) {
+	resolveFileTarget := func(path string) ([]string, bool, error) {
 		resolved, err := m.resolvePath(path, "")
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		info, err := os.Stat(resolved)
 		if err != nil {
-			return nil, err
+			return nil, false, err
 		}
 		if !info.IsDir() {
 			rel := filepath.ToSlash(m.displayPath(resolved))
 			if filepath.Ext(rel) != ".go" {
-				return nil, fmt.Errorf("%s is not a Go file", rel)
+				return nil, false, fmt.Errorf("%s is not a Go file", rel)
 			}
-			return []string{rel}, nil
+			return []string{rel}, true, nil
 		}
+		return []string{resolved}, false, nil
+	}
 
-		filter, err := filepath.Rel(m.cfg.Root, resolved)
+	resolveTarget := func(path string, index *semantic.GoIndex) ([]string, error) {
+		resolved, filesOnly, err := resolveFileTarget(path)
+		if err != nil {
+			return nil, err
+		}
+		if filesOnly {
+			return resolved, nil
+		}
+		resolvedPath := resolved[0]
+		filter, err := filepath.Rel(m.cfg.Root, resolvedPath)
 		if err != nil {
 			return nil, err
 		}
@@ -5821,16 +5831,34 @@ func (m *Manager) goDiagnosticTargets(req ToolRequest) ([]string, error) {
 	}
 
 	if strings.TrimSpace(req.Path) != "" {
-		return resolveTarget(req.Path)
+		if files, ok, err := resolveFileTarget(req.Path); err != nil || ok {
+			return files, err
+		}
+		index, err := m.getGoIndex()
+		if err != nil {
+			return nil, err
+		}
+		return resolveTarget(req.Path, index)
 	}
 	if strings.TrimSpace(req.ID) != "" {
 		path, err := m.pathForHandle(req.ID)
 		if err != nil {
 			return nil, err
 		}
-		return resolveTarget(path)
+		if files, ok, err := resolveFileTarget(path); err != nil || ok {
+			return files, err
+		}
+		index, err := m.getGoIndex()
+		if err != nil {
+			return nil, err
+		}
+		return resolveTarget(path, index)
 	}
 
+	index, err := m.getGoIndex()
+	if err != nil {
+		return nil, err
+	}
 	files := index.IssueHuntFiles(goResultLimit(req.MaxDepth, 4))
 	if len(files) == 0 {
 		files = index.DefaultFiles(goResultLimit(req.MaxDepth, 4))

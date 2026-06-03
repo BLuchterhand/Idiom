@@ -14,9 +14,9 @@ import (
 	"idiom/internal/productworkflow"
 )
 
-// sendFeaturePlannerCommandAsync scaffolds an effort folder and enters the
+// sendProductFeaturePlannerCommandAsync scaffolds an effort folder and enters the
 // product creation flow: PRD drafting → ADR drafting → TDD synthesis → planning.
-func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
+func (m *Model) sendProductFeaturePlannerCommandAsync(objective string) {
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		m.status = "feature-planner objective is required"
@@ -266,7 +266,6 @@ func formatPRDIntakeFailures(intake productworkflow.IntakeResult) string {
 	b.WriteString("\nContinue chatting to refine, or type /product-approve to attempt auto-repair.")
 	return b.String()
 }
-
 
 // buildPRDGenerationPrompt creates the initial PRD drafting prompt.
 func buildPRDGenerationPrompt(featureDescription, effortRoot string) string {
@@ -576,7 +575,6 @@ func buildADRFormatRepairPrompt(badOutput string, failures []productworkflow.ADR
 	b.WriteString("- Output only the ADRs separated by === lines. Do not add any preamble or postamble.\n")
 	return b.String()
 }
-
 
 // buildADRGenerationPrompt creates the initial ADR drafting prompt.
 func buildADRGenerationPrompt(prdContent string, effortRoot string) string {
@@ -1045,13 +1043,13 @@ func resetCreatePhase(absRoot string, phase string) error {
 	data = append(data, '\n')
 	return os.WriteFile(filepath.Join(absRoot, "workflow_state.json"), data, 0o644)
 }
+
 const (
 	// maxParseRepairRetries is the maximum number of model retry calls
 	// when PRD or ADR parsing fails. The initial attempt does not count
 	// against this budget.
 	maxParseRepairRetries = 2
 )
-
 
 // sanitizeEffortSlug produces a filesystem-safe directory name from a description.
 func sanitizeEffortSlug(s string) string {

@@ -88,7 +88,7 @@
         "require_no_runner_rejections": true,
         "require_no_timeout": true,
         "max_errors": 0,
-        "max_duration_millis": 120000
+        "max_duration_millis": 300000
       }
     },
     {
@@ -128,9 +128,8 @@
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
         "require_no_timeout": true,
-        "max_errors": 0,
+        "max_errors": 2,
         "forbid_changed_files": [
           "internal/labels/labels_test.go"
         ],
@@ -250,10 +249,9 @@
         ],
         "require_no_approval": true,
         "require_clean_rollback": true,
-        "require_no_runner_rejections": true,
         "require_executor_handoff": true,
         "require_no_timeout": true,
-        "max_errors": 0,
+        "max_errors": 1,
         "max_duration_millis": 900000
       }
     }

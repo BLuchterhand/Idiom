@@ -1,4 +1,5 @@
 package featureplanner
+
 import (
 	"bytes"
 	"context"
@@ -16,8 +17,8 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
 	"idiom/internal/llama"
-	"idiom/internal/telemetry"
 	"idiom/internal/productworkflow"
+	"idiom/internal/telemetry"
 	"path/filepath"
 )
 
@@ -289,7 +290,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	if strings.TrimSpace(req.Resume) != "" && hasOpenFeaturePlannerQuestion(state) {
 		resumeAnswer = req.Prompt
 	}
-		effortRoot := ""
+	effortRoot := ""
 	if strings.TrimSpace(req.EffortRoot) != "" {
 		effortRoot = req.EffortRoot
 	}
@@ -503,8 +504,8 @@ func featurePlannerAnswer(state featureplanner.FeatureState, statePath string) s
 		}
 		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
 	}
-	if len(state.Plan.SDDContract.Refs) > 0 {
-		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(state.Plan.SDDContract.Refs, ", "))
+	if sddRefs := featureplanner.SDDRefsForSummary(state.Plan); len(sddRefs) > 0 {
+		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(sddRefs, ", "))
 	}
 	if len(state.Plan.TDDContract.Obligations) > 0 {
 		var tddIDs []string

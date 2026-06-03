@@ -55,8 +55,8 @@
     "freshness_state": "current",
     "referenced_paths": [
       "docs/design-prd-adr-brief-research-workflow.md",
-      "internal/productcmd/product_workflow.go",
-      "internal/productcmd/product_workflow_test.go",
+      "internal/cmd/product/product_workflow.go",
+      "internal/cmd/product/product_workflow_test.go",
       "internal/productworkflow/types.go",
       "internal/productworkflow/status.go",
       "internal/productworkflow/status_test.go",
@@ -108,8 +108,8 @@
     ],
     "refresh_policy": "on_demand",
     "path_aliases": {
-      "cmd/idiom/product_workflow.go": "internal/productcmd/product_workflow.go",
-      "cmd/idiom/product_workflow_test.go": "internal/productcmd/product_workflow_test.go"
+      "cmd/idiom/product_workflow.go": "internal/cmd/product/product_workflow.go",
+      "cmd/idiom/product_workflow_test.go": "internal/cmd/product/product_workflow_test.go"
     }
   },
   "coverage": {

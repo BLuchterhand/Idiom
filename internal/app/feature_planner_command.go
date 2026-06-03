@@ -63,6 +63,19 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	return m.finishPromptOnceReply(answer), nil
 }
 
+func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
+	m.streaming = true
+	m.workingFrame = 0
+	m.currentTurnBusyStatus = busyStatusForPrompt(objective)
+	m.beginAgentHistoryTurn()
+	go func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		_, err := m.runFeaturePlannerCommandOnce(ctx, objective)
+		m.events <- streamDoneMsg{err: err}
+	}()
+}
+
 func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
 	m.logMessage("feature_planner_prompt", prompt)
 	opts := m.chatOptions()
@@ -161,8 +174,8 @@ func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath 
 		}
 		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
 	}
-	if len(state.Plan.SDDContract.Refs) > 0 {
-		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(state.Plan.SDDContract.Refs, ", "))
+	if sddRefs := featureplanner.SDDRefsForSummary(state.Plan); len(sddRefs) > 0 {
+		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(sddRefs, ", "))
 	}
 	if len(state.Plan.TDDContract.Obligations) > 0 {
 		var tddIDs []string

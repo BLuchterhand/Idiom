@@ -3,6 +3,7 @@ package llama
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,9 @@ import (
 )
 
 func TestDebugListModels(t *testing.T) {
+	if os.Getenv("IDIOM_RUN_DEBUG_TESTS") != "1" {
+		t.Skip("set IDIOM_RUN_DEBUG_TESTS=1 to run local debug smoke tests")
+	}
 	cfg, err := config.Load("/Users/ben/Documents/GitHub/idiom/.idiom/config.json")
 	if err != nil {
 		t.Fatal("config load error:", err)
@@ -41,13 +45,16 @@ func TestDebugListModels(t *testing.T) {
 }
 
 func TestDebugRoleSpec(t *testing.T) {
+	if os.Getenv("IDIOM_RUN_DEBUG_TESTS") != "1" {
+		t.Skip("set IDIOM_RUN_DEBUG_TESTS=1 to run local debug smoke tests")
+	}
 	projectRoot := "/Users/ben/Documents/GitHub/idiom"
-	
+
 	cfg, err := config.Load("/Users/ben/Documents/GitHub/idiom/.idiom/config.json")
 	if err != nil {
 		t.Fatal("config load error:", err)
 	}
-	
+
 	fmt.Println("=== backends.json resolution ===")
 	file, found, err := backends.LoadFromProjectRoot(projectRoot)
 	fmt.Println("found:", found, "err:", err)
@@ -63,7 +70,7 @@ func TestDebugRoleSpec(t *testing.T) {
 			alias, ok := prof.AliasForRole("planner")
 			fmt.Println("  planner alias:", alias, "ok:", ok)
 		}
-		
+
 		// Check explicit alias resolution
 		explicit := strings.TrimSpace(cfg.LlamaServer.Model)
 		fmt.Println("\nexplicit model from config:", explicit)
@@ -73,7 +80,7 @@ func TestDebugRoleSpec(t *testing.T) {
 			fmt.Printf("  alias=%s port=%d host=%s binary=%s roles=%v\n", m.Alias, m.Port, m.Host, m.Binary, m.Roles)
 		}
 	}
-	
+
 	// Check what the plannerSpec would look like
 	// Simulating roleSpec logic
 	fmt.Println("\n=== planner spec ===")

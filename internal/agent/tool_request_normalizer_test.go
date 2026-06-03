@@ -148,6 +148,31 @@ func TestNormalizeToolRequestSyntaxKeyValue(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxKeyValueEditFile(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "tool: edit_file\npath: internal/labels/labels.go\nold_text: \treturn \"Save changes\"\nnew_text: \treturn \"Save\"\ndescription: Update ShortLabel return value to \"Save\"",
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatalf("expected key/value edit_file tool request to normalize: %#v", result)
+	}
+	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.Request.OldText != `return "Save changes"` || result.Request.NewText != `return "Save"` {
+		t.Fatalf("unexpected replacement text: old=%q new=%q", result.Request.OldText, result.Request.NewText)
+	}
+	if result.Request.Description != `Update ShortLabel return value to "Save"` {
+		t.Fatalf("unexpected description: %q", result.Request.Description)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxKeyValueActionAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "tool: code_navigate\naction: read_symbol\npath: internal/productworkflow/coverage_gate.go\nsymbol: EvaluateCoverageGate",
