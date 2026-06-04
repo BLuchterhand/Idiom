@@ -4376,6 +4376,15 @@ func TestWriteReadyPacketAllowsReadOnCompletedRequiredPathWithGap(t *testing.T) 
 	}
 }
 
+func TestTerminalBlockedStatusSupersedesPrefinishCompletedStatus(t *testing.T) {
+	if !terminalBlockedStatusShouldEmit(true, "completed", "", "transport_protocol_output") {
+		t.Fatal("terminal blocked status must supersede a pre-finish completed status")
+	}
+	if terminalBlockedStatusShouldEmit(true, "blocked", "source_grounding_unmet", "transport_protocol_output") {
+		t.Fatal("terminal blocked status should not overwrite an already-blocked local status")
+	}
+}
+
 func TestWriteReadyPacketRejectsReadOutsideRequiredPathsAfterFirstWrite(t *testing.T) {
 	// The relaxation only widens the read scope to the brief's full
 	// required_edit_paths set. Reads on paths outside that set must still be
@@ -4946,7 +4955,7 @@ func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSuffic
 	}
 }
 
-func TestRunnerDoesNotAcceptFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
+func TestRunnerRepairsFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
 	root := t.TempDir()
 	source := strings.Join([]string{
 		"package labels",
@@ -4964,6 +4973,7 @@ func TestRunnerDoesNotAcceptFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":5,"end_line":8}`,
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":9,"end_line":12}`,
 		"BAD_FALLBACK_NOT_USED: the model was asked for another answer after repeated no-gap reads.",
+		"For `Explain what ShortLabel returns from internal/labels/labels.go.`, `internal/labels/labels.go` shows `ShortLabel` returns \"Save changes\".",
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -5006,8 +5016,10 @@ func TestRunnerDoesNotAcceptFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if !strings.HasPrefix(answer, "<<QUESTION>>") {
-		t.Fatalf("bad scripted final answer should be replaced by blocker, got:\n%s", answer)
+	for _, want := range []string{"internal/labels/labels.go", "ShortLabel", "Save changes"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("bad scripted final answer should be repaired into supported answer containing %q, got:\n%s", want, answer)
+		}
 	}
 	if strings.Contains(answer, "BAD_FALLBACK_NOT_USED") {
 		t.Fatalf("bad scripted final answer surfaced:\n%s", answer)
@@ -11425,7 +11437,7 @@ func TestRunnerDoesNotSalvageMalformedWriteJSONPrefixInReadOnlyMode(t *testing.T
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if answer != "<<QUESTION>>: Blocked by malformed write request." {
+	if answer != "Blocked by malformed write request." {
 		t.Fatalf("unexpected answer %q", answer)
 	}
 	if toolParseResults != 1 {
@@ -12782,7 +12794,7 @@ func TestDelegatedReadOnlyRepairsInvalidInitialDiscoveryPurpose(t *testing.T) {
 	}
 }
 
-func TestDelegatedReadOnlyRepairsOffContractDiscoveryUsefulnessPurpose(t *testing.T) {
+func TestDelegatedReadOnlyPreservesValidDiscoveryUsefulnessPurposeAndPath(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -12794,15 +12806,15 @@ func TestDelegatedReadOnlyRepairsOffContractDiscoveryUsefulnessPurpose(t *testin
 	decision := runner.applyLanePreflight(runnerLanePreflightInput{
 		Request: workspace.ToolRequest{Tool: "discovery_query", Purpose: "history_context", Path: "internal/workspace"},
 	})
-	if decision.Request.Tool != "discovery_query" || decision.Request.Purpose != "architecture_boundary" {
-		t.Fatalf("expected discovery-tool usefulness to force architecture_boundary, got %#v", decision.Request)
+	if decision.Request.Tool != "discovery_query" || decision.Request.Purpose != "history_context" {
+		t.Fatalf("expected valid discovery purpose to be preserved, got %#v", decision.Request)
 	}
-	if decision.Request.Path != "internal/agent" {
-		t.Fatalf("expected discovery usefulness repair to stay on agent synthesis boundary, got %#v", decision.Request)
+	if decision.Request.Path != "internal/workspace" {
+		t.Fatalf("expected valid discovery path to be preserved, got %#v", decision.Request)
 	}
-	for _, want := range []string{"answer[-_ ]?composer", "readiness", "closeout", "discovery[-_ ]?query"} {
-		if !strings.Contains(decision.Request.Pattern, want) {
-			t.Fatalf("expected usefulness pattern to include %q, got %#v", want, decision.Request)
+	for _, forbidden := range []string{"answer[-_ ]?composer", "synthesizeDelegatedReadOnlyAnswer", "readiness", "closeout"} {
+		if strings.Contains(decision.Request.Pattern, forbidden) {
+			t.Fatalf("expected usefulness pattern not to inject synthesis boundary %q, got %#v", forbidden, decision.Request)
 		}
 	}
 }
@@ -12967,30 +12979,35 @@ func TestDelegatedReadOnlyBootstrapPatternDoesNotInjectDelegateForDebugFeature(t
 	}
 }
 
-func TestDelegatedReadOnlyBootstrapPatternForDiscoveryUsefulnessTargetsSynthesisBoundary(t *testing.T) {
+func TestDelegatedReadOnlyBootstrapPatternForDiscoveryUsefulnessUsesQuestionTermsOnly(t *testing.T) {
 	pattern := delegatedReadOnlyBootstrapPattern("What can we add to our discovery tools to increase their overall usefulness?")
-	for _, want := range []string{"answer[-_ ]?composer", "synthesizeDelegatedReadOnlyAnswer", "readiness", "discovery[-_ ]?query", "child[-_ ]?packet", "closeout"} {
+	for _, want := range []string{"discovery", "tools", "increase"} {
 		if !strings.Contains(pattern, want) {
-			t.Fatalf("expected discovery usefulness pattern to include %q, got %q", want, pattern)
+			t.Fatalf("expected discovery usefulness pattern to preserve question term %q, got %q", want, pattern)
 		}
 	}
-	for _, forbidden := range []string{"comprehension", "frontier", "workspace|tool[-_ ]?surface"} {
+	for _, forbidden := range []string{"answer[-_ ]?composer", "synthesizeDelegatedReadOnlyAnswer", "readiness", "child[-_ ]?packet", "closeout", "comprehension", "frontier", "workspace|tool[-_ ]?surface"} {
 		if strings.Contains(pattern, forbidden) {
 			t.Fatalf("discovery usefulness pattern should not inject %q, got %q", forbidden, pattern)
 		}
 	}
 }
 
-func TestDelegatedReadOnlyBootstrapPatternAddsSubagentImplementationAliases(t *testing.T) {
+func TestDelegatedReadOnlyBootstrapPatternDoesNotInjectSubagentImplementationAliases(t *testing.T) {
 	pattern := delegatedReadOnlyBootstrapPattern("Explain how this harness uses sub-agents.")
-	for _, want := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool", "sub[-_ ]?agent"} {
+	for _, want := range []string{"explain", "sub[-_ ]?agents"} {
 		if !strings.Contains(pattern, want) {
-			t.Fatalf("expected subagent pattern alias %q, got %q", want, pattern)
+			t.Fatalf("expected subagent pattern to preserve question term %q, got %q", want, pattern)
+		}
+	}
+	for _, forbidden := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool", "delegat"} {
+		if strings.Contains(pattern, forbidden) {
+			t.Fatalf("subagent pattern should not inject implementation alias %q, got %q", forbidden, pattern)
 		}
 	}
 }
 
-func TestDelegatedReadOnlyDiscoveryRepairScopesSubagentArchitecture(t *testing.T) {
+func TestDelegatedReadOnlyDiscoveryRepairPreservesSubagentPurposeAndPath(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -13008,12 +13025,17 @@ func TestDelegatedReadOnlyDiscoveryRepairScopesSubagentArchitecture(t *testing.T
 	if !ok {
 		t.Fatal("expected delegated subagent discovery query to be repaired")
 	}
-	if repaired.Purpose != "architecture_boundary" || repaired.Path != "internal/agent" {
-		t.Fatalf("expected architecture query scoped to internal/agent, got %#v", repaired)
+	if repaired.Purpose != "impact_analysis" || repaired.Path != "." {
+		t.Fatalf("expected valid discovery purpose/path to be preserved, got %#v", repaired)
 	}
-	for _, want := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool"} {
+	for _, want := range []string{"tell", "subagents"} {
 		if !strings.Contains(repaired.Pattern, want) {
 			t.Fatalf("expected repaired query pattern to contain %q, got %q", want, repaired.Pattern)
+		}
+	}
+	for _, forbidden := range []string{"runChildTask", "child[-_ ]?task", "task[-_ ]?tool"} {
+		if strings.Contains(repaired.Pattern, forbidden) {
+			t.Fatalf("subagent discovery repair should not inject implementation alias %q, got %q", forbidden, repaired.Pattern)
 		}
 	}
 }
@@ -13418,7 +13440,7 @@ func TestDelegatedDiscoveryQueryEvidencePathsPreferCoreRunnerFiles(t *testing.T)
 	}
 }
 
-func TestAnswerComposerIncludesDiscoveryUsefulnessSynthesisBoundary(t *testing.T) {
+func TestAnswerComposerUsesProvidedDiscoveryUsefulnessEvidenceOnly(t *testing.T) {
 	summaries := []delegatedDiscoverySummary{{
 		Purpose:      "architecture_boundary",
 		ArtifactPath: ".idiom/discovery/queries/query.json",
@@ -13443,14 +13465,14 @@ func TestAnswerComposerIncludesDiscoveryUsefulnessSynthesisBoundary(t *testing.T
 	if !ok {
 		t.Fatal("expected discovery-usefulness answer composition")
 	}
-	for _, want := range []string{
-		"`internal/agent/answer_composer.go`",
-		"`internal/agent/runner.go`",
-		"`internal/agent/runner_lane_policy.go`",
-		"`internal/workspace/discovery_query.go`",
-	} {
+	for _, want := range []string{"`internal/workspace/discovery_query.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected composed answer to cite %q, got:\n%s", want, answer)
+		}
+	}
+	for _, forbidden := range []string{"`internal/agent/answer_composer.go`", "`internal/agent/runner.go`", "`internal/agent/runner_lane_policy.go`"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("composed answer should not inject question-class path %q, got:\n%s", forbidden, answer)
 		}
 	}
 }
@@ -13885,13 +13907,15 @@ func TestFinalAnswerDecoratorDecoratesBudgetExhaustionScaffold(t *testing.T) {
 		}},
 		UserFacing: true,
 	})
-	for _, want := range []string{"<<QUESTION>>:", "internal/agent/runner.go", "source-body"} {
+	for _, want := range []string{"could not produce a supported final answer", "internal/agent/runner.go"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected budget-exhausted scaffold to become actionable blocker containing %q, got:\n%s", want, answer)
 		}
 	}
-	if strings.Contains(answer, "Discovery packet:") || strings.Contains(answer, "What I found:") {
-		t.Fatalf("budget-exhausted scaffold should not be preserved raw:\n%s", answer)
+	for _, forbidden := range []string{"<<QUESTION>>", "Discovery packet:", "What I found:", "source-body"} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("budget-exhausted scaffold leaked internal phrase %q:\n%s", forbidden, answer)
+		}
 	}
 }
 
@@ -13967,10 +13991,13 @@ func TestFinalAnswerDecoratorDoesNotLeakDelegatedPacketWhenComposerLacksDiscover
 			t.Fatalf("final boundary leaked internal packet section %q:\n%s", forbidden, answer)
 		}
 	}
-	for _, want := range []string{"<<QUESTION>>:", "exact missing claim", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
+	for _, want := range []string{"could not produce a supported final answer", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected evidence-retained blocker to contain %q, got:\n%s", want, answer)
 		}
+	}
+	if strings.Contains(answer, "<<QUESTION>>") || strings.Contains(answer, "exact missing claim") {
+		t.Fatalf("final boundary leaked internal blocker protocol:\n%s", answer)
 	}
 }
 
@@ -14779,7 +14806,7 @@ func TestSafeVisibleToolRequestAllowsConcreteDiscoveryQuery(t *testing.T) {
 	}
 }
 
-func TestVisibleToolSalvageRepairsDelegatedReadOnlyDiscoveryQuery(t *testing.T) {
+func TestVisibleToolSalvageRepairsDelegatedReadOnlyDiscoveryQueryWithoutTopicScope(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -14794,18 +14821,18 @@ func TestVisibleToolSalvageRepairsDelegatedReadOnlyDiscoveryQuery(t *testing.T) 
 	if !ok {
 		t.Fatal("expected delegated discovery query JSON to salvage through repair")
 	}
-	if req.Tool != "discovery_query" || req.Purpose != "architecture_boundary" || req.Path != "internal/agent" {
-		t.Fatalf("expected repaired architecture discovery query scoped to internal/agent, got %#v", req)
+	if req.Tool != "discovery_query" || req.Purpose != "architecture_boundary" || req.Path != "." {
+		t.Fatalf("expected repaired architecture discovery query to keep generic scope, got %#v", req)
 	}
-	if !strings.Contains(req.Pattern, "answer[-_ ]?composer") {
-		t.Fatalf("expected repaired query to target answer synthesis boundary, got %q", req.Pattern)
+	if strings.Contains(req.Pattern, "answer[-_ ]?composer") || strings.Contains(req.Pattern, "synthesizeDelegatedReadOnlyAnswer") {
+		t.Fatalf("expected repaired query not to target answer synthesis boundary, got %q", req.Pattern)
 	}
-	if !strings.Contains(raw, `"purpose":"architecture_boundary"`) || !strings.Contains(raw, `"path":"internal/agent"`) {
+	if !strings.Contains(raw, `"purpose":"architecture_boundary"`) || !strings.Contains(raw, `"path":"."`) {
 		t.Fatalf("expected raw repaired request, got %s", raw)
 	}
 }
 
-func TestDelegatedChildFallbackSourceReadUsesExpectedEvidencePath(t *testing.T) {
+func TestDelegatedChildFallbackSourceReadUsesDiscoveredEvidencePath(t *testing.T) {
 	ws := newTestWorkspaceWithFiles(t, map[string]string{
 		"go.mod":                            "module example.test\n",
 		"internal/agent/answer_composer.go": "package agent\n\nfunc ComposeDiscoveryAnswer() string { return \"ok\" }\n",
@@ -14821,11 +14848,28 @@ func TestDelegatedChildFallbackSourceReadUsesExpectedEvidencePath(t *testing.T) 
 	if !ok {
 		t.Fatal("expected fallback source read")
 	}
-	if req.Path != "internal/agent/answer_composer.go" || result.Tool != "read_file" {
-		t.Fatalf("expected answer_composer read_file fallback, req=%#v result=%#v", req, result)
+	if req.Path != "internal/agent/runner.go" || result.Tool != "read_file" {
+		t.Fatalf("expected fallback to read discovered evidence path, req=%#v result=%#v", req, result)
 	}
 	if !readFileResultHasConcreteSourceBody(result) {
 		t.Fatalf("fallback result should contain source body, got %#v", result)
+	}
+}
+
+func TestDelegatedChildFallbackSourceReadDoesNotUseQuestionClassWithoutDiscoveryPath(t *testing.T) {
+	ws := newTestWorkspaceWithFiles(t, map[string]string{
+		"go.mod":                            "module example.test\n",
+		"internal/agent/answer_composer.go": "package agent\n\nfunc ComposeDiscoveryAnswer() string { return \"ok\" }\n",
+	})
+	runner := &Runner{Workspace: ws}
+	results := []workspace.ToolResult{{
+		Tool:    "discovery_query",
+		Summary: "Ran architecture_boundary discovery query",
+		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"dependency_graph","summary":"Collected graph","output_excerpt":"no file paths"}]}`,
+	}}
+	req, result, ok := runner.delegatedChildFallbackSourceRead(context.Background(), "What can we add to our discovery tools in an effort at increasing their overall usefulness?", results)
+	if ok {
+		t.Fatalf("expected no fallback read from question-class hardcoding, req=%#v result=%#v", req, result)
 	}
 }
 
@@ -15624,7 +15668,7 @@ func TestReadOnlyAnalysisAnswerReadyAfterExactArchitectureProbes(t *testing.T) {
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "architecture",
 			Contract:          "architecture_assessment",
-			Objective:         "Explain how this harness uses sub-agents.",
+			Objective:         "Explain how this harness uses sub-agents.\nKey terms: child task, runner",
 			PermissionProfile: "read_only_workspace",
 		},
 	}
@@ -15954,7 +15998,7 @@ func TestAugmentDelegatedReadOnlyPacketPreservesAdditionalPaths(t *testing.T) {
 	}
 }
 
-func TestAugmentDelegatedReadOnlyPacketIncludesDiscoveryUsefulnessExpectedPaths(t *testing.T) {
+func TestAugmentDelegatedReadOnlyPacketDoesNotInjectDiscoveryUsefulnessExpectedPaths(t *testing.T) {
 	answer := "For `What can we add to our discovery tools in an effort at increasing their overall usefulness?`, this is grounded in `internal/workspace/discovery_query.go`, `internal/agent/runner.go`."
 	results := []workspace.ToolResult{
 		{
@@ -15964,13 +16008,18 @@ func TestAugmentDelegatedReadOnlyPacketIncludesDiscoveryUsefulnessExpectedPaths(
 		},
 	}
 	augmented := augmentDelegatedReadOnlyPacket(answer, "What can we add to our discovery tools in an effort at increasing their overall usefulness?", results)
-	for _, want := range []string{
+	for _, forbidden := range []string{
 		"Additional inspected paths:",
 		"`internal/agent/answer_composer.go`",
 		"`internal/agent/runner_lane_policy.go`",
 	} {
+		if strings.Contains(augmented, forbidden) {
+			t.Fatalf("discovery usefulness augmentation should not inject topic-specific path %q, got %q", forbidden, augmented)
+		}
+	}
+	for _, want := range []string{"`internal/workspace/discovery_query.go`", "`internal/agent/runner.go`"} {
 		if !strings.Contains(augmented, want) {
-			t.Fatalf("expected augmented discovery packet to contain %q, got %q", want, augmented)
+			t.Fatalf("expected augmented discovery packet to preserve actual evidence path %q, got %q", want, augmented)
 		}
 	}
 }
@@ -16189,6 +16238,419 @@ func TestEmitAcceptedAnswerSignalsDirectAnswerAliasBlocksUnrelatedEvidence(t *te
 	}
 }
 
+func TestFinalAnswerOverrideLogsOriginalObjectiveRejection(t *testing.T) {
+	rawRejectedAnswer := "The TUI chat input newline wrap and upward shift issue is in `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display."
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": rawRejectedAnswer},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var override map[string]any
+	var acceptedCritic bool
+	var blockedCritic map[string]any
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view.",
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: true},
+		},
+		SeedResults: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read internal/app/rendering.go lines 1-9",
+				Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+			},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "final_answer_blocker_override":
+				if err := json.Unmarshal([]byte(event.Content), &override); err != nil {
+					t.Fatalf("decode override event: %v", err)
+				}
+			case "final_answer_critic":
+				if strings.Contains(event.Content, `"action":"accept"`) {
+					acceptedCritic = true
+				}
+				if strings.Contains(event.Content, `"action":"block"`) {
+					if err := json.Unmarshal([]byte(event.Content), &blockedCritic); err != nil {
+						t.Fatalf("decode blocked critic: %v", err)
+					}
+				}
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.Contains(answer, "<<QUESTION>>") {
+		t.Fatalf("user-facing answer should be sanitized, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "evidenceDisplayName") {
+		t.Fatalf("user-facing answer leaked rejected model answer:\n%s", answer)
+	}
+	if override == nil {
+		t.Fatal("expected final_answer_blocker_override event")
+	}
+	if acceptedCritic {
+		t.Fatal("rejected final answer replacement must not emit accepted final-answer telemetry")
+	}
+	if blockedCritic["blocker_kind"] != "answer_objective_unmet" ||
+		blockedCritic["acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
+		blockedCritic["objective_relevance"] != "checked" {
+		t.Fatalf("blocked telemetry should consume the original raw-answer acceptance, got %#v", blockedCritic)
+	}
+	if override["original_blocker_kind"] != "answer_objective_unmet" ||
+		override["replacement_stop_reason"] != "answer_objective_unmet" ||
+		override["objective_relevance"] != "checked" ||
+		override["original_acceptance_decision"] != string(finalAnswerAcceptanceRejected) ||
+		override["raw_answer_logged"] != false {
+		t.Fatalf("override event lost original rejection metadata: %#v", override)
+	}
+	if reason, _ := override["original_reason"].(string); !strings.Contains(reason, "does not establish the user's objective") {
+		t.Fatalf("override event should carry sanitized contract reason, got %#v", override)
+	}
+	if paths, _ := override["original_evidence_paths"].([]any); len(paths) != 0 {
+		t.Fatalf("override event must not promote unrelated evidence paths, got %#v", paths)
+	}
+	if strings.Contains(fmt.Sprint(override), "evidenceDisplayName") {
+		t.Fatalf("override event leaked raw rejected answer: %#v", override)
+	}
+}
+
+func TestTerminalAnswerDecisionBlocksTransportProtocolOutput(t *testing.T) {
+	rawAnswer := `<n_tool name="read_file"><path>internal/agent/runner.go</path></n_tool>`
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain the finish boundary.",
+		},
+	}
+	decision := runner.classifyTerminalAnswer(rawAnswer, "model_final", nil)
+	if decision.Outcome != terminalAnswerTransportBlocked {
+		t.Fatalf("transport markup got outcome %q, want %q", decision.Outcome, terminalAnswerTransportBlocked)
+	}
+	if decision.Acceptance.BlockerKind != "transport_protocol_output" ||
+		decision.Acceptance.Decision != finalAnswerAcceptanceRejected ||
+		decision.StopReason != "transport_protocol_output" {
+		t.Fatalf("transport decision should be blocked protocol output, got %#v", decision)
+	}
+	if strings.Contains(decision.PresentedAnswer, "<n_tool") || strings.TrimSpace(decision.PresentedAnswer) == "" {
+		t.Fatalf("presented transport blocker should be clean user-facing prose, got %q", decision.PresentedAnswer)
+	}
+
+	var critic map[string]any
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role != "final_answer_critic" {
+			return
+		}
+		if err := json.Unmarshal([]byte(event.Content), &critic); err != nil {
+			t.Fatalf("decode critic: %v", err)
+		}
+	}
+	runner.emitFinalAnswerTelemetry(decision.RawAnswer, nil, decision.Acceptance)
+	if critic["action"] != "block" ||
+		critic["blocker_kind"] != "transport_protocol_output" ||
+		critic["acceptance_decision"] != string(finalAnswerAcceptanceRejected) {
+		t.Fatalf("transport telemetry should be blocked from the typed decision, got %#v", critic)
+	}
+}
+
+func TestReadOnlySourceGroundingRejectionRetriesEvidenceLoop(t *testing.T) {
+	root := t.TempDir()
+	source := strings.Join([]string{
+		"package app",
+		"",
+		"func previousMessageIndex(current int) int {",
+		"\treturn current - 1",
+		"}",
+	}, "\n")
+	if err := writeTestFile(root, "internal/app/model_state.go", source); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		"The message navigation lives in `internal/app/model_state_test.go` lines 1-5.",
+		`{"tool":"read_file","path":"internal/app/model_state.go","start_line":1,"end_line":5,"named_gap":"source body for message navigation after missing test-path citation","why_not_answering":"the previous final answer cited a current-workspace path that does not exist"}`,
+		"The current source evidence is `internal/app/model_state.go` lines 1-5: `previousMessageIndex` returns the previous index.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawCompletionGateRejection bool
+	var sawOverride bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain where up/down previous-message navigation would live.",
+			AllowedTools:      []string{"read_file", "search_files", "search_content", "code_navigate"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "next_action_state":
+				if strings.Contains(event.Content, "completion_gate_rejected") {
+					sawCompletionGateRejection = true
+				}
+			case "final_answer_blocker_override":
+				sawOverride = true
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: runner.RuntimeBrief.Objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected rejected final answer, recovery read, and corrected final answer; used %d/%d replies", requests, len(replies))
+	}
+	if !sawCompletionGateRejection {
+		t.Fatal("expected source-grounding rejection to be recorded as completion_gate_rejected")
+	}
+	if sawOverride {
+		t.Fatal("first recoverable source-grounding rejection should not be replaced with final_answer_blocker_override")
+	}
+	if !strings.Contains(answer, "internal/app/model_state.go") || !strings.Contains(answer, "previousMessageIndex") {
+		t.Fatalf("expected corrected answer from source-body evidence, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "model_state_test.go") {
+		t.Fatalf("corrected answer should not retain missing-path citation:\n%s", answer)
+	}
+}
+
+func TestReadOnlyAnswerObjectiveRejectionRetriesEvidenceLoop(t *testing.T) {
+	root := t.TempDir()
+	source := strings.Join([]string{
+		"package app",
+		"",
+		"func explainChatInputWrap() string {",
+		"\treturn \"chat input first wraps to a newline when measured height grows and the viewport shifts upward out of view\"",
+		"}",
+	}, "\n")
+	if err := writeTestFile(root, "internal/app/model.go", source); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	objective := "Find why the TUI chat input first wraps to a newline and the existing line shifts upward out of view."
+	replies := []string{
+		"The TUI chat input newline wrap and upward shift issue is in `internal/app/rendering.go`: `evidenceDisplayName` trims the raw tool name before display.",
+		`{"tool":"read_file","path":"internal/app/model.go","start_line":1,"end_line":5,"named_gap":"objective-relevant source body for TUI chat input wrapping upward","why_not_answering":"the previous final answer used inspected source that did not establish the user's objective"}`,
+		"The objective-relevant source is `internal/app/model.go` lines 3-5: `explainChatInputWrap` says the chat input first wraps to a newline when measured height grows and the viewport shifts upward out of view.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawCompletionGateRejection bool
+	var sawOverride bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         objective,
+			AllowedTools:      []string{"read_file", "search_files", "search_content", "code_navigate"},
+			Readiness:         &workerruntime.ReadinessState{ReadyToAnswer: false},
+		},
+		SeedResults: []workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read internal/app/rendering.go lines 1-9",
+				Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string {\n4:\treturn strings.TrimSpace(rawTool)\n5:}\n",
+			},
+		},
+		OnEvent: func(event RunEvent) {
+			switch event.Role {
+			case "next_action_state":
+				if strings.Contains(event.Content, "completion_gate_rejected") {
+					sawCompletionGateRejection = true
+				}
+			case "final_answer_blocker_override":
+				sawOverride = true
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected objective rejection, recovery read, and corrected answer; used %d/%d replies", requests, len(replies))
+	}
+	if !sawCompletionGateRejection {
+		t.Fatal("expected objective rejection to be recorded as completion_gate_rejected")
+	}
+	if sawOverride {
+		t.Fatal("recoverable objective rejection should not be replaced with final_answer_blocker_override")
+	}
+	if !strings.Contains(answer, "internal/app/model.go") || !strings.Contains(answer, "explainChatInputWrap") {
+		t.Fatalf("expected corrected answer from objective-relevant source evidence, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "evidenceDisplayName") {
+		t.Fatalf("corrected answer should not retain unrelated source claim:\n%s", answer)
+	}
+}
+
+func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.T) {
+	readOnlyRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+		},
+	}
+	retryable := []string{"source_grounding_unmet", "answer_objective_unmet"}
+	for _, kind := range retryable {
+		if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
+			t.Fatalf("%s should be retryable for read-only direct-answer evidence repair", kind)
+		}
+	}
+	nonRetryable := []string{
+		"non_answer_prose",
+		"unexecuted_tool_request_final_answer",
+		"required_evidence_unmet",
+		"user_visible_blocker",
+		"required_edit_paths_remaining",
+	}
+	for _, kind := range nonRetryable {
+		if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
+			t.Fatalf("%s must not enter read-only final-answer retry policy", kind)
+		}
+	}
+}
+
+func TestFinalAnswerAcceptanceRetryPolicyRequiresToolsAndNoMutation(t *testing.T) {
+	noToolsRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	if noToolsRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "answer_objective_unmet"}, nil, 0, nil) {
+		t.Fatal("answer_objective_unmet must remain terminal when no evidence tools are available")
+	}
+
+	readOnlyRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 1, nil) {
+		t.Fatal("source_grounding_unmet should remain retryable before the retry limit is exhausted")
+	}
+	if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 2, nil) {
+		t.Fatal("source_grounding_unmet must become terminal once the retry budget is exhausted")
+	}
+
+	malformedRequiredPathRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			RequiredEditPaths: []string{"internal/app/model.go"},
+			AllowedTools:      []string{"read_file"},
+		},
+	}
+	if malformedRequiredPathRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "source_grounding_unmet"}, nil, 0, nil) {
+		t.Fatal("required_edit_paths must keep malformed direct-answer/read-only briefs out of final-answer retry policy")
+	}
+
+	mutationRunner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyImplementation),
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"internal/app/model.go"},
+			AllowedTools:      []string{"read_file", "apply_patch"},
+		},
+	}
+	if mutationRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "required_edit_paths_remaining"}, nil, 0, nil) {
+		t.Fatal("mutation required_edit_paths_remaining must not enter read-only final-answer retry policy")
+	}
+	if mutationRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: "answer_objective_unmet"}, nil, 0, nil) {
+		t.Fatal("read-only answer retry policy must not apply to mutation lanes")
+	}
+}
+
 func TestEmitAcceptedAnswerSignalsImplementationEvidenceUsesChangedPaths(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -16330,7 +16792,7 @@ func TestReadOnlyEvidenceCompletionRejectionRequiresBoundedEvidence(t *testing.T
 	if !rejected {
 		t.Fatalf("expected read-only final answer without evidence to be rejected")
 	}
-	if !strings.Contains(result.Error, "bounded codebase evidence") {
+	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
 		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
 	}
 	prompt, hideReads, ok := runner.completionGateRecoveryPrompt([]workspace.ToolResult{result})
@@ -16359,7 +16821,7 @@ func TestReadOnlyEvidenceCompletionRejectionAppliesToDirectAnswerAliasWithoutRea
 	if !rejected {
 		t.Fatal("expected direct_answer alias without readiness/source evidence to be rejected")
 	}
-	if !strings.Contains(result.Error, "bounded codebase evidence") {
+	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
 		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
 	}
 }
@@ -16426,7 +16888,7 @@ func TestReadOnlyEvidenceRejectionDoesNotAskToRereadAlreadyInspectedNamedPath(t 
 		{
 			Tool:    "completion_gate",
 			Summary: "Read-only completion gate rejected final answer",
-			Error:   "read-only workspace answers require bounded codebase evidence before a final answer",
+			Error:   "read-only workspace answers require bounded source-body or diagnostic evidence before a final answer",
 		},
 	}
 	result, rejected := runner.readOnlyEvidenceCompletionRejection("The guard is probably in the runner.", results)
@@ -16528,7 +16990,7 @@ func TestReadOnlyAnalysisAnswerReadyRejectsIrrelevantArchitectureSourceReads(t *
 			Contract:          "architecture_assessment",
 			TaskFamily:        "architecture",
 			PermissionProfile: "read_only_workspace",
-			Objective:         "What can we add to our discovery tools to increase their usefulness?",
+			Objective:         "What can we add to our discovery tools to increase their usefulness?\nKey terms: query, context graph",
 		},
 	}
 	results := []workspace.ToolResult{
@@ -16555,7 +17017,7 @@ func TestReadOnlyAnalysisAnswerReadyAcceptsRelevantDiscoveryToolSourceBody(t *te
 			Contract:          "architecture_assessment",
 			TaskFamily:        "architecture",
 			PermissionProfile: "read_only_workspace",
-			Objective:         "What can we add to our discovery tools to increase their usefulness?",
+			Objective:         "What can we add to internal/discovery/query.go to increase discovery tool usefulness?",
 		},
 	}
 	results := []workspace.ToolResult{
@@ -16565,12 +17027,12 @@ func TestReadOnlyAnalysisAnswerReadyAcceptsRelevantDiscoveryToolSourceBody(t *te
 			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"path":"internal/discovery/query.go","summary":"discovery tool surface"},{"path":"internal/comprehension/trace.go","summary":"context graph trace"}]}`,
 		},
 		{
-			Tool:    "read_file",
-			Summary: "Read internal/discovery/query.go lines 1-80",
+			Tool:    "go_read_symbol",
+			Summary: "Read RunDiscoveryTool in internal/discovery/query.go lines 1-80",
 			Output:  "func RunDiscoveryTool() string { return \"discovery tool context graph\" }\n",
 		},
 	}
-	if !runner.readOnlyAnalysisAnswerReadyAfterResult(workspace.ToolRequest{Tool: "read_file"}, results[1], results) {
+	if !runner.readOnlyAnalysisAnswerReadyAfterResult(workspace.ToolRequest{Tool: "go_read_symbol"}, results[1], results) {
 		t.Fatal("objective-relevant discovery source body should satisfy read-only architecture readiness")
 	}
 }
@@ -16894,7 +17356,7 @@ func TestArchitectureCompletionRejectionRequiresEvidenceWithoutReadinessState(t 
 	if !rejected {
 		t.Fatalf("expected architecture final answer without evidence to be rejected")
 	}
-	if !strings.Contains(result.Error, "bounded codebase evidence") {
+	if !strings.Contains(result.Error, "bounded source-body or diagnostic evidence") {
 		t.Fatalf("expected bounded-evidence rejection, got %#v", result)
 	}
 }
@@ -21140,15 +21602,44 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			false,
 		},
 		{
-			"legitimate <<QUESTION>> blocker (let through by escape hatch, not by nonAnswerProse)",
+			"legitimate blocker explanation (should NOT be blocked)",
+			"Blocker: the model had not read the source body yet, so the harness correctly asked for evidence before accepting the answer.",
+			false,
+		},
+		{
+			"legitimate command failure explanation (should NOT be blocked)",
+			"The command failed with exit status 2 because the search pattern was empty; the root cause was the missing query text, not the repository state.",
+			false,
+		},
+		{
+			"legitimate diagnostic answer with failure wording (should NOT be blocked)",
+			"The failure was in the acceptance boundary: a diagnostic log was treated as source evidence even though it did not prove the code-level claim.",
+			false,
+		},
+		{
+			"<<QUESTION>> blocker is handled by the explicit escape hatch",
 			"<<QUESTION>>: Cannot locate the target file. The path does not exist.",
-			true, // looksLikeNonAnswerProse blocks it, but <<QUESTION>> escape hatch fires first
+			false,
 		},
 	}
 	for _, c := range cases {
 		got := looksLikeNonAnswerProse(c.answer)
 		if got != c.want {
 			t.Errorf("%s: looksLikeNonAnswerProse = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestFinalAnswerBlockerKindAllowsSubstantiveBlockerAndFailureAnswers(t *testing.T) {
+	runner := &Runner{}
+	cases := []string{
+		"Blocker: the reviewer could not approve the patch because the diagnostic evidence did not match the user's source-code question.",
+		"The command failed with exit status 2 because the supplied search pattern was empty; rerunning with a concrete pattern is the next action.",
+	}
+	for _, answer := range cases {
+		blocker, reason := runner.finalAnswerBlockerKind(answer, nil)
+		if blocker != "" || reason != "" {
+			t.Fatalf("finalAnswerBlockerKind(%q) = (%q, %q), want accepted", answer, blocker, reason)
 		}
 	}
 }

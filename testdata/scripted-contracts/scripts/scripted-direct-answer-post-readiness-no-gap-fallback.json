@@ -11,7 +11,7 @@
       "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":9,\"end_line\":12}"
     },
     {
-      "content": "BAD_FALLBACK_NOT_USED: the model was asked for another answer after repeated no-gap reads."
+      "content": "For `Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.`, `internal/labels/labels.go` shows `ShortLabel` returns `\"Save changes\"`."
     }
   ]
 }

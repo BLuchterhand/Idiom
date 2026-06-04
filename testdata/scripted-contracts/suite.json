@@ -367,7 +367,7 @@
         "frozen-repo",
         "read-only",
         "information",
-        "bad-answer-blocked",
+        "bad-answer-repaired",
         "json-normalization",
         "repeated-rejection",
         "rollback"
@@ -440,7 +440,7 @@
         "frozen-repo",
         "read-only",
         "information",
-        "bad-answer-blocked",
+        "bad-answer-repaired",
         "repeated-rejection",
         "rollback"
       ],
@@ -452,9 +452,9 @@
           "source evidence"
         ],
         "final_assistant_contains": [
-          "<<QUESTION>>",
-          "Completion gate rejected",
-          "does not address the user's objective"
+          "ShortLabel",
+          "Save changes",
+          "internal/labels/labels.go"
         ],
         "forbid_final_assistant_contains": [
           "BAD_FALLBACK_NOT_USED",
@@ -483,8 +483,7 @@
           "idiom.live_contract.resolved_config",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
-          "completion_status",
-          "final_answer_blocker_override",
+          "final_answer_critic",
           "turn_summary"
         ],
         "require_verification": "none",
@@ -511,7 +510,7 @@
         "frozen-repo",
         "read-only",
         "information",
-        "bad-answer-blocked",
+        "bad-answer-repaired",
         "repeated-rejection",
         "rollback"
       ],
@@ -523,9 +522,9 @@
           "source evidence"
         ],
         "final_assistant_contains": [
-          "<<QUESTION>>",
-          "Completion gate rejected",
-          "does not address the user's objective"
+          "ShortLabel",
+          "Save changes",
+          "internal/labels/labels.go"
         ],
         "forbid_final_assistant_contains": [
           "BAD_FALLBACK_NOT_USED",
@@ -554,8 +553,7 @@
           "idiom.live_contract.resolved_config",
           "idiom.live_contract.rollback",
           "idiom.scripted_model.requests",
-          "completion_status",
-          "final_answer_blocker_override",
+          "final_answer_critic",
           "turn_summary"
         ],
         "require_verification": "none",

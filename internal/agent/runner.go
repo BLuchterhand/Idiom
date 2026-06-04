@@ -58,6 +58,24 @@ const scopedImplementationBoundedReadLineCharCap = 400
 
 const forceAnswerTailGatheredEvidence = "Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer. Do not emit XML tool-call tags, tool JSON, or tool-request syntax — write only the plain user-visible final answer."
 
+type terminalAnswerOutcome string
+
+const (
+	terminalAnswerAccepted         terminalAnswerOutcome = "accepted"
+	terminalAnswerBlocked          terminalAnswerOutcome = "blocked"
+	terminalAnswerTransportBlocked terminalAnswerOutcome = "transport_protocol_blocked"
+)
+
+type terminalAnswerDecision struct {
+	Outcome         terminalAnswerOutcome
+	RawAnswer       string
+	PresentedAnswer string
+	StopReason      string
+	Acceptance      finalAnswerAcceptance
+	BlockerResult   workspace.ToolResult
+	OverrideSource  string
+}
+
 type Runner struct {
 	Client llama.LLMClient
 	// ImplementerClient, when non-nil, is used for write-enabled child
@@ -395,10 +413,14 @@ func (r *Runner) Run(
 	var autonomyRecorder *runnerAutonomyRecorder
 	acceptedAnswerSignalsEmitted := false
 	completionStatusEmitted := false
+	completionStatusLastStatus := ""
+	completionStatusLastBlockerKind := ""
 	verificationTelemetryEmitted := false
 	completionGateRejections := 0
 	emitCompletionStatus := func(status, reason, blockerKind string, results []workspace.ToolResult, userVisibleBlocker bool) {
 		completionStatusEmitted = true
+		completionStatusLastStatus = strings.TrimSpace(status)
+		completionStatusLastBlockerKind = strings.TrimSpace(blockerKind)
 		r.emitCompletionStatus(status, reason, blockerKind, results, userVisibleBlocker)
 	}
 	defer func() {
@@ -408,26 +430,30 @@ func (r *Runner) Run(
 		}
 		r.emitBudgetLedger(policy, metrics, stopReason, budgetExhausted)
 	}()
-	emitAcceptedAnswerSignalsOnce := func(answer string) {
-		if acceptedAnswerSignalsEmitted || strings.TrimSpace(answer) == "" {
+	emitTerminalAnswerSignalsOnce := func(decision terminalAnswerDecision) {
+		if acceptedAnswerSignalsEmitted || strings.TrimSpace(decision.RawAnswer) == "" {
 			return
 		}
-		if blockerKind, _ := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" {
+		switch decision.Outcome {
+		case terminalAnswerAccepted:
+			if autonomyRecorder != nil {
+				reasonCode := "final_answer_accepted"
+				if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedAnswerIntent(decision.RawAnswer) {
+					reasonCode = "plan_source_satisfied_short_circuit"
+				}
+				autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, reasonCode, collectedResults, completionGateRejections)
+			}
+			r.emitFinalAnswerTelemetry(decision.RawAnswer, collectedResults, decision.Acceptance)
+		case terminalAnswerBlocked, terminalAnswerTransportBlocked:
+			blockerKind := util.FirstNonEmpty(strings.TrimSpace(decision.Acceptance.BlockerKind), strings.TrimSpace(decision.StopReason))
 			if autonomyRecorder != nil {
 				autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, blockerKind, collectedResults, completionGateRejections)
 			}
-			if completionStatusEmitted {
-				acceptedAnswerSignalsEmitted = true
-				return
+			r.emitFinalAnswerTelemetry(decision.RawAnswer, collectedResults, decision.Acceptance)
+			if terminalBlockedStatusShouldEmit(completionStatusEmitted, completionStatusLastStatus, completionStatusLastBlockerKind, blockerKind) {
+				emitCompletionStatus("blocked", decision.Acceptance.Reason, blockerKind, collectedResults, true)
 			}
-		} else if autonomyRecorder != nil {
-			reasonCode := "final_answer_accepted"
-			if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedAnswerIntent(answer) {
-				reasonCode = "plan_source_satisfied_short_circuit"
-			}
-			autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyAllow, reasonCode, collectedResults, completionGateRejections)
 		}
-		r.emitAcceptedAnswerSignals(answer, collectedResults)
 		acceptedAnswerSignalsEmitted = true
 	}
 	finish := func(value string, finishErr error, reason string, exhausted bool) (string, error) {
@@ -436,50 +462,21 @@ func (r *Runner) Run(
 		}
 		budgetExhausted = exhausted
 		if finishErr == nil {
-			decorated := r.decorateFinalAnswer(FinalAnswerDecorateInput{
-				Answer:     value,
-				StopReason: stopReason,
-				Brief:      r.RuntimeBrief,
-				Results:    collectedResults,
-				UserFacing: r.userFacingFinalAnswer(),
-			})
-			if strings.TrimSpace(decorated) != strings.TrimSpace(value) {
-				r.emitFinalAnswerDecorationEvent(stopReason, value, decorated)
+			decision := r.classifyTerminalAnswer(value, stopReason, collectedResults)
+			presentedBeforeDecoration := decision.PresentedAnswer
+			decision.PresentedAnswer = r.decorateTerminalAnswerDecision(decision, collectedResults)
+			if strings.TrimSpace(decision.PresentedAnswer) != strings.TrimSpace(presentedBeforeDecoration) {
+				r.emitFinalAnswerDecorationEvent(decision.StopReason, presentedBeforeDecoration, decision.PresentedAnswer)
 				if strings.TrimSpace(r.LastAssistantMessage.Role) != "" || strings.TrimSpace(r.LastAssistantMessage.Content) != "" {
-					r.LastAssistantMessage.Content = decorated
+					r.LastAssistantMessage.Content = decision.PresentedAnswer
 				}
 			}
-			value = decorated
-			if blockerKind, reason := r.finalAnswerBlockerKind(value, collectedResults); blockerKind != "" && !strings.HasPrefix(strings.TrimSpace(value), "<<QUESTION>>") {
-				shouldOverride := blockerKind != "non_answer_prose" ||
-					looksLikeMetaIntentRestatement(value) ||
-					finishShouldOverrideSourceEcho(value)
-				if shouldOverride {
-					blockerResult := workspace.ToolResult{
-						Tool:    "completion_gate",
-						Summary: "Final answer rejected by blocker check",
-						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, value, collectedResults),
-					}
-					value = r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
-					stopReason = blockerKind
-					r.emitEvent(RunEvent{
-						Role:    "final_answer_blocker_override",
-						Content: fmt.Sprintf("finish rejected a final answer that the %s blocker check rejected; replaced model text with deterministic blocker narrative", blockerKind),
-					})
-				}
+			value = decision.PresentedAnswer
+			stopReason = decision.StopReason
+			if decision.OverrideSource != "" {
+				r.emitFinalAnswerBlockerOverride(decision.Acceptance, decision.StopReason, decision.OverrideSource)
 			}
-			// Last-resort gate: no XML tool-call markup ever reaches
-			// the app layer as a final answer. Even if the upstream
-			// checks miss it, the finish function is the final gate.
-			if looksLikeTextualToolCall(value) ||
-				strings.Contains(value, "<n_tool") ||
-				strings.Contains(value, "<n_invoke") ||
-				strings.Contains(value, "<janus_tool") ||
-				strings.Contains(value, "<invoke name=") ||
-				strings.Contains(value, "DSML") {
-				value = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
-			}
-			emitAcceptedAnswerSignalsOnce(value)
+			emitTerminalAnswerSignalsOnce(decision)
 		}
 		return value, finishErr
 	}
@@ -565,6 +562,26 @@ func (r *Runner) Run(
 		consecutiveNoProgress:      &consecutiveNoProgress,
 		currentFingerprint:         &currentFingerprint,
 	}
+	retryRejectedFinalAnswer := func(stepNumber int, activeToolCall *llama.ToolCall, assistantMessage llama.ChatMessage, acceptance finalAnswerAcceptance, result workspace.ToolResult) bool {
+		if !r.retryableFinalAnswerAcceptanceRejection(acceptance, collectedResults, completionGateRejections, currentAllowedTools) {
+			return false
+		}
+		priorGateRejections := completionGateRejections
+		result.Error = escalateCompletionGateMessage(result.Error, priorGateRejections)
+		if autonomyRecorder != nil {
+			autonomyRecorder.emitCompletionGateAttempt(autonomy.PolicyReject, runnerAutonomyReasonCode(result.Summary), collectedResults, priorGateRejections)
+		}
+		controller.rejectCompletion(stepNumber, activeToolCall, assistantMessage, result)
+		completionGateRejections = priorGateRejections + 1
+		if prompt, _, ok := r.completionGateRecoveryPrompt(collectedResults); ok {
+			if card := r.renderRecoveryCardForRejectedAction(workspace.ToolRequest{Tool: "completion_gate"}, result, collectedResults, currentAllowedTools); card != "" {
+				prompt = appendRecoveryCardToMessage(prompt, card)
+			}
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			r.emitEvent(RunEvent{Role: "completion_gate_recovery", Content: prompt})
+		}
+		return true
+	}
 
 	if req, ok := r.verificationBootstrapRequest(); ok && r.Workspace != nil && len(collectedResults) == 0 {
 		raw := marshalToolRequestRaw(req)
@@ -601,7 +618,6 @@ func (r *Runner) Run(
 			autonomyRecorder.emitVerificationGate(req, decision, "verification_result_"+update.VerificationState, update.VerificationState)
 		}
 		answer := synthesizeVerificationOnlyAnswer(req, result)
-		emitAcceptedAnswerSignalsOnce(answer)
 		return finish(answer, nil, "verification_auto_answered", false)
 	}
 
@@ -737,7 +753,6 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "reasoning_tool_salvage", Content: fmt.Sprintf("model emitted parser-readable %s request in hidden reasoning while visible content was empty; executing the request", req.Tool)})
 			} else if answerText, salvaged := r.salvageAnswerFromReasoning(assistantMessage, collectedResults); salvaged {
 				r.emitEvent(RunEvent{Role: "reasoning_answer_salvage", Content: fmt.Sprintf("model emitted answer prose in hidden reasoning while visible content was empty; extracted %d chars", len(answerText))})
-				emitAcceptedAnswerSignalsOnce(answerText)
 				return finish(answerText, nil, "reasoning_answer_salvage", false)
 			} else if recoveredReq, recoveredRaw, recovered := r.deterministicPlanExecuteRejectedRequiredSourceRead(reply, collectedResults); recovered {
 				req, raw, ok = recoveredReq, recoveredRaw, true
@@ -876,16 +891,19 @@ func (r *Runner) Run(
 				answerContent = answerArgs.Content
 			}
 			if answerContent != "" {
-				if blockerKind, reason := r.finalAnswerBlockerKind(answerContent, collectedResults); blockerKind != "" {
+				if acceptance := r.evaluateFinalAnswerAcceptance(answerContent, collectedResults); acceptance.BlockerKind != "" {
+					blockerKind := acceptance.BlockerKind
+					reason := acceptance.Reason
 					blockerResult := workspace.ToolResult{
 						Tool:    "completion_gate",
 						Summary: "Answer tool rejected by blocker check",
 						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answerContent, collectedResults),
 					}
-					emitCompletionStatus("blocked", reason, blockerKind, collectedResults, true)
-					return finish(r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults), nil, blockerKind, true)
+					if retryRejectedFinalAnswer(stepNumber, activeToolCall, assistantMessage, acceptance, blockerResult) {
+						continue
+					}
+					return finish(answerContent, nil, blockerKind, true)
 				}
-				emitAcceptedAnswerSignalsOnce(answerContent)
 				return finish(answerContent, nil, "model_answer_tool", false)
 			}
 		}
@@ -996,7 +1014,6 @@ func (r *Runner) Run(
 				}
 				if priorGateRejections >= r.completionGateRetryLimit(collectedResults) {
 					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						emitAcceptedAnswerSignalsOnce(answer)
 						return finish(answer, nil, "host_read_only_closeout", true)
 					}
 					answer := r.completionGateRepeatedBlockerAnswer(result, collectedResults)
@@ -1011,7 +1028,10 @@ func (r *Runner) Run(
 				continue
 			}
 			answer, err := r.ensureNonEmptyAnswer(ctx, turnMessages, assistantMessage, modelCallOpts, collectedResults, &metrics)
-			if strings.TrimSpace(gateReply) != "" && strings.TrimSpace(gateReply) != strings.TrimSpace(reply) && strings.TrimSpace(answer) == strings.TrimSpace(reply) {
+			if strings.TrimSpace(gateReply) != "" &&
+				strings.TrimSpace(gateReply) != strings.TrimSpace(reply) &&
+				strings.TrimSpace(answer) == strings.TrimSpace(reply) &&
+				!strings.HasPrefix(strings.TrimSpace(gateReply), "<<QUESTION>>") {
 				answer = gateReply
 			}
 			if reason := retryAnswerHedgeRejectionReason(answer); reason != "" {
@@ -1022,7 +1042,9 @@ func (r *Runner) Run(
 				overridden := r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
 				return finish(overridden, nil, "content_gap", true)
 			}
-			if blockerKind, reason := r.finalAnswerBlockerKind(answer, collectedResults); blockerKind != "" {
+			if acceptance := r.evaluateFinalAnswerAcceptance(answer, collectedResults); acceptance.BlockerKind != "" {
+				blockerKind := acceptance.BlockerKind
+				reason := acceptance.Reason
 				// Override only fires when the model fabricates
 				// completion. A <<QUESTION>>: per-path blocker IS the
 				// proper way to report unfulfilled paths, so we keep
@@ -1035,16 +1057,12 @@ func (r *Runner) Run(
 						Summary: "Final answer rejected by blocker check",
 						Error:   r.finalAnswerBlockerErrorText(blockerKind, reason, answer, collectedResults),
 					}
-					overridden := r.completionGateRepeatedBlockerAnswer(blockerResult, collectedResults)
-					emitCompletionStatus("blocked", reason, blockerKind, collectedResults, true)
-					r.emitEvent(RunEvent{
-						Role:    "final_answer_blocker_override",
-						Content: fmt.Sprintf("model emitted a fabricated final answer that the %s blocker check rejected; replaced model text with deterministic blocker narrative", blockerKind),
-					})
-					return finish(overridden, err, blockerKind, true)
+					if retryRejectedFinalAnswer(stepNumber, activeToolCall, assistantMessage, acceptance, blockerResult) {
+						continue
+					}
+					return finish(answer, err, blockerKind, true)
 				}
 			}
-			emitAcceptedAnswerSignalsOnce(answer)
 			return finish(answer, err, "model_final", false)
 		}
 		var assistantToolTurn llama.ChatMessage
@@ -1669,7 +1687,6 @@ func (r *Runner) Run(
 				Role:    closeout.EventRole,
 				Content: closeout.EventContent,
 			})
-			emitAcceptedAnswerSignalsOnce(closeout.Answer)
 			return finish(closeout.Answer, nil, closeout.StopReason, false)
 		}
 		if summary, errorText, reject := r.planThenExecuteClampedEOFReadRejection(req, collectedResults); reject {
@@ -2113,7 +2130,6 @@ func (r *Runner) Run(
 					requestBudget.fingerprint.identicalRun = 0
 				} else {
 					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						emitAcceptedAnswerSignalsOnce(answer)
 						return finish(answer, nil, "host_read_only_closeout", true)
 					}
 					// User denied — feed a blocker result, then force a
@@ -2144,7 +2160,6 @@ func (r *Runner) Run(
 					answer, err = controller.completeWithoutMoreToolsWithReason(doomLoopForcedCloseoutPrompt(req, identicalCallRun))
 				}
 				if closeout, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					emitAcceptedAnswerSignalsOnce(closeout)
 					return finish(closeout, nil, "host_read_only_closeout", true)
 				}
 				return finish(answer, err, "doom_loop_guard", true)
@@ -2208,7 +2223,6 @@ func (r *Runner) Run(
 				summary, errorText := missingPostReadinessGapMessage(scope)
 				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
 					controller.recordHostCloseoutRejectionFeedback(stepNumber, activeToolCall, req, summary, errorText)
-					emitAcceptedAnswerSignalsOnce(answer)
 					return finish(answer, nil, "host_read_only_closeout", true)
 				}
 				answer, err, done := controller.rejectTool(stepNumber, activeToolCall, req, summary, errorText)
@@ -2216,7 +2230,6 @@ func (r *Runner) Run(
 					return finish(answer, err, "post_readiness_gap_required", true)
 				}
 				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					emitAcceptedAnswerSignalsOnce(answer)
 					return finish(answer, nil, "host_read_only_closeout", true)
 				}
 				if requestBudget.postReadinessNoGapRejections >= 2 {
@@ -2228,7 +2241,6 @@ func (r *Runner) Run(
 			if postReadinessAllowedFollowups >= postReadinessProbeBudget {
 				r.emitPostReadinessTerminalGate(scope, req, "probe_budget_exhausted")
 				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					emitAcceptedAnswerSignalsOnce(answer)
 					return finish(answer, nil, "host_read_only_closeout", true)
 				}
 				answer, err := controller.completeWithoutMoreToolsWithReason("The post-readiness exact-probe budget is exhausted. Tools are now disabled. Write the normal final answer from the gathered evidence. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
@@ -2242,7 +2254,6 @@ func (r *Runner) Run(
 					return finish(answer, err, "post_readiness_gap_invalid", true)
 				}
 				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					emitAcceptedAnswerSignalsOnce(answer)
 					return finish(answer, nil, "host_read_only_closeout", true)
 				}
 				if requestBudget.postReadinessInvalidGapRejections >= 2 {
@@ -2650,7 +2661,6 @@ func (r *Runner) Run(
 				workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract) &&
 				!runnerBriefRequiresMutation(r.RuntimeBrief) {
 				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					emitAcceptedAnswerSignalsOnce(answer)
 					return finish(answer, nil, "child_packet_synthesized_answer", false)
 				}
 			}
@@ -3208,13 +3218,11 @@ func (r *Runner) Run(
 		if reviewRepairNoopPassAnswer != "" {
 			closeout, _ := reviewRepairTerminalCloseoutForRequest(r.RuntimeBrief, req)
 			r.emitEvent(RunEvent{Role: closeout.EventRole, Content: closeout.EventContent})
-			emitAcceptedAnswerSignalsOnce(reviewRepairNoopPassAnswer)
 			return finish(reviewRepairNoopPassAnswer, nil, closeout.StopReason, false)
 		}
 		if reviewRepairNoopSubmitPlanCloseoutRequired(r.RuntimeBrief, req, result) {
 			if closeout, ok := reviewRepairTerminalCloseoutForRequest(r.RuntimeBrief, req); ok {
 				r.emitEvent(RunEvent{Role: closeout.EventRole, Content: closeout.EventContent})
-				emitAcceptedAnswerSignalsOnce(closeout.Answer)
 				return finish(closeout.Answer, nil, closeout.StopReason, false)
 			}
 			answer, err := controller.completeWithoutMoreToolsWithReason(reviewRepairNoopSubmitPlanCloseoutPrompt(req, result))
@@ -3231,7 +3239,6 @@ func (r *Runner) Run(
 				Role:    "plan_then_execute_source_satisfied_short_circuit",
 				Content: "empty submit_plan encoded a source-satisfied terminal outcome; synthesizing closeout from required-path source evidence",
 			})
-			emitAcceptedAnswerSignalsOnce(answer)
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteCandidateSourceReadyResult(result) {
@@ -3343,7 +3350,6 @@ func (r *Runner) Run(
 				Role:    "plan_then_execute_short_circuit",
 				Content: "submit_plan succeeded; synthesizing final answer from plan artifact instead of spending a second model turn",
 			})
-			emitAcceptedAnswerSignalsOnce(answer)
 			return finish(answer, nil, "plan_submitted_short_circuit", false)
 		}
 		if !delegatedReadOnlyAnswerReady && !postChildPacketActive {
@@ -3381,7 +3387,6 @@ func (r *Runner) Run(
 		}
 		if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
 			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-				emitAcceptedAnswerSignalsOnce(answer)
 				return finish(answer, nil, "read_only_no_match_closeout", false)
 			}
 			answer, err := controller.completeWithoutMoreToolsWithReason("The latest symbol probe returned no matches after source evidence was already gathered. Tools are now disabled. Answer from the gathered evidence and name any remaining uncertainty after the supported answer.")
@@ -7343,7 +7348,6 @@ func delegatedClosureEvidencePaths(objective string, results []workspace.ToolRes
 	paths = append(paths, delegatedReadOnlyInspectedImplementationPaths(results)...)
 	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, max*4)...)
 	paths = append(paths, pinnedPathsFromToolResults(results, max*4)...)
-	paths = append(paths, questionExpectedEvidencePaths(objective)...)
 	paths = prioritizedClosureEvidencePaths(delegatedDiscoveryAnswerEvidencePaths(objective, paths), results, max)
 	return closurePromptEvidencePaths(paths, max)
 }
@@ -7516,13 +7520,13 @@ func (r *Runner) readOnlyEvidenceCompletionRejection(reply string, results []wor
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Read-only completion gate rejected final answer",
-			Error:   "read-only workspace answers require bounded codebase evidence before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ". Use one targeted source search/read/navigation request for a different concrete code path tied to the explicit question, or answer `<<QUESTION>>:` with the exact blocker.",
+			Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Already inspected path(s) should not be reread: " + strings.Join(readPaths, ", ") + ". Use one targeted source search/read/navigation request for a different concrete code path tied to the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
 		}, true
 	}
 	return workspace.ToolResult{
 		Tool:    "completion_gate",
 		Summary: "Read-only completion gate rejected final answer",
-		Error:   "read-only workspace answers require bounded codebase evidence before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact blocker.",
+		Error:   "read-only workspace answers require bounded source-body or diagnostic evidence tied to the user's objective before a final answer. Use one targeted read/search/discovery tool for the explicit question, or answer `<<QUESTION>>:` with the exact unavailable evidence source.",
 	}, true
 }
 
@@ -9548,6 +9552,33 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 		return 1
 	}
 	return 2
+}
+
+func (r *Runner) retryableFinalAnswerAcceptanceRejection(acceptance finalAnswerAcceptance, results []workspace.ToolResult, priorGateRejections int, allowedTools []string) bool {
+	if r == nil || !retryableReadOnlyFinalAnswerBlockerKind(acceptance.BlockerKind) {
+		return false
+	}
+	if priorGateRejections >= r.completionGateRetryLimit(results) {
+		return false
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if !workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) ||
+		!workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) ||
+		len(brief.RequiredEditPaths) > 0 ||
+		runnerBriefRequiresMutation(brief) {
+		return false
+	}
+	tools := uniquePhaseStrings(append(append([]string(nil), brief.AllowedTools...), allowedTools...))
+	return len(genericReadOnlyEvidenceTools(tools)) > 0
+}
+
+func retryableReadOnlyFinalAnswerBlockerKind(kind string) bool {
+	switch strings.TrimSpace(kind) {
+	case "source_grounding_unmet", "answer_objective_unmet":
+		return true
+	default:
+		return false
+	}
 }
 
 func completionGateRejectionBeforeLatestWrite(results []workspace.ToolResult) bool {
@@ -18373,13 +18404,99 @@ func delegatedDiscoveryPathPriority(path string) int {
 	}
 }
 
+func (r *Runner) classifyTerminalAnswer(answer string, stopReason string, results []workspace.ToolResult) terminalAnswerDecision {
+	stopReason = strings.TrimSpace(stopReason)
+	if stopReason == "" {
+		stopReason = "completed"
+	}
+	acceptance := r.evaluateFinalAnswerAcceptance(answer, results)
+	decision := terminalAnswerDecision{
+		Outcome:         terminalAnswerAccepted,
+		RawAnswer:       answer,
+		PresentedAnswer: answer,
+		StopReason:      stopReason,
+		Acceptance:      acceptance,
+	}
+	if terminalAnswerContainsTransportProtocol(answer) {
+		acceptance.Decision = finalAnswerAcceptanceRejected
+		acceptance.BlockerKind = "transport_protocol_output"
+		acceptance.Reason = "the final answer contained tool-call transport markup instead of user-visible answer prose"
+		decision.Outcome = terminalAnswerTransportBlocked
+		decision.PresentedAnswer = "I wasn't able to produce a clean answer from the evidence. Could you rephrase or narrow the question?"
+		decision.StopReason = acceptance.BlockerKind
+		decision.Acceptance = acceptance
+		return decision
+	}
+	if acceptance.BlockerKind == "" {
+		return decision
+	}
+	decision.Outcome = terminalAnswerBlocked
+	decision.StopReason = acceptance.BlockerKind
+	if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") && r.terminalAnswerShouldOverrideRejectedRaw(answer, acceptance) {
+		blockerResult := workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Final answer rejected by blocker check",
+			Error:   r.finalAnswerBlockerErrorText(acceptance.BlockerKind, acceptance.Reason, answer, results),
+		}
+		decision.BlockerResult = blockerResult
+		decision.PresentedAnswer = r.completionGateRepeatedBlockerAnswer(blockerResult, results)
+		decision.OverrideSource = "finish"
+	}
+	return decision
+}
+
+func terminalBlockedStatusShouldEmit(alreadyEmitted bool, lastStatus string, lastBlockerKind string, terminalBlockerKind string) bool {
+	return !alreadyEmitted || strings.TrimSpace(lastStatus) != "blocked"
+}
+
+func (r *Runner) terminalAnswerShouldOverrideRejectedRaw(answer string, acceptance finalAnswerAcceptance) bool {
+	if acceptance.BlockerKind == "" {
+		return false
+	}
+	return acceptance.BlockerKind != "non_answer_prose" ||
+		looksLikeMetaIntentRestatement(answer) ||
+		finishShouldOverrideSourceEcho(answer)
+}
+
+func terminalAnswerContainsTransportProtocol(answer string) bool {
+	return looksLikeTextualToolCall(answer) ||
+		strings.Contains(answer, "<n_tool") ||
+		strings.Contains(answer, "<n_invoke") ||
+		strings.Contains(answer, "<janus_tool") ||
+		strings.Contains(answer, "<invoke name=") ||
+		strings.Contains(answer, "DSML")
+}
+
+func (r *Runner) decorateTerminalAnswerDecision(decision terminalAnswerDecision, results []workspace.ToolResult) string {
+	if decision.Outcome == terminalAnswerTransportBlocked {
+		return decision.PresentedAnswer
+	}
+	return r.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     decision.PresentedAnswer,
+		StopReason: decision.StopReason,
+		Brief:      r.RuntimeBrief,
+		Results:    results,
+		UserFacing: r.userFacingFinalAnswer(),
+	})
+}
+
 func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.ToolResult) {
+	if r == nil || r.OnEvent == nil || strings.TrimSpace(answer) == "" {
+		return
+	}
+	acceptance := r.evaluateFinalAnswerAcceptance(answer, results)
+	r.emitFinalAnswerTelemetry(answer, results, acceptance)
+	if acceptance.BlockerKind != "" {
+		r.emitCompletionStatus("blocked", acceptance.Reason, acceptance.BlockerKind, results, true)
+	}
+}
+
+func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.ToolResult, acceptance finalAnswerAcceptance) {
 	if r == nil || r.OnEvent == nil || strings.TrimSpace(answer) == "" {
 		return
 	}
 	lane := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
 	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), string(workerruntime.ContractDirectAnswer))
-	acceptance := r.evaluateFinalAnswerAcceptance(answer, results)
 	evidencePaths := acceptance.EvidencePaths
 	acceptanceFields := finalAnswerAcceptanceEventFields(acceptance)
 	if acceptance.BlockerKind != "" {
@@ -18422,7 +18539,6 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 			rails[key] = value
 		}
 		r.emitEvent(marshalRunEvent("control_rails_enforcement", rails))
-		r.emitCompletionStatus("blocked", acceptance.Reason, acceptance.BlockerKind, results, true)
 		return
 	}
 	confidence := "medium"
@@ -18470,6 +18586,30 @@ func (r *Runner) emitAcceptedAnswerSignals(answer string, results []workspace.To
 		rails[key] = value
 	}
 	r.emitEvent(marshalRunEvent("control_rails_enforcement", rails))
+}
+
+func (r *Runner) emitFinalAnswerBlockerOverride(acceptance finalAnswerAcceptance, replacementStopReason string, source string) {
+	if r == nil || r.OnEvent == nil || acceptance.BlockerKind == "" {
+		return
+	}
+	payload := map[string]any{
+		"summary":                      "model final answer rejected and replaced with deterministic blocker narrative",
+		"source":                       strings.TrimSpace(source),
+		"original_acceptance_contract": acceptance.SchemaVersion,
+		"original_acceptance_decision": string(acceptance.Decision),
+		"original_blocker_kind":        strings.TrimSpace(acceptance.BlockerKind),
+		"original_reason":              strings.TrimSpace(acceptance.Reason),
+		"original_evidence_paths":      acceptance.EvidencePaths,
+		"replacement_stop_reason":      strings.TrimSpace(replacementStopReason),
+		"raw_answer_logged":            false,
+	}
+	if acceptance.ObjectiveRelevanceStatus != "" {
+		payload["objective_relevance"] = acceptance.ObjectiveRelevanceStatus
+	}
+	if len(acceptance.RelevantSourceBodyPaths) > 0 {
+		payload["relevant_source_body_paths"] = cappedStrings(acceptance.RelevantSourceBodyPaths, 8)
+	}
+	r.emitEvent(marshalRunEvent("final_answer_blocker_override", payload))
 }
 
 func (r *Runner) emitPostWriteVerificationTelemetry(req workspace.ToolRequest, result workspace.ToolResult) bool {
@@ -22608,23 +22748,21 @@ func looksLikeNonAnswerProse(answer string) bool {
 	if looksLikeSourceEchoOnlyAnswer(trimmed) {
 		return true
 	}
-	// Short answer dominated by tool-failure language: "rejected",
-	// "command failed", "exit status", "does not exist", etc.
-	// A genuine answer is never just a tool-error dump.
-	if len(trimmed) < 300 {
-		toolFailure := strings.Contains(lower, "rejected") ||
-			strings.Contains(lower, "does not exist") ||
-			strings.Contains(lower, "cannot exist") ||
-			strings.Contains(lower, "failed to resolve") ||
-			strings.Contains(lower, "command failed") ||
-			strings.Contains(lower, "exit status")
-		blockerReport := strings.Contains(lower, "\nblocker:") ||
-			strings.HasPrefix(lower, "blocker:")
-		if toolFailure || blockerReport {
-			return true
-		}
+	// Leaked implementation-result templates are protocol artifacts, not
+	// direct answers. Do not reject ordinary diagnostic prose just because it
+	// discusses a blocker, a failed command, or an exit status.
+	if looksLikeLeakedImplementationBlockerTemplate(lower) {
+		return true
 	}
 	return false
+}
+
+func looksLikeLeakedImplementationBlockerTemplate(lowerAnswer string) bool {
+	if !strings.HasPrefix(lowerAnswer, "changed paths: none") {
+		return false
+	}
+	return strings.Contains(lowerAnswer, "\nverification: not run") &&
+		strings.Contains(lowerAnswer, "\nblocker:")
 }
 
 func looksLikeMetaIntentRestatement(answer string) bool {

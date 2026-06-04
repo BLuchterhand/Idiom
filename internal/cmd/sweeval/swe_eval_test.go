@@ -1083,14 +1083,13 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s task missing", id)
 		}
-		assertTaskHasTags(t, task, "information", "bad-answer-blocked", "repeated-rejection", "read-only", "rollback")
+		assertTaskHasTags(t, task, "information", "bad-answer-repaired", "repeated-rejection", "read-only", "rollback")
 		assertTaskHasRunEvents(t, task,
 			"idiom.live_contract.workspace_prepared",
 			"idiom.live_contract.resolved_config",
 			"idiom.live_contract.rollback",
 			"idiom.scripted_model.requests",
-			"completion_status",
-			"final_answer_blocker_override",
+			"final_answer_critic",
 			"turn_summary",
 		)
 		if !slices.Contains(task.Scenario.RequireTools, "read_file") ||
@@ -1098,10 +1097,10 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 			t.Fatalf("%s must pin evidence reads even after read-only readiness, scenario=%#v", id, task.Scenario)
 		}
 		if !slices.Contains(task.Scenario.ForbidFinalAssistantContains, "BAD_FALLBACK_NOT_USED") ||
-			!slices.Contains(task.Scenario.FinalAssistantContains, "<<QUESTION>>") ||
+			!slices.Contains(task.Scenario.FinalAssistantContains, "Save changes") ||
 			!task.Oracle.RequireNoChangedFiles ||
 			!task.Oracle.RequireCleanRollback {
-			t.Fatalf("%s must block unsupported model answers without host-forced closeout, scenario=%#v oracle=%#v", id, task.Scenario, task.Oracle)
+			t.Fatalf("%s must repair unsupported model answers without host-forced closeout, scenario=%#v oracle=%#v", id, task.Scenario, task.Oracle)
 		}
 	}
 }
