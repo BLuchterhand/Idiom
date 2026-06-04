@@ -236,6 +236,216 @@ func TestReadOnlyAnswerabilityContextPackCandidateRequiresObjectiveRelevantSourc
 	}
 }
 
+func TestReadOnlyAnswerabilityPromotesCollectiveSourceBodyObjectiveSupport(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("How do up and down arrow keys navigate conversation history?")
+	contextOnly := []workspace.ToolResult{{
+		Tool:    "context_pack",
+		Summary: "Context pack returned weak candidates",
+		Output:  `{"candidate_files":[{"path":"internal/app/update_handlers.go"},{"path":"internal/app/rendering.go"}]}`,
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, contextOnly)
+	if ledger.Answerable() {
+		t.Fatalf("context packet candidates alone must not satisfy answerability: %#v", ledger)
+	}
+
+	partialResults := append([]workspace.ToolResult{}, contextOnly...)
+	partialResults = append(partialResults,
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Read internal/app/update_handlers.go lines 80-120",
+			Output: strings.Join([]string{
+				"80:func (m Model) handleKeyUpdate(msg tea.KeyMsg) (Model, tea.Cmd) {",
+				"81:\tswitch msg.String() {",
+				"82:\tcase \"up\":",
+				"83:\t\tm.navigateHistory(-1)",
+				"84:\tcase \"down\":",
+				"85:\t\tm.navigateHistory(1)",
+				"86:\t}",
+				"87:\treturn m, nil",
+				"88:}",
+			}, "\n"),
+		},
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 300-330",
+			Output: strings.Join([]string{
+				"300:func (m Model) renderViewport() string {",
+				"301:\treturn m.viewport.View()",
+				"302:}",
+			}, "\n"),
+		},
+	)
+	ledger = readOnlyAnswerabilityForResults(brief, partialResults)
+	if ledger.Answerable() {
+		t.Fatalf("source bodies missing one objective term must not satisfy collective relevance: %#v", ledger)
+	}
+	if conversationEvidenceSatisfied(brief, partialResults) {
+		t.Fatal("conversation readiness must remain false until source bodies collectively cover the objective")
+	}
+
+	completeResults := append([]workspace.ToolResult{}, contextOnly...)
+	completeResults = append(completeResults, partialResults[1])
+	completeResults[1].Output = strings.ReplaceAll(completeResults[1].Output, "m.navigateHistory(-1)", "m.navigateHistory(-1) // arrow-key history")
+	completeResults = append(completeResults, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read internal/app/rendering.go lines 300-330",
+		Output: strings.Join([]string{
+			"300:func (m Model) renderConversationViewport() string {",
+			"301:\treturn m.messages.View()",
+			"302:}",
+		}, "\n"),
+	})
+
+	ledger = readOnlyAnswerabilityForResults(brief, completeResults)
+	if !ledger.Answerable() {
+		t.Fatalf("collective source-body objective coverage should be answerable: %#v", ledger)
+	}
+	if !slices.Contains(ledger.SourceBodyObjectivePaths, "internal/app/update_handlers.go") {
+		t.Fatalf("expected substantive collective objective path, got %#v", ledger.SourceBodyObjectivePaths)
+	}
+	if slices.Contains(ledger.SourceBodyObjectivePaths, "internal/app/rendering.go") {
+		t.Fatalf("one-term companion source body must not be promoted as objective support, got %#v", ledger.SourceBodyObjectivePaths)
+	}
+	if !slices.Contains(ledger.RelevantSourceBodyPaths, "internal/app/update_handlers.go") {
+		t.Fatalf("expected relevant source body path, got %#v", ledger.RelevantSourceBodyPaths)
+	}
+	if !conversationEvidenceSatisfied(brief, completeResults) {
+		t.Fatal("conversation readiness should be satisfied by collective source-body objective coverage")
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsCollectiveSourceBodyObjectiveAnswer(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("How do up and down arrow keys navigate conversation history?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack returned weak candidates",
+			Output:  `{"candidate_files":[{"path":"internal/app/update_handlers.go"},{"path":"internal/app/rendering.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/update_handlers.go lines 80-120",
+			Output: strings.Join([]string{
+				"80:func (m Model) handleKeyUpdate(msg tea.KeyMsg) (Model, tea.Cmd) {",
+				"81:\tswitch msg.String() {",
+				"82:\tcase \"up\":",
+				"83:\t\tm.navigateHistory(-1) // arrow-key history",
+				"84:\tcase \"down\":",
+				"85:\t\tm.navigateHistory(1)",
+				"86:\t}",
+				"87:\treturn m, nil",
+				"88:}",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 300-330",
+			Output: strings.Join([]string{
+				"300:func (m Model) renderConversationViewport() string {",
+				"301:\treturn m.messages.View()",
+				"302:}",
+			}, "\n"),
+		},
+	}
+	answer := "Up and down arrow keys navigate conversation history through `internal/app/update_handlers.go`, where the key handler calls `navigateHistory`, and `internal/app/rendering.go` renders the conversation viewport that displays the resulting message state."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("collective source-body answer blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISources(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("what would it take to make it so that the up and down arrow keys jump between messages from conversation history?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote weak packet",
+			Output:  `{"candidate_files":[{"path":"internal/agent/runner.go"},{"path":"internal/app/app.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/update_handlers.go lines 20-90",
+			Output: strings.Join([]string{
+				"20:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+				"21:\tswitch msg.Type {",
+				"22:\tcase tea.KeyUp:",
+				"23:\t\tm.history.selected--",
+				"24:\tcase tea.KeyDown:",
+				"25:\t\tm.history.selected++",
+				"26:\t}",
+				"27:}",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-100",
+			Output: strings.Join([]string{
+				"1:package app",
+				"2:func (m *Model) renderMessages(force bool) {",
+				"3:\tm.viewport.SetContent(strings.Join(m.messages, \"\\n\"))",
+				"4:}",
+			}, "\n"),
+		},
+	}
+	answer := "It would take adding a separate conversation-message history navigation path. `internal/app/update_handlers.go` already consumes up/down key handling for panels, while `internal/app/rendering.go` renders the message list; wiring the feature would need state that maps those keys to message-history selection instead of only the existing panel behavior."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("what-would-it-take answer from discovered TUI source bodies blocked: kind=%q reason=%q", kind, reason)
+	}
+	paths := acceptedAnswerEvidencePaths(answer, results, brief)
+	if !slices.Contains(paths, "internal/app/update_handlers.go") {
+		t.Fatalf("expected accepted evidence path from the strongest source-body support, got %#v", paths)
+	}
+	if slices.Contains(paths, "internal/app/rendering.go") {
+		t.Fatalf("accepted evidence paths should not promote one-term companion citation, got %#v", paths)
+	}
+	if slices.Contains(paths, "internal/agent/runner.go") {
+		t.Fatalf("accepted evidence paths must not retain weak context-pack candidate, got %#v", paths)
+	}
+}
+
+func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("How do up and down arrow keys navigate conversation history?")
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack returned a real candidate unrelated to later reads",
+			Output:  `{"candidate_files":[{"path":"internal/app/update_handlers.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/config/config.go lines 1-8",
+			Output: strings.Join([]string{
+				"1:package config",
+				"2:// down key history words appear in an unrelated config comment",
+				"3:const ConfigValue = true",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/workspace/manager.go lines 1-8",
+			Output: strings.Join([]string{
+				"1:package workspace",
+				"2:// conversation message words appear in unrelated workspace plumbing",
+				"3:type Manager struct{}",
+			}, "\n"),
+		},
+	}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("unrelated source bodies must not become answerable through scattered objective words: %#v", ledger)
+	}
+	if len(ledger.SourceBodyObjectivePaths) > 0 {
+		t.Fatalf("unrelated source bodies must not be promoted to objective paths: %#v", ledger.SourceBodyObjectivePaths)
+	}
+}
+
 func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
 	results := []workspace.ToolResult{{
@@ -375,6 +585,88 @@ func TestReadOnlyAnswerabilityAcceptsExplicitDiagnosticEvidence(t *testing.T) {
 	}
 	if !ledger.DiagnosticEvidence {
 		t.Fatalf("expected diagnostic evidence flag: %#v", ledger)
+	}
+	if !slices.Contains(ledger.DiagnosticPaths, "internal/agent/runner.go") {
+		t.Fatalf("expected diagnostic source path, got %#v", ledger.DiagnosticPaths)
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsUnrelatedDiagnosticEvidence(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why did the runner build fail?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "source_sanity failed for internal/config/config.go",
+		Output:  "internal/config/config.go:10: undefined: ConfigValue\n",
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() || ledger.DiagnosticRelevant {
+		t.Fatalf("unrelated diagnostic evidence must not satisfy broad failure objectives: %#v", ledger)
+	}
+	if !ledger.DiagnosticEvidence {
+		t.Fatalf("diagnostic evidence should still be recorded as weak evidence: %#v", ledger)
+	}
+	if !slices.Contains(ledger.DiagnosticPaths, "internal/config/config.go") {
+		t.Fatalf("expected diagnostic source path to be recorded, got %#v", ledger.DiagnosticPaths)
+	}
+}
+
+func TestReadOnlyAnswerabilityAcceptsPathMatchedDiagnosticEvidence(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why did diagnostics fail for internal/agent/runner.go?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "source_sanity failed for internal/agent/runner.go",
+		Output:  "internal/agent/runner.go:10: undefined: RunnerState\n",
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if !ledger.Answerable() || !ledger.DiagnosticRelevant {
+		t.Fatalf("path-matched diagnostic evidence should satisfy diagnostic objective: %#v", ledger)
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsWrongPathDiagnosticEvidence(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why did diagnostics fail for internal/agent/runner.go?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "source_sanity failed for internal/config/config.go",
+		Output:  "internal/config/config.go:10: undefined: ConfigValue\n",
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() || ledger.DiagnosticRelevant {
+		t.Fatalf("diagnostic evidence for the wrong named path must not satisfy answerability: %#v", ledger)
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsWrongPathDiagnosticEvidenceEvenWhenTextEchoesObjective(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why did diagnostics fail for internal/agent/runner.go?")
+	results := []workspace.ToolResult{{
+		Tool:    "source_sanity",
+		Summary: "source_sanity failed for internal/config/config.go while investigating diagnostics for internal/agent/runner.go",
+		Output:  "internal/config/config.go:10: undefined: ConfigValue\ninternal/agent/runner.go remains the requested diagnostic target.\n",
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() || ledger.DiagnosticRelevant {
+		t.Fatalf("wrong-path diagnostic text that echoes the named target must not satisfy answerability: %#v", ledger)
+	}
+}
+
+func TestReadOnlyAnswerabilityDoesNotTreatCompleteDiagnosticLogAsSourceEvidence(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Why did the runner build fail?")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f7 logs/conversations/20260603-173738.903.jsonl lines 1-72 (file has 72 lines total; defaulted to recent log tail; pass start_line/end_line for a different window)",
+		Output:  "1:{\"type\":\"session_start\"}\n72:{\"type\":\"final\"}\n",
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() || ledger.DiagnosticRelevant {
+		t.Fatalf("complete diagnostic logs must not satisfy source-code failure questions without a typed diagnostic evidence contract: %#v", ledger)
+	}
+	if len(ledger.SourceBodyPaths) > 0 {
+		t.Fatalf("diagnostic logs must not become source-body paths: %#v", ledger.SourceBodyPaths)
 	}
 }
 

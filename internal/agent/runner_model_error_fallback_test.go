@@ -64,15 +64,14 @@ func TestModelErrorAfterReadOnlyEvidenceReturnsDeterministicFallback(t *testing.
 		t.Fatalf("expected deterministic fallback instead of transport error, got %v", err)
 	}
 	for _, want := range []string{
-		"<<QUESTION>>:",
-		"concrete user-facing finding",
+		"could not produce a supported final answer",
 		"internal/app/rendering.go",
 	} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("fallback answer missing %q:\n%s", want, answer)
 		}
 	}
-	if strings.Contains(answer, "Chat failed") || strings.Contains(answer, "budget was reached") {
+	if strings.Contains(answer, "<<QUESTION>>") || strings.Contains(answer, "Chat failed") || strings.Contains(answer, "budget was reached") {
 		t.Fatalf("fallback leaked failure UI or budget framing:\n%s", answer)
 	}
 }

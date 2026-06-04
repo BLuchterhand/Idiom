@@ -59,7 +59,9 @@ func (r *Runner) completionGatePipeline(step int, taskLedger *taskLedgerState, d
 
 func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool) []CompletionGateCheck {
 	return []CompletionGateCheck{
-		textualToolCallGateCheck,
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return textualToolCallCompletionRejection(r, reply, results)
+		},
 		func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
 			return r.unexecutedToolRequestCompletionRejection(reply)
 		},
@@ -94,6 +96,21 @@ func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool
 }
 
 var textualToolCallGateCheck CompletionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {
+	return textualToolCallCompletionRejection(nil, reply, nil)
+}
+
+func textualToolCallCompletionRejection(r *Runner, reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if tool, transport, ok := unsafeTextualWriteAttempt(reply); ok && r.unsafeTextualWriteRecoverySurfaceActive(results) {
+		msg := "the reply contains a " + transport + " " + tool + " write attempt, but key-value and function-call write syntax are not executable. Emit the write through the native tool-call mechanism, or as one visible JSON object with top-level `tool`, `path`, `old_text`, `new_text`, and `description` fields copied from source evidence. Do not use key-value or function-call write syntax."
+		if r != nil && r.planThenExecutePlannerPhase() {
+			msg = "the reply contains a " + transport + " " + tool + " write attempt, but the plan-execute planner phase does not execute per-edit writes. Emit one visible JSON object for `submit_plan` with top-level `tool`, `rationale`, and `edits`, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker. Key-value and function-call write syntax are not executable."
+		}
+		return workspace.ToolResult{
+			Tool:    "completion_gate",
+			Summary: "Textual write syntax rejected as final answer",
+			Error:   msg,
+		}, true
+	}
 	if !looksLikeTextualToolCall(reply) {
 		return workspace.ToolResult{}, false
 	}
@@ -106,6 +123,19 @@ var textualToolCallGateCheck CompletionGateCheck = func(reply string, _ []worksp
 		Summary: "Textual tool-call markup rejected as final answer",
 		Error:   msg,
 	}, true
+}
+
+func (r *Runner) unsafeTextualWriteRecoverySurfaceActive(results []workspace.ToolResult) bool {
+	if r == nil || !runnerBriefRequiresMutation(r.RuntimeBrief) {
+		return false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return false
+	}
+	if r.planThenExecutePlannerPhase() {
+		return concreteSourceEvidenceAlreadyRead(results)
+	}
+	return implementationTargetWriteReadySurfaceActive(r.RuntimeBrief, results)
 }
 
 var unexecutedToolRequestGateCheck CompletionGateCheck = func(reply string, _ []workspace.ToolResult) (workspace.ToolResult, bool) {

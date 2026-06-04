@@ -33,6 +33,44 @@ depends on synthesis, when prompts ask for one role while gates enforce
 another, or when the harness asks the model to serialize an unnatural artifact
 instead of using its normal editing capability.
 
+## Required De-Drift Gate
+
+Drift is cheap. A small sanitizer, phrase matcher, prompt nudge, fallback, or
+test assertion can create a second contract beside the real one. Behavior fixes
+are not ready for implementation until they have a de-drift analysis that names
+the canonical owner and every consumer that can observe the changed state.
+
+Before editing harness behavior, write down:
+
+- **Canonical owner**: the existing module, gate, presenter, or typed contract
+  that should own the behavior.
+- **Consumer matrix**: whether the affected text/state is model-facing,
+  machine-consumed, user-facing, audit-only, or mixed.
+- **Preserve lanes**: lanes where raw protocol must remain intact for recovery,
+  plan execution, review-repair, mutation, or downstream detection.
+- **Cleanup lanes**: lanes where the same protocol must be hidden or rewritten
+  for user presentation.
+- **Existing helper scan**: helpers, gates, tests, prompts, and audit code that
+  already handle related behavior.
+- **Negative oracle**: at least one valid lane/use case that would regress if
+  the fix is too broad.
+- **Contradiction scan**: tests or docs that still bless the behavior now being
+  forbidden.
+
+For final-answer and protocol-marker changes, the minimum regression set is:
+
+- the bad user-visible leak or malformed output is fixed;
+- a normal answer passes through unchanged;
+- machine-consumed protocol remains machine-readable in terminal phases;
+- a similar-looking but wrong lane is not accepted as sufficient evidence;
+- the cleaned output still carries useful evidence or blocker context.
+
+Use reviewers as separate checks, not as a rubber stamp. For non-trivial
+behavior changes, request three lenses after the patch and again after the last
+material revision: canonical owner/duplicate authority, blast radius across
+lanes and consumers, and test-oracle quality. A review that only says the
+current scenario passes is incomplete.
+
 ## Idiom-Offloaded Work Loop
 
 Use idiom as the default worker for idiom maintenance. The expected loop is:

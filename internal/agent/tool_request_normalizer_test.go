@@ -415,7 +415,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSON(t *testing.T) {
 	if result.OK {
 		t.Fatalf("function-call-like multi-line text should not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -428,7 +428,7 @@ func TestNormalizeToolRequestSyntaxKeyValueArgsJSONRejectsToolMismatch(t *testin
 	if result.OK {
 		t.Fatalf("mismatched key/value args request must not normalize: %#v", result.Request)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValueArgs {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 }
@@ -510,6 +510,66 @@ func TestNormalizeToolRequestSyntaxRejectsUnsafeFunctionCallFields(t *testing.T)
 	}
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportFunctionCall {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+	tool, transport, ok := unsafeTextualWriteAttempt(`tool: edit_file(path="README.md", old_text="old", new_text="new")`)
+	if !ok || tool != "edit_file" || transport != toolRequestNormalizerTransportFunctionCall {
+		t.Fatalf("expected non-executing unsafe function-call write classification, got tool=%q transport=%q ok=%v", tool, transport, ok)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxRejectsNonJSONTextualWriteTools(t *testing.T) {
+	tests := []struct {
+		name      string
+		content   string
+		tool      string
+		transport string
+	}{
+		{
+			name:      "key value write_file",
+			content:   "tool: write_file\npath: README.md\ncontent: hello\ndescription: update readme",
+			tool:      "write_file",
+			transport: toolRequestNormalizerTransportKeyValue,
+		},
+		{
+			name:      "key value append_file",
+			content:   "tool: append_file\npath: README.md\ncontent: hello\ndescription: append readme",
+			tool:      "append_file",
+			transport: toolRequestNormalizerTransportKeyValue,
+		},
+		{
+			name:      "key value args write_file",
+			content:   "tool: write_file\nargs:\n{\"path\":\"README.md\",\"content\":\"hello\",\"description\":\"update readme\"}",
+			tool:      "write_file",
+			transport: toolRequestNormalizerTransportKeyValueArgs,
+		},
+		{
+			name:      "function call write_file",
+			content:   `tool: write_file(path="README.md", content="hello", description="update readme")`,
+			tool:      "write_file",
+			transport: toolRequestNormalizerTransportFunctionCall,
+		},
+		{
+			name:      "function call append_file",
+			content:   `tool: append_file(path="README.md", content="hello", description="append readme")`,
+			tool:      "append_file",
+			transport: toolRequestNormalizerTransportFunctionCall,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := normalizeToolRequestSyntax(llama.ChatMessage{Content: tt.content})
+			if result.OK {
+				t.Fatalf("non-JSON textual %s body must not normalize: %#v", tt.tool, result.Request)
+			}
+			if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != tt.transport {
+				t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+			}
+			tool, transport, ok := unsafeTextualWriteAttempt(tt.content)
+			if !ok || tool != tt.tool || transport != tt.transport {
+				t.Fatalf("expected non-executing unsafe textual write classification, got tool=%q transport=%q ok=%v", tool, transport, ok)
+			}
+		})
 	}
 }
 
@@ -687,7 +747,7 @@ func TestNormalizeToolRequestSyntaxDoesNotInferNarrativeFencedJSON(t *testing.T)
 
 func TestNormalizeToolRequestSyntaxRejectsUnsafeKeyValueFields(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
-		Content: "tool: edit_file\npath: README.md\nold_text: old\nnew_text: new",
+		Content: "tool: edit_file\npath: README.md\nold_text: old\nnew_text: new\ndescription: update readme",
 	})
 
 	if result.OK {
@@ -695,6 +755,10 @@ func TestNormalizeToolRequestSyntaxRejectsUnsafeKeyValueFields(t *testing.T) {
 	}
 	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+	tool, transport, ok := unsafeTextualWriteAttempt("tool: edit_file\npath: README.md\nold_text: old\nnew_text: new\ndescription: update readme")
+	if !ok || tool != "edit_file" || transport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("expected non-executing unsafe textual write classification, got tool=%q transport=%q ok=%v", tool, transport, ok)
 	}
 }
 

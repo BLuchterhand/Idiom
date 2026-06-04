@@ -112,6 +112,11 @@ func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspac
 		return readOnlyDirectAnswerRelevance{Status: "skipped_empty_objective"}
 	}
 	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	answerSupportedPaths := answerCitedCollectiveSourceBodySupportPaths(answer, ledger)
+	if len(answerSupportedPaths) > 0 {
+		ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
+		ledger.RelevantSourceBodyPaths = mergeRunnerStateStrings(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
+	}
 	relevance := readOnlyDirectAnswerRelevance{
 		Status:                  "checked",
 		RelevantSourceBodyPaths: ledger.RelevantSourceBodyPaths,
@@ -398,8 +403,59 @@ func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntim
 	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
 	paths := intersectRunnerPaths(mentioned, ledger.RelevantSourceBodyPaths)
 	paths = mergeRunnerStateStrings(paths, ledger.SourceBodyObjectivePaths, ledger.RelevantSourceBodyPaths)
+	paths = mergeRunnerStateStrings(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
 	if len(paths) == 0 && ledger.DiagnosticRelevant {
 		paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResults(results, 8))
+	}
+	return closurePromptEvidencePaths(paths, 8)
+}
+
+func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyAnswerabilityLedger) []string {
+	mentionedSet := readOnlyPathSet(sourceGroundingMentionedPaths(answer))
+	if len(mentionedSet) == 0 {
+		return nil
+	}
+	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
+	requiredTerms := ledger.requiredSourceBodyObjectiveTerms()
+	if len(requiredTerms) < 2 {
+		return nil
+	}
+	termCovered := map[string]struct{}{}
+	pathTermCount := map[string]int{}
+	for _, support := range ledger.SourceBodyObjectiveTerms {
+		path := normalizeRunnerPath(support.Path)
+		if path == "" {
+			continue
+		}
+		if _, cited := mentionedSet[path]; !cited {
+			continue
+		}
+		if _, read := sourceSet[path]; !read {
+			continue
+		}
+		seenTermsForPath := map[string]struct{}{}
+		for _, term := range support.Terms {
+			term = readOnlyObjectiveSupportTerm(term)
+			if term == "" {
+				continue
+			}
+			termCovered[term] = struct{}{}
+			if _, seen := seenTermsForPath[term]; seen {
+				continue
+			}
+			seenTermsForPath[term] = struct{}{}
+			pathTermCount[path]++
+		}
+	}
+	if len(termCovered) < collectiveSourceBodyObjectiveTermThreshold(len(requiredTerms)) {
+		return nil
+	}
+	var paths []string
+	for path, count := range pathTermCount {
+		if count < 2 {
+			continue
+		}
+		paths = append(paths, path)
 	}
 	return closurePromptEvidencePaths(paths, 8)
 }
@@ -432,9 +488,6 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 	}
 	if len(acceptance.RelevantSourceBodyPaths) > 0 {
 		fields["relevant_source_body_paths"] = cappedStrings(acceptance.RelevantSourceBodyPaths, 8)
-	}
-	if len(acceptance.AnswerObjectiveTerms) > 0 {
-		fields["answer_objective_terms"] = cappedStrings(acceptance.AnswerObjectiveTerms, 12)
 	}
 	return fields
 }

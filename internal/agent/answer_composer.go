@@ -2,8 +2,6 @@ package agent
 
 import (
 	"strings"
-
-	"idiom/internal/util"
 )
 
 // AnswerComposer is the presentation boundary between deterministic evidence
@@ -29,7 +27,6 @@ func (AnswerComposer) Compose(input AnswerComposerInput) (string, bool) {
 
 func composeGenericEvidenceAnswer(question string, paths []string, lines []string) string {
 	var b strings.Builder
-	paths = mergeQuestionExpectedEvidencePaths(question, paths)
 	if len(paths) > 0 {
 		b.WriteString("The strongest implementation evidence is in ")
 		b.WriteString(formatInlinePathList(paths, 4))
@@ -50,35 +47,6 @@ func composeGenericEvidenceAnswer(question string, paths []string, lines []strin
 		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String())
-}
-
-func mergeQuestionExpectedEvidencePaths(question string, paths []string) []string {
-	expected := questionExpectedEvidencePaths(question)
-	if len(expected) == 0 {
-		return paths
-	}
-	out := append([]string(nil), expected...)
-	for _, path := range paths {
-		out = util.AppendUnique(out, path)
-	}
-	return out
-}
-
-func questionExpectedEvidencePaths(question string) []string {
-	if delegatedObjectiveIsDiscoveryToolUsefulness(question) {
-		return []string{
-			"internal/agent/answer_composer.go",
-			"internal/agent/runner.go",
-			"internal/agent/runner_lane_policy.go",
-		}
-	}
-	if delegatedObjectiveIsSubagentArchitecture(question) {
-		return []string{
-			"internal/agent/runner.go",
-			"internal/agent/runner_child_tasks.go",
-		}
-	}
-	return nil
 }
 
 func questionPresentationBlock(question string) string {

@@ -3372,7 +3372,7 @@ func (r *Runner) Run(
 				nudge := delegatedReadOnlyAnswerReadyNudge(r.RuntimeBrief.Objective, collectedResults, postReadinessProbeBudget)
 				eventRole := "delegated_read_only_answer_ready_nudge"
 				if becameReadyFromAnalysis {
-					nudge = readOnlyAnswerReadyNudge(r.RuntimeBrief.Objective, collectedResults, postReadinessProbeBudget)
+					nudge = readOnlyAnswerReadyNudge(r.RuntimeBrief, collectedResults, postReadinessProbeBudget)
 					eventRole = "read_only_answer_ready_nudge"
 				}
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
@@ -4303,7 +4303,14 @@ func (r *Runner) runtimeBriefWithLiveState(policy RunPolicy, messages []llama.Ch
 			MaxContextChars:    policy.MaxContextChars,
 		}
 	}
-	brief.EvidencePaths = mergeRunnerStateStrings(brief.EvidencePaths, runnerEvidencePathsForBrief(brief, results, 8))
+	liveEvidencePaths := runnerEvidencePathsForBrief(brief, results, 8)
+	if readOnlyDirectAnswerLane(brief) {
+		if len(liveEvidencePaths) > 0 {
+			brief.EvidencePaths = liveEvidencePaths
+		}
+	} else {
+		brief.EvidencePaths = mergeRunnerStateStrings(brief.EvidencePaths, liveEvidencePaths)
+	}
 	brief.ChangedPaths = mergeRunnerStateStrings(brief.ChangedPaths, mapKeys(changedPathsFromToolResults(results)))
 	brief = runnerBriefWithPhaseHints(brief, results)
 	brief.Readiness = runnerReadinessState(r.agentName(), brief, results)
@@ -5864,6 +5871,11 @@ func (r *Runner) emitModelCallTraceWithOptions(step int, label string, prompt []
 	payload["message_count"] = len(prompt)
 	payload["role_chars"] = roleChars
 	payload["chosen_tool"] = chosen
+	if textual := modelCallParsedTextualToolTelemetry(reply); textual != nil {
+		for key, value := range textual {
+			payload[key] = value
+		}
+	}
 	payload["duration_ms"] = durationMs
 	backendKind := runnerTurnPhaseBackendKind(r)
 	payload["backend_kind"] = backendKind
@@ -5896,6 +5908,10 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 		"tool":      strings.TrimSpace(req.Tool),
 		"path":      normalizeRunnerPath(planThenExecuteRequestTargetPath(req)),
 	}
+	if parseErr == nil && strings.TrimSpace(req.Tool) != "" && toolRequestNormalizerTransportIsModelTextual(transport) {
+		payload["parsed_textual_tool"] = strings.TrimSpace(req.Tool)
+		payload["textual_tool_transport"] = strings.TrimSpace(transport)
+	}
 	if parseErr != nil {
 		payload["error"] = strings.TrimSpace(parseErr.Error())
 		if parserFailureClass == "" {
@@ -5906,6 +5922,41 @@ func (r *Runner) emitToolRequestNormalizerEvent(outcome string, transport string
 		}
 	}
 	r.emitEvent(marshalRunEvent("tool_request_normalizer", payload))
+}
+
+func toolRequestNormalizerTransportIsModelTextual(transport string) bool {
+	switch strings.TrimSpace(transport) {
+	case toolRequestNormalizerTransportTextual,
+		toolRequestNormalizerTransportFencedJSON,
+		toolRequestNormalizerTransportKeyValue,
+		toolRequestNormalizerTransportKeyValueArgs,
+		toolRequestNormalizerTransportFunctionCall,
+		toolRequestNormalizerTransportNestedArguments,
+		toolRequestNormalizerTransportIdiomCLI,
+		toolRequestNormalizerTransportStringifiedSubmitRepair:
+		return true
+	default:
+		return false
+	}
+}
+
+func modelCallParsedTextualToolTelemetry(reply llama.ChatMessage) map[string]any {
+	if len(reply.ToolCalls) > 0 {
+		return nil
+	}
+	normalization := normalizeToolRequestSyntax(reply)
+	if !normalization.OK || strings.TrimSpace(normalization.Request.Tool) == "" {
+		return nil
+	}
+	transport := strings.TrimSpace(normalization.EventTransport)
+	if transport == "" || transport == toolRequestNormalizerTransportNative {
+		return nil
+	}
+	return map[string]any{
+		"parsed_textual_tool":       strings.TrimSpace(normalization.Request.Tool),
+		"parsed_tool_transport":     transport,
+		"parsed_tool_request_valid": true,
+	}
 }
 
 func safeModelAliasForTelemetry(model string) string {
@@ -5949,7 +6000,7 @@ func (r *Runner) emitReadOnlyAnswerReadyEvent(req workspace.ToolRequest, results
 	if r == nil || r.OnEvent == nil {
 		return
 	}
-	paths := promptEvidencePathsFromToolResults(results, 8)
+	paths := readOnlyPresentationEvidencePathsForBrief(r.RuntimeBrief, results, 8)
 	payload := map[string]any{
 		"agent":          r.agentName(),
 		"reason":         "sufficient_read_only_evidence",
@@ -6359,9 +6410,7 @@ func directProbePathsFromToolResults(results []workspace.ToolResult, max int) []
 	seen := make(map[string]struct{}, max)
 	var paths []string
 	for _, result := range results {
-		switch strings.TrimSpace(result.Tool) {
-		case "read_file", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_extract_body", "python_read_symbol", "python_extract_body", "code_navigate":
-		default:
+		if !concreteSourceEvidenceResult(result) {
 			continue
 		}
 		for _, path := range pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(result.Summary)) {
@@ -6404,6 +6453,9 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 		max = 8
 	}
 	if !runnerBriefRequiresMutation(brief) {
+		if readOnlyDirectAnswerLane(brief) {
+			return readOnlyDirectAnswerPresentationEvidencePaths(brief, results, max)
+		}
 		return promptEvidencePathsFromToolResults(results, max)
 	}
 	scope := mutationEvidenceScope(brief, results)
@@ -6425,11 +6477,33 @@ func runnerEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results
 	return closurePromptEvidencePathsPreservingTests(paths, max)
 }
 
+func readOnlyPresentationEvidencePathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	if readOnlyDirectAnswerLane(brief) {
+		return readOnlyDirectAnswerPresentationEvidencePaths(brief, results, max)
+	}
+	return promptEvidencePathsFromToolResults(results, max)
+}
+
+func readOnlyDirectAnswerPresentationEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	paths := append([]string{}, ledger.RelevantSourceBodyPaths...)
+	if ledger.DiagnosticRelevant {
+		paths = mergeRunnerStateStrings(paths, readOnlySourceLikePaths(ledger.DiagnosticPaths, max*2))
+	}
+	return closurePromptEvidencePaths(paths, max)
+}
+
 func runnerPinnedPathsForBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
 	if max <= 0 {
 		max = 8
 	}
 	if !runnerBriefRequiresMutation(brief) {
+		if readOnlyDirectAnswerLane(brief) {
+			return readOnlyDirectAnswerPresentationEvidencePaths(brief, results, max)
+		}
 		return promptEvidencePathsFromToolResults(results, max)
 	}
 	paths := append([]string{}, brief.RequiredEditPaths...)
@@ -7089,8 +7163,9 @@ func delegatedReadOnlyAnswerReadyNudge(objective string, results []workspace.Too
 	return strings.Join(lines, "\n")
 }
 
-func readOnlyAnswerReadyNudge(objective string, results []workspace.ToolResult, probeBudget int) string {
-	paths := closurePromptEvidencePaths(promptEvidencePathsFromToolResults(results, 4), 4)
+func readOnlyAnswerReadyNudge(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, probeBudget int) string {
+	objective := strings.TrimSpace(brief.Objective)
+	paths := closurePromptEvidencePaths(readOnlyPresentationEvidencePathsForBrief(brief, results, 4), 4)
 	validity, _ := closureDecisionRationale(objective, results, paths)
 	lines := []string{
 		"Answer now from the evidence above. The read-only evidence is sufficient for this question.",
@@ -9786,6 +9861,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			"The completion gate rejected a final answer before any successful workspace write. No required_edit_paths list is active, so this is a target-selection failure, not a required-path coverage failure.",
 			"Your next visible message must be exactly one parser-readable action, not prose and not an implementation summary. Do not include analysis before or after the action.",
 			writeStep,
+			textualMutationEditFileJSONInstruction(),
 			targetDiscoveryStep,
 			"If one edit-safety fact is missing after a concrete candidate exists, call exactly one bounded discovery/read tool with `named_gap` and `why_not_answering` that names the fact needed before the write.",
 			"The only non-tool closeout is `<<QUESTION>>:` naming the exact blocker, such as no resolvable edit target, missing permission, or missing body evidence. Do not repeat a final answer without a tool-backed write.",
@@ -9802,6 +9878,14 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 		return postWriteVerificationPendingRecoveryPrompt(results, false), false, true
 	}
 	return "", false, false
+}
+
+func textualMutationWriteJSONInstruction() string {
+	return "For textual tool transport, a write action is one visible JSON object with a top-level `tool` field plus real source-backed arguments. Key-value and function-call write syntax are not executable; do not use line-oriented `tool:` fields or function-call syntax for writes."
+}
+
+func textualMutationEditFileJSONInstruction() string {
+	return textualMutationWriteJSONInstruction() + " For `edit_file`, include a real required path when one is active, exact `old_text` copied from source evidence, complete replacement `new_text`, and a one-sentence `description`. Do not copy placeholders, ellipses, schema examples, or prose as edit fields."
 }
 
 func (r *Runner) readOnlyEvidenceCompletionRecoveryPrompt(results []workspace.ToolResult) string {
@@ -9931,7 +10015,7 @@ func (r *Runner) implementationRequiredPathCompletionRecoveryPrompt(missing []st
 	} else {
 		b.WriteString("Every remaining required path already has source-body anchor evidence. Do not restart broad discovery or task planning. Call a write capability, or answer `<<QUESTION>>:` with the exact path-specific blocker that prevents the write.\n")
 		if scopedImplementationMissingPathsAreExistingSourceFiles(missing, r.Workspace) {
-			b.WriteString("\nFor textual-tool backends, emit one parser-readable write object with real values from the source evidence. For `edit_file`, use a real required path plus exact `old_text` and complete replacement `new_text`; for `apply_patch`, include a valid patch whose context and replacement lines are copied from real source evidence. Do not copy placeholders, ellipses, or schema examples.\n")
+			b.WriteString("\n" + textualMutationEditFileJSONInstruction() + "\n")
 		}
 	}
 	b.WriteString("\nThe only non-tool closeout is `<<QUESTION>>:` with one concrete blocker reason for every remaining required path.")
@@ -13011,6 +13095,7 @@ func (r *Runner) unscopedNoWriteTerminalRecoveryPrompt(results []workspace.ToolR
 		"The completion gate has now rejected multiple no-write final answers after source evidence was gathered.",
 		"Read/search/discovery tools are hidden for this turn. Do not inspect, search, navigate, plan, or summarize again.",
 		"Your next visible message must be exactly one terminal action: a parser-readable write tool call using current source evidence, or `<<QUESTION>>:` naming the exact blocker that prevents a write.",
+		textualMutationWriteJSONInstruction(),
 	}
 	if sourced := implementationTargetWriteReadySourcedPathSummary(results, 4); sourced != "" {
 		lines = append(lines, "Already-read source-body evidence is available for: "+sourced+".")
@@ -13024,6 +13109,7 @@ func hiddenOnlyNoWriteTerminalRecoveryPrompt() string {
 		"The previous retry produced hidden-only output after concrete source evidence was already read. Hidden thinking is disabled for this retry.",
 		"Read/search/discovery tools are hidden for this turn. Do not inspect, search, plan, or summarize again.",
 		"Your next visible message must be exactly one terminal action: a parser-readable write tool call using the current source evidence, or `<<QUESTION>>:` naming the exact blocker that prevents a write.",
+		textualMutationWriteJSONInstruction(),
 		"Choose the path and edit shape from the gathered evidence and active runtime contract. Do not copy placeholders, schema examples, or prose as edit fields.",
 	}, "\n\n")
 }
@@ -14225,7 +14311,7 @@ func readOnlyCloseoutEvidencePaths(brief workerruntime.WorkerRuntimeBrief, resul
 func mentionedEvidencePathsFromToolResults(results []workspace.ToolResult, max int) []string {
 	var paths []string
 	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" && strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
+		if !acceptedMentionedEvidenceResult(result) {
 			continue
 		}
 		paths = mergeRunnerStateStrings(paths, pathparse.MentionedWorkspacePaths(result.Summary))
@@ -14236,6 +14322,22 @@ func mentionedEvidencePathsFromToolResults(results []workspace.ToolResult, max i
 		}
 	}
 	return closurePromptEvidencePaths(paths, max)
+}
+
+func acceptedMentionedEvidenceResult(result workspace.ToolResult) bool {
+	if strings.TrimSpace(result.Error) != "" {
+		return false
+	}
+	if concreteSourceEvidenceResult(result) || readOnlyDiagnosticEvidenceResult(result) {
+		return true
+	}
+	if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Output) == "" {
+		return false
+	}
+	if _, ok := readOnlyEvidencePacketFromResult(result); ok {
+		return true
+	}
+	return delegatedTaskOutputHasFindingEvidence(result.Output)
 }
 
 // verificationContractSkipsGate reports whether the brief's
@@ -18498,6 +18600,15 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 	lane := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Lane), strings.TrimSpace(r.RuntimeBrief.TaskFamily), r.agentName())
 	contract := util.FirstNonEmpty(strings.TrimSpace(r.RuntimeBrief.Contract), string(workerruntime.ContractDirectAnswer))
 	evidencePaths := acceptance.EvidencePaths
+	var presentationEvidencePaths []string
+	if readOnlyDirectAnswerLane(r.RuntimeBrief) && len(evidencePaths) == 0 {
+		presentationEvidencePaths = readOnlyDirectAnswerPresentationEvidencePaths(r.RuntimeBrief, results, 8)
+	}
+	addPresentationEvidencePaths := func(payload map[string]any) {
+		if len(presentationEvidencePaths) > 0 {
+			payload["presentation_evidence_paths"] = presentationEvidencePaths
+		}
+	}
 	acceptanceFields := finalAnswerAcceptanceEventFields(acceptance)
 	if acceptance.BlockerKind != "" {
 		readiness := map[string]any{
@@ -18509,6 +18620,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 			"blocker_kind":   acceptance.BlockerKind,
 			"evidence_paths": evidencePaths,
 		}
+		addPresentationEvidencePaths(readiness)
 		for key, value := range acceptanceFields {
 			readiness[key] = value
 		}
@@ -18521,6 +18633,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 			"blocker_kind":   acceptance.BlockerKind,
 			"evidence_paths": evidencePaths,
 		}
+		addPresentationEvidencePaths(critic)
 		for key, value := range acceptanceFields {
 			critic[key] = value
 		}
@@ -18535,6 +18648,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 			"blocker_kind":   acceptance.BlockerKind,
 			"evidence_paths": evidencePaths,
 		}
+		addPresentationEvidencePaths(rails)
 		for key, value := range acceptanceFields {
 			rails[key] = value
 		}
@@ -18560,6 +18674,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 		"reason":         "answer satisfies lane contract and evidence gate",
 		"evidence_paths": evidencePaths,
 	}
+	addPresentationEvidencePaths(readiness)
 	for key, value := range acceptanceFields {
 		readiness[key] = value
 	}
@@ -18570,6 +18685,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
 	}
+	addPresentationEvidencePaths(critic)
 	for key, value := range acceptanceFields {
 		critic[key] = value
 	}
@@ -18582,6 +18698,7 @@ func (r *Runner) emitFinalAnswerTelemetry(answer string, results []workspace.Too
 		"action":         "accept",
 		"evidence_paths": evidencePaths,
 	}
+	addPresentationEvidencePaths(rails)
 	for key, value := range acceptanceFields {
 		rails[key] = value
 	}

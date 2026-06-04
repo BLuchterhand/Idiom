@@ -24,6 +24,9 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if answer == "" || !input.UserFacing {
 		return answer
 	}
+	present := func(candidate string) string {
+		return presentableFinalAnswerForUser(input.Brief, input.Results, candidate)
+	}
 	// Strip self-inflicted "Blocker:" prose when the harness has
 	// objective evidence the contract is satisfied: all required edit
 	// paths changed, planner owns verification, and the last failed
@@ -34,39 +37,166 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	// no-op blocker note as a run-level failure. Runs heading toward a
 	// real <<QUESTION>> blocker still pass through untouched.
 	if cleaned, ok := stripCompletedMutationSelfBlocker(input.Brief, input.Results, answer); ok {
-		return cleaned
+		return present(cleaned)
 	}
 	if !strings.HasPrefix(answer, "<<QUESTION>>") && !mutationReplyReportsConcreteNoopOrBlocker(strings.ToLower(answer)) {
 		if blocker, ok := canonicalMutationBlockerFinalAnswer(input.Brief, input.Results, answer); ok {
-			return blocker
+			return present(blocker)
 		}
 	}
 	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
 		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer, runnerWorkspaceRoot(r)); ok {
-			return presentable
+			return present(presentable)
 		}
 		if conversationFallbackShouldAvoidSourceBody(input.Brief) {
-			return synthesizeBriefConversationFallback(input.Brief, input.Results)
+			return present(synthesizeBriefConversationFallback(input.Brief, input.Results))
 		}
 	}
 	if finalAnswerStopReasonPreservesUncertainty(input.StopReason) &&
 		!finalAnswerNeedsDecoration(answer) &&
 		!looksLikeGenericEvidenceComposerAnswer(answer) {
-		return answer
+		return present(answer)
 	}
 	if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
-		return answer
+		return present(answer)
 	}
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
-		return cleaned
+		return present(cleaned)
 	}
 	if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
-		return composed
+		return present(composed)
 	}
 	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer, runnerWorkspaceRoot(r)); ok {
+		return present(presentable)
+	}
+	return present(answer)
+}
+
+func presentableFinalAnswerForUser(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) string {
+	answer = strings.TrimSpace(answer)
+	if presentable, ok := presentableNonMutationQuestionBlocker(brief, results, answer); ok {
 		return presentable
 	}
 	return answer
+}
+
+func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, blocker string) (string, bool) {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	if runnerBriefRequiresMutation(brief) ||
+		workerruntime.TaskFamilyIsPlanThenExecutePlanner(brief.TaskFamily) ||
+		workerruntime.TaskFamilyIsPlanThenExecuteReview(brief.TaskFamily) {
+		return "", false
+	}
+	reason := strings.TrimSpace(blocker)
+	if !strings.HasPrefix(reason, "<<QUESTION>>") {
+		return "", false
+	}
+	reason = strings.TrimPrefix(reason, "<<QUESTION>>")
+	reason = strings.TrimLeft(strings.TrimSpace(reason), ": ")
+	internalReason := questionBlockerReasonLooksInternal(reason)
+	reason = presentableQuestionBlockerReason(reason)
+	if reason == "" {
+		reason = "the run stopped before producing a supported answer."
+	}
+	if !internalReason && !questionBlockerReasonLooksInternal(reason) && !strings.Contains(reason, "\n") {
+		return ensureTrailingPeriod(reason), true
+	}
+	paths := readOnlyCloseoutEvidencePaths(brief, results, 4)
+	if len(paths) == 0 {
+		paths = delegatedClosureEvidencePaths(brief.Objective, results, 4)
+	}
+
+	var b strings.Builder
+	b.WriteString("I could not produce a supported final answer before the run stopped.")
+	if reason != "" {
+		b.WriteString(" The blocker was: ")
+		b.WriteString(lowercaseFirstSentence(reason))
+		if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
+			b.WriteString(".")
+		}
+	}
+	if len(paths) > 0 {
+		b.WriteString(" Inspected evidence: ")
+		b.WriteString(formatInlinePathList(paths, 4))
+		b.WriteString(".")
+	}
+	return strings.TrimSpace(b.String()), true
+}
+
+func presentableQuestionBlockerReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if questionBlockerReasonLooksInternal(reason) {
+		if malformed := extractMalformedWriteBlockerReason(reason); malformed != "" {
+			return malformed
+		}
+		return "the run stopped before it had enough supported evidence for the requested answer"
+	}
+	replacements := []struct {
+		old string
+		new string
+	}{
+		{"`<<QUESTION>>:`", "a blocker"},
+		{"`<<QUESTION>>`", "a blocker"},
+		{"<<QUESTION>>:", "a blocker"},
+		{"<<QUESTION>>", "a blocker"},
+	}
+	for _, replacement := range replacements {
+		reason = strings.ReplaceAll(reason, replacement.old, replacement.new)
+	}
+	return strings.TrimSpace(reason)
+}
+
+func questionBlockerReasonLooksInternal(reason string) bool {
+	lower := strings.ToLower(strings.TrimSpace(reason))
+	if lower == "" {
+		return false
+	}
+	return containsAny(lower,
+		"completion gate",
+		"missing completion evidence",
+		"required next evidence",
+		"answer with the exact",
+		"current read-only answer has",
+		"current read-only answer is",
+		"current read-only answer uses",
+		"no concrete user-facing finding was retained",
+		"state the supported claim from the inspected source",
+		"state the supported concrete finding from",
+		"name the exact missing claim",
+		"only localization evidence",
+		"candidate paths but no relevant source-body evidence",
+		"not backed by relevant source-body or diagnostic evidence",
+		"missing source-body evidence for named path",
+		"retained enough source-body evidence for a grounded answer",
+		"read one objective-relevant source candidate",
+		"gather one source-body read",
+	)
+}
+
+func extractMalformedWriteBlockerReason(reason string) string {
+	lower := strings.ToLower(reason)
+	idx := strings.Index(lower, "blocked by malformed write request")
+	if idx < 0 {
+		return ""
+	}
+	end := idx + len("blocked by malformed write request")
+	if end < len(reason) {
+		if dot := strings.Index(reason[end:], "."); dot >= 0 {
+			end += dot + 1
+		}
+	}
+	return ensureTrailingPeriod(strings.TrimSpace(reason[idx:end]))
+}
+
+func ensureTrailingPeriod(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	if strings.HasSuffix(s, ".") || strings.HasSuffix(s, "!") || strings.HasSuffix(s, "?") {
+		return s
+	}
+	return s + "."
 }
 
 func runnerWorkspaceRoot(r *Runner) string {

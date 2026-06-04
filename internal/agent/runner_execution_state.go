@@ -10,6 +10,14 @@ import (
 	"idiom/internal/workspace"
 )
 
+type discoveryConsumptionStrength int
+
+const (
+	discoveryConsumptionNone discoveryConsumptionStrength = iota
+	discoveryConsumptionCandidateOnly
+	discoveryConsumptionSourceOwner
+)
+
 type runnerExecutionState struct {
 	verificationAttempted            bool
 	needsNarrowingAfterBroad         bool
@@ -24,7 +32,7 @@ type runnerExecutionState struct {
 	pendingDiscoverySummary          string
 	pendingDiscoveryOutput           string
 	pendingDiscoveryCandidates       []string
-	pendingDiscoveryWeakPacket       bool
+	pendingDiscoveryStrength         discoveryConsumptionStrength
 	pendingDiscoveryFailedAttempt    bool
 	checkpointCreated                bool
 	writesSinceVerification          int
@@ -120,14 +128,16 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 		s.pendingSearchSummary = ""
 		s.pendingSearchOutput = ""
 	}
-	if successfulDiscoveryConsumptionResult(req, result) {
-		s.pendingDiscoveryConsumption = true
-		s.pendingDiscoveryTool = strings.TrimSpace(req.Tool)
-		s.pendingDiscoverySummary = truncForRetryReason(result.Summary)
-		s.pendingDiscoveryOutput = truncForRetryReason(result.Output)
-		s.pendingDiscoveryCandidates = discoveryConsumptionCandidatesFromResult(result, 6)
-		s.pendingDiscoveryWeakPacket = contextPackResultWeakSourceOwner(result)
-		s.pendingDiscoveryFailedAttempt = false
+	if strength := discoveryConsumptionResultStrength(req, result); strength != discoveryConsumptionNone {
+		if s.shouldReplacePendingDiscovery(strength) {
+			s.pendingDiscoveryConsumption = true
+			s.pendingDiscoveryTool = strings.TrimSpace(req.Tool)
+			s.pendingDiscoverySummary = truncForRetryReason(result.Summary)
+			s.pendingDiscoveryOutput = truncForRetryReason(result.Output)
+			s.pendingDiscoveryCandidates = discoveryConsumptionCandidatesFromResult(result, 6)
+			s.pendingDiscoveryStrength = strength
+			s.pendingDiscoveryFailedAttempt = false
+		}
 	} else if sourceBodyConsumed {
 		s.clearPendingDiscoveryConsumption()
 	} else if s.pendingDiscoveryConsumption && isContentInspectionTool(req.Tool) && strings.TrimSpace(result.Error) != "" {
@@ -144,6 +154,10 @@ func (s *runnerExecutionState) applyResult(req workspace.ToolRequest, result wor
 	return update
 }
 
+func (s *runnerExecutionState) shouldReplacePendingDiscovery(strength discoveryConsumptionStrength) bool {
+	return s.pendingDiscoveryStrength != discoveryConsumptionSourceOwner || strength == discoveryConsumptionSourceOwner
+}
+
 func (s *runnerExecutionState) clearPendingDiscoveryConsumption() {
 	if s == nil {
 		return
@@ -153,7 +167,7 @@ func (s *runnerExecutionState) clearPendingDiscoveryConsumption() {
 	s.pendingDiscoverySummary = ""
 	s.pendingDiscoveryOutput = ""
 	s.pendingDiscoveryCandidates = nil
-	s.pendingDiscoveryWeakPacket = false
+	s.pendingDiscoveryStrength = discoveryConsumptionNone
 	s.pendingDiscoveryFailedAttempt = false
 }
 
@@ -230,25 +244,67 @@ func successfulSearchDiscoveryResult(req workspace.ToolRequest, result workspace
 }
 
 func successfulDiscoveryConsumptionResult(req workspace.ToolRequest, result workspace.ToolResult) bool {
+	return discoveryConsumptionResultStrength(req, result) == discoveryConsumptionSourceOwner
+}
+
+func discoveryConsumptionResultStrength(req workspace.ToolRequest, result workspace.ToolResult) discoveryConsumptionStrength {
 	if strings.TrimSpace(result.Error) != "" || workerruntime.IsZeroHitSearchResult(result) {
-		return false
+		return discoveryConsumptionNone
 	}
 	if concreteSourceEvidenceResult(result) {
-		return false
+		return discoveryConsumptionNone
 	}
 	if strings.TrimSpace(result.Output) == "" && strings.TrimSpace(result.Summary) == "" {
-		return false
+		return discoveryConsumptionNone
 	}
 	switch strings.TrimSpace(req.Tool) {
 	case "context_pack":
-		return contextPackResultHasTargets(result) && !contextPackResultWeakSourceOwner(result)
+		if !contextPackResultHasTargets(result) {
+			return discoveryConsumptionNone
+		}
+		if contextPackResultWeakSourceOwner(result) {
+			return discoveryConsumptionCandidateOnly
+		}
+		return discoveryConsumptionSourceOwner
+	case "context_query":
+		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
+			return discoveryConsumptionNone
+		}
+		if discoveryConsumptionResultHasReadableSourceOwner(result) {
+			return discoveryConsumptionSourceOwner
+		}
+		return discoveryConsumptionCandidateOnly
 	case "search_files", "search_content", "rg", "grep",
 		"go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol",
-		"structural_search", "discovery_query", "context_query", "context_zoom", "context_impact":
-		return len(discoveryConsumptionCandidatesFromResult(result, 1)) > 0
+		"structural_search", "discovery_query", "context_zoom", "context_impact":
+		if len(discoveryConsumptionCandidatesFromResult(result, 1)) == 0 {
+			return discoveryConsumptionNone
+		}
+		return discoveryConsumptionSourceOwner
 	default:
+		return discoveryConsumptionNone
+	}
+}
+
+func discoveryConsumptionResultHasReadableSourceOwner(result workspace.ToolResult) bool {
+	text := strings.TrimSpace(result.Summary + "\n" + result.Output)
+	if text == "" {
 		return false
 	}
+	lower := strings.ToLower(text)
+	if strings.Contains(lower, `"source_owner_found":false`) ||
+		strings.Contains(lower, `"source_owner_found": false`) {
+		return false
+	}
+	if !strings.Contains(lower, `"source_owner_found":true`) &&
+		!strings.Contains(lower, `"source_owner_found": true`) &&
+		!strings.Contains(lower, "source owner found") &&
+		!strings.Contains(lower, "source-owner found") &&
+		!strings.Contains(lower, "readable source owner") &&
+		!strings.Contains(lower, "readable source-owner") {
+		return false
+	}
+	return len(readOnlySourceLikePaths(sourceLikePathsFromText(text, 4), 1)) > 0
 }
 
 func (s *runnerExecutionState) shouldConsumeSearchHitBeforeMoreSearch(req workspace.ToolRequest) bool {
@@ -259,7 +315,7 @@ func (s *runnerExecutionState) shouldConsumeDiscoveryBeforeMoreBroadDiscovery(re
 	if s == nil || !s.pendingDiscoveryConsumption {
 		return false
 	}
-	if s.pendingDiscoveryWeakPacket && strings.TrimSpace(req.Tool) == "context_pack" {
+	if s.pendingDiscoveryStrength != discoveryConsumptionSourceOwner {
 		return false
 	}
 	if s.pendingDiscoveryFailedAttempt && strings.TrimSpace(s.pendingDiscoveryTool) != "context_pack" {

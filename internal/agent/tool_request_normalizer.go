@@ -120,11 +120,11 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 	if idiomCLI := normalizeIdiomCLIToolRequestSyntax(message.Content); idiomCLI.EventOutcome != "" {
 		return idiomCLI
 	}
-	if functionCall := normalizeFunctionCallToolRequestSyntax(message.Content); functionCall.EventOutcome != "" {
-		return functionCall
-	}
 	if argsBlock := normalizeKeyValueArgsToolRequestSyntax(message.Content); argsBlock.EventOutcome != "" {
 		return argsBlock
+	}
+	if functionCall := normalizeFunctionCallToolRequestSyntax(message.Content); functionCall.EventOutcome != "" {
+		return functionCall
 	}
 	if keyValue := normalizeKeyValueToolRequestSyntax(message.Content); keyValue.EventOutcome != "" {
 		return keyValue
@@ -406,6 +406,12 @@ func normalizeKeyValueToolRequestSyntax(text string) toolRequestSyntaxNormalizat
 		}
 		return toolRequestSyntaxNormalization{}
 	}
+	if workspace.IsWorkspaceWriteTool(req.Tool) {
+		return toolRequestSyntaxNormalization{
+			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			EventTransport: toolRequestNormalizerTransportKeyValue,
+		}
+	}
 	raw := marshalToolRequestRaw(req)
 	result := toolRequestSyntaxNormalization{
 		Request:        req,
@@ -428,6 +434,12 @@ func normalizeKeyValueArgsToolRequestSyntax(text string) toolRequestSyntaxNormal
 			}
 		}
 		return toolRequestSyntaxNormalization{}
+	}
+	if workspace.IsWorkspaceWriteTool(req.Tool) {
+		return toolRequestSyntaxNormalization{
+			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			EventTransport: toolRequestNormalizerTransportKeyValueArgs,
+		}
 	}
 	result := toolRequestSyntaxNormalization{
 		Request:        req,
@@ -478,6 +490,9 @@ func keyValueArgsToolAndBodyStart(text string) (string, int, bool) {
 		rawLine := strings.TrimRight(line, "\r\n")
 		trimmed := strings.TrimSpace(rawLine)
 		lower := strings.ToLower(trimmed)
+		if tool == "" && trimmed != "" && !strings.HasPrefix(lower, "tool:") {
+			return "", 0, false
+		}
 		if value, ok := strings.CutPrefix(lower, "tool:"); ok {
 			original := strings.TrimSpace(rawLine[strings.Index(strings.ToLower(rawLine), "tool:")+len("tool:"):])
 			if original == "" || !toolRequestSyntaxIdentifier(original) {
@@ -551,6 +566,12 @@ func normalizeFunctionCallToolRequestSyntax(text string) toolRequestSyntaxNormal
 			}
 		}
 		return toolRequestSyntaxNormalization{}
+	}
+	if workspace.IsWorkspaceWriteTool(req.Tool) {
+		return toolRequestSyntaxNormalization{
+			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
+			EventTransport: toolRequestNormalizerTransportFunctionCall,
+		}
 	}
 	raw := marshalToolRequestRaw(req)
 	result := toolRequestSyntaxNormalization{
@@ -1052,4 +1073,40 @@ func missingToolInferenceNeedsTypedAuthority(tool string) bool {
 	default:
 		return false
 	}
+}
+
+func unsafeTextualWriteAttempt(text string) (tool string, transport string, ok bool) {
+	normalization := normalizeToolRequestSyntax(llama.ChatMessage{Content: text})
+	if normalization.OK ||
+		normalization.ParseErr != nil ||
+		normalization.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer {
+		return "", "", false
+	}
+	tool = unsafeTextualToolName(text)
+	if !workspace.IsWorkspaceWriteTool(tool) {
+		return "", "", false
+	}
+	return tool, strings.TrimSpace(normalization.EventTransport), true
+}
+
+func unsafeTextualToolName(text string) string {
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		key, body, ok := strings.Cut(line, ":")
+		if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
+			return ""
+		}
+		body = strings.TrimSpace(body)
+		if left, _, ok := strings.Cut(body, "("); ok {
+			body = strings.TrimSpace(left)
+		}
+		if left, _, ok := strings.Cut(body, " "); ok {
+			body = strings.TrimSpace(left)
+		}
+		return strings.ToLower(strings.TrimSpace(body))
+	}
+	return ""
 }

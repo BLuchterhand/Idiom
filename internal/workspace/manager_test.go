@@ -489,7 +489,7 @@ func TestInstructionsPreferStructuredNarrowing(t *testing.T) {
 	})
 	instructions := mgr.Instructions()
 	for _, want := range []string{
-		"Resolve a path-discovery capability, discovered handle, or structured symbol/navigation route",
+		"Resolve a path-discovery capability, discovered handle, or structured symbol/code navigation route",
 		"narrow with structured language-aware routes or discovered handles first",
 		"either answer directly or take one exact evidence step tied to a named gap",
 	} {
@@ -536,8 +536,129 @@ func TestResolveReadPathMissingFileSuggestsStructuredDiscovery(t *testing.T) {
 		t.Fatal("expected missing read path error")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "structured symbol/navigation") {
-		t.Fatalf("expected missing path error to mention structured symbol/navigation capabilities, got %q", msg)
+	if strings.Contains(msg, "list_files") {
+		t.Fatalf("missing read path error must not prescribe list_files, got %q", msg)
+	}
+	if count := strings.Count(msg, "Available recovery capabilities"); count != 1 {
+		t.Fatalf("missing read path error should include one capability sentence, got %d in %q", count, msg)
+	}
+	for _, want := range []string{"file-name search", "structured symbol/code navigation", "exact text search"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected missing path error to mention %q capability, got %q", want, msg)
+		}
+	}
+}
+
+func TestResolveReadPathMissingFileWithoutNameMatchUsesGenericCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	subdir := filepath.Join(dir, "notes")
+	if err := os.MkdirAll(subdir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	writeTestFile(t, filepath.Join(subdir, "alpha.txt"), "ok\n")
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+
+	_, _, err := mgr.resolveReadTarget(ToolRequest{Tool: "read_file", Path: "notes/zzzzzzzz.go"})
+	if err == nil {
+		t.Fatal("expected missing read path error")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "list_files") {
+		t.Fatalf("missing read path helper must not prescribe list_files, got %q", msg)
+	}
+	if count := strings.Count(msg, "Available recovery capabilities"); count != 1 {
+		t.Fatalf("missing read path helper should include one capability sentence, got %d in %q", count, msg)
+	}
+	for _, want := range []string{"file-name search", "structured symbol/code navigation", "exact text search"} {
+		if !strings.Contains(msg, want) {
+			t.Fatalf("expected missing path helper to mention %q capability, got %q", want, msg)
+		}
+	}
+}
+
+func TestReadFileDirectoryErrorUsesGenericCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "notes"), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "notes"})
+	if result.Error == "" {
+		t.Fatalf("expected read_file directory error, got %#v", result)
+	}
+	if strings.Contains(result.Error, "list_files") {
+		t.Fatalf("read_file directory error must not prescribe list_files, got %q", result.Error)
+	}
+	if count := strings.Count(result.Error, "Available recovery capabilities"); count != 1 {
+		t.Fatalf("read_file directory error should include one capability sentence, got %d in %q", count, result.Error)
+	}
+	for _, want := range []string{"file-name search", "structured symbol/code navigation", "exact text search"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected read_file directory error to mention %q capability, got %q", want, result.Error)
+		}
+	}
+}
+
+func TestReadFileMissingParentErrorUsesGenericCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteOverview(t, filepath.Join(dir, "internal/agent/runner.go"), "package agent\n")
+	mgr := NewManager(config.Workspace{
+		Root:                dir,
+		CWD:                 dir,
+		MaxDirectoryEntries: 512,
+		MaxFileBytes:        1 << 20,
+	})
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "internal/llm/llm.go"})
+	if result.Error == "" {
+		t.Fatalf("expected read_file missing-parent error, got %#v", result)
+	}
+	if strings.Contains(result.Error, "list_files") {
+		t.Fatalf("read_file missing-parent error must not prescribe list_files, got %q", result.Error)
+	}
+	if count := strings.Count(result.Error, "Available recovery capabilities"); count != 1 {
+		t.Fatalf("read_file missing-parent error should include one capability sentence, got %d in %q", count, result.Error)
+	}
+	for _, want := range []string{"file-name search", "structured symbol/code navigation", "exact text search"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected read_file missing-parent error to mention %q capability, got %q", want, result.Error)
+		}
+	}
+}
+
+func TestReadFileOsMissingErrorUsesGenericCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	mgr := NewManager(config.Workspace{
+		Root: dir,
+		CWD:  dir,
+	})
+	missingPath, err := mgr.resolvePath("stale.txt", "")
+	if err != nil {
+		t.Fatalf("resolve missing path: %v", err)
+	}
+	mgr.rememberPath(missingPath)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "read_file", Path: "stale.txt"})
+	if result.Error == "" {
+		t.Fatalf("expected read_file os missing error, got %#v", result)
+	}
+	if strings.Contains(result.Error, "list_files") {
+		t.Fatalf("read_file os missing error must not prescribe list_files, got %q", result.Error)
+	}
+	if count := strings.Count(result.Error, "Available recovery capabilities"); count != 1 {
+		t.Fatalf("read_file os missing error should include one capability sentence, got %d in %q", count, result.Error)
+	}
+	for _, want := range []string{"file-name search", "structured symbol/code navigation", "exact text search"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected read_file os missing error to mention %q capability, got %q", want, result.Error)
+		}
 	}
 }
 

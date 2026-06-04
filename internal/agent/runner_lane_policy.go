@@ -602,19 +602,11 @@ func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspac
 	}
 	repaired := req
 	changed := false
-	if (delegatedObjectiveIsDiscoveryToolUsefulness(r.RuntimeBrief.Objective) || delegatedObjectiveIsSubagentArchitecture(r.RuntimeBrief.Objective)) &&
-		strings.TrimSpace(repaired.Purpose) != "architecture_boundary" {
-		repaired.Purpose = "architecture_boundary"
-		changed = true
-	} else if !validDelegatedDiscoveryPurpose(repaired.Purpose) {
+	if !validDelegatedDiscoveryPurpose(repaired.Purpose) {
 		repaired.Purpose = delegatedReadOnlyDiscoveryPurpose(r.RuntimeBrief.Objective)
 		changed = true
 	}
-	if (delegatedObjectiveIsDiscoveryToolUsefulness(r.RuntimeBrief.Objective) || delegatedObjectiveIsSubagentArchitecture(r.RuntimeBrief.Objective)) &&
-		strings.TrimSpace(repaired.Path) != "internal/agent" {
-		repaired.Path = "internal/agent"
-		changed = true
-	} else if strings.TrimSpace(repaired.Path) == "" {
+	if strings.TrimSpace(repaired.Path) == "" {
 		repaired.Path = delegatedReadOnlyBootstrapScope(r.RuntimeBrief.Objective)
 		changed = true
 	}
@@ -702,8 +694,6 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 func delegatedReadOnlyDiscoveryPurpose(objective string) string {
 	lower := strings.ToLower(objective)
 	switch {
-	case delegatedObjectiveIsDiscoveryToolUsefulness(objective):
-		return "architecture_boundary"
 	case containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
 		return "security_review"
 	case containsAny(lower, "history", "evolution", "changed over time", "regression introduced"):
@@ -834,16 +824,10 @@ func delegatedReadOnlyBootstrapScope(objective string) string {
 		}
 		return filepath.ToSlash(candidate)
 	}
-	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) {
-		return "internal/agent"
-	}
 	return "."
 }
 
 func delegatedReadOnlyBootstrapPattern(objective string) string {
-	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) {
-		return "answer[-_ ]?composer|synthesizeDelegatedReadOnlyAnswer|final[-_ ]?answer|readiness|discovery[-_ ]?query|child[-_ ]?packet|closeout"
-	}
 	terms := make([]string, 0, 6)
 	for _, line := range strings.Split(objective, "\n") {
 		line = strings.TrimSpace(line)
@@ -877,39 +861,7 @@ func delegatedReadOnlyBootstrapPattern(objective string) string {
 			terms = util.AppendUnique(terms, normalized)
 		}
 	}
-	for _, term := range delegatedReadOnlySubagentAliasTerms(objective) {
-		terms = util.AppendUnique(terms, term)
-	}
 	return strings.Join(terms, "|")
-}
-
-func delegatedReadOnlySubagentAliasTerms(objective string) []string {
-	lower := strings.ToLower(delegatedDisplayQuestion(objective))
-	if !containsAny(lower, "subagent", "sub-agent", "sub agent", "child task", "child runner", "delegated child") {
-		return nil
-	}
-	terms := []string{"runChildTask", "delegat", "sub[-_ ]?agent"}
-	if containsAny(lower, "uses subagent", "uses sub-agent", "uses sub agent", "child task", "child runner", "task tool") {
-		terms = append(terms, "child[-_ ]?task", "task[-_ ]?tool")
-	}
-	return terms
-}
-
-func delegatedObjectiveIsDiscoveryToolUsefulness(objective string) bool {
-	lower := strings.ToLower(delegatedDisplayQuestion(objective))
-	if !containsAny(lower, "discovery tool", "discovery tools", "discovery tool surface", "graph capabilities") {
-		return false
-	}
-	return containsAny(lower,
-		"useful", "usefulness", "improve", "improvement", "add",
-		"gap analysis", "gaps", "limitations", "recommendation", "recommendations",
-		"insufficient", "stale", "unhelpful",
-	)
-}
-
-func delegatedObjectiveIsSubagentArchitecture(objective string) bool {
-	lower := strings.ToLower(delegatedDisplayQuestion(objective))
-	return containsAny(lower, "subagent", "sub-agent", "sub agent", "child task", "child runner", "delegated child", "task tool")
 }
 
 func delegatedReadOnlyQuestionText(objective string) string {
@@ -1308,27 +1260,9 @@ func readOnlyAnalysisHasObjectiveRelevantSourceBody(brief workerruntime.WorkerRu
 	}
 	for _, path := range evidence.SourceBodyPaths {
 		if implementationSourcePathOverlapsObjective(path, brief.Objective) ||
-			sourceEvidencePathSharesObjectiveTerm(path, brief.Objective) ||
-			readOnlyAnalysisPathMatchesObjectiveAlias(path, brief.Objective) {
+			sourceEvidencePathSharesObjectiveTerm(path, brief.Objective) {
 			return true
 		}
-	}
-	return false
-}
-
-func readOnlyAnalysisPathMatchesObjectiveAlias(path string, objective string) bool {
-	path = strings.ToLower(normalizeRunnerPath(path))
-	lower := strings.ToLower(delegatedDisplayQuestion(objective))
-	if path == "" || lower == "" {
-		return false
-	}
-	if containsAny(lower, "subagent", "sub-agent", "sub agent") &&
-		containsAny(path, "runner_child_tasks", "child_task", "child_tasks") {
-		return true
-	}
-	if delegatedObjectiveIsDiscoveryToolUsefulness(objective) &&
-		containsAny(path, "answer_composer", "runner", "discovery", "comprehension", "context", "frontier", "workspace") {
-		return true
 	}
 	return false
 }

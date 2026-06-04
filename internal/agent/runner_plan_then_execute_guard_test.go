@@ -6826,6 +6826,8 @@ func TestCompletionGateRecoveryPromptForUnscopedImplementationNoWrite(t *testing
 		"append_file",
 		"apply_patch",
 		"Do not call a write tool until",
+		"one visible JSON object",
+		"Key-value and function-call write syntax are not executable",
 		"previous `context_pack` did not establish an exact edit target",
 		"`search_content`",
 		"named_gap",

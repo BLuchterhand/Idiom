@@ -510,7 +510,7 @@ func (m *Manager) Instructions() string {
 	return fmt.Sprintf(
 		"Workspace root: %s\nWorking directory: %s\n\n"+
 			"Rules:\n"+
-			"- Do not invent file paths from memory. Resolve a path-discovery capability, discovered handle, or structured symbol/navigation route before naming a new file.\n"+
+			"- Do not invent file paths from memory. Resolve a path-discovery capability, discovered handle, or structured symbol/code navigation route before naming a new file.\n"+
 			"- After an orientation call, narrow with structured language-aware routes or discovered handles first. Exact-text search and bounded reads are fallback capabilities for prose, config, or ranges a semantic probe cannot cover.\n"+
 			"- Paths are relative to the working directory unless absolute.\n"+
 			"- Prefer anchored edit capabilities for small localized changes; whole-file writes overwrite.\n"+
@@ -4056,7 +4056,7 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 			if parent != "." && parent != "/" && parent != "" {
 				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
 					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
-						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. (inner: %s)", parent, req.Path, err.Error())
+						errMsg = readFileRecoveryError(fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either.", parent, req.Path))
 					}
 				}
 			}
@@ -4074,13 +4074,13 @@ func (m *Manager) readFile(req ToolRequest) ToolResult {
 		// say so explicitly instead of letting the bare "no such file"
 		// repeat across sibling probes. The Did-you-mean output already
 		// surfaces real siblings of the closest-existing ancestor.
-		errMsg := err.Error() + ". Verify the path with search_files, a structured symbol/navigation route, or search_content before retrying read_file."
+		errMsg := readFileRecoveryError(err.Error())
 		if os.IsNotExist(err) && strings.TrimSpace(req.Path) != "" {
 			parent := filepath.Dir(strings.ReplaceAll(strings.TrimSpace(req.Path), "\\", "/"))
 			if parent != "." && parent != "/" && parent != "" {
 				if parentAbs, parentErr := m.resolvePath(parent, req.Workdir); parentErr == nil {
 					if _, statErr := os.Stat(parentAbs); os.IsNotExist(statErr) {
-						errMsg = fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. (os: %s)", parent, req.Path, err.Error())
+						errMsg = readFileRecoveryError(fmt.Sprintf("parent directory %q does not exist in this workspace, so %q cannot exist either. (os: %s)", parent, req.Path, err.Error()))
 					}
 				}
 			}
@@ -5567,18 +5567,31 @@ func (m *Manager) resolveExplicitReadPath(path string) (string, string, error) {
 	if !m.hasDiscoveredPath(path) {
 		info, statErr := os.Stat(path)
 		if statErr != nil {
-			return "", "", fmt.Errorf(
-				"path %q was not found. %s Available recovery capabilities: file-name search, structured symbol/navigation, or exact text search followed by a returned handle",
-				m.displayPath(path),
+			return "", "", fmt.Errorf("%s", readFileRecoveryError(
+				fmt.Sprintf("path %q was not found.", m.displayPath(path)),
 				m.notFoundRecoveryHint(path),
-			)
+			))
 		}
 		if info.IsDir() {
-			return "", "", fmt.Errorf("path %q is a directory; use list_files or search_files to choose a file", m.displayPath(path))
+			return "", "", fmt.Errorf("%s", readFileRecoveryError(fmt.Sprintf("path %q is a directory and cannot be read as a file.", m.displayPath(path))))
 		}
 		m.rememberPath(path)
 	}
 	return path, m.handleDisplay(path), nil
+}
+
+const readFileRecoveryCapabilities = "Available recovery capabilities: file-name search, structured symbol/code navigation, or exact text search followed by a returned handle"
+
+func readFileRecoveryError(base string, facts ...string) string {
+	parts := []string{strings.TrimSpace(base)}
+	for _, fact := range facts {
+		fact = strings.TrimSpace(fact)
+		if fact != "" {
+			parts = append(parts, fact)
+		}
+	}
+	parts = append(parts, readFileRecoveryCapabilities)
+	return strings.Join(parts, " ")
 }
 
 func (m *Manager) closestRecoverableReadPath(query string, workdir string) (string, bool) {
@@ -5692,10 +5705,9 @@ func (m *Manager) notFoundRecoveryHint(path string) string {
 	}
 	entries, err := os.ReadDir(parent)
 	if err != nil {
-		// Parent itself doesn't exist — suggest exploring further up.
 		grandparent := filepath.Dir(parent)
 		if grandparent != "" && grandparent != parent {
-			return fmt.Sprintf("Parent directory %q does not exist either; try list_files %q first.", m.displayPath(parent), m.displayPath(grandparent))
+			return fmt.Sprintf("Parent directory %q does not exist either; closest existing parent: %q.", m.displayPath(parent), m.displayPath(grandparent))
 		}
 		return ""
 	}
@@ -5709,7 +5721,7 @@ func (m *Manager) notFoundRecoveryHint(path string) string {
 	}
 	suggestions := closestToolNames(target, candidates, 3)
 	if len(suggestions) == 0 {
-		return fmt.Sprintf("Parent directory %q exists but contains no matching name; try list_files %q to see what's there.", m.displayPath(parent), m.displayPath(parent))
+		return fmt.Sprintf("Parent directory %q exists but contains no matching name.", m.displayPath(parent))
 	}
 	quoted := make([]string, 0, len(suggestions))
 	for _, s := range suggestions {

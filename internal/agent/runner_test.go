@@ -17714,6 +17714,201 @@ func TestPromptEvidencePathsFromToolResultsPrefersExactProbePathsOverEarlyScaffo
 	}
 }
 
+func TestReadOnlyDirectAnswerPresentationUsesLedgerRelevantSourcePaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain chat input newline rendering.",
+		EvidencePaths:     []string{"internal/app/prompt_candidate.go"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  "internal/app/broad_candidate.go\ninternal/app/other_candidate.go\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-6",
+			Output: strings.Join([]string{
+				"1:package app",
+				"2:",
+				"3:// chat input newline rendering is handled by this function.",
+				"4:func renderChatInputNewline() {}",
+			}, "\n"),
+		},
+	}
+
+	got := runnerEvidencePathsForBrief(brief, results, 8)
+	if !slices.Contains(got, "internal/app/rendering.go") {
+		t.Fatalf("expected direct-answer evidence paths to contain ledger source path, got %#v", got)
+	}
+	for _, forbidden := range []string{"internal/app/broad_candidate.go", "internal/app/other_candidate.go", "internal/app/prompt_candidate.go"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("direct-answer presentation must not fall back to broad candidate %q, got %#v", forbidden, got)
+		}
+	}
+	live := (&Runner{RuntimeBrief: brief}).runtimeBriefWithLiveState(RunPolicy{}, nil, results)
+	if slices.Contains(live.EvidencePaths, "internal/app/prompt_candidate.go") {
+		t.Fatalf("direct-answer live brief must replace broad prompt evidence paths, got %#v", live.EvidencePaths)
+	}
+}
+
+func TestRuntimeBriefDirectAnswerPreservesAdvisoryEvidenceBeforeAnswerability(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain chat input newline rendering.",
+		EvidencePaths:     []string{"internal/app/prompt_candidate.go"},
+	}
+
+	live := (&Runner{RuntimeBrief: brief}).runtimeBriefWithLiveState(RunPolicy{}, nil, nil)
+	if !slices.Contains(live.EvidencePaths, "internal/app/prompt_candidate.go") {
+		t.Fatalf("direct-answer live brief should preserve advisory evidence before answerability, got %#v", live.EvidencePaths)
+	}
+}
+
+func TestRunnerEvidencePathsPreservesBroadCandidatesForArchitecture(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "architecture",
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain chat input newline rendering.",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  "internal/app/broad_candidate.go\ninternal/app/other_candidate.go\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-6",
+			Output: strings.Join([]string{
+				"1:package app",
+				"2:",
+				"3:// chat input newline rendering is handled by this function.",
+				"4:func renderChatInputNewline() {}",
+			}, "\n"),
+		},
+	}
+
+	got := runnerEvidencePathsForBrief(brief, results, 8)
+	if !slices.Contains(got, "internal/app/broad_candidate.go") {
+		t.Fatalf("non-direct-answer presentation should retain broad candidate paths, got %#v", got)
+	}
+}
+
+func TestEmitAcceptedAnswerSignalsDirectAnswerBlockedUsesLedgerRelevantSourcePaths(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain chat input newline rendering.",
+		},
+	}
+	var readiness map[string]any
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role != "readiness_check" {
+			return
+		}
+		_ = json.Unmarshal([]byte(event.Content), &readiness)
+	}
+	runner.emitAcceptedAnswerSignals(
+		"The issue is in `internal/app/broad_candidate.go`.",
+		[]workspace.ToolResult{
+			{
+				Tool:    "context_pack",
+				Summary: "Context pack wrote packet",
+				Output:  "internal/app/broad_candidate.go\ninternal/app/other_candidate.go\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read internal/app/rendering.go lines 1-6",
+				Output: strings.Join([]string{
+					"1:package app",
+					"2:",
+					"3:// chat input newline rendering is handled by this function.",
+					"4:func renderChatInputNewline() {}",
+				}, "\n"),
+			},
+		},
+	)
+	rawPaths, _ := readiness["evidence_paths"].([]any)
+	got := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		if value, ok := raw.(string); ok {
+			got = append(got, value)
+		}
+	}
+	if !slices.Contains(got, "internal/app/rendering.go") {
+		t.Fatalf("blocked direct-answer readiness should name ledger source path, got %#v", got)
+	}
+	for _, forbidden := range []string{"internal/app/broad_candidate.go", "internal/app/other_candidate.go"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("blocked direct-answer readiness must not fall back to broad candidate %q, got %#v", forbidden, got)
+		}
+	}
+}
+
+func TestEmitReadOnlyAnswerReadyEventDirectAnswerUsesLedgerRelevantSourcePaths(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Lane:              "main",
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain chat input newline rendering.",
+		},
+	}
+	var payload map[string]any
+	runner.OnEvent = func(event RunEvent) {
+		if event.Role != "read_only_answer_ready" {
+			return
+		}
+		_ = json.Unmarshal([]byte(event.Content), &payload)
+	}
+	runner.emitReadOnlyAnswerReadyEvent(workspace.ToolRequest{Tool: "read_file"}, []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  "internal/app/broad_candidate.go\ninternal/app/other_candidate.go\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-6",
+			Output: strings.Join([]string{
+				"1:package app",
+				"2:",
+				"3:// chat input newline rendering is handled by this function.",
+				"4:func renderChatInputNewline() {}",
+			}, "\n"),
+		},
+	})
+	rawPaths, _ := payload["evidence_paths"].([]any)
+	got := make([]string, 0, len(rawPaths))
+	for _, raw := range rawPaths {
+		if value, ok := raw.(string); ok {
+			got = append(got, value)
+		}
+	}
+	if !slices.Contains(got, "internal/app/rendering.go") {
+		t.Fatalf("direct-answer ready event should name ledger source path, got %#v", got)
+	}
+	for _, forbidden := range []string{"internal/app/broad_candidate.go", "internal/app/other_candidate.go"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("direct-answer ready event must not fall back to broad candidate %q, got %#v", forbidden, got)
+		}
+	}
+}
+
 func TestPromptEvidencePathsFromToolResultsKeepsDirectTestProbePath(t *testing.T) {
 	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{
 		{

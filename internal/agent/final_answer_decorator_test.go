@@ -663,6 +663,189 @@ func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T)
 	}
 }
 
+func TestDecorateFinalAnswerSanitizesReadOnlyQuestionBlocker(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     "<<QUESTION>>: Completion gate rejected the final answer repeatedly before the required completion evidence was produced.\n\nMissing completion evidence: the final answer uses inspected source evidence, but that evidence does not establish the user's objective. Answer with the exact objective-relevant source-body evidence, state that the current evidence is insufficient, or use <<QUESTION>>: with the exact missing evidence.",
+		StopReason: "answer_objective_unmet",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "Find why the TUI chat input first wraps to a newline.",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read internal/app/rendering.go lines 1-9",
+			Output:  "1:package app\n2:\n3:func evidenceDisplayName(rawTool string) string { return strings.TrimSpace(rawTool) }\n",
+		}},
+		UserFacing: true,
+	})
+
+	if strings.Contains(got, "<<QUESTION>>") {
+		t.Fatalf("user-facing decorator leaked internal blocker protocol:\n%s", got)
+	}
+	for _, want := range []string{"could not produce a supported final answer", "internal/app/rendering.go"} {
+		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
+			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"<<question>>", "completion gate", "missing completion evidence", "answer with the exact", "required next evidence"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Fatalf("decorated blocker leaked internal phrase %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+func TestDecorateFinalAnswerDoesNotRewriteNormalReadOnlyAnswer(t *testing.T) {
+	runner := &Runner{}
+	answer := "The inspected source shows that rendering delegates wrapping to the layout width calculation."
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer: answer,
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+		},
+		UserFacing: true,
+	})
+	if got != answer {
+		t.Fatalf("normal read-only answer should pass through unchanged, got:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerSanitizesConversationOnlyQuestionBlocker(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer: "<<QUESTION>>: Cannot answer because the requested external fact is unavailable.",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionConversationOnly),
+		},
+		UserFacing: true,
+	})
+	if got != "Cannot answer because the requested external fact is unavailable." {
+		t.Fatalf("conversation-only blocker should be presentable without protocol marker, got:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerPreservesExternalQuestionBlockerEvidenceTerms(t *testing.T) {
+	runner := &Runner{}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+	}
+	cases := []struct {
+		name   string
+		answer string
+		want   string
+	}{
+		{
+			name:   "source body evidence",
+			answer: "<<QUESTION>>: Cannot answer because source-body evidence from the requested generated file is unavailable.",
+			want:   "Cannot answer because source-body evidence from the requested generated file is unavailable.",
+		},
+		{
+			name:   "diagnostic evidence",
+			answer: "<<QUESTION>>: Cannot answer until diagnostic evidence from the failed job is attached.",
+			want:   "Cannot answer until diagnostic evidence from the failed job is attached.",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+				Answer:     tc.answer,
+				Brief:      brief,
+				UserFacing: true,
+			})
+			if got != tc.want {
+				t.Fatalf("external blocker should preserve evidence terminology without protocol marker, got:\n%s", got)
+			}
+		})
+	}
+}
+
+func TestDecorateFinalAnswerSanitizesInternalReadOnlyRemediationQuestionBlocker(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer: "<<QUESTION>>: The current read-only answer is not backed by relevant source-body or diagnostic evidence. Gather one source-body read for the claim, or name the exact missing claim.",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "Explain why the latest run failed.",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read logs/conversations/session.jsonl lines 1-20",
+			Output:  "1:{\"event\":\"model_stop\"}\n",
+		}},
+		UserFacing: true,
+	})
+
+	if strings.Contains(got, "<<QUESTION>>") {
+		t.Fatalf("decorator leaked internal blocker protocol:\n%s", got)
+	}
+	for _, forbidden := range []string{"current read-only answer", "gather one source-body read", "exact missing claim"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Fatalf("decorated blocker leaked internal remediation phrase %q:\n%s", forbidden, got)
+		}
+	}
+	if !strings.Contains(got, "could not produce a supported final answer") || !strings.Contains(got, "logs/conversations/session.jsonl") {
+		t.Fatalf("decorated blocker should keep user-facing stop context and evidence path, got:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerPreservesPlanExecuteReviewRepairQuestionBlocker(t *testing.T) {
+	runner := &Runner{}
+	answer := "<<QUESTION>>: Cannot repair because evidence is unavailable."
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer: answer,
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "review_findings",
+			TaskFamily:        string(workerruntime.TaskFamilyPlanThenExecuteReview),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+		},
+		UserFacing: true,
+	})
+	if got != answer {
+		t.Fatalf("plan-execute review-repair blocker must remain machine-readable, got:\n%s", got)
+	}
+}
+
+func TestDecorateFinalAnswerSanitizesSynthesizedReadOnlyQuestionBlocker(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer: "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`.",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "What does ShortLabel return?",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "search_content",
+			Summary: "Found 1 matching line(s).",
+			Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+		}},
+		UserFacing: true,
+	})
+
+	if strings.Contains(got, "<<QUESTION>>") {
+		t.Fatalf("decorator leaked synthesized internal blocker protocol:\n%s", got)
+	}
+	if !strings.Contains(got, "could not produce a supported final answer") || !strings.Contains(got, "internal/labels/labels.go") {
+		t.Fatalf("decorated synthesized blocker lost useful context:\n%s", got)
+	}
+	for _, forbidden := range []string{"required next evidence", "answer with the exact"} {
+		if strings.Contains(strings.ToLower(got), forbidden) {
+			t.Fatalf("decorated synthesized blocker leaked internal phrase %q:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestPresentableEvidenceBodySourceAnswerRejectsSearchHits(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",

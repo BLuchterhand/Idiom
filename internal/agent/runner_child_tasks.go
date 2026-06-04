@@ -52,16 +52,6 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 		childPolicy.MaxModelCalls = 6
 		childPolicy.MaxDuration = 45 * time.Second
 	}
-	if delegatedObjectiveIsDiscoveryToolUsefulness(prompt) {
-		childPolicy.MaxToolSteps = 1
-		childPolicy.MaxModelCalls = 3
-		childPolicy.MaxDuration = 45 * time.Second
-	}
-	if delegatedObjectiveIsSubagentArchitecture(prompt) && len(pathparse.MentionedWorkspacePaths(prompt)) == 0 {
-		childPolicy.MaxToolSteps = 2
-		childPolicy.MaxModelCalls = 4
-		childPolicy.MaxDuration = 45 * time.Second
-	}
 	if effective := r.effectivePolicy(); effective.MaxContextMessages > 0 || effective.MaxContextChars > 0 {
 		childPolicy.MaxContextMessages = effective.MaxContextMessages
 		childPolicy.MaxContextChars = effective.MaxContextChars
@@ -134,9 +124,6 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 	}
 	fallbackSourceReads := 0
 	maxFallbackSourceReads := 1
-	if delegatedObjectiveIsSubagentArchitecture(prompt) {
-		maxFallbackSourceReads = 2
-	}
 	for r.Workspace != nil && fallbackSourceReads < maxFallbackSourceReads && delegatedChildFallbackSourceReadNeeded(prompt, childResults) {
 		if req, result, ok := r.delegatedChildFallbackSourceRead(ctx, prompt, childResults); ok {
 			step := len(childResults) + 1
@@ -194,8 +181,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 	if r == nil || r.Workspace == nil {
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
-	paths := append([]string{}, questionExpectedEvidencePaths(prompt)...)
-	paths = append(paths, delegatedDiscoveryQueryEvidencePaths(results, 6)...)
+	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
 	paths = closurePromptEvidencePaths(paths, 6)
 	for _, path := range paths {
 		path = normalizeRunnerPath(path)
@@ -220,17 +206,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 }
 
 func delegatedChildFallbackSourceReadNeeded(prompt string, results []workspace.ToolResult) bool {
-	expected := questionExpectedEvidencePaths(prompt)
-	if len(expected) == 0 {
-		return len(delegatedReadOnlySourceBodyEvidencePaths(results)) == 0
-	}
-	for _, path := range expected {
-		path = normalizeRunnerPath(path)
-		if path != "" && !concreteSourceEvidenceReadForPath(path, results) {
-			return true
-		}
-	}
-	return false
+	return len(delegatedReadOnlySourceBodyEvidencePaths(results)) == 0
 }
 
 func normalizeReadOnlyChildPrompt(prompt string) string {

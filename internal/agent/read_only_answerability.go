@@ -32,6 +32,11 @@ type readOnlyEvidenceItem struct {
 	Summary        string
 }
 
+type readOnlySourceBodyObjectiveSupport struct {
+	Path  string
+	Terms []string
+}
+
 type readOnlyAnswerabilityLedger struct {
 	Objective                string
 	TaskFamily               string
@@ -46,9 +51,11 @@ type readOnlyAnswerabilityLedger struct {
 	RelevantSourceBodyPaths  []string
 	GeneratedArtifactPaths   []string
 	SourceBodyObjectivePaths []string
+	SourceBodyObjectiveTerms []readOnlySourceBodyObjectiveSupport
 	SearchHitCount           int
 	HighCardinalitySearch    bool
 	DiagnosticEvidence       bool
+	DiagnosticPaths          []string
 	DiagnosticRelevant       bool
 }
 
@@ -81,14 +88,19 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 			continue
 		}
 		if readOnlyDiagnosticEvidenceResult(result) {
+			paths := readOnlyDiagnosticEvidencePaths(result, 8)
+			relevant := readOnlyDiagnosticEvidenceMatchesObjective(ledger.Objective, namedTargets, result, paths)
 			ledger.DiagnosticEvidence = true
-			if readOnlyDiagnosticObjectiveApplies(ledger.Objective) {
+			ledger.DiagnosticPaths = mergeRunnerStateStrings(ledger.DiagnosticPaths, paths)
+			if relevant {
 				ledger.DiagnosticRelevant = true
 			}
 			ledger.addItem(readOnlyEvidenceItem{
-				Kind:    readOnlyEvidenceDiagnostic,
-				Tool:    tool,
-				Summary: strings.TrimSpace(result.Summary),
+				Kind:           readOnlyEvidenceDiagnostic,
+				Tool:           tool,
+				CandidatePaths: paths,
+				Relevant:       relevant,
+				Summary:        strings.TrimSpace(result.Summary),
 			})
 		}
 		if concreteSourceEvidenceResult(result) {
@@ -100,9 +112,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					Summary: strings.TrimSpace(result.Summary),
 				})
 				ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, []string{path})
-				if sourceBodyHasStrongObjectiveToken(result.Output, ledger.Objective) {
-					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, []string{path})
-				}
+				ledger.observeSourceBodyObjectiveSupport(path, result.Output)
 			}
 			continue
 		}
@@ -139,9 +149,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					Path:    path,
 					Summary: strings.TrimSpace(result.Summary),
 				})
-				if sourceBodyHasStrongObjectiveToken(sourceBodyText, ledger.Objective) {
-					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, []string{path})
-				}
+				ledger.observeSourceBodyObjectiveSupport(path, sourceBodyText)
 			}
 			if inspectedPathFallback {
 				ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
@@ -206,6 +214,7 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 	}
 	ledger.CandidatePaths = mergeRunnerStateStrings(namedTargets, ledger.CandidatePaths)
 	ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results))
+	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
 	return ledger
 }
@@ -243,6 +252,181 @@ func (l *readOnlyAnswerabilityLedger) addItem(item readOnlyEvidenceItem) {
 	item.CandidatePaths = readOnlySourceLikePaths(item.CandidatePaths, 128)
 	item.Summary = strings.TrimSpace(item.Summary)
 	l.Items = append(l.Items, item)
+}
+
+func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path string, body string) {
+	path = normalizeRunnerPath(path)
+	if path == "" || isNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
+		return
+	}
+	if sourceBodyHasStrongObjectiveToken(body, l.Objective) {
+		l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, []string{path})
+	}
+	terms := l.sourceBodyObjectiveTerms(body)
+	if len(terms) == 0 {
+		return
+	}
+	for i := range l.SourceBodyObjectiveTerms {
+		if l.SourceBodyObjectiveTerms[i].Path == path {
+			l.SourceBodyObjectiveTerms[i].Terms = uniqueSortedStrings(mergeRunnerStateStrings(l.SourceBodyObjectiveTerms[i].Terms, terms))
+			return
+		}
+	}
+	l.SourceBodyObjectiveTerms = append(l.SourceBodyObjectiveTerms, readOnlySourceBodyObjectiveSupport{
+		Path:  path,
+		Terms: terms,
+	})
+}
+
+func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTerms(body string) []string {
+	body = strings.ToLower(body)
+	if strings.TrimSpace(body) == "" {
+		return nil
+	}
+	var terms []string
+	for _, term := range l.requiredSourceBodyObjectiveTerms() {
+		if strings.Contains(body, term) {
+			terms = append(terms, term)
+		}
+	}
+	return uniqueSortedStrings(terms)
+}
+
+func (l readOnlyAnswerabilityLedger) requiredSourceBodyObjectiveTerms() []string {
+	terms := readOnlySearchHitObjectiveTerms(l.Objective)
+	if len(terms) == 0 {
+		return nil
+	}
+	var required []string
+	seen := map[string]struct{}{}
+	for _, term := range terms {
+		term = readOnlyObjectiveSupportTerm(term)
+		if len(term) < 3 {
+			continue
+		}
+		if readOnlyCollectiveObjectiveSupportStopWord(term) {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		required = append(required, term)
+	}
+	return required
+}
+
+func readOnlyCollectiveObjectiveSupportStopWord(term string) bool {
+	term = readOnlyObjectiveSupportTerm(term)
+	if term == "" {
+		return true
+	}
+	if _, skip := recoverySearchStopWords()[term]; skip {
+		return true
+	}
+	switch term {
+	case "allow", "allows", "allowed", "enable", "enabled", "enabl",
+		"support", "supported", "what", "would", "take", "need", "needs",
+		"needed", "require", "requires", "required", "between":
+		return true
+	default:
+		return false
+	}
+}
+
+func readOnlyObjectiveSupportTerm(term string) string {
+	term = strings.TrimSpace(strings.ToLower(term))
+	if len(term) > 3 && strings.HasSuffix(term, "s") {
+		term = strings.TrimSuffix(term, "s")
+	}
+	return term
+}
+
+func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSupport(namedTargets []string) {
+	requiredTerms := l.requiredSourceBodyObjectiveTerms()
+	if len(requiredTerms) < 2 {
+		return
+	}
+	candidateSet := readOnlyPathSet(l.CandidatePaths)
+	objectiveCandidateSet := readOnlyPathSet(l.CandidateObjectivePaths)
+	namedSet := readOnlyPathSet(namedTargets)
+	termPaths := make(map[string][]string, len(requiredTerms))
+	pathTermCount := make(map[string]int)
+	supportingPaths := map[string]struct{}{}
+	for _, support := range l.SourceBodyObjectiveTerms {
+		path := normalizeRunnerPath(support.Path)
+		if path == "" {
+			continue
+		}
+		for _, term := range support.Terms {
+			term = readOnlyObjectiveSupportTerm(term)
+			if term == "" {
+				continue
+			}
+			termPaths[term] = mergeRunnerStateStrings(termPaths[term], []string{path})
+			supportingPaths[path] = struct{}{}
+			pathTermCount[path]++
+		}
+	}
+	if len(supportingPaths) < 2 {
+		return
+	}
+	var collectivePaths []string
+	coveredTerms := 0
+	for _, term := range requiredTerms {
+		paths := termPaths[term]
+		if len(paths) > 0 {
+			coveredTerms++
+			for _, path := range paths {
+				if pathTermCount[normalizeRunnerPath(path)] < 2 {
+					continue
+				}
+				if !l.collectiveSourceBodyPromotionPathAllowed(path, candidateSet, objectiveCandidateSet, namedSet) {
+					continue
+				}
+				collectivePaths = mergeRunnerStateStrings(collectivePaths, []string{path})
+			}
+		}
+	}
+	if coveredTerms < collectiveSourceBodyObjectiveTermThreshold(len(requiredTerms)) {
+		return
+	}
+	if len(collectivePaths) == 0 {
+		return
+	}
+	l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, collectivePaths)
+}
+
+func (l readOnlyAnswerabilityLedger) collectiveSourceBodyPromotionPathAllowed(path string, candidateSet map[string]struct{}, objectiveCandidateSet map[string]struct{}, namedSet map[string]struct{}) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	if _, ok := namedSet[path]; ok {
+		return true
+	}
+	if _, ok := objectiveCandidateSet[path]; ok {
+		return true
+	}
+	if _, ok := candidateSet[path]; ok {
+		return true
+	}
+	return implementationSourcePathOverlapsObjective(path, l.Objective) ||
+		sourceEvidencePathSharesObjectiveTerm(path, l.Objective) ||
+		candidateSourcePathStronglyOverlapsObjective(path, l.Objective)
+}
+
+func collectiveSourceBodyObjectiveTermThreshold(requiredTermCount int) int {
+	switch {
+	case requiredTermCount <= 0:
+		return 1
+	case requiredTermCount <= 2:
+		return requiredTermCount
+	case requiredTermCount <= 4:
+		return 3
+	default:
+		return 4
+	}
 }
 
 func (l *readOnlyAnswerabilityLedger) markRelevantSourceBodies(namedTargets []string) {
@@ -310,9 +494,6 @@ func (l readOnlyAnswerabilityLedger) sourceBodyPathRelevant(path string, candida
 		return true
 	}
 	if implementationSourcePathOverlapsObjective(path, l.Objective) || sourceEvidencePathSharesObjectiveTerm(path, l.Objective) {
-		return true
-	}
-	if readOnlyAnalysisPathMatchesObjectiveAlias(path, l.Objective) {
 		return true
 	}
 	return !fromTaskPacket && len(candidateSet) == 0 && len(namedSet) == 0 && !l.directConversationWithoutObjective()
@@ -526,8 +707,15 @@ func codeLikeObjectiveTokens(text string) []string {
 	return tokens
 }
 
+func (l readOnlyAnswerabilityLedger) diagnosticEvidenceAnswerable() bool {
+	if !l.DiagnosticRelevant {
+		return false
+	}
+	return len(readOnlySourceLikePaths(l.DiagnosticPaths, 8)) > 0
+}
+
 func (l readOnlyAnswerabilityLedger) Answerable() bool {
-	return l.DiagnosticRelevant || (len(l.RelevantSourceBodyPaths) > 0 && len(l.MissingNamedSourcePaths) == 0)
+	return l.diagnosticEvidenceAnswerable() || (len(l.RelevantSourceBodyPaths) > 0 && len(l.MissingNamedSourcePaths) == 0)
 }
 
 func (l readOnlyAnswerabilityLedger) directConversationWithoutObjective() bool {
@@ -605,17 +793,95 @@ func readOnlyDiagnosticEvidenceResult(result workspace.ToolResult) bool {
 	return false
 }
 
-func readOnlyDiagnosticObjectiveApplies(objective string) bool {
+func readOnlyDiagnosticEvidencePaths(result workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	return readOnlySourceLikePaths(mergeRunnerStateStrings(
+		readPathsFromToolResult(result),
+		readOnlyDiagnosticLocationPaths(result.Summary+"\n"+result.Output, max),
+	), max)
+}
+
+func readOnlyDiagnosticLocationPaths(text string, max int) []string {
+	if max <= 0 {
+		max = 8
+	}
+	var paths []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		for _, path := range sourceLikePathsFromText(line, max) {
+			if !readOnlyDiagnosticLineIdentifiesPath(line, path) {
+				continue
+			}
+			paths = mergeRunnerStateStrings(paths, []string{path})
+			if len(paths) >= max {
+				return paths
+			}
+		}
+	}
+	return paths
+}
+
+func readOnlyDiagnosticLineIdentifiesPath(line string, path string) bool {
+	line = strings.ToLower(strings.TrimSpace(line))
+	path = strings.ToLower(strings.TrimSpace(path))
+	if line == "" || path == "" {
+		return false
+	}
+	idx := strings.Index(line, path)
+	if idx < 0 {
+		return false
+	}
+	after := strings.TrimSpace(line[idx+len(path):])
+	if strings.HasPrefix(after, ":") && len(after) > 1 && after[1] >= '0' && after[1] <= '9' {
+		return true
+	}
+	before := strings.TrimSpace(line[:idx])
+	return strings.HasSuffix(before, "failed for") ||
+		strings.HasSuffix(before, "failed in") ||
+		strings.HasSuffix(before, "error in") ||
+		strings.HasSuffix(before, "errors in")
+}
+
+func readOnlyDiagnosticEvidenceMatchesObjective(objective string, namedTargets []string, result workspace.ToolResult, paths []string) bool {
+	objective = strings.TrimSpace(objective)
+	paths = readOnlySourceLikePaths(paths, 8)
+	if objective == "" || len(paths) == 0 {
+		return false
+	}
+	namedSet := readOnlyPathSet(namedTargets)
+	for _, path := range paths {
+		if _, ok := namedSet[normalizeRunnerPath(path)]; ok {
+			return true
+		}
+		if implementationSourcePathOverlapsObjective(path, objective) ||
+			sourceEvidencePathSharesObjectiveTerm(path, objective) ||
+			candidateSourcePathStronglyOverlapsObjective(path, objective) {
+			return true
+		}
+	}
+	if len(readOnlySourceLikePaths(namedTargets, 8)) > 0 {
+		return false
+	}
+	if sourceBodyHasStrongObjectiveToken(result.Summary+"\n"+result.Output, objective) {
+		return true
+	}
+	return readOnlyObjectiveExplicitlyAsksForDiagnostics(objective)
+}
+
+func readOnlyObjectiveExplicitlyAsksForDiagnostics(objective string) bool {
 	lower := strings.ToLower(strings.TrimSpace(objective))
 	if lower == "" {
 		return false
 	}
 	return containsAny(lower,
 		"diagnostic", "diagnostics",
-		"error", "errors",
-		"failure", "failures", "failing", "failed",
-		"build", "test failure", "test failures",
-		"what broke", "broken",
+		"source_sanity",
+		"compiler error", "compile error",
 	)
 }
 

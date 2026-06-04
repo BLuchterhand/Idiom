@@ -54,6 +54,55 @@ failure patterns that have cost time in real Idiom/Colony runs.
   phase, recovery, or fallback transition, verify the effective before/after
   runtime state from telemetry or phase-contract events before blaming the
   model or prompt.
+- **Drift is cheap**: a one-line sanitizer, phrase matcher, prompt nudge, or
+  test expectation can silently fork the harness contract. Before adding one,
+  prove why the existing owner is insufficient and name the lanes where raw
+  protocol must be preserved. Treat "this fixes the visible symptom" as
+  insufficient until the consumer boundary is classified.
+- **Skipping de-drift analysis**: every harness behavior fix needs a short
+  de-drift checklist before edits: canonical owner, consumer type, preservation
+  lanes, cleanup lanes, existing helper scan, negative oracle, and test
+  contradiction scan. If any item is unknown, inspect before patching.
+- **Protocol marker boundary drift**: markers such as `<<QUESTION>>` are not
+  just strings. They can be model-facing recovery protocol, machine-consumed
+  terminal signals, or forbidden user-facing presentation text depending on the
+  lane. Classify the consumer before sanitizing, preserving, or asserting on a
+  marker.
+- **Absence-only tests hiding drift**: tests that only assert "does not contain
+  X" allow irrelevant but clean output to pass. Pair absence checks with
+  positive preservation checks: normal answers pass through, machine-consumed
+  protocol remains intact, and the cleaned user-facing output still carries the
+  useful evidence or blocker context.
+- **Reviewer drift blind spots**: for non-trivial harness behavior changes,
+  review the patch with three distinct lenses before finalizing: canonical
+  owner/duplicate authority, blast radius across lanes and consumers, and
+  oracle quality. If a reviewer finds drift and the fix changes design, rerun
+  the same review lens after the last material change.
+
+### De-Drift Checklist
+
+Use this before changing prompt layers, final-answer shaping, readiness,
+answerability, completion gates, recovery, routing, tool policy, or audit
+behavior.
+
+| Question | Required answer |
+| --- | --- |
+| Canonical owner | Which existing module/gate/presenter owns this behavior today? |
+| Consumer type | Is the text or state model-facing, machine-consumed, user-facing, audit-only, or mixed? |
+| Preserve lanes | Which lanes must keep the raw protocol or state unchanged? |
+| Cleanup lanes | Which lanes must transform or hide it before users see it? |
+| Existing helper scan | Which local helpers already handle this class of behavior? |
+| Negative oracle | What valid lane/use case would break if the fix is too broad? |
+| Test contradiction scan | Do existing tests still bless the behavior being declared forbidden? |
+
+For `<<QUESTION>>` specifically:
+
+| Consumer | Expected treatment |
+| --- | --- |
+| Model-facing recovery | Preserve as a valid terminal/blocker shape. |
+| Machine-consumed plan/repair/mutation terminal phases | Preserve when downstream code detects typed blockers. |
+| User-facing non-mutation final answers | Present without the raw marker or internal gate instructions. |
+| Audit/log evidence | Record bounded state names and blocker kinds; avoid raw prompt or transcript bodies. |
 
 ## Plan-Execute And Implementation Traps
 
