@@ -73,9 +73,21 @@ const (
 	ExecutorHandoffStateOverridden = "overridden"
 )
 
+const (
+	ExecutorPacketFreshnessFresh           = "fresh"
+	ExecutorPacketFreshnessStale           = "stale"
+	ExecutorPacketFreshnessMissing         = "missing"
+	ExecutorPacketFreshnessNotUsedByDesign = "not_used_by_design"
+	ExecutorPacketFreshnessUnknown         = "unknown"
+)
+
 type ExecutorHandoffPacket struct {
 	State                   string
 	Reason                  string
+	HandoffCreated          bool
+	PacketPresent           bool
+	PacketNotUsedByDesign   bool
+	PacketFreshnessState    string
 	PlanID                  string
 	HandoffID               string
 	HandoffStatus           string
@@ -249,6 +261,10 @@ type PhaseEvidencePacket struct {
 type phaseEvidenceHandoff struct {
 	PacketState      string `json:"packet_state"`
 	Reason           string `json:"reason,omitempty"`
+	HandoffCreated   bool   `json:"handoff_created,omitempty"`
+	PacketPresent    bool   `json:"packet_present,omitempty"`
+	PacketNotUsed    bool   `json:"packet_not_used_by_design,omitempty"`
+	PacketFreshness  string `json:"packet_freshness_state,omitempty"`
 	PlanID           string `json:"plan_id,omitempty"`
 	HandoffID        string `json:"handoff_id,omitempty"`
 	HandoffStatus    string `json:"handoff_status,omitempty"`

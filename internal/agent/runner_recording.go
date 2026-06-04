@@ -75,7 +75,8 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 		r.onToolResult(ToolResultEvent{Step: step, Agent: r.runner.agentName(), Request: req, Result: result})
 	}
 	if r.turnMessages != nil {
-		*r.turnMessages = append(*r.turnMessages, toolResultMessage(r.activeToolCall, result))
+		modelResult := r.modelFacingToolResult(step, req, result, reason)
+		*r.turnMessages = append(*r.turnMessages, toolResultMessage(r.activeToolCall, modelResult))
 	}
 	if r.runner != nil {
 		r.runner.emitNextActionState(step, reason, req, result, r.snapshotResults(), r.declarationMovesForbidden)
@@ -87,6 +88,62 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 				}
 			}
 		}
+	}
+}
+
+func (r runnerTurnRecorder) modelFacingToolResult(step int, req workspace.ToolRequest, result workspace.ToolResult, reason string) workspace.ToolResult {
+	if r.runner == nil || strings.TrimSpace(result.Error) == "" || strings.TrimSpace(reason) != "tool_rejected" {
+		return result
+	}
+	packet := buildRunnerFailureFeedbackPacketWithAllowedTools(
+		r.runner.agentName(),
+		step,
+		reason,
+		req,
+		result,
+		r.snapshotResults(),
+		r.declarationMovesForbidden,
+		r.runner.RuntimeBrief,
+		r.runner.currentAllowedTools,
+	)
+	feedback := renderModelFacingFailureFeedback(packet)
+	if feedback == "" {
+		return result
+	}
+	modelResult := result
+	modelResult.Error = appendRecoveryCardToMessage(modelResult.Error, feedback)
+	return modelResult
+}
+
+func renderModelFacingFailureFeedback(packet runnerFailureFeedbackPacket) string {
+	var b strings.Builder
+	b.WriteString("Recovery feedback")
+	writeModelFacingFeedbackList(&b, "do_not_repeat", packet.DoNotRepeat, 5)
+	writeModelFacingFeedbackList(&b, "required_next", packet.RequiredNext, 5)
+	writeModelFacingFeedbackList(&b, "valid_next", packet.ValidNext, 5)
+	writeModelFacingFeedbackList(&b, "evidence_status", packet.EvidenceStatus, 3)
+	if card := strings.TrimSpace(packet.RecoveryCard); card != "" {
+		b.WriteString("\n")
+		b.WriteString(card)
+	}
+	feedback := strings.TrimSpace(b.String())
+	if feedback == "Recovery feedback" {
+		return ""
+	}
+	return feedback
+}
+
+func writeModelFacingFeedbackList(b *strings.Builder, label string, values []string, limit int) {
+	values = nonEmptyRunnerStrings(values, limit)
+	if len(values) == 0 {
+		return
+	}
+	b.WriteString("\n")
+	b.WriteString(label)
+	b.WriteString(":")
+	for _, value := range values {
+		b.WriteString("\n- ")
+		b.WriteString(value)
 	}
 }
 

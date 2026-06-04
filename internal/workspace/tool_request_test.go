@@ -186,6 +186,22 @@ func TestParseToolRequestUnwrapsNestedRequestObjectPayload(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestNestedCodeNavigateGraphResolutionDoesNotBecomeCapability(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"request\":{\"tool\":\"code_navigate\",\"query\":\"task tool implementation\",\"resolution\":\"symbol\",\"include_evidence\":\"true\"}}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "code_navigate" || req.Query != "task tool implementation" || req.Resolution != "symbol" || !req.IncludeEvidence {
+		t.Fatalf("unexpected nested object request repair: %#v", req)
+	}
+	if req.Capability != "" {
+		t.Fatalf("graph resolution must not be treated as code_navigate capability: %#v", req)
+	}
+}
+
 func TestParseToolRequestUnwrapsNestedInputObjectPayload(t *testing.T) {
 	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"input\":{\"tool\":\"read_symbol\",\"path\":\"internal/frontier/discovery.go\",\"symbol\":\"DiscoveryQuery\"}}\n```")
 	if err != nil {
@@ -228,6 +244,27 @@ func TestCodeNavigateFileOutlineDirectoryReturnsCandidates(t *testing.T) {
 		!strings.Contains(result.Output, "candidate_file: internal/app/lifecycle.go") ||
 		!strings.Contains(result.Output, "candidate_file: internal/app/rendering.go") {
 		t.Fatalf("directory outline missing candidate files:\n%s", result.Output)
+	}
+}
+
+func TestCodeNavigateRejectsGraphResolutionWithoutNavigationCapability(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, filepath.Join(dir, "go.mod"), "module example.com/test\n\ngo 1.22\n")
+	writeTestFile(t, filepath.Join(dir, "internal/app/lifecycle.go"), "package app\nfunc Run() {}\n")
+	mgr := NewManager(config.Workspace{Root: dir, CWD: dir})
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:            "code_navigate",
+		Query:           "task tool implementation",
+		Resolution:      "symbol",
+		IncludeEvidence: true,
+	})
+
+	if result.Error == "" {
+		t.Fatalf("expected graph-resolution-shaped code_navigate request to be rejected, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "use context_query") || !strings.Contains(result.Error, "set capability") {
+		t.Fatalf("rejection should explain the contract mismatch, got %q", result.Error)
 	}
 }
 
@@ -296,6 +333,22 @@ func TestParseToolRequestTreatsResolutionAsCodeNavigateCapabilityAlias(t *testin
 	}
 	if req.Tool != "code_navigate" || req.Capability != "definition" || req.Pattern != "EvaluateCoverageGate" {
 		t.Fatalf("unexpected request: %#v", req)
+	}
+}
+
+func TestParseToolRequestDoesNotTreatGraphResolutionAsCodeNavigateCapability(t *testing.T) {
+	req, _, ok, err := ParseToolRequest("```tool\n{\"tool\":\"code_navigate\",\"resolution\":\"symbol\",\"query\":\"task tool implementation\"}\n```")
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected tool request")
+	}
+	if req.Tool != "code_navigate" || req.Resolution != "symbol" || req.Query != "task tool implementation" {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+	if req.Capability != "" {
+		t.Fatalf("graph resolution must not become capability: %#v", req)
 	}
 }
 

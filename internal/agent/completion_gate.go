@@ -101,9 +101,9 @@ var textualToolCallGateCheck CompletionGateCheck = func(reply string, _ []worksp
 
 func textualToolCallCompletionRejection(r *Runner, reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	if tool, transport, ok := unsafeTextualWriteAttempt(reply); ok && r.unsafeTextualWriteRecoverySurfaceActive(results) {
-		msg := "the reply contains a " + transport + " " + tool + " write attempt, but key-value and function-call write syntax are not executable. Emit the write through the native tool-call mechanism, or as one visible JSON object with top-level `tool`, `path`, `old_text`, `new_text`, and `description` fields copied from source evidence. Do not use key-value or function-call write syntax."
+		msg := "the reply contains a " + transport + " " + tool + " write attempt that could not be converted into a safe write request. Emit the write through the native tool-call mechanism, as one visible JSON object with top-level `tool`, `path`, `old_text`, `new_text`, and `description` fields copied from source evidence, or as Qwen key-value `tool:` syntax with those same fields. Function-call write syntax is not executable."
 		if r != nil && r.planThenExecutePlannerPhase() {
-			msg = "the reply contains a " + transport + " " + tool + " write attempt, but the plan-execute planner phase does not execute per-edit writes. Emit one visible JSON object for `submit_plan` with top-level `tool`, `rationale`, and `edits`, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker. Key-value and function-call write syntax are not executable."
+			msg = "the reply contains a " + transport + " " + tool + " write attempt, but the plan-execute planner phase does not execute per-edit writes. Emit one visible JSON object for `submit_plan` with top-level `tool`, `rationale`, and `edits`, answer `Decision: source-satisfied`, or answer `<<QUESTION>>:` with the exact blocker. Function-call write syntax is not executable."
 		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",

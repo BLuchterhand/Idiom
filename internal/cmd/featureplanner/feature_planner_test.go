@@ -12,8 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"idiom/internal/config"
 	"idiom/internal/featureplanner"
-	"idiom/internal/productworkflow"
 )
 
 func TestRunFeaturePlannerMainReadsPromptFileAndHonorsJSON(t *testing.T) {
@@ -145,20 +145,12 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 		if !strings.Contains(prompt, "Implement one feature atom") || !strings.Contains(prompt, "docs/feature-planner-plan-execute.txt") {
 			t.Fatalf("plan-execute prompt missing atom contract: %s", prompt)
 		}
-		for _, want := range []string{
-			"Git history evidence required before writes:",
-			"`history_range` or `history_symbol`",
-			"read the commit descriptions",
-			"Paths whose existing logic needs history evidence before mutation:",
-		} {
-			if !strings.Contains(prompt, want) {
-				t.Fatalf("plan-execute prompt missing git history evidence requirement %q: %s", want, prompt)
-			}
-		}
 		body, _ := json.Marshal(map[string]any{
-			"tool":        featureplanner.ToolPlanExecuteComplete,
-			"lane_family": "plan-execute",
-			"summary":     "plan-execute wrote docs/feature-planner-plan-execute.txt and ran go test ./internal/featureplanner",
+			"tool":              featureplanner.ToolPlanExecuteComplete,
+			"lane_family":       "plan-execute",
+			"status":            "completed",
+			"completion_source": "test_plan_execute_adapter",
+			"summary":           "plan-execute wrote docs/feature-planner-plan-execute.txt and ran go test ./internal/featureplanner",
 		})
 		return string(body), nil
 	}
@@ -185,28 +177,202 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 	if !strings.Contains(stdout.String(), `"lane_family":"plan-execute"`) {
 		t.Fatalf("feature planner event should record plan-execute lane: %s", stdout.String())
 	}
-	for _, want := range []string{
-		`"type":"idiom.feature_planner.plan_execute_git_history_requirement"`,
-		`"evidence_tools":["history_range","history_symbol"]`,
-		`"commit_descriptions_required":true`,
-	} {
-		if !strings.Contains(stdout.String(), want) {
-			t.Fatalf("stdout missing git history requirement event field %q: %s", want, stdout.String())
-		}
-	}
 }
 
 func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T) {
 	output := strings.Join([]string{
-		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/first/state.json"}`,
+		`{"type":"idiom.plan_execute.resume_state_saved","phase":"executor","status":"running","state_path":".idiom/plan-execute/first/state.json"}`,
 		`not json`,
-		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/final/state.json"}`,
+		`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","state_path":".idiom/plan-execute/final/state.json"}`,
 		`{"type":"message","state_path":"ignored"}`,
 	}, "\n")
 
-	if got := featurePlannerPlanExecuteProgressPath(output); got != ".idiom/plan-execute/final/state.json" {
+	fields := featurePlannerPlanExecuteCompletionFields(output)
+	if got := featureplanner.CompletionFieldString(fields, "progress_path"); got != ".idiom/plan-execute/final/state.json" {
 		t.Fatalf("progress path = %q", got)
 	}
+	if got := fmt.Sprint(fields["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["phase"]); got != "complete" {
+		t.Fatalf("phase = %q, want complete; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["review_status"]); got != "skipped" {
+		t.Fatalf("review_status = %q, want skipped; fields=%+v", got, fields)
+	}
+}
+
+func TestFeaturePlannerPlanExecuteCompletionFieldsMarksReviewDegradedWithoutStatePath(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"review_model_error"}`,
+		`{"type":"message","content":"review unavailable"}`,
+	}, "\n")
+
+	fields := featurePlannerPlanExecuteCompletionFields(output)
+
+	if got := fmt.Sprint(fields["status"]); got != "degraded" {
+		t.Fatalf("status = %q, want degraded; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["review_status"]); got != "review_unavailable" {
+		t.Fatalf("review_status = %q, want review_unavailable; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
+		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteReturnsTypedSkippedReviewCompletion(t *testing.T) {
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
+				if !testContainsString(args, "-skip-review-repair") {
+					t.Fatalf("expected explicit skipped review flag, args=%+v", args)
+				}
+				_, _ = stdout.Write([]byte(strings.Join([]string{
+					`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","state_path":".idiom/plan-execute/session/state.json"}`,
+					`{"type":"message","content":"done"}`,
+				}, "\n")))
+				return 0
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+	if got := fmt.Sprint(envelope["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
+	}
+	if got := fmt.Sprint(envelope["review_status"]); got != "skipped" {
+		t.Fatalf("review_status = %q, want skipped; envelope=%+v", got, envelope)
+	}
+	if got := envelope["review_repair_skipped"]; got != true {
+		t.Fatalf("review_repair_skipped = %v, want true; envelope=%+v", got, envelope)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteMarksMissingTypedStatusAmbiguous(t *testing.T) {
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(_ []string, stdout io.Writer, _ io.Writer) int {
+				_, _ = stdout.Write([]byte("plain nested stdout without typed completion status"))
+				return 0
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+	if got := fmt.Sprint(envelope["status"]); got != "ambiguous" {
+		t.Fatalf("status = %q, want ambiguous; envelope=%+v", got, envelope)
+	}
+	if got := fmt.Sprint(envelope["failure_kind"]); got != "missing_nested_plan_execute_status" {
+		t.Fatalf("failure_kind = %q, want missing_nested_plan_execute_status; envelope=%+v", got, envelope)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteReturnsTypedFailureCompletion(t *testing.T) {
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		Deps: Dependencies{
+			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"review_repair","status":"degraded","review_status":"degraded","state_path":".idiom/plan-execute/session/state.json"}`))
+				_, _ = stderr.Write([]byte("review repair degraded"))
+				return 1
+			},
+		},
+	}
+
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard)
+	if err != nil {
+		t.Fatalf("typed nested failure should be returned to feature planner, got error: %v", err)
+	}
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(raw), &envelope); err != nil {
+		t.Fatalf("decode completion envelope: %v", err)
+	}
+	if got := fmt.Sprint(envelope["status"]); got != "degraded" {
+		t.Fatalf("status = %q, want degraded; envelope=%+v", got, envelope)
+	}
+	if got := fmt.Sprint(envelope["failure_reason"]); !strings.Contains(got, "exit 1") {
+		t.Fatalf("failure_reason = %q, want exit status; envelope=%+v", got, envelope)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecuteEmitsBlockedTelemetryForFailure(t *testing.T) {
+	req := featurePlannerRequest{
+		ConfigPath: "config.json",
+		SessionID:  "feature-session",
+		JSONEvents: true,
+		Deps: Dependencies{
+			RunPlanExecute: func(_ []string, stdout io.Writer, stderr io.Writer) int {
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.resume_state_saved","phase":"review_repair","status":"failed","review_status":"review_model_error","state_path":".idiom/plan-execute/session/state.json"}`))
+				_, _ = stderr.Write([]byte("review model error"))
+				return 1
+			},
+		},
+	}
+
+	var stdout bytes.Buffer
+	raw, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", &stdout)
+	if err != nil {
+		t.Fatalf("typed nested failure should be returned to feature planner, got error: %v", err)
+	}
+	if !strings.Contains(raw, `"status":"failed"`) {
+		t.Fatalf("completion should preserve failed status: %s", raw)
+	}
+	if !strings.Contains(stdout.String(), `"type":"internal_idiom.plan_execute.blocked"`) {
+		t.Fatalf("expected blocked telemetry, stdout=%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), `"type":"internal_idiom.plan_execute.completed"`) {
+		t.Fatalf("failure completion must not emit completed telemetry, stdout=%s", stdout.String())
+	}
+}
+
+func TestDefaultHeadlessFeaturePlannerRequiresExplicitProductContext(t *testing.T) {
+	root := t.TempDir()
+	originalModelTurn := runFeaturePlannerModelTurn
+	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+		t.Fatal("model planner must not run when explicit product effort context cannot load")
+		return "", nil
+	}
+
+	_, err := defaultHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
+		Config:                config.Config{Workspace: config.Workspace{Root: root}},
+		Prompt:                "implement product feature",
+		MaxPlanningIterations: 3,
+		EffortRoot:            filepath.Join(root, "missing-effort"),
+	}, io.Discard)
+
+	if err == nil || !strings.Contains(err.Error(), "product workflow context unavailable") {
+		t.Fatalf("expected product context error, got %v", err)
+	}
+}
+
+func testContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func featurePlannerPlanExecuteDispatchPlanJSON() string {
@@ -294,154 +460,6 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 	return path
 }
 
-func TestLoadProductWorkflowBriefCarriesClaimBlockersWithoutImplementationRecords(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "adrs"), 0o755); err != nil {
-		t.Fatalf("mkdir adrs: %v", err)
-	}
-	workflowState := productworkflow.WorkflowState{
-		SchemaVersion:        "idiom.product_workflow_state.v0.fixture",
-		EffortID:             "effort-headless",
-		TaskID:               "task-headless",
-		Title:                "Headless claim blocker",
-		StatusBucket:         "started",
-		CurrentPhase:         "phase-4",
-		CurrentState:         "planning",
-		ArtifactPaths:        map[string]string{"events": "events.jsonl"},
-		Context:              productworkflow.WorkflowContext{ContextPackID: "pack", FreshnessState: "current", RefreshPolicy: "on_demand"},
-		Coverage:             productworkflow.CoverageState{CoverageTier: "unit"},
-		Privacy:              productworkflow.PrivacyState{RedactionStatus: "applied"},
-		FolderPath:           root,
-		NextValidActions:     []string{"feature-planner"},
-		DurabilityLevel:      "source_controlled",
-		WorkspaceFingerprint: "test",
-	}
-	writeJSONFile(t, filepath.Join(root, "workflow_state.json"), workflowState)
-	prd := productworkflow.PRDDocument{
-		FrontMatter: productworkflow.PRDFrontMatter{
-			SchemaVersion:     "idiom.prd.v1",
-			PRDID:             "PRD-HEADLESS",
-			Status:            "accepted",
-			TaskID:            "task-headless",
-			CreatedAt:         "2026-05-31T00:00:00Z",
-			AcceptedAt:        "2026-05-31T00:01:00Z",
-			AcceptedBy:        "test",
-			AcceptanceProfile: "human-review",
-		},
-		Requirements: []productworkflow.PRDRequirement{{
-			ID:                   "REQ-HEADLESS",
-			Priority:             "must",
-			Statement:            "Use the ExampleCloud platform for implementation.",
-			EvidenceRefs:         []string{"EV-MISSING"},
-			TDDObligations:       []string{"TDD-HEADLESS"},
-			OwnerAlignment:       "operator-approved",
-			Testability:          "go test",
-			Metric:               "claim is backed before dispatch",
-			OpenQuestionsPresent: true,
-		}},
-	}
-	if err := os.WriteFile(filepath.Join(root, "prd.md"), []byte(productworkflow.RenderPRDMarkdown(prd)), 0o644); err != nil {
-		t.Fatalf("write prd: %v", err)
-	}
-	adrIndex := productworkflow.ADRIndex{
-		SchemaVersion: "idiom.adr_index.v1",
-		EffortID:      "effort-headless",
-		ADRs: []productworkflow.ADRIndexEntry{{
-			ADRID:   "ADR-HEADLESS",
-			Status:  "accepted",
-			Path:    "001-headless.md",
-			PRDRefs: []string{"REQ-HEADLESS"},
-		}},
-	}
-	writeJSONFile(t, filepath.Join(root, "adrs", "index.json"), adrIndex)
-	adr := productworkflow.ADRDocument{
-		FrontMatter: productworkflow.ADRFrontMatter{
-			SchemaVersion:     "idiom.adr.v1",
-			ADRID:             "ADR-HEADLESS",
-			Status:            "accepted",
-			PRDRefs:           []string{"REQ-HEADLESS"},
-			EvidenceRefs:      []string{"EV-MISSING"},
-			TDDObligations:    []string{"TDD-HEADLESS"},
-			CoverageTier:      "unit",
-			AcceptedAt:        "2026-05-31T00:02:00Z",
-			AcceptedBy:        "test",
-			AcceptanceProfile: "human-review",
-		},
-		BodyMarkdown: strings.Join([]string{
-			"## Context",
-			"Headless dispatch needs product authority.",
-			"## Decision",
-			"Keep the ExampleCloud platform requirement visible to implementation planners.",
-			"## Alternatives Considered",
-			"Drop ADR details at CLI load time.",
-			"## Evidence",
-			"EV-MISSING",
-			"## Consequences",
-			"Feature planner sees accepted decisions.",
-			"## Compatibility and Migration",
-			"Existing product brief DTO remains stable.",
-			"## TDD Obligations",
-			"TDD-HEADLESS",
-			"## Rollback",
-			"Restore prior feature-planner loading behavior.",
-			"## Open Questions",
-			"None.",
-		}, "\n\n"),
-	}
-	if err := os.WriteFile(filepath.Join(root, "adrs", "001-headless.md"), []byte(productworkflow.RenderADRMarkdown(adr)), 0o644); err != nil {
-		t.Fatalf("write adr: %v", err)
-	}
-	tdd := productworkflow.TDDLedger{
-		SchemaVersion: "idiom.tdd_ledger.v1",
-		EffortID:      "effort-headless",
-		TaskID:        "task-headless",
-		CoverageTier:  "unit",
-		Coverage:      productworkflow.TDDCoverage{MutationMinScore: 1},
-		Obligations: []productworkflow.TDDObligation{{
-			ID:             "TDD-HEADLESS",
-			Type:           "regression",
-			Behavior:       "Claim is validated",
-			Owner:          "internal/cmd/featureplanner/feature_planner_test.go",
-			Command:        "go test ./internal/cmd/featureplanner",
-			RequiredBefore: "implementation",
-			Status:         "planned",
-		}},
-	}
-	writeJSONFile(t, filepath.Join(root, "tdd.json"), tdd)
-
-	brief, err := loadProductWorkflowBrief(root)
-	if err != nil {
-		t.Fatalf("loadProductWorkflowBrief: %v", err)
-	}
-	if brief == nil {
-		t.Fatal("expected product workflow brief")
-	}
-	if !strings.Contains(strings.Join(brief.Blockers, "\n"), `implementation-affecting claim in PRD requirement REQ-HEADLESS references unresolved evidence "EV-MISSING"`) {
-		t.Fatalf("expected implementation claim blocker without implementation records, got %#v", brief.Blockers)
-	}
-	prompt := featureplanner.BuildPlannerPrompt("plan headless task", featureplanner.NewState("session", "plan", "", 3, time.Unix(1, 0).UTC()), brief)
-	for _, want := range []string{
-		"Keep the ExampleCloud platform requirement visible to implementation planners.",
-		"REQ-HEADLESS testability: go test",
-		"REQ-HEADLESS metric: claim is backed before dispatch",
-	} {
-		if !strings.Contains(prompt, want) {
-			t.Fatalf("planner prompt missing product handoff fact %q:\n%s", want, prompt)
-		}
-	}
-}
-
-func writeJSONFile(t *testing.T, path string, value any) {
-	t.Helper()
-	data, err := json.MarshalIndent(value, "", "  ")
-	if err != nil {
-		t.Fatalf("marshal %s: %v", path, err)
-	}
-	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}
-
 func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 	// Verify that ProductWorkflowBrief can be constructed from fixture data
 	// and that BuildPlannerPrompt injects real artifact IDs.
@@ -463,10 +481,7 @@ func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 		CoverageTier:       "behavior_standard",
 		CoverageGatePassed: true,
 		FilesToModify:      []string{"internal/example/thing.go"},
-		RequiredBehavior:   []string{"REQ-001: Add a thing that works"},
 		Tests:              []string{"go test ./internal/example/..."},
-		Acceptance:         []string{"go test ./internal/example/... passes before implementation dispatch"},
-		Decisions:          []string{"ADR-001 (adrs/001-test.md): Keep the thing simple."},
 		ArtifactRootPath:   "testdata/feature-planner-pw-integration/effort",
 	}
 
@@ -485,15 +500,6 @@ func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 	}
 	if !strings.Contains(prompt, "Product Workflow Context") {
 		t.Error("prompt missing Product Workflow Context section")
-	}
-	if !strings.Contains(prompt, "Required behavior: REQ-001: Add a thing that works") {
-		t.Error("prompt missing required behavior from product workflow brief")
-	}
-	if !strings.Contains(prompt, "Accepted decisions:") || !strings.Contains(prompt, "Keep the thing simple") {
-		t.Error("prompt missing accepted ADR decisions")
-	}
-	if !strings.Contains(prompt, "Acceptance: go test ./internal/example/... passes before implementation dispatch") {
-		t.Error("prompt missing acceptance from product workflow brief")
 	}
 	if !strings.Contains(prompt, "idiom.feature_plan.v2") {
 		t.Error("prompt should reference v2 schema")

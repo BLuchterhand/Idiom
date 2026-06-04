@@ -54,6 +54,11 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	if result.Protocol.ProtocolHash == "" {
 		t.Fatal("protocol hash is empty")
 	}
+	for _, want := range []string{autonomy.ContractEnvelopeSchemaVersion, autonomy.ContextPacketSchemaVersion, autonomy.ModelResponseSchemaVersion, "submit_plan"} {
+		if !slices.Contains(result.Protocol.SchemaNames, want) {
+			t.Fatalf("protocol schema names missing %q: %#v", want, result.Protocol.SchemaNames)
+		}
+	}
 	if result.Protocol.PhaseID != "plan_execute.required_source" {
 		t.Fatalf("protocol phase id = %q", result.Protocol.PhaseID)
 	}
@@ -106,6 +111,26 @@ func TestCompilePlanExecutePlannerBindsAuthorityRuntimeAndProtocol(t *testing.T)
 	}
 	if !slices.Contains(result.Protocol.SourceBodyObligations, "internal/agent/runner.go") {
 		t.Fatalf("source-body obligations missing required path: %#v", result.Protocol.SourceBodyObligations)
+	}
+	if result.Protocol.CompactPacket.SchemaVersion != autonomy.ContextPacketSchemaVersion {
+		t.Fatalf("compact packet schema = %q", result.Protocol.CompactPacket.SchemaVersion)
+	}
+	if result.Protocol.CompactPacket.PacketID == "" {
+		t.Fatal("compact packet id is empty")
+	}
+	if result.Protocol.CompactPacket.ContractID != result.Protocol.ContractID ||
+		result.Protocol.CompactPacket.ProtocolHash != result.Protocol.ProtocolHash {
+		t.Fatalf("compact packet refs not bound to protocol: %#v", result.Protocol.CompactPacket)
+	}
+	if !slices.Contains(result.Protocol.CompactPacket.TargetRefs, "pack:e7818bd1b0006176") {
+		t.Fatalf("compact packet missing target packet ref: %#v", result.Protocol.CompactPacket.TargetRefs)
+	}
+	if !slices.Contains(result.Protocol.CompactPacket.PathRefs, "internal/agent/runner.go") {
+		t.Fatalf("compact packet missing path ref: %#v", result.Protocol.CompactPacket.PathRefs)
+	}
+	if !slices.Contains(result.Protocol.CompactPacket.RedactionMarkers, "metadata_only") ||
+		!slices.Contains(result.Protocol.CompactPacket.RedactionMarkers, "file_content_omitted") {
+		t.Fatalf("compact packet missing redaction markers: %#v", result.Protocol.CompactPacket.RedactionMarkers)
 	}
 
 	decision := findActiveAuthorityDecision(t, result)
@@ -435,6 +460,18 @@ func TestCompilePlanExecutePlannerRejectsInvalidProtocolVocabulary(t *testing.T)
 					InvariantID: "runtime.queue_unavailable",
 					Decision:    "authorized_fallback",
 				}}
+			},
+		},
+		{
+			name: "raw marker in structured schema",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.Protocol.StructuredSchemaNames = append(input.Protocol.StructuredSchemaNames, "raw_prompt")
+			},
+		},
+		{
+			name: "raw marker in context packet ref",
+			mutate: func(input *PlanExecutePlannerInput) {
+				input.TargetPacket = append(input.TargetPacket, "transcript: full text")
 			},
 		},
 	} {

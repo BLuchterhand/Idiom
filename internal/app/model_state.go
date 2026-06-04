@@ -193,6 +193,7 @@ type Model struct {
 	forcedTaskFamily               string
 	suppressPromptTranscript       bool
 	plannerOwnedVerification       bool
+	lastPlanExecuteRunResult       *planexecute.RunResult
 	maxTokensOverride              int
 	disableThinkingOverride        bool
 	forcedReadinessOpenObligations []string

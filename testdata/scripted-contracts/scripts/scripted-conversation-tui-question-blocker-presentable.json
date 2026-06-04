@@ -1,0 +1,8 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "Question: Can you investigate why resizing the TUI mid-answer leaves the conversation with stale wrapped lines?\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/app/update_handlers.go`\n- `internal/app/rendering.go`\n\nKey findings:\n- I still need source-body evidence before answering."
+    }
+  ]
+}

@@ -317,6 +317,7 @@ func (m *Model) runPlanExecuteCommandOnce(ctx context.Context, objective string)
 	if objective == "" {
 		return "", fmt.Errorf("plan-execute objective is required")
 	}
+	m.lastPlanExecuteRunResult = nil
 	m.emitJSONStart(objective)
 	plan := m.planExecuteCommandExecutionPlan(objective)
 	if m.workspace != nil {

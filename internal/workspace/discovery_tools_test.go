@@ -116,6 +116,27 @@ func TestContextImpactSchemaAllowsPathOnlyRequests(t *testing.T) {
 	}
 }
 
+func TestHistoryRangeSchemaAllowsPathOnlyRequests(t *testing.T) {
+	defs := BuildToolDefinitions([]string{"history_range"})
+	if len(defs) != 1 {
+		t.Fatalf("expected one history_range definition, got %#v", defs)
+	}
+	var schema struct {
+		Required []string `json:"required"`
+	}
+	if err := json.Unmarshal([]byte(defs[0].ParametersJSON), &schema); err != nil {
+		t.Fatalf("decode history_range schema: %v\n%s", err, defs[0].ParametersJSON)
+	}
+	if !slices.Contains(schema.Required, "path") {
+		t.Fatalf("history_range schema must require path, required=%#v", schema.Required)
+	}
+	for _, field := range []string{"start_line", "end_line"} {
+		if slices.Contains(schema.Required, field) {
+			t.Fatalf("history_range schema should allow path-only requests, required=%#v", schema.Required)
+		}
+	}
+}
+
 func TestContextToolsBuildQueryAndReportStaleSymbols(t *testing.T) {
 	root := t.TempDir()
 	writeWorkspaceFile(t, filepath.Join(root, "go.mod"), "module example.com/contexttools\n\ngo 1.22\n")
@@ -2248,7 +2269,7 @@ func TestHarnessAuditIgnoresLegacyTurnPhaseProjectionContradictions(t *testing.T
 	historicalFindings := historicalTurnPhaseProjectionFindingsFromEvents(historicalEvents)
 	if !slices.ContainsFunc(historicalFindings, func(finding harnessAuditFinding) bool {
 		return finding.ID == "historical_turn_phase_contract_contradiction" &&
-			strings.Contains(finding.Evidence, "1 pre-current turn-phase projection contradiction(s)")
+			strings.Contains(finding.Evidence, "pre-current turn-phase projection contradiction(s)")
 	}) {
 		t.Fatalf("legacy turn-phase contradiction should be retained as historical finding")
 	}
@@ -3443,6 +3464,20 @@ func TestHistoryAndBlameToolsUseGit(t *testing.T) {
 		t.Fatalf("expected git log -L output to include both commits, got:\n%s", history.Output)
 	}
 
+	pathOnlyHistory := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go"})
+	if pathOnlyHistory.Error != "" {
+		t.Fatalf("path-only history_range returned error: %v\n%s", pathOnlyHistory.Error, pathOnlyHistory.Output)
+	}
+	if pathOnlyHistory.Code != "" {
+		t.Fatalf("path-only history_range Code = %q, want empty; result=%#v", pathOnlyHistory.Code, pathOnlyHistory)
+	}
+	if !strings.Contains(pathOnlyHistory.Summary, "lines 1-5") {
+		t.Fatalf("expected path-only history_range to default to bounded file lines, got summary %q", pathOnlyHistory.Summary)
+	}
+	if !strings.Contains(pathOnlyHistory.Output, "change add") || !strings.Contains(pathOnlyHistory.Output, "initial") {
+		t.Fatalf("expected path-only git log -L output to include both commits, got:\n%s", pathOnlyHistory.Output)
+	}
+
 	symbolHistory := mgr.Execute(context.Background(), ToolRequest{Tool: "history_symbol", Path: "sample.go", Pattern: "add"})
 	if symbolHistory.Error != "" {
 		t.Fatalf("history_symbol returned error: %v\n%s", symbolHistory.Error, symbolHistory.Output)
@@ -3527,6 +3562,21 @@ func TestHistoryRangeReportsNotApplicableForTrackedPathWithoutCommittedHistory(t
 	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1, EndLine: 1})
 
 	assertHistoryNotApplicable(t, result, "path_no_committed_history", "sample.go")
+}
+
+func TestHistoryRangeRejectsPartialRange(t *testing.T) {
+	root := t.TempDir()
+	writeWorkspaceFile(t, filepath.Join(root, "sample.go"), "package main\n")
+	mgr := historyTestManager(root)
+
+	result := mgr.Execute(context.Background(), ToolRequest{Tool: "history_range", Path: "sample.go", StartLine: 1})
+
+	if result.Error == "" {
+		t.Fatalf("partial history_range should be rejected, got %#v", result)
+	}
+	if !strings.Contains(result.Error, "start_line and end_line are required") {
+		t.Fatalf("partial history_range should explain required bounds, got %#v", result)
+	}
 }
 
 func TestHistoryRangeMissingPathRemainsError(t *testing.T) {

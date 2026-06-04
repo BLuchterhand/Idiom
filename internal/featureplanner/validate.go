@@ -218,6 +218,7 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 	}
 	for i, atom := range plan.Atoms {
 		errs = append(errs, repoGrounding.validateAtomEditScope(i, atom)...)
+		errs = append(errs, repoGrounding.validateAtomTestArtifactScope(i, atom)...)
 		if readinessErrs := validateProductTDDReadiness(i, atom, productTDD); len(readinessErrs) > 0 {
 			errs = append(errs, readinessErrs...)
 		}
@@ -298,6 +299,26 @@ func (g productRepoGrounding) validateAtomEditScope(atomIndex int, atom FeatureA
 			continue
 		}
 		errs = append(errs, fmt.Errorf("atom %d edit path %q is ungrounded by files_to_modify, context/source evidence, existing grounded package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
+	}
+	return errs
+}
+
+func (g productRepoGrounding) validateAtomTestArtifactScope(atomIndex int, atom FeatureAtomPlan) []error {
+	var errs []error
+	paths := normalizedStringList(append(atom.TestFirst.TestArtifactPaths, atom.PlannedTDDSnapshot.TestArtifactPaths...))
+	for _, scopedPath := range paths {
+		if normalizeWorkspacePath(scopedPath) == "" {
+			errs = append(errs, fmt.Errorf("atom %d test artifact path %q is not a valid repo-relative workspace path; use ask_planner_question for planning repair", atomIndex, scopedPath))
+			continue
+		}
+		if !g.hasLocalization {
+			errs = append(errs, fmt.Errorf("atom %d test artifact path %q is ungrounded by product workflow localization; use ask_planner_question for planning repair instead of inventing test artifact paths", atomIndex, scopedPath))
+			continue
+		}
+		if g.pathGrounded(scopedPath) {
+			continue
+		}
+		errs = append(errs, fmt.Errorf("atom %d test artifact path %q is ungrounded by files_to_modify, context/source evidence, existing grounded package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
 	}
 	return errs
 }

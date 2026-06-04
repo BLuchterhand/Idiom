@@ -112,6 +112,28 @@ func TestRunnerRequestBudgetAllowsOneCorrectedRetryAfterMissingNamedGap(t *testi
 	}
 }
 
+func TestRecoverablePostReadinessRejectionSummaryUsesContractNamespace(t *testing.T) {
+	for _, summary := range []string{
+		"Post-readiness named_gap restates the original question",
+		"Post-readiness search is broader than the current evidence requires",
+		"Post-readiness exact probe is not grounded in current evidence (replayed same blocker)",
+		"Post-child follow-up gap is not packet-anchored",
+	} {
+		if !isRecoverablePostReadinessGapRejection(summary) {
+			t.Fatalf("expected %q to be recoverable post-readiness rejection", summary)
+		}
+	}
+	for _, summary := range []string{
+		"Post-child broad inspection blocked",
+		"Repeated dead-end action rejected",
+		"Post-readiness named-gap contract is exhausted. Tools are now disabled.",
+	} {
+		if isRecoverablePostReadinessGapRejection(summary) {
+			t.Fatalf("expected %q not to be recoverable post-readiness rejection", summary)
+		}
+	}
+}
+
 func TestRunnerRequestBudgetStillBlocksRejectedRetryWithoutNamedGap(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{

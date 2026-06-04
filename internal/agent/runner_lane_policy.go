@@ -227,19 +227,60 @@ func conversationBroadDiscoveryToolResult(result workspace.ToolResult) bool {
 	}
 }
 
+type conversationDiscoveryRequestRelationKind string
+
+const (
+	conversationDiscoveryRequestRelationNone                  conversationDiscoveryRequestRelationKind = "none"
+	conversationDiscoveryRequestRelationSourceOwnerRefinement conversationDiscoveryRequestRelationKind = "source_owner_refinement"
+	conversationDiscoveryRequestRelationBroadRediscovery      conversationDiscoveryRequestRelationKind = "broad_rediscovery"
+)
+
 func conversationBroadDiscoveryRequest(req workspace.ToolRequest) bool {
-	if conversationTargetedGraphQueryWithGap(req) ||
-		conversationTargetedContextZoom(req) ||
-		conversationTargetedFileNameSearch(req) ||
-		conversationTargetedContentSearch(req) {
-		return false
+	return conversationDiscoveryRequestRelation(req) == conversationDiscoveryRequestRelationBroadRediscovery
+}
+
+func conversationDiscoveryRequestRelation(req workspace.ToolRequest) conversationDiscoveryRequestRelationKind {
+	if conversationSemanticSourceOwnerRefinement(req) {
+		return conversationDiscoveryRequestRelationSourceOwnerRefinement
 	}
-	switch strings.TrimSpace(req.Tool) {
+	if conversationTargetedContentSearch(req) ||
+		conversationTargetedContextZoom(req) ||
+		conversationTargetedFileNameSearch(req) {
+		return conversationDiscoveryRequestRelationNone
+	}
+	if conversationBroadDiscoveryRequestTool(req.Tool) {
+		return conversationDiscoveryRequestRelationBroadRediscovery
+	}
+	return conversationDiscoveryRequestRelationNone
+}
+
+func conversationBroadDiscoveryRequestTool(tool string) bool {
+	switch strings.TrimSpace(tool) {
 	case "context_pack", "context_query", "context_zoom", "context_impact", "discovery_query", "search_files", "search_content", "structural_search":
 		return true
 	default:
 		return false
 	}
+}
+
+func conversationSemanticSourceOwnerRefinement(req workspace.ToolRequest) bool {
+	if strings.TrimSpace(req.Tool) != "context_query" {
+		return false
+	}
+	if strings.TrimSpace(req.Query) == "" || strings.TrimSpace(req.Resolution) == "" {
+		return false
+	}
+	return conversationContextQueryHasConcreteScope(req)
+}
+
+func conversationContextQueryHasConcreteScope(req workspace.ToolRequest) bool {
+	if conversationConcreteSearchScope(req.Path) ||
+		strings.TrimSpace(req.Handle) != "" ||
+		strings.TrimSpace(req.ID) != "" ||
+		strings.TrimSpace(req.NamedGap) != "" {
+		return true
+	}
+	return false
 }
 
 func conversationTargetedContentSearch(req workspace.ToolRequest) bool {
@@ -339,16 +380,6 @@ func conversationBroadFileSearchToken(token string) bool {
 	default:
 		return false
 	}
-}
-
-func conversationTargetedGraphQueryWithGap(req workspace.ToolRequest) bool {
-	if postReadinessGap(req) == "" {
-		return false
-	}
-	if strings.TrimSpace(req.Tool) != "context_query" {
-		return false
-	}
-	return strings.TrimSpace(req.Query) != "" && strings.TrimSpace(req.Resolution) != ""
 }
 
 func conversationBroadDiscoveryRejectionRecorded(results []workspace.ToolResult) bool {

@@ -16,9 +16,9 @@ import (
 	"idiom/internal/productworkflow"
 )
 
-// sendFeaturePlannerCommandAsync scaffolds an effort folder and enters the
+// sendProductFeaturePlannerCommandAsync scaffolds an effort folder and enters the
 // product creation flow: PRD drafting → ADR drafting → TDD synthesis → planning.
-func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
+func (m *Model) sendProductFeaturePlannerCommandAsync(objective string) {
 	objective = strings.TrimSpace(objective)
 	if objective == "" {
 		m.status = "feature-planner objective is required"
@@ -249,7 +249,28 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 	}
 	sessionID := m.featurePlannerSessionID()
 	state := featureplanner.NewState(sessionID, "Implement direct feature plan emitted during PRD drafting", "", 3, time.Now().UTC())
-	events := featureplanner.ApplyPlannerOutput(&state, parsed, time.Now().UTC())
+	var events []featureplanner.Event
+	brief, briefErr := loadDirectFeaturePlannerProductBrief(effortRoot)
+	if briefErr != nil {
+		state.Status = featureplanner.FeatureStatePlanningRepair
+		state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
+		state.Blockers = append(state.Blockers, briefErr.Error())
+		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: briefErr.Error()})
+	} else if parsed.Kind == featureplanner.ToolSubmitFeaturePlan && brief != nil {
+		if err := featureplanner.ValidatePlanProductWorkflowContext(parsed.Plan, *brief); err != nil {
+			state.Status = featureplanner.FeatureStatePlanningRepair
+			state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
+			state.Blockers = append(state.Blockers, err.Error())
+			events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()})
+		} else {
+			events = featureplanner.ApplyPlannerOutput(&state, parsed, time.Now().UTC())
+		}
+	} else {
+		state.Status = featureplanner.FeatureStatePlanningRepair
+		state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
+		state.Blockers = append(state.Blockers, "direct product feature plan is missing product workflow context")
+		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: "direct product feature plan is missing product workflow context"})
+	}
 	implementorBlocked := false
 	if state.Status == featureplanner.FeatureStateDispatching {
 		events = append(events, featureplanner.DispatchReadyAtoms(&state, 0, func(prompt string, taskFamily string) (string, error) {
@@ -287,6 +308,17 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 	answer := formatFeaturePlannerTUIAnswer(state, statePath)
 	m.logMessage(featurePlannerTUITerminalRole(state.Status), answer)
 	return answer, nil
+}
+
+func loadDirectFeaturePlannerProductBrief(effortRoot string) (*featureplanner.ProductWorkflowBrief, error) {
+	if strings.TrimSpace(effortRoot) == "" {
+		return nil, fmt.Errorf("direct product feature plan is missing effort root")
+	}
+	handoff, err := productworkflow.LoadImplementationHandoff(effortRoot)
+	if err != nil {
+		return nil, fmt.Errorf("load product workflow implementation handoff: %w", err)
+	}
+	return productworkflow.FeaturePlannerBriefFromImplementationHandoff(handoff), nil
 }
 
 // buildPRDFormatRepairPrompt creates a prompt asking the model to fix

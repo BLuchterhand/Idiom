@@ -3,6 +3,7 @@ package llama
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +13,9 @@ import (
 )
 
 func TestDebugListModels(t *testing.T) {
+	if os.Getenv("IDIOM_RUN_DEBUG_TESTS") != "1" {
+		t.Skip("set IDIOM_RUN_DEBUG_TESTS=1 to run local debug smoke tests")
+	}
 	cfg, err := config.Load("/Users/ben/Documents/GitHub/idiom/.idiom/config.json")
 	if err != nil {
 		t.Fatal("config load error:", err)
@@ -41,6 +45,9 @@ func TestDebugListModels(t *testing.T) {
 }
 
 func TestDebugRoleSpec(t *testing.T) {
+	if os.Getenv("IDIOM_RUN_DEBUG_TESTS") != "1" {
+		t.Skip("set IDIOM_RUN_DEBUG_TESTS=1 to run local debug smoke tests")
+	}
 	projectRoot := "/Users/ben/Documents/GitHub/idiom"
 
 	cfg, err := config.Load("/Users/ben/Documents/GitHub/idiom/.idiom/config.json")

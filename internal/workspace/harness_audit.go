@@ -2453,6 +2453,9 @@ func historicalTurnPhaseProjectionFindingsFromEvents(events []autonomy.Event) []
 	report := autonomy.AuditEvents(dedupeAndSortHarnessAuditAutonomyEvents(historicalEvents), autonomy.EventAuditOptions{})
 	contradictions := len(report.TurnPhaseCoverage.Contradictions)
 	if contradictions == 0 {
+		contradictions = legacyTurnPhaseProjectionContradictions(historicalEvents)
+	}
+	if contradictions == 0 {
 		return nil
 	}
 	return []harnessAuditFinding{{
@@ -2462,6 +2465,60 @@ func historicalTurnPhaseProjectionFindingsFromEvents(events []autonomy.Event) []
 		Recommendation: "Historical projection mismatches are retained as compatibility evidence; post-cutoff turn-phase contradictions still raise turn_phase_contract_contradiction.",
 		Tools:          []string{"harness_audit"},
 	}}
+}
+
+func legacyTurnPhaseProjectionContradictions(events []autonomy.Event) int {
+	count := 0
+	for _, event := range events {
+		if event.Lifecycle == nil || event.Lifecycle.TurnPhaseContract == nil {
+			continue
+		}
+		phase := *event.Lifecycle.TurnPhaseContract
+		if !strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") {
+			continue
+		}
+		for _, tool := range phase.AllowedTools {
+			tool = strings.TrimSpace(tool)
+			if tool == "" || stringSetContainsWorkspaceAudit(phase.RuntimeCall.ExpressibleActionClasses, tool) {
+				continue
+			}
+			count++
+			break
+		}
+		if count == 0 {
+			for _, surface := range event.Lifecycle.SurfaceSummaries {
+				if strings.EqualFold(surface.RuntimeCall.ToolTransportMode, "textual") && legacySurfaceSummaryHasUnexpressibleTool(surface) {
+					count++
+					break
+				}
+			}
+		}
+	}
+	return count
+}
+
+func legacySurfaceSummaryHasUnexpressibleTool(surface autonomy.TurnPhaseSurfaceSummaryEvent) bool {
+	for _, tool := range surface.CallableTools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" || stringSetContainsWorkspaceAudit(surface.RuntimeCall.ExpressibleActionClasses, tool) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func stringSetContainsWorkspaceAudit(values []string, want string) bool {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return false
+	}
+	for _, value := range values {
+		if strings.TrimSpace(value) == want {
+			return true
+		}
+	}
+	return false
 }
 
 func currentHarnessAuditIncompleteSessions(sessions []harnessAuditIncompleteSession) []harnessAuditIncompleteSession {

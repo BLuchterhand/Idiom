@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -151,7 +152,7 @@ func synthesizeReadOnlyEvidencePacketAnswer(objective string, packets []ReadOnly
 	var findings []ReadOnlyEvidenceFinding
 	for _, packet := range packets {
 		packet = normalizeReadOnlyEvidencePacket(packet)
-		if !readOnlyEvidencePacketAnswerable(packet) {
+		if !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
 			continue
 		}
 		sourcePaths = mergeRunnerStateStrings(sourcePaths, packet.SourceBodyPaths)
@@ -251,6 +252,55 @@ func readOnlyEvidencePacketHasContent(packet ReadOnlyEvidencePacket) bool {
 func readOnlyEvidencePacketAnswerable(packet ReadOnlyEvidencePacket) bool {
 	packet = normalizeReadOnlyEvidencePacket(packet)
 	return len(packet.SourceBodyPaths) > 0 && len(packet.Findings) > 0
+}
+
+func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket, objective string) bool {
+	packet = normalizeReadOnlyEvidencePacket(packet)
+	if !readOnlyEvidencePacketAnswerable(packet) {
+		return false
+	}
+	objective = strings.TrimSpace(objective)
+	if objective == "" {
+		return true
+	}
+	var findingText []string
+	for _, finding := range packet.Findings {
+		text := strings.TrimSpace(finding.Text)
+		if text != "" {
+			findingText = append(findingText, text)
+		}
+	}
+	body := substantiveAnswerWithoutEchoedObjective(strings.Join(findingText, "\n"), objective)
+	objectiveText := answerTextWithoutPathCitations(body)
+	if readOnlyObjectiveAnswerEvidenceSupported(objectiveText, objective) {
+		return true
+	}
+	if readOnlyEvidencePacketNamesObjectiveSource(packet, objective) &&
+		readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(body, objective) {
+		return true
+	}
+	return false
+}
+
+func readOnlyEvidencePacketNamesObjectiveSource(packet ReadOnlyEvidencePacket, objective string) bool {
+	objective = strings.ToLower(strings.TrimSpace(objective))
+	if objective == "" {
+		return false
+	}
+	for _, path := range packet.SourceBodyPaths {
+		normalized := strings.ToLower(normalizeReadOnlyEvidencePacketPath(path))
+		if normalized == "" {
+			continue
+		}
+		base := strings.ToLower(filepath.Base(normalized))
+		stem := strings.TrimSuffix(base, filepath.Ext(base))
+		if strings.Contains(objective, normalized) ||
+			(base != "" && strings.Contains(objective, base)) ||
+			(stem != "" && strings.Contains(objective, stem)) {
+			return true
+		}
+	}
+	return false
 }
 
 func readOnlyEvidencePacketSourceBodyPaths(results []workspace.ToolResult) []string {
@@ -429,9 +479,7 @@ func readOnlyEvidencePacketTransportLine(text string) bool {
 		strings.HasPrefix(lower, "verified context:") ||
 		strings.HasPrefix(lower, "grounded answer:") ||
 		strings.HasPrefix(lower, "grounded findings:") ||
-		strings.HasPrefix(lower, "read ") ||
-		strings.HasPrefix(lower, "found ") ||
-		strings.HasPrefix(lower, "located ")
+		strings.HasPrefix(lower, "read ")
 }
 
 func utilUniqueTrimmed(values []string, limit int) []string {

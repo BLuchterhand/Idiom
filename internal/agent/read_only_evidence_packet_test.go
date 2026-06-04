@@ -44,7 +44,10 @@ func TestReadOnlyEvidencePacketParsesTypedPayloadWithoutProseHeadings(t *testing
 		PermissionProfile: "read_only_workspace",
 	}, []workspace.ToolResult{result})
 	if !ledger.Answerable() {
-		t.Fatalf("typed task packet should satisfy read-only answerability: %#v", ledger)
+		t.Fatalf("typed task packet should satisfy read-only answerability: answerable=%t terms=%#v ledger=%#v",
+			readOnlyEvidencePacketAnswerableForObjective(packet, "Explain runner readiness."),
+			readOnlyObjectivePromotionTerms("Explain runner readiness."),
+			ledger)
 	}
 	rendered := renderReadOnlyEvidencePacketForToolOutput(packet, result.Output)
 	if !strings.Contains(rendered, "`internal/agent/runner.go`") || !strings.Contains(rendered, "runner.go computes") {
@@ -175,5 +178,104 @@ func TestBuildReadOnlyEvidencePacketFromChildResultsAndAnswerText(t *testing.T) 
 	}
 	if !readOnlyEvidencePacketAnswerable(packet) {
 		t.Fatalf("source-backed built packet should be answerable: %#v", packet)
+	}
+}
+
+func TestBuildReadOnlyEvidencePacketKeepsFoundFindingBullets(t *testing.T) {
+	answer := strings.Join([]string{
+		"Partial findings from this turn (the budget was reached before a full synthesis):",
+		"",
+		"Verified context:",
+		"- Read internal/agent/runner_child_tasks.go lines 1-20",
+		"- Found task child runner creation in internal/agent/runner_child_tasks.go",
+	}, "\n")
+	childResults := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner_child_tasks.go lines 1-20",
+		Output:  "package agent\n",
+	}}
+
+	packet, ok := buildReadOnlyEvidencePacket("Explain how delegated child runners are created.", answer, childResults)
+	if !ok {
+		t.Fatal("expected packet from child answer")
+	}
+	if !readOnlyEvidencePacketAnswerableForObjective(packet, "Explain how delegated child runners are created in this harness.") {
+		t.Fatalf("expected found finding bullet to support objective answerability: %#v", packet)
+	}
+}
+
+func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t *testing.T) {
+	packet := ReadOnlyEvidencePacket{
+		Objective:       "Explain how subagents work.",
+		Question:        "Explain how subagents work.",
+		SourceBodyPaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The parent runner delegates subagent read-only exploration through the `task` tool"},
+			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` constructs the subagent child runner and returns the typed evidence packet"},
+		},
+		Confidence: "high",
+	}
+	objective := "Explain how subagents work."
+	body := strings.Join([]string{packet.Findings[0].Text, packet.Findings[1].Text}, "\n")
+	objectiveText := answerTextWithoutPathCitations(substantiveAnswerWithoutEchoedObjective(body, objective))
+	mechanismText := strings.ToLower(answerProseForObjectiveMatching(objectiveText))
+	if !readOnlyEvidencePacketAnswerableForObjective(packet, objective) {
+		t.Fatalf("expected subagent packet to support objective answerability: terms=%#v objectiveText=%q mechanism=%t packet=%#v",
+			readOnlyObjectivePromotionTerms(objective),
+			objectiveText,
+			readOnlyExplanationHasMechanismVerb(mechanismText),
+			packet)
+	}
+	answer, ok := synthesizeReadOnlyEvidencePacketAnswer(objective, []ReadOnlyEvidencePacket{packet})
+	if !ok {
+		t.Fatal("expected synthesis from subagent packet")
+	}
+	for _, want := range []string{"delegates subagent read-only exploration", "returns the typed evidence packet"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected synthesized answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+}
+
+func TestReadOnlyObjectiveAnswerEvidenceSupportedAcceptsRunnerReadiness(t *testing.T) {
+	text := "runner.go computes read-only readiness from grounded source evidence."
+	objective := "Explain runner readiness."
+	if readOnlyObjectiveAnswerEvidenceSupported(text, objective) {
+		t.Fatal("path-like source name alone should not satisfy generic objective support")
+	}
+	if !readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(text, objective) {
+		t.Fatalf("expected named-source runner readiness text to support objective: terms=%#v text=%q",
+			readOnlyObjectivePromotionTerms(objective), text)
+	}
+}
+
+func TestReadOnlyTaskResultAnswerableForObjectiveUsesTypedPacketAsAuthority(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Source-body evidence paths:",
+			"- `internal/agent/runner.go`",
+			"",
+			"Key findings:",
+			"- The harness uses subagents through delegated child runners.",
+		}, "\n"),
+	}
+	result = readOnlyEvidencePacketToolResult(result, ReadOnlyEvidencePacket{
+		SchemaVersion:   ReadOnlyEvidencePacketSchema,
+		Objective:       "Explain how subagents work.",
+		Question:        "Explain how subagents work.",
+		SourceBodyPaths: []string{"internal/agent/runner.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The runner records model-call metadata."},
+		},
+		Confidence: "medium",
+	})
+
+	if readOnlyTaskResultAnswerableForObjective(result, "Explain how subagents work.") {
+		t.Fatal("typed packet rejection must not fall back to legacy rendered text promotion")
+	}
+	if paths := postChildClosureEvidencePaths("Explain how subagents work.", []workspace.ToolResult{result}, 4); len(paths) != 0 {
+		t.Fatalf("non-answerable typed packet must not promote closure evidence paths: %#v", paths)
 	}
 }

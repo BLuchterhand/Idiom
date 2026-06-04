@@ -299,6 +299,70 @@ func TestEvaluatePlanExecutionExpectationDetectsScopeDrift(t *testing.T) {
 	}
 }
 
+func TestEvaluatePlanExecutionExpectationRequiresPacketFreshness(t *testing.T) {
+	records := []Record{
+		{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+			"handoff_created":           true,
+			"handoff_id":                "handoff-1",
+			"packet_state":              "inherited",
+			"packet_present":            true,
+			"packet_freshness_state":    "fresh",
+			"pack_id":                   "feedfacecafebeef",
+			"packet_not_used_by_design": false,
+		}},
+	}
+	report := Evaluate("", records, Scenario{
+		Name: "plan-execution-fresh-packet",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:            true,
+			RequirePacketPresent:        true,
+			RequirePacketFresh:          true,
+			RequirePacketFreshnessState: []string{"fresh"},
+		},
+	})
+	if !report.Passed {
+		t.Fatalf("expected fresh packet assertions to pass, got %#v", report.Findings)
+	}
+
+	missing := Evaluate("", []Record{{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+		"handoff_created":        true,
+		"packet_state":           "missing",
+		"packet_freshness_state": "missing",
+	}}}, Scenario{
+		Name: "plan-execution-missing-packet",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:     true,
+			RequirePacketPresent: true,
+			RequirePacketFresh:   true,
+		},
+	})
+	if missing.Passed {
+		t.Fatalf("expected missing packet assertions to fail")
+	}
+	joined := strings.Join(missing.Findings, "\n")
+	for _, want := range []string{"packet presence was required", "fresh packet was required"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("expected finding %q, got %q", want, joined)
+		}
+	}
+
+	createdOnly := Evaluate("", []Record{{Type: "idiom.plan_execute.executor_handoff_packet", Data: map[string]any{
+		"handoff_created": true,
+	}}}, Scenario{
+		Name: "plan-execution-handoff-created-without-id",
+		RequirePlanExecution: &PlanExecutionExpectation{
+			RequireHandoffID:      true,
+			RequireHandoffCreated: true,
+		},
+	})
+	if createdOnly.Passed {
+		t.Fatalf("handoff_created without handoff_id must not satisfy RequireHandoffID")
+	}
+	if !strings.Contains(strings.Join(createdOnly.Findings, "\n"), "handoff id was required but not observed") {
+		t.Fatalf("expected strict handoff id finding, got %#v", createdOnly.Findings)
+	}
+}
+
 func TestEvaluatePlanExecuteVerificationEventsSatisfyVerificationRequirement(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "Use plan-execute to update internal/labels/labels.go, then run `go test ./...`."}},

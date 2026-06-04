@@ -179,7 +179,7 @@ func TestApplyModelSwapMLXSetsThinkingFloor(t *testing.T) {
 		t.Fatalf("expected display model local-qwen, got %q", m.activeModelDisplayID())
 	}
 	if !m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=true for MLX backend (Qwen 3.6 needs thinking mode)")
+		t.Fatal("expected modelThinkingFloor=true for MLX local model")
 	}
 	if m.maxTokensOverride != 8192 {
 		t.Fatalf("expected maxTokensOverride=8192 from backends.json, got %d", m.maxTokensOverride)
@@ -199,7 +199,7 @@ func TestApplyModelSwapLocalWithNoMaxTokens(t *testing.T) {
 	}
 }
 
-func TestApplyModelSwapHostedToMLXPreservesThinkingFloor(t *testing.T) {
+func TestApplyModelSwapHostedToLocalResetsThinkingFloor(t *testing.T) {
 	m := newTestModelWithWorkspace(t)
 
 	m.applyModelSwap("glm-5.1")
@@ -207,18 +207,18 @@ func TestApplyModelSwapHostedToMLXPreservesThinkingFloor(t *testing.T) {
 		t.Fatal("setup: expected thinking floor after hosted swap")
 	}
 
-	m.applyModelSwap("local-qwen")
-	if !m.modelThinkingFloor {
-		t.Fatal("expected modelThinkingFloor=true after swapping from hosted to MLX (Qwen 3.6 needs thinking mode)")
+	m.applyModelSwap("local-no-max")
+	if m.modelThinkingFloor {
+		t.Fatal("expected modelThinkingFloor=false after swapping from hosted to non-MLX local")
 	}
 }
 
 func TestApplyModelSwapLocalToHostedSetsThinkingFloor(t *testing.T) {
 	m := newTestModelWithWorkspace(t)
 
-	m.applyModelSwap("local-qwen")
-	if !m.modelThinkingFloor {
-		t.Fatal("setup: expected thinking floor after MLX swap (Qwen 3.6 needs thinking mode)")
+	m.applyModelSwap("local-no-max")
+	if m.modelThinkingFloor {
+		t.Fatal("setup: expected no thinking floor after non-MLX local swap")
 	}
 
 	m.applyModelSwap("glm-5.1")

@@ -63,6 +63,35 @@ failure patterns that have cost time in real Idiom/Colony runs.
   de-drift checklist before edits: canonical owner, consumer type, preservation
   lanes, cleanup lanes, existing helper scan, negative oracle, and test
   contradiction scan. If any item is unknown, inspect before patching.
+- **Readiness-promotion drift**: when a failure is "accepted but wrong",
+  "answer-ready but not useful", or "forced answer but no useful answer landed",
+  audit every surface that can promote evidence to answer readiness or synthesize
+  a final answer. Check legacy packets, typed packets, answerability ledgers,
+  completion gates, fallback composers, decorators, and parent/child handoff
+  nudges for the same objective/evidence contract before patching only the latest
+  failing surface.
+- **Split answerability authority**: a child packet, direct source read,
+  discovery result, fallback answer, and final-answer decorator may all look like
+  "read-only evidence," but only one contract should decide whether the evidence
+  answers the objective. If a fix adds objective matching, source-body checks, or
+  path promotion in one consumer, audit the sibling consumers before landing:
+  readiness ledgers, typed packet parsing, parent/child promotion,
+  post-child evidence paths, fallback synthesis, final-answer acceptance, and
+  lane policy. A path or phrase matcher in one of those consumers is churn unless
+  it delegates to the same answerability decision.
+- **Path mentions as source authority**: mentioned paths, pinned paths, context
+  packet candidates, generated logs, and diagnostic artifact paths are candidate
+  or audit evidence. They are not final-answer citation authority and must not be
+  merged into closeout evidence unless the shared answerability contract has
+  accepted a source-body read, typed source-body packet, direct source probe, or
+  explicitly accepted inspected path for the same objective.
+- **Tool-surface projection drift**: hidden tools, allowed tools, callable tool
+  names, model-visible manifests, recovery cards, next-action state, and audit
+  phase contracts are projections of one active turn surface. If a fix hides,
+  releases, narrows, or restores a tool, verify every projection changes from
+  the same source of truth. A local `hidden[tool] = true` plus a remembered
+  rebuild call is a temporary patch; repeated misses mean the tool surface needs
+  a typed owner.
 - **Protocol marker boundary drift**: markers such as `<<QUESTION>>` are not
   just strings. They can be model-facing recovery protocol, machine-consumed
   terminal signals, or forbidden user-facing presentation text depending on the
@@ -92,6 +121,10 @@ behavior.
 | Preserve lanes | Which lanes must keep the raw protocol or state unchanged? |
 | Cleanup lanes | Which lanes must transform or hide it before users see it? |
 | Existing helper scan | Which local helpers already handle this class of behavior? |
+| Similar-surface scan | Which sibling modules can promote, hide, recover, compose, accept, or audit the same state? |
+| Readiness promotion scan | Which gates, packets, ledgers, fallbacks, decorators, or handoffs can mark this evidence answer-ready or synthesize a final answer? |
+| Path authority classification | Are the paths source-body authority, accepted inspected paths, candidates, diagnostics, generated artifacts, or user-facing citations? |
+| Tool-surface projection check | If tools changed, do model manifests, phase contracts, recovery cards, next-action state, telemetry, and audit all reflect the same callable surface? |
 | Negative oracle | What valid lane/use case would break if the fix is too broad? |
 | Test contradiction scan | Do existing tests still bless the behavior being declared forbidden? |
 
@@ -212,6 +245,12 @@ For `<<QUESTION>>` specifically:
   does not actually satisfy. Fix the command, packet, schema, or expectation
   before adding another nudge that pushes the model away from what it is trying
   to inspect.
+- **Redirects that do not satisfy the sought evidence shape**: a recovery
+  redirect should either return the evidence shape the model was trying to get
+  or explain, in typed state, why that shape is unavailable and what exact
+  alternative can satisfy the same claim. Repeatedly redirecting a bounded read
+  into another tool while the model keeps asking for the same source body is a
+  harness affordance bug, not proof that exploration should be blocked.
 - **Generic surface after specific evidence need**: after discovery returns
   candidates, do not keep presenting the same generic `read/search` menu while
   prose says "read the highest-confidence hit." The active phase must reconcile
@@ -270,6 +309,11 @@ For `<<QUESTION>>` specifically:
   answer-shape cleanup, stop treating the next failure as local. Reconstruct the
   first broken invariant, identify the owning boundary, and consolidate the
   behavior into one typed contract or abstraction before adding another patch.
+- **Fix migration without stabilization**: if a follow-up live run changes which
+  assertion fails but still fails the same user intent, record that as churn
+  unless the new failure is a known independent invariant with its own owner.
+  Passing unit tests plus a moved live failure is not stabilization; it is
+  evidence that only one projection of the contract was repaired.
 - **Passing the assertion instead of fixing the invariant**: a live/eval
   expectation is evidence, not the root cause. Do not update an oracle, add a
   topic-specific path, or suppress an error counter until the reusable failure
@@ -444,9 +488,16 @@ Before calling an Idiom harness change complete, check:
    allowed path?
 9. For scripted answer tests, does the oracle require positive semantic content
    and use a fixture that actually contains the concept under test?
-10. If behavior was removed or reverted, did a retention table prove that no
+10. If answerability, evidence paths, or final-answer acceptance changed, did
+   every sibling promotion/composition/acceptance surface use the same decision
+   or get explicitly classified as an adapter?
+11. If the visible tool surface changed, do the model manifest, phase contract,
+   recovery card, next-action state, telemetry, and audit agree?
+12. If the latest live failure moved rather than disappeared, did you classify
+   that as churn and identify the unrepaired projection?
+13. If behavior was removed or reverted, did a retention table prove that no
    current live/scripted contract still depends on it?
-11. Did an independent reviewer check the root cause, north-star alignment, and
+14. Did an independent reviewer check the root cause, north-star alignment, and
    rabbit-hole risk before the fix was finalized?
-12. Was the reviewer set minimal and matched to the failure signature, rather
+15. Was the reviewer set minimal and matched to the failure signature, rather
    than the full bench by default?

@@ -182,14 +182,13 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	coverage := EvaluateCoverageGate(diskPRD, diskIdx, acceptedADRs, diskTDD, matrix, knownTDDIDs)
 
 	brief := &featureplanner.ProductWorkflowBrief{
-		EffortID:                  ws.EffortID,
-		TaskID:                    ws.TaskID,
-		EffortRoot:                root,
-		CoverageTier:              diskTDD.CoverageTier,
-		CoverageGatePassed:        coverage.Status == "pass",
-		ArtifactRootPath:          root,
-		FilesToModify:             []string{"internal/auth/login.go"},
-		AuthorizedNewPackageRoots: []string{"internal/auth"},
+		EffortID:           ws.EffortID,
+		TaskID:             ws.TaskID,
+		EffortRoot:         root,
+		CoverageTier:       diskTDD.CoverageTier,
+		CoverageGatePassed: coverage.Status == "pass",
+		ArtifactRootPath:   root,
+		FilesToModify:      []string{"internal/auth/login.go", "internal/auth/login_test.go"},
 	}
 	for _, req := range diskPRD.Requirements {
 		if req.ID == "" {
@@ -314,7 +313,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 					"obligation_refs":               []string{"TDD-001"},
 					"commands":                      []string{"go test ./auth/..."},
 					"baseline_required":             true,
-					"test_artifact_paths":           []string{"auth/login_test.go"},
+					"test_artifact_paths":           []string{"internal/auth/login_test.go"},
 					"pre_execution_event_ids":       []string{"evt-tdd-1"},
 					"expected_pre_execution_result": "red-confirmed",
 					"coverage_gate_event_id":        "evt-cov-1",
@@ -324,7 +323,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 					"snapshot_digest":                  "sha256:abc123",
 					"obligation_ids":                   []string{"TDD-001"},
 					"test_commands":                    []string{"go test ./auth/..."},
-					"test_artifact_paths":              []string{"auth/login_test.go"},
+					"test_artifact_paths":              []string{"internal/auth/login_test.go"},
 					"expected_pre_execution_results":   []string{"red-confirmed"},
 					"created_before_dispatch_event_id": "evt-tdd-1",
 				},
@@ -338,7 +337,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 			return string(mockJSON), nil
 		}
 		if taskFamily == "feature_planner_implementor" {
-			return `{"tool":"plan_execute_completed","summary":"atom-1 implemented","progress_path":".idiom/plan-execute/session/state.json","status":"pass"}`, nil
+			return fmt.Sprintf(`{"tool":%q,"summary":"atom-1 implemented","status":"completed","review_status":"skipped","review_repair_skipped":true}`, featureplanner.ToolPlanExecuteComplete), nil
 		}
 		return "", fmt.Errorf("unknown task family: %s", taskFamily)
 	}
@@ -354,7 +353,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 		t.Fatalf("featureplanner.Run: %v", runErr)
 	}
 	if len(runResult.State.Atoms) != 1 {
-		t.Fatalf("expected 1 atom, got %d, state status=%s", len(runResult.State.Atoms), runResult.State.Status)
+		t.Fatalf("expected 1 atom, got %d, state status=%s blockers=%v events=%+v", len(runResult.State.Atoms), runResult.State.Status, runResult.State.Blockers, runResult.Events)
 	}
 	atom := runResult.State.Atoms[0]
 	if atom.ID != "atom-1" {

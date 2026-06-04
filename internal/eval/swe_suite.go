@@ -52,6 +52,7 @@ type SWEOracle struct {
 	MaxToolRequests             *int                        `json:"max_tool_requests,omitempty"`
 	MaxDurationMillis           *int64                      `json:"max_duration_millis,omitempty"`
 	MaxErrors                   *int                        `json:"max_errors,omitempty"`
+	ExpectedRecoveries          []SWEExpectedRecovery       `json:"expected_recoveries,omitempty"`
 	MinUserTurns                *int                        `json:"min_user_turns,omitempty"`
 	MinAssistantTurns           *int                        `json:"min_assistant_turns,omitempty"`
 	RequireNoApproval           bool                        `json:"require_no_approval,omitempty"`
@@ -70,6 +71,19 @@ type SWEOracle struct {
 	RequireCleanRollback        bool                        `json:"require_clean_rollback,omitempty"`
 	Groundedness                *SWEGroundednessOracle      `json:"groundedness,omitempty"`
 	ForbidGenericPhrases        bool                        `json:"forbid_generic_phrases,omitempty"`
+}
+
+type SWEExpectedRecovery struct {
+	Kind                           string   `json:"kind"`
+	EventType                      string   `json:"event_type,omitempty"`
+	Tool                           string   `json:"tool,omitempty"`
+	ErrorContains                  []string `json:"error_contains,omitempty"`
+	SummaryContains                []string `json:"summary_contains,omitempty"`
+	ReasonContains                 []string `json:"reason_contains,omitempty"`
+	AccountsForRunnerRejection     bool     `json:"accounts_for_runner_rejection,omitempty"`
+	AccountsForCompletionRejection bool     `json:"accounts_for_completion_rejection,omitempty"`
+	MinCount                       *int     `json:"min_count,omitempty"`
+	MaxCount                       *int     `json:"max_count,omitempty"`
 }
 
 // SWEGroundednessOracle asserts the final assistant response is grounded in
@@ -372,6 +386,26 @@ func LintSWESuite(suite SWESuite) []string {
 		}
 		if taskHasTag(task, "tool-error") && task.Oracle.MaxErrors == nil {
 			addFinding(task, "tool-error task must bound errors")
+		}
+		if taskHasTag(task, "live") && task.Oracle.MaxErrors != nil && *task.Oracle.MaxErrors > 0 && len(task.Oracle.ExpectedRecoveries) == 0 {
+			addFinding(task, "live task with max_errors > 0 must declare typed expected_recoveries")
+		}
+		for i, expected := range task.Oracle.ExpectedRecoveries {
+			if strings.TrimSpace(expected.Kind) == "" {
+				addFinding(task, "expected_recoveries[%d] missing kind", i)
+			}
+			if !expectedRecoveryHasMatcher(expected) {
+				addFinding(task, "expected_recoveries[%d] must match event_type, tool, error_contains, summary_contains, or reason_contains", i)
+			}
+			if expected.MinCount != nil && *expected.MinCount < 0 {
+				addFinding(task, "expected_recoveries[%d] min_count must be non-negative", i)
+			}
+			if expected.MaxCount != nil && *expected.MaxCount < 0 {
+				addFinding(task, "expected_recoveries[%d] max_count must be non-negative", i)
+			}
+			if expected.MinCount != nil && expected.MaxCount != nil && *expected.MinCount > *expected.MaxCount {
+				addFinding(task, "expected_recoveries[%d] min_count must be <= max_count", i)
+			}
 		}
 		for _, expected := range task.Oracle.RequireFileContent {
 			if err := validateFixturePathSyntax(expected.Path); err != nil {
@@ -889,8 +923,12 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 	if oracle.MaxDurationMillis != nil && report.Metrics.DurationMillis > *oracle.MaxDurationMillis {
 		addFinding("duration exceeded oracle limit: got %dms want <= %dms", report.Metrics.DurationMillis, *oracle.MaxDurationMillis)
 	}
-	if oracle.MaxErrors != nil && report.Metrics.TotalErrorEvents() > *oracle.MaxErrors {
-		addFinding("errors exceeded oracle limit: got %d want <= %d", report.Metrics.TotalErrorEvents(), *oracle.MaxErrors)
+	recoveryEval := evaluateExpectedRecoveries(report.Metrics, oracle.ExpectedRecoveries)
+	if oracle.MaxErrors != nil && recoveryEval.UnexpectedErrorEvents > *oracle.MaxErrors {
+		addFinding("unexpected errors exceeded oracle limit: got %d want <= %d", recoveryEval.UnexpectedErrorEvents, *oracle.MaxErrors)
+	}
+	for _, finding := range recoveryEval.Findings {
+		addFinding("%s", finding)
 	}
 	if oracle.MinUserTurns != nil && report.Metrics.UserTurns < *oracle.MinUserTurns {
 		addFinding("user turns below oracle minimum: got %d want >= %d", report.Metrics.UserTurns, *oracle.MinUserTurns)
@@ -916,10 +954,18 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 	if oracle.RequireNoRunnerRejections && !report.Metrics.TurnSummarySeen {
 		addFinding("runner rejections were forbidden but no turn_summary was present to prove aggregate rejection counters")
 	}
-	if oracle.RequireNoRunnerRejections && (report.Metrics.RejectedActions > 0 || report.Metrics.CompletionGateRejections > 0) {
-		addFinding("runner rejections were forbidden but observed rejected_actions=%d completion_gate_rejections=%d", report.Metrics.RejectedActions, report.Metrics.CompletionGateRejections)
+	unexpectedRunnerRejections := report.Metrics.RejectedActions - recoveryEval.ExpectedRunnerRejections
+	if unexpectedRunnerRejections < 0 {
+		unexpectedRunnerRejections = 0
 	}
-	if oracle.RequireExecutorHandoff && !planExecutionHasHandoffID(report.Metrics.PlanExecutionHandoffs) {
+	unexpectedCompletionGateRejections := report.Metrics.CompletionGateRejections - recoveryEval.ExpectedCompletionRejections
+	if unexpectedCompletionGateRejections < 0 {
+		unexpectedCompletionGateRejections = 0
+	}
+	if oracle.RequireNoRunnerRejections && (unexpectedRunnerRejections > 0 || unexpectedCompletionGateRejections > 0) {
+		addFinding("runner rejections were forbidden but observed unexpected rejected_actions=%d completion_gate_rejections=%d (raw rejected_actions=%d completion_gate_rejections=%d)", unexpectedRunnerRejections, unexpectedCompletionGateRejections, report.Metrics.RejectedActions, report.Metrics.CompletionGateRejections)
+	}
+	if oracle.RequireExecutorHandoff && !planExecutionHasHandoffCreated(report.Metrics.PlanExecutionHandoffs) {
 		addFinding("executor handoff was required but not observed")
 	}
 	if oracle.RequireNoTimeout && report.Metrics.LiveContractTimeouts > 0 {
@@ -935,7 +981,7 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 		addFinding("source-satisfied outcomes were forbidden but observed %d", report.Metrics.SourceSatisfiedOutcomes)
 	}
 	if taskRequiresImplementationWrite(task) {
-		noExecutorHandoff := !planExecutionHasHandoffID(report.Metrics.PlanExecutionHandoffs)
+		noExecutorHandoff := !planExecutionHasHandoffCreated(report.Metrics.PlanExecutionHandoffs)
 		noChangedFiles := len(report.Metrics.ChangedFiles) == 0
 		if report.Metrics.TypedBlockers > 0 && noChangedFiles && noExecutorHandoff && !oracle.AllowNoWrite {
 			addFinding("implementation-required fixture ended blocker-only without allow_no_write")
@@ -973,6 +1019,125 @@ func EvaluateSWETask(logPath string, records []Record, task SWETask) SWETaskRepo
 		}
 	}
 	return report
+}
+
+type expectedRecoveryEvaluation struct {
+	UnexpectedErrorEvents        int
+	ExpectedRunnerRejections     int
+	ExpectedCompletionRejections int
+	Findings                     []string
+}
+
+func evaluateExpectedRecoveries(metrics Metrics, expected []SWEExpectedRecovery) expectedRecoveryEvaluation {
+	events := metrics.ErrorEvents
+	if len(events) == 0 {
+		for _, errText := range metrics.Errors {
+			events = append(events, ErrorEventSnapshot{Error: errText})
+		}
+	}
+	evaluation := expectedRecoveryEvaluation{}
+	if len(expected) == 0 {
+		evaluation.UnexpectedErrorEvents = len(events)
+		return evaluation
+	}
+	findings := make([]string, 0)
+	matchedCounts := make([]int, len(expected))
+	for _, event := range events {
+		matched := false
+		eventAccountsForRunnerRejection := false
+		eventAccountsForCompletionRejection := false
+		for i, recovery := range expected {
+			if expectedRecoveryMatchesEvent(recovery, event) {
+				matchedCounts[i]++
+				if recovery.AccountsForRunnerRejection && event.RunnerRejected {
+					eventAccountsForRunnerRejection = true
+				}
+				if recovery.AccountsForCompletionRejection && event.CompletionGateRejected {
+					eventAccountsForCompletionRejection = true
+				}
+				matched = true
+			}
+		}
+		if eventAccountsForRunnerRejection {
+			evaluation.ExpectedRunnerRejections++
+		}
+		if eventAccountsForCompletionRejection {
+			evaluation.ExpectedCompletionRejections++
+		}
+		if !matched {
+			evaluation.UnexpectedErrorEvents++
+			findings = append(findings, fmt.Sprintf("unexpected error event did not match expected_recoveries: type=%q tool=%q error=%q", event.EventType, event.Tool, event.Error))
+		}
+	}
+	for i, recovery := range expected {
+		kind := strings.TrimSpace(recovery.Kind)
+		if kind == "" {
+			kind = fmt.Sprintf("expected_recoveries[%d]", i)
+		}
+		minCount := 1
+		if recovery.MinCount != nil {
+			minCount = *recovery.MinCount
+		}
+		if matchedCounts[i] < minCount {
+			findings = append(findings, fmt.Sprintf("expected recovery %q below minimum: got %d want >= %d", kind, matchedCounts[i], minCount))
+		}
+		if recovery.MaxCount != nil && matchedCounts[i] > *recovery.MaxCount {
+			findings = append(findings, fmt.Sprintf("expected recovery %q exceeded maximum: got %d want <= %d", kind, matchedCounts[i], *recovery.MaxCount))
+		}
+	}
+	evaluation.Findings = findings
+	return evaluation
+}
+
+func expectedRecoveryMatchesEvent(expected SWEExpectedRecovery, event ErrorEventSnapshot) bool {
+	if expected.EventType != "" && !strings.EqualFold(strings.TrimSpace(event.EventType), strings.TrimSpace(expected.EventType)) {
+		return false
+	}
+	if expected.Tool != "" && !strings.EqualFold(strings.TrimSpace(event.Tool), strings.TrimSpace(expected.Tool)) {
+		return false
+	}
+	for _, required := range expected.ErrorContains {
+		if !containsFold(event.Error, required) {
+			return false
+		}
+	}
+	for _, required := range expected.SummaryContains {
+		if !containsFold(event.Summary, required) {
+			return false
+		}
+	}
+	for _, required := range expected.ReasonContains {
+		if !containsFold(event.Reason, required) {
+			return false
+		}
+	}
+	return expectedRecoveryHasMatcher(expected)
+}
+
+func expectedRecoveryHasMatcher(expected SWEExpectedRecovery) bool {
+	return strings.TrimSpace(expected.EventType) != "" ||
+		strings.TrimSpace(expected.Tool) != "" ||
+		len(nonEmptyStrings(expected.ErrorContains)) > 0 ||
+		len(nonEmptyStrings(expected.SummaryContains)) > 0 ||
+		len(nonEmptyStrings(expected.ReasonContains)) > 0
+}
+
+func nonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			out = append(out, value)
+		}
+	}
+	return out
+}
+
+func containsFold(haystack string, needle string) bool {
+	needle = strings.TrimSpace(needle)
+	if needle == "" {
+		return true
+	}
+	return strings.Contains(strings.ToLower(haystack), strings.ToLower(needle))
 }
 
 func cleanRollbackFinding(rollback LiveContractRollbackSnapshot) string {
@@ -1684,6 +1849,9 @@ func taskOracleAssertions(task SWETask) []string {
 	}
 	if oracle.MaxErrors != nil {
 		assertions = append(assertions, "max_errors")
+	}
+	if len(oracle.ExpectedRecoveries) > 0 {
+		assertions = append(assertions, "expected_recoveries")
 	}
 	if oracle.MinUserTurns != nil {
 		assertions = append(assertions, "min_user_turns")

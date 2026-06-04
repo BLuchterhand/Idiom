@@ -1,8 +1,6 @@
 package agent
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -221,8 +219,8 @@ func TestFinalAnswerDecoratorComposesFromTypedDelegatedPacketWithoutProseHeading
 		Objective:       brief.Objective,
 		SourceBodyPaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
 		Findings: []ReadOnlyEvidenceFinding{
-			{Path: "internal/agent/runner.go", Text: "The parent runner invokes the `task` tool to delegate read-only work."},
-			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded child runner and returns its result."},
+			{Path: "internal/agent/runner.go", Text: "The harness uses the `task` tool to delegate read-only subagent work."},
+			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded subagent child runner and returns its result."},
 		},
 		Confidence: "high",
 	})}
@@ -243,6 +241,35 @@ func TestFinalAnswerDecoratorComposesFromTypedDelegatedPacketWithoutProseHeading
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("decorated typed packet answer leaked %q:\n%s", forbidden, got)
 		}
+	}
+}
+
+func TestFinalAnswerDecoratorDoesNotPromoteOffObjectiveTaskOutput(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you tell me how this harness uses subagents?",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Source-body evidence paths:",
+			"- `internal/agent/runner.go`",
+			"",
+			"Key findings:",
+			"- The runner records model-call metadata in internal/agent/runner.go.",
+			"Confidence: high.",
+		}, "\n"),
+	}}
+
+	runner := &Runner{}
+	if answer, ok := runner.composedFinalAnswerFromEvidence(FinalAnswerDecorateInput{
+		Brief:   brief,
+		Results: results,
+	}); ok {
+		t.Fatalf("off-objective task output must not be promoted by final-answer decoration, got:\n%s", answer)
 	}
 }
 
@@ -290,7 +317,7 @@ func TestPresentableReadFileSourceAnswerSkipsGeneratedArtifacts(t *testing.T) {
 		Summary: "Read f1 .idiom/comprehension/views/context.json lines 1-5 (total lines: 5)",
 		Output:  "1:{\"candidate_files\":[{\"path\":\"internal/agent/runner.go\"}]}\n",
 	}}
-	if answer, ok := presentableReadFileSourceAnswer(brief, results, ""); ok {
+	if answer, ok := presentableReadFileSourceAnswer(brief, results); ok {
 		t.Fatalf("generated artifacts must not be converted into source-body answers, got %q", answer)
 	}
 }
@@ -613,14 +640,6 @@ func TestExactEvidenceSymbolSetAcceptsRoutedCodeNavigateSourceBody(t *testing.T)
 }
 
 func TestPresentableNoToolsFallbackDoesNotReadWorkspaceFromPathOnlyEvidence(t *testing.T) {
-	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, "internal", "labels"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "labels", "labels.go"), []byte("package labels\n\nfunc ShortLabel() string {\n\treturn \"Save changes\"\n}\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "conversation",
 		Contract:          "direct_answer",
@@ -632,7 +651,7 @@ func TestPresentableNoToolsFallbackDoesNotReadWorkspaceFromPathOnlyEvidence(t *t
 	}}
 	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
 
-	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, root)
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer)
 	if ok && strings.Contains(got, "\"Save changes\"") {
 		t.Fatalf("fallback must not promote path-only evidence into source-body evidence by reading the workspace:\n%s", got)
 	}
@@ -651,7 +670,7 @@ func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T)
 	}}
 	answer := "The retained source context identifies the relevant implementation surface as `internal/labels/labels.go`."
 
-	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer)
 	if !ok {
 		t.Fatal("expected fallback to convert unsupported scaffold into a blocker")
 	}
@@ -846,20 +865,33 @@ func TestDecorateFinalAnswerSanitizesSynthesizedReadOnlyQuestionBlocker(t *testi
 	}
 }
 
-func TestPresentableEvidenceBodySourceAnswerRejectsSearchHits(t *testing.T) {
-	brief := workerruntime.WorkerRuntimeBrief{
-		TaskFamily:        "conversation",
-		Contract:          "direct_answer",
-		PermissionProfile: "read_only_workspace",
-		Objective:         "What does ShortLabel return?",
+func TestDecorateFinalAnswerLabelsCandidateOnlyReadOnlyBlocker(t *testing.T) {
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     "<<QUESTION>>: Completion gate rejected the final answer before source-body evidence was gathered.",
+		StopReason: "user_visible_blocker",
+		Brief: workerruntime.WorkerRuntimeBrief{
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			PermissionProfile: string(workerruntime.PermissionReadOnlyWorkspace),
+			Objective:         "What does ShortLabel return?",
+		},
+		Results: []workspace.ToolResult{{
+			Tool:    "search_content",
+			Summary: "Found 1 matching line(s).",
+			Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
+		}},
+		UserFacing: true,
+	})
+
+	if strings.Contains(got, "<<QUESTION>>") {
+		t.Fatalf("decorator leaked internal blocker protocol:\n%s", got)
 	}
-	results := []workspace.ToolResult{{
-		Tool:    "search_content",
-		Summary: "Found 1 matching line(s).",
-		Output:  "internal/labels/labels.go:4:\treturn \"Save changes\"",
-	}}
-	if got, ok := presentableEvidenceBodySourceAnswer(brief, results); ok {
-		t.Fatalf("literal search hit must not be rendered as source-body answer:\n%s", got)
+	if !strings.Contains(got, "Candidate paths surfaced") || !strings.Contains(got, "internal/labels/labels.go") {
+		t.Fatalf("candidate-only blocker should retain candidate context with honest label:\n%s", got)
+	}
+	if strings.Contains(got, "Inspected evidence") {
+		t.Fatalf("candidate-only blocker must not claim inspected evidence:\n%s", got)
 	}
 }
 
@@ -880,7 +912,7 @@ func TestPresentableNoToolsFallbackRejectsEchoedQuestion(t *testing.T) {
 		"The history pane also has some weird forced newlines. Can we ensure that text wrapping is properly dynamic in all containers?\n\n" +
 		"Source: delegated read-only evidence packet."
 
-	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer)
 	if ok {
 		t.Fatalf("expected fallback to reject echoed user question; got ok=true with:\n%s", got)
 	}
@@ -911,7 +943,7 @@ func TestPresentableNoToolsFallbackPreservesSubstantiveAnswerAfterStrippingAppen
 		"Key findings:\n- history.go is the primary rendering path\n- layout.go handles resizing\n\n" +
 		"Confidence: high"
 
-	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer, "")
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer)
 	if !ok {
 		t.Fatal("expected fallback to preserve substantive answer")
 	}
@@ -1062,6 +1094,138 @@ func TestSynthesizeBriefConversationFallbackAnswersFromMarkdownEvidence(t *testi
 	}
 }
 
+func TestSynthesizeBriefConversationFallbackAnswersFromInspectedExplainerSymbol(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Explain the harness control flow.",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner.go lines 1-20",
+		Output: strings.Join([]string{
+			"1:package agent",
+			"2:func (r *Runner) Run() {}",
+		}, "\n"),
+	}}
+
+	got := synthesizeBriefConversationFallback(brief, results)
+	if strings.HasPrefix(got, "<<QUESTION>>") {
+		t.Fatalf("answerable inspected symbol should synthesize an answer, got:\n%s", got)
+	}
+	for _, want := range []string{"internal/agent/runner.go", "Runner.Run"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("symbol answer missing %q:\n%s", want, got)
+		}
+	}
+
+	results = append(results,
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Post-readiness named_gap is an explainer ask, not a falsifiable claim",
+			Error:   "the named_gap reads as an explainer rather than naming a specific symbol body",
+		},
+		workspace.ToolResult{
+			Tool:    "read_file",
+			Summary: "Post-readiness named_gap is an explainer ask, not a falsifiable claim",
+			Error:   "the named_gap reads as an explainer rather than naming a specific symbol body",
+		},
+	)
+	got = synthesizeBriefConversationFallback(brief, results)
+	if strings.HasPrefix(got, "<<QUESTION>>") {
+		t.Fatalf("post-readiness rejections must not hide answerable source evidence, got:\n%s", got)
+	}
+	for _, want := range []string{"internal/agent/runner.go", "Runner.Run"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("post-rejection symbol answer missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandlerBody(t *testing.T) {
+	objective := "What would it take to enable the up and down arrow keys to iterate through old user messages as a shortcut to retry previous messages?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         objective,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/update_handlers.go lines 22-182",
+			Output: strings.Join([]string{
+				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+				"43:\t\tcase tea.KeyUp:",
+				"44:\t\t\tif m.slashSuggestions.selected > 0 {",
+				"49:\t\tcase tea.KeyDown:",
+				"50:\t\t\tif m.slashSuggestions.selected < len(m.slashSuggestions.matches)-1 {",
+				"69:\t\tcase tea.KeyUp:",
+				"70:\t\t\tif m.history.selected > 0 {",
+				"76:\t\tcase tea.KeyDown:",
+				"77:\t\t\tif m.history.selected < len(m.history.entries)-1 {",
+				"83:\t\tcase tea.KeyEnter:",
+				"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/model_state.go lines 133-180",
+			Output: strings.Join([]string{
+				"133:type Model struct {",
+				"166:\tmessages []llama.ChatMessage",
+				"237:\thistory historyState",
+			}, "\n"),
+		},
+	}
+
+	got := synthesizeBriefConversationFallback(brief, results)
+	if strings.HasPrefix(got, "<<QUESTION>>") {
+		t.Fatalf("answerable TUI key-handler evidence should synthesize an answer, got:\n%s", got)
+	}
+	for _, want := range []string{"internal/app/update_handlers.go", "Model.handleKeyPress", "tea.KeyUp", "tea.KeyDown", "appendHistoryMessage"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("TUI fallback answer missing %q:\n%s", want, got)
+		}
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	if kind, reason := runner.finalAnswerBlockerKind(got, results); kind != "" || reason != "" {
+		t.Fatalf("TUI fallback answer blocked: kind=%q reason=%q\n%s", kind, reason, got)
+	}
+
+	codeNavigateResults := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-141",
+			"",
+			"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+			"44:\t\tcase tea.KeyUp:",
+			"49:\t\tcase tea.KeyDown:",
+			"69:\t\tcase tea.KeyUp:",
+			"76:\t\tcase tea.KeyDown:",
+			"83:\t\tcase tea.KeyEnter:",
+			"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
+		}, "\n"),
+	}}
+	got = synthesizeBriefConversationFallback(brief, codeNavigateResults)
+	if strings.HasPrefix(got, "<<QUESTION>>") {
+		t.Fatalf("answerable code_navigate key-handler evidence should synthesize an answer, got:\n%s", got)
+	}
+	for _, want := range []string{"internal/app/update_handlers.go", "Model.handleKeyPress", "tea.KeyUp", "tea.KeyDown", "appendHistoryMessage"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("code_navigate fallback answer missing %q:\n%s", want, got)
+		}
+	}
+	if kind, reason := runner.finalAnswerBlockerKind(got, codeNavigateResults); kind != "" || reason != "" {
+		t.Fatalf("code_navigate TUI fallback answer blocked: kind=%q reason=%q\n%s", kind, reason, got)
+	}
+}
+
 func TestDecorateFinalAnswerConversationFallbackDoesNotInventBudgetExhaustion(t *testing.T) {
 	runner := &Runner{}
 	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
@@ -1104,7 +1268,7 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyForConversationFallback(t *tes
 	}
 	internalAnswer := "Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- read_file internal/architect/packet.go"
 
-	got, ok := presentableNoToolsFallbackAnswer(brief, results, internalAnswer, "")
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, internalAnswer)
 	if !ok {
 		t.Fatalf("expected fallback to return ok=true")
 	}
@@ -1126,7 +1290,7 @@ func TestPresentableNoToolsFallbackSkipsSourceBodyAnswerForConversation(t *testi
 	}
 	internalAnswer := "The inspected source in `internal/labels/labels.go` contains `func ShortLabel() string {` and `return \"Save changes\"`. No files were changed."
 
-	got, ok := presentableNoToolsFallbackAnswer(brief, results, internalAnswer, "")
+	got, ok := presentableNoToolsFallbackAnswer(brief, results, internalAnswer)
 	if !ok {
 		t.Fatalf("expected fallback to return ok=true")
 	}

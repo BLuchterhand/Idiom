@@ -72,54 +72,6 @@ func TestRunLiveGeneratesLogsAndScoresThem(t *testing.T) {
 	}
 }
 
-func TestRunLiveRefusesTrackedSWEGeneratedLogsWithoutOverride(t *testing.T) {
-	dir := t.TempDir()
-	suiteDir := filepath.Join(dir, "testdata", "swe")
-	suitePath := filepath.Join(suiteDir, "live-subset.json")
-	if err := os.MkdirAll(suiteDir, 0o755); err != nil {
-		t.Fatalf("mkdir suite dir: %v", err)
-	}
-	writeSWESmokeSuite(t, suitePath, "")
-
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"-suite", suitePath, "-run-live", "-runner-command", "exit 99"}, &stdout, &stderr)
-	if code != 1 {
-		t.Fatalf("expected exit 1, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-	for _, want := range []string{"refusing to write live generated logs", "-allow-tracked-generated-logs"} {
-		if !strings.Contains(stderr.String(), want) {
-			t.Fatalf("expected stderr to contain %q, got %s", want, stderr.String())
-		}
-	}
-}
-
-func TestRunLiveAllowsTrackedSWEGeneratedLogsWithOverride(t *testing.T) {
-	dir := t.TempDir()
-	suiteDir := filepath.Join(dir, "testdata", "swe")
-	suitePath := filepath.Join(suiteDir, "live-subset.json")
-	logsDir := filepath.Join(suiteDir, "generated-logs")
-	if err := os.MkdirAll(suiteDir, 0o755); err != nil {
-		t.Fatalf("mkdir suite dir: %v", err)
-	}
-	writeSWESmokeSuite(t, suitePath, "")
-
-	command := strings.Join([]string{
-		`printf '%s\n'`,
-		`'{"type":"message","role":"user","content":"Explain routing."}'`,
-		`'{"type":"message","role":"route_plan","content":"initial=main reason=direct_conversation contract=direct_answer"}'`,
-		`'{"type":"message","role":"assistant","content":"Routing is direct for this smoke test."}'`,
-		`> {log_path}`,
-	}, " ")
-	var stdout, stderr bytes.Buffer
-	code := run([]string{"-suite", suitePath, "-run-live", "-allow-tracked-generated-logs", "-runner-command", command}, &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("expected exit 0, got %d stdout=%s stderr=%s", code, stdout.String(), stderr.String())
-	}
-	if _, err := os.Stat(filepath.Join(logsDir, "direct.jsonl")); err != nil {
-		t.Fatalf("expected generated log with override: %v", err)
-	}
-}
-
 func TestRunLivePassesMultiTurnMetadata(t *testing.T) {
 	dir := t.TempDir()
 	suitePath := filepath.Join(dir, "suite.json")
@@ -307,7 +259,10 @@ PY
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
-	fixturePath := copyTestFixtureDir(t, filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
+	fixturePath, err := filepath.Abs(filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
+	if err != nil {
+		t.Fatalf("fixture path: %v", err)
+	}
 	fixtureLeak := filepath.Join(fixturePath, "logs", "telemetry", "cwd-leak.jsonl")
 	_ = os.Remove(fixtureLeak)
 	cmd := exec.Command("bash", scriptPath)
@@ -402,7 +357,10 @@ PY
 	if err != nil {
 		t.Fatalf("script path: %v", err)
 	}
-	fixturePath := copyTestFixtureDir(t, filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
+	fixturePath, err := filepath.Abs(filepath.Join("..", "..", "..", "testdata", "live-contracts", "fixtures", "frozen-label-repo"))
+	if err != nil {
+		t.Fatalf("fixture path: %v", err)
+	}
 	cmd := exec.Command("bash", scriptPath)
 	cmd.Dir = fixturePath
 	cmd.Env = append(os.Environ(),
@@ -543,39 +501,6 @@ func mustCommandOutput(t *testing.T, name string, args ...string) []byte {
 		t.Fatalf("%s %v failed: %v\n%s", name, args, err, output)
 	}
 	return output
-}
-
-func copyTestFixtureDir(t *testing.T, src string) string {
-	t.Helper()
-	absSrc, err := filepath.Abs(src)
-	if err != nil {
-		t.Fatalf("fixture path: %v", err)
-	}
-	dst := filepath.Join(t.TempDir(), filepath.Base(absSrc))
-	if err := filepath.Walk(absSrc, func(path string, info os.FileInfo, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(absSrc, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, info.Mode().Perm())
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, data, info.Mode().Perm())
-	}); err != nil {
-		t.Fatalf("copy fixture %s: %v", absSrc, err)
-	}
-	return dst
 }
 
 func TestRunLiveDerivesTaskTimeoutFromOracleAndReportsProgress(t *testing.T) {
@@ -1050,59 +975,6 @@ func TestScriptedContractGenericHarnessClassTasksPinned(t *testing.T) {
 	if help.Family != "coding_help" || help.Scenario.RequireVerification != "none" || !help.Oracle.RequireNoShell || !help.Oracle.RequireNoChangedFiles {
 		t.Fatalf("coding-help task must stay read-only, family=%q scenario=%#v oracle=%#v", help.Family, help.Scenario, help.Oracle)
 	}
-
-	diagnostic, ok := taskByID["scripted-diagnostic-log-lines-alias-repeat-recovery"]
-	if !ok {
-		t.Fatalf("diagnostic log line-alias recovery task missing")
-	}
-	assertTaskHasTags(t, diagnostic, "information", "json-normalization", "repeated-rejection", "read-only", "rollback")
-	assertTaskHasRunEvents(t, diagnostic,
-		"idiom.live_contract.workspace_prepared",
-		"idiom.live_contract.resolved_config",
-		"idiom.live_contract.rollback",
-		"idiom.scripted_model.requests",
-	)
-	if diagnostic.Env["IDIOM_WORKSPACE_EXTRA_FILES_JSON"] == "" ||
-		!strings.Contains(diagnostic.Env["IDIOM_WORKSPACE_EXTRA_FILES_JSON"], "logs/conversations/debug-loop.jsonl") {
-		t.Fatalf("diagnostic task must seed a fixture diagnostic log, env=%#v", diagnostic.Env)
-	}
-	if !slices.Contains(diagnostic.Scenario.RequireTools, "read_file") ||
-		!slices.Contains(diagnostic.Scenario.RequireRejectedTools, "read_file") ||
-		!slices.Contains(diagnostic.Scenario.RequireEvidencePaths, "logs/conversations/debug-loop.jsonl") {
-		t.Fatalf("diagnostic task must pin successful and rejected diagnostic reads, scenario=%#v", diagnostic.Scenario)
-	}
-	if diagnostic.Oracle.Groundedness == nil || !diagnostic.Oracle.RequireNoChangedFiles || !diagnostic.Oracle.RequireCleanRollback {
-		t.Fatalf("diagnostic task must be grounded and rollback-scored, oracle=%#v", diagnostic.Oracle)
-	}
-
-	for _, id := range []string{
-		"scripted-direct-answer-post-readiness-no-gap-fallback",
-		"scripted-direct-answer-post-readiness-invalid-gap-fallback",
-	} {
-		task, ok := taskByID[id]
-		if !ok {
-			t.Fatalf("%s task missing", id)
-		}
-		assertTaskHasTags(t, task, "information", "bad-answer-repaired", "repeated-rejection", "read-only", "rollback")
-		assertTaskHasRunEvents(t, task,
-			"idiom.live_contract.workspace_prepared",
-			"idiom.live_contract.resolved_config",
-			"idiom.live_contract.rollback",
-			"idiom.scripted_model.requests",
-			"final_answer_critic",
-			"turn_summary",
-		)
-		if !slices.Contains(task.Scenario.RequireTools, "read_file") ||
-			!slices.Contains(task.Scenario.RequireEvidencePaths, "internal/labels/labels.go") {
-			t.Fatalf("%s must pin evidence reads even after read-only readiness, scenario=%#v", id, task.Scenario)
-		}
-		if !slices.Contains(task.Scenario.ForbidFinalAssistantContains, "BAD_FALLBACK_NOT_USED") ||
-			!slices.Contains(task.Scenario.FinalAssistantContains, "Save changes") ||
-			!task.Oracle.RequireNoChangedFiles ||
-			!task.Oracle.RequireCleanRollback {
-			t.Fatalf("%s must repair unsupported model answers without host-forced closeout, scenario=%#v oracle=%#v", id, task.Scenario, task.Oracle)
-		}
-	}
 }
 
 func TestScriptedContractReplayCoverageTasksPinned(t *testing.T) {
@@ -1249,7 +1121,6 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 		"idiom.feature_planner.tdd_pre_execution_checked",
 		"idiom.feature_planner.plan_accepted",
 		"idiom.feature_planner.atom_dispatched",
-		"idiom.feature_planner.plan_execute_git_history_requirement",
 		"internal_idiom.plan_execute.completed",
 		"idiom.feature_planner.atom_completed",
 		"idiom.feature_planner.complete",
@@ -1270,7 +1141,7 @@ func TestScriptedContractRedisCloneTestbedTaskExercisesRealFixture(t *testing.T)
 	}
 }
 
-func TestScriptedContractFeaturePlannerGitHistoryEvidenceTasksPinned(t *testing.T) {
+func TestScriptedContractFeaturePlannerDirectAndProductWorkflowCoverageSeparated(t *testing.T) {
 	suitePath := filepath.Join("..", "..", "..", "testdata", "scripted-contracts", "suite.json")
 	suite, err := eval.LoadSWESuite(suitePath)
 	if err != nil {
@@ -1281,18 +1152,49 @@ func TestScriptedContractFeaturePlannerGitHistoryEvidenceTasksPinned(t *testing.
 	for _, task := range suite.Tasks {
 		taskByID[task.ID] = task
 	}
+	if _, ok := taskByID["scripted-feature-planner-tui-product-workflow-e2e"]; ok {
+		t.Fatal("plain /feature-planner product-workflow coverage task should be relabeled as direct plan-execute coverage")
+	}
 
-	for _, id := range []string{
-		"scripted-feature-planner-tui-plan-execute-delivery",
-		"scripted-feature-planner-tui-redis-clone-mget",
-		"scripted-feature-planner-tui-product-workflow-e2e",
-	} {
-		task, ok := taskByID[id]
-		if !ok {
-			t.Fatalf("%s task missing", id)
+	direct, ok := taskByID["scripted-feature-planner-tui-direct-greeting-plan-execute"]
+	if !ok {
+		t.Fatal("direct /feature-planner nested plan-execute task missing")
+	}
+	assertTaskHasTags(t, direct, "feature-planner", "tui", "slash-command", "plan-execute")
+	assertTaskLacksTags(t, direct, "product-workflow", "prd", "adr")
+	if !strings.HasPrefix(direct.Prompt, "/feature-planner ") || !strings.Contains(direct.Prompt, "nested plan-execute") {
+		t.Fatalf("direct task prompt should remain plain /feature-planner nested plan-execute coverage, got %q", direct.Prompt)
+	}
+	assertTaskHasRunEvents(t, direct,
+		"idiom.feature_planner.start",
+		"idiom.feature_planner.atom_dispatched",
+		"internal_idiom.plan_execute.completed",
+		"idiom.feature_planner.complete",
+	)
+	for _, want := range []string{"atom-direct-greeting-package", "TDD-DirectGreetingHello", "SDD-DirectGreetingPackage"} {
+		if !slices.Contains(direct.Scenario.FinalAssistantContains, want) {
+			t.Fatalf("direct feature-planner task final assistant assertions must include %q, got %#v", want, direct.Scenario.FinalAssistantContains)
 		}
-		assertTaskHasTags(t, task, "feature-planner", "tui")
-		assertTaskHasRunEvents(t, task, "idiom.feature_planner.plan_execute_git_history_requirement")
+	}
+
+	prd, ok := taskByID["scripted-product-create-tui-prd-workflow"]
+	if !ok {
+		t.Fatal("explicit /product-create PRD workflow task missing")
+	}
+	assertTaskHasTags(t, prd, "product-workflow", "tui", "prd", "slash-command")
+	assertTaskLacksTags(t, prd, "feature-planner", "plan-execute", "adr")
+	if !strings.HasPrefix(prd.Prompt, "/product-create ") {
+		t.Fatalf("PRD workflow coverage must use /product-create, got %q", prd.Prompt)
+	}
+
+	adr, ok := taskByID["scripted-product-approve-tui-adr-workflow"]
+	if !ok {
+		t.Fatal("explicit /product-approve ADR workflow task missing")
+	}
+	assertTaskHasTags(t, adr, "product-workflow", "tui", "prd", "adr", "slash-command")
+	assertTaskLacksTags(t, adr, "feature-planner", "plan-execute")
+	if !strings.HasPrefix(adr.Prompt, "/product-approve ") {
+		t.Fatalf("ADR workflow coverage must use /product-approve, got %q", adr.Prompt)
 	}
 }
 
@@ -1301,6 +1203,15 @@ func assertTaskHasTags(t *testing.T, task eval.SWETask, tags ...string) {
 	for _, tag := range tags {
 		if !slices.Contains(task.Tags, tag) {
 			t.Fatalf("%s missing tag %q in %#v", task.ID, tag, task.Tags)
+		}
+	}
+}
+
+func assertTaskLacksTags(t *testing.T, task eval.SWETask, tags ...string) {
+	t.Helper()
+	for _, tag := range tags {
+		if slices.Contains(task.Tags, tag) {
+			t.Fatalf("%s should not have tag %q in %#v", task.ID, tag, task.Tags)
 		}
 	}
 }

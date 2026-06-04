@@ -32,13 +32,13 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	}
 	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
 		if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
-			if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer, ""); ok {
+			if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
 				return presentable, true
 			}
 		}
 		return annotateBudgetLimitedAnswer(answer), true
 	}
-	if output, ok := bestTaskResultOutput(results); ok && childPacketContainsGroundedAnswerEvidence(brief.Objective, output) {
+	if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
 		return annotateBudgetLimitedAnswer(output), true
 	}
 	if usefulFallbackResultCount(results) < 2 {
@@ -99,7 +99,7 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
 			return answer, true
 		}
-		if output, ok := bestTaskResultOutput(results); ok && childPacketContainsGroundedAnswerEvidence(brief.Objective, output) {
+		if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
 			if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
 				return normalized, true
 			}
@@ -492,15 +492,12 @@ func firstBulletText(s string) string {
 // "Final blocker" lines -- the user did nothing wrong and the message is
 // internal to the harness's own enforcement loop.
 func isHarnessRejectionSummary(summary string) bool {
-	switch strings.TrimSpace(summary) {
-	case "Post-readiness follow-up missing named gap",
-		"Post-child follow-up missing named gap",
-		"Post-readiness follow-up is not an exact probe",
-		"Post-readiness follow-up is broader than the current evidence requires",
-		"Post-readiness exact probe is not grounded in current evidence",
-		"Post-child follow-up gap is contradicted by current evidence",
-		"Post-child follow-up gap is not packet-anchored",
-		"Post-child broad inspection blocked",
+	summary = normalizedHarnessRejectionSummary(summary)
+	if postReadinessContinuationRejectionSummary(summary) {
+		return true
+	}
+	switch summary {
+	case "Post-child broad inspection blocked",
 		"Post-child unrelated discovery blocked",
 		"Post-child reread blocked",
 		"Broad exploration after delegation nudge blocked",

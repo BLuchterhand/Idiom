@@ -328,10 +328,10 @@ func baseToolDefinitions() []ToolDefinition {
 		},
 		{
 			Name:        "history_range",
-			Description: "Show git history for a specific line range using git log -L.",
+			Description: "Show git history for a file or specific line range using git log -L. Path-only requests default to a bounded current-file range.",
 			ParametersJSON: schemaObj(
-				[]string{"path", "start_line", "end_line"},
-				`"path":`+strProp("file path")+`,"start_line":`+intProp("1-based start")+`,"end_line":`+intProp("1-based end"),
+				[]string{"path"},
+				`"path":`+strProp("file path")+`,"start_line":`+intProp("optional 1-based start; if provided, end_line is also required")+`,"end_line":`+intProp("optional 1-based end; if provided, start_line is also required"),
 			),
 		},
 		{

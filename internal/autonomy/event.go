@@ -32,6 +32,7 @@ const (
 	EventCompletionGateDecision EventType = "completion_gate_decision"
 	EventGateDecision           EventType = "gate_decision"
 	EventGuardFriction          EventType = "guard_friction"
+	EventModelExchange          EventType = "model_exchange"
 )
 
 type EventEffect string
@@ -114,6 +115,7 @@ type Event struct {
 	Completion    *ContractCompletionEvent    `json:"completion,omitempty"`
 	Gate          *ContractGateEvent          `json:"gate,omitempty"`
 	GuardFriction *ContractGuardFrictionEvent `json:"guard_friction,omitempty"`
+	ModelExchange *ContractModelExchangeEvent `json:"model_exchange,omitempty"`
 	EvidenceRefs  []string                    `json:"evidence_refs,omitempty"`
 	Metadata      ContractMetadata            `json:"metadata,omitempty"`
 }
@@ -134,6 +136,7 @@ type EventInput struct {
 	Completion    *ContractCompletionEvent
 	Gate          *ContractGateEvent
 	GuardFriction *ContractGuardFrictionEvent
+	ModelExchange *ContractModelExchangeEvent
 	EvidenceRefs  []string
 	Metadata      ContractMetadata
 }
@@ -442,6 +445,7 @@ func NewEvent(input EventInput) (Event, error) {
 		Completion:    copyCompletionEvent(input.Completion),
 		Gate:          copyGateEvent(input.Gate),
 		GuardFriction: copyGuardFrictionEvent(input.GuardFriction),
+		ModelExchange: copyModelExchangeEvent(input.ModelExchange),
 		EvidenceRefs:  append([]string(nil), input.EvidenceRefs...),
 		Metadata:      copyMetadata(input.Metadata),
 	}
@@ -579,6 +583,21 @@ func NewGuardFrictionEvent(contract AutonomyContract, friction ContractGuardFric
 	})
 }
 
+func NewModelExchangeEvent(contract AutonomyContract, exchange ContractModelExchangeEvent, occurredAt time.Time, sequence int64) (Event, error) {
+	exchange.ContractID = firstNonEmptyEventValue(exchange.ContractID, contract.ContractID)
+	return NewEvent(EventInput{
+		Type:          EventModelExchange,
+		OccurredAt:    occurredAt,
+		Sequence:      sequence,
+		ContractID:    contract.ContractID,
+		ParentID:      contract.ParentID,
+		Correlation:   CorrelationFromContract(contract),
+		ModelExchange: &exchange,
+		EvidenceRefs:  modelExchangeEvidenceRefs(exchange),
+		Metadata:      contract.Metadata,
+	})
+}
+
 func firstNonEmptyEventValue(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -706,6 +725,9 @@ func (e *Event) Normalize() {
 	if e.GuardFriction != nil {
 		e.GuardFriction.normalize()
 	}
+	if e.ModelExchange != nil {
+		e.ModelExchange.Normalize()
+	}
 	e.EvidenceRefs = compactStrings(e.EvidenceRefs)
 	e.Metadata.normalize()
 }
@@ -791,6 +813,9 @@ func (e Event) validatePayload(problems *[]string) {
 		payloads++
 	}
 	if e.GuardFriction != nil {
+		payloads++
+	}
+	if e.ModelExchange != nil {
 		payloads++
 	}
 	if payloads != 1 {
@@ -896,7 +921,27 @@ func (e Event) validatePayload(problems *[]string) {
 			return
 		}
 		e.GuardFriction.validate(e.ContractID, problems)
+	case EventModelExchange:
+		if e.ModelExchange == nil {
+			*problems = append(*problems, "model_exchange payload is required for model_exchange")
+			return
+		}
+		e.ModelExchange.validate(e.ContractID, problems)
 	}
+}
+
+func modelExchangeEvidenceRefs(exchange ContractModelExchangeEvent) []string {
+	refs := []string{}
+	if exchange.SourceEventID != "" {
+		refs = append(refs, "event:"+exchange.SourceEventID)
+	}
+	if exchange.SourceEventType != "" {
+		refs = append(refs, "event_type:"+exchange.SourceEventType)
+	}
+	if exchange.InvariantID != "" {
+		refs = append(refs, "invariant:"+exchange.InvariantID)
+	}
+	return compactStrings(refs)
 }
 
 func (e Event) validateCorrelation(problems *[]string) {
@@ -1306,7 +1351,7 @@ func validEventType(eventType EventType) bool {
 	case EventContractCompiled, EventContractPresented, EventContractRecompiled, EventContractStopped,
 		EventToolIntentClassified, EventPathRolesResolved, EventToolPolicyDecision, EventToolPolicyResult,
 		EventObligationOpened, EventObligationResolved, EventObligationWaived, EventReadinessStateUpdated,
-		EventCompletionGateDecision, EventGateDecision, EventGuardFriction:
+		EventCompletionGateDecision, EventGateDecision, EventGuardFriction, EventModelExchange:
 		return true
 	default:
 		return false
@@ -1434,6 +1479,7 @@ func copyEvent(in Event) Event {
 		Completion:    copyCompletionEvent(in.Completion),
 		Gate:          copyGateEvent(in.Gate),
 		GuardFriction: copyGuardFrictionEvent(in.GuardFriction),
+		ModelExchange: copyModelExchangeEvent(in.ModelExchange),
 		EvidenceRefs:  append([]string(nil), in.EvidenceRefs...),
 		Metadata:      copyMetadata(in.Metadata),
 	}
@@ -1596,6 +1642,112 @@ func copyGateEvent(in *ContractGateEvent) *ContractGateEvent {
 		out.Budget = &budget
 	}
 	return &out
+}
+
+func copyModelExchangeEvent(in *ContractModelExchangeEvent) *ContractModelExchangeEvent {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	if in.ContextPacket != nil {
+		payload := *in.ContextPacket
+		payload.SummaryRefs = append([]string(nil), in.ContextPacket.SummaryRefs...)
+		payload.TargetRefs = append([]string(nil), in.ContextPacket.TargetRefs...)
+		payload.PathRefs = append([]string(nil), in.ContextPacket.PathRefs...)
+		payload.SymbolRefs = append([]string(nil), in.ContextPacket.SymbolRefs...)
+		payload.EvidenceRefs = append([]string(nil), in.ContextPacket.EvidenceRefs...)
+		payload.ObligationRefs = append([]string(nil), in.ContextPacket.ObligationRefs...)
+		payload.SchemaNames = append([]string(nil), in.ContextPacket.SchemaNames...)
+		payload.RedactionMarkers = append([]string(nil), in.ContextPacket.RedactionMarkers...)
+		out.ContextPacket = &payload
+	}
+	if in.PermissionSnapshot != nil {
+		payload := *in.PermissionSnapshot
+		payload.AllowedTools = append([]string(nil), in.PermissionSnapshot.AllowedTools...)
+		payload.HiddenTools = append([]string(nil), in.PermissionSnapshot.HiddenTools...)
+		payload.CapabilityRefs = append([]string(nil), in.PermissionSnapshot.CapabilityRefs...)
+		payload.PathRoleRefs = append([]string(nil), in.PermissionSnapshot.PathRoleRefs...)
+		out.PermissionSnapshot = &payload
+	}
+	if in.FailureDelta != nil {
+		payload := *in.FailureDelta
+		payload.EvidenceRefs = append([]string(nil), in.FailureDelta.EvidenceRefs...)
+		out.FailureDelta = &payload
+	}
+	if in.ModelResponse != nil {
+		payload := copyModelResponse(*in.ModelResponse)
+		out.ModelResponse = &payload
+	}
+	if in.ValidationSignal != nil {
+		payload := *in.ValidationSignal
+		payload.EvidenceRefs = append([]string(nil), in.ValidationSignal.EvidenceRefs...)
+		payload.CommandRefs = append([]string(nil), in.ValidationSignal.CommandRefs...)
+		out.ValidationSignal = &payload
+	}
+	if in.TraceStorePolicy != nil {
+		payload := *in.TraceStorePolicy
+		payload.AllowedFields = append([]string(nil), in.TraceStorePolicy.AllowedFields...)
+		payload.ForbiddenFields = append([]string(nil), in.TraceStorePolicy.ForbiddenFields...)
+		payload.StoreRefs = append([]string(nil), in.TraceStorePolicy.StoreRefs...)
+		out.TraceStorePolicy = &payload
+	}
+	if in.ReplayClassification != nil {
+		payload := *in.ReplayClassification
+		payload.AtomRefs = append([]string(nil), in.ReplayClassification.AtomRefs...)
+		payload.ViolationRefs = append([]string(nil), in.ReplayClassification.ViolationRefs...)
+		out.ReplayClassification = &payload
+	}
+	if in.PhaseGatePolicy != nil {
+		payload := *in.PhaseGatePolicy
+		payload.GateRefs = append([]string(nil), in.PhaseGatePolicy.GateRefs...)
+		payload.TerminalResponseKinds = append([]string(nil), in.PhaseGatePolicy.TerminalResponseKinds...)
+		out.PhaseGatePolicy = &payload
+	}
+	if in.RollbackControl != nil {
+		payload := *in.RollbackControl
+		payload.GuardRefs = append([]string(nil), in.RollbackControl.GuardRefs...)
+		payload.AffectedPackIDs = append([]string(nil), in.RollbackControl.AffectedPackIDs...)
+		out.RollbackControl = &payload
+	}
+	return &out
+}
+
+func copyModelResponse(in ModelResponse) ModelResponse {
+	out := in
+	if in.ProposedAction != nil {
+		payload := *in.ProposedAction
+		payload.TargetRefs = append([]string(nil), in.ProposedAction.TargetRefs...)
+		payload.EvidenceRefs = append([]string(nil), in.ProposedAction.EvidenceRefs...)
+		payload.ProposalRefs = append([]string(nil), in.ProposedAction.ProposalRefs...)
+		out.ProposedAction = &payload
+	}
+	if in.ContextRequest != nil {
+		payload := *in.ContextRequest
+		payload.RequestRefs = append([]string(nil), in.ContextRequest.RequestRefs...)
+		payload.MissingRefs = append([]string(nil), in.ContextRequest.MissingRefs...)
+		out.ContextRequest = &payload
+	}
+	if in.ContextChallenge != nil {
+		payload := *in.ContextChallenge
+		payload.ChallengeRefs = append([]string(nil), in.ContextChallenge.ChallengeRefs...)
+		payload.EvidenceRefs = append([]string(nil), in.ContextChallenge.EvidenceRefs...)
+		out.ContextChallenge = &payload
+	}
+	if in.ValidationProposal != nil {
+		payload := *in.ValidationProposal
+		payload.ValidationRefs = append([]string(nil), in.ValidationProposal.ValidationRefs...)
+		payload.CommandRefs = append([]string(nil), in.ValidationProposal.CommandRefs...)
+		payload.EvidenceRefs = append([]string(nil), in.ValidationProposal.EvidenceRefs...)
+		out.ValidationProposal = &payload
+	}
+	if in.Escalation != nil {
+		payload := *in.Escalation
+		payload.EscalationRefs = append([]string(nil), in.Escalation.EscalationRefs...)
+		payload.BlockerRefs = append([]string(nil), in.Escalation.BlockerRefs...)
+		payload.QuestionRefs = append([]string(nil), in.Escalation.QuestionRefs...)
+		out.Escalation = &payload
+	}
+	return out
 }
 
 func copyContractSummary(in ContractSummary) ContractSummary {

@@ -5,10 +5,26 @@ import (
 	"testing"
 
 	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/llama"
 	"idiom/internal/workspace"
 )
 
-func TestTextualWriteGateDirectImplementationRejectsUnsafeWriteWithJSONGuidance(t *testing.T) {
+func TestTextualWriteNormalizerAcceptsKeyValueWriteSyntax(t *testing.T) {
+	reply := "tool: edit_file\npath: internal/labels/labels.go\nold_text: return \"Save changes\"\nnew_text: return \"Save\"\ndescription: update label"
+
+	result := normalizeToolRequestSyntax(llama.ChatMessage{Content: reply})
+	if !result.OK {
+		t.Fatalf("key-value write syntax should normalize before completion gating, outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+	if result.Request.Tool != "edit_file" || result.Request.OldText != `return "Save changes"` || result.Request.NewText != `return "Save"` {
+		t.Fatalf("unexpected normalized write request: %#v", result.Request)
+	}
+	if tool, transport, unsafe := unsafeTextualWriteAttempt(reply); unsafe {
+		t.Fatalf("normalized key-value write should not be unsafe, tool=%q transport=%q", tool, transport)
+	}
+}
+
+func TestTextualWriteGateDirectImplementationRejectsFunctionCallWriteWithExecutableGuidance(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "implementation",
@@ -16,7 +32,7 @@ func TestTextualWriteGateDirectImplementationRejectsUnsafeWriteWithJSONGuidance(
 			PermissionProfile: "guarded_workspace_write",
 		},
 	}
-	reply := "tool: edit_file\npath: internal/labels/labels.go\nold_text: return \"Save changes\"\nnew_text: return \"Save\"\ndescription: update label"
+	reply := `tool: edit_file(path="internal/labels/labels.go", old_text="return \"Save changes\"", new_text="return \"Save\"", description="update label")`
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
 		Summary: "Read internal/labels/labels.go lines 1-5 (total lines: 5)",
@@ -26,13 +42,14 @@ func TestTextualWriteGateDirectImplementationRejectsUnsafeWriteWithJSONGuidance(
 	got, rejected := textualToolCallCompletionRejection(runner, reply, results)
 
 	if !rejected {
-		t.Fatal("expected unsafe textual write syntax to be rejected")
+		t.Fatal("expected unsafe function-call write syntax to be rejected")
 	}
 	for _, want := range []string{
-		"key-value and function-call write syntax are not executable",
+		"could not be converted into a safe write request",
 		"one visible JSON object",
+		"Qwen key-value `tool:` syntax",
 		"`path`, `old_text`, `new_text`, and `description`",
-		"Do not use key-value or function-call write syntax",
+		"Function-call write syntax is not executable",
 	} {
 		if !strings.Contains(got.Error, want) {
 			t.Fatalf("expected direct implementation gate message to contain %q, got %q", want, got.Error)
@@ -52,7 +69,7 @@ func TestTextualWriteGatePlanExecutePointsAtSubmitPlan(t *testing.T) {
 			RequiredEditPaths: []string{"internal/labels/labels.go"},
 		},
 	}
-	reply := "tool: edit_file\npath: internal/labels/labels.go\nold_text: return \"Save changes\"\nnew_text: return \"Save\"\ndescription: update label"
+	reply := `tool: edit_file(path="internal/labels/labels.go", old_text="return \"Save changes\"", new_text="return \"Save\"", description="update label")`
 	results := []workspace.ToolResult{{
 		Tool:    "read_file",
 		Summary: "Read internal/labels/labels.go lines 1-5 (total lines: 5)",
@@ -68,7 +85,7 @@ func TestTextualWriteGatePlanExecutePointsAtSubmitPlan(t *testing.T) {
 		"plan-execute planner phase does not execute per-edit writes",
 		"one visible JSON object for `submit_plan`",
 		"`rationale`, and `edits`",
-		"Key-value and function-call write syntax are not executable",
+		"Function-call write syntax is not executable",
 	} {
 		if !strings.Contains(got.Error, want) {
 			t.Fatalf("expected plan-execute gate message to contain %q, got %q", want, got.Error)

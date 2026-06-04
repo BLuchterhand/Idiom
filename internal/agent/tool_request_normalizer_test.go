@@ -40,6 +40,41 @@ func TestNormalizeToolRequestSyntaxNativeToolCall(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxNestedCodeNavigateGraphResolutionDoesNotInferCapability(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `{"tool":"code_navigate","request":{"tool":"code_navigate","query":"task tool implementation","resolution":"symbol","include_evidence":"true"}}`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected nested code_navigate request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" || result.Request.Query != "task tool implementation" || result.Request.Resolution != "symbol" || !result.Request.IncludeEvidence {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.Request.Capability != "" {
+		t.Fatalf("graph resolution must not become code_navigate capability: %#v", result.Request)
+	}
+}
+
+func TestParseNativeToolCallRejectsMismatchedDeclaredTool(t *testing.T) {
+	_, ok, err := parseToolCall(llama.ToolCall{
+		Function: llama.ToolCallFunc{
+			Name:      "code_navigate",
+			Arguments: `{"tool":"context_query","query":"task tool implementation","resolution":"symbol","include_evidence":true}`,
+		},
+	})
+
+	if err == nil || ok {
+		t.Fatalf("native tool mismatch should reject, ok=%t err=%v", ok, err)
+	}
+	if !strings.Contains(err.Error(), `arguments declared tool "context_query"`) {
+		t.Fatalf("unexpected mismatch error: %v", err)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxTextualJSON(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `{"tool":"read_file","path":"README.md","start_line":1,"end_line":20}`,
@@ -745,20 +780,23 @@ func TestNormalizeToolRequestSyntaxDoesNotInferNarrativeFencedJSON(t *testing.T)
 	}
 }
 
-func TestNormalizeToolRequestSyntaxRejectsUnsafeKeyValueFields(t *testing.T) {
+func TestNormalizeToolRequestSyntaxAcceptsKeyValueEditFields(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: "tool: edit_file\npath: README.md\nold_text: old\nnew_text: new\ndescription: update readme",
 	})
 
-	if result.OK {
-		t.Fatalf("key/value edit body shape must not normalize: %#v", result.Request)
+	if !result.OK {
+		t.Fatalf("key/value edit body shape should normalize: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
-	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+	if result.Request.Tool != "edit_file" || result.Request.OldText != "old" || result.Request.NewText != "new" {
+		t.Fatalf("unexpected parsed edit request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized || result.EventTransport != toolRequestNormalizerTransportKeyValue {
 		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
 	}
 	tool, transport, ok := unsafeTextualWriteAttempt("tool: edit_file\npath: README.md\nold_text: old\nnew_text: new\ndescription: update readme")
-	if !ok || tool != "edit_file" || transport != toolRequestNormalizerTransportKeyValue {
-		t.Fatalf("expected non-executing unsafe textual write classification, got tool=%q transport=%q ok=%v", tool, transport, ok)
+	if ok {
+		t.Fatalf("normalized key-value edit should not be classified unsafe, got tool=%q transport=%q", tool, transport)
 	}
 }
 

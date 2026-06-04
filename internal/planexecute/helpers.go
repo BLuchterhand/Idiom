@@ -595,6 +595,8 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 	handoff := ExecutorHandoffPacket{
 		State:                   ExecutorHandoffStateMissing,
 		Reason:                  "missing_packet_id",
+		HandoffCreated:          strings.TrimSpace(plan.Handoff.ID) != "",
+		PacketFreshnessState:    ExecutorPacketFreshnessMissing,
 		PlanID:                  sanitizePlanExecuteEventID(plan.PlanID),
 		HandoffID:               sanitizePlanExecuteEventID(plan.Handoff.ID),
 		HandoffStatus:           sanitizePlanExecuteEventToken(plan.Handoff.Status),
@@ -625,6 +627,11 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 	handoff.PackID = effectivePackID
 	handoff.DeclaredPackID = declaredPackID
 	if effectivePackID == "" {
+		if strings.EqualFold(strings.TrimSpace(plan.Packet.Status), "not_used") {
+			handoff.PacketNotUsedByDesign = true
+			handoff.PacketFreshnessState = ExecutorPacketFreshnessNotUsedByDesign
+			handoff.Reason = "packet_not_used_by_design"
+		}
 		return handoff
 	}
 	overridden := topLevelPackID != "" && declaredPackID != "" && topLevelPackID != declaredPackID
@@ -646,7 +653,7 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 		if overridden {
 			handoff.State = ExecutorHandoffStateOverridden
 			handoff.Reason = "packet_id_override"
-		} else if view.Fresh {
+		} else if handoff.Fresh {
 			handoff.State = ExecutorHandoffStateInherited
 			handoff.Reason = "fresh_graph_view"
 		} else {
@@ -659,6 +666,9 @@ func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 		if overridden {
 			handoff.State = ExecutorHandoffStateOverridden
 			handoff.Reason = "packet_id_override"
+		} else if handoff.Fresh {
+			handoff.State = ExecutorHandoffStateInherited
+			handoff.Reason = "fresh_scoped_graph_view"
 		} else {
 			handoff.State = ExecutorHandoffStateStale
 			handoff.Reason = "stale_graph_view"
@@ -699,11 +709,21 @@ func ClassifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) Exe
 func applyExecutorHandoffView(handoff ExecutorHandoffPacket, view comprehension.PackResult) ExecutorHandoffPacket {
 	handoff.PackID = firstNonEmptyString(normalizePlanExecutePackID(view.PackID), handoff.PackID)
 	handoff.IndexID = sanitizePlanExecuteEventToken(firstNonEmptyString(view.IndexID, handoff.IndexID))
-	handoff.Fresh = view.Fresh
+	handoff.Fresh = executorHandoffViewFresh(view)
+	handoff.PacketPresent = true
+	if handoff.Fresh {
+		handoff.PacketFreshnessState = ExecutorPacketFreshnessFresh
+	} else {
+		handoff.PacketFreshnessState = ExecutorPacketFreshnessStale
+	}
 	handoff.CandidateFiles = len(view.CandidateFiles)
 	handoff.CandidateSymbols = len(view.CandidateSymbols)
 	handoff.Tests = len(view.Tests)
 	return handoff
+}
+
+func executorHandoffViewFresh(view comprehension.PackResult) bool {
+	return view.Fresh || (view.Freshness != nil && view.Freshness.FreshForScope)
 }
 
 func emitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff ExecutorHandoffPacket) {
@@ -725,11 +745,19 @@ func emitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff 
 	}
 }
 
+func EmitExecutorHandoffPacketEvents(stdout io.Writer, jsonEvents bool, handoff ExecutorHandoffPacket) {
+	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
+}
+
 func executorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]any {
 	fields := map[string]any{
-		"packet_state": handoff.State,
-		"reason":       handoff.Reason,
-		"fresh":        handoff.Fresh,
+		"packet_state":              handoff.State,
+		"reason":                    handoff.Reason,
+		"fresh":                     handoff.Fresh,
+		"handoff_created":           handoff.HandoffCreated,
+		"packet_present":            handoff.PacketPresent,
+		"packet_not_used_by_design": handoff.PacketNotUsedByDesign,
+		"packet_freshness_state":    firstNonEmptyString(handoff.PacketFreshnessState, ExecutorPacketFreshnessUnknown),
 	}
 	addPlanExecuteEventString(fields, "plan_id", handoff.PlanID)
 	addPlanExecuteEventString(fields, "handoff_id", handoff.HandoffID)
@@ -758,6 +786,10 @@ func executorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]
 		fields["tests"] = handoff.Tests
 	}
 	return fields
+}
+
+func ExecutorHandoffPacketEventFields(handoff ExecutorHandoffPacket) map[string]any {
+	return executorHandoffPacketEventFields(handoff)
 }
 
 func addPlanExecuteEventString(fields map[string]any, key string, value string) {
@@ -2289,16 +2321,24 @@ func planExecuteApprovalPartial(status string) bool {
 
 func planScopeDriftEventFields(handoff ExecutorHandoffPacket, mismatch *PlanEditPreflightMismatch) map[string]any {
 	fields := map[string]any{
-		"edit_index":        mismatch.Index,
-		"reason":            mismatch.Reason,
-		"packet_state":      handoff.State,
-		"handoff_id":        handoff.HandoffID,
-		"approval_scope_id": handoff.ApprovalScopeID,
+		"edit_index":                mismatch.Index,
+		"reason":                    mismatch.Reason,
+		"packet_state":              handoff.State,
+		"handoff_id":                handoff.HandoffID,
+		"approval_scope_id":         handoff.ApprovalScopeID,
+		"handoff_created":           handoff.HandoffCreated,
+		"packet_present":            handoff.PacketPresent,
+		"packet_not_used_by_design": handoff.PacketNotUsedByDesign,
+		"packet_freshness_state":    firstNonEmptyString(handoff.PacketFreshnessState, ExecutorPacketFreshnessUnknown),
 	}
 	if path := sanitizePlanExecuteEventPath(mismatch.Path); path != "" {
 		fields["path"] = path
 	}
 	return fields
+}
+
+func PlanScopeDriftEventFields(handoff ExecutorHandoffPacket, mismatch *PlanEditPreflightMismatch) map[string]any {
+	return planScopeDriftEventFields(handoff, mismatch)
 }
 
 func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
@@ -2716,6 +2756,10 @@ func phaseEvidenceHandoffFromExecutor(handoff ExecutorHandoffPacket) phaseEviden
 	return phaseEvidenceHandoff{
 		PacketState:      firstNonEmptyString(strings.TrimSpace(handoff.State), ExecutorHandoffStateMissing),
 		Reason:           strings.TrimSpace(handoff.Reason),
+		HandoffCreated:   handoff.HandoffCreated,
+		PacketPresent:    handoff.PacketPresent,
+		PacketNotUsed:    handoff.PacketNotUsedByDesign,
+		PacketFreshness:  firstNonEmptyString(strings.TrimSpace(handoff.PacketFreshnessState), ExecutorPacketFreshnessUnknown),
 		PlanID:           strings.TrimSpace(handoff.PlanID),
 		HandoffID:        strings.TrimSpace(handoff.HandoffID),
 		HandoffStatus:    strings.TrimSpace(handoff.HandoffStatus),
@@ -3054,7 +3098,14 @@ func renderPlanExecutePhaseEvidence(bundle PhaseEvidenceBundle) string {
 		fmt.Fprintf(&b, " summary=%s", summary)
 	}
 	b.WriteString("\n")
-	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s", bundle.ExecutorHandoff.PacketState, bundle.ExecutorHandoff.Reason)
+	fmt.Fprintf(&b, "executor_handoff_packet: state=%s reason=%s handoff_created=%t packet_present=%t packet_not_used_by_design=%t packet_freshness_state=%s",
+		bundle.ExecutorHandoff.PacketState,
+		bundle.ExecutorHandoff.Reason,
+		bundle.ExecutorHandoff.HandoffCreated,
+		bundle.ExecutorHandoff.PacketPresent,
+		bundle.ExecutorHandoff.PacketNotUsed,
+		bundle.ExecutorHandoff.PacketFreshness,
+	)
 	if bundle.ExecutorHandoff.PackID != "" {
 		fmt.Fprintf(&b, " pack_id=%s", bundle.ExecutorHandoff.PackID)
 	}
@@ -3136,6 +3187,10 @@ func phaseEvidenceTelemetry(bundle PhaseEvidenceBundle) map[string]any {
 		"executor_packet_state":     bundle.ExecutorHandoff.PacketState,
 		"executor_packet_reason":    bundle.ExecutorHandoff.Reason,
 		"executor_handoff_id":       bundle.ExecutorHandoff.HandoffID,
+		"handoff_created":           bundle.ExecutorHandoff.HandoffCreated,
+		"packet_present":            bundle.ExecutorHandoff.PacketPresent,
+		"packet_not_used_by_design": bundle.ExecutorHandoff.PacketNotUsed,
+		"packet_freshness_state":    bundle.ExecutorHandoff.PacketFreshness,
 		"candidate_files":           len(bundle.Packet.CandidateFiles),
 		"candidate_file_paths":      phaseEvidenceTelemetryFilePaths(bundle.Packet.CandidateFiles, 8),
 		"candidate_symbols":         len(bundle.Packet.CandidateSymbols),

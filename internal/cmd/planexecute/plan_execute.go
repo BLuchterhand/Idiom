@@ -83,99 +83,35 @@ func runPlanExecuteResumeReviewRepair(
 }
 
 func toSharedReviewRepairBaseline(baseline reviewRepairBaseline) planexecute.ReviewRepairBaseline {
-	out := planexecute.ReviewRepairBaseline{Files: map[string]planexecute.ReviewRepairFileSnapshot{}}
-	for path, snapshot := range baseline.Files {
-		out.Files[path] = planexecute.ReviewRepairFileSnapshot{Before: snapshot.Before, Exists: snapshot.Exists}
-	}
-	return out
+	return baseline
 }
 
 func fromSharedReviewRepairBaseline(baseline planexecute.ReviewRepairBaseline) reviewRepairBaseline {
-	out := reviewRepairBaseline{Files: map[string]reviewRepairFileSnapshot{}}
-	for path, snapshot := range baseline.Files {
-		out.Files[path] = reviewRepairFileSnapshot{Before: snapshot.Before, Exists: snapshot.Exists}
-	}
-	return out
+	return baseline
 }
 
 func toSharedExecutorPhaseReport(report executorPhaseReport) planexecute.ExecutorPhaseReport {
-	return planexecute.ExecutorPhaseReport{
-		Total:        report.Total,
-		Succeeded:    report.Succeeded,
-		Failed:       report.Failed,
-		Failures:     append([]string(nil), report.Failures...),
-		SourceSanity: toSharedPhaseEvidenceChecks(report.SourceSanity),
-		Verification: toSharedPhaseEvidenceChecks(report.Verification),
-		Handoff:      toSharedExecutorHandoffPacket(report.Handoff),
-	}
+	return report
 }
 
 func fromSharedExecutorPhaseReport(report planexecute.ExecutorPhaseReport) executorPhaseReport {
-	return executorPhaseReport{
-		Total:        report.Total,
-		Succeeded:    report.Succeeded,
-		Failed:       report.Failed,
-		Failures:     append([]string(nil), report.Failures...),
-		SourceSanity: fromSharedPhaseEvidenceChecks(report.SourceSanity),
-		Verification: fromSharedPhaseEvidenceChecks(report.Verification),
-		Handoff:      fromSharedExecutorHandoffPacket(report.Handoff),
-	}
+	return report
 }
 
 func toSharedPhaseEvidenceChecks(checks []phaseEvidenceCheck) []planexecute.PhaseEvidenceCheck {
-	out := make([]planexecute.PhaseEvidenceCheck, 0, len(checks))
-	for _, check := range checks {
-		out = append(out, planexecute.PhaseEvidenceCheck{
-			Kind:       check.Kind,
-			Path:       check.Path,
-			Command:    check.Command,
-			WorkingDir: check.WorkingDir,
-			Status:     check.Status,
-			Summary:    check.Summary,
-			Error:      check.Error,
-		})
-	}
-	return out
+	return checks
 }
 
 func fromSharedPhaseEvidenceChecks(checks []planexecute.PhaseEvidenceCheck) []phaseEvidenceCheck {
-	out := make([]phaseEvidenceCheck, 0, len(checks))
-	for _, check := range checks {
-		out = append(out, phaseEvidenceCheck{
-			Kind:       check.Kind,
-			Path:       check.Path,
-			Command:    check.Command,
-			WorkingDir: check.WorkingDir,
-			Status:     check.Status,
-			Summary:    check.Summary,
-			Error:      check.Error,
-		})
-	}
-	return out
+	return checks
 }
 
 func toSharedReviewRepairPhaseReport(report reviewRepairPhaseReport) planexecute.ReviewRepairPhaseReport {
-	return planexecute.ReviewRepairPhaseReport{
-		Skipped:        report.Skipped,
-		Status:         report.Status,
-		Repairs:        report.Repairs,
-		AutoRepairs:    report.AutoRepairs,
-		ReviewPlan:     report.ReviewPlan,
-		ChecklistFound: report.ChecklistFound,
-		ReasonClass:    report.ReasonClass,
-	}
+	return report
 }
 
 func fromSharedReviewRepairPhaseReport(report planexecute.ReviewRepairPhaseReport) reviewRepairPhaseReport {
-	return reviewRepairPhaseReport{
-		Skipped:        report.Skipped,
-		Status:         report.Status,
-		Repairs:        report.Repairs,
-		AutoRepairs:    report.AutoRepairs,
-		ReviewPlan:     report.ReviewPlan,
-		ChecklistFound: report.ChecklistFound,
-		ReasonClass:    report.ReasonClass,
-	}
+	return report
 }
 
 func toSharedReviewRepairBaselinePtr(baseline *reviewRepairBaseline) *planexecute.ReviewRepairBaseline {
@@ -187,51 +123,11 @@ func toSharedReviewRepairBaselinePtr(baseline *reviewRepairBaseline) *planexecut
 }
 
 func toSharedExecutorHandoffPacket(handoff executorHandoffPacket) planexecute.ExecutorHandoffPacket {
-	return planexecute.ExecutorHandoffPacket{
-		State:                   handoff.State,
-		Reason:                  handoff.Reason,
-		PlanID:                  handoff.PlanID,
-		HandoffID:               handoff.HandoffID,
-		HandoffStatus:           handoff.HandoffStatus,
-		ApprovalScopeID:         handoff.ApprovalScopeID,
-		ApprovalStatus:          handoff.ApprovalStatus,
-		ApprovalPermission:      handoff.ApprovalPermission,
-		PackID:                  handoff.PackID,
-		DeclaredPackID:          handoff.DeclaredPackID,
-		ArtifactPacketStatus:    handoff.ArtifactPacketStatus,
-		ArtifactPacketFreshness: handoff.ArtifactPacketFreshness,
-		IndexID:                 handoff.IndexID,
-		Fresh:                   handoff.Fresh,
-		CandidateFiles:          handoff.CandidateFiles,
-		CandidateSymbols:        handoff.CandidateSymbols,
-		Tests:                   handoff.Tests,
-		ApprovedPathCount:       handoff.ApprovedPathCount,
-		PendingPathCount:        handoff.PendingPathCount,
-	}
+	return handoff
 }
 
 func fromSharedExecutorHandoffPacket(handoff planexecute.ExecutorHandoffPacket) executorHandoffPacket {
-	return executorHandoffPacket{
-		State:                   handoff.State,
-		Reason:                  handoff.Reason,
-		PlanID:                  handoff.PlanID,
-		HandoffID:               handoff.HandoffID,
-		HandoffStatus:           handoff.HandoffStatus,
-		ApprovalScopeID:         handoff.ApprovalScopeID,
-		ApprovalStatus:          handoff.ApprovalStatus,
-		ApprovalPermission:      handoff.ApprovalPermission,
-		PackID:                  handoff.PackID,
-		DeclaredPackID:          handoff.DeclaredPackID,
-		ArtifactPacketStatus:    handoff.ArtifactPacketStatus,
-		ArtifactPacketFreshness: handoff.ArtifactPacketFreshness,
-		IndexID:                 handoff.IndexID,
-		Fresh:                   handoff.Fresh,
-		CandidateFiles:          handoff.CandidateFiles,
-		CandidateSymbols:        handoff.CandidateSymbols,
-		Tests:                   handoff.Tests,
-		ApprovedPathCount:       handoff.ApprovedPathCount,
-		PendingPathCount:        handoff.PendingPathCount,
-	}
+	return handoff
 }
 
 func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
@@ -448,88 +344,22 @@ func findLatestPlanArtifact(root string, notBefore time.Time, sessionID string) 
 	return planexecute.FindLatestPlanArtifact(root, notBefore, sessionID)
 }
 
-// executorPhaseReport summarizes what the executor phase did so the
-// caller can read a one-shot status line.
-type executorPhaseReport struct {
-	Total        int
-	Succeeded    int
-	Failed       int
-	Failures     []string
-	SourceSanity []phaseEvidenceCheck
-	Verification []phaseEvidenceCheck
-	Handoff      executorHandoffPacket
-}
-
-func (r executorPhaseReport) String() string {
-	header := fmt.Sprintf("executor: %d edits, %d succeeded, %d failed", r.Total, r.Succeeded, r.Failed)
-	if len(r.Failures) == 0 {
-		return header
-	}
-	return header + "\n  " + strings.Join(r.Failures, "\n  ")
-}
+type executorPhaseReport = planexecute.ExecutorPhaseReport
 
 const (
-	executorHandoffStateInherited  = "inherited"
-	executorHandoffStateMissing    = "missing"
-	executorHandoffStateStale      = "stale"
-	executorHandoffStateOverridden = "overridden"
+	executorHandoffStateInherited  = planexecute.ExecutorHandoffStateInherited
+	executorHandoffStateMissing    = planexecute.ExecutorHandoffStateMissing
+	executorHandoffStateStale      = planexecute.ExecutorHandoffStateStale
+	executorHandoffStateOverridden = planexecute.ExecutorHandoffStateOverridden
 )
 
-type executorHandoffPacket struct {
-	State                   string
-	Reason                  string
-	PlanID                  string
-	HandoffID               string
-	HandoffStatus           string
-	ApprovalScopeID         string
-	ApprovalStatus          string
-	ApprovalPermission      string
-	PackID                  string
-	DeclaredPackID          string
-	ArtifactPacketStatus    string
-	ArtifactPacketFreshness string
-	IndexID                 string
-	Fresh                   bool
-	CandidateFiles          int
-	CandidateSymbols        int
-	Tests                   int
-	ApprovedPathCount       int
-	PendingPathCount        int
-}
+type executorHandoffPacket = planexecute.ExecutorHandoffPacket
 
 func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) executorHandoffPacket {
 	return fromSharedExecutorHandoffPacket(planexecute.ClassifyExecutorHandoffPacket(root, plan))
 }
 
-type reviewRepairPhaseReport struct {
-	Skipped        bool
-	Status         string
-	Repairs        int
-	AutoRepairs    int
-	ReviewPlan     string
-	ChecklistFound bool
-	ReasonClass    string
-}
-
-func (r reviewRepairPhaseReport) String() string {
-	if r.Skipped {
-		return "review-repair: skipped"
-	}
-	status := strings.TrimSpace(r.Status)
-	if status == "" {
-		status = "not run"
-	}
-	if r.Repairs == 0 {
-		if r.AutoRepairs == 0 {
-			return fmt.Sprintf("review-repair: %s", status)
-		}
-		return fmt.Sprintf("review-repair: %s, %d mechanical repair(s)", status, r.AutoRepairs)
-	}
-	if r.AutoRepairs == 0 {
-		return fmt.Sprintf("review-repair: %s, %d corrective edit(s)", status, r.Repairs)
-	}
-	return fmt.Sprintf("review-repair: %s, %d corrective edit(s), %d mechanical repair(s)", status, r.Repairs, r.AutoRepairs)
-}
+type reviewRepairPhaseReport = planexecute.ReviewRepairPhaseReport
 
 type patchHygieneAutoRepairReport struct {
 	Repaired bool
@@ -544,14 +374,9 @@ type reviewRepairEvidence struct {
 	PhaseEvidence phaseEvidenceBundle
 }
 
-type reviewRepairBaseline struct {
-	Files map[string]reviewRepairFileSnapshot
-}
+type reviewRepairBaseline = planexecute.ReviewRepairBaseline
 
-type reviewRepairFileSnapshot struct {
-	Before string
-	Exists bool
-}
+type reviewRepairFileSnapshot = planexecute.ReviewRepairFileSnapshot
 
 func runReviewRepairPhase(
 	cfg config.Config,

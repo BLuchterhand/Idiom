@@ -27,6 +27,140 @@ func TestQwenKeyValueSimpleFormat(t *testing.T) {
 	}
 }
 
+func TestQwenKeyValueEditFileFormat(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: edit_file",
+			"path: internal/labels/labels.go",
+			`old_text: return "Save changes"`,
+			`new_text: return "Save"`,
+			"description: update label",
+		}, "\n"),
+	})
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key-value edit_file request to normalize")
+	}
+	if result.Request.Tool != "edit_file" || result.Request.Path != "internal/labels/labels.go" {
+		t.Fatalf("unexpected request: tool=%q path=%q", result.Request.Tool, result.Request.Path)
+	}
+	if result.Request.OldText != `return "Save changes"` || result.Request.NewText != `return "Save"` {
+		t.Fatalf("edit anchors not parsed: old=%q new=%q", result.Request.OldText, result.Request.NewText)
+	}
+	if result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("expected key_value transport, got %q", result.EventTransport)
+	}
+}
+
+func TestQwenKeyValueEditFilePreservesBracesAndIndentation(t *testing.T) {
+	oldText := strings.Join([]string{
+		"func label() {",
+		"    return \"Save changes\"",
+		"}",
+	}, "\n")
+	newText := strings.Join([]string{
+		"func label() {",
+		"    return \"Save\"",
+		"}",
+	}, "\n")
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: edit_file",
+			"path: internal/labels/labels.go",
+			"old_text: func label() {",
+			"    return \"Save changes\"",
+			"}",
+			"new_text: func label() {",
+			"    return \"Save\"",
+			"}",
+			"description: update label",
+		}, "\n"),
+	})
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key-value edit_file request with braces to normalize")
+	}
+	if result.Request.OldText != oldText {
+		t.Fatalf("old_text not preserved:\nwant: %q\ngot:  %q", oldText, result.Request.OldText)
+	}
+	if result.Request.NewText != newText {
+		t.Fatalf("new_text not preserved:\nwant: %q\ngot:  %q", newText, result.Request.NewText)
+	}
+}
+
+func TestQwenKeyValueEditFilePreservesAllowedKeyLookingAnchorLines(t *testing.T) {
+	oldText := strings.Join([]string{
+		"metadata := []string{",
+		"path: internal/foo",
+		"content: old value",
+		"}",
+	}, "\n")
+	newText := strings.Join([]string{
+		"metadata := []string{",
+		"path: internal/foo",
+		"content: new value",
+		"}",
+	}, "\n")
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: edit_file",
+			"path: internal/labels/labels.go",
+			"old_text: metadata := []string{",
+			"path: internal/foo",
+			"content: old value",
+			"}",
+			"new_text: metadata := []string{",
+			"path: internal/foo",
+			"content: new value",
+			"}",
+			"description: update metadata",
+		}, "\n"),
+	})
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key-value edit_file request with key-looking anchor lines to normalize")
+	}
+	if result.Request.OldText != oldText {
+		t.Fatalf("old_text not preserved:\nwant: %q\ngot:  %q", oldText, result.Request.OldText)
+	}
+	if result.Request.NewText != newText {
+		t.Fatalf("new_text not preserved:\nwant: %q\ngot:  %q", newText, result.Request.NewText)
+	}
+}
+
+func TestQwenKeyValueEditFileAllowsEmptyNewTextDeletion(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: strings.Join([]string{
+			"tool: edit_file",
+			"path: internal/labels/labels.go",
+			`old_text: return "Save changes"`,
+			"new_text:",
+			"description: delete label",
+		}, "\n"),
+	})
+	if result.ParseErr != nil {
+		t.Fatalf("parse error: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected key-value edit_file deletion request to normalize")
+	}
+	if result.Request.OldText != `return "Save changes"` {
+		t.Fatalf("old_text not parsed: %q", result.Request.OldText)
+	}
+	if result.Request.NewText != "" {
+		t.Fatalf("empty new_text should be preserved, got %q", result.Request.NewText)
+	}
+	if result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("expected key_value transport, got %q", result.EventTransport)
+	}
+}
+
 // TestQwenKeyValueMultiCallParsesFirst verifies that when Qwen emits
 // two tool: blocks in one reply, only the first is parsed.
 func TestQwenKeyValueMultiCallParsesFirst(t *testing.T) {

@@ -301,14 +301,21 @@ func earlyRejectedFingerprintSummary(summary string) bool {
 }
 
 func isRecoverablePostReadinessGapRejection(summary string) bool {
+	return postReadinessContinuationRejectionSummary(summary)
+}
+
+func normalizedHarnessRejectionSummary(summary string) string {
 	summary = strings.TrimSpace(summary)
-	summary = strings.TrimSuffix(summary, " (replayed same blocker)")
-	switch summary {
-	case "Post-readiness follow-up missing named gap", "Post-child follow-up missing named gap":
-		return true
-	default:
-		return false
-	}
+	return strings.TrimSpace(strings.TrimSuffix(summary, " (replayed same blocker)"))
+}
+
+func postReadinessContinuationRejectionSummary(summary string) bool {
+	summary = normalizedHarnessRejectionSummary(summary)
+	return strings.HasPrefix(summary, "Post-readiness follow-up ") ||
+		strings.HasPrefix(summary, "Post-readiness named_gap ") ||
+		strings.HasPrefix(summary, "Post-readiness search ") ||
+		strings.HasPrefix(summary, "Post-readiness exact probe ") ||
+		strings.HasPrefix(summary, "Post-child follow-up ")
 }
 
 func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.ToolRequest, results []workspace.ToolResult) runnerRequestBudgetDecision {

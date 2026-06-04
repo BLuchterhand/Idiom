@@ -35,6 +35,13 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 	// sometimes bypass the normalization pipeline — double-gating here
 	// prevents needless "capability is required" errors.
 	if strings.TrimSpace(req.Capability) == "" {
+		if codeNavigateGraphResolutionOnly(req.Resolution) {
+			return ToolResult{
+				Tool:    "code_navigate",
+				Summary: "Code navigation rejected",
+				Error:   fmt.Sprintf("code_navigate received graph resolution %q without a navigation capability; use context_query for graph resolutions or set capability to one of file_outline, find_symbol, workspace_symbol, read_symbol, definition, references, calls_from, calls_into, implementations, related_files", strings.TrimSpace(req.Resolution)),
+			}
+		}
 		if strings.TrimSpace(req.Path) != "" {
 			req.Capability = "file_outline"
 		} else if strings.TrimSpace(req.Pattern) != "" || strings.TrimSpace(req.Query) != "" || strings.TrimSpace(req.Symbol) != "" {
@@ -102,6 +109,18 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 
 func CodeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	return codeNavigationSpecFor(value)
+}
+
+func codeNavigateGraphResolutionOnly(value string) bool {
+	key := strings.ToLower(strings.TrimSpace(value))
+	key = strings.ReplaceAll(key, "-", "_")
+	key = strings.ReplaceAll(key, " ", "_")
+	switch key {
+	case "repository", "package", "file", "symbol", "summary", "any":
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Manager) codeNavigationLanguage(req ToolRequest) (LanguageSupport, bool, string) {

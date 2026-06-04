@@ -80,6 +80,20 @@ func TestRenderToolManifestInstructionsSuppressesManifestWidePlaceholderRequests
 	}
 }
 
+func TestHistoryRangeManifestDescribesPathOnlyDefault(t *testing.T) {
+	manifest := BuildToolManifest([]string{"history_range"})
+	if len(manifest) != 1 {
+		t.Fatalf("expected one history_range manifest entry, got %#v", manifest)
+	}
+	entry := manifest[0]
+	if !strings.Contains(entry.Purpose, "file") || !strings.Contains(entry.Purpose, "paired start_line/end_line") {
+		t.Fatalf("history_range purpose should describe path-only default and paired bounds, got %q", entry.Purpose)
+	}
+	if strings.Contains(entry.Request, "start_line") || strings.Contains(entry.Request, "end_line") {
+		t.Fatalf("history_range manifest request should not advertise line bounds as required, got %q", entry.Request)
+	}
+}
+
 func TestToolManifestToolsDerivesLanguageMembershipFromRegistry(t *testing.T) {
 	tools := ToolManifestTools(ToolManifestToolOptions{
 		IncludeGo:         true,

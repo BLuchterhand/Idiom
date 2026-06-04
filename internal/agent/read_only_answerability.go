@@ -119,20 +119,20 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		if tool == "task" {
 			if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
 				sourcePaths := readOnlySourceLikePaths(packet.SourceBodyPaths, 8)
-				for _, path := range sourcePaths {
-					ledger.addItem(readOnlyEvidenceItem{
-						Kind:    readOnlyEvidenceSourceBody,
-						Tool:    tool,
-						Path:    path,
-						Summary: strings.TrimSpace(result.Summary),
-					})
-				}
-				ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
-				ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
-				if readOnlyEvidencePacketAnswerable(packet) {
+				if readOnlyEvidencePacketAnswerableForObjective(packet, ledger.Objective) {
+					for _, path := range sourcePaths {
+						ledger.addItem(readOnlyEvidenceItem{
+							Kind:    readOnlyEvidenceSourceBody,
+							Tool:    tool,
+							Path:    path,
+							Summary: strings.TrimSpace(result.Summary),
+						})
+					}
+					ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
+					ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
 					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
 				}
-				ledger.CandidatePaths = mergeRunnerStateStrings(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths)
+				ledger.CandidatePaths = mergeRunnerStateStrings(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths, sourcePaths)
 				continue
 			}
 			sourcePaths := readOnlySourceLikePaths(sourceBodyEvidencePathsFromDelegatedPacket(result.Output), 8)
@@ -141,21 +141,26 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 				sourcePaths = readOnlySourceLikePaths(groundedChildPacketEvidencePaths(ledger.Objective, result.Output), 8)
 				inspectedPathFallback = len(sourcePaths) > 0
 			}
-			sourceBodyText := sanitizeDelegatedReadOnlyResultOutput(result)
-			for _, path := range sourcePaths {
-				ledger.addItem(readOnlyEvidenceItem{
-					Kind:    readOnlyEvidenceSourceBody,
-					Tool:    tool,
-					Path:    path,
-					Summary: strings.TrimSpace(result.Summary),
-				})
-				ledger.observeSourceBodyObjectiveSupport(path, sourceBodyText)
+			ledger.CandidatePaths = mergeRunnerStateStrings(ledger.CandidatePaths, sourcePaths)
+			sourcePathsAnswerable := childPacketContainsGroundedAnswerEvidence(ledger.Objective, result.Output) ||
+				(inspectedPathFallback && delegatedPacketAddressesObjective(ledger.Objective, result.Output))
+			if sourcePathsAnswerable {
+				sourceBodyText := sanitizeDelegatedReadOnlyResultOutput(result)
+				for _, path := range sourcePaths {
+					ledger.addItem(readOnlyEvidenceItem{
+						Kind:    readOnlyEvidenceSourceBody,
+						Tool:    tool,
+						Path:    path,
+						Summary: strings.TrimSpace(result.Summary),
+					})
+					ledger.observeSourceBodyObjectiveSupport(path, sourceBodyText)
+				}
+				if inspectedPathFallback {
+					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
+				}
+				ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
+				ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
 			}
-			if inspectedPathFallback {
-				ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
-			}
-			ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
-			ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
 			continue
 		}
 		switch tool {
@@ -213,10 +218,18 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		}
 	}
 	ledger.CandidatePaths = mergeRunnerStateStrings(namedTargets, ledger.CandidatePaths)
-	ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyEvidencePaths(results))
+	ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourceEvidenceBodyPaths(results), delegatedReadOnlySourceBodyReadinessPaths(ledger.Objective, results))
 	ledger.promoteCollectiveSourceBodyObjectiveSupport(namedTargets)
 	ledger.markRelevantSourceBodies(namedTargets)
 	return ledger
+}
+
+func readOnlyDirectAnswerCandidateOnlyLedger(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (readOnlyAnswerabilityLedger, bool) {
+	if !readOnlyDirectAnswerLane(brief) {
+		return readOnlyAnswerabilityLedger{}, false
+	}
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	return ledger, len(ledger.CandidatePaths) > 0 && len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence
 }
 
 func delegatedTaskOutputHasFindingEvidence(output string) bool {
@@ -667,6 +680,119 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 			}
 		}
 		if hasSpecific && matches >= 2 {
+			return true
+		}
+	}
+	return false
+}
+
+func readOnlyObjectiveAnswerEvidenceSupported(output string, objective string) bool {
+	return readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output, objective, 2)
+}
+
+func readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(output string, objective string) bool {
+	return readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output, objective, 1)
+}
+
+func readOnlyObjectiveAnswerEvidenceSupportedWithMinTerms(output string, objective string, minTerms int) bool {
+	objective = strings.TrimSpace(objective)
+	output = strings.TrimSpace(output)
+	if objective == "" || output == "" {
+		return false
+	}
+	objectiveText := answerTextWithoutPathCitations(output)
+	mechanismText := strings.ToLower(answerProseForObjectiveMatching(objectiveText))
+	if sourceBodyHasStrongObjectiveToken(objectiveText, objective) &&
+		readOnlyExplanationHasMechanismVerb(mechanismText) {
+		return true
+	}
+	terms := readOnlyObjectivePromotionTerms(objective)
+	if len(terms) == 0 || !readOnlyExplanationHasMechanismVerb(mechanismText) {
+		return false
+	}
+	matches := 0
+	for _, term := range terms {
+		if readOnlyObjectivePromotionTermInText(objectiveText, term) {
+			matches++
+		}
+	}
+	required := minTerms
+	if required < 1 {
+		required = 1
+	}
+	if len(terms) < required {
+		required = len(terms)
+	}
+	if len(terms) == 1 {
+		required = 1
+	}
+	return matches >= required
+}
+
+func readOnlyObjectivePromotionTerms(objective string) []string {
+	rawTerms := recoveryObjectiveSearchWords(objective, 32)
+	if len(rawTerms) == 0 {
+		return nil
+	}
+	seen := map[string]struct{}{}
+	var terms []string
+	for _, term := range rawTerms {
+		term = singularObjectiveWord(strings.TrimSpace(term))
+		if len(term) < 4 || readOnlyObjectivePromotionStopWord(term) {
+			continue
+		}
+		if _, ok := seen[term]; ok {
+			continue
+		}
+		seen[term] = struct{}{}
+		terms = append(terms, term)
+	}
+	return terms
+}
+
+func readOnlyObjectivePromotionStopWord(term string) bool {
+	term = singularObjectiveWord(strings.TrimSpace(term))
+	if term == "" {
+		return true
+	}
+	if _, skip := recoverySearchStopWords()[term]; skip {
+		return true
+	}
+	switch term {
+	case "explain", "describe", "what", "does", "where", "when", "which", "question",
+		"their", "your", "ours", "mine", "they", "them",
+		"tell", "uses", "using", "user", "overall", "effort", "increase", "increasing",
+		"harness", "tool", "tools", "schema", "schemas", "surface", "surfaces":
+		return true
+	default:
+		return false
+	}
+}
+
+func readOnlyObjectivePromotionTermInText(text string, term string) bool {
+	text = strings.ToLower(strings.TrimSpace(text))
+	term = singularObjectiveWord(strings.TrimSpace(term))
+	if text == "" || term == "" {
+		return false
+	}
+	if strings.Contains(text, term) {
+		return true
+	}
+	if term == "subagent" &&
+		(strings.Contains(text, "child runner") ||
+			strings.Contains(text, "child task") ||
+			strings.Contains(text, "delegated child")) {
+		return true
+	}
+	if strings.HasSuffix(term, "ness") {
+		stem := strings.TrimSuffix(term, "ness")
+		if len(stem) >= 4 && strings.Contains(text, stem) {
+			return true
+		}
+	}
+	if strings.HasSuffix(term, "ed") {
+		stem := strings.TrimSuffix(term, "ed")
+		if len(stem) >= 4 && (strings.Contains(text, stem) || strings.Contains(text, stem+"ion")) {
 			return true
 		}
 	}

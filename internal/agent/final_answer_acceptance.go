@@ -111,6 +111,7 @@ func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspac
 	if objective == "" {
 		return readOnlyDirectAnswerRelevance{Status: "skipped_empty_objective"}
 	}
+	substantiveAnswer := substantiveAnswerWithoutEchoedObjective(answer, objective)
 	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 	answerSupportedPaths := answerCitedCollectiveSourceBodySupportPaths(answer, ledger)
 	if len(answerSupportedPaths) > 0 {
@@ -120,9 +121,9 @@ func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspac
 	relevance := readOnlyDirectAnswerRelevance{
 		Status:                  "checked",
 		RelevantSourceBodyPaths: ledger.RelevantSourceBodyPaths,
-		AnswerObjectiveTerms:    answerObjectiveTerms(answer, objective),
+		AnswerObjectiveTerms:    answerObjectiveTerms(substantiveAnswer, objective),
 	}
-	if readOnlyAnswerReportsInsufficientEvidence(answer) {
+	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
 		relevance.Status = "insufficient_evidence_answer"
 		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
 			relevance.BlockerKind = "answer_objective_unmet"
@@ -143,7 +144,7 @@ func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspac
 		relevance.Status = "skipped_not_answerable"
 		return relevance
 	}
-	if answerAddressesObjective(answer, objective, ledger, results) && answerSourceCitationsAreObjectiveRelevant(answer, ledger) {
+	if answerAddressesObjective(substantiveAnswer, objective, ledger, results) && answerSourceCitationsAreObjectiveRelevant(answer, ledger) {
 		return relevance
 	}
 	relevance.BlockerKind = "answer_objective_unmet"
@@ -177,6 +178,10 @@ func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntime
 }
 
 func answerAddressesObjective(answer string, objective string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
+	answer = strings.TrimSpace(substantiveAnswerWithoutEchoedObjective(answer, objective))
+	if answer == "" {
+		return false
+	}
 	if sourceBodyHasStrongObjectiveToken(answer, objective) {
 		return true
 	}
@@ -186,6 +191,9 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 	if readOnlyCauseObjective(objective) {
 		return false
 	}
+	if readOnlyExplainerObjective(objective) && answerMentionsInspectedCodeSymbol(answer, results) {
+		return true
+	}
 	lower := strings.ToLower(answer)
 	terms := readOnlySearchHitObjectiveTerms(objective)
 	if len(terms) == 0 {
@@ -193,6 +201,41 @@ func answerAddressesObjective(answer string, objective string, ledger readOnlyAn
 	}
 	for _, term := range longestObjectiveTerms(terms, 2) {
 		if strings.Contains(lower, term) {
+			return true
+		}
+	}
+	objectiveLineMatches := 0
+	for _, term := range sourceEvidenceObjectiveLineTerms(objective) {
+		term = strings.ToLower(strings.TrimSpace(term))
+		if term == "" {
+			continue
+		}
+		if strings.Contains(lower, term) {
+			objectiveLineMatches++
+		}
+	}
+	if objectiveLineMatches >= 2 {
+		return true
+	}
+	return false
+}
+
+func readOnlyExplainerObjective(objective string) bool {
+	lower := strings.ToLower(strings.TrimSpace(objective))
+	return strings.HasPrefix(lower, "explain ") || strings.HasPrefix(lower, "describe ")
+}
+
+func answerMentionsInspectedCodeSymbol(answer string, results []workspace.ToolResult) bool {
+	exactSymbols := exactEvidenceSymbolSet(results)
+	if len(exactSymbols) == 0 {
+		return false
+	}
+	for _, symbol := range explicitAnswerCodeSymbols(answer) {
+		key := normalizedAnswerSymbol(symbol)
+		if key == "" || architectureNonSourceSymbolTerm(key) {
+			continue
+		}
+		if _, ok := exactSymbols[key]; ok {
 			return true
 		}
 	}
@@ -259,6 +302,7 @@ func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerability
 }
 
 func answerObjectiveTerms(answer string, objective string) []string {
+	answer = substantiveAnswerWithoutEchoedObjective(answer, objective)
 	lower := strings.ToLower(answer)
 	var matches []string
 	for _, term := range readOnlySearchHitObjectiveTerms(objective) {

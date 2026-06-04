@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -18,6 +19,7 @@ import (
 )
 
 const runnerAutonomyEventRole = "autonomy_event"
+const runnerAutonomyDisableModelExchangeEnv = "IDIOM_DISABLE_RUNNER_MODEL_EXCHANGE_EVENTS"
 
 type runnerAutonomyRecorder struct {
 	runner             *Runner
@@ -193,7 +195,9 @@ func (a *runnerAutonomyRecorder) activeAuthorityForProtocol(protocol contractcom
 		binding.RuntimeContractID = strings.TrimSpace(a.contract.Scope.RuntimeContract)
 	}
 	if a.hasPlannerCompile {
-		if strings.TrimSpace(binding.ProtocolHash) == "" {
+		if strings.TrimSpace(protocol.ProtocolHash) != "" {
+			binding.ProtocolHash = protocol.ProtocolHash
+		} else if strings.TrimSpace(binding.ProtocolHash) == "" {
 			binding.ProtocolHash = protocol.ProtocolHash
 		}
 		if strings.TrimSpace(binding.ActiveInvariantID) == "" {
@@ -219,6 +223,16 @@ func (a *runnerAutonomyRecorder) activeAuthorityForProtocol(protocol contractcom
 func (a *runnerAutonomyRecorder) bindModelProtocolProjection(protocol contractcompile.ModelProtocolProjection) contractcompile.ModelProtocolProjection {
 	if a == nil {
 		return protocol
+	}
+	if a.hasPlannerCompile {
+		binding := a.activeAuthority
+		if strings.TrimSpace(binding.ContractID) == "" {
+			binding.ContractID = a.contract.ContractID
+		}
+		if strings.TrimSpace(binding.ActiveInvariantID) == "" {
+			binding.ActiveInvariantID = contractcompile.InvariantActiveAuthority
+		}
+		return protocolWithActiveAuthority(protocol, binding)
 	}
 	return protocolWithActiveAuthority(protocol, a.activeAuthorityForProtocol(protocol))
 }
@@ -682,6 +696,8 @@ func (a *runnerAutonomyRecorder) emitTurnPhaseContract(contract TurnPhaseContrac
 		lifecycle.ModelProtocol = &protocolPayload
 	}
 	a.emitNewEvent(autonomy.NewContractPresentedEvent(a.contract, lifecycle, a.nextTime(), a.nextSequence()))
+	a.emitRollbackControlIfDisabled(payload.ProtocolHash)
+	a.emitContextPacket(contract, protocol, payload.ProtocolHash)
 }
 
 func (a *runnerAutonomyRecorder) markModelProtocolPresented(protocol contractcompile.ModelProtocolProjection) {
@@ -792,6 +808,8 @@ func (a *runnerAutonomyRecorder) emitGateDecision(input runnerAutonomyGateDecisi
 	if err == nil {
 		a.emitResolvedObligations(gate.ResolvedObligations, gateEvent.EventID)
 		a.emitGateFriction(input, gate, gateEvent.EventID)
+		a.emitFailureDeltaIntentFromGate(input, gate, gateEvent.EventID)
+		a.emitModelResponseObservationFromGate(input, gate, gateEvent.EventID)
 	}
 	if input.Gate == autonomy.GateCompletion {
 		a.emitNewEvent(autonomy.NewCompletionGateDecisionEvent(a.contract, autonomy.ContractCompletionEvent{
@@ -1604,6 +1622,343 @@ func (a *runnerAutonomyRecorder) hasOpenObligationsForGate(gate autonomy.GateKin
 	return false
 }
 
+func (a *runnerAutonomyRecorder) emitContextPacket(contract TurnPhaseContract, protocol contractcompile.ModelProtocolProjection, protocolHash string) {
+	if a == nil {
+		return
+	}
+	protocolHash = util.FirstNonEmpty(strings.TrimSpace(protocol.ProtocolHash), strings.TrimSpace(protocolHash))
+	packet := protocol.CompactPacket
+	if packet.SchemaVersion == "" {
+		packet.SchemaVersion = autonomy.ContextPacketSchemaVersion
+	}
+	packet.ContractID = a.contract.ContractID
+	packet.ProtocolHash = protocolHash
+	if packet.PacketID == "" {
+		packet.PacketID = "packet:" + digestRunnerAutonomyValue(strings.Join([]string{
+			packet.ContractID,
+			packet.ProtocolHash,
+			strings.TrimSpace(contract.PhaseID),
+			strings.TrimSpace(contract.ModelCallID),
+		}, ":"))
+	}
+	if len(packet.SchemaNames) == 0 {
+		packet.SchemaNames = compileModelExchangeSchemaNames()
+	}
+	if len(packet.RedactionMarkers) == 0 {
+		packet.RedactionMarkers = []string{"metadata_only", "prompt_omitted", "transcript_omitted", "file_content_omitted", "secrets_omitted"}
+	}
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:          "context_packet",
+		ContractID:    a.contract.ContractID,
+		ProtocolHash:  protocolHash,
+		PhaseID:       util.FirstNonEmpty(strings.TrimSpace(contract.PhaseID), strings.TrimSpace(protocol.PhaseID)),
+		ModelCallID:   strings.TrimSpace(contract.ModelCallID),
+		InvariantID:   firstRunnerAutonomyString(contract.InvariantIDs),
+		ContextPacket: &packet,
+	})
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:         "trace_store_policy",
+		ContractID:   a.contract.ContractID,
+		ProtocolHash: protocolHash,
+		PhaseID:      util.FirstNonEmpty(strings.TrimSpace(contract.PhaseID), strings.TrimSpace(protocol.PhaseID)),
+		ModelCallID:  strings.TrimSpace(contract.ModelCallID),
+		TraceStorePolicy: &autonomy.TraceStorePolicy{
+			ContractID:      a.contract.ContractID,
+			ProtocolHash:    protocolHash,
+			RetentionRef:    "retention:local_default_30d_raw_180d_redacted",
+			RedactionRef:    "redaction:metadata_only",
+			RedactionStatus: "pass",
+			AllowedFields:   []string{"schema_version", "event_id", "type", "contract_id", "protocol_hash", "phase_id", "model_call_id", "invariant_id", "source_event_id", "source_event_type", "refs", "counts", "redaction_markers"},
+			ForbiddenFields: []string{"raw_prompt", "raw_transcript", "prompt_body", "transcript_body", "file_body", "old_text", "new_text", "long_excerpt", "customer_id", "customer_identifier"},
+			StoreRefs:       []string{"role:autonomy_event", "event_type:model_exchange"},
+			CapturedBy:      "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitPermissionSnapshot(req workspace.ToolRequest, policy autonomy.ContractPolicyEvent, sourceEventID string) {
+	if a == nil {
+		return
+	}
+	protocolHash := a.activeProtocolHash()
+	if strings.TrimSpace(protocolHash) == "" {
+		return
+	}
+	_ = req
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:            "permission_snapshot",
+		ContractID:      a.contract.ContractID,
+		ProtocolHash:    protocolHash,
+		PhaseID:         a.lastTurnPhaseEvent.PhaseID,
+		ModelCallID:     a.lastTurnPhaseEvent.ModelCallID,
+		InvariantID:     strings.TrimSpace(policy.InvariantID),
+		SourceEventID:   sourceEventID,
+		SourceEventType: string(autonomy.EventToolPolicyResult),
+		PermissionSnapshot: &autonomy.PermissionSnapshot{
+			ContractID:        a.contract.ContractID,
+			ProtocolHash:      protocolHash,
+			PermissionProfile: a.contract.Scope.PermissionProfile,
+			AllowedTools:      append([]string(nil), a.brief.AllowedTools...),
+			HiddenTools:       append([]string(nil), a.contract.Capabilities.HiddenTools...),
+			CapabilityRefs:    runnerAutonomyPermissionCapabilityRefs(policy),
+			PathRoleRefs:      runnerAutonomyPermissionPathRoleRefs(policy),
+			CapturedBy:        "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitFailureDeltaIntentFromPolicy(policy autonomy.ContractPolicyEvent, sourceEventID string) {
+	if a == nil || !runnerAutonomyPolicyDecisionIsFailure(policy.Decision) {
+		return
+	}
+	protocolHash := a.activeProtocolHash()
+	if strings.TrimSpace(protocolHash) == "" {
+		return
+	}
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:            "failure_delta",
+		ContractID:      a.contract.ContractID,
+		ProtocolHash:    protocolHash,
+		PhaseID:         a.lastTurnPhaseEvent.PhaseID,
+		ModelCallID:     a.lastTurnPhaseEvent.ModelCallID,
+		InvariantID:     strings.TrimSpace(policy.InvariantID),
+		SourceEventID:   sourceEventID,
+		SourceEventType: string(autonomy.EventToolPolicyResult),
+		FailureDelta: &autonomy.FailureDelta{
+			ContractID:   a.contract.ContractID,
+			ProtocolHash: protocolHash,
+			FailureClass: util.FirstNonEmpty(runnerAutonomyReasonCode(policy.ErrorClass), runnerAutonomyReasonCode(policy.ReasonCode), strings.TrimSpace(string(policy.Decision))),
+			BeforeRef:    "policy:before",
+			AfterRef:     "policy:" + strings.TrimSpace(string(policy.Decision)),
+			EvidenceRefs: []string{"event:" + sourceEventID, "surface:tool_policy"},
+			GeneratedBy:  "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitFailureDeltaIntentFromGate(input runnerAutonomyGateDecision, gate autonomy.ContractGateEvent, sourceEventID string) {
+	if a == nil || !runnerAutonomyPolicyDecisionIsFailure(input.Decision) {
+		return
+	}
+	protocolHash := util.FirstNonEmpty(strings.TrimSpace(gate.ProtocolHash), a.activeProtocolHash())
+	if strings.TrimSpace(protocolHash) == "" {
+		return
+	}
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:            "failure_delta",
+		ContractID:      a.contract.ContractID,
+		ProtocolHash:    protocolHash,
+		PhaseID:         a.lastTurnPhaseEvent.PhaseID,
+		ModelCallID:     a.lastTurnPhaseEvent.ModelCallID,
+		InvariantID:     strings.TrimSpace(input.InvariantID),
+		SourceEventID:   sourceEventID,
+		SourceEventType: string(autonomy.EventGateDecision),
+		FailureDelta: &autonomy.FailureDelta{
+			ContractID:   a.contract.ContractID,
+			ProtocolHash: protocolHash,
+			FailureClass: util.FirstNonEmpty(string(input.Gate), runnerAutonomyReasonCode(input.ReasonCode), strings.TrimSpace(string(input.Decision))),
+			BeforeRef:    "gate:before",
+			AfterRef:     "gate:" + strings.TrimSpace(string(input.Decision)),
+			EvidenceRefs: []string{"event:" + sourceEventID, "surface:" + string(input.Gate)},
+			GeneratedBy:  "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitModelResponseObservationFromPolicy(policy autonomy.ContractPolicyEvent, sourceEventID string) {
+	if a == nil || policy.ParserFailure == "" || policy.ParserFailure == autonomy.ParserFailureNone {
+		return
+	}
+	protocolHash := a.activeProtocolHash()
+	if strings.TrimSpace(protocolHash) == "" {
+		return
+	}
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:            "validation_signal",
+		ContractID:      a.contract.ContractID,
+		ProtocolHash:    protocolHash,
+		PhaseID:         a.lastTurnPhaseEvent.PhaseID,
+		ModelCallID:     a.lastTurnPhaseEvent.ModelCallID,
+		InvariantID:     strings.TrimSpace(policy.InvariantID),
+		SourceEventID:   sourceEventID,
+		SourceEventType: string(autonomy.EventToolPolicyResult),
+		ValidationSignal: &autonomy.ValidationSignal{
+			ContractID:    a.contract.ContractID,
+			ProtocolHash:  protocolHash,
+			ValidationRef: "parser:" + strings.TrimSpace(string(policy.ParserFailure)),
+			Status:        "model_response_observed_non_authoritative",
+			EvidenceRefs:  []string{"event:" + sourceEventID, "basis:runner_parser_policy_result"},
+			CapturedBy:    "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitModelResponseObservationFromGate(input runnerAutonomyGateDecision, gate autonomy.ContractGateEvent, sourceEventID string) {
+	if a == nil || input.Gate != autonomy.GateCompletion || !runnerAutonomyPolicyDecisionIsFailure(input.Decision) {
+		return
+	}
+	protocolHash := util.FirstNonEmpty(strings.TrimSpace(gate.ProtocolHash), a.activeProtocolHash())
+	if strings.TrimSpace(protocolHash) == "" {
+		return
+	}
+	a.emitModelExchangeEvent(autonomy.ContractModelExchangeEvent{
+		Kind:            "validation_signal",
+		ContractID:      a.contract.ContractID,
+		ProtocolHash:    protocolHash,
+		PhaseID:         a.lastTurnPhaseEvent.PhaseID,
+		ModelCallID:     a.lastTurnPhaseEvent.ModelCallID,
+		InvariantID:     strings.TrimSpace(input.InvariantID),
+		SourceEventID:   sourceEventID,
+		SourceEventType: string(autonomy.EventGateDecision),
+		ValidationSignal: &autonomy.ValidationSignal{
+			ContractID:    a.contract.ContractID,
+			ProtocolHash:  protocolHash,
+			ValidationRef: "completion_gate:" + strings.TrimSpace(string(input.Decision)),
+			Status:        "model_response_observed_non_authoritative",
+			EvidenceRefs:  []string{"event:" + sourceEventID, "basis:runner_completion_gate_decision"},
+			CapturedBy:    "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitRollbackControlIfDisabled(protocolHash string) {
+	if a == nil || !runnerAutonomyModelExchangeDisabled() {
+		return
+	}
+	protocolHash = util.FirstNonEmpty(strings.TrimSpace(protocolHash), a.activeProtocolHash())
+	if protocolHash == "" {
+		return
+	}
+	a.emitModelExchangeEventIgnoringRollback(autonomy.ContractModelExchangeEvent{
+		Kind:         "rollback_control",
+		ContractID:   a.contract.ContractID,
+		ProtocolHash: protocolHash,
+		PhaseID:      a.lastTurnPhaseEvent.PhaseID,
+		ModelCallID:  a.lastTurnPhaseEvent.ModelCallID,
+		RollbackControl: &autonomy.RollbackControl{
+			ContractID:   a.contract.ContractID,
+			ProtocolHash: protocolHash,
+			RollbackRef:  "env:" + runnerAutonomyDisableModelExchangeEnv,
+			Decision:     "model_exchange_disabled",
+			OperatorRef:  "operator:env",
+			Source:       "runner_autonomy",
+			PreviousMode: "observe_only_model_exchange",
+			NewMode:      "disabled",
+			Reason:       "rollback switch active",
+			GuardRefs:    []string{"guard:typed_autonomy_events_remain_enabled"},
+			AffectedPackIDs: []string{
+				string(autonomy.ContractPackCompletionReadiness),
+				string(autonomy.ContractPackVerificationPostWrite),
+				string(autonomy.ContractPackWriteRequiredPaths),
+			},
+			AuthorizedBy: "harness",
+		},
+	})
+}
+
+func (a *runnerAutonomyRecorder) emitModelExchangeEvent(event autonomy.ContractModelExchangeEvent) {
+	if a == nil || runnerAutonomyModelExchangeDisabled() {
+		return
+	}
+	a.emitModelExchangeEventIgnoringRollback(event)
+}
+
+func (a *runnerAutonomyRecorder) emitModelExchangeEventIgnoringRollback(event autonomy.ContractModelExchangeEvent) {
+	if a == nil {
+		return
+	}
+	event.ContractID = util.FirstNonEmpty(strings.TrimSpace(event.ContractID), a.contract.ContractID)
+	if strings.TrimSpace(event.ProtocolHash) == "" || strings.TrimSpace(event.Kind) == "" {
+		return
+	}
+	autonomyEvent, err := autonomy.NewModelExchangeEvent(a.contract, event, a.nextTime(), a.nextSequence())
+	if err != nil {
+		return
+	}
+	a.emitNewEvent(autonomyEvent, err)
+}
+
+func runnerAutonomyModelExchangeDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(runnerAutonomyDisableModelExchangeEnv))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func compileModelExchangeSchemaNames() []string {
+	return []string{
+		autonomy.ContractEnvelopeSchemaVersion,
+		autonomy.ContextPacketSchemaVersion,
+		autonomy.ModelResponseSchemaVersion,
+		autonomy.PermissionSnapshotSchemaVersion,
+		autonomy.ValidationSignalSchemaVersion,
+		autonomy.FailureDeltaSchemaVersion,
+		autonomy.TraceStorePolicySchemaVersion,
+		autonomy.RollbackControlSchemaVersion,
+	}
+}
+
+func runnerAutonomyPermissionCapabilityRefs(policy autonomy.ContractPolicyEvent) []string {
+	refs := []string{}
+	if policy.Capability != "" {
+		refs = append(refs, "capability:"+string(policy.Capability))
+	}
+	if policy.SideEffect != "" {
+		refs = append(refs, "side_effect:"+string(policy.SideEffect))
+	}
+	if policy.ActionClass != "" {
+		refs = append(refs, "action_class:"+string(policy.ActionClass))
+	}
+	if policy.Transport != "" {
+		refs = append(refs, "transport:"+string(policy.Transport))
+	}
+	if policy.Decision != "" {
+		refs = append(refs, "decision:"+string(policy.Decision))
+	}
+	if policy.ArgumentsDigest != "" {
+		refs = append(refs, "arguments_digest:"+policy.ArgumentsDigest)
+	}
+	return runnerAutonomyBoundedFactStrings(refs, 12)
+}
+
+func runnerAutonomyPermissionPathRoleRefs(policy autonomy.ContractPolicyEvent) []string {
+	refs := []string{}
+	for _, match := range policy.PathRoles {
+		path := util.FirstNonEmpty(match.Path, match.MatchedPattern, match.PacketID)
+		if path != "" && match.Role != "" {
+			refs = append(refs, string(match.Role)+":"+path)
+		}
+	}
+	for _, path := range policy.ProtectedMatches {
+		refs = append(refs, "protected:"+path)
+	}
+	for _, path := range policy.RequiredEditMatches {
+		refs = append(refs, "required_edit:"+path)
+	}
+	for _, path := range policy.OutsideWorkspace {
+		refs = append(refs, "outside_workspace:"+path)
+	}
+	return runnerAutonomyBoundedFactStrings(refs, 24)
+}
+
+func (a *runnerAutonomyRecorder) activeProtocolHash() string {
+	if a == nil {
+		return ""
+	}
+	return util.FirstNonEmpty(a.currentModelProtocolHash(), strings.TrimSpace(a.lastTurnPhaseEvent.ProtocolHash), strings.TrimSpace(a.lastModelProtocol.ProtocolHash))
+}
+
+func runnerAutonomyPolicyDecisionIsFailure(decision autonomy.ToolPolicyDecision) bool {
+	switch decision {
+	case autonomy.PolicyDeny, autonomy.PolicyReject, autonomy.PolicyStop:
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *runnerAutonomyRecorder) emitNewEvent(event autonomy.Event, err error) {
 	if a == nil || err != nil {
 		return
@@ -1623,7 +1978,10 @@ func (a *runnerAutonomyRecorder) emitPolicyEvent(req workspace.ToolRequest, inpu
 	event, err := autonomy.NewPolicyEvent(input.EventType, a.contract, policy, a.nextTime(), a.nextSequence())
 	a.emitNewEvent(event, err)
 	if err == nil && input.EventType == autonomy.EventToolPolicyResult {
+		a.emitPermissionSnapshot(req, policy, event.EventID)
 		a.emitPolicyFriction(req, input, policy, event.EventID)
+		a.emitFailureDeltaIntentFromPolicy(policy, event.EventID)
+		a.emitModelResponseObservationFromPolicy(policy, event.EventID)
 	}
 }
 

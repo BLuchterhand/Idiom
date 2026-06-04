@@ -406,7 +406,7 @@ func normalizeKeyValueToolRequestSyntax(text string) toolRequestSyntaxNormalizat
 		}
 		return toolRequestSyntaxNormalization{}
 	}
-	if workspace.IsWorkspaceWriteTool(req.Tool) {
+	if workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(req.Tool) != "edit_file" {
 		return toolRequestSyntaxNormalization{
 			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
 			EventTransport: toolRequestNormalizerTransportKeyValue,
@@ -435,7 +435,7 @@ func normalizeKeyValueArgsToolRequestSyntax(text string) toolRequestSyntaxNormal
 		}
 		return toolRequestSyntaxNormalization{}
 	}
-	if workspace.IsWorkspaceWriteTool(req.Tool) {
+	if workspace.IsWorkspaceWriteTool(req.Tool) && strings.TrimSpace(req.Tool) != "edit_file" {
 		return toolRequestSyntaxNormalization{
 			EventOutcome:   toolRequestNormalizerOutcomeUnsafeToInfer,
 			EventTransport: toolRequestNormalizerTransportKeyValueArgs,
@@ -540,8 +540,10 @@ func normalizeKeyValueArgsObject(tool string, object string) (string, bool) {
 			if rawResolution, hasResolution := fields["resolution"]; hasResolution {
 				var resolution string
 				if err := json.Unmarshal(rawResolution, &resolution); err == nil && strings.TrimSpace(resolution) != "" {
-					capabilityRaw, _ := json.Marshal(strings.TrimSpace(resolution))
-					fields["capability"] = capabilityRaw
+					if capability := workspace.CodeNavigateResolutionCapabilityAlias(resolution); capability != "" {
+						capabilityRaw, _ := json.Marshal(capability)
+						fields["capability"] = capabilityRaw
+					}
 				}
 			}
 		}
@@ -677,6 +679,9 @@ func normalizeCodeNavigateMissingCapability(req *workspace.ToolRequest) bool {
 	if req == nil || strings.TrimSpace(req.Tool) != "code_navigate" || strings.TrimSpace(req.Capability) != "" {
 		return false
 	}
+	if workspace.ContextGraphResolutionOnly(req.Resolution) {
+		return false
+	}
 	mode := strings.TrimSpace(req.Mode)
 	if mode != "" && visibleCodeNavigateCapability(mode) {
 		req.Capability = mode
@@ -714,14 +719,14 @@ func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, boo
 		// reasoning-content salvage paths that could recover the answer.
 		return workspace.ToolRequest{}, false, false
 	}
-	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return workspace.ToolRequest{}, false, true
-	}
 	if strings.Contains(trimmed, "\n") {
 		if strings.Contains(trimmed, "(") && keyValueLikeText(trimmed) {
 			return workspace.ToolRequest{}, false, false
 		}
 		return workspace.ToolRequest{}, false, false
+	}
+	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
+		return workspace.ToolRequest{}, false, true
 	}
 	key, body, ok := strings.Cut(trimmed, ":")
 	if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
@@ -912,6 +917,8 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		Workaround:      values["workaround"],
 		Impact:          values["impact"],
 		TaskID:          values["task_id"],
+		OldText:         values["old_text"],
+		NewText:         values["new_text"],
 	}
 	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Operation) != "" {
 		req.Capability = req.Operation
@@ -923,7 +930,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		req.Capability = values["kind"]
 	}
 	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Resolution) != "" && syntaxToolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = req.Resolution
+		req.Capability = workspace.CodeNavigateResolutionCapabilityAlias(req.Resolution)
 	}
 	if strings.TrimSpace(req.Path) == "" && strings.TrimSpace(values["scope"]) != "" {
 		req.Path = values["scope"]
@@ -967,6 +974,7 @@ func toolRequestFromSyntaxValues(tool string, values map[string]string) (workspa
 		"include_source":   func(v bool) { req.IncludeSource = v },
 		"include_files":    func(v bool) { req.IncludeFiles = v },
 		"refresh":          func(v bool) { req.Refresh = v },
+		"replace_all":      func(v bool) { req.ReplaceAll = v },
 	} {
 		if raw := strings.TrimSpace(values[key]); raw != "" {
 			v, err := strconv.ParseBool(raw)
@@ -1001,10 +1009,10 @@ func keyValueToolRequestFieldAllowed(key string) bool {
 	switch key {
 	case "tool", "id", "key", "path", "file", "scope", "pattern", "query", "capability", "operation", "action", "kind", "mode", "task", "glob", "language", "resolution",
 		"symbol", "named_gap", "why_not_answering", "start_line", "end_line", "limit", "budget_tokens", "max_depth",
-		"include_evidence", "include_source", "include_files", "refresh", "lines",
+		"include_evidence", "include_source", "include_files", "refresh", "lines", "replace_all",
 		"purpose", "command", "description", "content", "prompt", "agent", "workdir", "handle", "root", "destination", "status",
 		"packet_path", "output_path", "component", "category", "session_id", "confidence", "severity", "suggested_fix",
-		"expected", "observed", "workaround", "impact", "task_id", "recursive":
+		"expected", "observed", "workaround", "impact", "task_id", "recursive", "old_text", "new_text", "new_text_ref", "content_ref":
 		return true
 	default:
 		return false

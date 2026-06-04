@@ -409,6 +409,85 @@ func TestFinalAnswerAcceptanceAllowsWhatWouldItTakeAnswerFromDiscoveredTUISource
 	}
 }
 
+func TestFinalAnswerAcceptanceRejectsEchoedObjectivePathInventoryFromLiveTUIQuestion(t *testing.T) {
+	objective := "What would it take to enable the up and down arrow keys to iterate through old user messages as a shortcut to retry previous messages?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output:  `{"candidate_files":[{"path":"internal/app/update_handlers.go"},{"path":"internal/app/sessions_panel.go"}]}`,
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/sessions_panel.go lines 208-248",
+			Output: strings.Join([]string{
+				"208:func (p *SessionsPanel) HandleKey(msg tea.KeyMsg) {",
+				"209:\tswitch msg.Type {",
+				"210:\tcase tea.KeyUp:",
+				"211:\t\tp.MoveUp()",
+				"212:\tcase tea.KeyDown:",
+				"213:\t\tp.MoveDown()",
+				"214:\t}",
+				"215:}",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/app/update_handlers.go lines 22-182",
+			Output: strings.Join([]string{
+				"22:func (m Model) handleKeyPress(msg tea.KeyMsg) (Model, tea.Cmd) {",
+				"23:\tswitch msg.Type {",
+				"24:\tcase tea.KeyUp:",
+				"25:\t\tm.sessionsPanel.MoveUp()",
+				"26:\tcase tea.KeyDown:",
+				"27:\t\tm.sessionsPanel.MoveDown()",
+				"28:\tcase tea.KeyEnter:",
+				"29:\t\tm.retrySelectedConversationMessage()",
+				"30:\t}",
+				"31:\treturn m, nil",
+				"32:}",
+			}, "\n"),
+		},
+	}
+	answer := "For `" + objective + "`, `internal/app/update_handlers.go` shows defines `Model.handleKeyPress`."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("echoed-objective path inventory got (%q, %q), want answer_objective_unmet", kind, reason)
+	}
+	acceptance := runner.evaluateFinalAnswerAcceptance(answer, results)
+	if len(acceptance.AnswerObjectiveTerms) > 0 {
+		t.Fatalf("echoed objective must not satisfy answer objective terms, got %#v", acceptance.AnswerObjectiveTerms)
+	}
+}
+
+func TestFinalAnswerAcceptanceAllowsExplainerAnswerWithInspectedSymbol(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Explain the harness control flow.")
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner.go lines 1-20",
+		Output: strings.Join([]string{
+			"1:package agent",
+			"2:func (r *Runner) Run() {}",
+		}, "\n"),
+	}}
+	answer := "`Runner.Run` is visible in `internal/agent/runner.go`; the inspected source anchors the harness control flow in that file."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("explainer answer with inspected symbol blocked: kind=%q reason=%q", kind, reason)
+	}
+
+	answer = "For `Explain the harness control flow.`, `internal/agent/runner.go` shows defines `Runner.Run`."
+	kind, reason = runner.finalAnswerBlockerKind(answer, results)
+	if kind != "" || reason != "" {
+		t.Fatalf("deterministic explainer symbol answer blocked: kind=%q reason=%q", kind, reason)
+	}
+}
+
 func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("How do up and down arrow keys navigate conversation history?")
 	results := []workspace.ToolResult{
@@ -494,8 +573,8 @@ func TestReadOnlyAnswerabilityAcceptsTypedDelegatedEvidencePacket(t *testing.T) 
 		CandidatePaths:  []string{".idiom/discovery/queries/query.json"},
 		Confidence:      "high",
 		Findings: []ReadOnlyEvidenceFinding{
-			{Path: "internal/agent/runner.go", Text: "The parent runner uses the `task` tool to delegate read-only exploration."},
-			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded child runner and returns its packet to the parent."},
+			{Path: "internal/agent/runner.go", Text: "The harness uses the `task` tool as the subagent entrypoint for read-only exploration."},
+			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded subagent child runner and returns its packet to the parent."},
 		},
 	})}
 
@@ -525,6 +604,91 @@ func TestReadOnlyAnswerabilityAcceptsTypedDelegatedEvidencePacket(t *testing.T) 
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("typed synthesis should not depend on legacy heading %q:\n%s", forbidden, answer)
 		}
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsOffObjectiveTypedDelegatedEvidencePacket(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		Question:        brief.Objective,
+		SourceBodyPaths: []string{"internal/agent/runner.go", "internal/comprehension/result_metadata.go"},
+		InspectedPaths:  []string{"internal/agent/runner.go", "internal/comprehension/result_metadata.go"},
+		Confidence:      "high",
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The runner reads ChatMessage values and records model-call metadata."},
+			{Path: "internal/comprehension/result_metadata.go", Text: "Result metadata stores provenance fields for context packets."},
+		},
+	})}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("off-objective typed delegated packet must not satisfy answerability: %#v", ledger)
+	}
+	if len(ledger.SourceBodyPaths) > 0 || len(ledger.SourceBodyTaskPaths) > 0 || len(ledger.RelevantSourceBodyPaths) > 0 {
+		t.Fatalf("off-objective typed packet paths must not be promoted to source-body readiness: %#v", ledger)
+	}
+	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+		t.Fatalf("off-objective typed packet should not synthesize an answer, got:\n%s", answer)
+	}
+}
+
+func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjective(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		Objective:         "What can we add to our discovery tools in an effort at increasing their overall usefulness?",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		Question:        brief.Objective,
+		SourceBodyPaths: []string{"internal/workspace/tool_schema_export.go", "internal/workspace/tool_schemas.go"},
+		InspectedPaths:  []string{"internal/workspace/tool_schema_export.go", "internal/workspace/tool_schemas.go"},
+		Confidence:      "high",
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/workspace/tool_schema_export.go", Text: "Tool schema export serializes available discovery tool schemas as JSON."},
+			{Path: "internal/workspace/tool_schemas.go", Text: "The workspace tool schema table returns argument metadata for registered tools."},
+		},
+	})}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("generic tool/schema packet must not satisfy usefulness answerability: %#v", ledger)
+	}
+	if postChildReadOnlyPacketAvailable(brief, results) {
+		t.Fatal("generic tool/schema packet must not activate child packet closure")
+	}
+	if paths := postChildClosureEvidencePaths(brief.Objective, results, 4); len(paths) > 0 {
+		t.Fatalf("generic tool/schema packet must not populate post-child evidence paths, got %#v", paths)
+	}
+	if paths := acceptedAnswerEvidencePaths("Discovery tool schema details are available.", results, brief); len(paths) > 0 {
+		t.Fatalf("generic tool/schema packet must not leak accepted evidence paths, got %#v", paths)
+	}
+}
+
+func TestReadOnlyAnswerabilityAcceptsObjectiveRelevantLegacyChildPacket(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		Objective:         "Explain how delegated child runners are created in this harness.",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Partial findings from this turn (the budget was reached before a full synthesis):",
+			"",
+			"Verified context:",
+			"- Read f23 internal/agent/runner_child_tasks.go lines 1-20",
+			"- Found task child runner creation in internal/agent/runner_child_tasks.go",
+		}, "\n"),
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if !ledger.Answerable() {
+		t.Fatalf("objective-relevant legacy child packet should satisfy read-only answerability: %#v", ledger)
 	}
 }
 
@@ -563,7 +727,7 @@ func TestReadOnlyAnswerabilityRejectsTypedDelegatedArtifactOnlyPacket(t *testing
 	if ledger.Answerable() {
 		t.Fatalf("artifact-only typed packet must not satisfy answerability: %#v", ledger)
 	}
-	if postChildReadOnlyPacketAvailable(results) {
+	if postChildReadOnlyPacketAvailable(brief, results) {
 		t.Fatalf("artifact-only typed packet must not activate child packet closure")
 	}
 	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {

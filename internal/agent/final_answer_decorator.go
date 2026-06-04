@@ -45,7 +45,7 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 		}
 	}
 	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
-		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer, runnerWorkspaceRoot(r)); ok {
+		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
 			return present(presentable)
 		}
 		if conversationFallbackShouldAvoidSourceBody(input.Brief) {
@@ -66,7 +66,7 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
 		return present(composed)
 	}
-	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer, runnerWorkspaceRoot(r)); ok {
+	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
 		return present(presentable)
 	}
 	return present(answer)
@@ -101,10 +101,7 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	if !internalReason && !questionBlockerReasonLooksInternal(reason) && !strings.Contains(reason, "\n") {
 		return ensureTrailingPeriod(reason), true
 	}
-	paths := readOnlyCloseoutEvidencePaths(brief, results, 4)
-	if len(paths) == 0 {
-		paths = delegatedClosureEvidencePaths(brief.Objective, results, 4)
-	}
+	evidenceLabel, paths := questionBlockerContextPaths(brief, results, 4)
 
 	var b strings.Builder
 	b.WriteString("I could not produce a supported final answer before the run stopped.")
@@ -116,11 +113,53 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 		}
 	}
 	if len(paths) > 0 {
-		b.WriteString(" Inspected evidence: ")
+		b.WriteString(" ")
+		b.WriteString(evidenceLabel)
+		b.WriteString(": ")
 		b.WriteString(formatInlinePathList(paths, 4))
 		b.WriteString(".")
 	}
 	return strings.TrimSpace(b.String()), true
+}
+
+func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) (string, []string) {
+	if max <= 0 {
+		max = 4
+	}
+	if ledger, candidateOnly := readOnlyDirectAnswerCandidateOnlyLedger(brief, results); candidateOnly {
+		paths := closurePromptEvidencePaths(ledger.CandidatePaths, max)
+		if len(paths) > 0 {
+			return "Candidate paths surfaced", paths
+		}
+		return "", nil
+	} else if readOnlyDirectAnswerLane(brief) {
+		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		paths := mergeRunnerStateStrings(ledger.RelevantSourceBodyPaths, ledger.SourceBodyObjectivePaths)
+		if ledger.DiagnosticRelevant {
+			paths = mergeRunnerStateStrings(paths, ledger.DiagnosticPaths)
+		}
+		paths = closurePromptEvidencePaths(paths, max)
+		if len(paths) > 0 {
+			return "Inspected evidence", paths
+		}
+		paths = readOnlyCloseoutEvidencePaths(brief, results, max)
+		if len(paths) > 0 {
+			return "Inspected evidence", paths
+		}
+		paths = promptEvidencePathsFromToolResults(results, max)
+		if len(paths) > 0 {
+			return "Inspected evidence", paths
+		}
+		return "", nil
+	}
+	paths := readOnlyCloseoutEvidencePaths(brief, results, max)
+	if len(paths) == 0 {
+		paths = delegatedClosureEvidencePaths(brief.Objective, results, max)
+	}
+	if len(paths) == 0 {
+		return "", nil
+	}
+	return "Inspected evidence", paths
 }
 
 func presentableQuestionBlockerReason(reason string) string {
@@ -285,7 +324,7 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 			}
 		}
 	}
-	if output, ok := bestTaskResultOutput(input.Results); ok {
+	if output, ok := bestObjectiveAnswerableTaskResultOutput(input.Brief.Objective, input.Results); ok {
 		if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
 			return cleaned, true
 		}
@@ -307,7 +346,7 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 	return "", false
 }
 
-func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, internalAnswer string, workspaceRoot string) (string, bool) {
+func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, internalAnswer string) (string, bool) {
 	internalAnswer = strings.TrimSpace(internalAnswer)
 	if internalAnswer == "" {
 		return "", false
@@ -324,7 +363,7 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 			if exact, ok := presentableExactProbeAnswer(brief, results); ok {
 				return exact, true
 			}
-			if sourceBody, ok := presentableReadFileSourceAnswer(brief, results, workspaceRoot); ok {
+			if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
 				return sourceBody, true
 			}
 			if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
@@ -376,10 +415,7 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		return synthesizeBriefConversationFallback(brief, results), true
 	}
 
-	if sourceBody, ok := presentableReadFileSourceAnswer(brief, results, workspaceRoot); ok {
-		return sourceBody, true
-	}
-	if sourceBody, ok := presentableEvidenceBodySourceAnswer(brief, results); ok {
+	if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
 		return sourceBody, true
 	}
 	if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
@@ -417,11 +453,12 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		", but no concrete user-facing finding was retained. State the supported claim from the inspected source, or name the exact missing claim.", true
 }
 
-func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, workspaceRoot string) (string, bool) {
-	_ = workspaceRoot
+func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
 	if runnerBriefRequiresMutation(brief) || briefPrefersDelegatedPacketFallback(brief, results) {
 		return "", false
 	}
+	bestAnswer := ""
+	bestScore := -1
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
 		if strings.TrimSpace(result.Error) != "" {
@@ -442,48 +479,23 @@ func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, res
 		}
 		output := strings.TrimSpace(result.Output)
 		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, paths[0], output); ok {
-			return answer, true
+			score := presentableSourceAnswerObjectiveScore(answer, brief.Objective)
+			if score > bestScore {
+				bestScore = score
+				bestAnswer = answer
+			}
 		}
 	}
-	return "", false
+	return bestAnswer, strings.TrimSpace(bestAnswer) != ""
 }
 
-func presentableEvidenceBodySourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	if runnerBriefRequiresMutation(brief) || briefPrefersDelegatedPacketFallback(brief, results) {
-		return "", false
+func presentableSourceAnswerObjectiveScore(answer string, objective string) int {
+	score := sourceEvidenceLineObjectiveScore(answer, sourceEvidenceObjectiveLineTerms(objective))
+	score += len(answerObjectiveTerms(answer, objective)) * 2
+	if strings.Contains(strings.ToLower(answer), "defines `") {
+		score--
 	}
-	for i := len(results) - 1; i >= 0; i-- {
-		result := results[i]
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		if !presentableEvidenceBodyTool(result.Tool) {
-			continue
-		}
-		output := strings.TrimSpace(result.Output)
-		if output == "" {
-			continue
-		}
-		paths := readPathsFromToolResult(result)
-		if len(paths) == 0 {
-			paths = promptEvidencePathsFromToolResults([]workspace.ToolResult{result}, 1)
-		}
-		if len(paths) == 0 {
-			continue
-		}
-		if isNonSourceEvidenceArtifactPath(paths[0]) {
-			continue
-		}
-		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, paths[0], normalizeSourceEvidenceLines(output)); ok {
-			return answer, true
-		}
-	}
-	return "", false
-}
-
-func presentableEvidenceBodyTool(tool string) bool {
-	_ = tool
-	return false
+	return score
 }
 
 func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -706,11 +718,11 @@ func briefPrefersDelegatedPacketFallback(brief workerruntime.WorkerRuntimeBrief,
 
 func presentableSourceBodyFactsAnswer(objective string, path string, output string) (string, bool) {
 	path = strings.TrimSpace(path)
-	lines := sourceEvidenceAnswerLines(output, 4)
+	lines := sourceEvidenceAnswerLinesForObjective(output, objective, 24)
 	if path == "" || len(lines) == 0 {
 		return "", false
 	}
-	facts := sourceBodySemanticFacts(lines, 3)
+	facts := sourceBodySemanticFacts(lines, 5)
 	if len(facts) == 0 {
 		return "", false
 	}
@@ -755,7 +767,11 @@ func sourceBodySemanticFacts(lines []string, max int) []string {
 			add(fact)
 		} else if fact := sourceBodyDefinitionFact(line); fact != "" {
 			add(fact)
+		} else if fact := sourceBodyCaseFact(currentFunction, line); fact != "" {
+			add(fact)
 		} else if fact := exactProbeAssignmentObservation(line); fact != "" {
+			add(fact)
+		} else if fact := sourceBodyCallFact(currentFunction, line); fact != "" {
 			add(fact)
 		}
 		if len(facts) >= max {
@@ -766,6 +782,67 @@ func sourceBodySemanticFacts(lines []string, max int) []string {
 		return facts[1:]
 	}
 	return facts
+}
+
+func sourceBodyCaseFact(functionName string, line string) string {
+	line = strings.TrimSpace(line)
+	rest, ok := strings.CutPrefix(line, "case ")
+	if !ok {
+		return ""
+	}
+	head, _, ok := strings.Cut(rest, ":")
+	if !ok {
+		return ""
+	}
+	var cases []string
+	for _, raw := range strings.Split(head, ",") {
+		value := strings.TrimSpace(raw)
+		if value == "" || strings.Contains(value, `"`) {
+			continue
+		}
+		if !strings.Contains(value, ".") && !codeShapedTokenPattern.MatchString(value) {
+			continue
+		}
+		cases = append(cases, "`"+value+"`")
+	}
+	if len(cases) == 0 {
+		return ""
+	}
+	if functionName != "" {
+		return "`" + functionName + "` handles " + joinFallbackFacts(cases)
+	}
+	return "handles " + joinFallbackFacts(cases)
+}
+
+func sourceBodyCallFact(functionName string, line string) string {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return ""
+	}
+	var calls []string
+	for _, match := range callLikeIdentifierPattern.FindAllStringSubmatch(line, -1) {
+		if len(match) <= 1 {
+			continue
+		}
+		candidate, ok := delegatedReadOnlyLiteralSymbolCandidate(match[1])
+		if !ok {
+			continue
+		}
+		if strings.EqualFold(candidate, "String") || strings.EqualFold(candidate, "Error") {
+			continue
+		}
+		calls = util.AppendUnique(calls, "`"+candidate+"`")
+		if len(calls) >= 2 {
+			break
+		}
+	}
+	if len(calls) == 0 {
+		return ""
+	}
+	if functionName != "" {
+		return "`" + functionName + "` calls " + joinFallbackFacts(calls)
+	}
+	return "calls " + joinFallbackFacts(calls)
 }
 
 func sourceBodyFunctionName(line string) string {
@@ -915,6 +992,50 @@ func normalizeSourceEvidenceLines(output string) string {
 	return strings.Join(normalized, "\n")
 }
 
+func sourceEvidenceAnswerLinesForObjective(output string, objective string, maxLines int) []string {
+	if maxLines <= 0 {
+		maxLines = 8
+	}
+	all := sourceEvidenceAnswerLines(output, 256)
+	if len(all) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(objective) == "" || len(all) <= maxLines {
+		return limitStrings(all, maxLines)
+	}
+	terms := sourceEvidenceObjectiveLineTerms(objective)
+	if len(terms) == 0 {
+		return limitStrings(all, maxLines)
+	}
+	selected := make([]string, 0, maxLines)
+	add := func(line string) {
+		line = strings.TrimSpace(line)
+		if line == "" || slices.Contains(selected, line) {
+			return
+		}
+		selected = append(selected, line)
+	}
+	for _, line := range all {
+		if sourceBodyFunctionName(line) != "" {
+			add(line)
+			break
+		}
+	}
+	for _, line := range all {
+		if sourceEvidenceLineObjectiveScore(line, terms) <= 0 {
+			continue
+		}
+		add(line)
+		if len(selected) >= maxLines {
+			return selected
+		}
+	}
+	if len(selected) == 0 {
+		return limitStrings(all, maxLines)
+	}
+	return selected
+}
+
 func sourceEvidenceAnswerLines(output string, maxLines int) []string {
 	if maxLines <= 0 {
 		maxLines = 3
@@ -969,11 +1090,11 @@ func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return "", false
 	}
-	anchor, ok := bestPresentableExactProbeAnchor(results)
+	anchor, ok := bestPresentableExactProbeAnchor(brief.Objective, results)
 	if !ok {
 		return "", false
 	}
-	facts := exactProbeObservations(anchor.symbol, anchor.output)
+	facts := exactProbeObservationsForObjective(anchor.symbol, anchor.output, brief.Objective)
 	if len(facts) == 0 {
 		return "", false
 	}
@@ -1005,7 +1126,7 @@ type presentableExactProbeAnchor struct {
 	output string
 }
 
-func bestPresentableExactProbeAnchor(results []workspace.ToolResult) (presentableExactProbeAnchor, bool) {
+func bestPresentableExactProbeAnchor(objective string, results []workspace.ToolResult) (presentableExactProbeAnchor, bool) {
 	candidates := make([]presentableExactProbeAnchor, 0, len(results))
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
@@ -1024,7 +1145,7 @@ func bestPresentableExactProbeAnchor(results []workspace.ToolResult) (presentabl
 		}
 	}
 	for _, candidate := range candidates {
-		if len(exactProbeObservations(candidate.symbol, candidate.output)) > 0 {
+		if len(exactProbeObservationsForObjective(candidate.symbol, candidate.output, objective)) > 0 {
 			return candidate, true
 		}
 	}
@@ -1032,6 +1153,16 @@ func bestPresentableExactProbeAnchor(results []workspace.ToolResult) (presentabl
 		return presentableExactProbeAnchor{}, false
 	}
 	return candidates[0], true
+}
+
+func exactProbeObservationsForObjective(symbol string, output string, objective string) []string {
+	lines := sourceEvidenceAnswerLinesForObjective(output, objective, 24)
+	if len(lines) > 0 {
+		if facts := sourceBodySemanticFacts(lines, 5); len(facts) > 0 {
+			return facts
+		}
+	}
+	return exactProbeObservations(symbol, output)
 }
 
 func presentableExactProbeResult(result workspace.ToolResult) bool {
@@ -1314,10 +1445,10 @@ func presentableInternalFinding(finding string) bool {
 	)
 }
 
-func bestTaskResultOutput(results []workspace.ToolResult) (string, bool) {
+func bestObjectiveAnswerableTaskResultOutput(objective string, results []workspace.ToolResult) (string, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
-		if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Error) != "" {
+		if !readOnlyTaskResultAnswerableForObjective(result, objective) {
 			continue
 		}
 		output := strings.TrimSpace(result.Output)
@@ -1716,10 +1847,10 @@ func isDeterministicFallbackAnswer(answer string) bool {
 // produces misleading code-fragment answers.
 func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	if strings.TrimSpace(brief.Objective) != "" && readOnlyClosureDecisionForResults(brief, results).Answerable() {
-		if sourceBody, ok := presentableReadFileSourceAnswer(brief, results, ""); ok {
-			return sourceBody
+		if exact, ok := presentableExactProbeAnswer(brief, results); ok {
+			return exact
 		}
-		if sourceBody, ok := presentableEvidenceBodySourceAnswer(brief, results); ok {
+		if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
 			return sourceBody
 		}
 		if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {

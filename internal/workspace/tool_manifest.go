@@ -323,7 +323,7 @@ func BuildToolManifest(allowedTools []string) []ToolManifestEntry {
 		{Tool: "discovery_query", Request: `{"tool":"discovery_query","purpose":"impact_analysis","path":"file.go","pattern":"FunctionName","language":"go","max_depth":2,"named_gap":"gather one bounded evidence packet for the remaining uncertainty before choosing a specific file read","why_not_answering":"I need one reproducible map of the surface before drilling into a single implementation point"}`, Purpose: "run a deterministic layered discovery recipe and persist the evidence packet"},
 		{Tool: "structural_search", Request: `{"tool":"structural_search","pattern":"if $COND { $BODY }","language":"go","path":"."}`, Purpose: "AST structural search via ast-grep"},
 		{Tool: "dependency_graph", Request: `{"tool":"dependency_graph","language":"go","path":"."}`, Purpose: "summarize package/module/import dependencies"},
-		{Tool: "history_range", Request: `{"tool":"history_range","path":"file.go","start_line":10,"end_line":40}`, Purpose: "show git history for a line range"},
+		{Tool: "history_range", Request: `{"tool":"history_range","path":"file.go"}`, Purpose: "show git history for a file, or add paired start_line/end_line for a narrower range"},
 		{Tool: "history_symbol", Request: `{"tool":"history_symbol","path":"file.go","pattern":"FunctionName"}`, Purpose: "show git history for a function or symbol"},
 		{Tool: "blame_range", Request: `{"tool":"blame_range","path":"file.go","start_line":10,"end_line":40}`, Purpose: "show git blame for a line range"},
 		{Tool: "ctags_symbols", Request: `{"tool":"ctags_symbols","path":".","pattern":"Handler"}`, Purpose: "fallback symbol index via Universal Ctags"},

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -10,7 +11,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
-	"idiom/internal/productworkflow"
+	"idiom/internal/planexecute"
 	"idiom/internal/recoverstatus"
 	"idiom/internal/recovery"
 	"idiom/internal/workspace"
@@ -152,30 +153,6 @@ func TestSlashHelpDocumentsRecoverStatusBarePacketPath(t *testing.T) {
 	if !strings.Contains(model.status, "/feature-planner <objective>") {
 		t.Fatalf("help must document typed feature-planner command, got %q", model.status)
 	}
-	if len(model.messages) != 1 || model.messages[0].Role != "operator" || !strings.Contains(model.messages[0].Content, "/product-approve") {
-		t.Fatalf("help must be durable as an operator message, got %#v", model.messages)
-	}
-}
-
-func TestSlashHelpIncludesActiveProductPhase(t *testing.T) {
-	model := &Model{
-		featurePlannerPhase:      productworkflow.PhaseADRDrafting,
-		featurePlannerEffortRoot: "/tmp/idiom-effort",
-	}
-
-	model.slashHelp("/help", []string{"/help"})
-
-	if len(model.messages) != 1 {
-		t.Fatalf("expected durable help operator message, got %#v", model.messages)
-	}
-	for _, want := range []string{
-		"Product workflow: phase=" + productworkflow.PhaseADRDrafting,
-		"next=/product-approve or continue chatting to refine",
-	} {
-		if !strings.Contains(model.messages[0].Content, want) {
-			t.Fatalf("active product help missing %q:\n%s", want, model.messages[0].Content)
-		}
-	}
 }
 
 func TestFeaturePlannerSlashCommandRequiresObjective(t *testing.T) {
@@ -186,6 +163,178 @@ func TestFeaturePlannerSlashCommandRequiresObjective(t *testing.T) {
 	}
 	if model.status != "Usage: /feature-planner <objective>" {
 		t.Fatalf("status = %q", model.status)
+	}
+}
+
+func TestProductSlashCommandsStaySeparateFromFeaturePlanner(t *testing.T) {
+	model := &Model{}
+
+	if model.handleFeaturePlannerCommand("/product-create --effort-root docs/product-workflows/efforts/started/test") {
+		t.Fatal("product-create must not be consumed by the feature-planner command handler")
+	}
+	if model.handleFeaturePlannerCommand("/product-approve --effort-root docs/product-workflows/efforts/started/test") {
+		t.Fatal("product-approve must not be consumed by the feature-planner command handler")
+	}
+	for _, command := range []string{"/product-create", "/product-approve"} {
+		if _, ok := slashCommands[command]; !ok {
+			t.Fatalf("%s must remain an explicit product slash command", command)
+		}
+	}
+	if _, ok := slashCommands["/feature-planner"]; ok {
+		t.Fatal("/feature-planner should remain on the direct feature-planner handler, not the generic product slash map")
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionPreservesNestedDegradedStatus(t *testing.T) {
+	model := &Model{}
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion(strings.Join([]string{
+		`{"type":"idiom.plan_execute.review_repair_degraded","status":"review_unavailable","reason_class":"review_model_error"}`,
+		`{"type":"message","content":"review unavailable"}`,
+	}, "\n"))
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	for _, want := range []string{
+		`"status":"degraded"`,
+		`"review_status":"review_unavailable"`,
+		`"failure_kind":"review_model_error"`,
+		`"completion_source":"tui_plan_execute_returned"`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in payload %s", want, payload)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionRequiresTypedNestedStatus(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_missing_status", "prompt", "", nil, nil, time.Now().UTC())
+	state.Phase = "planner"
+	state.Status = ""
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        0,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plain nested stdout without typed completion")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	for _, want := range []string{
+		`"status":"ambiguous"`,
+		`"failure_kind":"missing_nested_plan_execute_status"`,
+		`"progress_path":"` + statePath + `"`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in payload %s", want, payload)
+		}
+	}
+	if strings.Contains(payload, `"status":"completed"`) {
+		t.Fatalf("missing nested status must not default to completed: %s", payload)
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_model_error", "prompt", "", nil, nil, time.Now().UTC())
+	state.Phase = "review_repair"
+	state.Status = "failed"
+	state.FailureKind = "review_model_error"
+	state.FailureReason = "model returned malformed review"
+	state.Review.Status = "review_model_error"
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        1,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+			FailureKind:     "model_error",
+			FailureReason:   "plan-execute exited nonzero",
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute exited 1")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	for _, want := range []string{
+		`"tool":"plan_execute_completed"`,
+		`"status":"failed"`,
+		`"phase":"review_repair"`,
+		`"review_status":"review_model_error"`,
+		`"failure_kind":"model_error"`,
+		`"failure_reason":"plan-execute exited nonzero"`,
+		`"progress_path":"` + statePath + `"`,
+	} {
+		if !strings.Contains(payload, want) {
+			t.Fatalf("expected %s in payload %s", want, payload)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionLogTypeIsStatusAware(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "completed",
+			body: `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed"}`,
+			want: "idiom.plan_execute.completed",
+		},
+		{
+			name: "ambiguous",
+			body: `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"ambiguous","failure_kind":"missing_nested_plan_execute_status"}`,
+			want: "idiom.plan_execute.blocked",
+		},
+		{
+			name: "failed",
+			body: `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed"}`,
+			want: "idiom.plan_execute.blocked",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := featurePlannerPlanExecuteCompletionLogType(tt.body); got != tt.want {
+				t.Fatalf("featurePlannerPlanExecuteCompletionLogType = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestFeaturePlannerPlanExecuteGitHistoryRequirementPayload(t *testing.T) {
+	payload := featurePlannerPlanExecuteGitHistoryRequirementPayload()
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatalf("payload is not json: %v", err)
+	}
+	if fields["tool"] != "git_history_requirement" {
+		t.Fatalf("tool = %#v", fields["tool"])
+	}
+	if fields["lane_family"] != "plan-execute" {
+		t.Fatalf("lane_family = %#v", fields["lane_family"])
+	}
+	if fields["commit_descriptions_required"] != true {
+		t.Fatalf("commit_descriptions_required = %#v", fields["commit_descriptions_required"])
+	}
+	if strings.Contains(payload, "prompt") || strings.Contains(payload, "summary") {
+		t.Fatalf("git-history requirement payload must stay redacted: %s", payload)
+	}
+	if featurePlannerPlanExecuteGitHistoryRequirementRole != "idiom.feature_planner.plan_execute_git_history_requirement" {
+		t.Fatalf("unexpected role %q", featurePlannerPlanExecuteGitHistoryRequirementRole)
 	}
 }
 

@@ -418,6 +418,19 @@ func parseToolCall(call llama.ToolCall) (workspace.ToolRequest, bool, error) {
 	} else {
 		req.Args = json.RawMessage(`{}`)
 	}
-	req.Tool = call.Function.Name
+	if strings.TrimSpace(req.Tool) == "" {
+		req.Tool = call.Function.Name
+	} else if strings.TrimSpace(req.Tool) != call.Function.Name {
+		if call.Function.Name == "code_navigate" {
+			if capability := workspace.CodeNavigateCapabilityAlias(req.Tool); capability != "" {
+				if strings.TrimSpace(req.Capability) == "" {
+					req.Capability = capability
+				}
+				req.Tool = call.Function.Name
+				return req, true, nil
+			}
+		}
+		return workspace.ToolRequest{}, false, fmt.Errorf("native tool call %q arguments declared tool %q", call.Function.Name, req.Tool)
+	}
 	return req, true, nil
 }

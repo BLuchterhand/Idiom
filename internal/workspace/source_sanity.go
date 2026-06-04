@@ -218,6 +218,12 @@ func SourceSanityCoversPath(path string) bool {
 }
 
 func diagnosticsUnavailable(result ToolResult) bool {
+	goDiagnosticText := strings.ToLower(result.Output + "\n" + result.Error)
+	if result.Tool == "go_diagnostics" &&
+		strings.Contains(goDiagnosticText, "go test compile failed") &&
+		!strings.Contains(goDiagnosticText, "go.mod file not found") {
+		return false
+	}
 	text := strings.ToLower(strings.TrimSpace(result.Summary + " " + result.Error))
 	if text == "" {
 		return false

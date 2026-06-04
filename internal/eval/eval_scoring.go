@@ -359,12 +359,17 @@ func Analyze(records []Record) Metrics {
 			if strings.Contains(summary, "repeated tool request rejected") {
 				metrics.RepeatedToolRejections++
 			}
+			if errText != "" && recoverablePostReadinessGapToolResult(record.Data) {
+				metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
+			}
 			if errText != "" && !recoverablePostReadinessGapToolResult(record.Data) {
 				if key := toolErrorEventKey(record.Data); key == "" {
 					metrics.ErrorCount++
+					metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 				} else if _, ok := countedErrorEventKeys[key]; !ok {
 					countedErrorEventKeys[key] = struct{}{}
 					metrics.ErrorCount++
+					metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 				}
 				metrics.Errors = append(metrics.Errors, errText)
 			}
@@ -389,10 +394,15 @@ func Analyze(records []Record) Metrics {
 			metrics.PlanExecutionHandoffs = append(metrics.PlanExecutionHandoffs, PlanExecutionHandoffSnapshot{
 				PlanID:              stringField(record.Data, "plan_id"),
 				HandoffID:           stringField(record.Data, "handoff_id"),
+				HandoffCreated:      boolField(record.Data, "handoff_created") || strings.TrimSpace(stringField(record.Data, "handoff_id")) != "",
 				ApprovalScopeID:     stringField(record.Data, "approval_scope_id"),
 				ApprovalStatus:      stringField(record.Data, "approval_status"),
 				ExecutionPermission: stringField(record.Data, "approval_execution_permission"),
+				PackID:              stringField(record.Data, "pack_id"),
 				PacketState:         stringField(record.Data, "packet_state"),
+				PacketPresent:       boolField(record.Data, "packet_present"),
+				PacketNotUsed:       boolField(record.Data, "packet_not_used_by_design"),
+				PacketFreshness:     stringField(record.Data, "packet_freshness_state"),
 				Reason:              stringField(record.Data, "reason"),
 			})
 		case "idiom.plan_execute.writer_route_decision":
@@ -410,8 +420,12 @@ func Analyze(records []Record) Metrics {
 				Path:            stringField(record.Data, "path"),
 				Reason:          stringField(record.Data, "reason"),
 				HandoffID:       stringField(record.Data, "handoff_id"),
+				HandoffCreated:  boolField(record.Data, "handoff_created") || strings.TrimSpace(stringField(record.Data, "handoff_id")) != "",
 				ApprovalScopeID: stringField(record.Data, "approval_scope_id"),
 				PacketState:     stringField(record.Data, "packet_state"),
+				PacketPresent:   boolField(record.Data, "packet_present"),
+				PacketNotUsed:   boolField(record.Data, "packet_not_used_by_design"),
+				PacketFreshness: stringField(record.Data, "packet_freshness_state"),
 			})
 		case "idiom.plan_execute.verification":
 			metrics.VerificationChecks++
@@ -426,7 +440,9 @@ func Analyze(records []Record) Metrics {
 			}
 		case "error":
 			if message := strings.TrimSpace(stringField(record.Data, "message")); message != "" {
+				metrics.ErrorCount++
 				metrics.Errors = append(metrics.Errors, message)
+				metrics.ErrorEvents = append(metrics.ErrorEvents, errorEventSnapshot(record))
 			}
 		case "turn_summary":
 			metrics.TurnSummarySeen = true
@@ -524,6 +540,26 @@ func changedPathFromSuccessfulWriteResult(data map[string]any, requestedWritePat
 		return ""
 	}
 	return path
+}
+
+func errorEventSnapshot(record Record) ErrorEventSnapshot {
+	errText := strings.TrimSpace(stringField(record.Data, "error"))
+	if errText == "" {
+		errText = strings.TrimSpace(stringField(record.Data, "message"))
+	}
+	runnerRejected := record.Type == "tool_result" && (toolResultCountsAsRejectedAttempt(record.Data) || recoverablePostReadinessGapToolResult(record.Data))
+	if _, ok := record.Data["runner_rejected"]; ok {
+		runnerRejected = boolField(record.Data, "runner_rejected")
+	}
+	return ErrorEventSnapshot{
+		EventType:              strings.TrimSpace(record.Type),
+		Tool:                   strings.TrimSpace(stringField(record.Data, "tool")),
+		Summary:                strings.TrimSpace(stringField(record.Data, "summary")),
+		Error:                  errText,
+		Reason:                 strings.TrimSpace(stringField(record.Data, "reason")),
+		RunnerRejected:         runnerRejected,
+		CompletionGateRejected: record.Type == "tool_result" && strings.TrimSpace(stringField(record.Data, "tool")) == "completion_gate" && errText != "",
+	}
 }
 
 func writePathFromToolRequest(data map[string]any) string {
@@ -719,6 +755,7 @@ func toolResultCountsAsRejectedAttempt(data map[string]any) bool {
 	return strings.Contains(summary, "rejected") ||
 		strings.Contains(summary, "retry blocked") ||
 		strings.Contains(summary, "preempted") ||
+		(strings.Contains(summary, "follow-up missing named gap") && strings.Contains(errText, "answer readiness has already been reached")) ||
 		strings.Contains(summary, "not available in current runtime contract") ||
 		strings.Contains(errText, "not in the current allowed tool surface")
 }
@@ -1459,8 +1496,20 @@ func evaluatePlanExecutionExpectation(metrics Metrics, expected PlanExecutionExp
 	if expected.RequireHandoffID && !planExecutionHasHandoffID(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution handoff id was required but not observed")
 	}
+	if expected.RequireHandoffCreated && !planExecutionHasHandoffCreated(metrics.PlanExecutionHandoffs) {
+		findings = append(findings, "plan execution handoff creation was required but not observed")
+	}
 	if expected.RequireApprovalScopeID && !planExecutionHasApprovalScopeID(metrics.PlanExecutionHandoffs) {
 		findings = append(findings, "plan execution approval scope id was required but not observed")
+	}
+	if expected.RequirePacketPresent && !planExecutionHasPacketPresent(metrics.PlanExecutionHandoffs) {
+		findings = append(findings, "plan execution packet presence was required but not observed")
+	}
+	if expected.RequirePacketFresh && !planExecutionHasPacketFresh(metrics.PlanExecutionHandoffs) {
+		findings = append(findings, "plan execution fresh packet was required but not observed")
+	}
+	if expected.RequirePacketNotUsed && !planExecutionHasPacketNotUsed(metrics.PlanExecutionHandoffs) {
+		findings = append(findings, "plan execution packet non-use by design was required but not observed")
 	}
 	if expected.RequireNoDrift && len(metrics.PlanExecutionDrift) > 0 {
 		findings = append(findings, fmt.Sprintf("plan execution drift was forbidden but observed %d drift event(s)", len(metrics.PlanExecutionDrift)))
@@ -1486,6 +1535,15 @@ func evaluatePlanExecutionExpectation(metrics Metrics, expected PlanExecutionExp
 			findings = append(findings, fmt.Sprintf("plan execution packet state %q was not observed", state))
 		}
 	}
+	for _, state := range expected.RequirePacketFreshnessState {
+		state = normalizedCoverageKey(state)
+		if state == "" {
+			continue
+		}
+		if !planExecutionHasPacketFreshness(metrics.PlanExecutionHandoffs, state) {
+			findings = append(findings, fmt.Sprintf("plan execution packet freshness state %q was not observed", state))
+		}
+	}
 	for _, permission := range expected.RequireExecutionPermissions {
 		permission = normalizedCoverageKey(permission)
 		if permission == "" {
@@ -1501,6 +1559,15 @@ func evaluatePlanExecutionExpectation(metrics Metrics, expected PlanExecutionExp
 func planExecutionHasHandoffID(handoffs []PlanExecutionHandoffSnapshot) bool {
 	for _, handoff := range handoffs {
 		if strings.TrimSpace(handoff.HandoffID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasHandoffCreated(handoffs []PlanExecutionHandoffSnapshot) bool {
+	for _, handoff := range handoffs {
+		if handoff.HandoffCreated || strings.TrimSpace(handoff.HandoffID) != "" {
 			return true
 		}
 	}
@@ -1532,6 +1599,51 @@ func planExecutionHasPacketState(handoffs []PlanExecutionHandoffSnapshot, state 
 		}
 	}
 	return false
+}
+
+func planExecutionHasPacketPresent(handoffs []PlanExecutionHandoffSnapshot) bool {
+	for _, handoff := range handoffs {
+		if handoff.PacketPresent || planExecutionPacketStateImpliesPresence(handoff.PacketState) && strings.TrimSpace(handoff.PackID) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasPacketFresh(handoffs []PlanExecutionHandoffSnapshot) bool {
+	for _, handoff := range handoffs {
+		if normalizedCoverageKey(handoff.PacketFreshness) == "fresh" {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasPacketNotUsed(handoffs []PlanExecutionHandoffSnapshot) bool {
+	for _, handoff := range handoffs {
+		if handoff.PacketNotUsed || normalizedCoverageKey(handoff.PacketFreshness) == "not_used_by_design" {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionHasPacketFreshness(handoffs []PlanExecutionHandoffSnapshot, state string) bool {
+	for _, handoff := range handoffs {
+		if normalizedCoverageKey(handoff.PacketFreshness) == state {
+			return true
+		}
+	}
+	return false
+}
+
+func planExecutionPacketStateImpliesPresence(state string) bool {
+	switch normalizedCoverageKey(state) {
+	case "inherited", "stale", "overridden":
+		return true
+	default:
+		return false
+	}
 }
 
 func planExecutionHasPermission(handoffs []PlanExecutionHandoffSnapshot, permission string) bool {

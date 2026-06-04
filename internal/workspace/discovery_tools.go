@@ -92,19 +92,38 @@ func (m *Manager) historyRange(ctx context.Context, req ToolRequest) ToolResult 
 	if err != nil {
 		return toolPathResolutionFailureResult("history_range", "Failed to resolve path", err)
 	}
-	if req.StartLine <= 0 || req.EndLine <= 0 || req.StartLine > req.EndLine {
+	startLine, endLine := req.StartLine, req.EndLine
+	if startLine <= 0 && endLine <= 0 {
+		startLine, endLine = m.defaultHistoryRange(rel)
+	}
+	if startLine <= 0 || endLine <= 0 || startLine > endLine {
 		return toolInvalidArgumentResult("history_range", "History query rejected", "start_line and end_line are required and start_line must be <= end_line")
 	}
 	if result, handled := m.gitHistoryApplicability(ctx, "history_range", rel); handled {
 		return result
 	}
-	spec := fmt.Sprintf("%d,%d:%s", req.StartLine, req.EndLine, rel)
+	spec := fmt.Sprintf("%d,%d:%s", startLine, endLine, rel)
 	output, execErr := m.runCommand(ctx, m.cfg.Root, "git", "log", "--no-color", "--decorate=short", "-L", spec)
-	result := ToolResult{Tool: "history_range", Summary: fmt.Sprintf("Read git history for %s lines %d-%d", rel, req.StartLine, req.EndLine), Output: strings.TrimSpace(output)}
+	result := ToolResult{Tool: "history_range", Summary: fmt.Sprintf("Read git history for %s lines %d-%d", rel, startLine, endLine), Output: strings.TrimSpace(output)}
 	if execErr != nil {
 		result.Error = execErr.Error()
 	}
 	return result
+}
+
+func (m *Manager) defaultHistoryRange(rel string) (int, int) {
+	data, err := os.ReadFile(filepath.Join(m.cfg.Root, filepath.FromSlash(rel)))
+	if err != nil {
+		return 1, 200
+	}
+	lines := strings.Count(string(data), "\n")
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		lines++
+	}
+	if lines <= 0 {
+		lines = 1
+	}
+	return 1, min(lines, 200)
 }
 
 func (m *Manager) historySymbol(ctx context.Context, req ToolRequest) ToolResult {

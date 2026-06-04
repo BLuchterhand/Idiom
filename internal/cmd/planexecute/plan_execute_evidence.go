@@ -90,15 +90,7 @@ type phaseEvidenceTest struct {
 	Required bool   `json:"required,omitempty"`
 }
 
-type phaseEvidenceCheck struct {
-	Kind       string `json:"kind"`
-	Path       string `json:"path,omitempty"`
-	Command    string `json:"command,omitempty"`
-	WorkingDir string `json:"working_dir,omitempty"`
-	Status     string `json:"status"`
-	Summary    string `json:"summary,omitempty"`
-	Error      string `json:"error,omitempty"`
-}
+type phaseEvidenceCheck = planexecute.PhaseEvidenceCheck
 
 type phaseEvidenceSummary struct {
 	Kind    string `json:"kind"`

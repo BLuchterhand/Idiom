@@ -92,7 +92,7 @@ func TestModelCallTelemetryDistinguishesParsedTextualTool(t *testing.T) {
 	}
 }
 
-func TestModelCallTelemetryDoesNotTreatUnsafeTextualWriteAsExecutedTool(t *testing.T) {
+func TestModelCallTelemetryReportsParsedKeyValueWriteWithoutRawEditText(t *testing.T) {
 	var event RunEvent
 	runner := &Runner{
 		OnEvent: func(got RunEvent) {
@@ -122,11 +122,14 @@ func TestModelCallTelemetryDoesNotTreatUnsafeTextualWriteAsExecutedTool(t *testi
 		t.Fatalf("decode model_call payload: %v", err)
 	}
 	if payload["chosen_tool"] != "<answer>" {
-		t.Fatalf("unsafe textual write request must not masquerade as native chosen_tool, got %#v", payload)
+		t.Fatalf("textual write request must not masquerade as native chosen_tool, got %#v", payload)
 	}
-	for _, forbidden := range []string{"parsed_textual_tool", "executed_textual_tool", "textual_tool_transport", "old_text", "new_text"} {
+	if payload["parsed_textual_tool"] != "edit_file" || payload["parsed_tool_transport"] != toolRequestNormalizerTransportKeyValue || payload["parsed_tool_request_valid"] != true {
+		t.Fatalf("model_call telemetry should report parsed key-value write shape without treating it as native: %#v", payload)
+	}
+	for _, forbidden := range []string{"executed_textual_tool", "textual_tool_transport", "old_text", "new_text"} {
 		if _, ok := payload[forbidden]; ok {
-			t.Fatalf("unsafe textual write must not emit %q telemetry: %#v", forbidden, payload)
+			t.Fatalf("textual write telemetry must not emit raw edit field %q: %#v", forbidden, payload)
 		}
 	}
 }

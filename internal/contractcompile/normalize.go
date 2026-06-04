@@ -267,6 +267,7 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 	protocol.ContractID = strings.TrimSpace(protocol.ContractID)
 	protocol.ContractVersion = strings.TrimSpace(protocol.ContractVersion)
 	protocol.ProtocolHash = strings.TrimSpace(protocol.ProtocolHash)
+	protocol.SchemaNames = uniqueStrings(protocol.SchemaNames)
 	protocol.PhaseID = strings.TrimSpace(protocol.PhaseID)
 	protocol.ParserMode = strings.TrimSpace(protocol.ParserMode)
 	protocol.ToolTransportMode = strings.TrimSpace(protocol.ToolTransportMode)
@@ -294,6 +295,22 @@ func normalizeProtocolProjection(protocol *ModelProtocolProjection) {
 	protocol.Constraints = uniqueStrings(protocol.Constraints)
 	protocol.InvalidActions = uniqueStrings(protocol.InvalidActions)
 	protocol.ActiveInvariantID = firstNonEmpty(protocol.ActiveInvariantID, InvariantActiveAuthority)
+	normalizeCompactPacketProjection(&protocol.CompactPacket)
+}
+
+func normalizeCompactPacketProjection(packet *autonomy.ContextPacket) {
+	packet.SchemaVersion = strings.TrimSpace(packet.SchemaVersion)
+	packet.PacketID = strings.TrimSpace(packet.PacketID)
+	packet.ContractID = strings.TrimSpace(packet.ContractID)
+	packet.ProtocolHash = strings.TrimSpace(packet.ProtocolHash)
+	packet.SummaryRefs = uniqueStrings(packet.SummaryRefs)
+	packet.TargetRefs = uniqueStrings(packet.TargetRefs)
+	packet.PathRefs = uniquePaths(packet.PathRefs)
+	packet.SymbolRefs = uniqueStrings(packet.SymbolRefs)
+	packet.EvidenceRefs = uniqueStrings(packet.EvidenceRefs)
+	packet.ObligationRefs = uniqueStrings(packet.ObligationRefs)
+	packet.SchemaNames = uniqueStrings(packet.SchemaNames)
+	packet.RedactionMarkers = uniqueStrings(packet.RedactionMarkers)
 }
 
 func canonicalActionClassStrings(values []string) []string {

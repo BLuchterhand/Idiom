@@ -1521,6 +1521,10 @@ func DecodeToolRequestJSON(payload []byte) (ToolRequest, error) {
 	if nested, ok, err := decodeNestedToolRequestJSON(payload); ok || err != nil {
 		return nested, err
 	}
+	return decodeFlatToolRequestJSON(payload)
+}
+
+func decodeFlatToolRequestJSON(payload []byte) (ToolRequest, error) {
 	var req ToolRequest
 	stringifiedFields := stringifiedStructuredToolFields(payload)
 	if _, ok := stringifiedFields["edits"]; ok {
@@ -1587,8 +1591,8 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 	if len(request) == 0 || request[0] != '{' {
 		return ToolRequest{}, false, nil
 	}
-	var nested ToolRequest
-	if err := json.Unmarshal(request, &nested); err != nil {
+	nested, err := decodeFlatToolRequestJSON(request)
+	if err != nil {
 		return ToolRequest{}, true, fmt.Errorf("decode nested request: %w", err)
 	}
 	if strings.TrimSpace(nested.Tool) == "" {
@@ -1607,11 +1611,37 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 }
 
 func codeNavigateCapabilityAlias(tool string) string {
-	switch strings.TrimSpace(tool) {
-	case "file_outline", "find_symbol", "workspace_symbol", "read_symbol", "definition", "references", "calls_from", "calls_into", "implementations", "related_files":
-		return strings.TrimSpace(tool)
-	default:
+	return CodeNavigateCapabilityAlias(tool)
+}
+
+func CodeNavigateCapabilityAlias(value string) string {
+	if strings.TrimSpace(value) == "" {
 		return ""
+	}
+	spec, err := languagetools.CodeNavigationSpecFor(value)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(spec.Name)
+}
+
+func CodeNavigateResolutionCapabilityAlias(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" || ContextGraphResolutionOnly(value) {
+		return ""
+	}
+	return CodeNavigateCapabilityAlias(value)
+}
+
+func ContextGraphResolutionOnly(value string) bool {
+	key := strings.ToLower(strings.TrimSpace(value))
+	key = strings.ReplaceAll(key, "-", "_")
+	key = strings.ReplaceAll(key, " ", "_")
+	switch key {
+	case "repository", "package", "file", "symbol", "summary", "any":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -2135,7 +2165,7 @@ func normalizeToolRequestAliases(req *ToolRequest) {
 		req.Capability = req.Action
 	}
 	if strings.TrimSpace(req.Capability) == "" && strings.TrimSpace(req.Resolution) != "" && toolRequestUsesCapabilityAlias(req.Tool) {
-		req.Capability = req.Resolution
+		req.Capability = CodeNavigateResolutionCapabilityAlias(req.Resolution)
 	}
 	if strings.TrimSpace(req.Pattern) == "" && strings.TrimSpace(req.Query) != "" && toolRequestUsesPatternAlias(req.Tool) {
 		req.Pattern = req.Query

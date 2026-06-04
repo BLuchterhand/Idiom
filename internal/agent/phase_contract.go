@@ -263,6 +263,10 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 		contract.AllowedTools = nil
 		contract.ActionPolicy.CallableToolNames = nil
 	}
+	if len(input.HiddenTools) > 0 {
+		contract.AllowedTools = removePhaseTools(contract.AllowedTools, input.HiddenTools)
+		contract.ActionPolicy.CallableToolNames = removePhaseTools(contract.ActionPolicy.CallableToolNames, input.HiddenTools)
+	}
 	contract.AllowedTools = uniquePhaseStrings(contract.AllowedTools)
 	contract.HiddenTools = uniquePhaseStrings(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
 	contract.RequiredNext = uniquePhaseStrings(contract.RequiredNext)
@@ -702,8 +706,9 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.Phase = "read_only_evidence_pending"
 		contract.DerivationReason = "read_only_workspace_evidence_pending"
 		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
-		contract.RequiredNext = []string{"bounded read/search evidence for the question, final answer once evidence is sufficient, or <<QUESTION>> with the exact blocker"}
+		contract.RequiredNext = []string{"bounded read/search evidence for the question, or <<QUESTION>> with the exact blocker"}
 		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "final answer before sufficient evidence"}
+		contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
 		contract.ActionPolicy = TurnActionClassPolicy{
 			AllowedActionClasses:   []string{actionRead, actionSearch, actionBlocker},
 			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify, actionFinalAnswer},
@@ -1060,6 +1065,31 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 		if _, ok := allowedSet[tool]; ok {
 			out = append(out, tool)
 		}
+	}
+	return uniquePhaseStrings(out)
+}
+
+func removePhaseTools(tools []string, hidden []string) []string {
+	if len(tools) == 0 || len(hidden) == 0 {
+		return tools
+	}
+	hiddenSet := make(map[string]struct{}, len(hidden))
+	for _, tool := range hidden {
+		tool = strings.TrimSpace(tool)
+		if tool != "" {
+			hiddenSet[tool] = struct{}{}
+		}
+	}
+	var out []string
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := hiddenSet[tool]; ok {
+			continue
+		}
+		out = append(out, tool)
 	}
 	return uniquePhaseStrings(out)
 }

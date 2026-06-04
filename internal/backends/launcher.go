@@ -413,22 +413,32 @@ func Stop(prof Profile, opts StopOptions) []StopResult {
 // source of truth when set so a backend that crashes and gets
 // replaced on its port doesn't trick stop into killing the wrong
 // process.
-func resolvePID(m Model, runDir string, isAlive func(int) bool, pidForPort func(int) (int, error)) (int, error) {
+type resolvedPID struct {
+	PID         int
+	FromPIDFile bool
+}
+
+func resolvePID(m Model, runDir string, isAlive func(int) bool, pidForPort func(int) (int, error)) (resolvedPID, error) {
 	pid, err := readPIDFile(runDir, m.Alias, isAlive)
 	if err != nil {
-		return 0, err
+		return resolvedPID{}, err
 	}
 	if pid > 0 {
-		return pid, nil
+		return resolvedPID{PID: pid, FromPIDFile: true}, nil
 	}
-	return pidForPort(m.Port)
+	pid, err = pidForPort(m.Port)
+	if err != nil {
+		return resolvedPID{}, err
+	}
+	return resolvedPID{PID: pid}, nil
 }
 
 func stopOne(m Model, opts StopOptions) StopResult {
-	pid, err := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
+	resolved, err := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
 	if err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, Err: err}
 	}
+	pid := resolved.PID
 	if pid <= 0 {
 		// Nothing listening; report Stopped=true since the desired
 		// end-state ("port is free") is already satisfied. Clean up
@@ -450,6 +460,10 @@ func stopOne(m Model, opts StopOptions) StopResult {
 			removePIDFile(opts.RunDir, m.Alias)
 			return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 		}
+		if !resolved.FromPIDFile && !portStillOwnedByPID(m.Port, pid, opts.PIDForPort) {
+			removePIDFile(opts.RunDir, m.Alias)
+			return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
+		}
 		time.Sleep(100 * time.Millisecond)
 	}
 	// Re-verify before SIGKILL: if the original PID is already gone,
@@ -461,11 +475,20 @@ func stopOne(m Model, opts StopOptions) StopResult {
 		removePIDFile(opts.RunDir, m.Alias)
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
 	}
+	if !resolved.FromPIDFile && !portStillOwnedByPID(m.Port, pid, opts.PIDForPort) {
+		removePIDFile(opts.RunDir, m.Alias)
+		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
+	}
 	if err := opts.Kill(pid, SignalKill); err != nil {
 		return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Err: fmt.Errorf("backends: SIGKILL pid %d: %w", pid, err)}
 	}
 	removePIDFile(opts.RunDir, m.Alias)
 	return StopResult{Alias: m.Alias, Port: m.Port, PID: pid, Stopped: true}
+}
+
+func portStillOwnedByPID(port int, pid int, pidForPort func(int) (int, error)) bool {
+	current, err := pidForPort(port)
+	return err == nil && current == pid
 }
 
 // pidForPortViaLsof is the cross-platform PID lookup. Shells out
@@ -524,7 +547,8 @@ func Status(prof Profile, opts StopOptions) []StatusResult {
 	}
 	results := make([]StatusResult, 0, len(prof.Models))
 	for _, m := range prof.Models {
-		pid, _ := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
+		resolved, _ := resolvePID(m, opts.RunDir, opts.IsAlive, opts.PIDForPort)
+		pid := resolved.PID
 		results = append(results, StatusResult{
 			Alias: m.Alias,
 			Port:  m.Port,

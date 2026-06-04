@@ -1251,6 +1251,8 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceRequiresEvidenceBeforeAnswer(t 
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.TerminalOutcomes, "final answer")
+	assertNotContains(t, contract.RequiredNext, "final answer once evidence is sufficient")
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "edit_file")
@@ -1371,6 +1373,30 @@ func TestDeriveTurnPhaseContractReadOnlyConversationEvidenceAvailableKeepsProofR
 	assertNotContains(t, textual.ActionPolicy.InvalidActionClasses, actionSearch)
 	assertEqualSet(t, textual.AllowedTools, []string{"search_content", "read_file", "code_navigate"})
 	assertEqualSet(t, textual.ActionPolicy.CallableToolNames, []string{"search_content", "read_file", "code_navigate"})
+}
+
+func TestDeriveTurnPhaseContractOmitsHiddenToolsFromCallableSurface(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "architecture",
+			Contract:          "architecture_assessment",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Explain the architecture.",
+			AllowedTools:      []string{"task", "search_content", "read_file", "code_navigate"},
+		},
+		BaseAllowedTools: []string{"task", "search_content", "read_file", "code_navigate"},
+		HiddenTools:      []string{"task"},
+		Results: []workspace.ToolResult{{
+			Tool:    "read_file",
+			Summary: "Read f1 internal/agent/runner.go lines 1-5",
+			Output:  "package agent\nfunc RunExample() {}\n",
+		}},
+	})
+
+	assertContains(t, contract.HiddenTools, "task")
+	assertNotContains(t, contract.AllowedTools, "task")
+	assertNotContains(t, contract.ActionPolicy.CallableToolNames, "task")
+	assertContains(t, contract.ActionPolicy.CallableToolNames, "read_file")
 }
 
 func TestDeriveTurnPhaseContractReadOnlyConversationKeepsToolsForUnreadNamedPath(t *testing.T) {

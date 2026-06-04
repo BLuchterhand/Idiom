@@ -11,6 +11,9 @@ Start here for current project direction:
   maintenance rules for prompts, rails, lanes, audit, and recovery
 - [design-harness-optimization-program.md](design-harness-optimization-program.md)
   — current follow-up program for reducing avoidable guard friction
+- [design-harness-model-boundary.md](design-harness-model-boundary.md) —
+  observe-only rollout and operations runbook for the model strategy / harness
+  contract boundary
 
 Use [obsidian/README.md](obsidian/README.md) when you want the connected
 knowledge-base view.

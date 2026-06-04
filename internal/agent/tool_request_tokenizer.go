@@ -67,9 +67,6 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 	if trimmed == "" {
 		return ToolRequestTokenization{}
 	}
-	if strings.Contains(trimmed, "{") || strings.Contains(trimmed, "```") {
-		return ToolRequestTokenization{Unsafe: true}
-	}
 	lines := strings.Split(trimmed, "\n")
 	toolLineIdx := -1
 	proseLines := 0
@@ -107,9 +104,16 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 		values[lastKey] += "\n" + line
 		return true
 	}
-	for _, line := range lines[toolLineIdx:] {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, rawLine := range lines[toolLineIdx:] {
+		line := strings.TrimRight(rawLine, "\r")
+		trimmedLine := strings.TrimSpace(line)
+		if trimmedLine == "" {
+			if sawKeyValue && keyValueBlankContinuationField(lastKey) {
+				if !appendContinuation(line) {
+					return ToolRequestTokenization{Unsafe: true}
+				}
+				continue
+			}
 			if sawKeyValue && strings.TrimSpace(values["tool"]) != "" {
 				break
 			}
@@ -126,8 +130,18 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 			return ToolRequestTokenization{Unsafe: true}
 		}
 		key = strings.ToLower(strings.TrimSpace(key))
-		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		if key == "" || value == "" {
+		if sawKeyValue && keyValueRawValueField(lastKey) && !keyValueRawFieldStructuralTransition(lastKey, key) {
+			if !appendContinuation(line) {
+				return ToolRequestTokenization{Unsafe: true}
+			}
+			continue
+		}
+		if keyValueRawValueField(key) {
+			value = normalizeRawKeyValueField(value)
+		} else {
+			value = trimMatchingSyntaxQuotes(strings.TrimSpace(value))
+		}
+		if key == "" || (value == "" && !keyValueAllowsEmptyValue(key, values)) {
 			return ToolRequestTokenization{Unsafe: true}
 		}
 		if key == "tool" && strings.TrimSpace(values["tool"]) != "" {
@@ -157,9 +171,66 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
 }
 
+func normalizeRawKeyValueField(value string) string {
+	if strings.HasPrefix(value, " ") || strings.HasPrefix(value, "\t") {
+		value = value[1:]
+	}
+	return trimMatchingSyntaxQuotes(value)
+}
+
+func trimMatchingSyntaxQuotes(value string) string {
+	if len(value) < 2 {
+		return value
+	}
+	first := value[0]
+	last := value[len(value)-1]
+	if (first == '"' || first == '\'') && first == last {
+		return value[1 : len(value)-1]
+	}
+	return value
+}
+
+func keyValueRawValueField(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "old_text", "new_text", "content", "prompt":
+		return true
+	default:
+		return false
+	}
+}
+
+func keyValueBlankContinuationField(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(key)) {
+	case "old_text", "new_text", "content", "prompt":
+		return true
+	default:
+		return false
+	}
+}
+
+func keyValueRawFieldStructuralTransition(lastKey, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(lastKey)) {
+	case "old_text":
+		return key == "new_text"
+	case "new_text":
+		switch key {
+		case "description", "task_id", "replace_all":
+			return true
+		default:
+			return false
+		}
+	default:
+		return false
+	}
+}
+
+func keyValueAllowsEmptyValue(key string, values map[string]string) bool {
+	return key == "new_text" && strings.TrimSpace(values["tool"]) == "edit_file"
+}
+
 func keyValueContinuationField(key string) bool {
 	switch strings.ToLower(strings.TrimSpace(key)) {
-	case "prompt", "content", "description", "purpose", "task", "query", "named_gap", "why_not_answering", "expected", "observed", "workaround", "impact", "suggested_fix":
+	case "prompt", "content", "old_text", "new_text", "description", "purpose", "task", "query", "named_gap", "why_not_answering", "expected", "observed", "workaround", "impact", "suggested_fix":
 		return true
 	default:
 		return false

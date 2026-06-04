@@ -1,0 +1,28 @@
+{
+  "schema_version": "idiom.tdd_obligations.v2",
+  "effort_id": "scripted-adr-workflow",
+  "task_id": "scripted-adr-workflow",
+  "coverage_tier": "unit",
+  "coverage": {
+    "ears_total": 1,
+    "ears_mapped": 1,
+    "bdd_total": 1,
+    "bdd_with_concrete_data": 1,
+    "mutation_min_score": 80,
+    "gates_passed": [
+      "unit"
+    ],
+    "gates_blocked": []
+  },
+  "obligations": [
+    {
+      "id": "TDD-SCRIPTED-APPROVAL",
+      "type": "contract",
+      "behavior": "The product workflow can transition from human verification to implementation after operator approval.",
+      "owner": "product_workflow",
+      "command": "go test ./internal/productworkflow",
+      "required_before": "implementation",
+      "status": "passed"
+    }
+  ]
+}

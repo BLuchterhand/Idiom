@@ -46,12 +46,24 @@ Before editing harness behavior, write down:
   that should own the behavior.
 - **Consumer matrix**: whether the affected text/state is model-facing,
   machine-consumed, user-facing, audit-only, or mixed.
+- **Similar-surface scan**: every module that can promote, reject, recover,
+  compose, accept, hide, expose, or audit the same state. For read-only evidence,
+  this includes typed packets, legacy packet parsing, answerability ledgers,
+  child promotion, evidence-path collectors, fallback composers, decorators,
+  final-answer acceptance, and lane policy.
 - **Preserve lanes**: lanes where raw protocol must remain intact for recovery,
   plan execution, review-repair, mutation, or downstream detection.
 - **Cleanup lanes**: lanes where the same protocol must be hidden or rewritten
   for user presentation.
 - **Existing helper scan**: helpers, gates, tests, prompts, and audit code that
   already handle related behavior.
+- **Authority classification**: whether paths or facts are source-body
+  authority, accepted inspected evidence, candidate scope, generated diagnostics,
+  audit-only metadata, or user-facing citations.
+- **Projection parity**: for tool-surface or phase-contract changes, prove that
+  model-visible manifests, active allowed tools, hidden tools, recovery cards,
+  next-action state, phase-contract events, telemetry, and audit all describe
+  the same callable surface.
 - **Negative oracle**: at least one valid lane/use case that would regress if
   the fix is too broad.
 - **Contradiction scan**: tests or docs that still bless the behavior now being
@@ -64,6 +76,29 @@ For final-answer and protocol-marker changes, the minimum regression set is:
 - machine-consumed protocol remains machine-readable in terminal phases;
 - a similar-looking but wrong lane is not accepted as sufficient evidence;
 - the cleaned output still carries useful evidence or blocker context.
+
+For read-only answerability changes, the minimum regression set is:
+
+- an off-objective child packet, discovery hit, or diagnostic path does not make
+  the parent answer-ready;
+- an on-objective typed packet with source-body findings is accepted by
+  readiness, child promotion, fallback synthesis, and final-answer acceptance
+  through the same decision path;
+- mentioned or pinned paths remain candidates until accepted by that decision;
+- the final answer cites only accepted evidence paths;
+- a valid exact follow-up read remains allowed when the prior evidence is
+  insufficient, and any post-readiness recovery explains the missing claim
+  contract rather than blocking exploration generically.
+
+For tool-surface changes, the minimum regression set is:
+
+- a hidden tool is absent from the model manifest, `allowed_tools`,
+  `callable_tool_names`, recovery cards, and next-action state;
+- a valid release or phase transition restores the tool in every projection;
+- audit catches an observed call to a tool that any projection still claims is
+  hidden or absent;
+- no caller has to remember a manual rebuild after mutating hidden/allowed tool
+  state.
 
 Use reviewers as separate checks, not as a rubber stamp. For non-trivial
 behavior changes, request three lenses after the patch and again after the last
@@ -203,6 +238,11 @@ live/scripted contracts are covered by a better boundary.
   live-readiness, TUI, or scripted-suite regressions and restoring the removed
   behavior makes them pass, the cleanup path is the regression. Stop there and
   either keep the behavior or replace it with a proven equivalent boundary.
+- Treat migrated failures as first-class churn evidence. If a fix reduces a
+  counter, changes the failed assertion, or moves failure from tool count to
+  answer content while the original user intent still fails, do not call the
+  system stable. Name which projection improved, which projection still fails,
+  and whether the shared contract needs consolidation before the next patch.
 
 ## Change Locality
 
@@ -212,6 +252,17 @@ live/scripted contracts are covered by a better boundary.
   piling up counters, duplicate host closeout calls, or individual tool
   allowances around the runner loop unless they hang off that one typed
   readiness state.
+- For read-only evidence bugs, fix the shared answerability boundary first.
+  Avoid adding objective phrase checks, path collectors, fallback exceptions, or
+  answer-shape filters in individual consumers unless those consumers delegate
+  to one typed evidence decision. Candidate paths and source-body evidence must
+  remain distinct through readiness, parent/child handoff, final-answer
+  composition, telemetry, and audit.
+- For tool-surface bugs, fix the shared turn surface first. Hidden tools,
+  active allowed tools, callable tool names, textual tool menus, recovery cards,
+  next-action state, and audit events should be projections of one object or
+  state transition. A local map mutation plus scattered rebuild calls is a
+  churn risk.
 - If a prompt or recovery packet currently acts as authority, extract the
   authority into a typed contract first, then make the prompt describe that
   contract. Prompt text, examples, tool schemas, and context packets may explain
@@ -348,6 +399,17 @@ live/scripted contracts are covered by a better boundary.
 - Before calling a fix complete, inspect the diff for duplicated phase
   authority, privacy leaks in logs, stale documentation, and false-positive
   blocking of legitimate dispatchable work.
+- Before calling an answerability or evidence-path fix complete, confirm every
+  sibling promotion, composition, fallback, acceptance, telemetry, and audit
+  surface delegates to the same decision or is intentionally isolated as an
+  adapter.
+- Before calling a tool-surface fix complete, confirm model manifests, active
+  allowed tools, hidden tools, callable tool names, recovery cards,
+  next-action state, phase-contract events, telemetry, and audit all project the
+  same turn surface.
+- If a live/scripted failure moves rather than disappears, classify the migrated
+  failure before patching again. Name the projection that improved and the
+  projection that still violates the original user intent.
 - When committing, include why the change exists, not just what files changed:
   the observed failure or requirement, the contract/design decision, important
   alternatives avoided, and the verification evidence. Commit history should be

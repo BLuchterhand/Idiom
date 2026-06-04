@@ -19,6 +19,7 @@ import (
 	"idiom/internal/llama"
 	"idiom/internal/productworkflow"
 	"idiom/internal/telemetry"
+	"path/filepath"
 )
 
 type featurePlannerOptions struct {
@@ -155,53 +156,12 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 	if strings.TrimSpace(effortRoot) == "" {
 		return nil, nil
 	}
-	handoff, err := productworkflow.LoadImplementationHandoff(effortRoot)
+	root := filepath.Clean(effortRoot)
+	handoff, err := productworkflow.LoadImplementationHandoff(root)
 	if err != nil {
 		return nil, err
 	}
-	return productWorkflowBriefFromHandoff(handoff), nil
-}
-
-func productWorkflowBriefFromHandoff(handoff productworkflow.ImplementationHandoff) *featureplanner.ProductWorkflowBrief {
-	brief := &featureplanner.ProductWorkflowBrief{
-		EffortID:             handoff.EffortID,
-		TaskID:               handoff.TaskID,
-		EffortRoot:           handoff.EffortRoot,
-		CoverageTier:         handoff.CoverageTier,
-		CoverageGatePassed:   handoff.CoverageGatePassed,
-		CoverageBlockers:     append([]string{}, handoff.CoverageBlockers...),
-		FilesToModify:        append([]string{}, handoff.FilesToModify...),
-		ContextEvidencePaths: append([]string{}, handoff.ContextEvidencePaths...),
-		RequiredBehavior:     append([]string{}, handoff.RequiredBehavior...),
-		Tests:                append([]string{}, handoff.Tests...),
-		Acceptance:           append([]string{}, handoff.Acceptance...),
-		Constraints:          append([]string{}, handoff.Constraints...),
-		Decisions:            append([]string{}, handoff.Decisions...),
-		Blockers:             append([]string{}, handoff.Blockers...),
-		ArtifactRootPath:     handoff.ArtifactRootPath,
-	}
-	for _, req := range handoff.PRDRequirements {
-		brief.PRDRequirements = append(brief.PRDRequirements, featureplanner.PRDRequirementBrief{
-			ID:          req.ID,
-			Priority:    req.Priority,
-			Statement:   req.Statement,
-			Testability: req.Testability,
-			Metric:      req.Metric,
-			Obligations: append([]string{}, req.Obligations...),
-		})
-	}
-	brief.AcceptedADRIDs = append([]string{}, handoff.AcceptedADRIDs...)
-	brief.AcceptedADRPaths = append([]string{}, handoff.AcceptedADRPaths...)
-	for _, obl := range handoff.TDDObligations {
-		brief.TDDObligations = append(brief.TDDObligations, featureplanner.TDDObligationBrief{
-			ID:             obl.ID,
-			Behavior:       obl.Behavior,
-			Command:        obl.Command,
-			RequiredBefore: obl.RequiredBefore,
-			Status:         obl.Status,
-		})
-	}
-	return brief
+	return productworkflow.FeaturePlannerBriefFromImplementationHandoff(handoff), nil
 }
 
 func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {
@@ -219,6 +179,9 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	}
 	pwBrief, briefErr := loadProductWorkflowBrief(effortRoot)
 	if briefErr != nil {
+		if strings.TrimSpace(req.EffortRoot) != "" {
+			return featurePlannerResult{}, fmt.Errorf("feature-planner product workflow context unavailable: %w", briefErr)
+		}
 		fmt.Fprintf(stdout, "feature-planner: product workflow context unavailable: %v\n", briefErr)
 	}
 
@@ -232,7 +195,6 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		ProductWorkflowBrief:  pwBrief,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
-			emitPlanExecuteGitHistoryRequirement(req, prompt, stdout)
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
 		}
 		return runFeaturePlannerModelTurn(req, prompt, taskFamily, stdout)
@@ -331,61 +293,51 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	if req.JSONEvents && stdout != nil {
 		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 	}
+	completion := featurePlannerPlanExecuteCompletionFields(planStdout.String())
+	completion["tool"] = featureplanner.ToolPlanExecuteComplete
+	completion["lane_family"] = "plan-execute"
+	completion["summary"] = strings.TrimSpace(planStdout.String())
+	completion["review_repair_skipped"] = true
+	if featureplanner.CompletionFieldString(completion, "completion_source") == "" {
+		completion["completion_source"] = "headless_skip_review_repair"
+	}
 	if code != 0 {
-		return "", fmt.Errorf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))
+		completion["status"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "status"), "failed")
+		completion["failure_reason"] = strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String())))
+		return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 	}
+	if featureplanner.CompletionFieldString(completion, "status") == "" {
+		completion["status"] = "ambiguous"
+		completion["failure_kind"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "failure_kind"), "missing_nested_plan_execute_status")
+		completion["failure_reason"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "failure_reason"), "nested plan-execute returned without typed completion status")
+	}
+	return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
+}
+
+func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Writer, completion map[string]any) (string, error) {
 	if req.JSONEvents && stdout != nil {
-		emitFeaturePlannerInternalJSONEvent(stdout, "internal_idiom.plan_execute.completed", map[string]any{
-			"session_id":    req.SessionID,
-			"tool":          featureplanner.ToolPlanExecuteComplete,
-			"lane_family":   "plan-execute",
-			"summary":       strings.TrimSpace(planStdout.String()),
-			"progress_path": featurePlannerPlanExecuteProgressPath(planStdout.String()),
-		})
+		eventFields := map[string]any{"session_id": req.SessionID}
+		maps.Copy(eventFields, completion)
+		emitFeaturePlannerInternalJSONEvent(stdout, featurePlannerPlanExecuteCompletionEventType(completion), eventFields)
 	}
-	payload := map[string]any{
-		"tool":        featureplanner.ToolPlanExecuteComplete,
-		"lane_family": "plan-execute",
-		"summary":     strings.TrimSpace(planStdout.String()),
-	}
-	if progressPath := featurePlannerPlanExecuteProgressPath(planStdout.String()); progressPath != "" {
-		payload["progress_path"] = progressPath
-	}
-	body, err := json.Marshal(payload)
+	body, err := json.Marshal(completion)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
 }
 
-func emitPlanExecuteGitHistoryRequirement(req featurePlannerRequest, prompt string, stdout io.Writer) {
-	if !req.JSONEvents || stdout == nil || !featureplanner.PlanExecuteGitHistoryRequirementPresent(prompt) {
-		return
+func featurePlannerPlanExecuteCompletionEventType(fields map[string]any) string {
+	switch featureplanner.PlanExecuteCompletionTerminalClass(fields) {
+	case featureplanner.PlanExecuteTerminalCompleted:
+		return "internal_idiom.plan_execute.completed"
+	default:
+		return "internal_idiom.plan_execute.blocked"
 	}
-	fields := featureplanner.PlanExecuteGitHistoryRequirementFields()
-	fields["session_id"] = req.SessionID
-	emitFeaturePlannerInternalJSONEvent(stdout, featureplanner.EventPlanExecuteGitHistoryRequirement, fields)
 }
 
-func featurePlannerPlanExecuteProgressPath(output string) string {
-	var progressPath string
-	for _, line := range strings.Split(output, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "{") {
-			continue
-		}
-		var record struct {
-			Type      string `json:"type"`
-			StatePath string `json:"state_path"`
-		}
-		if err := json.Unmarshal([]byte(line), &record); err != nil {
-			continue
-		}
-		if strings.HasPrefix(record.Type, "idiom.plan_execute.") && strings.TrimSpace(record.StatePath) != "" {
-			progressPath = strings.TrimSpace(record.StatePath)
-		}
-	}
-	return progressPath
+func featurePlannerPlanExecuteCompletionFields(output string) map[string]any {
+	return featureplanner.PlanExecuteCompletionFields(output)
 }
 
 func emitFeaturePlannerMessage(stdout io.Writer, jsonEvents bool, role string, content string, sessionID string) {
@@ -437,8 +389,8 @@ func featurePlannerAnswer(state featureplanner.FeatureState, statePath string) s
 		}
 		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
 	}
-	if len(state.Plan.SDDContract.Refs) > 0 {
-		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(state.Plan.SDDContract.Refs, ", "))
+	if sddRefs := featureplanner.SDDRefsForSummary(state.Plan); len(sddRefs) > 0 {
+		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(sddRefs, ", "))
 	}
 	if len(state.Plan.TDDContract.Obligations) > 0 {
 		var tddIDs []string

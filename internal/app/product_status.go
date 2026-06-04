@@ -1,6 +1,7 @@
 package app
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,13 +12,8 @@ import (
 	"idiom/internal/productworkflow"
 )
 
-const (
-	productCreateUsage   = "usage: /product-create [--effort-root <path>|<path>]"
-	productContinueUsage = "usage: /product-continue <action> [--effort-root <path>|<path>]"
-	productStatusUsage   = "usage: /product-status [--effort-root <path>|<path>]"
-)
-
 func (m *Model) slashProductCreate(_ string, fields []string) bool {
+	m.logProductWorkflowCommand(fields)
 	effortRoot, err := m.productCreateEffortRoot(fields)
 	if err != nil {
 		m.status = "/product-create: " + err.Error()
@@ -29,6 +25,12 @@ func (m *Model) slashProductCreate(_ string, fields []string) bool {
 		m.status = fmt.Sprintf("/product-create: %v", createErr)
 		return false
 	}
+	m.logProductWorkflowEvent("idiom.product_workflow.create", map[string]any{
+		"status":            result.Status,
+		"effort_root":       result.EffortRoot,
+		"current_phase":     result.CurrentPhase,
+		"next_valid_action": result.NextValidAction,
+	})
 	displayRoot := m.displayPath(result.EffortRoot)
 	m.insertBeforePendingAssistant(llama.ChatMessage{
 		Role:    "operator",
@@ -53,16 +55,16 @@ func (m *Model) productCreateEffortRoot(fields []string) (string, error) {
 		return m.productStatusAbsPath(".")
 	case 2:
 		if fields[1] == "--effort-root" {
-			return "", errors.New(productCreateUsage)
+			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
 		}
 		return m.productStatusAbsPath(fields[1])
 	case 3:
 		if fields[1] != "--effort-root" {
-			return "", errors.New(productCreateUsage)
+			return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
 		}
 		return m.productStatusAbsPath(fields[2])
 	default:
-		return "", errors.New(productCreateUsage)
+		return "", errors.New("Usage: /product-create [--effort-root <path>|<path>]")
 	}
 }
 
@@ -97,8 +99,8 @@ func (m *Model) slashProductStatus(_ string, fields []string) bool {
 	return false
 }
 
-func (m *Model) slashProductApprove(raw string, fields []string) bool {
-	m.logMessage("user", raw)
+func (m *Model) slashProductApprove(_ string, fields []string) bool {
+	m.logProductWorkflowCommand(fields)
 	// If in a product creation phase, run the creation-specific approval gate.
 	if m.featurePlannerPhase == productworkflow.PhasePRDDrafting || m.featurePlannerPhase == productworkflow.PhaseADRDrafting {
 		if m.streaming {
@@ -150,9 +152,16 @@ func (m *Model) slashProductContinue(_ string, fields []string) bool {
 	return m.applyProductWorkflowTransition(absRoot, action)
 }
 
+func (m *Model) logProductWorkflowCommand(fields []string) {
+	command := strings.TrimSpace(strings.Join(fields, " "))
+	if command != "" {
+		m.logMessage("user", command)
+	}
+}
+
 func productContinueArgs(fields []string) (string, []string, error) {
 	if len(fields) < 2 {
-		return "", nil, errors.New(productContinueUsage)
+		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
 	}
 	action := ""
 	rootFields := []string{fields[0]}
@@ -163,7 +172,7 @@ func productContinueArgs(fields []string) (string, []string, error) {
 		}
 		if field == "--effort-root" {
 			if i+1 >= len(fields) {
-				return "", nil, errors.New(productContinueUsage)
+				return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
 			}
 			rootFields = append(rootFields, "--effort-root", fields[i+1])
 			i++
@@ -177,10 +186,10 @@ func productContinueArgs(fields []string) (string, []string, error) {
 			rootFields = append(rootFields, field)
 			continue
 		}
-		return "", nil, errors.New(productContinueUsage)
+		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
 	}
 	if action == "" {
-		return "", nil, errors.New(productContinueUsage)
+		return "", nil, errors.New("Usage: /product-continue <action> [--effort-root <path>|<path>]")
 	}
 	return action, rootFields, nil
 }
@@ -191,8 +200,24 @@ func (m *Model) applyProductWorkflowTransition(absRoot string, action string) bo
 		Action:     action,
 		Actor:      "operator",
 	})
+	m.logProductWorkflowEvent("idiom.product_workflow.transition", map[string]any{
+		"status":            result.Status,
+		"effort_root":       absRoot,
+		"action":            result.Action,
+		"from_state":        result.FromState,
+		"to_state":          result.ToState,
+		"next_valid_action": result.NextValidAction,
+		"blocker_count":     len(result.Blockers),
+	})
 	body := productWorkflowTransitionTUIMessage(result)
 	if result.Status == "applied" {
+		m.logProductWorkflowEvent("idiom.product_workflow.transition_applied", map[string]any{
+			"status":      result.Status,
+			"effort_root": absRoot,
+			"action":      result.Action,
+			"from_state":  result.FromState,
+			"to_state":    result.ToState,
+		})
 		statusView, workflowState, statusErr := productworkflow.LoadCheckedProductStatus(absRoot)
 		operatorStatus := productworkflow.BuildProductOperatorStatusView(statusView, workflowState)
 		body = strings.TrimRight(body, "\n") + "\n\n" + strings.TrimRight(productworkflow.FormatProductOperatorStatusText(filepath.Base(absRoot), operatorStatus), "\n")
@@ -211,6 +236,12 @@ func (m *Model) applyProductWorkflowTransition(absRoot string, action string) bo
 	}
 	m.status = fmt.Sprintf("Product workflow transition applied for %s: %s -> %s.", displayRoot, result.FromState, result.ToState)
 	return false
+}
+
+func (m *Model) logProductWorkflowEvent(role string, fields map[string]any) {
+	if body, err := json.Marshal(fields); err == nil {
+		m.logMessage(role, string(body))
+	}
 }
 
 func productWorkflowTransitionTUIMessage(result productworkflow.ProductWorkflowTransitionApplyResult) string {
@@ -252,16 +283,16 @@ func (m *Model) productStatusEffortRoot(fields []string) (string, error) {
 		return absRoot, nil
 	case 2:
 		if fields[1] == "--effort-root" {
-			return "", errors.New(productStatusUsage)
+			return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
 		}
 		return m.productStatusAbsPath(fields[1])
 	case 3:
 		if fields[1] != "--effort-root" {
-			return "", errors.New(productStatusUsage)
+			return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
 		}
 		return m.productStatusAbsPath(fields[2])
 	default:
-		return "", errors.New(productStatusUsage)
+		return "", errors.New("Usage: /product-status [--effort-root <path>|<path>]")
 	}
 }
 
