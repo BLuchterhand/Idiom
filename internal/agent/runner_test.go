@@ -4223,6 +4223,103 @@ func TestWriteReadyPacketReadWithoutNamedGapAllowsInScopeRead(t *testing.T) {
 	}
 }
 
+func TestScopedImplementationLastChanceHidesReadsBeforeModelCallBudgetExhaustion(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "a.txt", "before\nmore\n"); err != nil {
+		t.Fatalf("write a: %v", err)
+	}
+
+	requests := 0
+	thirdRequestChecked := false
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Tools []llama.Tool `json:"tools,omitempty"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode request body: %v", err)
+		}
+		requests++
+		switch requests {
+		case 1:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`}}},
+			})
+		case 2:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]string{"content": `{"tool":"read_file","path":"a.txt","start_line":2,"end_line":2}`}}},
+			})
+		case 3:
+			thirdRequestChecked = true
+			var toolNames []string
+			for _, tool := range body.Tools {
+				toolNames = append(toolNames, tool.Function.Name)
+			}
+			for _, forbidden := range []string{"read_file", "search_content", "code_navigate", "context_query"} {
+				if slices.Contains(toolNames, forbidden) {
+					t.Fatalf("last-chance scoped implementation call advertised non-write tool %q: %#v", forbidden, toolNames)
+				}
+			}
+			if !slices.Contains(toolNames, "write_file") && !slices.Contains(toolNames, "edit_file") && !slices.Contains(toolNames, "apply_patch") {
+				t.Fatalf("last-chance scoped implementation call must retain write tools, got %#v", toolNames)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"choices": []map[string]any{{"message": map[string]string{"content": "<<QUESTION>>: no safe edit for a.txt without a current replacement anchor"}}},
+			})
+		default:
+			t.Fatalf("unexpected extra chat request %d", requests)
+		}
+	}))
+	defer server.Close()
+
+	var sawLastChance bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8, MaxModelCalls: 3},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:           "implementation",
+			Contract:             "implementation_result",
+			PermissionProfile:    "guarded_workspace_write",
+			VerificationContract: "not_required_for_text_mutations",
+			RequiredEditPaths:    []string{"a.txt"},
+			AllowedTools:         []string{"read_file", "search_content", "code_navigate", "write_file", "edit_file", "apply_patch"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "implementation_scoped_last_chance_write_only" {
+				sawLastChance = true
+			}
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Update a.txt."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !thirdRequestChecked {
+		t.Fatal("expected third model call to exercise last-chance write-only surface")
+	}
+	if !sawLastChance {
+		t.Fatal("expected implementation_scoped_last_chance_write_only event")
+	}
+	if !strings.Contains(answer, "<<QUESTION>>") || !strings.Contains(answer, "a.txt") {
+		t.Fatalf("expected typed blocker answer for a.txt, got %q", answer)
+	}
+	if requests != 3 {
+		t.Fatalf("expected exactly three model requests, got %d", requests)
+	}
+}
+
 func TestWriteReadyPacketRepeatedEmptyPathReadReturnsTypedBlocker(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "a.txt", "before\n"); err != nil {
@@ -9243,6 +9340,104 @@ func TestRepeatedSearchFilesRejectsAfterReplayBeforeDoomLoop(t *testing.T) {
 	}
 }
 
+func TestReadOnlyDirectAnswerClosesAfterAnswerableExactSearchReplay(t *testing.T) {
+	root := t.TempDir()
+	docPath := "internal/documentviewer/document-viewer.go"
+	if err := writeTestFile(root, docPath, strings.Join([]string{
+		"package documentviewer",
+		"",
+		"const DocumentViewerBehavior = \"document viewer renders approved design documents\"",
+	}, "\n")); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+
+	replies := []string{
+		fmt.Sprintf(`{"tool":"read_file","path":%q}`, docPath),
+		`{"tool":"search_files","pattern":"*document*viewer*"}`,
+		`{"tool":"search_files","pattern":"*document*viewer*"}`,
+		`{"tool":"search_files","pattern":"*document*viewer*"}`,
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	var replayed bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+			Objective:         "What does internal/documentviewer/document-viewer.go say about the document viewer?",
+			AllowedTools:      []string{"read_file", "search_files"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "What does internal/documentviewer/document-viewer.go say about the document viewer?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		func(event ToolResultEvent) {
+			if event.Result.Tool == "search_files" && strings.Contains(strings.ToLower(event.Result.Summary), "replayed prior evidence") {
+				replayed = true
+			}
+		},
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !replayed {
+		t.Fatalf("expected exact search replay to reuse prior evidence before closeout; events=%s", formatRunEventsForTest(events))
+	}
+	if requests != 3 {
+		t.Fatalf("expected source read, first search, replay closeout; got %d requests; events=%s", requests, formatRunEventsForTest(events))
+	}
+	if !strings.Contains(answer, docPath) ||
+		!strings.Contains(strings.ToLower(answer), "document viewer") ||
+		!strings.Contains(answer, "approved design documents") {
+		t.Fatalf("host closeout answer should preserve the inspected document evidence, got:\n%s", answer)
+	}
+	for _, event := range events {
+		if event.Role != "budget_ledger" {
+			continue
+		}
+		var ledger runnerBudgetLedger
+		if err := json.Unmarshal([]byte(event.Content), &ledger); err != nil {
+			t.Fatalf("decode budget ledger %q: %v", event.Content, err)
+		}
+		if ledger.StopReason != "host_read_only_closeout" {
+			t.Fatalf("expected host_read_only_closeout, got %#v", ledger)
+		}
+		if ledger.RejectedActions != 0 {
+			t.Fatalf("exact replay closeout should not accumulate rejected actions, got %#v", ledger)
+		}
+		return
+	}
+	t.Fatalf("expected budget ledger; events=%s", formatRunEventsForTest(events))
+}
+
 func TestRunnerRepeatedBroadInspectionStillHitsExploreGuard(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "README.md", "hello\n"); err != nil {
@@ -14116,6 +14311,58 @@ func TestDelegatedTaskAnswerSynthesizesDebugLogRedactedMode(t *testing.T) {
 	}
 }
 
+func TestCleanDelegatedReadOnlyFindingLineStripsPacketLabels(t *testing.T) {
+	cases := map[string]string{
+		"Key findings: ShortLabel returns Save changes.":          "ShortLabel returns Save changes.",
+		"Verified context: redacted mode masks raw prompt text.":  "redacted mode masks raw prompt text.",
+		"Inspected paths: internal/agent/runner.go was read.":     "internal/agent/runner.go was read.",
+		"Evidence used: internal/transcript/debuglog.go.":         "internal/transcript/debuglog.go.",
+		"Core files: internal/agent/runner_child_tasks.go.":       "internal/agent/runner_child_tasks.go.",
+		"Important flow: the task result returns a child packet.": "the task result returns a child packet.",
+		"Source body paths: internal/agent/runner.go.":            "internal/agent/runner.go.",
+		"Grounded findings: child packet ready.":                  "child packet ready.",
+	}
+	for input, want := range cases {
+		if got := cleanDelegatedReadOnlyFindingLine(input); got != want {
+			t.Fatalf("cleanDelegatedReadOnlyFindingLine(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+func TestSourceEvidenceAnswerLinesStripSearchContextHandles(t *testing.T) {
+	output := strings.Join([]string{
+		"package workspace",
+		"",
+		"// task tool manifest entries wire subagents for delegated child work.",
+		"context:",
+		"f1 internal/workspace/tool_manifest.go:3:// task tool manifest entries wire subagents for delegated child work.",
+	}, "\n")
+
+	lines := sourceEvidenceAnswerLinesForObjective(output, "Explain how subagents work in this harness.", 8)
+	if len(lines) != 0 {
+		t.Fatalf("expected comment-only context handles to be ignored, got %#v", lines)
+	}
+}
+
+func TestDelegatedReadOnlyFindingLinesIgnoreSearchContextHandles(t *testing.T) {
+	results := []workspace.ToolResult{{
+		Tool: "read_file",
+		Output: strings.Join([]string{
+			"package workspace",
+			"",
+			"// task tool manifest entries wire subagents for delegated child work.",
+			"context:",
+			"f1 internal/workspace/tool_manifest.go:3:// task tool manifest entries wire subagents for delegated child work.",
+			"f1 internal/workspace/tool_manifest.go:4:\treturn \"subagents are wired through task tool manifest entries for delegated child work\"",
+		}, "\n"),
+	}}
+
+	lines := delegatedReadOnlyFindingLines(results, []string{"internal/workspace/tool_manifest.go"}, 4)
+	if len(lines) != 0 {
+		t.Fatalf("expected comment-only context handles to be ignored, got %#v", lines)
+	}
+}
+
 func TestDelegatedTaskAnswerDoesNotSynthesizeFromStrippedControlPacketOnly(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:    "task",
@@ -15571,7 +15818,6 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 		`{"tool":"list_files","path":"."}`,
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect internal/agent/runner.go for performance evidence and report paths."}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":3}`,
-		"Source-body evidence paths:\n- `internal/agent/runner.go`\n\nInspected paths: internal/agent/runner.go. No performance issue found.",
 		"No performance risk stands out in internal/agent/runner.go from the delegated evidence. Confidence: medium.",
 	}
 	requests := 0
@@ -15591,6 +15837,8 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 	defer server.Close()
 
 	var rejected bool
+	var sawChildTaskResult bool
+	var parentModelCallAfterChild bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, 2*time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -15599,6 +15847,14 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 			MaxDirectoryEntries: 64,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 6},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "next_action_state" && strings.Contains(event.Content, `"reason":"child_task_result"`) {
+				sawChildTaskResult = true
+			}
+			if sawChildTaskResult && event.Role == "model_call" && strings.Contains(event.Content, `"agent":"main"`) {
+				parentModelCallAfterChild = true
+			}
+		},
 	}
 	answer, err := runner.Run(
 		context.Background(),
@@ -15616,10 +15872,13 @@ func TestRunnerRequiresChildTaskForBroadEvidenceReads(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if answer != "No performance risk stands out in internal/agent/runner.go from the delegated evidence. Confidence: medium." {
-		t.Fatalf("unexpected answer: %q", answer)
+		t.Fatalf("unexpected answer after %d/%d requests: %q", requests, len(replies), answer)
 	}
 	if !rejected {
 		t.Fatal("expected broad exploration to be rejected after the delegation nudge")
+	}
+	if !parentModelCallAfterChild {
+		t.Fatalf("expected parent model synthesis after child task result (saw child result=%t)", sawChildTaskResult)
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected parent to take one post-child decision turn, used %d/%d replies", requests, len(replies))
@@ -15642,7 +15901,6 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 		`{"tool":"list_files","path":"."}`,
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect performance evidence in internal/agent/runner.go and report paths."}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":3}`,
-		"Source-body evidence paths:\n- `internal/agent/runner.go`\n\nInspected paths: internal/agent/runner.go. No performance issue found.",
 		"No performance risk stands out in internal/agent/runner.go from the delegated evidence. Confidence: medium.",
 	}
 	requests := 0
@@ -15661,6 +15919,8 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 	}))
 	defer server.Close()
 
+	var sawChildTaskResult bool
+	var parentModelCallAfterChild bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, 2*time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -15669,6 +15929,14 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 			MaxDirectoryEntries: 64,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 6},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "next_action_state" && strings.Contains(event.Content, `"reason":"child_task_result"`) {
+				sawChildTaskResult = true
+			}
+			if sawChildTaskResult && event.Role == "model_call" && strings.Contains(event.Content, `"agent":"main"`) {
+				parentModelCallAfterChild = true
+			}
+		},
 	}
 	answer, err := runner.Run(
 		context.Background(),
@@ -15682,7 +15950,10 @@ func TestRunnerReturnsChildPacketBeforeBroadRediscovery(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if answer != "No performance risk stands out in internal/agent/runner.go from the delegated evidence. Confidence: medium." {
-		t.Fatalf("unexpected answer: %q", answer)
+		t.Fatalf("unexpected answer after %d/%d requests: %q", requests, len(replies), answer)
+	}
+	if !parentModelCallAfterChild {
+		t.Fatalf("expected parent model synthesis after child task result (saw child result=%t)", sawChildTaskResult)
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected parent to take one post-child decision turn, used %d/%d replies", requests, len(replies))
@@ -15701,7 +15972,6 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 	replies := []string{
 		`{"tool":"task","agent":"explorer","mode":"read_only","prompt":"Inspect internal/agent/runner.go and summarize."}`,
 		`{"tool":"read_file","path":"internal/agent/runner.go","start_line":1,"end_line":3}`,
-		"Source-body evidence paths:\n- `internal/agent/runner.go`\n\nInspected paths: internal/agent/runner.go. Key findings: child packet ready.",
 		"internal/agent/runner.go is the inspected path and the delegated child packet did not surface a deeper issue. Confidence: medium.",
 	}
 	requests := 0
@@ -15720,6 +15990,8 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 	}))
 	defer server.Close()
 
+	var sawChildTaskResult bool
+	var parentModelCallAfterChild bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, 2*time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -15727,6 +15999,14 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 			CWD:  root,
 		}),
 		Policy: RunPolicy{MaxToolSteps: 6, MaxNoProgressTurns: 4},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "next_action_state" && strings.Contains(event.Content, `"reason":"child_task_result"`) {
+				sawChildTaskResult = true
+			}
+			if sawChildTaskResult && event.Role == "model_call" && strings.Contains(event.Content, `"agent":"main"`) {
+				parentModelCallAfterChild = true
+			}
+		},
 	}
 	answer, err := runner.Run(
 		context.Background(),
@@ -15740,7 +16020,10 @@ func TestRunnerReturnsFirstReadOnlyChildPacketWithoutSecondDelegation(t *testing
 		t.Fatalf("Run: %v", err)
 	}
 	if answer != "internal/agent/runner.go is the inspected path and the delegated child packet did not surface a deeper issue. Confidence: medium." {
-		t.Fatalf("unexpected answer: %q", answer)
+		t.Fatalf("unexpected answer after %d/%d requests: %q", requests, len(replies), answer)
+	}
+	if !parentModelCallAfterChild {
+		t.Fatalf("expected parent model synthesis after child task result (saw child result=%t)", sawChildTaskResult)
 	}
 	if requests != len(replies) {
 		t.Fatalf("expected parent to decide after the child packet, used %d/%d replies", requests, len(replies))
@@ -15752,7 +16035,7 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 	if err := os.MkdirAll(filepath.Join(root, "internal", "workspace"), 0o755); err != nil {
 		t.Fatalf("mkdir workspace: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "internal", "workspace", "tool_manifest.go"), []byte("package workspace\n\n// task tool manifest entries wire subagents for delegated child work.\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "internal", "workspace", "tool_manifest.go"), []byte("package workspace\n\nfunc TaskToolManifestSummary() string {\n\treturn \"subagents are wired through task tool manifest entries for delegated child work\"\n}\n"), 0o644); err != nil {
 		t.Fatalf("write tool manifest: %v", err)
 	}
 
@@ -15761,8 +16044,6 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 		`{"tool":"search_files","pattern":"*tool_manifest*"}`,
 		`{"tool":"read_file","path":"internal/workspace/tool_manifest.go","start_line":1,"end_line":20}`,
 		"Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read internal/workspace/tool_manifest.go lines 1-20\n- Found task tool manifest entries for delegated child work\n",
-		"Partial findings from this turn (the budget was reached before a full synthesis):\n\nVerified context:\n- Read internal/workspace/tool_manifest.go lines 1-20\n- Found subagents are wired through task tool manifest entries for delegated child work\n",
-		"Subagents are wired through the task tool; the delegated child inspects internal/workspace/tool_manifest.go for the task manifest entries. Confidence: medium.",
 	}
 	requests := 0
 	var roles []string
@@ -15814,18 +16095,20 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
+	lowerAnswer := strings.ToLower(answer)
 	for _, want := range []string{
-		"Subagents are wired through the task tool",
+		"subagents are wired through",
+		"task tool",
 		"internal/workspace/tool_manifest.go",
 	} {
-		if !strings.Contains(answer, want) {
+		if !strings.Contains(lowerAnswer, strings.ToLower(want)) {
 			t.Fatalf("expected direct answer to include %q, got %q", want, answer)
 		}
 	}
 	if strings.Contains(strings.ToLower(answer), "partial findings from this turn") {
 		t.Fatalf("expected parent synthesis instead of raw child packet, got %q", answer)
 	}
-	if strings.Contains(answer, "f23 ") {
+	if strings.Contains(answer, "f23 ") || strings.Contains(answer, "f1 ") {
 		t.Fatalf("unexpected answer: %q", answer)
 	}
 	for _, want := range []string{"readiness_check", "final_answer_critic"} {
@@ -15834,7 +16117,7 @@ func TestRunnerDirectAnswerReturnsChildPacketWithoutParentFollowups(t *testing.T
 		}
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected parent to synthesize from child evidence after bounded retries, used %d/%d replies", requests, len(replies))
+		t.Fatalf("expected host to close from the child evidence packet without parent followups, used %d/%d replies", requests, len(replies))
 	}
 }
 

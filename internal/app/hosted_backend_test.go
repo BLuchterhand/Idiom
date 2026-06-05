@@ -35,6 +35,51 @@ func TestBackendsModelToLlamaServerCarriesHostedFields(t *testing.T) {
 	}
 }
 
+func TestBackendsModelToLlamaServerDoesNotCarryLocalBaseURLIntoHostedRole(t *testing.T) {
+	defaults := config.Default().RouteClassifier.LlamaServerSpec()
+	defaults.Kind = config.BackendMLX
+	defaults.BaseURL = "http://127.0.0.1:11437"
+	defaults.Host = "127.0.0.1"
+	defaults.Port = 11437
+	defaults.Model = "/models/local-classifier"
+
+	got := backendsModelToLlamaServer(backends.Model{
+		Alias:     "deepseek-v4-pro",
+		Kind:      config.BackendDeepSeek,
+		Model:     "deepseek-chat",
+		APIKeyEnv: "DEEPSEEK_API_KEY",
+		Roles:     []string{backends.RolePlanner, backends.RoleClassifier},
+	}, defaults)
+
+	if !got.IsDeepSeek() {
+		t.Fatalf("expected hosted DeepSeek classifier, got %#v", got)
+	}
+	if got.BaseURL != "" {
+		t.Fatalf("hosted role without explicit base_url must not inherit local classifier base_url, got %q", got.BaseURL)
+	}
+	if got.EndpointBaseURL() != "https://api.deepseek.com" {
+		t.Fatalf("expected DeepSeek default endpoint, got %q from %#v", got.EndpointBaseURL(), got)
+	}
+}
+
+func TestBackendsModelToLlamaServerKeepsCustomBaseURLForSameHostedKind(t *testing.T) {
+	defaults := config.Default().LlamaServer
+	defaults.Kind = config.BackendDeepSeek
+	defaults.BaseURL = "https://deepseek.internal/v1"
+	defaults.APIKeyEnv = "DEEPSEEK_API_KEY"
+
+	got := backendsModelToLlamaServer(backends.Model{
+		Alias: "deepseek-v4-pro",
+		Kind:  config.BackendDeepSeek,
+		Model: "deepseek-chat",
+		Roles: []string{backends.RolePlanner},
+	}, defaults)
+
+	if got.EndpointBaseURL() != "https://deepseek.internal/v1" {
+		t.Fatalf("same hosted kind should inherit custom base_url, got %q", got.EndpointBaseURL())
+	}
+}
+
 func TestRoleSpecResolvesExplicitHostedAliasAcrossProfiles(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
@@ -116,5 +161,58 @@ func TestNewReusesPlannerClientWhenClassifierRoleMatchesPlanner(t *testing.T) {
 	}
 	if model.summaryController != nil {
 		t.Fatal("classifier role shares the planner target; must not create a second server controller")
+	}
+}
+
+func TestNewHostedClassifierRoleDoesNotUseStaleLocalClassifierBaseURL(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, ".idiom"), 0o755); err != nil {
+		t.Fatalf("mkdir .idiom: %v", err)
+	}
+	backendsJSON := `{
+  "default_profile": "deepseek",
+  "profiles": {
+    "deepseek": {
+      "models": [{
+        "alias": "deepseek-v4-pro",
+        "kind": "deepseek",
+        "model": "deepseek-chat",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        "roles": ["planner", "executor", "classifier"]
+      }],
+      "proxy": {
+        "default_planner": "deepseek-v4-pro",
+        "default_executor": "deepseek-v4-pro",
+        "default_classifier": "deepseek-v4-pro"
+      }
+    }
+  }
+}`
+	if err := os.WriteFile(filepath.Join(root, ".idiom", "backends.json"), []byte(backendsJSON), 0o644); err != nil {
+		t.Fatalf("write backends.json: %v", err)
+	}
+
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.RouteClassifier.Enabled = true
+	cfg.RouteClassifier.AutoStartServer = true
+	cfg.RouteClassifier.Kind = config.BackendMLX
+	cfg.RouteClassifier.BaseURL = "http://127.0.0.1:11437"
+	cfg.RouteClassifier.Host = "127.0.0.1"
+	cfg.RouteClassifier.Port = 11437
+	cfg.RouteClassifier.ServerModel = "/models/local-classifier"
+
+	model := New(cfg)
+	defer model.Close()
+
+	if model.plannerSpec.EndpointBaseURL() != "https://api.deepseek.com" {
+		t.Fatalf("expected hosted planner endpoint, got %#v", model.plannerSpec)
+	}
+	if model.summaryClient != model.client {
+		t.Fatal("classifier role shares the hosted planner target; expected summary client to reuse planner client")
+	}
+	if model.summaryController != nil {
+		t.Fatal("hosted classifier role must not create a local summary controller")
 	}
 }

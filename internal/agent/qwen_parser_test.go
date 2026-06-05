@@ -335,3 +335,27 @@ func TestQwenKeyValuePromptPreservesUnknownColonContinuation(t *testing.T) {
 		t.Fatalf("prompt dropped file:line continuation: %q", result.Request.Prompt)
 	}
 }
+
+func TestQwenKeyValueFinalAnswerConfidenceIsNotUnsafeToolRequest(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "No performance risk stands out in internal/agent/runner.go from the delegated evidence. Confidence: medium.",
+	})
+	if result.OK {
+		t.Fatalf("final-answer prose must not parse as a tool request: %#v", result.Request)
+	}
+	if result.EventOutcome != "" || result.EventTransport != "" || result.ParseErr != nil {
+		t.Fatalf("final-answer confidence label must not classify as unsafe tool syntax: %#v", result)
+	}
+}
+
+func TestQwenKeyValueMissingToolWithActionFieldRemainsUnsafe(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: "path: internal/agent/runner.go\nstart_line: 1\nend_line: 20",
+	})
+	if result.OK {
+		t.Fatalf("missing-tool key-value action fields must not parse as a valid request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer || result.EventTransport != toolRequestNormalizerTransportKeyValue {
+		t.Fatalf("missing-tool action fields should remain unsafe key-value syntax, got %#v", result)
+	}
+}

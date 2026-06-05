@@ -806,6 +806,28 @@ func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) 
 	}
 }
 
+func TestPostChildSourceBodyPacketEvidenceAvailableAcceptsDelegatedNegativeFinding(t *testing.T) {
+	brief := readOnlyConversationBriefForTest("Review performance risks in this workspace.")
+	results := []workspace.ToolResult{{
+		Tool:    "task",
+		Summary: "Child task completed",
+		Output: strings.Join([]string{
+			"Source-body evidence paths:",
+			"- `internal/agent/runner.go`",
+			"",
+			"Inspected paths: internal/agent/runner.go. No performance issue found.",
+		}, "\n"),
+	}}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("source-body packet availability alone should not satisfy answerability: %#v", ledger)
+	}
+	if !postChildSourceBodyPacketEvidenceAvailable(results) {
+		t.Fatal("delegated source-body packet with a bounded negative finding should trigger parent model synthesis")
+	}
+}
+
 func TestReadOnlyAnswerabilityAcceptsTypedDelegatedEvidencePacket(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
 	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{

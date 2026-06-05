@@ -1,0 +1,17 @@
+{
+  "model": "scripted-model",
+  "responses": [
+    {
+      "content": "{\"tool\":\"read_file\",\"path\":\"internal/labels/labels.go\",\"start_line\":1,\"end_line\":8}"
+    },
+    {
+      "content": "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}"
+    },
+    {
+      "content": "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}"
+    },
+    {
+      "content": "{\"tool\":\"search_files\",\"pattern\":\"labels.go\"}"
+    }
+  ]
+}

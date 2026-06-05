@@ -1,0 +1,82 @@
+{
+  "name": "scripted-contracts",
+  "version": 1,
+  "coverage": {
+    "min_tasks": 1
+  },
+  "tasks": [
+    {
+      "id": "scripted-direct-answer-exact-search-replay-closeout",
+      "family": "information_request",
+      "runner_mode": "auto",
+      "prompt": "Explain what ShortLabel returns from internal/labels/labels.go. Use source evidence and do not edit files.",
+      "tags": [
+        "deterministic",
+        "fake-model",
+        "frozen-repo",
+        "read-only",
+        "information",
+        "grounded-answer",
+        "repeated-rejection",
+        "rollback"
+      ],
+      "fixture": "fixtures/frozen-label-repo",
+      "scenario": {
+        "name": "scripted-direct-answer-exact-search-replay-closeout",
+        "prompt_contains": [
+          "ShortLabel",
+          "source evidence"
+        ],
+        "final_assistant_contains": [
+          "ShortLabel",
+          "Save changes",
+          "internal/labels/labels.go"
+        ],
+        "forbid_final_assistant_contains": [
+          "BAD_FALLBACK_NOT_USED",
+          "delegated read-only evidence packet",
+          "Key findings",
+          "symbol/body/branch"
+        ],
+        "forbid_tools": [
+          "edit_file",
+          "write_file",
+          "append_file",
+          "apply_patch",
+          "mkdir",
+          "shell",
+          "source_sanity",
+          "submit_plan"
+        ],
+        "require_tools": [
+          "read_file",
+          "search_files"
+        ],
+        "require_evidence_paths": [
+          "internal/labels/labels.go"
+        ],
+        "require_run_events": [
+          "idiom.live_contract.workspace_prepared",
+          "idiom.live_contract.resolved_config",
+          "idiom.live_contract.rollback",
+          "idiom.scripted_model.requests",
+          "final_answer_critic",
+          "turn_summary"
+        ],
+        "require_verification": "none",
+        "require_approval": false
+      },
+      "oracle": {
+        "require_no_changed_files": true,
+        "require_no_approval": true,
+        "require_no_shell": true,
+        "require_no_runner_rejections": true,
+        "require_clean_rollback": true,
+        "require_no_timeout": true,
+        "max_tool_requests": 3,
+        "max_errors": 0,
+        "max_duration_millis": 120000
+      }
+    }
+  ]
+}

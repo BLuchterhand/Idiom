@@ -183,6 +183,7 @@ func (r *Runner) Run(
 	writeDescriptionRepairPath := ""
 	implementationWriteOnlyHiddenTools := make(map[string]bool)
 	scopedHiddenNonWriteRecoveryUsed := false
+	scopedLastChanceWriteOnlyActive := false
 	scratchpadCloseoutNonWriteRejections := 0
 	// recoveryReadAllowanceUsed tracks paths that have already consumed
 	// their one bounded read during the current write-only recovery. The
@@ -634,6 +635,19 @@ func (r *Runner) Run(
 				answer, err := controller.completeWithoutMoreToolsWithReason("Model-call budget is exhausted. Tools are now disabled. " + forceAnswerTailGatheredEvidence)
 				return finish(answer, err, "model_call_budget_exhausted", true)
 			}
+		}
+		if r.scopedImplementationLastChanceWriteOnlyApplies(policy, metrics.ModelCalls, collectedResults) && !scopedLastChanceWriteOnlyActive {
+			scopedLastChanceWriteOnlyActive = true
+			implementationWriteOnlyRecoveryActive = true
+			requiredPathCompletionRecoveryActive = true
+			markRuntimeBriefPathsObserved(r.Workspace, r.RuntimeBrief)
+			hideImplementationWriteOnlyToolsForTurn(turnHiddenTools, implementationWriteOnlyHiddenTools, r.Workspace)
+			rebuildTools()
+			prompt := r.scopedImplementationLastChanceWriteOnlyPrompt(collectedResults)
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			opts = forceVisibleActionChatOptions(opts)
+			opts = planExecuteSetExactMaxTokens(opts, 768)
+			r.emitEvent(RunEvent{Role: "implementation_scoped_last_chance_write_only", Content: prompt})
 		}
 		modelCallOpts := readOnlyEvidenceAvailableTerminalChatOptions(opts, r.RuntimeBrief, collectedResults)
 		if r.compactTurnMessagesIfNeeded(&turnMessages, policy, taskLedger, collectedResults) {
@@ -2503,6 +2517,11 @@ func (r *Runner) Run(
 						SetLastToolKey:      false,
 					})
 					if readOnlyReplayedEvidenceCloseoutApplies(r.agentName(), r.RuntimeBrief, collectedResults, req, replayed) {
+						if readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(r.RuntimeBrief, req) {
+							if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+								return finish(answer, nil, "host_read_only_closeout", true)
+							}
+						}
 						answer, err := controller.completeWithoutMoreToolsWithReason(readOnlyReplayedEvidenceCloseoutPrompt(r.RuntimeBrief))
 						return finish(answer, err, "read_only_replayed_evidence_closeout", true)
 					}
@@ -2625,6 +2644,9 @@ func (r *Runner) Run(
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
+				if shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults) {
+					continue
+				}
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Tools are now disabled. Use the child-task result and gathered evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
 			}
@@ -3894,14 +3916,23 @@ func readOnlyReplayedEvidenceCloseoutApplies(agent string, brief workerruntime.W
 		strings.TrimSpace(replayed.Error) != "" {
 		return false
 	}
-	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() {
+	directAnswerExactSearchReplay := readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief, req)
+	if LanePolicyForBrief(brief).ShouldSkipRecoveryNudge() && !directAnswerExactSearchReplay {
 		return false
 	}
-	if !readOnlyExplanationGateApplies(brief) {
+	if !readOnlyExplanationGateApplies(brief) && !directAnswerExactSearchReplay {
 		return false
 	}
 	closure := readOnlyClosureDecisionForResults(brief, results)
+	if directAnswerExactSearchReplay {
+		_, ok := closure.HostOwnedAnswer(agent)
+		return ok
+	}
 	return closure.Answerable()
+}
+
+func readOnlyDirectAnswerExactSearchReplayCloseoutCandidate(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolRequest) bool {
+	return readOnlyDirectAnswerLane(brief) && shouldRejectExactReplayBeforeLoopGate(req)
 }
 
 func readOnlyReplayedEvidenceCloseoutPrompt(brief workerruntime.WorkerRuntimeBrief) string {
@@ -15480,6 +15511,34 @@ func (r *Runner) implementationScopedDisallowedToolRecovery(req workspace.ToolRe
 	return summary, errorText, prompt, true
 }
 
+func (r *Runner) scopedImplementationLastChanceWriteOnlyApplies(policy RunPolicy, usedModelCalls int, results []workspace.ToolResult) bool {
+	if r == nil || policy.MaxModelCalls <= 0 || usedModelCalls <= 0 {
+		return false
+	}
+	if !runnerBriefRequiresMutation(r.RuntimeBrief) || r.planThenExecutePlannerPhase() {
+		return false
+	}
+	if !implementationScopedEditSurfaceActive(r.RuntimeBrief, results) || len(r.remainingRequiredEditPaths(results)) == 0 {
+		return false
+	}
+	if len(changedPathsFromToolResults(results)) > 0 {
+		return false
+	}
+	return usedModelCalls+1 >= policy.MaxModelCalls
+}
+
+func (r *Runner) scopedImplementationLastChanceWriteOnlyPrompt(results []workspace.ToolResult) string {
+	target := "the remaining required edit path(s)"
+	if r != nil {
+		if paths := r.remainingRequiredEditPaths(results); len(paths) > 0 {
+			target = strings.Join(paths, ", ")
+		} else if paths := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 3); len(paths) > 0 {
+			target = strings.Join(paths, ", ")
+		}
+	}
+	return fmt.Sprintf("This is the final model-call budget slot for the scoped implementation run. Required edit paths remain unchanged: %s. Non-write tools are now hidden. Use one available parser-readable write tool for an in-scope required path from the packet and gathered source evidence, or answer exactly `<<QUESTION>>:` with the concrete path-specific blocker/no-op evidence. Do not read, search, inspect, or narrate a plan.", target)
+}
+
 func lastResultSummaryIs(results []workspace.ToolResult, summary string) bool {
 	if len(results) == 0 {
 		return false
@@ -17282,6 +17341,7 @@ func childPacketContainsGroundedAnswerEvidence(objective string, output string) 
 		"core files:",
 		"primary files:",
 		"verified context:",
+		"inspected paths:",
 		"evidence used:",
 		"important flow:",
 		"key findings:",
@@ -17298,6 +17358,13 @@ func childPacketContainsGroundedAnswerEvidence(objective string, output string) 
 		return true
 	}
 	return delegatedPacketAddressesObjective(objective, output)
+}
+
+func delegatedSourceBodyPacketHasGroundedFinding(output string) bool {
+	if len(sourceBodyEvidencePathsFromDelegatedPacket(output)) == 0 {
+		return false
+	}
+	return delegatedTaskOutputHasFindingEvidence(output)
 }
 
 func delegatedPacketAddressesObjective(objective string, output string) bool {
@@ -17808,7 +17875,7 @@ func delegatedReadOnlyFindingLines(results []workspace.ToolResult, supportedPath
 	for _, result := range results {
 		output := compactOutput(result.Output, fallbackLineBudgetForTool(result.Tool))
 		for _, raw := range strings.Split(output, "\n") {
-			line := strings.TrimSpace(strings.TrimPrefix(raw, "- "))
+			line := cleanDelegatedReadOnlyFindingLine(strings.TrimSpace(strings.TrimPrefix(raw, "- ")))
 			if !delegatedReadOnlyFindingLineIsUseful(line) {
 				continue
 			}
@@ -17828,6 +17895,42 @@ func delegatedReadOnlyFindingLines(results []workspace.ToolResult, supportedPath
 	return lines
 }
 
+func cleanDelegatedReadOnlyFindingLine(line string) string {
+	line = strings.TrimSpace(line)
+	for {
+		lower := strings.ToLower(line)
+		stripped := false
+		for _, label := range delegatedReadOnlyPacketLineLabels() {
+			if !strings.HasPrefix(lower, label) {
+				continue
+			}
+			line = strings.TrimSpace(line[len(label):])
+			stripped = true
+			break
+		}
+		if !stripped {
+			return line
+		}
+	}
+}
+
+func delegatedReadOnlyPacketLineLabels() []string {
+	return []string{
+		"source-body evidence paths:",
+		"source body evidence paths:",
+		"source body paths:",
+		"grounded findings:",
+		"grounded answer:",
+		"key findings:",
+		"verified context:",
+		"inspected paths:",
+		"evidence used:",
+		"core files:",
+		"primary files:",
+		"important flow:",
+	}
+}
+
 func delegatedReadOnlyFindingLineSupportedByPaths(line string, supported map[string]struct{}) bool {
 	mentionedAny := false
 	supportedAny := false
@@ -17841,7 +17944,13 @@ func delegatedReadOnlyFindingLineSupportedByPaths(line string, supported map[str
 }
 
 func delegatedReadOnlyFindingLineIsUseful(line string) bool {
-	if line == "" || delegatedDiscoveryLineIsBarePath(line) || looksLikeLineOrientedSourceSnippetLine(line) {
+	if _, ok := stripSourceEvidenceHandleLinePrefix(line); ok {
+		return false
+	}
+	if line == "" ||
+		delegatedDiscoveryLineIsBarePath(line) ||
+		looksLikeLineOrientedSourceSnippetLine(line) ||
+		sourceEvidenceLineIsBoilerplate(stripSourceEvidenceLinePrefix(line)) {
 		return false
 	}
 	lower := strings.ToLower(line)
@@ -17855,6 +17964,8 @@ func delegatedReadOnlyFindingLineIsUseful(line string) bool {
 		strings.Contains(lower, "safely expand beyond the inspected anchors") ||
 		strings.Contains(lower, "the strongest implementation evidence is in") ||
 		strings.Contains(lower, "use those findings as the source of truth") ||
+		lower == "context:" ||
+		lower == "context" ||
 		strings.Contains(lower, "top-level declaration") ||
 		strings.HasPrefix(lower, "source-body evidence paths:") ||
 		strings.HasPrefix(lower, "source-body evidence:") ||
@@ -18478,6 +18589,9 @@ func terminalBlockedStatusShouldEmit(alreadyEmitted bool, lastStatus string, las
 
 func (r *Runner) terminalAnswerShouldOverrideRejectedRaw(answer string, acceptance finalAnswerAcceptance) bool {
 	if acceptance.BlockerKind == "" {
+		return false
+	}
+	if r != nil && strings.HasPrefix(r.agentName(), "child:") && !runnerBriefRequiresMutation(r.RuntimeBrief) {
 		return false
 	}
 	return acceptance.BlockerKind != "non_answer_prose" ||
@@ -20480,7 +20594,7 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 	}
 	reason = answerFirstNoToolsPrompt(reason)
 	preferModelSynthesis := shouldPreferModelBudgetSynthesis(r.agentName(), r.RuntimeBrief, collectedResults)
-	if postReadinessForcedCompletionReason(reason) && shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults) {
+	if !preferModelSynthesis && postReadinessForcedCompletionReason(reason) && shouldPreferDeterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults) {
 		if answer, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			if !strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
 				return answer, nil
@@ -20897,7 +21011,26 @@ func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.Work
 	if strings.HasPrefix(agentName, "child:") {
 		return true
 	}
-	return workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) && postChildPacketClosureReadyWithBrief(brief, results)
+	return postChildPacketClosureReadyWithBrief(brief, results) ||
+		postChildSourceBodyPacketEvidenceAvailable(results)
+}
+
+func postChildSourceBodyPacketEvidenceAvailable(results []workspace.ToolResult) bool {
+	for _, result := range results {
+		if strings.TrimSpace(result.Tool) != "task" || strings.TrimSpace(result.Error) != "" {
+			continue
+		}
+		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
+			if len(packet.SourceBodyPaths) > 0 {
+				return true
+			}
+			continue
+		}
+		if delegatedSourceBodyPacketHasGroundedFinding(result.Output) {
+			return true
+		}
+	}
+	return false
 }
 
 func runnerBriefAllowsExternalToolAppend(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -22801,13 +22934,7 @@ func looksLikeRawReadOnlyEvidencePacketAnswer(answer string) bool {
 		return false
 	}
 	packetMarkers := 0
-	for _, marker := range []string{
-		"source-body evidence paths:",
-		"source body paths:",
-		"inspected paths:",
-		"key findings:",
-		"source: delegated read-only evidence packet",
-	} {
+	for _, marker := range append(delegatedReadOnlyPacketLineLabels(), "source: delegated read-only evidence packet") {
 		if strings.Contains(lower, marker) {
 			packetMarkers++
 		}

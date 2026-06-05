@@ -730,7 +730,10 @@ func parseFunctionCallToolRequestSyntax(text string) (workspace.ToolRequest, boo
 	}
 	key, body, ok := strings.Cut(trimmed, ":")
 	if !ok || strings.ToLower(strings.TrimSpace(key)) != "tool" {
-		return workspace.ToolRequest{}, false, true
+		if ok && keyValueMissingToolActionField(strings.ToLower(strings.TrimSpace(key))) {
+			return workspace.ToolRequest{}, false, true
+		}
+		return workspace.ToolRequest{}, false, false
 	}
 	body = strings.TrimSpace(body)
 	open := strings.Index(body, "(")

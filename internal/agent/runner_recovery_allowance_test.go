@@ -50,6 +50,61 @@ func TestScaleMaxToolStepsLeavesUnboundedExplicitTightAndAlreadyHighPoliciesAlon
 	}
 }
 
+func TestScaleMaxModelCallsByRequiredPathsCurve(t *testing.T) {
+	cases := []struct {
+		paths    int
+		base     int
+		want     int
+		describe string
+	}{
+		{0, maxModelCallsBase, maxModelCallsBase, "no required paths leaves base alone"},
+		{1, maxModelCallsBase, maxModelCallsBase, "single-file atom uses base"},
+		{2, maxModelCallsBase, 5, "3+2*(N-1) for two paths"},
+		{6, maxModelCallsBase, 13, "6-file atom gets enough calls for reads plus writes"},
+		{20, maxModelCallsBase, maxModelCallsCeiling, "large atoms cap"},
+	}
+	for _, tc := range cases {
+		policy := RunPolicy{MaxModelCalls: tc.base}
+		scaled := scaleMaxModelCallsByRequiredPaths(policy, tc.paths)
+		if scaled.MaxModelCalls != tc.want {
+			t.Errorf("%s: got MaxModelCalls=%d, want %d", tc.describe, scaled.MaxModelCalls, tc.want)
+		}
+	}
+}
+
+func TestScaleMaxModelCallsLeavesUnboundedExplicitTightAndAlreadyHighPoliciesAlone(t *testing.T) {
+	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 0}, 10); got.MaxModelCalls != 0 {
+		t.Fatalf("unbounded policy must stay unbounded, got %d", got.MaxModelCalls)
+	}
+	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 60}, 10); got.MaxModelCalls != 60 {
+		t.Fatalf("explicitly-higher policy must not be lowered, got %d", got.MaxModelCalls)
+	}
+	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 1}, 5); got.MaxModelCalls != 1 {
+		t.Fatalf("explicit tight policy below base must not be raised, got %d", got.MaxModelCalls)
+	}
+	if got := scaleMaxModelCallsByRequiredPaths(RunPolicy{MaxModelCalls: 2}, 5); got.MaxModelCalls != 2 {
+		t.Fatalf("explicit tight policy below base must not be raised, got %d", got.MaxModelCalls)
+	}
+}
+
+func TestEffectivePolicyBriefModelCallBudgetCapsScaledMutationBudget(t *testing.T) {
+	runner := &Runner{
+		Policy: RunPolicy{MaxModelCalls: maxModelCallsBase},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go", "c.go", "d.go"},
+			Budget: workerruntime.BudgetBrief{
+				MaxModelCalls: 5,
+			},
+		},
+	}
+	if got := runner.effectivePolicy().MaxModelCalls; got != 5 {
+		t.Fatalf("brief MaxModelCalls must cap scaled mutation budget, got %d", got)
+	}
+}
+
 func TestConsumeRecoveryReadAllowanceGrantsOnePerRemainingPath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

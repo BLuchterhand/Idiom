@@ -84,3 +84,23 @@ func TestPostReadinessReadinessWithoutAnswerableEvidenceRemainsAdvisory(t *testi
 		t.Fatalf("readiness without answerable evidence should remain advisory, got %#v", contract)
 	}
 }
+
+func TestShouldPreferModelBudgetSynthesisAfterSourceBodyChildPacket(t *testing.T) {
+	result := typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       "Inspect internal/agent/runner.go and summarize.",
+		Question:        "Inspect internal/agent/runner.go and summarize.",
+		SourceBodyPaths: []string{"internal/agent/runner.go"},
+		InspectedPaths:  []string{"internal/agent/runner.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The child packet retained source-body evidence for the delegated question."},
+		},
+		Confidence: "medium",
+	})
+	brief := workerruntime.WorkerRuntimeBrief{
+		Objective: "Explain how this harness delegates work.",
+	}
+
+	if !shouldPreferModelBudgetSynthesis("main", brief, []workspace.ToolResult{result}) {
+		t.Fatal("source-body child packets should trigger parent model synthesis instead of deterministic no-tools fallback")
+	}
+}

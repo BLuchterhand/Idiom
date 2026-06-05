@@ -86,7 +86,10 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 		}
 	}
 	if toolLineIdx < 0 {
-		return ToolRequestTokenization{Unsafe: true}
+		if keyValueNoToolUnsafe(lines) {
+			return ToolRequestTokenization{Unsafe: true}
+		}
+		return ToolRequestTokenization{}
 	}
 
 	values := map[string]string{}
@@ -169,6 +172,33 @@ func (keyValueToolRequestTokenizer) Tokenize(text string) ToolRequestTokenizatio
 		return ToolRequestTokenization{Unsafe: true}
 	}
 	return ToolRequestTokenization{Tool: tool, Fields: values, OK: true}
+}
+
+func keyValueNoToolUnsafe(lines []string) bool {
+	for _, line := range lines {
+		key, _, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
+		}
+		if keyValueMissingToolActionField(strings.ToLower(strings.TrimSpace(key))) {
+			return true
+		}
+	}
+	return false
+}
+
+func keyValueMissingToolActionField(key string) bool {
+	switch key {
+	case "path", "file", "scope", "pattern", "query", "symbol", "capability", "operation", "action", "kind",
+		"mode", "task", "glob", "language", "resolution", "named_gap", "why_not_answering", "start_line",
+		"end_line", "limit", "budget_tokens", "max_depth", "include_evidence", "include_source", "include_files",
+		"refresh", "lines", "replace_all", "purpose", "command", "content", "prompt", "agent", "workdir",
+		"handle", "root", "destination", "packet_path", "output_path", "component", "category", "session_id",
+		"task_id", "recursive", "old_text", "new_text", "new_text_ref", "content_ref":
+		return true
+	default:
+		return false
+	}
 }
 
 func normalizeRawKeyValueField(value string) string {

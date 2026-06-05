@@ -1263,6 +1263,9 @@ func stripSourceEvidenceLinePrefix(line string) string {
 	if line == "" {
 		return ""
 	}
+	if stripped, ok := stripSourceEvidenceHandleLinePrefix(line); ok {
+		return stripped
+	}
 	idx := 0
 	for idx < len(line) && line[idx] >= '0' && line[idx] <= '9' {
 		idx++
@@ -1273,9 +1276,42 @@ func stripSourceEvidenceLinePrefix(line string) string {
 	return strings.TrimSpace(line[idx+1:])
 }
 
+func stripSourceEvidenceHandleLinePrefix(line string) (string, bool) {
+	space := strings.IndexByte(line, ' ')
+	if space <= 1 || line[0] != 'f' {
+		return "", false
+	}
+	for _, ch := range line[1:space] {
+		if ch < '0' || ch > '9' {
+			return "", false
+		}
+	}
+	rest := strings.TrimSpace(line[space+1:])
+	pathEnd := strings.IndexByte(rest, ':')
+	if pathEnd <= 0 {
+		return "", false
+	}
+	path := strings.TrimSpace(rest[:pathEnd])
+	if path == "" || (!strings.Contains(path, "/") && !strings.Contains(path, ".")) {
+		return "", false
+	}
+	afterPath := rest[pathEnd+1:]
+	lineEnd := 0
+	for lineEnd < len(afterPath) && afterPath[lineEnd] >= '0' && afterPath[lineEnd] <= '9' {
+		lineEnd++
+	}
+	if lineEnd == 0 || lineEnd >= len(afterPath) || afterPath[lineEnd] != ':' {
+		return "", false
+	}
+	return strings.TrimSpace(afterPath[lineEnd+1:]), true
+}
+
 func sourceEvidenceLineIsBoilerplate(line string) bool {
 	lower := strings.ToLower(strings.TrimSpace(line))
 	if lower == "" {
+		return true
+	}
+	if lower == "context:" || lower == "context" {
 		return true
 	}
 	if strings.HasPrefix(lower, "package ") || strings.HasPrefix(lower, "import ") {

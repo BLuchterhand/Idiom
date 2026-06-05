@@ -42,7 +42,13 @@ import (
 // host in backends.json shouldn't be a hard error.
 func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) config.LlamaServer {
 	out := defaults
-	if k := strings.TrimSpace(m.Kind); k != "" {
+	explicitKind := strings.TrimSpace(m.Kind)
+	explicitBaseURL := strings.TrimSpace(m.BaseURL)
+	if explicitKind != "" {
+		if explicitBaseURL == "" && !strings.EqualFold(explicitKind, strings.TrimSpace(defaults.Kind)) {
+			out.BaseURL = ""
+		}
+		k := explicitKind
 		out.Kind = k
 	}
 	if b := strings.TrimSpace(m.Binary); b != "" {
@@ -74,8 +80,8 @@ func backendsModelToLlamaServer(m backends.Model, defaults config.LlamaServer) c
 	if alias := strings.TrimSpace(m.Alias); alias != "" {
 		out.DisplayName = alias
 	}
-	if baseURL := strings.TrimSpace(m.BaseURL); baseURL != "" {
-		out.BaseURL = baseURL
+	if explicitBaseURL != "" {
+		out.BaseURL = explicitBaseURL
 	}
 	if apiKeyEnv := strings.TrimSpace(m.APIKeyEnv); apiKeyEnv != "" {
 		out.APIKeyEnv = apiKeyEnv

@@ -98,14 +98,15 @@ func (r *Runner) effectivePolicy() RunPolicy {
 	if briefLimit := r.RuntimeBrief.Budget.MaxToolSteps; briefLimit > 0 && (policy.MaxToolSteps <= 0 || briefLimit < policy.MaxToolSteps) {
 		policy.MaxToolSteps = briefLimit
 	}
-	if briefLimit := r.RuntimeBrief.Budget.MaxModelCalls; briefLimit > 0 && (policy.MaxModelCalls <= 0 || briefLimit < policy.MaxModelCalls) {
-		policy.MaxModelCalls = briefLimit
-	}
 	if policy.MaxNoProgressTurns <= 0 {
 		policy.MaxNoProgressTurns = 6
 	}
 	if runnerBriefRequiresMutation(r.RuntimeBrief) {
 		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
+		policy = scaleMaxModelCallsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
+	}
+	if briefLimit := r.RuntimeBrief.Budget.MaxModelCalls; briefLimit > 0 && (policy.MaxModelCalls <= 0 || briefLimit < policy.MaxModelCalls) {
+		policy.MaxModelCalls = briefLimit
 	}
 	return policy
 }
@@ -136,6 +137,25 @@ func scaleMaxToolStepsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy
 	return policy
 }
 
+// scaleMaxModelCallsByRequiredPaths grows tight model-call ceilings for
+// multi-file implementation atoms. Tool-step scaling alone is not enough:
+// each successful tool result needs a follow-up model call, so a six-path atom
+// capped at three model calls can spend the whole run on legitimate scoped
+// reads and never receive a write/blocker turn.
+func scaleMaxModelCallsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy {
+	if pathCount <= 1 {
+		return policy
+	}
+	scaled := maxModelCallsBase + 2*(pathCount-1)
+	if scaled > maxModelCallsCeiling {
+		scaled = maxModelCallsCeiling
+	}
+	if policy.MaxModelCalls >= maxModelCallsBase && policy.MaxModelCalls < scaled {
+		policy.MaxModelCalls = scaled
+	}
+	return policy
+}
+
 const (
 	// maxToolStepsBase is the conservative default budget for a single-file
 	// implementation atom. Multi-file briefs scale up via
@@ -145,6 +165,13 @@ const (
 	// maxToolStepsCeiling caps the scaled budget so a sprawling brief
 	// can't run away even if it slipped past the brief lint.
 	maxToolStepsCeiling = 40
+	// maxModelCallsBase is the smallest normal mutation-lane model budget.
+	// Values below it are treated as deliberately tight tests or operator
+	// limits; values at or above it scale with required edit paths.
+	maxModelCallsBase = 3
+	// maxModelCallsCeiling keeps scaled model-call budgets bounded while
+	// leaving already-higher explicit policies alone.
+	maxModelCallsCeiling = 24
 	// postCompletionVerificationCutoff bounds how many non-write tool calls
 	// the agent can issue after all required edit paths have been written.
 	// A small budget lets the model do legitimate "did my edit land?" reads
