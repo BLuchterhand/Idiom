@@ -16077,6 +16077,15 @@ func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) 
 	if err := os.MkdirAll(filepath.Join(root, "internal", "agent"), 0o755); err != nil {
 		t.Fatalf("mkdir internal/agent: %v", err)
 	}
+	if err := os.WriteFile(filepath.Join(root, "internal", "agent", "runner.go"), []byte(strings.Join([]string{
+		"package agent",
+		"",
+		"func dispatch() {",
+		"\t// Initial orientation only; the delegated mechanism is elsewhere.",
+		"}",
+	}, "\n")), 0o644); err != nil {
+		t.Fatalf("write runner.go: %v", err)
+	}
 	if err := os.WriteFile(filepath.Join(root, "internal", "agent", "runner_child_tasks.go"), []byte(strings.Join([]string{
 		"package agent",
 		"",
@@ -16088,6 +16097,7 @@ func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) 
 	}
 
 	replies := []string{
+		`{"tool":"search_files","pattern":"runner_child_tasks","path":"internal/agent"}`,
 		`{"tool":"read_file","path":"internal/agent/runner_child_tasks.go","start_line":1,"end_line":20}`,
 		"SHOULD NOT BE USED",
 	}
@@ -16120,7 +16130,7 @@ func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) 
 			Contract:          string(workerruntime.ContractGroundedEvidence),
 			Objective:         "Can you tell me how this harness uses subagents?",
 			PermissionProfile: "read_only_workspace",
-			AllowedTools:      []string{"read_file"},
+			AllowedTools:      []string{"search_files", "read_file"},
 		},
 		OnEvent: func(event RunEvent) {
 			roles = append(roles, event.Role)
@@ -16138,8 +16148,8 @@ func TestDelegatedReadOnlyChildHostClosesAfterAnswerReadyEvidence(t *testing.T) 
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("expected child host closeout without an extra model turn, used %d requests", requests)
+	if requests != 2 {
+		t.Fatalf("expected child host closeout without an extra model turn, used %d requests; roles=%v answer=%q", requests, roles, answer)
 	}
 	for _, want := range []string{"task", "subagent", "internal/agent/runner_child_tasks.go"} {
 		if !strings.Contains(strings.ToLower(answer), strings.ToLower(want)) {
@@ -17936,6 +17946,54 @@ func TestArchitectureCompletionRejectionAllowsDiscoveryUsefulnessMechanism(t *te
 	)
 	if rejected {
 		t.Fatalf("objective-relevant discovery usefulness mechanism should be accepted, got %#v", result)
+	}
+}
+
+func TestMutationCompletionRejectsUnresolvedRejectedWriteTarget(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "implementation_result",
+			TaskFamily:        "implementation",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"edit_file", "shell"},
+			Objective:         "Add terminal-style input history navigation.",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "edit_file",
+		Summary: "Edited internal/app/model_state.go",
+		Output:  "Changed paths:\n- internal/app/model_state.go\n",
+	}, {
+		Tool:    "edit_file",
+		Summary: "Tool not available in current runtime contract",
+		Output:  "Rejected write target: `internal/app/update_handlers.go`",
+		Error:   "edit_file is not in the current allowed tool surface.",
+	}, {
+		Tool:    "shell",
+		Summary: "Ran shell command in .",
+		Output:  "ok\tidiom/internal/app\n",
+	}}
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"Implemented the requested change.\n\nChanged paths:\n- internal/app/model_state.go\n\nVerification: go test ./internal/app passed",
+		results,
+	)
+	if acceptance.Decision != finalAnswerAcceptanceRejected || acceptance.BlockerKind != "rejected_mutation_paths_remaining" {
+		t.Fatalf("expected unresolved rejected write target to block completion, got %#v", acceptance)
+	}
+	if len(acceptance.EvidencePaths) == 0 || !slices.Contains(acceptance.EvidencePaths, "internal/app/update_handlers.go") {
+		t.Fatalf("expected unresolved rejected path in evidence paths, got %#v", acceptance.EvidencePaths)
+	}
+}
+
+func TestRejectedWriteResultRetainsRequestTarget(t *testing.T) {
+	req := workspace.ToolRequest{Tool: "edit_file", Path: "internal/app/update_handlers.go"}
+	result := resultWithRejectedRequestTarget(req, workspace.ToolResult{
+		Tool:    "edit_file",
+		Summary: "Tool not available in current runtime contract",
+		Error:   "edit_file is not in the current allowed tool surface.",
+	})
+	if !strings.Contains(result.Output, "internal/app/update_handlers.go") {
+		t.Fatalf("expected rejected write result to retain target path, got %#v", result)
 	}
 }
 

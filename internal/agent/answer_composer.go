@@ -67,7 +67,7 @@ func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit
 		} else {
 			line = cleanDiscoveryFindingText(line)
 		}
-		if line == "" || strings.Contains(strings.ToLower(line), "open a returned handle") {
+		if line == "" || strings.Contains(strings.ToLower(line), "open a returned handle") || decoratedDiscoveryFindingLineIsToolInventory(line) {
 			continue
 		}
 		lines = append(lines, line)
@@ -76,6 +76,27 @@ func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit
 		}
 	}
 	return lines
+}
+
+func decoratedDiscoveryFindingLineIsToolInventory(line string) bool {
+	lower := strings.ToLower(strings.TrimSpace(line))
+	if lower == "" {
+		return true
+	}
+	if strings.HasPrefix(lower, "symbol index: indexed symbols ") ||
+		strings.HasPrefix(lower, "symbol index: no ") ||
+		strings.HasPrefix(lower, "dependency graph: dependency graph unavailable") {
+		return true
+	}
+	if strings.HasPrefix(lower, "text anchors: found ") &&
+		strings.Contains(lower, " matching line") {
+		return true
+	}
+	if strings.HasPrefix(lower, "related files: found ") &&
+		(strings.Contains(lower, " related ") || strings.Contains(lower, " file")) {
+		return true
+	}
+	return false
 }
 
 func humanDiscoveryLayerName(name string) string {

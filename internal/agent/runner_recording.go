@@ -40,6 +40,7 @@ func (r runnerTurnRecorder) record(step int, req workspace.ToolRequest, result w
 }
 
 func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolRequest, result workspace.ToolResult, reason string, opts runnerRecordOptions) {
+	result = resultWithRejectedRequestTarget(req, result)
 	if r.collectedResults != nil {
 		*r.collectedResults = append(*r.collectedResults, result)
 	}
@@ -89,6 +90,22 @@ func (r runnerTurnRecorder) recordWithOptions(step int, req workspace.ToolReques
 			}
 		}
 	}
+}
+
+func resultWithRejectedRequestTarget(req workspace.ToolRequest, result workspace.ToolResult) workspace.ToolResult {
+	if strings.TrimSpace(result.Error) == "" || !workspace.IsWorkspaceWriteTool(req.Tool) {
+		return result
+	}
+	path := normalizeRunnerPath(req.Path)
+	if path == "" || strings.Contains(result.Summary, path) || strings.Contains(result.Output, path) {
+		return result
+	}
+	if strings.TrimSpace(result.Output) == "" {
+		result.Output = "Rejected write target: `" + path + "`"
+	} else {
+		result.Output = strings.TrimRight(result.Output, "\n") + "\nRejected write target: `" + path + "`"
+	}
+	return result
 }
 
 func (r runnerTurnRecorder) modelFacingToolResult(step int, req workspace.ToolRequest, result workspace.ToolResult, reason string) workspace.ToolResult {

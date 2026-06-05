@@ -83,6 +83,13 @@ func TestReadOnlyCloseoutHostAcceptanceRequiresContractProducedAnswer(t *testing
 	}
 }
 
+func TestReadOnlyCloseoutHostOwnedAnswerRejectsSynthesizedDiscoveryInventory(t *testing.T) {
+	answer := "Symbol index: Indexed symbols under internal/agent with ctags. This is grounded in `internal/agent/runner.go`, `internal/agent/runner_child_tasks.go`."
+	if hostOwnedCloseoutAnswerIsPresentable(answer) {
+		t.Fatalf("host-owned closeout must reject synthesized discovery inventory:\n%s", answer)
+	}
+}
+
 func TestReadOnlyCloseoutHostSynthesizesDelegatedChildAnswer(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        string(workerruntime.TaskFamilyDelegatedReadOnly),

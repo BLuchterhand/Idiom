@@ -400,6 +400,9 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	if !finalAnswerNeedsDecoration(internalAnswer) && !looksLikeGenericEvidenceComposerAnswer(internalAnswer) {
 		return "", false
 	}
+	if answer, ok := presentableGroundedAnswerFromRenderedPacket(internalAnswer); ok {
+		return answer, true
+	}
 	closure := readOnlyClosureDecisionForResults(brief, results)
 	if readOnlyFallbackNeedsAnswerableEvidence(brief, internalAnswer) && !closure.Answerable() {
 		return closure.UserFacingUncertainty(), true
@@ -490,6 +493,42 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	return presentableUnsupportedFinalAnswerLead() + " The current read-only answer has relevant evidence in " +
 		formatInlinePathList(paths, 4) +
 		", but no concrete user-facing finding was retained.", true
+}
+
+func presentableGroundedAnswerFromRenderedPacket(answer string) (string, bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return "", false
+	}
+	lower := strings.ToLower(answer)
+	marker := "grounded answer:\n"
+	idx := strings.Index(lower, marker)
+	if idx < 0 {
+		return "", false
+	}
+	rest := strings.TrimSpace(answer[idx+len(marker):])
+	if rest == "" {
+		return "", false
+	}
+	cut := len(rest)
+	for _, section := range []string{
+		"\nGrounded findings:",
+		"\nSource body paths:",
+		"\nCandidate paths:",
+		"\nConfidence:",
+	} {
+		if next := strings.Index(rest, section); next >= 0 && next < cut {
+			cut = next
+		}
+	}
+	grounded := strings.TrimSpace(rest[:cut])
+	if grounded == "" ||
+		finalAnswerNeedsDecoration(grounded) ||
+		looksLikeGenericEvidenceComposerAnswer(grounded) ||
+		looksLikeLowValueSourceInventoryNonAnswer(grounded) {
+		return "", false
+	}
+	return grounded, true
 }
 
 func presentableReadOnlyClosureUncertainty(brief workerruntime.WorkerRuntimeBrief, closure readOnlyClosureDecision) string {
@@ -799,7 +838,7 @@ func presentableSourceBodyFactsAnswer(objective string, path string, output stri
 	if path == "" || len(lines) == 0 {
 		return "", false
 	}
-	facts := sourceBodySemanticFacts(lines, 5)
+	facts := sourceBodySemanticFacts(lines, objective, 5)
 	if len(facts) == 0 {
 		return "", false
 	}
@@ -830,7 +869,7 @@ func presentableSourceBodyFactsAnswer(objective string, path string, output stri
 	return answer, true
 }
 
-func sourceBodySemanticFacts(lines []string, max int) []string {
+func sourceBodySemanticFacts(lines []string, objective string, max int) []string {
 	if max <= 0 {
 		max = 3
 	}
@@ -844,21 +883,27 @@ func sourceBodySemanticFacts(lines []string, max int) []string {
 	}
 	currentFunction := ""
 	for _, line := range lines {
+		functionLine := false
 		if name := sourceBodyFunctionName(line); name != "" {
 			currentFunction = name
 			add("defines `" + name + "`")
-			continue
+			functionLine = true
 		}
-		if fact := sourceBodyReturnFact(currentFunction, line); fact != "" {
+		if fact := sourceBodyObjectiveLiteralFact(currentFunction, line, objective); fact != "" {
 			add(fact)
-		} else if fact := sourceBodyDefinitionFact(line); fact != "" {
-			add(fact)
-		} else if fact := sourceBodyCaseFact(currentFunction, line); fact != "" {
-			add(fact)
-		} else if fact := exactProbeAssignmentObservation(line); fact != "" {
-			add(fact)
-		} else if fact := sourceBodyCallFact(currentFunction, line); fact != "" {
-			add(fact)
+		}
+		if !functionLine {
+			if fact := sourceBodyReturnFact(currentFunction, line); fact != "" {
+				add(fact)
+			} else if fact := sourceBodyDefinitionFact(line); fact != "" {
+				add(fact)
+			} else if fact := sourceBodyCaseFact(currentFunction, line); fact != "" {
+				add(fact)
+			} else if fact := exactProbeAssignmentObservation(line); fact != "" {
+				add(fact)
+			} else if fact := sourceBodyCallFact(currentFunction, line); fact != "" {
+				add(fact)
+			}
 		}
 		if len(facts) >= max {
 			return facts
@@ -868,6 +913,73 @@ func sourceBodySemanticFacts(lines []string, max int) []string {
 		return facts[1:]
 	}
 	return facts
+}
+
+func sourceBodyObjectiveLiteralFact(functionName string, line string, objective string) string {
+	literals := sourceBodyObjectiveStringLiterals(line, objective, 2)
+	if len(literals) == 0 {
+		return ""
+	}
+	if functionName != "" {
+		return "`" + functionName + "` references " + joinFallbackFacts(literals)
+	}
+	return "references " + joinFallbackFacts(literals)
+}
+
+func sourceBodyObjectiveStringLiterals(line string, objective string, limit int) []string {
+	if limit <= 0 {
+		limit = 2
+	}
+	objective = strings.TrimSpace(objective)
+	var literals []string
+	inQuote := false
+	escaped := false
+	var current strings.Builder
+	for _, r := range line {
+		if !inQuote {
+			if r == '"' {
+				inQuote = true
+				escaped = false
+				current.Reset()
+			}
+			continue
+		}
+		if escaped {
+			current.WriteRune(r)
+			escaped = false
+			continue
+		}
+		switch r {
+		case '\\':
+			escaped = true
+		case '"':
+			value := strings.TrimSpace(current.String())
+			inQuote = false
+			if sourceBodyLiteralSupportsObjective(value, objective) {
+				literals = util.AppendUnique(literals, "`\""+value+"\"`")
+				if len(literals) >= limit {
+					return literals
+				}
+			}
+		default:
+			current.WriteRune(r)
+		}
+	}
+	return literals
+}
+
+func sourceBodyLiteralSupportsObjective(value string, objective string) bool {
+	value = strings.TrimSpace(value)
+	if len(value) < 4 || len(value) > 120 {
+		return false
+	}
+	if strings.ContainsAny(value, "\n\r\t") {
+		return false
+	}
+	if objective == "" {
+		return codeShapedTokenPattern.MatchString(value)
+	}
+	return textSharesObjectiveTerm(value, objective)
 }
 
 func sourceBodyCaseFact(functionName string, line string) string {
@@ -1358,7 +1470,7 @@ func presentableExactProbeAnchorObjectiveScore(candidate presentableExactProbeAn
 func exactProbeObservationsForObjective(symbol string, output string, objective string) []string {
 	lines := sourceEvidenceAnswerLinesForObjective(output, objective, 24)
 	if len(lines) > 0 {
-		if facts := sourceBodySemanticFacts(lines, 5); len(facts) > 0 {
+		if facts := sourceBodySemanticFacts(lines, objective, 5); len(facts) > 0 {
 			return facts
 		}
 	}
@@ -1808,7 +1920,7 @@ func finalAnswerStopReasonPreservesUncertainty(stopReason string) bool {
 
 func cleanedSubstantiveFinalAnswer(answer string) (string, bool) {
 	cleaned := stripInternalEvidenceAppendix(answer)
-	if !looksLikeSubstantiveFinalAnswer(cleaned) || finalAnswerNeedsDecoration(cleaned) || looksLikeGenericEvidenceComposerAnswer(cleaned) {
+	if looksLikeLowValueSourceInventoryNonAnswer(cleaned) || !looksLikeSubstantiveFinalAnswer(cleaned) || finalAnswerNeedsDecoration(cleaned) || looksLikeGenericEvidenceComposerAnswer(cleaned) {
 		return "", false
 	}
 	return cleaned, true

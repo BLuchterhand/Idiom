@@ -102,6 +102,12 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			}
 		}
 	}
+	if cmd, handled := m.handleInputHistoryNavigation(msg); handled {
+		return cmd, true
+	}
+	if inputKeyResetsHistoryNavigation(msg) {
+		m.resetInputHistoryNavigation()
+	}
 	switch msg.Type {
 	case tea.KeyCtrlC:
 		return tea.Quit, true
@@ -155,6 +161,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			}
 			break
 		}
+		if !m.streaming {
+			m.recordInputHistory(text)
+		}
 		m.input.SetValue("")
 		if strings.HasPrefix(text, "/") {
 			if !m.handleFeaturePlannerCommand(text) && !m.handlePlanExecuteCommand(text) && !m.handleImplementCommand(text) {
@@ -179,6 +188,68 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 		m.renderMessages(true)
 	}
 	return nil, false
+}
+
+func (m *Model) handleInputHistoryNavigation(msg tea.KeyMsg) (tea.Cmd, bool) {
+	if m == nil || m.streaming || m.slashSuggestions.visible || m.history.focused {
+		return nil, false
+	}
+	switch msg.Type {
+	case tea.KeyUp:
+		if len(m.inputHistory) == 0 {
+			return nil, false
+		}
+		if m.inputHistoryIndex < 0 {
+			m.inputHistoryDraft = m.input.Value()
+			m.inputHistoryIndex = len(m.inputHistory) - 1
+		} else if m.inputHistoryIndex > 0 {
+			m.inputHistoryIndex--
+		}
+		m.input.SetValue(m.inputHistory[m.inputHistoryIndex])
+		m.input.CursorEnd()
+		return m.waitForEventCmd(), true
+	case tea.KeyDown:
+		if m.inputHistoryIndex < 0 {
+			return nil, false
+		}
+		m.inputHistoryIndex++
+		if m.inputHistoryIndex >= len(m.inputHistory) {
+			m.inputHistoryIndex = -1
+			m.input.SetValue(m.inputHistoryDraft)
+			m.inputHistoryDraft = ""
+		} else {
+			m.input.SetValue(m.inputHistory[m.inputHistoryIndex])
+		}
+		m.input.CursorEnd()
+		return m.waitForEventCmd(), true
+	default:
+		return nil, false
+	}
+}
+
+func (m *Model) recordInputHistory(text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != text {
+		m.inputHistory = append(m.inputHistory, text)
+	}
+	m.resetInputHistoryNavigation()
+}
+
+func (m *Model) resetInputHistoryNavigation() {
+	m.inputHistoryIndex = -1
+	m.inputHistoryDraft = ""
+}
+
+func inputKeyResetsHistoryNavigation(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyRunes, tea.KeySpace, tea.KeyBackspace, tea.KeyDelete:
+		return true
+	default:
+		return false
+	}
 }
 
 func (m *Model) handlePlanExecuteCommand(raw string) bool {

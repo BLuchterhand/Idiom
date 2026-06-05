@@ -59,6 +59,10 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
 			return reject("required_edit_paths_remaining", "required_edit_paths_remaining")
 		}
+		if missing := unresolvedRejectedMutationPaths(results); len(missing) > 0 {
+			acceptance.EvidencePaths = mergeRunnerStateStrings(acceptance.EvidencePaths, missing)
+			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
+		}
 	}
 	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
 		if r != nil && readOnlyDirectAnswerLane(r.RuntimeBrief) && !runnerBriefRequiresMutation(r.RuntimeBrief) {

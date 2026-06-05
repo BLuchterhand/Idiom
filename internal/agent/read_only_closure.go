@@ -193,6 +193,9 @@ func (d ReadOnlyCloseout) AllowsSourceInventoryAnswer(answer string, currentlyAc
 	if looksLikeLineOrientedSourceSnippetAnswer(answer) {
 		return false
 	}
+	if looksLikeDiscoveryEvidenceInventoryNonAnswer(answer) {
+		return false
+	}
 	brief := workerruntime.NormalizeRuntimeBrief(d.Brief)
 	if readOnlyDirectAnswerLane(brief) {
 		return false
@@ -532,26 +535,29 @@ func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
 	if delegatedChildReadOnlyHostCloseoutApplies(brief, agentName, d) {
 		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, d.Results); ok {
 			answer = strings.TrimSpace(answer)
-			if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
+			if hostOwnedCloseoutAnswerIsPresentable(answer) && delegatedSourceFactAddressesObjective(answer, brief.Objective) {
 				return answer, true
 			}
 		}
 		return "", false
 	}
 	if workerruntime.RuntimeContractIsArchitecture(brief.Contract) {
+		if answer, ok := d.PresentableTaskResultAnswer(agentName); ok {
+			return answer, true
+		}
 		packets := readOnlyEvidencePacketsFromResults(d.Results)
 		if len(packets) == 0 {
 			return "", false
 		}
 		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(brief.Objective, packets); ok {
 			answer = strings.TrimSpace(answer)
-			if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
+			if hostOwnedCloseoutAnswerIsPresentable(answer) {
 				return answer, true
 			}
 		}
 		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer("", architectureObjectiveRelatedPackets(brief.Objective, packets)); ok {
 			answer = strings.TrimSpace(answer)
-			if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
+			if hostOwnedCloseoutAnswerIsPresentable(answer) {
 				return answer, true
 			}
 		}
@@ -564,6 +570,23 @@ func (d ReadOnlyCloseout) HostOwnedAnswer(agentName string) (string, bool) {
 		return answer, true
 	}
 	return "", false
+}
+
+func (d ReadOnlyCloseout) PresentableTaskResultAnswer(agentName string) (string, bool) {
+	if output, ok := bestObjectiveAnswerableTaskResultOutput(d.Brief.Objective, d.Results); ok {
+		if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
+			output = normalized
+		}
+		if answer, ok := d.PresentableFallbackCandidate(agentName, output); ok && hostOwnedCloseoutAnswerIsPresentable(answer) {
+			return answer, true
+		}
+	}
+	return "", false
+}
+
+func hostOwnedCloseoutAnswerIsPresentable(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	return answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") && !looksLikeNonAnswerProse(answer)
 }
 
 func delegatedChildReadOnlyHostCloseoutApplies(brief workerruntime.WorkerRuntimeBrief, agentName string, closeout ReadOnlyCloseout) bool {

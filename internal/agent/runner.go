@@ -3338,23 +3338,23 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: eventRole, Content: nudge})
 			}
-				// Rebuild tools so readiness state can affect explicit
-				// mutation/source-refresh contracts. Read-only readiness is
-				// advisory and must not hide or reshape discovery tools.
-				if justBecameReady {
-					rebuildTools()
-				}
-				if strings.HasPrefix(r.agentName(), "child:") &&
-					postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
-					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-						return finish(answer, nil, "delegated_read_only_host_closeout", false)
-					}
+			// Rebuild tools so readiness state can affect explicit
+			// mutation/source-refresh contracts. Read-only readiness is
+			// advisory and must not hide or reshape discovery tools.
+			if justBecameReady {
+				rebuildTools()
+			}
+			if strings.HasPrefix(r.agentName(), "child:") &&
+				postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					return finish(answer, nil, "delegated_read_only_host_closeout", false)
 				}
 			}
-			if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "read_only_no_match_closeout", false)
-				}
+		}
+		if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
+			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+				return finish(answer, nil, "read_only_no_match_closeout", false)
+			}
 			answer, err := controller.completeWithoutMoreToolsWithReason("The latest symbol probe returned no matches after source evidence was already gathered. Tools are now disabled. Answer from the gathered evidence and name any remaining uncertainty after the supported answer.")
 			return finish(answer, err, "read_only_no_match_closeout", true)
 		}
@@ -6652,17 +6652,21 @@ func postReadinessReadOnlyAnswerOnlyContractApplies(brief workerruntime.WorkerRu
 	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
 		return false
 	}
-		if postChildPacketActive && postChildPacketClosureReadyWithBrief(brief, results) {
-			return true
-		}
-		if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) &&
-			workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) {
-			closure := readOnlyClosureDecisionForResults(brief, results)
-			return closure.Answerable()
-		}
-		if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
+	if postChildPacketActive && postChildPacketClosureReadyWithBrief(brief, results) {
+		return true
+	}
+	if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) &&
+		workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) {
+		closure := readOnlyClosureDecisionForResults(brief, results)
+		if !closure.Answerable() {
 			return false
 		}
+		_, ok := closure.HostOwnedAnswer("child:delegated-read-only")
+		return ok
+	}
+	if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
+		return false
+	}
 	closure := readOnlyClosureDecisionForResults(brief, results)
 	if !closure.Answerable() {
 		return false
@@ -17278,7 +17282,6 @@ func childPacketContainsGroundedAnswerEvidence(objective string, output string) 
 		"core files:",
 		"primary files:",
 		"verified context:",
-		"inspected paths:",
 		"evidence used:",
 		"important flow:",
 		"key findings:",
@@ -17621,6 +17624,11 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		return "", false
 	}
 	if answer, ok := synthesizeDelegatedDiscoveryAnswer(objective, sanitizedResults, paths); ok {
+		if !looksLikeNonAnswerProse(answer) {
+			return answer, true
+		}
+	}
+	if answer, ok := synthesizeDelegatedSourceBodyFactsAnswer(objective, sanitizedResults, sourceBodyPaths, paths); ok {
 		return answer, true
 	}
 
@@ -17644,6 +17652,76 @@ func synthesizeDelegatedReadOnlyAnswer(objective string, results []workspace.Too
 		b.WriteString("\n")
 	}
 	return strings.TrimSpace(b.String()), true
+}
+
+func synthesizeDelegatedSourceBodyFactsAnswer(objective string, results []workspace.ToolResult, sourceBodyPaths []string, evidencePaths []string) (string, bool) {
+	sourceBodySet := readOnlyPathSet(sourceBodyPaths)
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Tool) != "read_file" {
+			continue
+		}
+		paths := readPathsFromToolResult(result)
+		if len(paths) == 0 {
+			continue
+		}
+		path := normalizeRunnerPath(paths[0])
+		if _, ok := sourceBodySet[path]; !ok {
+			continue
+		}
+		factAnswer, ok := presentableSourceBodyFactsAnswer(objective, path, result.Output)
+		if !ok || looksLikeNonAnswerProse(factAnswer) {
+			continue
+		}
+		factText := stripPresentableSourceObjectiveEcho(factAnswer)
+		if looksLikeLowValueSourceInventoryFallback(factText) {
+			continue
+		}
+		if strings.TrimSpace(objective) != "" && !delegatedSourceFactAddressesObjective(factText, objective) {
+			continue
+		}
+		var b strings.Builder
+		b.WriteString("The answer is grounded in ")
+		b.WriteString(formatInlinePathList(evidencePaths, 4))
+		b.WriteString(".")
+		if question := delegatedDisplayQuestion(objective); question != "" {
+			b.WriteString(" Use those findings as the source of truth for `")
+			b.WriteString(question)
+			b.WriteString("`.")
+		}
+		b.WriteString("\n\nWhat this establishes:\n")
+		b.WriteString("- ")
+		b.WriteString(factText)
+		b.WriteString("\n")
+		return strings.TrimSpace(b.String()), true
+	}
+	return "", false
+}
+
+func delegatedSourceFactAddressesObjective(factText string, objective string) bool {
+	factText = strings.ToLower(strings.TrimSpace(factText))
+	if factText == "" {
+		return false
+	}
+	for _, term := range recoveryObjectiveSearchWords(objective, 32) {
+		term = singularObjectiveWord(strings.ToLower(strings.TrimSpace(term)))
+		if len(term) < 4 || delegatedSourceFactGenericObjectiveTerm(term) {
+			continue
+		}
+		if strings.Contains(factText, term) {
+			return true
+		}
+	}
+	return false
+}
+
+func delegatedSourceFactGenericObjectiveTerm(term string) bool {
+	switch term {
+	case "internal", "agent", "runner", "source", "evidence", "inspect", "inspected", "path", "paths", "report", "file", "code", "explain", "harness":
+		return true
+	default:
+		return false
+	}
 }
 
 func sanitizeDelegatedReadOnlyResultOutput(result workspace.ToolResult) string {
@@ -18819,6 +18897,11 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 			return "the answer does not satisfy the required evidence contract. Missing: " + strings.Join(missing, ", ") + ". Address each missing obligation in your answer, or use <<QUESTION>>: to state a concrete blocker."
 		}
 		return "the answer does not satisfy the required evidence contract. Address each missing obligation, or use <<QUESTION>>: to state a concrete blocker."
+	case "rejected_mutation_paths_remaining":
+		if missing := unresolvedRejectedMutationPaths(results); len(missing) > 0 {
+			return "the implementation contract is not fulfilled. The model attempted workspace write(s) that were rejected and not later satisfied by successful writes: " + quotedRunnerStrings(missing) + ". Make those intended edits, or report a concrete no-op/blocker with <<QUESTION>>:."
+		}
+		return "the implementation contract is not fulfilled. A rejected workspace write attempt remains unresolved; make the intended edit, or report a concrete no-op/blocker with <<QUESTION>>:."
 	default:
 		return "the final answer did not satisfy the active blocker check; continue with concrete writes or a per-path blocker reason."
 	}
@@ -21222,6 +21305,29 @@ func changedPathsFromToolResults(results []workspace.ToolResult) map[string]stru
 	return paths
 }
 
+func unresolvedRejectedMutationPaths(results []workspace.ToolResult) []string {
+	changed := changedPathsFromToolResults(results)
+	var rejected []string
+	for _, result := range results {
+		if strings.TrimSpace(result.Error) == "" || !workspace.IsWorkspaceWriteTool(result.Tool) {
+			continue
+		}
+		paths := readOnlySourceLikePaths(readPathsFromToolResult(result), 8)
+		paths = mergeRunnerStateStrings(paths, readOnlySourceLikePaths(sourceLikePathsFromText(result.Summary+"\n"+result.Output+"\n"+result.Error, 8), 8))
+		for _, path := range paths {
+			path = normalizeRunnerPath(path)
+			if path == "" {
+				continue
+			}
+			if _, ok := changed[path]; ok {
+				continue
+			}
+			rejected = appendUniqueRunnerStrings(rejected, path)
+		}
+	}
+	return uniqueSortedRunnerPaths(rejected)
+}
+
 func unsupportedClaimedChangedPaths(reply string, results []workspace.ToolResult) []string {
 	claimed := claimedChangedPathsFromAnswer(reply)
 	if len(claimed) == 0 {
@@ -22664,6 +22770,9 @@ func looksLikeNonAnswerProse(answer string) bool {
 	if looksLikeScratchpadLeakedAnswer(trimmed) {
 		return true
 	}
+	if looksLikeRawReadOnlyEvidencePacketAnswer(trimmed) {
+		return true
+	}
 	if looksLikeLowValueSourceInventoryNonAnswer(trimmed) {
 		return true
 	}
@@ -22684,6 +22793,26 @@ func looksLikeNonAnswerProse(answer string) bool {
 		return true
 	}
 	return false
+}
+
+func looksLikeRawReadOnlyEvidencePacketAnswer(answer string) bool {
+	lower := strings.ToLower(strings.TrimSpace(answer))
+	if lower == "" || strings.Contains(lower, "grounded answer:") {
+		return false
+	}
+	packetMarkers := 0
+	for _, marker := range []string{
+		"source-body evidence paths:",
+		"source body paths:",
+		"inspected paths:",
+		"key findings:",
+		"source: delegated read-only evidence packet",
+	} {
+		if strings.Contains(lower, marker) {
+			packetMarkers++
+		}
+	}
+	return packetMarkers >= 1
 }
 
 func looksLikeLeakedImplementationBlockerTemplate(lowerAnswer string) bool {

@@ -165,9 +165,10 @@ type Model struct {
 
 	// inputHistory stores previous user inputs for up/down arrow navigation.
 	// inputHistoryIndex is the current position in inputHistory while navigating.
-	// -1 means not navigating (showing current textarea content).
+	// -1 means not navigating; inputHistoryDraft restores text typed before navigation.
 	inputHistory      []string
 	inputHistoryIndex int
+	inputHistoryDraft string
 
 	messages                       []llama.ChatMessage
 	promptStack                    promptstack.Stack
