@@ -345,6 +345,9 @@ func New(cfg config.Config) *Model {
 	if err := m.reloadPromptStack(); err != nil {
 		m.setContextError("Prompt context failed: " + err.Error())
 	}
+	if err := m.loadInputHistoryFromLogs(); err != nil {
+		m.setContextError("Input history failed: " + err.Error())
+	}
 	m.initDebugLogger()
 	return m
 }

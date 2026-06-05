@@ -181,6 +181,9 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			m.appendHistoryMessage("user", text, nil)
 			if m.featurePlannerPhase != "" {
 				m.sendProductFeaturePlannerTurnAsync(text)
+			} else if m.handleTUIRequestPreflight(text) {
+				// Preflight handled locally; typed slash commands remain the
+				// explicit authority boundary for write-capable lanes.
 			} else {
 				m.sendPromptAsync(text)
 			}
@@ -225,17 +228,6 @@ func (m *Model) handleInputHistoryNavigation(msg tea.KeyMsg) (tea.Cmd, bool) {
 	default:
 		return nil, false
 	}
-}
-
-func (m *Model) recordInputHistory(text string) {
-	text = strings.TrimSpace(text)
-	if text == "" {
-		return
-	}
-	if len(m.inputHistory) == 0 || m.inputHistory[len(m.inputHistory)-1] != text {
-		m.inputHistory = append(m.inputHistory, text)
-	}
-	m.resetInputHistoryNavigation()
 }
 
 func (m *Model) resetInputHistoryNavigation() {

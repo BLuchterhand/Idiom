@@ -150,6 +150,7 @@ func (m *Model) LoadHistoryFromSession(path string) error {
 		return fmt.Errorf("session log %q contained no user/assistant messages", path)
 	}
 	m.messages = append(m.messages, replay.messages...)
+	m.loadInputHistoryFromSessionMessages(replay.messages)
 	m.history.entries = append(m.history.entries, replay.history...)
 	if len(m.history.entries) > 0 {
 		m.history.selected = len(m.history.entries) - 1
