@@ -2,11 +2,13 @@ package app
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 
 	"idiom/internal/llama"
 	"idiom/internal/util"
@@ -56,6 +58,11 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 
 	if m.history.panelOpen && m.history.focused && m.panelTab == panelTabPlan {
 		if handled, cmd := m.handlePlanPanelKey(msg); handled {
+			return cmd, true
+		}
+	}
+	if m.history.panelOpen && m.history.focused && m.panelTab == panelTabDocViewer {
+		if handled, cmd := m.handleDocViewerPanelKey(msg); handled {
 			return cmd, true
 		}
 	}
@@ -181,10 +188,8 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			m.appendHistoryMessage("user", text, nil)
 			if m.featurePlannerPhase != "" {
 				m.sendProductFeaturePlannerTurnAsync(text)
-			} else if m.handleTUIRequestPreflight(text) {
-				// Preflight handled locally; typed slash commands remain the
-				// explicit authority boundary for write-capable lanes.
 			} else {
+				m.updateTUIRequestStatus(text)
 				m.sendPromptAsync(text)
 			}
 		}
@@ -306,12 +311,212 @@ func (m *Model) handleImplementCommand(raw string) bool {
 }
 
 func (m *Model) handleMouse(msg tea.MouseMsg) (tea.Cmd, bool) {
-	if m.history.panelOpen && msg.X >= m.viewport.Width+1 {
-		m.history.viewport, _ = m.history.viewport.Update(msg)
+	if m.history.panelOpen && msg.X >= m.panelStartX() {
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			if m.handlePanelClick(msg) {
+				return m.waitForEventCmd(), true
+			}
+		}
+		m.updateActivePanelViewport(msg)
 	} else {
+		if msg.Button == tea.MouseButtonLeft && msg.Action == tea.MouseActionPress {
+			m.history.focused = false
+			m.rerenderActivePanel()
+		}
 		m.updateViewport(msg)
 	}
 	return m.waitForEventCmd(), true
+}
+
+func (m *Model) panelStartX() int {
+	if m == nil {
+		return 0
+	}
+	return m.viewport.Width + 1
+}
+
+func (m *Model) handlePanelClick(msg tea.MouseMsg) bool {
+	panelX := msg.X - m.panelStartX()
+	panelY := msg.Y - 2 // header row and top divider sit above the content row.
+	if panelX < 0 || panelY < 0 {
+		return false
+	}
+	if panelY == 0 {
+		tab, ok := m.panelTabAtX(panelX)
+		if !ok {
+			return false
+		}
+		m.panelTab = tab
+		m.history.focused = true
+		if m.panelTab == panelTabSessions {
+			m.refreshSessionsList()
+		}
+		m.rerenderActivePanel()
+		return true
+	}
+	m.history.focused = true
+	return m.handleActivePanelContentClick(panelY - 1)
+}
+
+func (m *Model) panelTabAtX(x int) (int, bool) {
+	if x < 0 {
+		return 0, false
+	}
+	labels := m.panelTabLabels()
+	offset := 0
+	for _, tab := range labels {
+		width := lipgloss.Width(" " + tab.label + " ")
+		if x >= offset && x < offset+width {
+			return tab.idx, true
+		}
+		offset += width
+	}
+	return 0, false
+}
+
+type panelTabLabel struct {
+	idx   int
+	label string
+}
+
+func (m *Model) panelTabLabels() []panelTabLabel {
+	planLabel := "Plan"
+	if checked, total := m.planCheckboxCounts(); total > 0 {
+		planLabel = fmt.Sprintf("Plan · %d/%d", checked, total)
+	}
+	return []panelTabLabel{
+		{panelTabHistory, "History"},
+		{panelTabPlan, planLabel},
+		{panelTabDocViewer, "Doc Viewer"},
+		{panelTabSessions, "Sessions"},
+	}
+}
+
+func (m *Model) handleActivePanelContentClick(row int) bool {
+	if row < 0 {
+		return false
+	}
+	switch m.panelTab {
+	case panelTabPlan:
+		return m.handlePlanPanelClick(row)
+	case panelTabDocViewer:
+		return m.handleDocViewerPanelClick(row)
+	case panelTabSessions:
+		return m.handleSessionsPanelClick(row)
+	default:
+		return m.handleHistoryPanelClick(row)
+	}
+}
+
+func (m *Model) updateActivePanelViewport(msg tea.Msg) {
+	switch m.panelTab {
+	case panelTabPlan:
+		m.planViewport, _ = m.planViewport.Update(msg)
+	case panelTabDocViewer:
+		m.docViewer.viewport, _ = m.docViewer.viewport.Update(msg)
+	case panelTabSessions:
+		m.sessions.viewport, _ = m.sessions.viewport.Update(msg)
+	default:
+		m.history.viewport, _ = m.history.viewport.Update(msg)
+	}
+}
+
+func (m *Model) handleHistoryPanelClick(row int) bool {
+	return false
+}
+
+func (m *Model) handlePlanPanelClick(row int) bool {
+	if m.plan.overlayID != "" {
+		return false
+	}
+	sourceLine := row + m.planViewport.YOffset - 1 // plan viewport row 0 is the panel title.
+	items := m.currentPlanItems()
+	idx := -1
+	for i, item := range items {
+		if item.LineIdx == sourceLine {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	m.plan.cursor = idx
+	if m.openPlanDiffOverlay() {
+		m.planViewport.GotoTop()
+	} else {
+		m.status = "No diff attached to this item."
+	}
+	m.renderPlanPanelContent()
+	return true
+}
+
+func (m *Model) handleDocViewerPanelClick(row int) bool {
+	line := viewportLineAt(m.docViewer.viewport.View(), row)
+	idx, ok := docViewerEditIndexFromLine(line)
+	if !ok {
+		return false
+	}
+	artifact, _, _ := m.loadDocViewerArtifact()
+	if idx < 0 || idx >= len(artifact.Edits) {
+		return false
+	}
+	if m.docViewer.expanded == nil {
+		m.docViewer.expanded = make(map[int]bool)
+	}
+	m.docViewer.cursor = idx
+	m.docViewer.expanded[idx] = !m.docViewer.expanded[idx]
+	m.renderDocViewerPanelContent()
+	return true
+}
+
+func (m *Model) handleSessionsPanelClick(row int) bool {
+	line := viewportLineAt(m.sessions.viewport.View(), row)
+	idx := -1
+	for i, session := range m.sessions.list {
+		if session.ID != "" && strings.Contains(line, session.ID) {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return false
+	}
+	m.sessions.cursor = idx
+	m.resumeSelectedSession()
+	m.renderSessionsPanelContent()
+	return true
+}
+
+func docViewerEditIndexFromLine(line string) (int, bool) {
+	start := strings.Index(line, "Edit ")
+	if start < 0 {
+		return 0, false
+	}
+	rest := line[start+len("Edit "):]
+	end := 0
+	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+		end++
+	}
+	if end == 0 {
+		return 0, false
+	}
+	n, err := strconv.Atoi(rest[:end])
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	return n - 1, true
+}
+
+func viewportLineAt(view string, row int) string {
+	if row < 0 {
+		return ""
+	}
+	lines := strings.Split(view, "\n")
+	if row >= len(lines) {
+		return ""
+	}
+	return lines[row]
 }
 
 func (m *Model) handleSpinnerTick(msg spinner.TickMsg) (tea.Cmd, bool) {

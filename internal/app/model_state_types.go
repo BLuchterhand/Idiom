@@ -23,6 +23,17 @@ type planState struct {
 	cachedItems           []planItemMeta
 }
 
+type docViewerState struct {
+	viewport      viewport.Model
+	cursor        int
+	expanded      map[int]bool
+	artifactPath  string
+	artifactMTime time.Time
+	artifact      workspace.PlanArtifact
+	loadError     string
+	loaded        bool
+}
+
 type sessionsState struct {
 	viewport      viewport.Model
 	list          []SessionInfo

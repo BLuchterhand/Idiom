@@ -23,10 +23,11 @@ import (
 var planCommentRe = regexp.MustCompile(`\s*<!--[^>]*-->`)
 
 const (
-	panelTabHistory  = 0
-	panelTabPlan     = 1
-	panelTabSessions = 2
-	panelTabCount    = 3
+	panelTabHistory   = 0
+	panelTabPlan      = 1
+	panelTabDocViewer = 2
+	panelTabSessions  = 3
+	panelTabCount     = 4
 )
 
 // planDirName is the directory (relative to workspace root) where per-session
@@ -373,22 +374,8 @@ type planEditorDoneMsg struct {
 // renderPanelTabs builds the header strip that sits above the active tab's
 // content. Active tab is highlighted; inactive tabs render dim.
 func (m *Model) renderPanelTabs(width int) string {
-	planLabel := "Plan"
-	if checked, total := m.planCheckboxCounts(); total > 0 {
-		planLabel = fmt.Sprintf("Plan · %d/%d", checked, total)
-	}
-
-	tabs := []struct {
-		idx   int
-		label string
-	}{
-		{panelTabHistory, "History"},
-		{panelTabPlan, planLabel},
-		{panelTabSessions, "Sessions"},
-	}
-
 	var rendered []string
-	for _, t := range tabs {
+	for _, t := range m.panelTabLabels() {
 		label := " " + t.label + " "
 		if t.idx == m.panelTab {
 			rendered = append(rendered, panelTabActiveStyle.Render(label))
@@ -410,6 +397,8 @@ func (m *Model) activePanelViewport() viewport.Model {
 	switch m.panelTab {
 	case panelTabPlan:
 		return m.planViewport
+	case panelTabDocViewer:
+		return m.docViewer.viewport
 	case panelTabSessions:
 		return m.sessions.viewport
 	default:
@@ -423,6 +412,8 @@ func (m *Model) rerenderActivePanel() {
 	switch m.panelTab {
 	case panelTabPlan:
 		m.renderPlanPanelContent()
+	case panelTabDocViewer:
+		m.renderDocViewerPanelContent()
 	case panelTabSessions:
 		m.renderSessionsPanelContent()
 	default:

@@ -232,16 +232,17 @@ type Model struct {
 	summaryClient     llama.LLMClient
 	summaryController *llama.ServerController
 
-	panelTab      int // panelTabHistory | panelTabPlan
+	panelTab      int // panelTabHistory | panelTabPlan | panelTabDocViewer | panelTabSessions
 	planViewport  viewport.Model
 	planPath      string
 	planMTime     time.Time
 	planContent   string
 	planLoadError string
 
-	plan     planState
-	sessions sessionsState
-	history  historyState
+	plan      planState
+	docViewer docViewerState
+	sessions  sessionsState
+	history   historyState
 
 	// pendingExec carries a tea.Cmd (typically tea.ExecProcess) that a slash
 	// command wants to run, but can't dispatch itself because handleSlashCommand
@@ -810,6 +811,8 @@ func (m *Model) resize() {
 		m.history.viewport.Height = panelContentHeight
 		m.planViewport.Width = panelWidth
 		m.planViewport.Height = panelContentHeight
+		m.docViewer.viewport.Width = panelWidth
+		m.docViewer.viewport.Height = panelContentHeight
 		m.sessions.viewport.Width = panelWidth
 		m.sessions.viewport.Height = panelContentHeight
 	}
