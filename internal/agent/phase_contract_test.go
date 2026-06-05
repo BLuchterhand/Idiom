@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/contractcompile"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/workspace"
 )
@@ -372,6 +373,35 @@ func TestPlanExecutePlannerAuthorityProjectionParity(t *testing.T) {
 
 			textualAllowed := runnerPlanExecuteTextualAllowedTools(nil, tt.brief, tt.results)
 			assertEqualSet(t, textualAllowed, tt.wantTools)
+
+			input, ok := runnerPlanExecutePlannerInput(tt.brief, tt.results, contract, RunPolicy{}, false, contract.ContractID)
+			if !ok {
+				t.Fatal("expected planner compiler input")
+			}
+			compiled, err := contractcompile.CompilePlanExecutePlanner(input)
+			if err != nil {
+				t.Fatalf("compile planner contract: %v", err)
+			}
+			assertEqualSet(t, compiled.Protocol.VisibleTools, contract.AllowedTools)
+			assertEqualSet(t, compiled.Protocol.CallableTools, contract.ActionPolicy.CallableToolNames)
+			assertEqualSet(t, compiled.Protocol.CallableActionClasses, contract.ActionPolicy.AllowedActionClasses)
+			assertEqualSet(t, compiled.Protocol.InvalidActionClasses, contract.ActionPolicy.InvalidActionClasses)
+			assertEqualSet(t, compiled.Protocol.TerminalResponseShapes, contract.ActionPolicy.TerminalResponseShapes)
+			assertEqualSet(t, compiled.Protocol.SourceBodyObligations, input.Protocol.SourceBodyObligations)
+
+			protocol, ok := (&Runner{}).compileModelProtocolProjection(tt.brief, tt.results, contract, RunPolicy{}, false)
+			if !ok {
+				t.Fatal("expected model protocol projection")
+			}
+			if protocol.PhaseID != contract.PhaseID {
+				t.Fatalf("model protocol PhaseID = %q, want %q", protocol.PhaseID, contract.PhaseID)
+			}
+			assertEqualSet(t, protocol.VisibleTools, contract.AllowedTools)
+			assertEqualSet(t, protocol.CallableTools, contract.ActionPolicy.CallableToolNames)
+			assertEqualSet(t, protocol.CallableActionClasses, contract.ActionPolicy.AllowedActionClasses)
+			assertEqualSet(t, protocol.InvalidActionClasses, contract.ActionPolicy.InvalidActionClasses)
+			assertEqualSet(t, protocol.TerminalResponseShapes, contract.ActionPolicy.TerminalResponseShapes)
+			assertEqualSet(t, protocol.SourceBodyObligations, input.Protocol.SourceBodyObligations)
 		})
 	}
 }

@@ -27,6 +27,37 @@ func TestAtomIntakeDispatchablePlannedScope(t *testing.T) {
 	}
 }
 
+func TestAtomIntakeCanonicalizesAbsoluteInRootScope(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "src"), 0o755); err != nil {
+		t.Fatalf("mkdir src: %v", err)
+	}
+	absPath := filepath.Join(root, "src", "foo.go")
+	if err := os.WriteFile(absPath, []byte("package src\n"), 0o644); err != nil {
+		t.Fatalf("write foo: %v", err)
+	}
+	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: planned\n\n## Scope\n\n- `"+absPath+"`\n")
+
+	report, code, stderr := runAtomIntakeJSONForTest(t, root, specPath)
+	if code != 0 {
+		t.Fatalf("expected dispatchable exit 0, got %d stderr=%s report=%+v", code, stderr, report)
+	}
+	if report.State != StateDispatchable || !report.Dispatchable {
+		t.Fatalf("unexpected report: %+v", report)
+	}
+	if !reflect.DeepEqual(report.ScopePaths, []string{"src/foo.go"}) {
+		t.Fatalf("scope paths=%#v, want [src/foo.go]", report.ScopePaths)
+	}
+	if !reflect.DeepEqual(report.Existing, []string{"src/foo.go"}) {
+		t.Fatalf("existing paths=%#v, want [src/foo.go]", report.Existing)
+	}
+	for _, path := range append(append([]string(nil), report.ScopePaths...), report.Existing...) {
+		if filepath.IsAbs(path) {
+			t.Fatalf("accepted atom scope path must be workspace-relative, got %q", path)
+		}
+	}
+}
+
 func TestAtomIntakeRefusesAcceptedStatusBeforeScopeDetails(t *testing.T) {
 	root := t.TempDir()
 	specPath := writeAtomSpec(t, root, "spec.md", "# Atom\n\nStatus: accepted\n")

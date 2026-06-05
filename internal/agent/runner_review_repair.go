@@ -62,15 +62,44 @@ func planThenExecuteReviewRepairFailedPhaseObligations(brief workerruntime.Worke
 }
 
 func reviewRepairPhaseEvidencePacket(objective string) []string {
+	evidence := reviewRepairPhaseEvidenceFromObjective(objective)
+	if evidence == "" {
+		return nil
+	}
+	return []string{"phase_evidence_bundle:\n" + evidence}
+}
+
+func reviewRepairTrustedPhaseEvidence(brief workerruntime.WorkerRuntimeBrief) string {
+	if evidence := reviewRepairPhaseEvidenceFromObjective(brief.Objective); evidence != "" {
+		return evidence
+	}
+	for _, packet := range brief.TargetPacket {
+		packet = strings.TrimSpace(packet)
+		if !strings.HasPrefix(packet, "phase_evidence_bundle:") {
+			continue
+		}
+		evidence := strings.TrimSpace(strings.TrimPrefix(packet, "phase_evidence_bundle:"))
+		if evidence == "" {
+			continue
+		}
+		if len(evidence) > 12000 {
+			evidence = evidence[:12000]
+		}
+		return evidence
+	}
+	return ""
+}
+
+func reviewRepairPhaseEvidenceFromObjective(objective string) string {
 	const heading = "## Phase Evidence Bundle"
 	idx := strings.Index(objective, heading)
 	if idx < 0 {
-		return nil
+		return ""
 	}
 	afterHeading := objective[idx+len(heading):]
 	fenceStart := strings.Index(afterHeading, "```")
 	if fenceStart < 0 {
-		return nil
+		return ""
 	}
 	afterFence := afterHeading[fenceStart+len("```"):]
 	if lineEnd := strings.Index(afterFence, "\n"); lineEnd >= 0 {
@@ -78,16 +107,16 @@ func reviewRepairPhaseEvidencePacket(objective string) []string {
 	}
 	fenceEnd := strings.Index(afterFence, "```")
 	if fenceEnd < 0 {
-		return nil
+		return ""
 	}
 	evidence := strings.TrimSpace(afterFence[:fenceEnd])
 	if evidence == "" {
-		return nil
+		return ""
 	}
 	if len(evidence) > 12000 {
 		evidence = evidence[:12000]
 	}
-	return []string{"phase_evidence_bundle:\n" + evidence}
+	return evidence
 }
 
 func planThenExecuteReviewRepairAnswerDeclaresBlocker(answer string) bool {

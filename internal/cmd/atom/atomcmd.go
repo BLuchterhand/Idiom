@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"idiom/internal/plancontract"
 	"idiom/internal/refinescope"
 	"idiom/internal/util"
 )
@@ -178,6 +179,7 @@ func EvaluateIntake(specBody, specPath, projectRoot string, allowDirty bool, sco
 		return report
 	}
 	report.Existing, report.Missing, report.Invalid, report.InvalidReasons = classifyAtomScopePaths(projectRoot, scopePaths)
+	report.ScopePaths = append(append([]string(nil), report.Existing...), report.Missing...)
 	if len(scopePaths) == 0 {
 		report.State = StateMissingScope
 		report.Reasons = append(report.Reasons, "spec does not expose any scoped file paths")
@@ -196,7 +198,7 @@ func EvaluateIntake(specBody, specPath, projectRoot string, allowDirty bool, sco
 		report.NextActions = append(report.NextActions, "refresh the atom status/tracker before dispatch")
 		return report
 	}
-	editEval := atomEvaluateRequiredEditSnippets(specBody, projectRoot, report.Existing, scopePaths)
+	editEval := atomEvaluateRequiredEditSnippets(specBody, projectRoot, report.Existing, report.ScopePaths)
 	if editEval.SourceSatisfied() {
 		report.State = StateSourceSatisfied
 		report.Reasons = append(report.Reasons, "all required edit snippets already appear in scoped source files")
@@ -212,7 +214,7 @@ func EvaluateIntake(specBody, specPath, projectRoot string, allowDirty bool, sco
 		return report
 	}
 	if editEval.SnippetCount == 0 {
-		currentStateEval := atomEvaluateCurrentStateSourceSatisfied(specBody, projectRoot, report.Existing, scopePaths)
+		currentStateEval := atomEvaluateCurrentStateSourceSatisfied(specBody, projectRoot, report.Existing, report.ScopePaths)
 		if currentStateEval.SourceSatisfied() {
 			report.State = StateSourceSatisfied
 			report.Reasons = append(report.Reasons, "current source covers the atom's current-state anchored scope")
@@ -222,7 +224,7 @@ func EvaluateIntake(specBody, specPath, projectRoot string, allowDirty bool, sco
 		}
 	}
 	if !allowDirty {
-		report.Dirty = dirtyAtomScopePaths(projectRoot, scopePaths)
+		report.Dirty = dirtyAtomScopePaths(projectRoot, report.ScopePaths)
 		if len(report.Dirty) > 0 {
 			report.State = StateBlockedDirty
 			report.Reasons = append(report.Reasons, "existing scoped paths have uncommitted changes")
@@ -1258,21 +1260,21 @@ func atomEditSnippetContiguousMatchesContent(content string, snippet string) boo
 
 func classifyAtomScopePaths(projectRoot string, paths []string) (existing []string, missing []string, invalid []string, invalidReasons map[string]string) {
 	for _, path := range paths {
-		fullPath, ok := atomScopeFullPath(projectRoot, path)
+		scopePath, fullPath, ok := atomScopePath(projectRoot, path)
 		if !ok {
 			invalidReasons = atomRecordInvalidScopeReason(invalidReasons, path, InvalidScopeOutsideProjectRoot)
 			invalid = append(invalid, path)
 			continue
 		}
 		if _, err := os.Stat(fullPath); err == nil {
-			existing = append(existing, path)
+			existing = append(existing, scopePath)
 		} else if os.IsNotExist(err) {
-			if atomScopeMissingPathLooksLikeBareShorthand(path) {
+			if atomScopeMissingPathLooksLikeBareShorthand(scopePath) {
 				invalidReasons = atomRecordInvalidScopeReason(invalidReasons, path, InvalidScopeAmbiguousBareShorthand)
 				invalid = append(invalid, path)
 				continue
 			}
-			missing = append(missing, path)
+			missing = append(missing, scopePath)
 		}
 	}
 	return existing, missing, invalid, invalidReasons
@@ -1379,17 +1381,38 @@ func ParseGitPorcelainPath(line string) string {
 }
 
 func atomScopeFullPath(projectRoot, path string) (string, bool) {
+	_, fullPath, ok := atomScopePath(projectRoot, path)
+	return fullPath, ok
+}
+
+func atomScopePath(projectRoot, path string) (string, string, bool) {
 	if filepath.IsAbs(path) {
 		if !pathWithinRoot(projectRoot, path) {
-			return "", false
+			return "", "", false
 		}
-		return path, true
+		root, err := filepath.Abs(projectRoot)
+		if err != nil {
+			return "", "", false
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return "", "", false
+		}
+		scopePath := plancontract.NormalizeScopePath(filepath.ToSlash(rel))
+		if scopePath == "" {
+			return "", "", false
+		}
+		return scopePath, filepath.Join(projectRoot, filepath.FromSlash(scopePath)), true
 	}
-	fullPath := filepath.Join(projectRoot, filepath.FromSlash(path))
+	scopePath := plancontract.NormalizeScopePath(path)
+	if scopePath == "" {
+		return "", "", false
+	}
+	fullPath := filepath.Join(projectRoot, filepath.FromSlash(scopePath))
 	if !pathWithinRoot(projectRoot, fullPath) {
-		return "", false
+		return "", "", false
 	}
-	return fullPath, true
+	return scopePath, fullPath, true
 }
 
 func pathWithinRoot(projectRoot, path string) bool {

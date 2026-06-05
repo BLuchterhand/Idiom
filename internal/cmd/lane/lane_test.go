@@ -163,10 +163,11 @@ func TestRunLaneMainPlanExecuteForwardsRequiredEditPathsFromBrief(t *testing.T) 
 func TestRunLaneMainPlanExecuteForwardsAtomIntakeScopePaths(t *testing.T) {
 	root := t.TempDir()
 	briefPath := filepath.Join(root, "atom.md")
+	absFooPath := filepath.Join(root, "src", "foo.go")
 	brief := "# Atom\n\n" +
 		"Status: pending\n\n" +
 		"## Scope\n\n" +
-		"- `src/foo.go`\n" +
+		"- `" + absFooPath + "`\n" +
 		"- `.planning/tracker.md`\n\n" +
 		"## Acceptance\n\n" +
 		"- The lane reaches the fake runner.\n"

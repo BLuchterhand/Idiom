@@ -2026,7 +2026,10 @@ func reviewRepairTerminalProbeTool(tool string) bool {
 }
 
 func reviewRepairNoopSubmitPlanEvidencePassCloseout(brief workerruntime.WorkerRuntimeBrief) (string, bool) {
-	evidence := strings.ToLower(brief.Objective + "\n" + strings.Join(brief.TargetPacket, "\n"))
+	evidence := strings.ToLower(reviewRepairTrustedPhaseEvidence(brief))
+	if evidence == "" {
+		return "", false
+	}
 	for _, required := range []string{
 		"phase: review_repair",
 		"submitted_plan_state:",
