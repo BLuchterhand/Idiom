@@ -850,6 +850,9 @@ func (m *Model) desiredInputHeight() int {
 
 func (m *Model) footerLineCount() int {
 	count := 0
+	if m.operatorStatusText(m.width) != "" {
+		count++
+	}
 	if m.currentApproval() != nil {
 		count++
 	}

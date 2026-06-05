@@ -186,6 +186,35 @@ func TestRenderMessagesSpinnerDoesNotDuplicateWithEmptyAssistant(t *testing.T) {
 	}
 }
 
+func TestRenderMessagesUsesActiveEvidenceInsteadOfGenericSpinner(t *testing.T) {
+	m := newRenderModel(t)
+	m.cfg.TUI.EvidencePanel = true
+	m.streaming = true
+	m.messages = []llama.ChatMessage{
+		{Role: "user", Content: "inspect the status rendering"},
+	}
+	m.turnEvidence = &turnEvidence{
+		expanded: true,
+		tools: []evidenceRow{{
+			step:     1,
+			toolName: "read_file",
+			target:   "internal/app/rendering.go",
+			running:  true,
+			glyph:    "…",
+		}},
+	}
+
+	m.renderMessages(true)
+
+	view := m.viewport.View()
+	if !strings.Contains(view, "rendering.go") {
+		t.Fatalf("expected live tool evidence to stay visible, got:\n%s", view)
+	}
+	if strings.Contains(view, "Qwen is preparing a response") {
+		t.Fatalf("generic spinner should not render below active evidence, got:\n%s", view)
+	}
+}
+
 func TestRenderMessagesDoesNotDuplicateAssistantReply(t *testing.T) {
 	// Direct regression test for the reported bug: given the m.messages
 	// shape the fixed turn bookkeeping produces ([user, assistant]), the

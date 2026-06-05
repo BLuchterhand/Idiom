@@ -65,6 +65,60 @@ func TestViewOmitsCompactContextFooterBelowInput(t *testing.T) {
 	}
 }
 
+func TestViewRendersStatusAboveInput(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	m := New(cfg)
+	defer m.Close()
+	m.ready = true
+	m.width = 80
+	m.height = 12
+	m.status = "Plan updated: ./.idiom/plans/last.plan.json"
+	m.viewport = viewport.New(80, 4)
+	m.input.SetHeight(1)
+	m.input.SetValue("next prompt")
+
+	view := m.View()
+	if !strings.Contains(view, "Plan updated: ./.idiom/plans/last.plan.json") {
+		t.Fatalf("view should render operator status, got:\n%s", view)
+	}
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if len(lines) < 2 {
+		t.Fatalf("expected status and input rows, got:\n%s", view)
+	}
+	if !strings.Contains(lines[len(lines)-2], "Plan updated:") {
+		t.Fatalf("status should render immediately above input, got:\n%s", view)
+	}
+	if !strings.Contains(lines[len(lines)-1], "next prompt") {
+		t.Fatalf("input should remain the bottom normal-state row, got:\n%s", view)
+	}
+}
+
+func TestResizeAccountsForStatusLine(t *testing.T) {
+	cfg := config.Default()
+	cfg.Chat.DebugLogDir = ""
+	cfg.Chat.SystemPromptFiles = nil
+	cfg.Chat.DefaultProfiles = nil
+	m := New(cfg)
+	defer m.Close()
+	m.width = 80
+	m.height = 14
+	m.status = "Server up."
+
+	m.resize()
+	view := m.View()
+
+	lines := strings.Split(strings.TrimRight(view, "\n"), "\n")
+	if got := len(lines); got != m.height {
+		t.Fatalf("view height = %d, want terminal height %d:\n%s", got, m.height, view)
+	}
+	if !strings.Contains(lines[len(lines)-2], "Server up.") {
+		t.Fatalf("status should consume one accounted row above input, got:\n%s", view)
+	}
+}
+
 func TestResizeUsesFullTerminalHeightWithoutFooter(t *testing.T) {
 	cfg := config.Default()
 	cfg.Chat.DebugLogDir = ""

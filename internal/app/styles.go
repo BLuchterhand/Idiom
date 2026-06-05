@@ -49,8 +49,9 @@ var (
 // ── Footer ────────────────────────────────────────────────────────────────────
 
 var (
-	approvalStyle = lipgloss.NewStyle().Bold(true).Foreground(colorWarningFg).Background(colorWarningBg).Padding(0, 1)
-	errorStyle    = lipgloss.NewStyle().Bold(true).Foreground(colorErrorFg).Background(colorErrorBg).Padding(0, 1)
+	approvalStyle   = lipgloss.NewStyle().Bold(true).Foreground(colorWarningFg).Background(colorWarningBg).Padding(0, 1)
+	errorStyle      = lipgloss.NewStyle().Bold(true).Foreground(colorErrorFg).Background(colorErrorBg).Padding(0, 1)
+	statusLineStyle = lipgloss.NewStyle().Foreground(colorDim).Padding(0, 1)
 )
 
 // ── History panel ─────────────────────────────────────────────────────────────

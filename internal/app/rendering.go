@@ -52,6 +52,7 @@ func (m *Model) View() string {
 	}
 
 	footer := strings.Join(footerLines, "\n")
+	statusLine := m.operatorStatusLine(w)
 
 	// ── Content row: main viewport + optional side panel (tabbed) ────────────
 	var contentRow string
@@ -73,7 +74,11 @@ func (m *Model) View() string {
 		contentRow = m.viewport.View()
 	}
 
-	parts := []string{header, divider, contentRow, divider, m.input.View()}
+	parts := []string{header, divider, contentRow, divider}
+	if statusLine != "" {
+		parts = append(parts, statusLine)
+	}
+	parts = append(parts, m.input.View())
 
 	// Slash-command suggestion popup — floats above the input area.
 	if m.slashSuggestions.visible && len(m.slashSuggestions.matches) > 0 {
@@ -91,6 +96,40 @@ func (m *Model) View() string {
 		view = lipgloss.JoinVertical(lipgloss.Left, view, popup)
 	}
 	return view
+}
+
+func (m *Model) operatorStatusLine(width int) string {
+	text := m.operatorStatusText(width)
+	if text == "" {
+		return ""
+	}
+	return statusLineStyle.Render(text)
+}
+
+func (m *Model) operatorStatusText(width int) string {
+	status := strings.TrimSpace(m.status)
+	if status == "" {
+		return ""
+	}
+	available := max(1, width-2)
+	hint := m.operatorHintText()
+	if hint != "" && available >= 72 {
+		status = status + " · " + hint
+	}
+	return truncateText(status, available)
+}
+
+func (m *Model) operatorHintText() string {
+	if m.history.panelOpen {
+		if m.history.focused {
+			return "Esc unfocus · Ctrl+T tabs"
+		}
+		return "Tab focus · Ctrl+T tabs"
+	}
+	if m.streaming {
+		return "working · Ctrl+C quits"
+	}
+	return "/help commands · Ctrl+B panel · Ctrl+S save"
 }
 
 func (m *Model) requestMessages() []llama.ChatMessage {
@@ -528,8 +567,11 @@ func (m *Model) renderMessages(forceBottom bool) {
 		b.WriteString(renderActiveContainer(m.turnEvidence, width, maxContainerRows, m.streaming))
 	}
 
-	// Streaming spinner below everything.
-	if m.streaming {
+	// Streaming spinner below everything, unless the live evidence container
+	// already has the turn's current progress. Keeping the extra assistant
+	// block below tool rows makes sticky-bottom scrolling hide the useful
+	// tool target behind generic "Qwen is..." text.
+	if m.streaming && !m.activeEvidenceContainerVisible() {
 		label := assistantLabelStyle.Render("Qwen")
 		content := m.spinner.View() + " " + m.streamingBusyText()
 		if b.Len() > 0 {
@@ -548,6 +590,10 @@ func (m *Model) renderMessages(forceBottom bool) {
 	if stickBottom {
 		m.viewport.GotoBottom()
 	}
+}
+
+func (m *Model) activeEvidenceContainerVisible() bool {
+	return m != nil && m.cfg.TUI.EvidencePanel && m.turnEvidence != nil && len(m.turnEvidence.tools) > 0
 }
 
 // cachedMessageRender returns the rendered body for a single message, using
