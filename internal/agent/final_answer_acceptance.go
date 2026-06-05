@@ -67,7 +67,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 		return reject("user_visible_blocker", "user_visible_blocker")
 	}
-	if looksLikeNonAnswerProse(answer) {
+	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r) {
 		return reject("non_answer_prose", "non_answer_prose")
 	}
 	if r != nil {
@@ -92,6 +92,25 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 	}
 	return acceptance
+}
+
+func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance, answer string, r *Runner) bool {
+	if r == nil || !looksLikeLowValueSourceInventoryNonAnswer(answer) {
+		return false
+	}
+	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
+	if readOnlyDirectAnswerLane(brief) {
+		return false
+	}
+	if !finalAnswerAcceptanceAllowsArchitectureSourceInventory(brief) {
+		return false
+	}
+	return acceptance.Decision == finalAnswerAcceptanceAccepted
+}
+
+func finalAnswerAcceptanceAllowsArchitectureSourceInventory(brief workerruntime.WorkerRuntimeBrief) bool {
+	return workerruntime.RuntimeContractIsArchitecture(brief.Contract) ||
+		workerruntime.TaskFamilyIsArchitecture(brief.TaskFamily)
 }
 
 type readOnlyDirectAnswerRelevance struct {

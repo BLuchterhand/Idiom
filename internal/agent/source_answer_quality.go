@@ -101,3 +101,14 @@ func looksLikeLowValueSourceInventoryFallback(answer string) bool {
 		(stats.Definitions >= 2 && stats.Returns >= 1) ||
 		(stats.Definitions >= 1 && stats.Calls+stats.Sets >= 2)
 }
+
+func looksLikeLowValueSourceInventoryNonAnswer(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "clearest inspected implementation anchor") &&
+		looksLikeInspectedBodySourceInventory(lower) {
+		return true
+	}
+	return (looksLikePathShowsSourceInventory(lower) || looksLikeInspectedBodySourceInventory(lower)) &&
+		looksLikeLowValueSourceInventoryFallback(trimmed)
+}

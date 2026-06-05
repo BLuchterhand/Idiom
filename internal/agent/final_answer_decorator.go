@@ -25,6 +25,10 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	if answer == "" || !input.UserFacing {
 		return answer
 	}
+	agentName := "main"
+	if r != nil {
+		agentName = r.agentName()
+	}
 	present := func(candidate string) string {
 		return presentableFinalAnswerForUser(input.Brief, input.Results, candidate)
 	}
@@ -47,10 +51,14 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 	}
 	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
 		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
-			return present(presentable)
+			if checked, ok := presentableOrReadOnlyNonAnswerReplacement(agentName, input.Brief, input.Results, presentable); ok {
+				return present(checked)
+			}
 		}
 		if conversationFallbackShouldAvoidSourceBody(input.Brief) {
-			return present(synthesizeBriefConversationFallback(input.Brief, input.Results))
+			if checked, ok := presentableBriefConversationFallbackCandidate(agentName, input.Brief, input.Results); ok {
+				return present(checked)
+			}
 		}
 	}
 	if finalAnswerStopReasonPreservesUncertainty(input.StopReason) &&
@@ -68,7 +76,9 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 		return present(composed)
 	}
 	if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
-		return present(presentable)
+		if checked, ok := presentableOrReadOnlyNonAnswerReplacement(agentName, input.Brief, input.Results, presentable); ok {
+			return present(checked)
+		}
 	}
 	return present(answer)
 }
@@ -580,7 +590,7 @@ func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, resu
 		return "", false
 	}
 	objective := strings.TrimSpace(delegatedDisplayQuestion(brief.Objective))
-	if objective == "" || !readOnlyClosureDecisionForResults(brief, results).Answerable() {
+	if objective == "" {
 		return "", false
 	}
 	for i := len(results) - 1; i >= 0; i-- {
@@ -1197,7 +1207,13 @@ func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results
 	b.WriteString(" The inspected body shows that it ")
 	b.WriteString(joinFallbackFacts(facts))
 	b.WriteString(".")
-	return strings.TrimSpace(b.String()), true
+	answer := strings.TrimSpace(b.String())
+	if readOnlyDirectAnswerLane(brief) &&
+		objectiveAsksImplementationShape(brief.Objective) &&
+		looksLikeLowValueSourceInventoryNonAnswer(answer) {
+		return "", false
+	}
+	return answer, true
 }
 
 func presentableImplementationShapeAnswerFromClaim(objective string, path string, symbol string, claim string) (string, bool) {
@@ -2044,6 +2060,10 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 			return prose
 		}
 	}
+	return synthesizeBriefConversationUncertaintyFallback(brief, results)
+}
+
+func synthesizeBriefConversationUncertaintyFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
 	// Collect inspected paths for context.
 	var inspectedPaths []string
 	var anchors []string

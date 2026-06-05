@@ -1306,7 +1306,7 @@ func (r *Runner) Run(
 				}
 				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 				if preflight.ForceAnswer.Reason == "conversation_evidence_sufficient" {
-					if presentable, ok := presentableNoToolsFallbackAnswer(r.RuntimeBrief, collectedResults, "The retained source context identifies the relevant implementation surface."); ok {
+					if presentable, ok := presentableFallbackCandidate(r.agentName(), r.RuntimeBrief, collectedResults, "The retained source context identifies the relevant implementation surface."); ok {
 						return finish(presentable, nil, preflight.ForceAnswer.Reason, true)
 					}
 				}
@@ -13653,14 +13653,19 @@ func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult)
 	if !readOnlyDirectAnswerLane(brief) {
 		return "", false
 	}
+	if answer, ok := presentableBriefConversationFallbackCandidate(r.agentName(), brief, results); ok {
+		answer = strings.TrimSpace(answer)
+		if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
+			return answer, true
+		}
+	}
 	if answer, ok := deterministicNoToolsAnswer(r.agentName(), brief, results); ok {
 		answer = strings.TrimSpace(answer)
 		if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
 			return answer, true
 		}
 	}
-	answer := strings.TrimSpace(synthesizeBriefConversationFallback(brief, results))
-	return answer, answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>")
+	return "", false
 }
 
 func readOnlyHostCloseoutHasObjectiveRelevantEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, evidence readOnlyAnswerabilityLedger) bool {
@@ -20610,9 +20615,11 @@ func (r *Runner) completeWithoutMoreToolsWithReason(
 		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, textOnlyOpts, answer, collectedResults, metrics); err != nil {
 			return "", err
 		} else if ok {
-			return repaired, nil
+			if presentable, ok := presentableFallbackCandidate(r.agentName(), r.RuntimeBrief, collectedResults, repaired); ok {
+				return presentable, nil
+			}
 		}
-		if presentable, ok := presentableNoToolsFallbackAnswer(r.RuntimeBrief, collectedResults, answer); ok {
+		if presentable, ok := presentableFallbackCandidate(r.agentName(), r.RuntimeBrief, collectedResults, answer); ok {
 			return presentable, nil
 		}
 	}
@@ -20636,27 +20643,19 @@ func (r *Runner) repairOrFallbackFinalAnswer(
 	if !ok {
 		return "", false, nil
 	}
-	if genericEvidenceAnswerIncludesLineOrientedSourceBody(rawFallback) {
-		if presentable, ok := presentableNoToolsFallbackAnswer(r.RuntimeBrief, collectedResults, rawFallback); ok {
-			return presentable, true, nil
-		}
-		return synthesizeBriefConversationFallback(r.RuntimeBrief, collectedResults), true, nil
-	}
-	if cleaned, ok := cleanedSubstantiveFinalAnswer(rawFallback); ok {
-		return cleaned, true, nil
-	}
 	if finalAnswerNeedsDecoration(rawFallback) && r.userFacingFinalAnswer() {
 		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, opts, rawFallback, collectedResults, metrics); err != nil {
 			return "", false, err
 		} else if ok {
-			return repaired, true, nil
+			if presentable, ok := presentableFallbackCandidate(r.agentName(), r.RuntimeBrief, collectedResults, repaired); ok {
+				return presentable, true, nil
+			}
 		}
 	}
-	if presentable, ok := presentableNoToolsFallbackAnswer(r.RuntimeBrief, collectedResults, rawFallback); ok {
+	if presentable, ok := presentableFallbackCandidate(r.agentName(), r.RuntimeBrief, collectedResults, rawFallback); ok {
 		return presentable, true, nil
 	}
-	rawFallback = strings.TrimSpace(rawFallback)
-	return rawFallback, rawFallback != "", nil
+	return "", false, nil
 }
 
 func (r *Runner) repairInternalFinalAnswer(
@@ -20795,7 +20794,9 @@ func (r *Runner) retryInvalidFinalAnswer(
 		if repaired, ok, err := r.repairInternalFinalAnswer(ctx, turnMessages, opts, content, collectedResults, metrics); err != nil {
 			return "", false, err
 		} else if ok {
-			return repaired, true, nil
+			if presentable, ok := presentableFallbackCandidate(r.agentName(), r.RuntimeBrief, collectedResults, repaired); ok {
+				return presentable, true, nil
+			}
 		}
 		if fallback, ok := deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, collectedResults); ok {
 			return fallback, true, nil
@@ -20828,29 +20829,105 @@ func deterministicNoToolsAnswer(agentName string, brief workerruntime.WorkerRunt
 	if !ok {
 		return "", false
 	}
+	return presentableFallbackCandidate(agentName, brief, results, answer)
+}
+
+func presentableFallbackCandidate(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return "", false
+	}
+	if runnerBriefRequiresMutation(brief) {
+		return answer, true
+	}
 	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(answer) {
-		return synthesizeBriefConversationFallback(brief, results), true
+		return presentableBriefConversationFallbackCandidate(agentName, brief, results)
+	}
+	if looksLikeDelegatedGroundedFallbackAnswer(answer) {
+		return answer, true
 	}
 	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
 		if conversationFallbackShouldAvoidSourceBody(brief) && strings.TrimSpace(brief.Objective) == "" {
 			return synthesizeBriefConversationFallback(brief, results), true
 		}
 		if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
-			return presentable, true
+			return presentableOrReadOnlyNonAnswerReplacement(agentName, brief, results, presentable)
 		}
-		return synthesizeBriefConversationFallback(brief, results), true
+		return presentableBriefConversationFallbackCandidate(agentName, brief, results)
+	}
+	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(answer) {
+		if replacement, ok := deterministicNoToolsNonAnswerReplacement(brief, results); ok {
+			return replacement, true
+		}
+		return "", false
 	}
 	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
 		return cleaned, true
 	}
 	if conversationFallbackShouldAvoidSourceBody(brief) && strings.Contains(strings.ToLower(answer), "source: delegated read-only evidence packet") {
-		return synthesizeBriefConversationFallback(brief, results), true
+		return presentableBriefConversationFallbackCandidate(agentName, brief, results)
 	}
 	if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
-		return presentable, true
+		return presentableOrReadOnlyNonAnswerReplacement(agentName, brief, results, presentable)
 	}
 	answer = strings.TrimSpace(answer)
+	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(answer) {
+		if replacement, ok := deterministicNoToolsNonAnswerReplacement(brief, results); ok {
+			return replacement, true
+		}
+		return "", false
+	}
 	return answer, answer != ""
+}
+
+func presentableOrReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return "", false
+	}
+	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(answer) {
+		if replacement, ok := deterministicNoToolsNonAnswerReplacement(brief, results); ok {
+			return replacement, true
+		}
+		return "", false
+	}
+	return answer, true
+}
+
+func presentableBriefConversationFallbackCandidate(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	fallback := strings.TrimSpace(synthesizeBriefConversationFallback(brief, results))
+	if fallback == "" {
+		return "", false
+	}
+	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(fallback) {
+		return deterministicNoToolsNonAnswerReplacement(brief, results)
+	}
+	return fallback, true
+}
+
+func looksLikeDelegatedGroundedFallbackAnswer(answer string) bool {
+	trimmed := strings.TrimSpace(answer)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	return strings.HasPrefix(lower, "the answer is grounded in ") &&
+		strings.Contains(lower, "\n\nwhat this establishes:\n- ")
+}
+
+func fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief) bool {
+	if strings.HasPrefix(agentName, "child:") || strings.HasPrefix(agentName, "child_write:") {
+		return false
+	}
+	return readOnlyDirectAnswerLane(brief) && !runnerBriefRequiresMutation(brief)
+}
+
+func deterministicNoToolsNonAnswerReplacement(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	fallback := strings.TrimSpace(synthesizeBriefConversationUncertaintyFallback(brief, results))
+	if fallback != "" && !looksLikeNonAnswerProse(fallback) {
+		return fallback, true
+	}
+	return "", false
 }
 
 func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
@@ -22708,6 +22785,9 @@ func looksLikeNonAnswerProse(answer string) bool {
 		return true
 	}
 	if looksLikeScratchpadLeakedAnswer(trimmed) {
+		return true
+	}
+	if looksLikeLowValueSourceInventoryNonAnswer(trimmed) {
 		return true
 	}
 	if finalAnswerSectionMarkerCount(answer) > 1 {

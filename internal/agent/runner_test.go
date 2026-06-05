@@ -3176,6 +3176,34 @@ func TestDeterministicNoToolsAnswerKeepsGroundedReadOnlyAnswer(t *testing.T) {
 	}
 }
 
+func TestPresentableFallbackCandidatePreservesChildDelegatedPacket(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "delegated_read_only",
+		Contract:          "grounded_evidence",
+		Objective:         "Explain how this harness uses child agents.",
+		PermissionProfile: "read_only_workspace",
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner_child_tasks.go lines 1-80",
+		Output:  "package agent\nfunc runChildTask() {}\n",
+	}}
+	childAnswer := "The answer is grounded in `internal/agent/runner_child_tasks.go`.\n\nWhat this establishes:\n- The child runner returns a delegated evidence packet to the parent after bounded read-only inspection."
+
+	answer, ok := presentableFallbackCandidate("child:explorer", brief, results, childAnswer)
+	if !ok {
+		t.Fatal("expected child delegated fallback packet to remain presentable")
+	}
+	if answer != childAnswer {
+		t.Fatalf("expected child delegated fallback packet to be preserved, got:\n%s", answer)
+	}
+	for _, forbidden := range []string{"not enough supported evidence", "<<QUESTION>>", "concrete user-facing finding"} {
+		if strings.Contains(strings.ToLower(answer), strings.ToLower(forbidden)) {
+			t.Fatalf("child delegated fallback should not be rewritten as main-lane uncertainty %q:\n%s", forbidden, answer)
+		}
+	}
+}
+
 func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t *testing.T) {
 	replies := []string{
 		`{"tool":"read_file","path":"internal/labels/labels.go","start_line":1,"end_line":200}`,
@@ -3375,6 +3403,136 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsInspectedBodyInventory
 	}
 	if requests > 1 {
 		t.Fatalf("expected at most one forced-completion model call, got %d", requests)
+	}
+}
+
+func TestForcedCompletionRepairReturnDoesNotLeakSourceInventory(t *testing.T) {
+	objective := "Can we enable up and down arrows to recall old user messages in the TUI?"
+	replies := []string{
+		"Question: Can we enable up and down arrows to recall old user messages in the TUI?\n\nThe inspected TUI key handler in `internal/app/update_handlers.go` already handles `tea.KeyUp` and `tea.KeyDown`, so the implementation needs to route those keys through user-message history recall when the input is focused.",
+		"`Model.handleKeyPress` in `internal/app/update_handlers.go` is the clearest inspected implementation anchor. The inspected body shows that it defines `Model.handleKeyPress`, sets `m.history.expanded` to `false`, calls `renderHistoryPanelContent`, and handles `tea.KeyUp` plus `tea.KeyDown`.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         objective,
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "context_query"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-141",
+			"",
+			"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+			"44:\t\tcase tea.KeyUp:",
+			"49:\t\tcase tea.KeyDown:",
+			"83:\t\tcase tea.KeyEnter:",
+			"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
+		}, "\n"),
+	}}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		results,
+		"The conversation lane has enough bounded evidence. Tools are now disabled. Answer from gathered evidence or state the exact unsupported claim.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	if strings.Contains(answer, "clearest inspected implementation anchor") || strings.Contains(answer, "inspected body shows") {
+		t.Fatalf("repair-path source inventory escaped forced completion:\n%s", answer)
+	}
+	if !strings.Contains(answer, "internal/app/update_handlers.go") {
+		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
+	}
+	if requests != 2 {
+		t.Fatalf("expected decoration repair path to use both model replies, used %d", requests)
+	}
+}
+
+func TestDeterministicNoToolsAnswerRejectsCodeNavigateInventoryFallback(t *testing.T) {
+	objective := "How can we enable the up and down arrow keys to iterate between previously sent user messages so they can be resent or edited before sending?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		Objective:         objective,
+		PermissionProfile: "read_only_workspace",
+		AllowedTools:      []string{"code_navigate", "context_query"},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.LoadHistoryFromSession in internal/app/sessions.go lines 1-20",
+			"",
+			"func (m *Model) LoadHistoryFromSession(path string) error {",
+			"\tif m == nil {",
+			"\t\treturn fmt.Errorf(\"model is nil\")",
+			"\t}",
+			"\tpath = strings.TrimSpace(path)",
+			"\tif path == \"\" {",
+			"\t\treturn fmt.Errorf(\"session path is required\")",
+			"\t}",
+			"\treturn replaySessionLog(m, path)",
+			"}",
+		}, "\n"),
+	}}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic closeout to produce presentable uncertainty from inspected evidence")
+	}
+	for _, forbidden := range []string{
+		"clearest inspected implementation anchor",
+		"inspected body shows",
+		"returns `fmt.Errorf",
+		"sets `path`",
+		"calls `replaySessionLog`",
+	} {
+		if strings.Contains(answer, forbidden) {
+			t.Fatalf("source-inventory fallback escaped deterministic closeout (%q):\n%s", forbidden, answer)
+		}
+	}
+	if !strings.Contains(answer, "internal/app/sessions.go") {
+		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
+	}
+	for _, want := range []string{"do not have enough supported evidence", "internal/app/sessions.go"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected presentable uncertainty to contain %q, got:\n%s", want, answer)
+		}
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
+		t.Fatalf("deterministic fallback should satisfy final-answer guard, got (%q, %q):\n%s", kind, reason, answer)
 	}
 }
 
@@ -12405,6 +12563,13 @@ func TestMutationDeterministicFallbackStartsForWriteReadyRequiredPaths(t *testin
 			t.Fatalf("expected deterministic blocker to contain %q, got:\n%s", want, answer)
 		}
 	}
+	runner := &Runner{RuntimeBrief: brief}
+	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "required_edit_paths_remaining" || reason != "required_edit_paths_remaining" {
+		t.Fatalf("mutation fallback should preserve required-path blocker classification, got (%q, %q):\n%s", kind, reason, answer)
+	}
+	if strings.Contains(answer, "not enough supported evidence") {
+		t.Fatalf("mutation fallback must not be rewritten as read-only uncertainty:\n%s", answer)
+	}
 }
 
 func TestSynthesizeMutationFallbackReportsMissingRequiredPathsAndPlannerOwnedVerification(t *testing.T) {
@@ -14273,26 +14438,28 @@ func TestFinalAnswerDecoratorDoesNotLeakDelegatedPacketWhenComposerLacksDiscover
 func TestFinalAnswerDecoratorUsesExactProbeEvidenceOverRetainedScopeSummary(t *testing.T) {
 	raw := "The strongest implementation evidence is in `internal/agent/runner_child_tasks.go`. Use those findings as the source of truth for `how does this harness utilize sub-agents?`.\n\nWhat this establishes:\n- Text anchors: Found child-runner implementation paths."
 	runner := &Runner{}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily: "architecture",
+		Contract:   "architecture_assessment",
+		Objective:  "how does this harness utilize sub-agents?",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "discovery_query",
+			Summary: "Ran architecture_boundary discovery query",
+			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found child-runner implementation paths.","output_excerpt":"internal/agent/runner_child_tasks.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult"}]}`,
+		},
+		{
+			Tool:    "go_read_symbol",
+			Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-132",
+			Output:  "func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {\n\tprompt = normalizeReadOnlyChildPrompt(prompt)\n\tprompt = r.augmentReadOnlyChildPrompt(prompt)\n\tchild := &Runner{\n\t\tClient: r.Client,\n\t\tWorkspace: r.Workspace,\n\t\tPolicy: childPolicy,\n\t\tPermissionPolicy: readOnlyChildTaskPermissionPolicy(),\n\t\tDisableTaskTool: true,\n\t}\n\tanswer, err := child.Run(ctx, []llama.ChatMessage{{Role: \"user\", Content: prompt}}, opts, nil, nil, nil)\n\tanswer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)\n\treturn workspace.ToolResult{Tool: \"task\", Summary: \"Child task completed\", Output: strings.TrimSpace(answer)}\n}\n",
+		},
+	}
 	answer := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
 		Answer:     raw,
 		StopReason: "post_readiness_probe_budget_exhausted",
-		Brief: workerruntime.WorkerRuntimeBrief{
-			TaskFamily: "architecture",
-			Contract:   "architecture_assessment",
-			Objective:  "how does this harness utilize sub-agents?",
-		},
-		Results: []workspace.ToolResult{
-			{
-				Tool:    "discovery_query",
-				Summary: "Ran architecture_boundary discovery query",
-				Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found child-runner implementation paths.","output_excerpt":"internal/agent/runner_child_tasks.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult"}]}`,
-			},
-			{
-				Tool:    "go_read_symbol",
-				Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-132",
-				Output:  "func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult {\n\tprompt = normalizeReadOnlyChildPrompt(prompt)\n\tprompt = r.augmentReadOnlyChildPrompt(prompt)\n\tchild := &Runner{\n\t\tClient: r.Client,\n\t\tWorkspace: r.Workspace,\n\t\tPolicy: childPolicy,\n\t\tPermissionPolicy: readOnlyChildTaskPermissionPolicy(),\n\t\tDisableTaskTool: true,\n\t}\n\tanswer, err := child.Run(ctx, []llama.ChatMessage{{Role: \"user\", Content: prompt}}, opts, nil, nil, nil)\n\tanswer = augmentDelegatedReadOnlyPacket(answer, prompt, childResults)\n\treturn workspace.ToolResult{Tool: \"task\", Summary: \"Child task completed\", Output: strings.TrimSpace(answer)}\n}\n",
-			},
-		},
+		Brief:      brief,
+		Results:    results,
 		UserFacing: true,
 	})
 	for _, want := range []string{
@@ -14314,6 +14481,10 @@ func TestFinalAnswerDecoratorUsesExactProbeEvidenceOverRetainedScopeSummary(t *t
 		if strings.Contains(answer, forbidden) {
 			t.Fatalf("expected exact-probe fallback answer to avoid %q, got:\n%s", forbidden, answer)
 		}
+	}
+	runner.RuntimeBrief = brief
+	if kind, reason := runner.finalAnswerBlockerKind(answer, results); kind != "" || reason != "" {
+		t.Fatalf("architecture exact-probe fallback should pass final-answer guard, got (%q, %q):\n%s", kind, reason, answer)
 	}
 }
 

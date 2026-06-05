@@ -33,26 +33,24 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
 	if delegatedOwnerReady {
 		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
-			if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
-				if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
-					return presentable, true
-				}
-			}
-			return annotateBudgetLimitedAnswer(answer), true
+			return presentableFallbackCandidate(agentName, brief, results, annotateBudgetLimitedAnswer(answer))
 		}
 	}
 	if delegatedOwnerReady {
 		if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
-			return annotateBudgetLimitedAnswer(output), true
+			return presentableFallbackCandidate(agentName, brief, results, annotateBudgetLimitedAnswer(output))
 		}
 	}
 	if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
-		return synthesizeBriefConversationFallback(brief, results), true
+		return presentableFallbackCandidate(agentName, brief, results, synthesizeBriefConversationFallback(brief, results))
 	}
 	if usefulFallbackResultCount(results) < 2 {
 		return "", false
 	}
-	return synthesizeFallbackAnswer(agentName, results)
+	if answer, ok := synthesizeFallbackAnswer(agentName, results); ok {
+		return presentableFallbackCandidate(agentName, brief, results, answer)
+	}
+	return "", false
 }
 
 func (r *Runner) modelErrorAfterReadOnlyEvidenceAnswer(err error, results []workspace.ToolResult) (string, bool) {
@@ -66,7 +64,10 @@ func (r *Runner) modelErrorAfterReadOnlyEvidenceAnswer(err error, results []work
 		return "", false
 	}
 	if conversationFallbackShouldAvoidSourceBody(r.RuntimeBrief) {
-		return synthesizeBriefConversationFallback(r.RuntimeBrief, results), true
+		if answer, ok := presentableBriefConversationFallbackCandidate(r.agentName(), r.RuntimeBrief, results); ok {
+			return answer, true
+		}
+		return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
 	}
 	return deterministicNoToolsAnswer(r.agentName(), r.RuntimeBrief, results)
 }
