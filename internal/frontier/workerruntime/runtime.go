@@ -1446,6 +1446,7 @@ func zeroHitText(text string) bool {
 	}
 	return containsAny(text,
 		"no file matches",
+		"no content matches",
 		"no matches",
 		"no matching",
 		"no go symbols matched",

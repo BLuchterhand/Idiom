@@ -62,6 +62,9 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 	}
 	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>") {
+		if r != nil && readOnlyDirectAnswerLane(r.RuntimeBrief) && !runnerBriefRequiresMutation(r.RuntimeBrief) {
+			return reject("read_only_protocol_blocker", "read_only_protocol_blocker")
+		}
 		return reject("user_visible_blocker", "user_visible_blocker")
 	}
 	if looksLikeNonAnswerProse(answer) {
@@ -319,6 +322,9 @@ func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAns
 		return true
 	}
 	relevantPaths := ledger.RelevantSourceBodyPaths
+	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
+		relevantPaths = ledger.ImplementationOwnerPaths()
+	}
 	if readOnlyCauseObjective(ledger.Objective) {
 		relevantPaths = ledger.SourceBodyObjectivePaths
 	}
@@ -445,8 +451,14 @@ func acceptedReadOnlyDirectAnswerEvidencePaths(answer string, brief workerruntim
 	}
 	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
 	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
-	paths := intersectRunnerPaths(mentioned, ledger.RelevantSourceBodyPaths)
-	paths = mergeRunnerStateStrings(paths, ledger.SourceBodyObjectivePaths, ledger.RelevantSourceBodyPaths)
+	relevant := ledger.RelevantSourceBodyPaths
+	objectivePaths := ledger.SourceBodyObjectivePaths
+	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
+		relevant = ledger.ImplementationOwnerPaths()
+		objectivePaths = relevant
+	}
+	paths := intersectRunnerPaths(mentioned, relevant)
+	paths = mergeRunnerStateStrings(paths, objectivePaths, relevant)
 	paths = mergeRunnerStateStrings(paths, answerCitedCollectiveSourceBodySupportPaths(answer, ledger))
 	if len(paths) == 0 && ledger.DiagnosticRelevant {
 		paths = mergeRunnerStateStrings(paths, mentionedEvidencePathsFromToolResults(results, 8))
@@ -458,6 +470,9 @@ func answerCitedCollectiveSourceBodySupportPaths(answer string, ledger readOnlyA
 	mentionedSet := readOnlyPathSet(sourceGroundingMentionedPaths(answer))
 	if len(mentionedSet) == 0 {
 		return nil
+	}
+	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
+		return intersectRunnerPaths(ledger.ImplementationOwnerPaths(), sourceGroundingMentionedPaths(answer))
 	}
 	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
 	requiredTerms := ledger.requiredSourceBodyObjectiveTerms()

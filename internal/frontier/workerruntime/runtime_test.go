@@ -94,6 +94,16 @@ func TestIsZeroHitSearchResultDetectsRoutedSymbolMiss(t *testing.T) {
 	}
 }
 
+func TestIsZeroHitSearchResultDetectsContentSearchMiss(t *testing.T) {
+	result := workspace.ToolResult{
+		Tool:    "search_content",
+		Summary: `No content matches for "pkey.KeyArrowUp"`,
+	}
+	if !IsZeroHitSearchResult(result) {
+		t.Fatal("expected No content matches summary to count as zero-hit search result")
+	}
+}
+
 func TestIsZeroHitSearchResultIgnoresBodyText(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "read_file",

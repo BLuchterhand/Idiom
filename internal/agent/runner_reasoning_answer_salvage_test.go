@@ -83,6 +83,77 @@ func TestExtractAnswerProseFromReasoning(t *testing.T) {
 	}
 }
 
+func TestExtractAnswerProseFromReasoningUsesSingleCleanMarkedAnswer(t *testing.T) {
+	reasoning := strings.Join([]string{
+		"The user wants a design answer. Let me inspect the evidence first.",
+		"I should not expose this scratchpad.",
+		"",
+		"[Answer]",
+		"The TUI history change belongs in the input key-handling path. Add small state for the selected user-message index, load the selected message into the textarea on up/down, and send the edited textarea content through the existing submit flow.",
+	}, "\n")
+
+	got := extractAnswerProseFromReasoning(reasoning)
+	if !strings.Contains(got, "belongs in the input key-handling path") {
+		t.Fatalf("expected clean marked answer, got %q", got)
+	}
+	for _, forbidden := range []string{"The user wants", "Let me", "I should", "[Answer]"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("marked answer leaked %q: %q", forbidden, got)
+		}
+	}
+}
+
+func TestExtractAnswerProseFromReasoningDedupesIdenticalMarkedAnswers(t *testing.T) {
+	answer := "The fix is to keep reasoning salvage bounded: extract only one final-answer section, run final-answer hygiene, and otherwise let the retry path continue."
+	reasoning := strings.Join([]string{
+		"Let me prepare the answer.",
+		"[Answer]",
+		answer,
+		"[Answer]",
+		answer,
+	}, "\n")
+
+	got := extractAnswerProseFromReasoning(reasoning)
+	if got != answer {
+		t.Fatalf("expected one deduped marked answer, got %q", got)
+	}
+}
+
+func TestExtractAnswerProseFromReasoningRejectsPollutedOrConflictingMarkedAnswers(t *testing.T) {
+	tests := []struct {
+		name      string
+		reasoning string
+	}{
+		{
+			name: "polluted repeated answer",
+			reasoning: strings.Join([]string{
+				"[Answer]",
+				"The change should be handled in the runner salvage boundary by extracting one clean answer candidate.",
+				"Actually, I should verify one more source path before answering.",
+				"[Answer]",
+				"The change should be handled in the runner salvage boundary by extracting one clean answer candidate.",
+			}, "\n"),
+		},
+		{
+			name: "conflicting repeated answer",
+			reasoning: strings.Join([]string{
+				"[Answer]",
+				"The fix belongs in reasoning salvage because hidden scratchpad must not become user-visible output.",
+				"[Final Answer]",
+				"The fix belongs in prompt text because the model should be reminded not to leak hidden reasoning.",
+			}, "\n"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := extractAnswerProseFromReasoning(tt.reasoning); got != "" {
+				t.Fatalf("expected no salvage for polluted/conflicting marked answers, got %q", got)
+			}
+		})
+	}
+}
+
 func TestSalvageAnswerFromReasoning(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -194,6 +265,72 @@ func TestSalvageAnswerFromReasoning(t *testing.T) {
 				t.Errorf("salvageAnswerFromReasoning result missing %q:\n  got: %q", tt.wantContains, got)
 			}
 		})
+	}
+}
+
+func TestSalvageAnswerFromReasoningRejectsHugeHiddenAnswer(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	reply := llama.ChatMessage{
+		ReasoningContent: strings.Repeat("The answer is that hidden reasoning salvage must remain bounded and must never expose scratchpad text as final output. ", 400),
+	}
+
+	if got, ok := runner.salvageAnswerFromReasoning(reply, nil); ok {
+		t.Fatalf("huge repeated hidden reasoning must not salvage as final output: len=%d", len(got))
+	}
+}
+
+func TestSalvageAnswerFromReasoningRejectsSourceGroundedScratchpadShape(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			PermissionProfile: "read_only_workspace",
+		},
+	}
+	answer := "The user wants me to explain the failure. Actually, the root cause is in `internal/app/app.go:42` because hidden reasoning was accepted as visible final-answer prose."
+	if blocker, reason := runner.finalAnswerBlockerKind(answer, nil); blocker != "non_answer_prose" || reason != "non_answer_prose" {
+		t.Fatalf("shared final-answer hygiene should reject scratchpad-shaped source answer, got (%q, %q)", blocker, reason)
+	}
+	reply := llama.ChatMessage{
+		ReasoningContent: strings.Join([]string{
+			"Let me write the final response.",
+			"[Answer]",
+			answer,
+		}, "\n"),
+	}
+
+	if got, ok := runner.salvageAnswerFromReasoning(reply, nil); ok {
+		t.Fatalf("scratchpad-shaped source answer must not be salvaged: %q", got)
+	}
+}
+
+func TestFinalAnswerHygieneRejectsRepeatedAnswerSections(t *testing.T) {
+	runner := &Runner{}
+	answer := strings.Join([]string{
+		"[Answer]",
+		"The first draft says the fix belongs in final-answer salvage because hidden reasoning is not user-facing output.",
+		"[Answer]",
+		"The second draft repeats the answer marker and should be treated as leaked answer-preparation structure.",
+	}, "\n")
+
+	if blocker, reason := runner.finalAnswerBlockerKind(answer, nil); blocker != "non_answer_prose" || reason != "non_answer_prose" {
+		t.Fatalf("shared final-answer hygiene should reject repeated answer sections, got (%q, %q)", blocker, reason)
+	}
+}
+
+func TestFinalAnswerHygieneAllowsCorrectionAndClarificationProse(t *testing.T) {
+	runner := &Runner{}
+	answers := []string{
+		"Actually, the better fix is to reject hidden scratchpad at the final-output boundary because that preserves model strategy while enforcing the harness contract.",
+		"Let me clarify: the run was not terminated too early. The model emitted an empty visible answer, and the harness must reject hidden scratchpad unless it can extract one clean final response.",
+	}
+
+	for _, answer := range answers {
+		if blocker, reason := runner.finalAnswerBlockerKind(answer, nil); blocker != "" || reason != "" {
+			t.Fatalf("shared final-answer hygiene should allow valid clarification prose, got (%q, %q) for %q", blocker, reason, answer)
+		}
 	}
 }
 

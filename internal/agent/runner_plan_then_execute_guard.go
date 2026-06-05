@@ -208,7 +208,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanGroundingGuard(req workspace.
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: edit paths lack source grounding",
 			Error: "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for " + quotedRunnerStrings(missing) + ". " +
-				"Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan. If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
+				"Read each existing edit path with `read_file` or " + workspace.CodeNavigateToolName + " " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + ", then submit a corrected plan. If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
 		},
 		Reason: "plan-then-execute planner phase: submit_plan lacked grounded edit paths",
 	}
@@ -725,7 +725,7 @@ func planThenExecuteRequiredPathDiscoveryRejection(req workspace.ToolRequest, br
 			next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
 			nextInstruction := planThenExecuteSourceReadInstruction(next, results)
 			return "Bounded submit_plan anchor refresh required",
-				"the previous submit_plan named an invalid edit anchor on " + target + ". Refresh that anchor with a source-body request such as bounded `read_file` with `start_line`/`end_line` or `code_navigate` `read_symbol`, then submit a corrected plan. Do not use whole-file `read_file` for this refresh because it can redirect to an outline and still leave no edit anchor. Remaining unread required path also needs source evidence: " + nextInstruction + ".",
+				"the previous submit_plan named an invalid edit anchor on " + target + ". Refresh that anchor with a source-body request such as bounded `read_file` with `start_line`/`end_line` or " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + ", then submit a corrected plan. Do not use whole-file `read_file` for this refresh because it can redirect to an outline and still leave no edit anchor. Remaining unread required path also needs source evidence: " + nextInstruction + ".",
 				true
 		}
 	}
@@ -755,9 +755,9 @@ func planThenExecuteSourceReadInstruction(path string, results []workspace.ToolR
 		return "read the next unread required_edit_path with source-body evidence"
 	}
 	if planThenExecutePathHasOutlineEvidence(path, results) {
-		return "read source for " + path + " using a source-body route: `code_navigate` with `capability:\"read_symbol\"` for the relevant declaration, or `read_file` with `start_line`/`end_line` copied from the outline. Do not repeat whole-file `read_file`; it can redirect to an outline and still leave the path unread"
+		return "read source for " + path + " using a source-body route: " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + " for the relevant declaration, or `read_file` with `start_line`/`end_line` copied from the outline. Do not repeat whole-file `read_file`; it can redirect to an outline and still leave the path unread"
 	}
-	return "read source for " + path + " with `read_file`; if the file is large or redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` using `start_line`/`end_line`"
+	return "read source for " + path + " with `read_file`; if the file is large or redirects to an outline, follow with " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + " or bounded `read_file` using `start_line`/`end_line`"
 }
 
 func planThenExecutePathHasOutlineEvidence(path string, results []workspace.ToolResult) bool {
@@ -790,7 +790,8 @@ func planThenExecuteSourceBodyReadRequest(req workspace.ToolRequest) bool {
 		return req.StartLine > 0 || req.EndLine > 0
 	case "code_navigate", "read_only_capability":
 		capability := strings.TrimSpace(req.Capability)
-		return capability == "read_symbol" || capability == "extract_body" ||
+		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability) ||
+			workspace.CodeNavigateCapabilityPredicate(workspace.CapExtractBody)(capability) ||
 			strings.HasSuffix(capability, "_read_symbol") ||
 			strings.HasSuffix(capability, "_extract_body")
 	default:
@@ -808,7 +809,8 @@ func planThenExecuteAnchorRefreshRequestAllowed(req workspace.ToolRequest) bool 
 		return req.StartLine > 0 && req.EndLine >= req.StartLine && req.EndLine-req.StartLine+1 <= 400
 	case "code_navigate":
 		capability := strings.TrimSpace(req.Capability)
-		return capability == "read_symbol" || capability == "extract_body"
+		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability) ||
+			workspace.CodeNavigateCapabilityPredicate(workspace.CapExtractBody)(capability)
 	default:
 		return false
 	}
@@ -989,7 +991,7 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 	if len(refreshable) == 0 {
 		return "No further read/search/discovery action is currently allowed for this rejected plan; use the existing source-body evidence to submit corrected edits or report a path-specific blocker."
 	}
-	return "The only remaining read exception is one bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshable, 4), ", ") + ". For `code_navigate`, include an explicit `capability:\"read_symbol\"` or `capability:\"extract_body\"` plus `pattern`. Otherwise do not call read/search/discovery before the corrected `submit_plan`."
+	return "The only remaining read exception is one bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshable, 4), ", ") + ". For `" + workspace.CodeNavigateToolName + "`, include explicit " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " plus `pattern`. Otherwise do not call read/search/discovery before the corrected `submit_plan`."
 }
 
 func planThenExecuteRejectedPlanSourceRefreshAllowed(req workspace.ToolRequest, requiredCoveragePaths []string, results []workspace.ToolResult) bool {
@@ -2626,7 +2628,7 @@ func planThenExecuteCandidatePostReadinessDiscoveryRejection(req workspace.ToolR
 	target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 	if target != "" && planThenExecuteCandidateRejectedPlanSourceRefreshTarget(brief, results, target) && planThenExecuteCodeNavigateMissingAnchorCapability(req) {
 		return "Anchor refresh capability required",
-			"the previous `submit_plan` named an invalid edit anchor on " + target + ". `code_navigate` anchor refresh requires an explicit source-body capability such as read_symbol or extract_body on the same path and concrete symbol/pattern. Alternatively use `read_file` with explicit start_line/end_line copied from current source evidence.",
+			"the previous `submit_plan` named an invalid edit anchor on " + target + ". `" + workspace.CodeNavigateToolName + "` anchor refresh requires an explicit source-body capability such as " + strings.Join(workspace.CodeNavigateSourceBodyCapabilityNames(), " or ") + " on the same path and concrete symbol/pattern. Alternatively use `read_file` with explicit start_line/end_line copied from current source evidence.",
 			true
 	}
 	if target != "" && planThenExecuteCandidateRejectedPlanSourceRefreshAllowed(req, brief, results) {
@@ -2908,7 +2910,7 @@ func planThenExecuteUnreadRequiredSourceNudge(brief workerruntime.WorkerRuntimeB
 		"Current evidence state: " + state,
 		"",
 		"Next action MUST be exactly one visible source-body tool call for that path before `submit_plan`:",
-		"  1. `code_navigate` with `capability:\"read_symbol\"` for the relevant declaration in " + next + ", or",
+		"  1. " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + " for the relevant declaration in " + next + ", or",
 		"  2. `read_file` with explicit `start_line`/`end_line` copied from the outline/search hit.",
 		"",
 		"Outline and search hits do not satisfy this contract by themselves. Do not call `submit_plan` until every required_edit_path has source-body evidence. Hidden reasoning is not executable evidence.",

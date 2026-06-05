@@ -41,13 +41,10 @@ func buildLlamaTools(defs []workspace.ToolDefinition) []llama.Tool {
 	return out
 }
 
-// postReadinessRequiredFields lists the JSON Schema properties that become
-// required on read-class tool calls once the lane has reached answer
-// readiness or received a child packet. Schema-level enforcement is the
-// load-bearing piece: the model's tool-call decoder rejects calls that
-// omit a required field, so the failure mode "model knows the contract,
-// still emits a no-gap call" closes at the protocol layer instead of
-// being chased through prose rejections.
+// postReadinessRequiredFields lists the JSON Schema properties required on
+// read-class source-refresh calls only when the consolidated runner contract
+// selects an explicit mutation/source-refresh surface. Read-only answer
+// readiness and child packets are advisory and must not call this path.
 var postReadinessRequiredFields = []string{"named_gap", "why_not_answering"}
 
 // applyPostReadinessSchemaRequirements rewrites the JSON Schema of every
@@ -62,9 +59,9 @@ var postReadinessRequiredFields = []string{"named_gap", "why_not_answering"}
 // so push that choice into the tool contract instead of spending a model turn
 // on a runtime rejection.
 //
-// Called from the runner's rebuildTools when delegatedReadOnlyAnswerReady
-// or postChildPacketActive is true. Idempotent: calling twice in a row
-// produces the same schema.
+// Called from the runner's rebuildTools only when
+// postReadinessToolContractForBrief returns RequireSourceRefreshContract.
+// Idempotent: calling twice in a row produces the same schema.
 func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 	if len(tools) == 0 {
 		return tools
@@ -95,12 +92,11 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 	return out
 }
 
-// stripPostReadinessBroadTools removes tools that are inappropriate after
-// answer readiness is declared. Broad file discovery (search_files, list_files)
-// encourages the model to keep orienting instead of answering or making one
-// exact targeted read. Keep search_content visible: the phase contract still
-// allows search, and invalidPostReadinessSearchProbe rejects broad content
-// patterns while permitting exact evidence-grounded probes.
+// stripPostReadinessBroadTools removes tools that are inappropriate under an
+// explicit mutation/source-refresh contract. Broad file discovery
+// (search_files, list_files) encourages rediscovery instead of resolving the
+// scoped write contract. Read-only answer readiness is advisory and must not
+// call this path.
 func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
 	if len(tools) == 0 {
 		return tools

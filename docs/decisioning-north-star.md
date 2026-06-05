@@ -32,6 +32,22 @@ When the model is making a normal execution choice, the harness should steer bef
 - Prefer bounded follow-up budgets over automatic answer synthesis.
 - Prefer “answer now or take one narrow next step” over “you must use tool X next”.
 
+## No User-Visible Hard Blockers In Strategy Lanes
+
+Read-only direct-answer and conversation lanes are strategy lanes. They may end
+with a supported answer, a partial answer with explicit uncertainty, or a
+normal user-facing statement that the gathered evidence is insufficient. They
+must not end by exposing harness blocker protocol, completion-gate retry text,
+or mutation-lane status such as "no files changed" as the user answer.
+
+`<<QUESTION>>` remains valid as model-facing and machine-consumed protocol in
+mutation, planning, repair, and recovery phases that need a typed blocker. In
+read-only direct-answer lanes, the same marker is not a user-facing terminal
+state. If the model emits it, the harness should either retry with a clearer
+contract while tools are still useful, or synthesize/present a normal
+uncertainty answer from the gathered evidence. The harness may still log the
+failed protocol internally, but the user-visible answer must remain prose.
+
 ## Model-Harness Parity
 
 The ideal state is not a clever harness that constantly corrects the model. The

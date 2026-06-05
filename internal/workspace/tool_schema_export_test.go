@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/semantic/languagetools"
 )
 
 func TestBuildToolSchemaExportDerivesFromManifestAndSchemas(t *testing.T) {
@@ -161,7 +162,12 @@ func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
 	for _, tool := range export.Tools {
 		exported[tool.Name] = tool
 	}
-	if !slices.Contains(exported["code_navigate"].EvidenceCapabilities, "find_references") {
+	for _, want := range []string{"find_references", "find_implementations", "inspect_symbol"} {
+		if !slices.Contains(exported["code_navigate"].EvidenceCapabilities, want) {
+			t.Fatalf("code_navigate export capabilities = %#v, want %s", exported["code_navigate"].EvidenceCapabilities, want)
+		}
+	}
+	if slices.Equal(exported["code_navigate"].EvidenceCapabilities, ReadOnlyCapabilityEvidenceCapabilities()) {
 		t.Fatalf("code_navigate export capabilities = %#v", exported["code_navigate"].EvidenceCapabilities)
 	}
 	if exported["go_definition"].CapabilityClassification != CapabilityClassCompatibilityAdapter {
@@ -184,6 +190,128 @@ func TestToolManifestAndExportExposeEvidenceCapabilityMetadata(t *testing.T) {
 		!slices.Contains(exported["ctags_symbols"].EvidenceCapabilities, "inspect_symbol") {
 		t.Fatalf("ctags_symbols export metadata = %#v", exported["ctags_symbols"])
 	}
+}
+
+func TestToolSchemaEnumsDeriveFromCapabilityRegistries(t *testing.T) {
+	codeNavigate := toolDefinitionForTest(t, "code_navigate")
+	if got := stringEnumForToolProperty(t, codeNavigate, "capability"); !slices.Equal(got, languagetools.CodeNavigationCapabilityNames()) {
+		t.Fatalf("code_navigate schema enum drifted from runtime capabilities:\ngot  %#v\nwant %#v", got, languagetools.CodeNavigationCapabilityNames())
+	}
+
+	readOnly := toolDefinitionForTest(t, readOnlyCapabilityToolName)
+	registry := BuildReadOnlyCapabilityRegistry()
+	wantReadOnly := make([]string, 0, len(registry.Capabilities))
+	for _, capability := range registry.Capabilities {
+		wantReadOnly = append(wantReadOnly, capability.ID)
+	}
+	if got := stringEnumForToolProperty(t, readOnly, "capability"); !slices.Equal(got, wantReadOnly) {
+		t.Fatalf("read_only_capability schema enum drifted from registry:\ngot  %#v\nwant %#v", got, wantReadOnly)
+	}
+}
+
+func TestLanguageToolCatalogDrivesSchemaManifestAndMetadata(t *testing.T) {
+	catalog := languageToolCatalog()
+	if len(catalog) == 0 {
+		t.Fatal("language tool catalog should not be empty")
+	}
+	names := languageToolCatalogToolNames()
+	if len(names) != len(catalog) {
+		t.Fatalf("catalog names = %d, entries = %d", len(names), len(catalog))
+	}
+
+	defs := BuildToolDefinitions(names)
+	manifest := BuildToolManifest(names)
+	if len(defs) != len(catalog) {
+		t.Fatalf("catalog tool definition count = %d, want %d", len(defs), len(catalog))
+	}
+	if len(manifest) != len(catalog) {
+		t.Fatalf("catalog manifest count = %d, want %d", len(manifest), len(catalog))
+	}
+
+	defByTool := make(map[string]ToolDefinition, len(defs))
+	for _, def := range defs {
+		defByTool[def.Name] = def
+	}
+	manifestByTool := make(map[string]ToolManifestEntry, len(manifest))
+	for _, entry := range manifest {
+		manifestByTool[entry.Tool] = entry
+	}
+	for _, entry := range catalog {
+		def, ok := defByTool[entry.Tool]
+		if !ok {
+			t.Fatalf("catalog tool %s missing schema definition", entry.Tool)
+		}
+		if def.Description != entry.Description || def.ParametersJSON != entry.ParametersJSON {
+			t.Fatalf("%s schema drifted from catalog:\ndef  %#v\nentry %#v", entry.Tool, def, entry)
+		}
+		if !json.Valid([]byte(def.ParametersJSON)) {
+			t.Fatalf("%s catalog schema is invalid JSON: %s", entry.Tool, def.ParametersJSON)
+		}
+		manifestEntry, ok := manifestByTool[entry.Tool]
+		if !ok {
+			t.Fatalf("catalog tool %s missing manifest entry", entry.Tool)
+		}
+		if manifestEntry.Purpose != entry.ManifestPurpose {
+			t.Fatalf("%s manifest purpose = %q, want %q", entry.Tool, manifestEntry.Purpose, entry.ManifestPurpose)
+		}
+		if !slices.Equal(manifestEntry.EvidenceCapabilities, entry.EvidenceCapabilities) {
+			t.Fatalf("%s evidence metadata = %#v, want %#v", entry.Tool, manifestEntry.EvidenceCapabilities, entry.EvidenceCapabilities)
+		}
+		wantClassification := CapabilityClassCompatibilityAdapter
+		if entry.Capability == CapDiagnostics {
+			wantClassification = CapabilityClassDeferred
+		}
+		if manifestEntry.CapabilityClassification != wantClassification {
+			t.Fatalf("%s classification = %q, want %q", entry.Tool, manifestEntry.CapabilityClassification, wantClassification)
+		}
+		if !isLanguageToolName(entry.Tool) {
+			t.Fatalf("%s should be accepted as a catalog language tool", entry.Tool)
+		}
+	}
+}
+
+func TestExtractBodyIsRegistryBackedLanguageCapability(t *testing.T) {
+	for _, tool := range []string{"go_extract_body", "cpp_extract_body"} {
+		entry, ok := languageToolCatalogEntryForTool(tool)
+		if !ok {
+			t.Fatalf("%s missing from language tool catalog", tool)
+		}
+		if entry.Supplemental {
+			t.Fatalf("%s should be registry-backed, not supplemental: %#v", tool, entry)
+		}
+		if entry.Capability != CapExtractBody {
+			t.Fatalf("%s capability = %q, want %q", tool, entry.Capability, CapExtractBody)
+		}
+		if !slices.Contains(entry.EvidenceCapabilities, "inspect_symbol") {
+			t.Fatalf("%s evidence capabilities = %#v", tool, entry.EvidenceCapabilities)
+		}
+	}
+}
+
+func toolDefinitionForTest(t *testing.T, tool string) ToolDefinition {
+	t.Helper()
+	defs := BuildToolDefinitions([]string{tool})
+	if len(defs) != 1 {
+		t.Fatalf("BuildToolDefinitions(%q) returned %d definition(s)", tool, len(defs))
+	}
+	return defs[0]
+}
+
+func stringEnumForToolProperty(t *testing.T, def ToolDefinition, property string) []string {
+	t.Helper()
+	var schema struct {
+		Properties map[string]struct {
+			Enum []string `json:"enum"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(def.ParametersJSON), &schema); err != nil {
+		t.Fatalf("decode schema for %s: %v\n%s", def.Name, err, def.ParametersJSON)
+	}
+	prop, ok := schema.Properties[property]
+	if !ok {
+		t.Fatalf("schema for %s missing property %q: %s", def.Name, property, def.ParametersJSON)
+	}
+	return prop.Enum
 }
 
 func TestToolSchemaPolicyUsesToolSurfaceMetadata(t *testing.T) {

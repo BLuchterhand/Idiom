@@ -706,14 +706,26 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 		contract.Phase = "read_only_evidence_pending"
 		contract.DerivationReason = "read_only_workspace_evidence_pending"
 		contract.AllowedTools = genericReadOnlyEvidenceTools(contract.AllowedTools)
-		contract.RequiredNext = []string{"bounded read/search evidence for the question, or <<QUESTION>> with the exact blocker"}
-		contract.InvalidNext = []string{"workspace write", "shell/mutating command", "final answer before sufficient evidence"}
-		contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
-		contract.ActionPolicy = TurnActionClassPolicy{
-			AllowedActionClasses:   []string{actionRead, actionSearch, actionBlocker},
-			InvalidActionClasses:   []string{actionPerEditWrite, actionVerify, actionFinalAnswer},
-			TerminalResponseShapes: []string{"<<QUESTION>>:"},
-			CallableToolNames:      contract.AllowedTools,
+		if readOnlyDirectAnswerLane(brief) {
+			contract.RequiredNext = []string{"final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker"}
+			contract.InvalidNext = []string{"workspace write", "shell/mutating command", "unsupported factual final answer"}
+			contract.TerminalOutcomes = []string{"final answer", "<<QUESTION>>:"}
+			contract.ActionPolicy = TurnActionClassPolicy{
+				AllowedActionClasses:   uniquePhaseStrings([]string{actionFinalAnswer, actionRead, actionSearch, actionBlocker}),
+				InvalidActionClasses:   []string{actionPerEditWrite, actionVerify},
+				TerminalResponseShapes: []string{"final answer", "<<QUESTION>>:"},
+				CallableToolNames:      contract.AllowedTools,
+			}
+		} else {
+			contract.RequiredNext = []string{"bounded read/search evidence for the question, or <<QUESTION>> with the exact blocker"}
+			contract.InvalidNext = []string{"workspace write", "shell/mutating command", "final answer before sufficient evidence"}
+			contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
+			contract.ActionPolicy = TurnActionClassPolicy{
+				AllowedActionClasses:   []string{actionRead, actionSearch, actionBlocker},
+				InvalidActionClasses:   []string{actionPerEditWrite, actionVerify, actionFinalAnswer},
+				TerminalResponseShapes: []string{"<<QUESTION>>:"},
+				CallableToolNames:      contract.AllowedTools,
+			}
 		}
 	}
 	contract.RuntimeCall.ExpressibleActionClasses = append([]string(nil), contract.ActionPolicy.AllowedActionClasses...)

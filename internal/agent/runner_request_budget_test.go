@@ -38,6 +38,43 @@ func TestRunnerRequestBudgetFingerprintDecisionWarnsThenBlocks(t *testing.T) {
 	}
 }
 
+func TestRunnerRequestBudgetSamePathFixationNudgesOnVariedRanges(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	for i := 0; i < samePathFixationNudgeAt-1; i++ {
+		req := workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go", StartLine: i*50 + 1, EndLine: (i + 1) * 50}
+		if decision := state.samePathFixationDecision(req, false); decision.Handled {
+			t.Fatalf("same-path nudge fired too early at request %d: %#v", i+1, decision)
+		}
+	}
+
+	req := workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go", StartLine: 201, EndLine: 250}
+	decision := state.samePathFixationDecision(req, true)
+	if !decision.Handled || decision.Nudge == "" || decision.EventRole != "same_path_fixation_nudge" {
+		t.Fatalf("expected same-path fixation nudge, got %#v", decision)
+	}
+	if !strings.Contains(decision.Nudge, "internal/app/app.go") ||
+		!strings.Contains(decision.Nudge, "exact missing claim") ||
+		!strings.Contains(decision.Nudge, "Do not request another adjacent range") {
+		t.Fatalf("same-path nudge should name the path and bounded next action, got %q", decision.Nudge)
+	}
+
+	req = workspace.ToolRequest{Tool: "read_file", Path: "internal/app/app.go", StartLine: 251, EndLine: 300}
+	decision = state.samePathFixationDecision(req, true)
+	if !decision.Handled || decision.HideTool != "read_file" || decision.EventRole != "same_path_fixation_tool_hidden" {
+		t.Fatalf("ignored same-path nudge should hide the repeated tool, got %#v", decision)
+	}
+}
+
+func TestRunnerRequestBudgetSamePathFixationSkipsDiagnosticLogs(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	for i := 0; i < samePathFixationNudgeAt+2; i++ {
+		req := workspace.ToolRequest{Tool: "read_file", Path: "logs/conversations/20260604-192533.289.jsonl", StartLine: i*80 + 1, EndLine: (i + 1) * 80}
+		if decision := state.samePathFixationDecision(req, true); decision.Handled {
+			t.Fatalf("diagnostic log window %d should not trigger source same-path nudge: %#v", i+1, decision)
+		}
+	}
+}
+
 func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
@@ -134,7 +171,7 @@ func TestRecoverablePostReadinessRejectionSummaryUsesContractNamespace(t *testin
 	}
 }
 
-func TestRunnerRequestBudgetStillBlocksRejectedRetryWithoutNamedGap(t *testing.T) {
+func TestRunnerRequestBudgetClearsLegacyMissingNamedGapRetryWithoutNamedGap(t *testing.T) {
 	state := newRunnerRequestBudgetState(2)
 	req := workspace.ToolRequest{
 		Tool: "read_file",
@@ -143,16 +180,14 @@ func TestRunnerRequestBudgetStillBlocksRejectedRetryWithoutNamedGap(t *testing.T
 	fingerprint := "read_file|internal/agent/runner.go"
 	state.fingerprint.rejected[fingerprint] = "Post-readiness follow-up missing named gap"
 
-	// First retry without named gap: nudge (nudge-then-block pattern)
+	// Read-only post-readiness follow-ups are advisory now. The old
+	// named_gap rejection summary must not enter the retry budget.
 	decision := state.fingerprintDecision(RunPolicy{}, req, fingerprint)
-	if !decision.Handled || decision.Nudge == "" {
-		t.Fatalf("expected nudge on first retry without named gap, got %#v", decision)
+	if decision.Handled {
+		t.Fatalf("advisory post-readiness retry should not be budget-blocked, got %#v", decision)
 	}
-
-	// Second retry: blocked
-	decision = state.fingerprintDecision(RunPolicy{}, req, fingerprint)
-	if !decision.Handled || decision.ForceAnswerReason != "rejection_retry_blocked" {
-		t.Fatalf("expected block on second retry without named gap, got %#v", decision)
+	if _, ok := state.fingerprint.rejected[fingerprint]; ok {
+		t.Fatal("expected legacy missing named-gap rejection fingerprint to be cleared")
 	}
 }
 
@@ -212,6 +247,31 @@ func TestRunnerRequestBudgetReadBudgetIsNoLongerEnforced(t *testing.T) {
 	}
 	if decision.RejectStopReason != "" {
 		t.Fatalf("expected empty stop reason, got %q", decision.RejectStopReason)
+	}
+}
+
+func TestRunnerRequestBudgetNudgesAndBlocksZeroHitSearchFamily(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	first := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "pkey.KeyArrowUp"}
+	state.noteZeroHitSearch(first, "search_content|.|pkey.KeyArrowUp", workspace.ToolResult{
+		Tool:    "search_content",
+		Summary: `No content matches for "pkey.KeyArrowUp"`,
+	})
+
+	second := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "pkey.KeyArrowDown"}
+	decision := state.fingerprintDecision(RunPolicy{}, second, "search_content|.|pkey.KeyArrowDown")
+	if !decision.Handled || decision.EventRole != "zero_hit_family_nudge" || decision.Nudge == "" {
+		t.Fatalf("expected same-family zero-hit nudge, got %#v", decision)
+	}
+
+	state.noteZeroHitSearch(second, "search_content|.|pkey.KeyArrowDown", workspace.ToolResult{
+		Tool:    "search_content",
+		Summary: `No content matches for "pkey.KeyArrowDown"`,
+	})
+	third := workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "key arrow"}
+	decision = state.fingerprintDecision(RunPolicy{}, third, "search_content|.|key arrow")
+	if !decision.Handled || decision.RejectSummary != "Zero-hit search family blocked" || decision.RejectStopReason != "zero_hit_family_budget_exhausted" {
+		t.Fatalf("expected same-family zero-hit block, got %#v", decision)
 	}
 }
 

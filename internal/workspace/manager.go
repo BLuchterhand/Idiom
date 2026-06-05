@@ -810,6 +810,9 @@ func toolTimeoutFor(tool string) time.Duration {
 func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result ToolResult) {
 	tool := strings.TrimSpace(req.Tool)
 	mode := m.Mode()
+	if isLanguageToolName(tool) {
+		return m.executeLanguageTool(ctx, req)
+	}
 	switch tool {
 	case "pwd":
 		return ToolResult{
@@ -881,174 +884,6 @@ func (m *Manager) executeDispatch(ctx context.Context, req ToolRequest) (result 
 		return m.semgrepScan(ctx, req)
 	case "joern_scan":
 		return m.joernScan(ctx, req)
-	case "go_overview":
-		return m.executeLanguageTool(ctx, req)
-	case "go_entrypoints":
-		return m.executeLanguageTool(ctx, req)
-	case "go_find_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "go_find_function":
-		return m.executeLanguageTool(ctx, req)
-	case "go_find_type":
-		return m.executeLanguageTool(ctx, req)
-	case "go_find_const":
-		return m.executeLanguageTool(ctx, req)
-	case "go_file_outline":
-		return m.executeLanguageTool(ctx, req)
-	case "go_read_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_overview":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_entrypoints":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_find_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_read_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_related_files":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_definition":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_declaration":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_implementations":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_references":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_calls_from":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_calls_into":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_extract_body":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_includes":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_who_includes":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_blast_radius":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_dead_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_workspace_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_diagnostics":
-		return m.executeLanguageTool(ctx, req)
-	case "cpp_file_outline":
-		return m.executeLanguageTool(ctx, req)
-	case "python_overview":
-		return m.executeLanguageTool(ctx, req)
-	case "python_entrypoints":
-		return m.executeLanguageTool(ctx, req)
-	case "python_find_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "python_read_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "python_related_files":
-		return m.executeLanguageTool(ctx, req)
-	case "python_definition":
-		return m.executeLanguageTool(ctx, req)
-	case "python_implementations":
-		return m.executeLanguageTool(ctx, req)
-	case "python_references":
-		return m.executeLanguageTool(ctx, req)
-	case "python_calls_from":
-		return m.executeLanguageTool(ctx, req)
-	case "python_calls_into":
-		return m.executeLanguageTool(ctx, req)
-	case "python_workspace_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "python_diagnostics":
-		return m.executeLanguageTool(ctx, req)
-	case "python_file_outline":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_overview":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_entrypoints":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_find_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_read_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_related_files":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_definition":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_implementations":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_references":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_calls_from":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_calls_into":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_workspace_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_diagnostics":
-		return m.executeLanguageTool(ctx, req)
-	case "ts_file_outline":
-		return m.executeLanguageTool(ctx, req)
-	case "rust_overview",
-		"rust_entrypoints",
-		"rust_find_symbol",
-		"rust_workspace_symbol",
-		"rust_read_symbol",
-		"rust_related_files",
-		"rust_file_outline",
-		"rust_definition",
-		"rust_references",
-		"rust_calls_from",
-		"rust_calls_into",
-		"rust_implementations",
-		"rust_diagnostics":
-		return m.executeLanguageTool(ctx, req)
-	case "java_overview":
-		return m.executeLanguageTool(ctx, req)
-	case "java_entrypoints":
-		return m.executeLanguageTool(ctx, req)
-	case "java_find_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "java_read_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "java_related_files":
-		return m.executeLanguageTool(ctx, req)
-	case "java_workspace_symbol":
-		return m.executeLanguageTool(ctx, req)
-	case "java_definition":
-		return m.executeLanguageTool(ctx, req)
-	case "java_references":
-		return m.executeLanguageTool(ctx, req)
-	case "java_implementations":
-		return m.executeLanguageTool(ctx, req)
-	case "java_calls_from":
-		return m.executeLanguageTool(ctx, req)
-	case "java_calls_into":
-		return m.executeLanguageTool(ctx, req)
-	case "java_diagnostics":
-		return m.executeLanguageTool(ctx, req)
-	case "java_file_outline":
-		return m.executeLanguageTool(ctx, req)
-	case "go_find_package":
-		return m.executeLanguageTool(ctx, req)
-	case "go_related_files":
-		return m.executeLanguageTool(ctx, req)
-	case "go_definition":
-		return m.executeLanguageTool(ctx, req)
-	case "go_references":
-		return m.executeLanguageTool(ctx, req)
-	case "go_implementations":
-		return m.executeLanguageTool(ctx, req)
-	case "go_calls_from":
-		return m.executeLanguageTool(ctx, req)
-	case "go_calls_into":
-		return m.executeLanguageTool(ctx, req)
-	case "go_extract_body":
-		return m.executeLanguageTool(ctx, req)
-	case "go_importers":
-		return m.executeLanguageTool(ctx, req)
-	case "go_diagnostics":
-		return m.executeLanguageTool(ctx, req)
-	case "go_workspace_symbol":
-		return m.executeLanguageTool(ctx, req)
 	case "go_move_declarations":
 		if blocked, ok := exploreBlockedTools[req.Tool]; ok && mode == ModeExplore {
 			return toolPermissionPolicyResult(req.Tool, "Tool request rejected", "explore mode is read-only; leave explore mode before "+blocked)
@@ -1371,21 +1206,6 @@ func inferLanguagePrecisionTier(result ToolResult) string {
 	return PrecisionTierSyntaxIndex
 }
 
-func isLanguageToolName(tool string) bool {
-	tool = strings.ToLower(strings.TrimSpace(tool))
-	if tool == "" {
-		return false
-	}
-	for _, lang := range LanguageRegistry() {
-		for _, candidate := range lang.Tools {
-			if strings.EqualFold(tool, strings.TrimSpace(candidate)) {
-				return true
-			}
-		}
-	}
-	return isSupplementalLanguageToolName(tool)
-}
-
 func (m *Manager) gitStatus(ctx context.Context, req ToolRequest) ToolResult {
 	workdir, err := m.resolveWorkdir(req.Workdir)
 	if err != nil {
@@ -1597,7 +1417,7 @@ func decodeNestedToolRequestJSON(payload []byte) (ToolRequest, bool, error) {
 	}
 	if strings.TrimSpace(nested.Tool) == "" {
 		nested.Tool = outerTool
-	} else if outerTool == "code_navigate" && codeNavigateCapabilityAlias(nested.Tool) != "" {
+	} else if outerTool == CodeNavigateToolName && codeNavigateCapabilityAlias(nested.Tool) != "" {
 		if strings.TrimSpace(nested.Capability) == "" {
 			nested.Capability = codeNavigateCapabilityAlias(nested.Tool)
 		}

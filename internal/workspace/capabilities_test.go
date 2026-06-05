@@ -86,6 +86,27 @@ func TestReadOnlyCapabilityRegistryMapsStableVocabularyToAdapters(t *testing.T) 
 	}
 }
 
+func TestReadOnlyCapabilityRegistryIsIntentionallyNarrowerThanCodeNavigate(t *testing.T) {
+	for _, capability := range []string{
+		CodeNavigateCapabilityName(CapImplementations),
+		CodeNavigateCapabilityName(CapExtractBody),
+	} {
+		if _, ok := ResolveReadOnlyCapability(capability, nil); ok {
+			t.Fatalf("%s should remain outside read_only_capability until promoted as a stable product capability", capability)
+		}
+	}
+	codeNavigateCapabilities := CodeNavigationEvidenceCapabilities()
+	if !slices.Contains(codeNavigateCapabilities, "find_implementations") {
+		t.Fatalf("code_navigate should expose implementation lookup evidence capability: %#v", codeNavigateCapabilities)
+	}
+	if !slices.Contains(codeNavigateCapabilities, "inspect_symbol") {
+		t.Fatalf("code_navigate should expose full-body/source-body evidence capability: %#v", codeNavigateCapabilities)
+	}
+	if slices.Equal(ReadOnlyCapabilityEvidenceCapabilities(), codeNavigateCapabilities) {
+		t.Fatalf("read_only_capability projection should remain a smaller stable product vocabulary, got same as code_navigate: %#v", codeNavigateCapabilities)
+	}
+}
+
 func TestReadOnlyCapabilityEvidenceCapabilitiesProjectResolverVocabulary(t *testing.T) {
 	want := []string{
 		"inspect_file",
@@ -107,10 +128,15 @@ func TestReadOnlyCapabilityEvidenceCapabilitiesProjectResolverVocabulary(t *test
 		t.Fatalf("projection should return an isolated slice, got %#v", next)
 	}
 
-	for _, tool := range []string{"code_navigate", readOnlyCapabilityToolName} {
-		if got := EvidenceCapabilitiesForTool(tool); !slices.Equal(got, want) {
-			t.Fatalf("%s evidence capabilities = %#v, want resolver projection %#v", tool, got, want)
-		}
+	if got := EvidenceCapabilitiesForTool(readOnlyCapabilityToolName); !slices.Equal(got, want) {
+		t.Fatalf("%s evidence capabilities = %#v, want resolver projection %#v", readOnlyCapabilityToolName, got, want)
+	}
+	codeNavigateWant := CodeNavigationEvidenceCapabilities()
+	if got := EvidenceCapabilitiesForTool("code_navigate"); !slices.Equal(got, codeNavigateWant) {
+		t.Fatalf("code_navigate evidence capabilities = %#v, want code navigation projection %#v", got, codeNavigateWant)
+	}
+	if !slices.Contains(codeNavigateWant, "find_implementations") {
+		t.Fatalf("code_navigate projection should include runtime-only implementation lookup capability, got %#v", codeNavigateWant)
 	}
 }
 

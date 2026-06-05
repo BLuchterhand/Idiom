@@ -36,6 +36,7 @@ const (
 	CapCallsFrom       = language.CapCallsFrom
 	CapCallsInto       = language.CapCallsInto
 	CapReadSymbol      = language.CapReadSymbol
+	CapExtractBody     = language.CapExtractBody
 	CapRelatedFiles    = language.CapRelatedFiles
 	CapImplementations = language.CapImplementations
 	CapDiagnostics     = language.CapDiagnostics
@@ -94,6 +95,14 @@ func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 		Cost:            spec.Cost,
 		Class:           spec.Class,
 	}, nil
+}
+
+func codeNavigationCapabilityNames() []string {
+	return languagetools.CodeNavigationCapabilityNames()
+}
+
+func codeNavigationCapabilityList() string {
+	return languagetools.CodeNavigationCapabilityList()
 }
 
 func validateSymbolPattern(tool, pattern string) error {

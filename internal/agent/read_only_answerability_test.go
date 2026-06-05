@@ -525,6 +525,249 @@ func TestReadOnlyAnswerabilityDoesNotPromoteUnrelatedCollectiveSourceBodies(t *t
 	}
 }
 
+func TestObjectiveAsksImplementationShapeDoesNotCatchPlainHowToUse(t *testing.T) {
+	if objectiveAsksImplementationShape("How to run the unit tests in this repository?") {
+		t.Fatal("plain how-to usage question must not require implementation-owner readiness")
+	}
+	if !objectiveAsksImplementationShape("What would it take to change the runner readiness behavior?") {
+		t.Fatal("change-shape question should require implementation-owner readiness")
+	}
+}
+
+func TestReadOnlyAnswerabilityDoesNotTreatSessionsPanelAsChatRecallOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history? the intent is to make it easy to find old messages and run them again without typing them out."
+	brief := readOnlyConversationBriefForTest(objective)
+
+	sessionsResults := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack returned candidate internal/app/sessions_panel.go",
+			Output:  `{"candidate_files":[{"path":"internal/app/sessions_panel.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleSessionsPanelKey in internal/app/sessions_panel.go lines 205-245",
+				"205:// handleSessionsPanelKey consumes a key press while the Sessions tab",
+				"206:// has focus. Returns (true, cmd) if handled. j/k navigate, Enter",
+				"207:// resumes the selected session.",
+				"208:func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {",
+				"211:\tcase tea.KeyUp:",
+				"215:\tcase tea.KeyDown:",
+				"230:\t\tif err := m.ResumeSession(id); err != nil {",
+				"236:\t\t\t// Bounce the panel back to History so the resumed chat",
+			}, "\n"),
+		},
+	}
+	if ledger := readOnlyAnswerabilityForResults(brief, sessionsResults); ledger.Answerable() {
+		t.Fatalf("sessions-panel source owner must not close chat-message recall readiness: %#v", ledger)
+	} else if role := sourceOwnerRoleForTest(ledger, "internal/app/sessions_panel.go"); role != readOnlySourceOwnerConflictingNavigation {
+		t.Fatalf("sessions-panel source should be conflicting navigation owner, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+
+	overlayResults := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack returned candidate internal/app/help_overlay.go",
+			Output:  `{"candidate_files":[{"path":"internal/app/help_overlay.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleHelpOverlayKey in internal/app/help_overlay.go lines 42-88",
+				"42:// handleHelpOverlayKey consumes a key press while the Help overlay has focus.",
+				"43:func (m *Model) handleHelpOverlayKey(msg tea.KeyMsg) (bool, tea.Cmd) {",
+				"44:\tswitch msg.Type {",
+				"45:\tcase tea.KeyUp:",
+				"46:\t\tm.helpOverlay.MoveUp()",
+				"47:\tcase tea.KeyDown:",
+				"48:\t\tm.helpOverlay.MoveDown()",
+				"49:\t}",
+				"50:\treturn true, nil",
+			}, "\n"),
+		},
+	}
+	if ledger := readOnlyAnswerabilityForResults(brief, overlayResults); ledger.Answerable() {
+		t.Fatalf("unrelated overlay navigation owner must not close chat-message recall readiness: %#v", ledger)
+	} else if role := sourceOwnerRoleForTest(ledger, "internal/app/help_overlay.go"); role != readOnlySourceOwnerConflictingNavigation {
+		t.Fatalf("overlay source should be conflicting navigation owner, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+
+	stateOnlyResults := []workspace.ToolResult{
+		sessionsResults[0],
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model in internal/app/model_state.go lines 100-150",
+				"100:type Model struct {",
+				"122:\tmessages []llama.ChatMessage",
+				"130:\thistory historyState",
+				"131:\tinputState inputState",
+				"150:}",
+			}, "\n"),
+		},
+	}
+	if ledger := readOnlyAnswerabilityForResults(brief, stateOnlyResults); ledger.Answerable() {
+		t.Fatalf("state-only source body must not close implementation-shape readiness: %#v", ledger)
+	} else if role := sourceOwnerRoleForTest(ledger, "internal/app/model_state.go"); role != readOnlySourceOwnerStateHolder {
+		t.Fatalf("model state source should be state support, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+
+	liveShapedStateResults := []workspace.ToolResult{
+		sessionsResults[0],
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model in internal/app/model_state.go lines 133-263",
+				"133:type Model struct {",
+				"162:\tinput    textarea.Model",
+				"169:\tmessages []llama.ChatMessage",
+				"249:\tcurrentTurnHistoryIndex  int",
+				"250:\tcurrentTurnHistoryActive bool",
+				"256:\tplan     planState",
+				"257:\tsessions sessionsState",
+				"258:\thistory  historyState",
+				"259:}",
+			}, "\n"),
+		},
+	}
+	if ledger := readOnlyAnswerabilityForResults(brief, liveShapedStateResults); ledger.Answerable() {
+		t.Fatalf("live-shaped Model state body must not close implementation-shape readiness: %#v", ledger)
+	} else if role := sourceOwnerRoleForTest(ledger, "internal/app/model_state.go"); role != readOnlySourceOwnerStateHolder {
+		t.Fatalf("live-shaped Model body should be state support, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+
+	sessionsPlusStateResults := append([]workspace.ToolResult{}, sessionsResults...)
+	sessionsPlusStateResults = append(sessionsPlusStateResults, stateOnlyResults[1])
+	if ledger := readOnlyAnswerabilityForResults(brief, sessionsPlusStateResults); ledger.Answerable() {
+		t.Fatalf("sessions navigation plus state support must not close without a mechanism owner: %#v", ledger)
+	}
+
+	handlerResults := []workspace.ToolResult{
+		sessionsResults[0],
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-180",
+				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+				"43:\t\tcase tea.KeyUp:",
+				"49:\t\tcase tea.KeyDown:",
+				"70:\t\t\tif m.history.selected > 0 {",
+				"77:\t\t\tif m.history.selected < len(m.history.entries)-1 {",
+				"172:\t\tm.appendHistoryMessage(\"user\", text, nil)",
+			}, "\n"),
+		},
+	}
+	if ledger := readOnlyAnswerabilityForResults(brief, handlerResults); !ledger.Answerable() {
+		t.Fatalf("chat/history key-handler source body should close readiness: %#v", ledger)
+	} else if role := sourceOwnerRoleForTest(ledger, "internal/app/update_handlers.go"); role != readOnlySourceOwnerMechanism {
+		t.Fatalf("chat/history key handler should be mechanism owner, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+}
+
+func TestReadOnlyAnswerabilityDoesNotTreatRegressionFixtureAsImplementationOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrows to iterate between and fill the chat input with a user's chat history entries?"
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "search_content",
+			Summary: "Found 38 matching line(s).",
+			Output: strings.Join([]string{
+				"internal/agent/final_answer_decorator_test.go:1237:func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t *testing.T) {",
+				"internal/agent/final_answer_decorator_test.go:1242:objective := \"what would it take to enable the up and down arrow keys to iterate through the user's chat history?\"",
+			}, "\n"),
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/agent/final_answer_decorator_test.go lines 1230-1270 (total lines: 1544)",
+			Output: strings.Join([]string{
+				"1237:func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t *testing.T) {",
+				"1242:\tobjective := \"what would it take to enable the up and down arrow keys to iterate through the user's chat history?\"",
+				"1249:\t\t\"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-180\",",
+				"1250:\t\t\"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {\",",
+				"1251:\t\t\"43:\\t\\tcase tea.KeyUp:\",",
+				"1252:\t\t\"49:\\t\\tcase tea.KeyDown:\",",
+				"1253:\t\t\"172:\\t\\tm.appendHistoryMessage(\\\"user\\\", text, nil)\",",
+			}, "\n"),
+		},
+	}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if ledger.Answerable() {
+		t.Fatalf("test fixture body must not satisfy implementation-owner readiness: %#v", ledger)
+	}
+	if got := ledger.ImplementationOwnerPaths(); len(got) > 0 {
+		t.Fatalf("test fixture must not become implementation owner path, got %#v", got)
+	}
+	if role := sourceOwnerRoleForTest(ledger, "internal/agent/final_answer_decorator_test.go"); role != readOnlySourceOwnerTestSupport {
+		t.Fatalf("test fixture should be classified as test support, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+}
+
+func sourceOwnerRoleForTest(ledger readOnlyAnswerabilityLedger, path string) readOnlySourceOwnerRole {
+	path = normalizeRunnerPath(path)
+	for _, evidence := range ledger.SourceOwnerEvidence {
+		if evidence.Path == path {
+			return evidence.Role
+		}
+	}
+	return readOnlySourceOwnerUnknown
+}
+
+func TestFinalAnswerAcceptanceRejectsSessionsPanelAsChatRecallOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history? the intent is to make it easy to find old messages and run them again without typing them out."
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack returned candidate internal/app/sessions_panel.go",
+			Output:  `{"candidate_files":[{"path":"internal/app/sessions_panel.go"},{"path":"internal/app/model_state.go"}]}`,
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleSessionsPanelKey in internal/app/sessions_panel.go lines 205-245",
+				"205:// handleSessionsPanelKey consumes a key press while the Sessions tab",
+				"206:// has focus. Returns (true, cmd) if handled. j/k navigate, Enter",
+				"207:// resumes the selected session.",
+				"208:func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {",
+				"211:\tcase tea.KeyUp:",
+				"215:\tcase tea.KeyDown:",
+				"230:\t\tif err := m.ResumeSession(id); err != nil {",
+				"236:\t\t\t// Bounce the panel back to History so the resumed chat",
+			}, "\n"),
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model in internal/app/model_state.go lines 100-150",
+				"100:type Model struct {",
+				"122:\tmessages []llama.ChatMessage",
+				"130:\thistory historyState",
+				"131:\tinputState inputState",
+				"150:}",
+			}, "\n"),
+		},
+	}
+	answer := "It would take changing `Model.handleSessionsPanelKey` in `internal/app/sessions_panel.go`. The inspected source shows it already handles `tea.KeyUp` and `tea.KeyDown`, so the work is to route those cases through chat-history state."
+	runner := &Runner{RuntimeBrief: brief}
+
+	kind, reason := runner.finalAnswerBlockerKind(answer, results)
+	if kind != "answer_objective_unmet" {
+		t.Fatalf("sessions-panel-owned final answer got blocker kind=%q reason=%q", kind, reason)
+	}
+	if paths := acceptedAnswerEvidencePaths(answer, results, brief); slices.Contains(paths, "internal/app/sessions_panel.go") {
+		t.Fatalf("accepted evidence paths must not promote conflicting navigation owner, got %#v", paths)
+	}
+}
+
 func TestReadOnlyAnswerabilityAcceptsDelegatedInspectedPathPacket(t *testing.T) {
 	brief := readOnlyConversationBriefForTest("Can you tell me how this harness uses subagents?")
 	results := []workspace.ToolResult{{

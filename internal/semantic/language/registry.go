@@ -23,6 +23,7 @@ const (
 	CapCallsFrom       Capability = "calls_from"
 	CapCallsInto       Capability = "calls_into"
 	CapReadSymbol      Capability = "read_symbol"
+	CapExtractBody     Capability = "extract_body"
 	CapRelatedFiles    Capability = "related_files"
 	CapImplementations Capability = "implementations"
 	CapDiagnostics     Capability = "diagnostics"
@@ -55,6 +56,7 @@ var languageRegistry = []LanguageSupport{
 			CapCallsFrom:       "go_calls_from",
 			CapCallsInto:       "go_calls_into",
 			CapReadSymbol:      "go_read_symbol",
+			CapExtractBody:     "go_extract_body",
 			CapRelatedFiles:    "go_related_files",
 			CapImplementations: "go_implementations",
 			CapDiagnostics:     "go_diagnostics",
@@ -89,6 +91,7 @@ A narrow read_file range can supply exact context when semantic routes do not la
 			CapCallsFrom:       "cpp_calls_from",
 			CapCallsInto:       "cpp_calls_into",
 			CapReadSymbol:      "cpp_read_symbol",
+			CapExtractBody:     "cpp_extract_body",
 			CapRelatedFiles:    "cpp_related_files",
 			CapImplementations: "cpp_implementations",
 			CapDiagnostics:     "cpp_diagnostics",

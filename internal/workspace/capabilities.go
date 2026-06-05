@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/semantic/languagetools"
 	"idiom/internal/util"
 )
 
@@ -233,6 +234,16 @@ func ReadOnlyCapabilityEvidenceCapabilities() []string {
 	}
 }
 
+func CodeNavigationEvidenceCapabilities() []string {
+	var out []string
+	for _, capability := range languagetools.CodeNavigationCapabilities() {
+		if evidence := evidenceCapabilityForLanguageCapability(Capability(capability)); evidence != "" {
+			out = append(out, evidence)
+		}
+	}
+	return util.UniqueNonEmpty(out)
+}
+
 func ReadOnlyCapabilityEvidenceCapability(capability string) string {
 	switch normalizeReadOnlyCapabilityID(capability) {
 	case string(ReadOnlyCapabilityFileOutline):
@@ -373,30 +384,13 @@ func CapabilityClassificationForTool(tool string) string {
 	return ""
 }
 
-func languageToolEvidenceCapabilities(tool string) []string {
-	if capabilities := supplementalLanguageEvidenceCapabilities(tool); len(capabilities) > 0 {
-		return capabilities
-	}
-	for _, lang := range LanguageRegistry() {
-		for capability, candidate := range lang.Tools {
-			if candidate != tool {
-				continue
-			}
-			if id := evidenceCapabilityForLanguageCapability(capability); id != "" {
-				return []string{id}
-			}
-		}
-	}
-	return nil
-}
-
 func evidenceCapabilityForLanguageCapability(capability Capability) string {
 	switch capability {
 	case CapFileOutline:
 		return "inspect_file"
 	case CapFindSymbol, CapWorkspaceSymbol:
 		return "find_symbol"
-	case CapReadSymbol:
+	case CapReadSymbol, CapExtractBody:
 		return "inspect_symbol"
 	case CapDefinition:
 		return "find_definition"

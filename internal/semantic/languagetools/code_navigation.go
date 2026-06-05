@@ -28,6 +28,25 @@ type codeNavigationSpec struct {
 	Class           string
 }
 
+var codeNavigationSpecs = []codeNavigationSpecDefinition{
+	{Spec: codeNavigationSpec{Name: "file_outline", Capability: CapFileOutline, RequiresPath: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"file_outline", "outline"}},
+	{Spec: codeNavigationSpec{Name: "find_symbol", Capability: CapFindSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"find_symbol", "symbol", "symbol_lookup", "lookup"}},
+	{Spec: codeNavigationSpec{Name: "workspace_symbol", Capability: CapWorkspaceSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"workspace_symbol", "workspace_symbols", "find_symbol_workspace"}},
+	{Spec: codeNavigationSpec{Name: "read_symbol", Capability: CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"read_symbol", "inspect_symbol", "symbol_body"}},
+	{Spec: codeNavigationSpec{Name: "extract_body", Capability: CapExtractBody, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, Aliases: []string{"extract_body", "full_body", "symbol_full_body"}},
+	{Spec: codeNavigationSpec{Name: "definition", Capability: CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"definition", "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition"}},
+	{Spec: codeNavigationSpec{Name: "references", Capability: CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"references", "reference", "usages", "find_references", "find_reference"}},
+	{Spec: codeNavigationSpec{Name: "calls_from", Capability: CapCallsFrom, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_from", "callees"}},
+	{Spec: codeNavigationSpec{Name: "calls_into", Capability: CapCallsInto, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"calls_into", "callers"}},
+	{Spec: codeNavigationSpec{Name: "implementations", Capability: CapImplementations, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"implementations", "implementation", "impls"}},
+	{Spec: codeNavigationSpec{Name: "related_files", Capability: CapRelatedFiles, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, Aliases: []string{"related_files", "related"}},
+}
+
+type codeNavigationSpecDefinition struct {
+	Spec    codeNavigationSpec
+	Aliases []string
+}
+
 func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult {
 
 	// Fallback: when the model omits capability, infer it from the request
@@ -39,7 +58,7 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 			return ToolResult{
 				Tool:    "code_navigate",
 				Summary: "Code navigation rejected",
-				Error:   fmt.Sprintf("code_navigate received graph resolution %q without a navigation capability; use context_query for graph resolutions or set capability to one of file_outline, find_symbol, workspace_symbol, read_symbol, definition, references, calls_from, calls_into, implementations, related_files", strings.TrimSpace(req.Resolution)),
+				Error:   fmt.Sprintf("code_navigate received graph resolution %q without a navigation capability; use context_query for graph resolutions or set capability to one of %s", strings.TrimSpace(req.Resolution), CodeNavigationCapabilityList()),
 			}
 		}
 		if strings.TrimSpace(req.Path) != "" {
@@ -78,43 +97,50 @@ func (m *Manager) codeNavigate(ctx context.Context, req ToolRequest) ToolResult 
 }
 
 func codeNavigationSpecFor(value string) (codeNavigationSpec, error) {
-	key := strings.ToLower(strings.TrimSpace(value))
-	key = strings.ReplaceAll(key, "-", "_")
-	key = strings.ReplaceAll(key, " ", "_")
-	switch key {
-	case "file_outline", "outline":
-		return codeNavigationSpec{Name: "file_outline", Capability: CapFileOutline, RequiresPath: true, Class: "language_symbol", Cost: "low"}, nil
-	case "find_symbol", "symbol", "symbol_lookup", "lookup":
-		return codeNavigationSpec{Name: "find_symbol", Capability: CapFindSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, nil
-	case "workspace_symbol", "workspace_symbols", "find_symbol_workspace":
-		return codeNavigationSpec{Name: "workspace_symbol", Capability: CapWorkspaceSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, nil
-	case "read_symbol", "inspect_symbol", "symbol_body":
-		return codeNavigationSpec{Name: "read_symbol", Capability: CapReadSymbol, RequiresPattern: true, Class: "language_symbol", Cost: "low"}, nil
-	case "definition", "definitions", "declaration", "declarations", "find_definition", "find_definitions", "find_declaration", "find_declarations", "goto_definition", "go_to_definition":
-		return codeNavigationSpec{Name: "definition", Capability: CapDefinition, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	case "references", "reference", "usages", "find_references", "find_reference":
-		return codeNavigationSpec{Name: "references", Capability: CapReferences, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	case "calls_from", "callees":
-		return codeNavigationSpec{Name: "calls_from", Capability: CapCallsFrom, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	case "calls_into", "callers":
-		return codeNavigationSpec{Name: "calls_into", Capability: CapCallsInto, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	case "implementations", "implementation", "impls":
-		return codeNavigationSpec{Name: "implementations", Capability: CapImplementations, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	case "related_files", "related":
-		return codeNavigationSpec{Name: "related_files", Capability: CapRelatedFiles, RequiresPattern: true, Class: "language_relationship", Cost: "medium"}, nil
-	default:
-		return codeNavigationSpec{}, fmt.Errorf("capability is required; choose one of file_outline, find_symbol, workspace_symbol, read_symbol, definition, references, calls_from, calls_into, implementations, related_files")
+	key := normalizeCodeNavigationCapability(value)
+	for _, entry := range codeNavigationSpecs {
+		for _, alias := range entry.Aliases {
+			if normalizeCodeNavigationCapability(alias) == key {
+				return entry.Spec, nil
+			}
+		}
 	}
+	return codeNavigationSpec{}, fmt.Errorf("capability is required; choose one of %s", CodeNavigationCapabilityList())
 }
 
 func CodeNavigationSpecFor(value string) (codeNavigationSpec, error) {
 	return codeNavigationSpecFor(value)
 }
 
-func codeNavigateGraphResolutionOnly(value string) bool {
+func CodeNavigationCapabilityNames() []string {
+	names := make([]string, 0, len(codeNavigationSpecs))
+	for _, entry := range codeNavigationSpecs {
+		names = append(names, entry.Spec.Name)
+	}
+	return names
+}
+
+func CodeNavigationCapabilities() []Capability {
+	capabilities := make([]Capability, 0, len(codeNavigationSpecs))
+	for _, entry := range codeNavigationSpecs {
+		capabilities = append(capabilities, entry.Spec.Capability)
+	}
+	return capabilities
+}
+
+func CodeNavigationCapabilityList() string {
+	return strings.Join(CodeNavigationCapabilityNames(), ", ")
+}
+
+func normalizeCodeNavigationCapability(value string) string {
 	key := strings.ToLower(strings.TrimSpace(value))
 	key = strings.ReplaceAll(key, "-", "_")
 	key = strings.ReplaceAll(key, " ", "_")
+	return key
+}
+
+func codeNavigateGraphResolutionOnly(value string) bool {
+	key := normalizeCodeNavigationCapability(value)
 	switch key {
 	case "repository", "package", "file", "symbol", "summary", "any":
 		return true

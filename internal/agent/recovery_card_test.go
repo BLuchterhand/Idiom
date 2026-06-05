@@ -563,6 +563,71 @@ func TestBuildRecoveryCardDoesNotAdvertiseToolsForFinalOnlyPhase(t *testing.T) {
 	}
 }
 
+func TestRecoveryCardDoesNotSayNoneAvailableWhenFinalAnswerAllowed(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID: turnPhaseGeneric,
+		Phase:   "read_only_evidence_available",
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionFinalAnswer, actionBlocker},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionFinalAnswer, actionBlocker},
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:   contract,
+		RejectedRequest: workspace.ToolRequest{Tool: "code_navigate", Path: "internal/app/model_state.go", Capability: "read_symbol"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "code_navigate",
+			Summary: "Repeated tool request rejected",
+			Error:   "this exact request already replayed prior evidence once",
+		},
+	}))
+
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("read-only final-answer recovery must not claim no safe action remains:\n%s", got)
+	}
+	assertRecoveryCardContains(t, got,
+		"currently callable action classes: final_answer, blocker",
+		"deterministic safe next action: Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source.",
+	)
+}
+
+func TestRecoveryCardEvidencePendingDoesNotSayNoneAvailableWhenFinalAnswerAllowed(t *testing.T) {
+	contract := TurnPhaseContract{
+		PhaseID: turnPhaseGeneric,
+		Phase:   "read_only_evidence_pending",
+		RequiredNext: []string{
+			"final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker",
+		},
+		ActionPolicy: TurnActionClassPolicy{
+			AllowedActionClasses: []string{actionBlocker, actionFinalAnswer, actionRead, actionSearch},
+			CallableToolNames:    []string{"code_navigate", "read_file", "search_content"},
+		},
+		RuntimeCall: RuntimeCallContract{
+			ExpressibleActionClasses: []string{actionBlocker, actionFinalAnswer, actionRead, actionSearch},
+		},
+	}
+	got := RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"code_navigate", "read_file", "search_content"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "search_content", Path: ".", Pattern: "key.*input"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "search_content",
+			Summary: "Discovery consumption required before more broad discovery",
+			Error:   "a previous discovery result already returned concrete candidates",
+		},
+	}))
+
+	if strings.Contains(got, "deterministic safe next action: none available") {
+		t.Fatalf("read-only pending recovery must not claim no safe action remains:\n%s", got)
+	}
+	assertRecoveryCardContains(t, got,
+		"currently callable action classes: read, search, blocker, final_answer",
+		"deterministic safe next action: Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source.",
+	)
+}
+
 func TestBuildRecoveryCardGenericDoesNotInjectProductWorkflowTerms(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

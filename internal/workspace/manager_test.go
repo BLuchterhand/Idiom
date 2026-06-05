@@ -263,6 +263,42 @@ func TestCodeNavigateRoutesByPathLanguage(t *testing.T) {
 	}
 }
 
+func TestCodeNavigateRoutesGoExtractBody(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "pkg", "runner.go")
+	if err := os.MkdirAll(filepath.Dir(source), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := "package pkg\n\nfunc Run() string {\n\tstep := \"first\"\n\treturn step + \" ok\"\n}\n"
+	if err := os.WriteFile(source, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := NewManager(config.Workspace{Root: root, CWD: root})
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:       "code_navigate",
+		Capability: "extract_body",
+		Path:       filepath.Join("pkg", "runner.go"),
+		Pattern:    "Run",
+	})
+
+	if result.Tool != "code_navigate" {
+		t.Fatalf("tool = %q, want code_navigate", result.Tool)
+	}
+	if result.Error != "" {
+		t.Fatalf("code_navigate extract_body returned error: %v\n%s", result.Error, result.Output)
+	}
+	if !strings.Contains(result.Summary, "go_extract_body") || !strings.Contains(result.Output, "routed_tool: go_extract_body") {
+		t.Fatalf("expected Go extract-body route, got summary=%q output=\n%s", result.Summary, result.Output)
+	}
+	if !strings.Contains(result.Output, "return step + \" ok\"") {
+		t.Fatalf("expected full symbol body in output, got:\n%s", result.Output)
+	}
+}
+
 func TestCodeNavigatePathLanguageBeatsConflictingOverride(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/nav\n\ngo 1.22\n"), 0o644); err != nil {

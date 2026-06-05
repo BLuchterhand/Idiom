@@ -7,6 +7,11 @@ import (
 	"idiom/internal/workspace"
 )
 
+const (
+	reasoningAnswerSalvageMinChars = 40
+	reasoningAnswerSalvageMaxChars = 4000
+)
+
 // salvageAnswerFromReasoning extracts answer prose from the thinking block
 // when the model produced empty visible content but substantial reasoning.
 // This happens with Qwen in thinking-enabled mode when the model puts its
@@ -29,7 +34,10 @@ func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage, results []w
 		return "", false
 	}
 	answer := extractAnswerProseFromReasoning(reasoning)
-	if len(strings.TrimSpace(answer)) < 40 {
+	if len(strings.TrimSpace(answer)) < reasoningAnswerSalvageMinChars {
+		return "", false
+	}
+	if !reasoningAnswerCandidateIsClean(answer) {
 		return "", false
 	}
 	if blockerKind, _ := r.finalAnswerBlockerKind(answer, results); blockerKind != "" {
@@ -44,6 +52,14 @@ func (r *Runner) salvageAnswerFromReasoning(reply llama.ChatMessage, results []w
 // paragraph where the model works out what to tell the user. This function
 // strips the scaffolding and returns the synthesis.
 func extractAnswerProseFromReasoning(reasoning string) string {
+	reasoning = strings.TrimSpace(reasoning)
+	if reasoning == "" {
+		return ""
+	}
+	if sections, hasMarkers := markedReasoningAnswerSections(reasoning); hasMarkers {
+		return selectMarkedReasoningAnswerSection(sections)
+	}
+
 	// Phase 1: strip fenced code blocks, Qwen XML tool calls,
 	// tool-call wrappers, and internal-monologue lines.
 	var cleaned strings.Builder
@@ -59,6 +75,10 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 			continue
 		}
 		if looksLikeQwenThinkingToolCall(trimmed) {
+			continue
+		}
+		if trimmed == "" {
+			cleaned.WriteString("\n")
 			continue
 		}
 		if looksLikeToolCallWrapper(trimmed) {
@@ -98,7 +118,133 @@ func extractAnswerProseFromReasoning(reasoning string) string {
 			best = p
 		}
 	}
+	if !reasoningAnswerCandidateIsClean(best) {
+		return ""
+	}
 	return best
+}
+
+func markedReasoningAnswerSections(reasoning string) ([]string, bool) {
+	var sections []string
+	var current strings.Builder
+	active := false
+	seenMarker := false
+	for _, line := range strings.Split(reasoning, "\n") {
+		if rest, ok := finalAnswerSectionMarkerRest(line); ok {
+			seenMarker = true
+			if active {
+				sections = append(sections, current.String())
+				current.Reset()
+			}
+			active = true
+			if rest != "" {
+				current.WriteString(rest)
+				current.WriteString("\n")
+			}
+			continue
+		}
+		if active {
+			current.WriteString(line)
+			current.WriteString("\n")
+		}
+	}
+	if active {
+		sections = append(sections, current.String())
+	}
+	return sections, seenMarker
+}
+
+func finalAnswerSectionMarkerRest(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
+	lower := strings.ToLower(trimmed)
+	for _, marker := range []string{"[final answer]", "[answer]"} {
+		if strings.HasPrefix(lower, marker) {
+			rest := strings.TrimSpace(trimmed[len(marker):])
+			rest = strings.TrimLeft(rest, ":.- ")
+			return strings.TrimSpace(rest), true
+		}
+	}
+	for _, marker := range []string{"final answer:", "answer:"} {
+		if strings.HasPrefix(lower, marker) {
+			return strings.TrimSpace(trimmed[len(marker):]), true
+		}
+	}
+	return "", false
+}
+
+func selectMarkedReasoningAnswerSection(sections []string) string {
+	var selected string
+	var selectedKey string
+	for _, section := range sections {
+		candidate := strings.TrimSpace(section)
+		if !reasoningAnswerCandidateIsClean(candidate) {
+			return ""
+		}
+		key := normalizeReasoningAnswerForDedupe(candidate)
+		if key == "" {
+			return ""
+		}
+		if selected == "" {
+			selected = candidate
+			selectedKey = key
+			continue
+		}
+		if key != selectedKey {
+			return ""
+		}
+	}
+	return selected
+}
+
+func normalizeReasoningAnswerForDedupe(answer string) string {
+	return strings.ToLower(strings.Join(strings.Fields(strings.TrimSpace(answer)), " "))
+}
+
+func reasoningAnswerCandidateIsClean(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return false
+	}
+	if len(answer) > reasoningAnswerSalvageMaxChars {
+		return false
+	}
+	if finalAnswerSectionMarkerCount(answer) > 0 {
+		return false
+	}
+	if reasoningAnswerLooksTruncated(answer) {
+		return false
+	}
+	if looksLikeTextualToolCall(answer) ||
+		looksLikeRawToolResultTranscript(answer) ||
+		looksLikeUnexecutedToolRequestAnswer(answer) ||
+		looksLikeNonAnswerProse(answer) {
+		return false
+	}
+	return true
+}
+
+func finalAnswerSectionMarkerCount(text string) int {
+	count := 0
+	for _, line := range strings.Split(text, "\n") {
+		if _, ok := finalAnswerSectionMarkerRest(line); ok {
+			count++
+		}
+	}
+	return count
+}
+
+func reasoningAnswerLooksTruncated(answer string) bool {
+	answer = strings.TrimSpace(answer)
+	if answer == "" {
+		return true
+	}
+	last := answer[len(answer)-1]
+	switch last {
+	case '.', '!', '?', ')', ']', '`', '"', '\'':
+		return false
+	default:
+		return true
+	}
 }
 
 func splitReasoningParagraphs(text string) []string {

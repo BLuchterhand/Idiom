@@ -26,6 +26,7 @@ const (
 	CapCallsFrom       = language.CapCallsFrom
 	CapCallsInto       = language.CapCallsInto
 	CapReadSymbol      = language.CapReadSymbol
+	CapExtractBody     = language.CapExtractBody
 	CapRelatedFiles    = language.CapRelatedFiles
 	CapImplementations = language.CapImplementations
 	CapDiagnostics     = language.CapDiagnostics

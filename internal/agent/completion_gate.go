@@ -81,6 +81,9 @@ func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool
 			return r.readOnlyNonSubstantiveCompletionRejection(reply, results)
 		},
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+			return r.readOnlyExplanationCompletionRejection(reply, results)
+		},
+		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 			return r.readOnlySearchHitInventoryCompletionRejection(reply, results)
 		},
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
@@ -88,9 +91,6 @@ func (r *Runner) completionGateChecks(_ int, taskLedger *taskLedgerState, _ bool
 		},
 		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 			return r.planThenExecuteReviewRepairCompletionRejection(reply, results)
-		},
-		func(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
-			return r.readOnlyExplanationCompletionRejection(reply, results)
 		},
 	}
 }

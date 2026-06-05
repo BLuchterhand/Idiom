@@ -24,6 +24,8 @@ func TestCodeNavigationSpecAcceptsDefinitionAliases(t *testing.T) {
 		{name: "find references", capability: "find_references", wantName: "references", wantCap: CapReferences},
 		{name: "hyphen references", capability: "find-references", wantName: "references", wantCap: CapReferences},
 		{name: "space references", capability: "find references", wantName: "references", wantCap: CapReferences},
+		{name: "extract body", capability: "extract_body", wantName: "extract_body", wantCap: CapExtractBody},
+		{name: "full body", capability: "full_body", wantName: "extract_body", wantCap: CapExtractBody},
 	}
 
 	for _, tc := range cases {
@@ -36,6 +38,34 @@ func TestCodeNavigationSpecAcceptsDefinitionAliases(t *testing.T) {
 				t.Fatalf("codeNavigationSpecFor(%q) = %#v, want name=%q capability=%q", tc.capability, spec, tc.wantName, tc.wantCap)
 			}
 		})
+	}
+}
+
+func TestCodeNavigationCapabilityListMatchesSpecs(t *testing.T) {
+	names := codeNavigationCapabilityNames()
+	if len(names) == 0 {
+		t.Fatal("expected advertised code navigation capabilities")
+	}
+	for _, name := range names {
+		spec, err := codeNavigationSpecFor(name)
+		if err != nil {
+			t.Fatalf("advertised capability %q did not resolve: %v", name, err)
+		}
+		if spec.Name != name {
+			t.Fatalf("advertised capability %q resolved as %q", name, spec.Name)
+		}
+	}
+	_, err := codeNavigationSpecFor("not_a_capability")
+	if err == nil {
+		t.Fatal("expected unknown capability to be rejected")
+	}
+	for _, name := range names {
+		if !strings.Contains(err.Error(), name) {
+			t.Fatalf("unknown-capability error omitted advertised capability %q: %s", name, err.Error())
+		}
+	}
+	if strings.Join(names, ", ") != codeNavigationCapabilityList() {
+		t.Fatalf("capability list helper drifted from names: names=%#v list=%q", names, codeNavigationCapabilityList())
 	}
 }
 

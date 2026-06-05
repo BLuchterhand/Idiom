@@ -2,6 +2,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 
@@ -104,9 +105,9 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	evidenceLabel, paths := questionBlockerContextPaths(brief, results, 4)
 
 	var b strings.Builder
-	b.WriteString("I could not produce a supported final answer before the run stopped.")
+	b.WriteString("I do not have enough supported evidence to answer that fully from this run.")
 	if reason != "" {
-		b.WriteString(" The blocker was: ")
+		b.WriteString(" The unresolved evidence gap was: ")
 		b.WriteString(lowercaseFirstSentence(reason))
 		if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
 			b.WriteString(".")
@@ -305,8 +306,11 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 	if exact, ok := presentableExactProbeAnswer(input.Brief, input.Results); ok {
 		return exact, true
 	}
-	if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, readOnlyEvidencePacketsFromResults(input.Results)); ok {
-		return answer, true
+	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(input.Brief, input.Results)
+	if delegatedOwnerReady {
+		if answer, ok := synthesizeReadOnlyEvidencePacketAnswer(input.Brief.Objective, readOnlyEvidencePacketsFromResults(input.Results)); ok {
+			return answer, true
+		}
 	}
 	if answer, ok := presentableProseEvidenceAnswer(input.Brief, input.Results); ok {
 		return answer, true
@@ -324,26 +328,43 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 			}
 		}
 	}
-	if output, ok := bestObjectiveAnswerableTaskResultOutput(input.Brief.Objective, input.Results); ok {
-		if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
-			return cleaned, true
-		}
-		if !finalAnswerNeedsDecoration(output) && !looksLikeGenericEvidenceComposerAnswer(output) {
-			return output, true
+	if delegatedOwnerReady {
+		if output, ok := bestObjectiveAnswerableTaskResultOutput(input.Brief.Objective, input.Results); ok {
+			if cleaned, ok := cleanedSubstantiveFinalAnswer(output); ok {
+				return cleaned, true
+			}
+			if !finalAnswerNeedsDecoration(output) && !looksLikeGenericEvidenceComposerAnswer(output) {
+				return output, true
+			}
 		}
 	}
-	if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
-		if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
-			return "", false
-		}
-		if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
-			return cleaned, true
-		}
-		if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
-			return answer, true
+	if delegatedOwnerReady {
+		if answer, ok := synthesizeDelegatedReadOnlyAnswer(input.Brief.Objective, input.Results); ok {
+			if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
+				return "", false
+			}
+			if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
+				return cleaned, true
+			}
+			if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
+				return answer, true
+			}
 		}
 	}
 	return "", false
+}
+
+func delegatedImplementationShapeSynthesisAllowed(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if !implementationShapeOwnerContractApplies(brief) {
+		return true
+	}
+	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+	return len(ledger.ImplementationOwnerPaths()) > 0
+}
+
+func implementationShapeOwnerContractApplies(brief workerruntime.WorkerRuntimeBrief) bool {
+	brief = workerruntime.NormalizeRuntimeBrief(brief)
+	return readOnlyDirectAnswerLane(brief) && objectiveAsksImplementationShape(brief.Objective)
 }
 
 func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, internalAnswer string) (string, bool) {
@@ -356,7 +377,7 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	}
 	closure := readOnlyClosureDecisionForResults(brief, results)
 	if readOnlyFallbackNeedsAnswerableEvidence(brief, internalAnswer) && !closure.Answerable() {
-		return closure.BlockerText(), true
+		return presentableReadOnlyClosureUncertainty(brief, closure), true
 	}
 	if conversationFallbackShouldAvoidSourceBody(brief) && isDeterministicFallbackAnswer(internalAnswer) {
 		if strings.TrimSpace(brief.Objective) != "" && closure.Answerable() {
@@ -446,16 +467,47 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		return "", false
 	}
 	if !closure.Answerable() {
-		return closure.BlockerText(), true
+		return presentableReadOnlyClosureUncertainty(brief, closure), true
 	}
-	return "<<QUESTION>>: The current read-only answer has relevant evidence in " +
+	return "I do not have enough supported evidence from this run to answer that fully. The current read-only answer has relevant evidence in " +
 		formatInlinePathList(paths, 4) +
-		", but no concrete user-facing finding was retained. State the supported claim from the inspected source, or name the exact missing claim.", true
+		", but no concrete user-facing finding was retained.", true
+}
+
+func presentableReadOnlyClosureUncertainty(brief workerruntime.WorkerRuntimeBrief, closure readOnlyClosureDecision) string {
+	if !readOnlyDirectAnswerLane(brief) {
+		return closure.BlockerText()
+	}
+	evidence := closure.Evidence
+	switch closure.Reason {
+	case readOnlyClosureReasonHighCardinalitySearch:
+		if strings.TrimSpace(evidence.Objective) != "" {
+			return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The search only localized `%s`: it returned %d hit(s), and one objective-relevant source candidate such as %s still needs a source-body read.", evidence.Objective, evidence.SearchHitCount, formatInlinePathList(closure.PrioritizedCandidatePaths(), 3))
+		}
+		return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The search only localized candidates: it returned %d hit(s), and one objective-relevant source candidate such as %s still needs a source-body read.", evidence.SearchHitCount, formatInlinePathList(closure.PrioritizedCandidatePaths(), 3))
+	case readOnlyClosureReasonMissingNamedSourceBody:
+		return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. Source-body evidence is still missing for named path(s): %s.", formatInlinePathList(evidence.MissingNamedSourcePaths, 4))
+	case readOnlyClosureReasonCandidatesNeedSource:
+		return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The run found candidate paths such as %s, but did not inspect objective-relevant source body.", formatInlinePathList(evidence.CandidatePaths, 3))
+	default:
+		if paths := readOnlyClosureKnownEvidencePaths(evidence); len(paths) > 0 {
+			return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The run gathered evidence in %s, but it was not relevant source-body or diagnostic evidence for the requested claim.", formatInlinePathList(paths, 4))
+		}
+		return "I do not have enough supported evidence from this run to answer that fully. The run did not retain relevant source-body or diagnostic evidence for the requested claim."
+	}
 }
 
 func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
 	if runnerBriefRequiresMutation(brief) || briefPrefersDelegatedPacketFallback(brief, results) {
 		return "", false
+	}
+	var ownerPathSet map[string]struct{}
+	if implementationShapeOwnerContractApplies(brief) {
+		ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		ownerPathSet = readOnlyPathSet(ledger.ImplementationOwnerPaths())
+		if len(ownerPathSet) == 0 {
+			return "", false
+		}
 	}
 	bestAnswer := ""
 	bestScore := -1
@@ -479,8 +531,19 @@ func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, res
 		}
 		output := strings.TrimSpace(result.Output)
 		if answer, ok := presentableSourceBodyFactsAnswer(brief.Objective, paths[0], output); ok {
+			if ownerPathSet != nil {
+				if _, ok := ownerPathSet[normalizeRunnerPath(paths[0])]; !ok {
+					continue
+				}
+			}
+			if implementationShape, ok := presentableImplementationShapeAnswerFromClaim(brief.Objective, paths[0], "", stripPresentableSourceObjectiveEcho(answer)); ok {
+				return implementationShape, true
+			}
 			score := presentableSourceAnswerObjectiveScore(answer, brief.Objective)
-			if score > bestScore {
+			if looksLikeSourceEchoOnlyAnswer(answer) && looksLikeLowValueSourceInventoryFallback(answer) {
+				continue
+			}
+			if bestAnswer == "" || score > bestScore {
 				bestScore = score
 				bestAnswer = answer
 			}
@@ -490,12 +553,26 @@ func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, res
 }
 
 func presentableSourceAnswerObjectiveScore(answer string, objective string) int {
-	score := sourceEvidenceLineObjectiveScore(answer, sourceEvidenceObjectiveLineTerms(objective))
-	score += len(answerObjectiveTerms(answer, objective)) * 2
-	if strings.Contains(strings.ToLower(answer), "defines `") {
+	claim := stripPresentableSourceObjectiveEcho(answer)
+	score := sourceEvidenceLineObjectiveScore(claim, sourceEvidenceObjectiveLineTerms(objective))
+	score += len(answerObjectiveTerms(claim, objective)) * 2
+	if strings.Contains(strings.ToLower(claim), "defines `") {
 		score--
 	}
 	return score
+}
+
+func stripPresentableSourceObjectiveEcho(answer string) string {
+	trimmed := strings.TrimSpace(answer)
+	if !strings.HasPrefix(trimmed, "For `") {
+		return trimmed
+	}
+	rest := strings.TrimPrefix(trimmed, "For `")
+	end := strings.Index(rest, "`, ")
+	if end < 0 {
+		return trimmed
+	}
+	return strings.TrimSpace(rest[end+len("`, "):])
 }
 
 func presentableProseEvidenceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -1090,13 +1167,16 @@ func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results
 	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return "", false
 	}
-	anchor, ok := bestPresentableExactProbeAnchor(brief.Objective, results)
+	anchor, ok := bestPresentableExactProbeAnchor(brief, results)
 	if !ok {
 		return "", false
 	}
 	facts := exactProbeObservationsForObjective(anchor.symbol, anchor.output, brief.Objective)
 	if len(facts) == 0 {
 		return "", false
+	}
+	if implementationShape, ok := presentableImplementationShapeAnswerFromClaim(brief.Objective, anchor.path, anchor.symbol, strings.Join(facts, ", ")); ok {
+		return implementationShape, true
 	}
 
 	var b strings.Builder
@@ -1120,14 +1200,85 @@ func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results
 	return strings.TrimSpace(b.String()), true
 }
 
+func presentableImplementationShapeAnswerFromClaim(objective string, path string, symbol string, claim string) (string, bool) {
+	if !objectiveAsksImplementationShape(objective) {
+		return "", false
+	}
+	path = strings.TrimSpace(path)
+	claim = strings.TrimSpace(claim)
+	if path == "" || claim == "" {
+		return "", false
+	}
+	lowerClaim := " " + strings.ToLower(strings.Join(strings.Fields(claim), " ")) + " "
+	if !containsAny(lowerClaim, " handles ", " calls ", " sets ") {
+		return "", false
+	}
+
+	anchor := "`" + path + "`"
+	if symbol = strings.TrimSpace(symbol); symbol != "" {
+		anchor = "`" + symbol + "` in " + anchor
+	} else if inferred := firstSourceInventoryCodeToken(claim); inferred != "" {
+		anchor = "`" + inferred + "` in " + anchor
+	}
+
+	claim = presentableImplementationShapeClaim(path, claim)
+	var parts []string
+	parts = append(parts, "The code evidence points to "+anchor+" as the inspected implementation owner.")
+	parts = append(parts, "In that source, "+ensureTrailingPeriod(strings.TrimRight(claim, ".")))
+	return strings.Join(parts, " "), true
+}
+
+func presentableImplementationShapeClaim(path string, claim string) string {
+	claim = strings.TrimSpace(claim)
+	path = strings.TrimSpace(path)
+	if path != "" {
+		prefix := "`" + path + "` shows "
+		if strings.HasPrefix(claim, prefix) {
+			claim = strings.TrimSpace(strings.TrimPrefix(claim, prefix))
+		}
+	}
+	claim = strings.TrimPrefix(claim, "defines ")
+	return strings.TrimSpace(claim)
+}
+
+func firstSourceInventoryCodeToken(claim string) string {
+	for _, part := range strings.Split(claim, "`") {
+		token := strings.TrimSpace(part)
+		if token == "" || strings.ContainsAny(token, " \t\n\r") {
+			continue
+		}
+		lower := strings.ToLower(token)
+		if lower == "true" || lower == "false" || strings.HasPrefix(lower, "tea.key") {
+			continue
+		}
+		if strings.Contains(token, "/") || strings.Contains(lower, ".go") || strings.Contains(lower, ".md") {
+			continue
+		}
+		return token
+	}
+	return ""
+}
+
 type presentableExactProbeAnchor struct {
 	path   string
 	symbol string
 	output string
 }
 
-func bestPresentableExactProbeAnchor(objective string, results []workspace.ToolResult) (presentableExactProbeAnchor, bool) {
+func bestPresentableExactProbeAnchor(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (presentableExactProbeAnchor, bool) {
+	objective := strings.TrimSpace(brief.Objective)
 	candidates := make([]presentableExactProbeAnchor, 0, len(results))
+	var best presentableExactProbeAnchor
+	requiresOwner := implementationShapeOwnerContractApplies(brief)
+	ledger := readOnlyAnswerabilityLedger{}
+	ownerPathSet := map[string]struct{}{}
+	if requiresOwner {
+		ledger = readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
+		ownerPathSet = readOnlyPathSet(ledger.ImplementationOwnerPaths())
+		if len(ownerPathSet) == 0 {
+			return presentableExactProbeAnchor{}, false
+		}
+	}
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) != "" || strings.TrimSpace(result.Output) == "" {
 			continue
@@ -1145,14 +1296,50 @@ func bestPresentableExactProbeAnchor(objective string, results []workspace.ToolR
 		}
 	}
 	for _, candidate := range candidates {
-		if len(exactProbeObservationsForObjective(candidate.symbol, candidate.output, objective)) > 0 {
-			return candidate, true
+		var owner readOnlySourceOwnerEvidence
+		if requiresOwner {
+			if _, ok := ownerPathSet[normalizeRunnerPath(candidate.path)]; !ok {
+				continue
+			}
+			owner, _ = ledger.SourceOwnerEvidenceForPath(candidate.path)
 		}
+		if len(exactProbeObservationsForObjective(candidate.symbol, candidate.output, objective)) == 0 {
+			continue
+		}
+		if best.path == "" || presentableExactProbeAnchorObjectiveScore(candidate, objective, owner) > presentableExactProbeAnchorObjectiveScore(best, objective, sourceOwnerEvidenceForBestAnchor(ledger, best)) {
+			best = candidate
+		}
+	}
+	if best.path != "" {
+		return best, true
+	}
+	if requiresOwner {
+		return presentableExactProbeAnchor{}, false
 	}
 	if len(candidates) == 0 {
 		return presentableExactProbeAnchor{}, false
 	}
 	return candidates[0], true
+}
+
+func sourceOwnerEvidenceForBestAnchor(ledger readOnlyAnswerabilityLedger, anchor presentableExactProbeAnchor) readOnlySourceOwnerEvidence {
+	evidence, _ := ledger.SourceOwnerEvidenceForPath(anchor.path)
+	return evidence
+}
+
+func presentableExactProbeAnchorObjectiveScore(candidate presentableExactProbeAnchor, objective string, owner readOnlySourceOwnerEvidence) int {
+	text := strings.Join([]string{candidate.symbol, candidate.output}, "\n")
+	score := sourceEvidenceLineObjectiveScore(text, sourceEvidenceObjectiveLineTerms(objective))
+	score += len(answerObjectiveTerms(text, objective)) * 2
+	if owner.OwnerEligible() {
+		score += 20 + owner.Score
+	} else if owner.Role == readOnlySourceOwnerConflictingNavigation {
+		score -= 20
+	}
+	if sourceBodyHasStrongObjectiveToken(text, objective) {
+		score += 3
+	}
+	return score
 }
 
 func exactProbeObservationsForObjective(symbol string, output string, objective string) []string {
@@ -1876,11 +2063,11 @@ func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief,
 	}
 
 	if len(inspectedPaths) == 0 && len(anchors) == 0 {
-		return "<<QUESTION>>: I did not change any files. The run ended before it retained enough source-body evidence for a grounded answer."
+		return "I do not have enough supported evidence from this run to answer that fully. The next useful step is one bounded source-body or diagnostic probe tied to the exact claim."
 	}
 
 	var b strings.Builder
-	b.WriteString("<<QUESTION>>: I did not change any files. The run collected evidence but did not retain a concrete user-facing finding.")
+	b.WriteString("I do not have enough supported evidence from this run to answer that fully. The run collected evidence but did not retain a concrete user-facing finding.")
 	if len(inspectedPaths) == 0 {
 		b.WriteString("\n\nEvidence paths:\n- relevant source files")
 	} else {

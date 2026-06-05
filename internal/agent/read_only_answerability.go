@@ -52,6 +52,7 @@ type readOnlyAnswerabilityLedger struct {
 	GeneratedArtifactPaths   []string
 	SourceBodyObjectivePaths []string
 	SourceBodyObjectiveTerms []readOnlySourceBodyObjectiveSupport
+	SourceOwnerEvidence      []readOnlySourceOwnerEvidence
 	SearchHitCount           int
 	HighCardinalitySearch    bool
 	DiagnosticEvidence       bool
@@ -130,7 +131,9 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 					}
 					ledger.SourceBodyPaths = mergeRunnerStateStrings(ledger.SourceBodyPaths, sourcePaths)
 					ledger.SourceBodyTaskPaths = mergeRunnerStateStrings(ledger.SourceBodyTaskPaths, sourcePaths)
-					ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
+					if !ledger.directAnswerConversation() || !objectiveAsksImplementationShape(ledger.Objective) {
+						ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, sourcePaths)
+					}
 				}
 				ledger.CandidatePaths = mergeRunnerStateStrings(ledger.CandidatePaths, packet.CandidatePaths, packet.InspectedPaths, sourcePaths)
 				continue
@@ -272,13 +275,33 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 	if path == "" || isNonSourceEvidenceArtifactPath(path) || !pathparse.HasWorkspaceFileExtension(path) {
 		return
 	}
-	if sourceBodyHasStrongObjectiveToken(body, l.Objective) {
+	if l.directAnswerConversation() && objectiveAsksImplementationShape(l.Objective) {
+		evidence := readOnlySourceOwnerEvidenceForBody(path, "", l.Objective, body)
+		l.observeSourceOwnerEvidence(evidence)
+		if evidence.OwnerEligible() && sourceBodyHasStrongObjectiveToken(body, l.Objective) {
+			l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, []string{path})
+		}
+		terms := l.sourceBodyObjectiveTerms(body)
+		if len(terms) == 0 {
+			return
+		}
+		l.observeSourceBodyObjectiveTerms(path, terms)
+		return
+	}
+	if sourceBodyHasStrongObjectiveToken(body, l.Objective) &&
+		(!l.directAnswerConversation() ||
+			!objectiveAsksImplementationShape(l.Objective) ||
+			implementationShapeSourceBodyCanClose(l.Objective, body)) {
 		l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, []string{path})
 	}
 	terms := l.sourceBodyObjectiveTerms(body)
 	if len(terms) == 0 {
 		return
 	}
+	l.observeSourceBodyObjectiveTerms(path, terms)
+}
+
+func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveTerms(path string, terms []string) {
 	for i := range l.SourceBodyObjectiveTerms {
 		if l.SourceBodyObjectiveTerms[i].Path == path {
 			l.SourceBodyObjectiveTerms[i].Terms = uniqueSortedStrings(mergeRunnerStateStrings(l.SourceBodyObjectiveTerms[i].Terms, terms))
@@ -289,6 +312,29 @@ func (l *readOnlyAnswerabilityLedger) observeSourceBodyObjectiveSupport(path str
 		Path:  path,
 		Terms: terms,
 	})
+}
+
+func (l *readOnlyAnswerabilityLedger) observeSourceOwnerEvidence(evidence readOnlySourceOwnerEvidence) {
+	evidence.Path = normalizeRunnerPath(evidence.Path)
+	if evidence.Path == "" {
+		return
+	}
+	for i := range l.SourceOwnerEvidence {
+		if l.SourceOwnerEvidence[i].Path != evidence.Path {
+			continue
+		}
+		if evidence.Score > l.SourceOwnerEvidence[i].Score ||
+			evidence.OwnerEligible() ||
+			sourceOwnerObjectiveMatchCount(evidence) > sourceOwnerObjectiveMatchCount(l.SourceOwnerEvidence[i]) {
+			l.SourceOwnerEvidence[i] = evidence
+		}
+		return
+	}
+	l.SourceOwnerEvidence = append(l.SourceOwnerEvidence, evidence)
+}
+
+func sourceOwnerObjectiveMatchCount(evidence readOnlySourceOwnerEvidence) int {
+	return len(evidence.SpecificTerms) + len(evidence.WeakTerms)
 }
 
 func (l readOnlyAnswerabilityLedger) sourceBodyObjectiveTerms(body string) []string {
@@ -360,6 +406,10 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 	if len(requiredTerms) < 2 {
 		return
 	}
+	if l.directAnswerConversation() && objectiveAsksImplementationShape(l.Objective) {
+		l.promoteCollectiveImplementationOwnerSupport(namedTargets, requiredTerms)
+		return
+	}
 	candidateSet := readOnlyPathSet(l.CandidatePaths)
 	objectiveCandidateSet := readOnlyPathSet(l.CandidateObjectivePaths)
 	namedSet := readOnlyPathSet(namedTargets)
@@ -408,6 +458,50 @@ func (l *readOnlyAnswerabilityLedger) promoteCollectiveSourceBodyObjectiveSuppor
 		return
 	}
 	l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, collectivePaths)
+}
+
+func (l *readOnlyAnswerabilityLedger) promoteCollectiveImplementationOwnerSupport(namedTargets []string, requiredTerms []string) {
+	candidateSet := readOnlyPathSet(l.CandidatePaths)
+	objectiveCandidateSet := readOnlyPathSet(l.CandidateObjectivePaths)
+	namedSet := readOnlyPathSet(namedTargets)
+	termPaths := make(map[string][]string, len(requiredTerms))
+	for _, support := range l.SourceBodyObjectiveTerms {
+		path := normalizeRunnerPath(support.Path)
+		if path == "" {
+			continue
+		}
+		for _, term := range support.Terms {
+			term = readOnlyObjectiveSupportTerm(term)
+			if term == "" {
+				continue
+			}
+			termPaths[term] = mergeRunnerStateStrings(termPaths[term], []string{path})
+		}
+	}
+	coveredTerms := 0
+	for _, term := range requiredTerms {
+		if len(termPaths[term]) > 0 {
+			coveredTerms++
+		}
+	}
+	if coveredTerms < collectiveSourceBodyObjectiveTermThreshold(len(requiredTerms)) {
+		return
+	}
+	var ownerPaths []string
+	for _, evidence := range l.SourceOwnerEvidence {
+		if !evidence.OwnerEligible() {
+			continue
+		}
+		path := normalizeRunnerPath(evidence.Path)
+		if !l.collectiveSourceBodyPromotionPathAllowed(path, candidateSet, objectiveCandidateSet, namedSet) {
+			continue
+		}
+		ownerPaths = mergeRunnerStateStrings(ownerPaths, []string{path})
+	}
+	if len(ownerPaths) == 0 {
+		return
+	}
+	l.SourceBodyObjectivePaths = mergeRunnerStateStrings(l.SourceBodyObjectivePaths, ownerPaths)
 }
 
 func (l readOnlyAnswerabilityLedger) collectiveSourceBodyPromotionPathAllowed(path string, candidateSet map[string]struct{}, objectiveCandidateSet map[string]struct{}, namedSet map[string]struct{}) bool {
@@ -648,7 +742,14 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 	if len(objectiveTerms) == 0 {
 		return false
 	}
-	specificTerms := longestObjectiveTerms(objectiveTerms, 1)
+	specificCandidates := objectiveTerms
+	if filtered := sourceOwnerSpecificObjectiveTerms(objectiveTerms); len(filtered) > 0 {
+		specificCandidates = filtered
+	}
+	specificTerms := sourceOwnerSpecificObjectiveTerms(specificCandidates)
+	if len(specificTerms) == 0 {
+		specificTerms = longestObjectiveTerms(objectiveTerms, 1)
+	}
 	proseMatches := 0
 	proseHasSpecific := false
 	for _, term := range objectiveTerms {
@@ -684,6 +785,34 @@ func sourceBodyHasStrongObjectiveToken(output string, objective string) bool {
 		}
 	}
 	return false
+}
+
+func sourceOwnerSpecificObjectiveTerms(terms []string) []string {
+	var filtered []string
+	for _, term := range terms {
+		term = readOnlyObjectiveSupportTerm(term)
+		if term == "" || weakSourceOwnerObjectiveTerm(term) {
+			continue
+		}
+		filtered = append(filtered, term)
+	}
+	return uniqueSortedStrings(filtered)
+}
+
+func implementationShapeSourceBodyCanClose(objective string, body string) bool {
+	if !objectiveAsksImplementationShape(objective) {
+		return false
+	}
+	return readOnlySourceOwnerEvidenceForBody("", "", objective, body).OwnerEligible()
+}
+
+func weakSourceOwnerObjectiveTerm(term string) bool {
+	switch readOnlyObjectiveSupportTerm(term) {
+	case "user", "chat", "history", "key", "arrow", "up", "down", "navigate", "old", "easy", "find", "intent", "make", "typing", "type":
+		return true
+	default:
+		return false
+	}
 }
 
 func readOnlyObjectiveAnswerEvidenceSupported(output string, objective string) bool {
@@ -841,7 +970,41 @@ func (l readOnlyAnswerabilityLedger) diagnosticEvidenceAnswerable() bool {
 }
 
 func (l readOnlyAnswerabilityLedger) Answerable() bool {
+	if l.directAnswerConversation() && objectiveAsksImplementationShape(l.Objective) {
+		return l.diagnosticEvidenceAnswerable() || (len(l.ImplementationOwnerPaths()) > 0 && len(l.MissingNamedSourcePaths) == 0)
+	}
 	return l.diagnosticEvidenceAnswerable() || (len(l.RelevantSourceBodyPaths) > 0 && len(l.MissingNamedSourcePaths) == 0)
+}
+
+func (l readOnlyAnswerabilityLedger) ImplementationOwnerPaths() []string {
+	var paths []string
+	objectiveSet := readOnlyPathSet(l.SourceBodyObjectivePaths)
+	for _, evidence := range l.SourceOwnerEvidence {
+		path := normalizeRunnerPath(evidence.Path)
+		if path == "" || !evidence.OwnerEligible() {
+			continue
+		}
+		if len(objectiveSet) > 0 {
+			if _, ok := objectiveSet[path]; !ok {
+				continue
+			}
+		}
+		paths = mergeRunnerStateStrings(paths, []string{path})
+	}
+	return readOnlySourceLikePaths(paths, 16)
+}
+
+func (l readOnlyAnswerabilityLedger) SourceOwnerEvidenceForPath(path string) (readOnlySourceOwnerEvidence, bool) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return readOnlySourceOwnerEvidence{}, false
+	}
+	for _, evidence := range l.SourceOwnerEvidence {
+		if normalizeRunnerPath(evidence.Path) == path {
+			return evidence, true
+		}
+	}
+	return readOnlySourceOwnerEvidence{}, false
 }
 
 func (l readOnlyAnswerabilityLedger) directConversationWithoutObjective() bool {

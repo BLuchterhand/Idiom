@@ -14,13 +14,22 @@ type fingerprintTrackingState struct {
 	lastFingerprint string
 	identicalRun    int
 	counts          map[string]int
+	samePathCounts  map[string]int
+	samePathNudged  map[string]bool
 	nudgeFired      map[string]bool
 	zeroHit         map[string]string
+	zeroHitFamily   map[string]zeroHitFamilyState
 	rejected        map[string]string
 	// rejectedRetries counts how many times a fingerprint has been
 	// retried after a prior rejection. Nudge on first retry, force-answer
 	// on the second — matching the nudge-then-block pattern.
 	rejectedRetries map[string]int
+}
+
+type zeroHitFamilyState struct {
+	Count      int
+	Summary    string
+	NudgeFired bool
 }
 
 type postChildBudgetState struct {
@@ -42,15 +51,13 @@ type runnerRequestBudgetState struct {
 	// of force-answering on the first rejection retry.
 	writeReadyNudgeActive bool
 
-	broadEvidenceDelegationRequired   bool
-	broadEvidenceDelegationSatisfied  bool
-	readOnlyChildTaskSatisfied        bool
-	synthesisNudgeFired               bool
-	readCallCount                     int
-	readCallsSinceWrite               int
-	postReadinessNoGapRejections      int
-	postReadinessInvalidGapRejections int
-	scopedReadRejections              map[string]int
+	broadEvidenceDelegationRequired  bool
+	broadEvidenceDelegationSatisfied bool
+	readOnlyChildTaskSatisfied       bool
+	synthesisNudgeFired              bool
+	readCallCount                    int
+	readCallsSinceWrite              int
+	scopedReadRejections             map[string]int
 }
 
 func (s runnerRequestBudgetState) postChildActive() bool {
@@ -64,6 +71,7 @@ type runnerRequestBudgetDecision struct {
 	RejectStopReason  string
 	ForceAnswerPrompt string
 	ForceAnswerReason string
+	HideTool          string
 	Nudge             string
 	EventRole         string
 	EventContent      string
@@ -122,8 +130,11 @@ func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetSta
 	return runnerRequestBudgetState{
 		fingerprint: fingerprintTrackingState{
 			counts:          make(map[string]int),
+			samePathCounts:  make(map[string]int),
+			samePathNudged:  make(map[string]bool),
 			nudgeFired:      make(map[string]bool),
 			zeroHit:         make(map[string]string),
+			zeroHitFamily:   make(map[string]zeroHitFamilyState),
 			rejected:        make(map[string]string),
 			rejectedRetries: make(map[string]int),
 		},
@@ -134,6 +145,20 @@ func newRunnerRequestBudgetState(postChildReadBudget int) runnerRequestBudgetSta
 			familyNudgeFired: make(map[string]bool),
 		},
 	}
+}
+
+const samePathFixationNudgeAt = 5
+
+// samePathFingerprint collapses different query parameters into a
+// same-tool + same-path identifier, catching file fixation even when
+// the exact request arguments vary.
+func samePathFingerprint(req workspace.ToolRequest) string {
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		return ""
+	}
+	path = filepath.ToSlash(filepath.Clean(path))
+	return req.Tool + "|path:" + path
 }
 
 func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) int {
@@ -147,6 +172,49 @@ func (s *runnerRequestBudgetState) noteFingerprint(currentFingerprint string) in
 		s.fingerprint.counts[currentFingerprint]++
 	}
 	return s.fingerprint.identicalRun
+}
+
+func (s *runnerRequestBudgetState) samePathFixationDecision(req workspace.ToolRequest, evidenceAvailable bool) runnerRequestBudgetDecision {
+	fp := samePathFingerprint(req)
+	if fp == "" || isDiagnosticLogArtifactPath(req.Path) {
+		return runnerRequestBudgetDecision{}
+	}
+	s.fingerprint.samePathCounts[fp]++
+	count := s.fingerprint.samePathCounts[fp]
+	if count < samePathFixationNudgeAt {
+		return runnerRequestBudgetDecision{}
+	}
+
+	path := cleanToolRequestPathDisplay(req.Path)
+	if s.fingerprint.samePathNudged[fp] {
+		return runnerRequestBudgetDecision{
+			Handled:  true,
+			HideTool: strings.TrimSpace(req.Tool),
+			Nudge: fmt.Sprintf(
+				"You asked to keep reading %s after the same-path warning. `%s` is hidden for the rest of this turn. Use structured navigation for a named symbol/body, switch to a different evidence source through the remaining tools, or answer from the evidence already gathered.",
+				path,
+				req.Tool,
+			),
+			EventRole: "same_path_fixation_tool_hidden",
+		}
+	}
+	s.fingerprint.samePathNudged[fp] = true
+
+	action := "switch to a materially different evidence path, use one structured source-body probe for a named missing claim, or answer with the evidence already gathered"
+	if evidenceAvailable {
+		action = "answer from the evidence already gathered, or use one structured source-body probe only if you can name the exact missing claim it will resolve"
+	}
+	return runnerRequestBudgetDecision{
+		Handled: true,
+		Nudge: fmt.Sprintf(
+			"You have called %s on %s %d times this turn with varied arguments. Stop walking the same file by adjacent chunks; %s. Do not request another adjacent range from the same file.",
+			req.Tool,
+			path,
+			count,
+			action,
+		),
+		EventRole: "same_path_fixation_nudge",
+	}
 }
 
 func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
@@ -185,10 +253,148 @@ func (s *runnerRequestBudgetState) fingerprintDecision(policy RunPolicy, req wor
 			RejectStopReason: "zero_hit_retry_budget_exhausted",
 		}
 	}
+	if decision := s.zeroHitFamilyDecision(req); decision.Handled {
+		return decision
+	}
 	if decision := s.rejectedFingerprintDecision(req, currentFingerprint); decision.Handled {
 		return decision
 	}
 	return runnerRequestBudgetDecision{}
+}
+
+func (s *runnerRequestBudgetState) noteZeroHitSearch(req workspace.ToolRequest, currentFingerprint string, result workspace.ToolResult) {
+	summary := truncForRetryReason(result.Summary)
+	if strings.TrimSpace(currentFingerprint) != "" {
+		s.fingerprint.zeroHit[currentFingerprint] = summary
+	}
+	family := zeroHitSearchFamilyKey(req)
+	if family == "" {
+		return
+	}
+	state := s.fingerprint.zeroHitFamily[family]
+	state.Count++
+	state.Summary = summary
+	s.fingerprint.zeroHitFamily[family] = state
+}
+
+func (s *runnerRequestBudgetState) zeroHitFamilyDecision(req workspace.ToolRequest) runnerRequestBudgetDecision {
+	family := zeroHitSearchFamilyKey(req)
+	if family == "" {
+		return runnerRequestBudgetDecision{}
+	}
+	state, seen := s.fingerprint.zeroHitFamily[family]
+	if !seen {
+		return runnerRequestBudgetDecision{}
+	}
+	if state.Count >= 2 {
+		return runnerRequestBudgetDecision{
+			Handled:          true,
+			RejectSummary:    "Zero-hit search family blocked",
+			RejectError:      fmt.Sprintf("closely related %s searches already returned no results this turn (latest: %q). Repeating symbol or spelling variants in the same search family is not progress. Switch to a source-body read from an existing candidate, use a broader semantic/context query, or answer with the evidence already gathered.", req.Tool, state.Summary),
+			RejectStopReason: "zero_hit_family_budget_exhausted",
+		}
+	}
+	if !state.NudgeFired {
+		state.NudgeFired = true
+		s.fingerprint.zeroHitFamily[family] = state
+		return runnerRequestBudgetDecision{
+			Handled:      true,
+			EventRole:    "zero_hit_family_nudge",
+			EventContent: fmt.Sprintf("zero-hit search family %q seen once; nudging before another related miss", family),
+			Nudge: fmt.Sprintf(
+				"A closely related %s search already returned no results this turn (%q). Before trying another spelling or symbol variant, choose a materially different probe: read a localized candidate, use semantic/context navigation, or answer with the evidence you have.",
+				req.Tool, state.Summary),
+		}
+	}
+	return runnerRequestBudgetDecision{}
+}
+
+func zeroHitSearchFamilyKey(req workspace.ToolRequest) string {
+	switch strings.TrimSpace(req.Tool) {
+	case "search_content", "search_files", "rg", "grep":
+	default:
+		return ""
+	}
+	terms := zeroHitSearchFamilyTerms(strings.Join([]string{req.Pattern, req.Query, req.Command}, " "))
+	if len(terms) < 2 {
+		return ""
+	}
+	path := normalizePostChildPath(req.Path)
+	return strings.TrimSpace(req.Tool) + ":" + path + ":" + strings.Join(terms, ":")
+}
+
+func zeroHitSearchFamilyTerms(text string) []string {
+	words := splitZeroHitSearchWords(text)
+	if len(words) == 0 {
+		return nil
+	}
+	hasKey := requestBudgetContainsString(words, "key")
+	hasArrow := requestBudgetContainsString(words, "arrow")
+	if hasKey && hasArrow {
+		return []string{"key", "arrow"}
+	}
+	var terms []string
+	for _, word := range words {
+		switch word {
+		case "up", "down", "left", "right", "true", "false":
+			continue
+		}
+		terms = util.AppendUnique(terms, word)
+		if len(terms) >= 3 {
+			break
+		}
+	}
+	return terms
+}
+
+func splitZeroHitSearchWords(text string) []string {
+	var words []string
+	var b strings.Builder
+	flush := func() {
+		if b.Len() == 0 {
+			return
+		}
+		word := strings.ToLower(b.String())
+		b.Reset()
+		if len(word) < 3 {
+			return
+		}
+		words = util.AppendUnique(words, word)
+	}
+	prevLower := false
+	for _, r := range text {
+		if r >= 'A' && r <= 'Z' {
+			if prevLower {
+				flush()
+			}
+			b.WriteRune(r + ('a' - 'A'))
+			prevLower = false
+			continue
+		}
+		if r >= 'a' && r <= 'z' {
+			b.WriteRune(r)
+			prevLower = true
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+			prevLower = false
+			continue
+		}
+		flush()
+		prevLower = false
+	}
+	flush()
+	return words
+}
+
+func requestBudgetContainsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.ToolRequest, currentFingerprint string) runnerRequestBudgetDecision {
@@ -199,7 +405,7 @@ func (s *runnerRequestBudgetState) rejectedFingerprintDecision(req workspace.Too
 		return decision
 	}
 	if priorSummary, ok := s.fingerprint.rejected[currentFingerprint]; ok {
-		if isRecoverablePostReadinessGapRejection(priorSummary) && postReadinessGap(req) != "" {
+		if isRecoverablePostReadinessGapRejection(priorSummary) {
 			delete(s.fingerprint.rejected, currentFingerprint)
 			delete(s.fingerprint.rejectedRetries, currentFingerprint)
 			return runnerRequestBudgetDecision{}
@@ -372,7 +578,7 @@ func (s *runnerRequestBudgetState) explorationDecision(r *Runner, req workspace.
 // paths when their own RequiredEditPaths need it. The completion gate
 // owns mutation closure; doom_loop_guard + MaxToolSteps own the
 // runaway-exploration ceiling. Same logic as
-// postReadinessGapScopeForBrief — keep child:* paths gated.
+// postReadinessToolContractForBrief — keep source-refresh gating centralized.
 func runnerExplorationParentIsMutation(r *Runner) bool {
 	if r == nil {
 		return false

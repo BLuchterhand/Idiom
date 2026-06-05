@@ -30,16 +30,24 @@ func immediateBudgetFallbackAnswer(agentName string, brief workerruntime.WorkerR
 	if !hasSuccessfulTaskResult(results) && !strings.HasPrefix(agentName, "child:") {
 		return "", false
 	}
-	if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
-		if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
-			if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
-				return presentable, true
+	delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
+	if delegatedOwnerReady {
+		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+			if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
+				if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
+					return presentable, true
+				}
 			}
+			return annotateBudgetLimitedAnswer(answer), true
 		}
-		return annotateBudgetLimitedAnswer(answer), true
 	}
-	if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
-		return annotateBudgetLimitedAnswer(output), true
+	if delegatedOwnerReady {
+		if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
+			return annotateBudgetLimitedAnswer(output), true
+		}
+	}
+	if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
+		return synthesizeBriefConversationFallback(brief, results), true
 	}
 	if usefulFallbackResultCount(results) < 2 {
 		return "", false
@@ -96,13 +104,21 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 		return synthesizeMutationFallbackAnswer(brief, results), true
 	}
 	if !runnerBriefRequiresMutation(brief) && !runnerVerificationRequired(brief) {
-		if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
-			return answer, true
-		}
-		if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
-			if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
-				return normalized, true
+		delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
+		if delegatedOwnerReady {
+			if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {
+				return answer, true
 			}
+		}
+		if delegatedOwnerReady {
+			if output, ok := bestObjectiveAnswerableTaskResultOutput(brief.Objective, results); ok {
+				if normalized := normalizeDelegatedReadOnlyPacket(output); strings.TrimSpace(normalized) != "" {
+					return normalized, true
+				}
+			}
+		}
+		if implementationShapeOwnerContractApplies(brief) && !delegatedOwnerReady {
+			return synthesizeBriefConversationFallback(brief, results), true
 		}
 	}
 	return synthesizeFallbackAnswer(agentName, results)

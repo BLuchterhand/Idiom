@@ -593,7 +593,8 @@ func shouldDelegateMainReadOnlyBootstrapRequest(req workspace.ToolRequest) bool 
 }
 
 func postReadinessSymbolBodyUpgradeRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if strings.TrimSpace(req.Tool) != "go_read_symbol" || req.StartLine > 0 || req.EndLine > 0 {
+	tool := strings.TrimSpace(req.Tool)
+	if !postReadinessSymbolBodyUpgradeableTool(tool, req.Capability) || req.StartLine > 0 || req.EndLine > 0 {
 		return workspace.ToolRequest{}, false
 	}
 	path := normalizeDelegatedDiscoveryEvidencePath(strings.TrimSpace(req.Path))
@@ -604,16 +605,35 @@ func postReadinessSymbolBodyUpgradeRequest(results []workspace.ToolResult, req w
 		return workspace.ToolRequest{}, false
 	}
 	upgraded := req
-	upgraded.Tool = "go_extract_body"
+	if tool == workspace.CodeNavigateToolName {
+		upgraded.Capability = workspace.CodeNavigateCapabilityName(workspace.CapExtractBody)
+	} else {
+		upgraded.Tool = "go_extract_body"
+	}
 	return upgraded, true
+}
+
+func postReadinessSymbolBodyUpgradeableTool(tool, capability string) bool {
+	switch strings.TrimSpace(tool) {
+	case "go_read_symbol":
+		return true
+	case workspace.CodeNavigateToolName:
+		return workspace.CodeNavigateCapabilityPredicate(workspace.CapReadSymbol)(capability)
+	default:
+		return false
+	}
 }
 
 func hasTruncatedGoReadSymbolResult(results []workspace.ToolResult, path string) bool {
 	for _, result := range results {
-		if strings.TrimSpace(result.Tool) != "go_read_symbol" || strings.TrimSpace(result.Error) != "" {
+		tool := strings.TrimSpace(result.Tool)
+		if (tool != "go_read_symbol" && tool != workspace.CodeNavigateToolName) || strings.TrimSpace(result.Error) != "" {
 			continue
 		}
-		summary := normalizeWorkspacePathScanText(result.Summary)
+		if tool == workspace.CodeNavigateToolName && !strings.Contains(strings.ToLower(result.Output), "routed_tool: go_read_symbol") {
+			continue
+		}
+		summary := normalizeWorkspacePathScanText(result.Summary + "\n" + result.Output)
 		if !strings.Contains(summary, path) {
 			continue
 		}

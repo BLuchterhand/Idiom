@@ -5,21 +5,31 @@ stable contract instead of binding directly to tool names. P3.5 routes the
 first read-only discovery slice through the `read_only_capability` tool while
 leaving direct tool names available as fallback.
 
-Initial capability IDs:
+Stable read-only capability IDs:
 
 - `file-outline`
+- `inspect-symbol`
 - `symbol-lookup`
 - `definition`
 - `references`
+- `calls-from`
+- `calls-into`
 - `related-files`
 
 The model or caller asks for a capability. The harness registry resolves that
 ID to existing read-only adapters such as `code_navigate`, language-specific
 symbol tools, and other read-only discovery adapters. Runtime execution now
-routes these five IDs through `code_navigate` first, preserving the adapter's
+routes these IDs through `code_navigate` first, preserving the adapter's
 language routing, generic fallback, uncertainty, and result evidence. The
 response is a thin wrapper with capability metadata, the selected adapter, any
 fallback reason, and the underlying tool result.
+
+`read_only_capability` is intentionally narrower than `code_navigate`.
+`code_navigate` may expose newer runtime navigation affordances such as
+`implementations` and `extract_body` before they become stable product
+capability IDs. Promote those into `read_only_capability` only when the product
+contract, resolver adapters, schema enum, audit metadata, and regression tests
+are all updated together.
 
 The wrapper keeps `schema_version: idiom.read_only_capability_result.v1` and
 adds an additive `status` object:

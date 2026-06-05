@@ -2358,7 +2358,7 @@ func TestClosureRecoveryNudgeAvoidsBroadRediscoveryAfterReadiness(t *testing.T) 
 		true,
 		false,
 	)
-	for _, want := range []string{"closure is already justified", "Answer now from the evidence already gathered", "one detail remains uncertain", "do not request more tools"} {
+	for _, want := range []string{"Answer with the evidence already gathered", "one narrow next step", "exact missing claim"} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected closure recovery nudge to contain %q, got:\n%s", want, nudge)
 		}
@@ -2380,7 +2380,7 @@ func TestFailureFeedbackPacketKeepsRepeatedActionClosureBiased(t *testing.T) {
 	result := workspace.ToolResult{
 		Tool:    "read_file",
 		Summary: "Repeated tool request rejected",
-		Error:   repeatedClosureRequestErrorText("delegated_read_only_answer_ready"),
+		Error:   "you just ran the same tool request. Either answer with what you already know, or take one materially different narrow step that names the exact missing claim it closes.",
 	}
 	packet := buildRunnerFailureFeedbackPacket(
 		"child:explorer",
@@ -3236,6 +3236,145 @@ func TestForcedCompletionFallsBackWhenReadOnlyRetryStillViolatesCompletionGate(t
 	}
 	if requests != 1 {
 		t.Fatalf("expected deterministic read-only fallback without additional retry, used %d/%d replies", requests, len(replies))
+	}
+}
+
+func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsSourceInventory(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history? the intent is to make it easy to find old messages and run them again without typing them out."
+	badInventoryAnswer := "For `" + objective + "`, `internal/app/app.go` shows defines `truncateText`, defines `normalizeHistoryRole`, and `normalizeHistoryRole` returns `strings.ToUpper(value[:1]) + value[1:]`."
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests > 0 {
+			t.Fatalf("unexpected extra chat request")
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": badInventoryAnswer},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         objective,
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "context_query"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 internal/app/app.go lines 1-57 (total lines: 57)",
+		Output: strings.Join([]string{
+			"1:package app",
+			"17:func truncateText(s string, max int) string {",
+			"18:\tif len(s) <= max {",
+			"19:\t\treturn s",
+			"20:\t}",
+			"21:\treturn s[:max]",
+			"42:func normalizeHistoryRole(value string) string {",
+			"43:\tif value == \"\" {",
+			"44:\t\treturn \"User\"",
+			"45:\t}",
+			"46:\treturn strings.ToUpper(value[:1]) + value[1:]",
+			"47:}",
+		}, "\n"),
+	}}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		results,
+		"Repeated post-readiness follow-up requests omitted the exact missing claim. Tools are now disabled. Answer from gathered evidence or state the exact unsupported claim.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	if answer == badInventoryAnswer || strings.Contains(answer, "shows defines") {
+		t.Fatalf("source-inventory retry answer escaped forced completion:\n%s", answer)
+	}
+	if strings.Contains(answer, "normalizeHistoryRole` returns") {
+		t.Fatalf("deterministic fallback reintroduced helper-function inventory:\n%s", answer)
+	}
+	if !strings.Contains(answer, "internal/app/app.go") {
+		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
+	}
+	if requests > 1 {
+		t.Fatalf("expected at most one forced-completion model call, got %d", requests)
+	}
+}
+
+func TestForcedCompletionFallsBackWhenReadOnlyRetryReturnsInspectedBodyInventory(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history? the intent is to make it easy to find old messages and run them again without typing them out."
+	badInventoryAnswer := "`Model.handleKeyPress` in `internal/app/update_handlers.go` is the clearest inspected implementation anchor. The inspected body shows that it defines `Model.handleKeyPress`, sets `m.history.expanded` to `false`, `Model.handleKeyPress` calls `renderHistoryPanelContent`, sets `m.history.expanded` to `!m.history.expanded`, and sets `m.history.focused` to `false`."
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests > 0 {
+			t.Fatalf("unexpected extra chat request")
+		}
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": badInventoryAnswer},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			Objective:         objective,
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "code_navigate", "context_query"},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: strings.Join([]string{
+			"capability: read_symbol",
+			"language: go",
+			"routed_tool: go_read_symbol",
+			"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-141",
+			"",
+			"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+			"44:\t\tcase tea.KeyUp:",
+			"49:\t\tcase tea.KeyDown:",
+			"69:\t\tcase tea.KeyUp:",
+			"76:\t\tcase tea.KeyDown:",
+			"83:\t\tcase tea.KeyEnter:",
+			"151:\t\tm.appendHistoryMessage(\"user\", text, nil)",
+		}, "\n"),
+	}}
+
+	answer, err := runner.completeWithoutMoreToolsWithReason(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: objective}},
+		llama.ChatOptions{},
+		results,
+		"Repeated post-readiness follow-up requests omitted the exact missing claim. Tools are now disabled. Answer from gathered evidence or state the exact unsupported claim.",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("completeWithoutMoreToolsWithReason: %v", err)
+	}
+	if answer == badInventoryAnswer || strings.Contains(answer, "inspected body shows") {
+		t.Fatalf("inspected-body inventory retry answer escaped forced completion:\n%s", answer)
+	}
+	if !strings.Contains(answer, "internal/app/update_handlers.go") {
+		t.Fatalf("fallback should retain inspected evidence path, got:\n%s", answer)
+	}
+	if requests > 1 {
+		t.Fatalf("expected at most one forced-completion model call, got %d", requests)
 	}
 }
 
@@ -4764,8 +4903,8 @@ func TestRunnerAllowsPostReadinessSourceToolWithoutExactProbeContract(t *testing
 	if !strings.Contains(answer, "runChildTask") {
 		t.Fatalf("expected final answer after honoring follow-up read, got %q; events=%s", answer, formatRunEventsForTest(events))
 	}
-	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
-		t.Fatalf("expected post-readiness exact-probe gate, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 0 {
+		t.Fatalf("read-only readiness is advisory; expected no post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
 	successfulProbe := false
 	for _, result := range toolResults {
@@ -4773,8 +4912,8 @@ func TestRunnerAllowsPostReadinessSourceToolWithoutExactProbeContract(t *testing
 			successfulProbe = true
 		}
 	}
-	if successfulProbe {
-		t.Fatalf("gapless post-readiness source probe should be recovered before dispatch, got results=%#v events=%s", toolResults, formatRunEventsForTest(events))
+	if !successfulProbe {
+		t.Fatalf("gapless post-readiness source probe should dispatch under advisory readiness, got results=%#v events=%s", toolResults, formatRunEventsForTest(events))
 	}
 }
 
@@ -4838,26 +4977,123 @@ func TestRunnerPostReadinessRepeatedReadDoesNotForceHostCloseout(t *testing.T) {
 		t.Fatalf("Run: %v", err)
 	}
 	if requests != 3 {
-		t.Fatalf("expected one post-readiness recovery before model closeout, used %d replies", requests)
+		t.Fatalf("expected repeated read then model closeout, used %d replies", requests)
 	}
 	if !strings.Contains(answer, "Save changes") || !strings.Contains(answer, "internal/labels/labels.go") {
 		t.Fatalf("expected model answer from gathered evidence, got %q", answer)
 	}
-	if got := countEventsByRole(events, "failure_feedback"); got != 1 {
-		t.Fatalf("expected one post-readiness recovery feedback, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "failure_feedback"); got != 0 {
+		t.Fatalf("advisory readiness should not reject repeated reads, got %d failure feedback event(s); events=%s", got, formatRunEventsForTest(events))
 	}
-	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 1 {
-		t.Fatalf("expected one post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
+	if got := countEventsByRole(events, "post_readiness_terminal_gate"); got != 0 {
+		t.Fatalf("advisory readiness should not emit post-readiness terminal gate, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
 	for _, event := range events {
 		if event.Role == "budget_ledger" {
-			if !strings.Contains(event.Content, `"rejected_actions":1`) || !strings.Contains(event.Content, `"stop_reason":"model_final"`) {
-				t.Fatalf("post-readiness repeated read should recover before model final: %s", event.Content)
+			if !strings.Contains(event.Content, `"rejected_actions":0`) || !strings.Contains(event.Content, `"stop_reason":"model_final"`) {
+				t.Fatalf("post-readiness repeated read should remain advisory before model final: %s", event.Content)
 			}
 			return
 		}
 	}
 	t.Fatalf("expected budget_ledger event; events=%s", formatRunEventsForTest(events))
+}
+
+func TestRunnerReadOnlyReviewClosesAfterReplayedSourceEvidence(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/agent/runner.go", "package agent\n\nfunc applyLanePreflight() {}\n"); err != nil {
+		t.Fatalf("write runner seed: %v", err)
+	}
+	if err := writeTestFile(root, "internal/agent/final_answer_decorator.go", "package agent\n\nfunc composedFinalAnswerFromEvidence() {}\n"); err != nil {
+		t.Fatalf("write decorator seed: %v", err)
+	}
+
+	replies := []string{
+		`{"tool":"code_navigate","capability":"read_symbol","path":"internal/agent/runner.go","pattern":"applyLanePreflight"}`,
+		`{"tool":"code_navigate","capability":"read_symbol","path":"internal/agent/final_answer_decorator.go","pattern":"composedFinalAnswerFromEvidence"}`,
+		`{"tool":"code_navigate","capability":"read_symbol","path":"internal/agent/final_answer_decorator.go","pattern":"composedFinalAnswerFromEvidence"}`,
+		"Review finding: the inspected runner and final-answer decorator paths already establish the replay-loop risk; confidence is high, with no writes made.",
+	}
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var events []RunEvent
+	executed := 0
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilySecurityReview),
+			Contract:          string(workerruntime.ContractReviewFindings),
+			Objective:         "Audit runner recovery and final answer contracts for repeated source-probe drift.",
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"code_navigate"},
+		},
+		PreExecute: func(step int, req workspace.ToolRequest) *workspace.ToolResult {
+			if req.Tool != "code_navigate" {
+				return nil
+			}
+			executed++
+			return &workspace.ToolResult{
+				Tool:    "code_navigate",
+				Summary: "Code navigation routed read_symbol via go_read_symbol",
+				Output: strings.Join([]string{
+					"capability: read_symbol",
+					"routed_tool: go_read_symbol",
+					"route_summary: Read " + req.Pattern + " in " + req.Path + " lines 1-12",
+					"1:func " + req.Pattern + "() {",
+					"2:\t// runner recovery and final answer contracts are inspected here",
+					"3:}",
+				}, "\n"),
+			}
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "No writes. Audit runner recovery and final answer contracts for repeated source-probe drift."}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if strings.TrimSpace(answer) == "" {
+		t.Fatal("expected forced review closeout to return an answer")
+	}
+	if executed != 2 {
+		t.Fatalf("replayed request should not execute a third code_navigate call, executed=%d", executed)
+	}
+	if requests < 3 || requests > 4 {
+		t.Fatalf("expected three tool-decision calls and at most one no-tools synthesis call, got %d", requests)
+	}
+	for _, event := range events {
+		if event.Role == "budget_ledger" && strings.Contains(event.Content, `"stop_reason":"read_only_replayed_evidence_closeout"`) {
+			return
+		}
+	}
+	t.Fatalf("expected read_only_replayed_evidence_closeout budget ledger; events=%s", formatRunEventsForTest(events))
 }
 
 func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSufficient(t *testing.T) {
@@ -4938,10 +5174,12 @@ func TestRunnerAnswersAfterRepeatedPostReadinessNoGapFollowupsWhenEvidenceSuffic
 	if !strings.Contains(answer, "Runner.Run") {
 		t.Fatalf("expected no-tools model synthesis answer, got %q", answer)
 	}
-	if requests >= len(replies) {
-		t.Fatalf("expected unscoped post-readiness reads to recover before exhausting scripted replies, used %d/%d replies", requests, len(replies))
+	if requests != len(replies) {
+		t.Fatalf("expected advisory readiness to allow scripted follow-up reads through final answer, used %d/%d replies", requests, len(replies))
 	}
-	_ = budgetStop
+	if rejected != 0 || budgetStop {
+		t.Fatalf("advisory readiness should not reject unscoped follow-ups: rejected=%d budgetStop=%v", rejected, budgetStop)
+	}
 }
 
 func TestRunnerRepairsFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
@@ -5013,8 +5251,8 @@ func TestRunnerRepairsFinalAnswerAfterNoGapReadFileRanges(t *testing.T) {
 	if strings.Contains(answer, "BAD_FALLBACK_NOT_USED") {
 		t.Fatalf("bad scripted final answer surfaced:\n%s", answer)
 	}
-	if requests >= len(replies) {
-		t.Fatalf("expected repeated no-gap ranges to recover before the bad scripted answer, used %d/%d requests", requests, len(replies))
+	if requests != len(replies) {
+		t.Fatalf("expected advisory readiness to allow repeated no-gap ranges through repaired answer, used %d/%d requests", requests, len(replies))
 	}
 }
 
@@ -5096,13 +5334,12 @@ func TestRunnerAnswersAfterRepeatedInvalidPostReadinessFollowupsWhenEvidenceSuff
 	if !strings.Contains(answer, "Runner.Run") {
 		t.Fatalf("expected no-tools model synthesis answer, got %q", answer)
 	}
-	if requests >= len(replies) {
-		t.Fatalf("expected invalid post-readiness followups to recover before exhausting scripted replies, used %d/%d replies", requests, len(replies))
+	if requests != len(replies) {
+		t.Fatalf("expected advisory readiness to allow scripted follow-ups through final answer, used %d/%d replies", requests, len(replies))
 	}
-	if rejected == 0 {
-		t.Fatal("expected invalid post-readiness actions to be recorded as rejected")
+	if rejected != 0 || budgetStop {
+		t.Fatalf("advisory readiness should not reject invalid post-readiness follow-ups: rejected=%d budgetStop=%v", rejected, budgetStop)
 	}
-	_ = budgetStop
 }
 
 func TestRunnerRequiresVerificationAfterRepeatedWrites(t *testing.T) {
@@ -13243,6 +13480,25 @@ func TestPostReadinessGoReadSymbolRedirectsToBodyAfterTruncatedRead(t *testing.T
 	}
 }
 
+func TestPostReadinessCodeNavigateReadSymbolRedirectsToExtractBodyAfterTruncatedRead(t *testing.T) {
+	runner := &Runner{}
+	results := []workspace.ToolResult{{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output:  "capability: read_symbol\nlanguage: go\nrouted_tool: go_read_symbol\nroute_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-141 (truncated from lines 22-182; full-body adapter: go_extract_body)\n\n22:func (m *Model) handleKeyPress(...) {",
+	}}
+	decision := runner.applyLanePreflight(runnerLanePreflightInput{
+		Request: workspace.ToolRequest{Tool: "code_navigate", Capability: "read_symbol", Path: "internal/app/update_handlers.go", Pattern: "handleKeyPress"},
+		Results: results,
+	})
+	if decision.Request.Tool != "code_navigate" || decision.Request.Capability != "extract_body" {
+		t.Fatalf("expected truncated code_navigate read_symbol follow-up to upgrade to code_navigate extract_body, got %#v", decision.Request)
+	}
+	if decision.Request.Pattern != "handleKeyPress" || decision.Request.Path != "internal/app/update_handlers.go" {
+		t.Fatalf("expected upgrade to preserve target, got %#v", decision.Request)
+	}
+}
+
 func TestDelegatedReadOnlyIntegrationPivotRedirectsToSiblingImplementation(t *testing.T) {
 	runner := &Runner{
 		AgentName: "child:explorer",
@@ -13920,7 +14176,7 @@ func TestFinalAnswerDecoratorDecoratesBudgetExhaustionScaffold(t *testing.T) {
 		}},
 		UserFacing: true,
 	})
-	for _, want := range []string{"could not produce a supported final answer", "internal/agent/runner.go"} {
+	for _, want := range []string{"not have enough supported evidence", "internal/agent/runner.go"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected budget-exhausted scaffold to become actionable blocker containing %q, got:\n%s", want, answer)
 		}
@@ -14004,7 +14260,7 @@ func TestFinalAnswerDecoratorDoesNotLeakDelegatedPacketWhenComposerLacksDiscover
 			t.Fatalf("final boundary leaked internal packet section %q:\n%s", forbidden, answer)
 		}
 	}
-	for _, want := range []string{"could not produce a supported final answer", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
+	for _, want := range []string{"not have enough supported evidence", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("expected evidence-retained blocker to contain %q, got:\n%s", want, answer)
 		}
@@ -14096,15 +14352,17 @@ func TestChildPacketBoundaryNudgeNamesEvidencePaths(t *testing.T) {
 		"Why answer now is valid:",
 		"Packet-named paths:",
 		"`internal/agent/discovery_redirect.go`",
-		"To continue, include `named_gap`",
-		"`named_gap`",
-		"repo-wide search will be rejected",
+		"normal tool policy",
+		"packet-named path or symbol",
 		"at most 2 targeted probes",
 		"Answer now from the packet",
 	} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected child packet nudge to contain %q, got:\n%s", want, nudge)
 		}
+	}
+	if strings.Contains(nudge, "`named_gap`") || strings.Contains(nudge, "`why_not_answering`") {
+		t.Fatalf("child packet nudge must not expose read-only named-gap schema requirements, got:\n%s", nudge)
 	}
 }
 
@@ -14115,7 +14373,7 @@ func TestChildPacketBoundaryNudgeDisclosesActualProbeBudget(t *testing.T) {
 	}{
 		{budget: 2, want: "at most 2 targeted probes"},
 		{budget: 1, want: "one targeted probe"},
-		{budget: 0, want: "no further reads"},
+		{budget: 0, want: "answer unless the missing claim is exact and material"},
 	} {
 		nudge := childPacketBoundaryNudge("q", nil, []string{"internal/agent/runner.go"}, tc.budget)
 		if !strings.Contains(nudge, tc.want) {
@@ -14160,14 +14418,17 @@ func TestDelegatedReadOnlyAnswerReadyNudgeIncludesClosureJustification(t *testin
 		"Why answer now is valid:",
 		"Core evidence paths:",
 		"Carry forward the inspected paths above",
-		"To continue, include `named_gap`",
-		"`named_gap`",
+		"normal tool policy",
+		"one exact unresolved claim",
 		"file-level raw reads",
 		"`internal/agent/runner.go`",
 	} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected delegated readiness nudge to contain %q, got:\n%s", want, nudge)
 		}
+	}
+	if strings.Contains(nudge, "`named_gap`") || strings.Contains(nudge, "`why_not_answering`") {
+		t.Fatalf("delegated readiness nudge must not expose read-only named-gap schema requirements, got:\n%s", nudge)
 	}
 }
 
@@ -14497,117 +14758,6 @@ func TestBuildRunnerNextActionStateDoesNotInventChildPacketForDirectReadOnlyEvid
 	}
 	if slices.Contains(readiness.ClosedClaims, "child_packet_available") {
 		t.Fatalf("readiness must not close child_packet_available without a task packet, got %#v", readiness)
-	}
-}
-
-func TestPostReadinessRequestSelfDescribesExactProbe(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:    "code_navigate",
-		Summary: "Code navigation routed file_outline via go_file_outline",
-		Output:  "internal/agent/runner_child_tasks.go\n- runChildTask\n- runWorkbranchChildTask\n",
-	}}
-	exact := workspace.ToolRequest{
-		Tool:       "code_navigate",
-		Path:       "internal/agent/runner_child_tasks.go",
-		Capability: "read_symbol",
-		Symbol:     "runWorkbranchChildTask",
-	}
-	if !postReadinessRequestSelfDescribesExactProbe(exact, results) {
-		t.Fatalf("symbol/body probe on an evidence path should self-describe its post-readiness gap")
-	}
-	references := workspace.ToolRequest{
-		Tool:       "code_navigate",
-		Path:       "internal/agent/runner_child_tasks.go",
-		Capability: "find_references",
-		Symbol:     "runWorkbranchChildTask",
-	}
-	if !postReadinessRequestSelfDescribesExactProbe(references, results) {
-		t.Fatalf("reference probe on an evidence path should self-describe its post-readiness gap")
-	}
-	broad := workspace.ToolRequest{
-		Tool: "read_file",
-		Path: "internal/agent/runner_child_tasks.go",
-	}
-	if postReadinessRequestSelfDescribesExactProbe(broad, results) {
-		t.Fatalf("whole-file read must still require a named post-readiness gap")
-	}
-	narrowRead := workspace.ToolRequest{
-		Tool:      "read_file",
-		Path:      "internal/agent/runner_child_tasks.go",
-		StartLine: 20,
-		EndLine:   30,
-	}
-	if postReadinessRequestSelfDescribesExactProbe(narrowRead, results) {
-		t.Fatalf("read_file line ranges must still go through the named-gap contract")
-	}
-	offPath := exact
-	offPath.Path = "internal/app/model_state.go"
-	if postReadinessRequestSelfDescribesExactProbe(offPath, results) {
-		t.Fatalf("exact probe outside current evidence paths must not bypass gap scoping")
-	}
-}
-
-func TestPostReadinessExactProbeContractRequiresNamedGapAndWhy(t *testing.T) {
-	req := workspace.ToolRequest{
-		Tool:            "code_navigate",
-		Path:            "internal/agent/runner_child_tasks.go",
-		Capability:      "read_symbol",
-		Symbol:          "runWorkbranchChildTask",
-		NamedGap:        "confirm runWorkbranchChildTask handoff behavior",
-		WhyNotAnswering: "one remaining claim depends on the exact handoff branch",
-	}
-	if !postReadinessExactProbeContractPresent(req) {
-		t.Fatal("post-readiness exact probes should require both named_gap and why_not_answering")
-	}
-	req.WhyNotAnswering = ""
-	if postReadinessExactProbeContractPresent(req) {
-		t.Fatal("named_gap alone must not satisfy the post-readiness exact-probe contract")
-	}
-	req.NamedGap = ""
-	req.WhyNotAnswering = "one remaining claim depends on the exact handoff branch"
-	if postReadinessExactProbeContractPresent(req) {
-		t.Fatal("why_not_answering alone must not satisfy the post-readiness exact-probe contract")
-	}
-}
-
-func TestPostReadinessReadFileAlreadyCovered(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5 (total lines: 5)",
-		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"\n5:}",
-	}}
-	if !postReadinessReadFileAlreadyCovered(workspace.ToolRequest{
-		Tool: "read_file",
-		Path: "internal/labels/labels.go",
-	}, results) {
-		t.Fatal("whole-file follow-up should be covered when the prior read covered the total file")
-	}
-	if !postReadinessReadFileAlreadyCovered(workspace.ToolRequest{
-		Tool:      "read_file",
-		Path:      "internal/labels/labels.go",
-		StartLine: 2,
-		EndLine:   4,
-	}, results) {
-		t.Fatal("bounded follow-up should be covered by a prior whole-file read")
-	}
-	if postReadinessReadFileAlreadyCovered(workspace.ToolRequest{
-		Tool:      "read_file",
-		Path:      "internal/labels/labels.go",
-		StartLine: 6,
-		EndLine:   8,
-	}, results) {
-		t.Fatal("new line range must not be treated as already covered")
-	}
-	partial := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-4 (total lines: 5)",
-		Output:  "1:package labels\n2:\n3:func ShortLabel() string {\n4:\treturn \"Save changes\"",
-	}}
-	if postReadinessReadFileAlreadyCovered(workspace.ToolRequest{
-		Tool: "read_file",
-		Path: "internal/labels/labels.go",
-	}, partial) {
-		t.Fatal("range-less follow-up should not be covered by a partial prior read")
 	}
 }
 
@@ -15747,261 +15897,6 @@ func TestEmitDelegatedReadOnlyAnswerReadyEventCanonicalizesEvidencePaths(t *test
 	}
 }
 
-func TestPostReadinessGapScopeRequiresNamedGapForChildReadFollowup(t *testing.T) {
-	scope := postReadinessGapScope(
-		"child:explorer",
-		true,
-		false,
-		workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner.go"},
-	)
-	if scope != "delegated_read_only_answer_ready" {
-		t.Fatalf("unexpected scope %q", scope)
-	}
-	if gap := postReadinessGap(workspace.ToolRequest{}); gap != "" {
-		t.Fatalf("expected empty gap, got %q", gap)
-	}
-	if gap := postReadinessGap(workspace.ToolRequest{NamedGap: "inspect the exact exit branch"}); gap != "inspect the exact exit branch" {
-		t.Fatalf("unexpected named gap %q", gap)
-	}
-}
-
-func TestPostReadinessGapScopeRequiresNamedGapAfterChildPacket(t *testing.T) {
-	scope := postReadinessGapScope(
-		"architecture",
-		false,
-		true,
-		workspace.ToolRequest{Tool: "search_content", Pattern: "runner", Path: "internal"},
-	)
-	if scope != "child_packet_available" {
-		t.Fatalf("unexpected scope %q", scope)
-	}
-	summary, errorText := missingPostReadinessGapMessage(scope)
-	if summary != "Post-child follow-up missing named gap" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"`named_gap`", "`why_not_answering`", "discovered handle", "raw path request"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected named-gap guidance to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsUnanchoredPostChildSearch(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner.go`\n- `internal/agent/answer_composer.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners in internal/agent/runner.go.\n",
-	}}
-	summary, errorText, rejected := invalidPostReadinessGap("child_packet_available", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "search_files",
-		Pattern:         "*harness*",
-		NamedGap:        "Locate the exact file that defines the harness handoff",
-		WhyNotAnswering: "I need one packet-anchored file before answering",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected unanchored post-child search to be rejected")
-	}
-	if summary != "Post-child follow-up gap is not packet-anchored" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"packet already surfaced relevant source paths", "packet-named path", "repo-wide filename or content search"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected rejection text to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsContradictedGap(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner.go`\n- `internal/agent/answer_composer.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners in internal/agent/runner.go.\n",
-	}}
-	summary, errorText, rejected := invalidPostReadinessGap("child_packet_available", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "search_content",
-		Pattern:         "harness|sub.?agent",
-		NamedGap:        "Locate the harness code and how it invokes sub-agents",
-		WhyNotAnswering: "I have not yet seen any harness code or sub-agent invocation patterns; the child task output was incomplete and I need to find the actual source files",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected contradicted post-child gap to be rejected")
-	}
-	if summary != "Post-child follow-up gap is contradicted by current evidence" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"already surfaced grounded source evidence", "Do not claim that source files or harness code are still unseen", "answer now from the child packet"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected contradiction text to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapAllowsPacketAnchoredRead(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/answer_composer.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners and answer composition in internal/agent/answer_composer.go.\n",
-	}}
-	_, _, rejected := invalidPostReadinessGap("child_packet_available", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "read_file",
-		Path:            "internal/agent/answer_composer.go",
-		StartLine:       60,
-		EndLine:         120,
-		NamedGap:        "Read the explanation body that composes the subagent answer",
-		WhyNotAnswering: "I need one anchored range from the packet-named file before answering",
-	}, results)
-	if rejected {
-		t.Fatalf("did not expect packet-anchored child follow-up to be rejected")
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsPromptArtifactPath(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/answer_composer.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners and answer composition in internal/agent/answer_composer.go.\n",
-	}}
-	summary, _, rejected := invalidPostReadinessGap("child_packet_available", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "read_file",
-		Path:            ".idiom/discovery/context.md",
-		NamedGap:        "Read the generated context for more harness details",
-		WhyNotAnswering: "I need one more source of context before answering",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected prompt artifact path to be rejected")
-	}
-	if summary != "Post-child follow-up gap is not packet-anchored" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsBroadChildFileTopicRead(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:    "discovery_query",
-			Summary: "Ran architecture_boundary discovery query",
-			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read subagent flow","output_excerpt":"internal/agent/runner.go:648 runChildTask\ninternal/agent/runner_child_tasks.go:16 runChildTask"}]}`,
-		},
-	}
-	summary, errorText, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:      "read_file",
-		Path:      "internal/agent/runner_child_tasks.go",
-		StartLine: 1,
-		EndLine:   100,
-		NamedGap:  "How runner_child_tasks.go implements sub-agent delegation via the task tool",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected broad child file-topic read to be rejected")
-	}
-	if summary != "Post-readiness follow-up is not an exact probe" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"file-level raw read is too broad", "exact branch, function body, symbol", "answer now"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected broad-read rejection to contain %q, got %q", want, errorText)
-		}
-	}
-	if !strings.Contains(errorText, "`runChildTask`") {
-		t.Fatalf("expected broad-read rejection to contain evidence-grounded probe suggestion, got %q", errorText)
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsFileOutlineAfterReadiness(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner_child_tasks.go`\n- `internal/agent/runner.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners in internal/agent/runner_child_tasks.go.\n",
-	}}
-	summary, errorText, rejected := invalidPostReadinessGap("child_packet_available", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "go_file_outline",
-		Path:            "internal/agent/runner_child_tasks.go",
-		NamedGap:        "runner_child_tasks.go should contain the child task delegation entrypoint",
-		WhyNotAnswering: "I need to identify one exact body before answering",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected post-readiness file outline to be rejected")
-	}
-	if summary != "Post-readiness follow-up is broader than the current evidence requires" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"file-level outline is broad orientation", "exact symbol/body/range", "answer now"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected outline rejection to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsBroadSearchAfterReadiness(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "discovery_query",
-		Output: `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found implementation paths.","output_excerpt":"internal/agent/runner_child_tasks.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult"}]}`,
-	}}
-	summary, errorText, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "search_content",
-		Path:            "internal/agent",
-		Pattern:         `func.*[Cc]hild|[Ss]ub[Aa]gent|[Dd]elegat`,
-		NamedGap:        "how runner_child_tasks.go implements sub-agent delegation",
-		WhyNotAnswering: "need to understand the child task/sub-agent mechanism before answering",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected post-readiness broad search to be rejected")
-	}
-	if summary != "Post-readiness search is broader than the current evidence requires" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"search_content", "broad rediscovery pattern", "exact probe", "answer now"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected broad-search rejection to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapAllowsExactSearchAfterReadiness(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "discovery_query",
-		Output: `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"text_anchor_search","summary":"Found implementation paths.","output_excerpt":"internal/agent/runner_child_tasks.go:16: func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, opts llama.ChatOptions) workspace.ToolResult"}]}`,
-	}}
-	_, _, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "search_content",
-		Path:            "internal/agent/runner_child_tasks.go",
-		Pattern:         "runChildTask",
-		NamedGap:        "the body of `runChildTask` determines child task spawning",
-		WhyNotAnswering: "I need one exact symbol anchor before answering",
-	}, results)
-	if rejected {
-		t.Fatalf("did not expect exact post-readiness search to be rejected")
-	}
-}
-
-func TestInvalidPostReadinessGapAllowsAnchoredShortLiteralSearchAfterReadiness(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5",
-		Output:  "package labels\n",
-	}}
-	_, _, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Should we include git operations in evidence?", workspace.ToolRequest{
-		Tool:            "search_content",
-		Pattern:         "git",
-		NamedGap:        "check for existing git operations",
-		WhyNotAnswering: "need evidence of existing git patterns",
-	}, results)
-	if rejected {
-		t.Fatalf("did not expect anchored short literal post-readiness search to be rejected")
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsUnanchoredShortNoiseSearchAfterReadiness(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:    "read_file",
-		Summary: "Read f1 internal/labels/labels.go lines 1-5",
-		Output:  "package labels\n",
-	}}
-	_, _, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain label behavior.", workspace.ToolRequest{
-		Tool:            "search_content",
-		Pattern:         "the",
-		NamedGap:        "check broad wording",
-		WhyNotAnswering: "need more evidence",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected unanchored short noise post-readiness search to be rejected")
-	}
-}
-
 func TestAugmentDelegatedReadOnlyPacketPreservesAdditionalPaths(t *testing.T) {
 	answer := "Question: Explain how subagents work.\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/agent/runner_child_tasks.go`\n"
 	results := []workspace.ToolResult{
@@ -16048,30 +15943,6 @@ func TestAugmentDelegatedReadOnlyPacketDoesNotInjectDiscoveryUsefulnessExpectedP
 		if !strings.Contains(augmented, want) {
 			t.Fatalf("expected augmented discovery packet to preserve actual evidence path %q, got %q", want, augmented)
 		}
-	}
-}
-
-func TestInvalidPostReadinessGapDoesNotUseQuestionClassSpecificAdjacentDetailRule(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:   "task",
-			Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go`\n\nExact probes already inspected:\n- `runChildTask`\n",
-		},
-		{
-			Tool:    "go_read_symbol",
-			Summary: "Read Runner.runChildTask in internal/agent/runner_child_tasks.go lines 16-131",
-			Output:  "func (r *Runner) runChildTask(...) { /* child handoff */ }",
-		},
-	}
-	summary, errorText, rejected := invalidPostReadinessGap("child_packet_available", "Explain how this harness uses subagents.", workspace.ToolRequest{
-		Tool:            "go_read_symbol",
-		Path:            "internal/agent/runner_child_tasks.go",
-		Pattern:         "workbranchChildTaskPermissionPolicy",
-		NamedGap:        "What tools are allowed/denied for read-only child tasks vs workbranch child tasks?",
-		WhyNotAnswering: "Need the permission-policy comparison before I can answer how the harness uses subagents",
-	}, results)
-	if rejected {
-		t.Fatalf("did not expect anchored exact probe to be rejected by a question-class-specific adjacent-detail rule; summary=%q error=%q", summary, errorText)
 	}
 }
 
@@ -16601,7 +16472,7 @@ func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.
 			AllowedTools:      []string{"read_file", "search_content"},
 		},
 	}
-	retryable := []string{"source_grounding_unmet", "answer_objective_unmet"}
+	retryable := []string{"source_grounding_unmet", "answer_objective_unmet", "read_only_protocol_blocker"}
 	for _, kind := range retryable {
 		if !readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
 			t.Fatalf("%s should be retryable for read-only direct-answer evidence repair", kind)
@@ -16618,6 +16489,51 @@ func TestFinalAnswerAcceptanceRetryPolicyKeepsNonRetryableBoundaries(t *testing.
 		if readOnlyRunner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
 			t.Fatalf("%s must not enter read-only final-answer retry policy", kind)
 		}
+	}
+}
+
+func TestDirectAnswerQuestionProtocolIsRetryableNotUserVisibleBlocker(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			AllowedTools:      []string{"read_file", "search_content"},
+		},
+	}
+	kind, _ := runner.finalAnswerBlockerKind("<<QUESTION>>: I need one more source read.", nil)
+	if kind != "read_only_protocol_blocker" {
+		t.Fatalf("read-only direct-answer QUESTION protocol should be retryable protocol drift, got %q", kind)
+	}
+	if !runner.retryableFinalAnswerAcceptanceRejection(finalAnswerAcceptance{BlockerKind: kind}, nil, 0, nil) {
+		t.Fatalf("%s should enter read-only final-answer retry policy", kind)
+	}
+}
+
+func TestHostReadOnlyCloseoutDoesNotTerminalizeAsBlocked(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+			Contract:          string(workerruntime.ContractDirectAnswer),
+			PermissionProfile: "read_only_workspace",
+			Objective:         "Why did the latest run fail?",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "search_content",
+		Summary: "Found 1 matching line(s).",
+		Output:  "logs/conversations/20260604-195321.801.jsonl:20: completion_gate_repeated_rejection",
+	}}
+	answer, ok := runner.hostOwnedReadOnlyCloseoutAnswer(results)
+	if !ok {
+		t.Fatal("expected host-owned read-only closeout answer")
+	}
+	if strings.Contains(answer, "<<QUESTION>>") || strings.Contains(strings.ToLower(answer), "did not change any files") {
+		t.Fatalf("host closeout must be normal read-only prose, got:\n%s", answer)
+	}
+	decision := runner.classifyTerminalAnswer(answer, "host_read_only_closeout", results)
+	if decision.Outcome != terminalAnswerAccepted || decision.StopReason != "host_read_only_closeout" {
+		t.Fatalf("host closeout should not terminalize as blocked, got %#v\nanswer:\n%s", decision, answer)
 	}
 }
 
@@ -18137,6 +18053,66 @@ func TestEmitReadOnlyAnswerReadyEventDirectAnswerUsesLedgerRelevantSourcePaths(t
 	}
 }
 
+func TestReadOnlyAnswerReadyPresentationUsesImplementationOwnerPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        string(workerruntime.TaskFamilyDirectAnswer),
+		Contract:          string(workerruntime.ContractDirectAnswer),
+		PermissionProfile: "read_only_workspace",
+		Objective:         "what would it take to enable the up and down arrows to fill the chat input with history entries?",
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "context_pack",
+			Summary: "Context pack wrote packet",
+			Output: strings.Join([]string{
+				"internal/agent/runner.go",
+				"internal/agent/git_history_requirement.go",
+				"internal/agent/final_answer_decorator_test.go",
+			}, "\n"),
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"capability: read_symbol",
+				"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-180",
+				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+				"23:\tswitch msg.Type {",
+				"24:\tcase tea.KeyUp:",
+				"25:\t\tm.history.selected--",
+				"26:\tcase tea.KeyDown:",
+				"27:\t\tm.history.selected++",
+				"28:\t\tm.input.SetValue(m.history.entries[m.history.selected].content)",
+				"29:\t}",
+				"30:\treturn nil, true",
+				"31:}",
+			}, "\n"),
+		},
+	}
+
+	paths := readOnlyDirectAnswerPresentationEvidencePaths(brief, results, 8)
+	if !slices.Contains(paths, "internal/app/update_handlers.go") {
+		t.Fatalf("expected implementation owner path in presentation evidence, got %#v", paths)
+	}
+	for _, forbidden := range []string{"internal/agent/runner.go", "internal/agent/git_history_requirement.go", "internal/agent/final_answer_decorator_test.go"} {
+		if slices.Contains(paths, forbidden) {
+			t.Fatalf("presentation evidence must not substitute candidate path %q, got %#v", forbidden, paths)
+		}
+	}
+
+	nudge := readOnlyAnswerReadyNudge(brief, results, 2)
+	if !strings.Contains(nudge, "`internal/app/update_handlers.go`") {
+		t.Fatalf("expected readiness nudge to cite implementation owner path, got:\n%s", nudge)
+	}
+	if strings.Contains(nudge, "`internal/agent/runner.go`") || strings.Contains(nudge, "`internal/agent/git_history_requirement.go`") {
+		t.Fatalf("readiness nudge must not fall back to generic discovery candidates, got:\n%s", nudge)
+	}
+	if strings.Contains(nudge, "core implementation paths") {
+		t.Fatalf("readiness nudge must not overclaim implementation ownership, got:\n%s", nudge)
+	}
+}
+
 func TestPromptEvidencePathsFromToolResultsKeepsDirectTestProbePath(t *testing.T) {
 	got := promptEvidencePathsFromToolResults([]workspace.ToolResult{
 		{
@@ -18264,88 +18240,6 @@ func TestClosurePromptEvidencePathsPrefersImplementationOverTests(t *testing.T) 
 	}
 }
 
-func TestInvalidPostReadinessGapRejectsOutlineWhenExactProbeAlreadyKnown(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:    "discovery_query",
-			Summary: "Ran architecture_boundary discovery query",
-			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read flow","output_excerpt":"internal/agent/runner_child_tasks.go:16 runChildTask"}]}`,
-		},
-	}
-	summary, errorText, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain the child runner flow.", workspace.ToolRequest{
-		Tool:            "go_file_outline",
-		Path:            "internal/agent/runner_child_tasks.go",
-		NamedGap:        "runner_child_tasks.go:16 runChildTask body should show the child runner flow",
-		WhyNotAnswering: "I need one exact body before answering",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected file outline to be rejected once an exact probe is already known")
-	}
-	if summary != "Post-readiness follow-up is broader than the current evidence requires" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"file-level outline is broad orientation", "`runChildTask`", "evidence already gathered"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected outline rejection to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsWholeFileReadWhenExactProbeAlreadyKnown(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:    "discovery_query",
-			Summary: "Ran function_tracing discovery query",
-			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read flow","output_excerpt":"internal/agent/runner_child_tasks.go:16 runChildTask"}]}`,
-		},
-	}
-	summary, errorText, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain the child runner flow.", workspace.ToolRequest{
-		Tool:            "read_file",
-		Path:            "internal/agent/runner_child_tasks.go",
-		NamedGap:        "How runChildTask constructs and executes sub-agent tasks with delegated instructions",
-		WhyNotAnswering: "I have not yet inspected the exact implementation body",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected raw whole-file reread to be rejected once an exact probe is already known")
-	}
-	if summary != "Post-readiness follow-up is not an exact probe" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"file-level raw read is too broad", "Known exact probes for this path", "`runChildTask`"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected raw-read rejection to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapRejectsUngroundedExactProbe(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:    "discovery_query",
-			Summary: "Ran architecture_boundary discovery query",
-			Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"name":"go_read_symbol","summary":"Read flow","output_excerpt":"internal/agent/runner_child_tasks.go:16 runChildTask"}]}`,
-		},
-	}
-	summary, errorText, rejected := invalidPostReadinessGap("delegated_read_only_answer_ready", "Explain the child runner flow.", workspace.ToolRequest{
-		Tool:            "go_extract_body",
-		Path:            "internal/agent/runner_child_tasks.go",
-		Pattern:         "delegatedReadOnlyLikelySourceCandidates",
-		NamedGap:        "Need to inspect delegatedReadOnlyLikelySourceCandidates before answering",
-		WhyNotAnswering: "I have not yet seen the exact body I need",
-	}, results)
-	if !rejected {
-		t.Fatalf("expected ungrounded exact probe to be rejected")
-	}
-	if summary != "Post-readiness exact probe is not grounded in current evidence" {
-		t.Fatalf("unexpected summary %q", summary)
-	}
-	for _, want := range []string{"not grounded in the current evidence", "`runChildTask`", "Use one evidence-grounded exact probe or answer now"} {
-		if !strings.Contains(errorText, want) {
-			t.Fatalf("expected exact-probe rejection to contain %q, got %q", want, errorText)
-		}
-	}
-}
-
 func TestClosureDecisionRationaleUsesActualPacketCoverage(t *testing.T) {
 	results := []workspace.ToolResult{{
 		Tool:   "task",
@@ -18365,520 +18259,22 @@ func TestClosureDecisionRationaleUsesActualPacketCoverage(t *testing.T) {
 	}
 }
 
-func TestBuildClosureRecoveryNudgeAvoidsRepeatedReadSuggestion(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:   "task",
-			Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner_child_tasks.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners in internal/agent/runner_child_tasks.go.\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Repeated dead-end action rejected",
-			Error:   "this action class already failed earlier in the turn. Do not retry the same kind of move. Choose a materially different step or answer with the evidence you already have.",
-		},
-	}
-	nudge := buildClosureRecoveryNudge("child_packet_available", workspace.ToolRequest{
-		Tool:            "read_file",
-		Path:            "internal/agent/runner_child_tasks.go",
-		NamedGap:        "How runChildTask spawns the child runner with bounded tool budget and collects results",
-		WhyNotAnswering: "Without the body of runChildTask I cannot explain the sub-agent lifecycle",
-	}, results, workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how this harness uses subagents."})
-	for _, forbidden := range []string{`{"tool":"read_file"`, `{"tool":"go_file_outline"`} {
-		if strings.Contains(nudge, forbidden) {
-			t.Fatalf("expected closure recovery nudge to avoid concrete probe JSON %q, got:\n%s", forbidden, nudge)
-		}
-	}
-	for _, want := range []string{"Grounded evidence paths:", "internal/agent/runner_child_tasks.go", "Answer now from the evidence already gathered"} {
-		if !strings.Contains(nudge, want) {
-			t.Fatalf("expected recovery nudge to contain %q, got:\n%s", want, nudge)
-		}
-	}
-}
-
-func TestBuildClosureRecoveryNudgeKeepsCorrectedReadAfterMissingGap(t *testing.T) {
-	results := []workspace.ToolResult{
-		{
-			Tool:   "task",
-			Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner_child_tasks.go`\n\nKey findings:\n- The harness uses subagents through delegated child runners in internal/agent/runner_child_tasks.go.\n",
-		},
-		{
-			Tool:    "read_file",
-			Summary: "Post-child follow-up missing named gap",
-			Error:   "the child packet already contains sufficient evidence to bias toward answering. Before any additional read/search call, include `named_gap` describing one exact unresolved claim this follow-up will verify or falsify.",
-		},
-	}
-	nudge := buildClosureRecoveryNudge("child_packet_available", workspace.ToolRequest{
-		Tool: "read_file",
-		Path: "internal/agent/runner_child_tasks.go",
-	}, results, workerruntime.WorkerRuntimeBrief{TaskFamily: "architecture", Objective: "Explain how this harness uses subagents."})
-	if strings.Contains(nudge, `{"tool":"read_file"`) {
-		t.Fatalf("expected closure recovery nudge to avoid concrete read_file JSON after missing-gap repair, got:\n%s", nudge)
-	}
-	for _, want := range []string{"Grounded evidence paths:", "internal/agent/runner_child_tasks.go", "Answer now from the evidence already gathered"} {
-		if !strings.Contains(nudge, want) {
-			t.Fatalf("expected recovery nudge to contain %q, got:\n%s", want, nudge)
-		}
-	}
-}
-
-func TestDelegatedReadOnlyDiminishingReturnsNudgeEncouragesExactProbe(t *testing.T) {
+func TestClosureDecisionRationaleDoesNotOverclaimImplementationOwnership(t *testing.T) {
 	results := []workspace.ToolResult{{
-		Tool:    "discovery_query",
-		Summary: "Ran architecture_boundary discovery query",
-		Output:  `{"artifact_path":".idiom/discovery/queries/query.json","evidence":[{"path":"internal/agent/runner.go","excerpt":"delegatedDiscoveryAnswerEvidencePaths"},{"path":"internal/agent/runner_child_tasks.go","excerpt":"runChildTask"}]}`,
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output: "route_summary: Read Model in internal/app/model_state.go lines 133-263\n" +
+			"133:type Model struct {\n" +
+			"249:\tcurrentTurnHistoryIndex int\n" +
+			"258:\thistory historyState\n" +
+			"259:}\n",
 	}}
-	first := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 1)
-	second := delegatedReadOnlyDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 2)
-	for _, want := range []string{"Post-readiness probes used: 1", "final soft warning", "Inspected paths:"} {
-		if !strings.Contains(first, want) {
-			t.Fatalf("expected first diminishing-returns nudge to contain %q, got:\n%s", want, first)
-		}
+	validity, _ := closureDecisionRationale("what would it take to enable the up and down arrows to fill the chat input with history entries?", results, []string{"internal/app/model_state.go"})
+	if !strings.Contains(validity, "inspected source paths") {
+		t.Fatalf("expected inspected-source rationale, got %q", validity)
 	}
-	if !strings.Contains(second, "final soft warning") {
-		t.Fatalf("expected second diminishing-returns nudge to require an exact claim, got:\n%s", second)
-	}
-}
-
-func TestPostChildDiminishingReturnsNudgeEncouragesExactProbe(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner_child_tasks.go`\n\nKey findings:\n- The inspected child task source identifies `harnessUsesSubagents` behavior.\n\nInspected paths:\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go`\n",
-	}}
-	nudge := postChildDiminishingReturnsNudge("Explain how this harness uses subagents.", results, 2)
-	for _, want := range []string{"Post-child probes used: 2", "final soft warning", "`internal/agent/runner.go`"} {
-		if !strings.Contains(nudge, want) {
-			t.Fatalf("expected post-child diminishing-returns nudge to contain %q, got:\n%s", want, nudge)
-		}
-	}
-}
-
-func TestClosureSynthesisAfterIgnoredNudgeDoesNotForcePostChildRead(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nSource-body evidence paths:\n- `internal/agent/runner_child_tasks.go`\n\nInspected paths:\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go`\n",
-	}}
-	brief := workerruntime.WorkerRuntimeBrief{
-		PermissionProfile: "read_only_workspace",
-		Objective:         "Explain how this harness uses subagents.",
-	}
-	prompt, ok := closureSynthesisAfterIgnoredNudgePrompt(
-		"main",
-		brief,
-		results,
-		workspace.ToolRequest{Tool: "read_file", Path: "internal/agent/runner_child_tasks.go"},
-		false,
-		true,
-		0,
-		1,
-	)
-	if ok || prompt != "" {
-		t.Fatalf("post-child read after a soft nudge must remain model-owned, got ok=%v prompt=%q", ok, prompt)
-	}
-}
-
-func TestClosureSynthesisSkipsWhenGapDeclared(t *testing.T) {
-	results := []workspace.ToolResult{{
-		Tool:   "task",
-		Output: "Question: explain subagents\nSource: delegated read-only evidence packet.\n\nInspected paths:\n- `internal/agent/runner.go`\n- `internal/agent/runner_child_tasks.go`\n",
-	}}
-	brief := workerruntime.WorkerRuntimeBrief{
-		PermissionProfile: "read_only_workspace",
-		Objective:         "Explain how this harness uses subagents.",
-	}
-	// Same scenario as TestClosureSynthesisAfterIgnoredNudgeDoesNotForcePostChildRead
-	// (post-child packet, diminishing nudge already fired, model is making
-	// another read), but this time the request carries a tool-shaped gap —
-	// the contract the readiness nudge said to satisfy. Force-closing here
-	// would punish the model for following instructions; the trigger must
-	// not fire.
-	_, ok := closureSynthesisAfterIgnoredNudgePrompt(
-		"main",
-		brief,
-		results,
-		workspace.ToolRequest{
-			Tool:            "go_read_symbol",
-			Path:            "internal/agent/runner_child_tasks.go",
-			Pattern:         "runChildTask",
-			NamedGap:        "the body of `Runner.runChildTask` to confirm budget plumbing",
-			WhyNotAnswering: "without the function body the budget allocation is inferred, not verified",
-		},
-		false,
-		true,
-		0,
-		1,
-	)
-	if ok {
-		t.Fatal("expected closure_synthesis to skip when the request declares a tool-shaped named gap")
-	}
-}
-
-func TestSanitizeFallbackResultOutputDropsSearchOutput(t *testing.T) {
-	for _, tool := range []string{"search_content", "search_files"} {
-		got := sanitizeFallbackResultOutput(workspace.ToolResult{Tool: tool, Output: "internal/agent/runner_test.go:123:\toutput := `{\"a\":1}`"})
-		if got != "" {
-			t.Fatalf("tool=%s: expected output to be dropped (summary suffices), got %q", tool, got)
-		}
-	}
-}
-
-func TestSanitizeFallbackResultOutputKeepsRichEvidenceTools(t *testing.T) {
-	for _, tool := range []string{"read_file", "go_read_symbol", "go_extract_body", "task", "discovery_query"} {
-		body := "func Foo() { return }"
-		got := sanitizeFallbackResultOutput(workspace.ToolResult{Tool: tool, Output: body})
-		if got != body {
-			t.Fatalf("tool=%s: expected output to be preserved, got %q", tool, got)
-		}
-	}
-}
-
-func TestApplyPostReadinessSchemaRequirementsMakesGapFieldsRequiredOnReadTools(t *testing.T) {
-	tools := []llama.Tool{
-		{
-			Type: "function",
-			Function: llama.ToolFunction{
-				Name:       "read_file",
-				Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
-			},
-		},
-		{
-			Type: "function",
-			Function: llama.ToolFunction{
-				Name:       "edit_file",
-				Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"}},"required":["path"]}`),
-			},
-		},
-	}
-	out := applyPostReadinessSchemaRequirements(tools)
-	if len(out) != 2 {
-		t.Fatalf("expected 2 tools, got %d", len(out))
-	}
-	// read_file: gap fields added to required + properties.
-	var readSchema map[string]any
-	if err := json.Unmarshal(out[0].Function.Parameters, &readSchema); err != nil {
-		t.Fatalf("unmarshal read_file params: %v", err)
-	}
-	required, _ := readSchema["required"].([]any)
-	requiredSet := map[string]bool{}
-	for _, v := range required {
-		if s, ok := v.(string); ok {
-			requiredSet[s] = true
-		}
-	}
-	for _, want := range []string{"path", "named_gap", "why_not_answering", "start_line", "end_line"} {
-		if !requiredSet[want] {
-			t.Fatalf("expected read_file required to include %q, got %#v", want, required)
-		}
-	}
-	props, _ := readSchema["properties"].(map[string]any)
-	for _, want := range []string{"path", "named_gap", "why_not_answering", "start_line", "end_line"} {
-		if _, ok := props[want]; !ok {
-			t.Fatalf("expected read_file properties to include %q, got %#v", want, props)
-		}
-	}
-	for _, field := range []string{"start_line", "end_line"} {
-		prop, _ := props[field].(map[string]any)
-		if prop["minimum"] != float64(1) {
-			t.Fatalf("expected %s minimum=1, got %#v", field, prop)
-		}
-	}
-	// edit_file: NOT a read-class tool, schema unchanged.
-	var editSchema map[string]any
-	if err := json.Unmarshal(out[1].Function.Parameters, &editSchema); err != nil {
-		t.Fatalf("unmarshal edit_file params: %v", err)
-	}
-	editRequired, _ := editSchema["required"].([]any)
-	if len(editRequired) != 1 {
-		t.Fatalf("expected edit_file required to remain ['path'], got %#v", editRequired)
-	}
-	if s, ok := editRequired[0].(string); !ok || s != "path" {
-		t.Fatalf("expected edit_file required to remain ['path'], got %#v", editRequired)
-	}
-	editProps, _ := editSchema["properties"].(map[string]any)
-	if _, leaked := editProps["named_gap"]; leaked {
-		t.Fatalf("expected edit_file properties to NOT include named_gap, got %#v", editProps)
-	}
-}
-
-func TestApplyPostReadinessSchemaRequirementsRequiresReadFilePathAnchor(t *testing.T) {
-	tools := []llama.Tool{{
-		Type: "function",
-		Function: llama.ToolFunction{
-			Name:       "read_file",
-			Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"id":{"type":"string"}}}`),
-		},
-	}}
-	out := applyPostReadinessSchemaRequirements(tools)
-	var schema map[string]any
-	if err := json.Unmarshal(out[0].Function.Parameters, &schema); err != nil {
-		t.Fatalf("unmarshal read_file params: %v", err)
-	}
-	required, _ := schema["required"].([]any)
-	requiredSet := map[string]bool{}
-	for _, v := range required {
-		if s, ok := v.(string); ok {
-			requiredSet[s] = true
-		}
-	}
-	for _, want := range []string{"named_gap", "why_not_answering", "start_line", "end_line"} {
-		if !requiredSet[want] {
-			t.Fatalf("expected read_file required to include %q, got %#v", want, required)
-		}
-	}
-	if !requiredSet["path"] {
-		t.Fatalf("expected read_file required to include concrete path anchor, got %#v", required)
-	}
-	if requiredSet["id"] {
-		t.Fatalf("expected transient read_file handle id to remain optional, got %#v", required)
-	}
-}
-
-func TestApplyPostReadinessSchemaRequirementsExposesLineRangesOnSymbolTools(t *testing.T) {
-	tools := []llama.Tool{{
-		Type: "function",
-		Function: llama.ToolFunction{
-			Name:       "go_read_symbol",
-			Parameters: json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"pattern":{"type":"string"}},"required":["path","pattern"]}`),
-		},
-	}}
-	out := applyPostReadinessSchemaRequirements(tools)
-	var schema map[string]any
-	if err := json.Unmarshal(out[0].Function.Parameters, &schema); err != nil {
-		t.Fatalf("unmarshal go_read_symbol params: %v", err)
-	}
-	required, _ := schema["required"].([]any)
-	requiredSet := map[string]bool{}
-	for _, v := range required {
-		if s, ok := v.(string); ok {
-			requiredSet[s] = true
-		}
-	}
-	for _, want := range []string{"path", "pattern", "named_gap", "why_not_answering"} {
-		if !requiredSet[want] {
-			t.Fatalf("expected go_read_symbol required to include %q, got %#v", want, required)
-		}
-	}
-	if requiredSet["start_line"] || requiredSet["end_line"] {
-		t.Fatalf("expected symbol-tool line ranges to remain optional, got %#v", required)
-	}
-	props, _ := schema["properties"].(map[string]any)
-	for _, field := range []string{"start_line", "end_line"} {
-		prop, _ := props[field].(map[string]any)
-		if prop == nil {
-			t.Fatalf("expected %s property to be present, got %#v", field, props)
-		}
-		if prop["minimum"] != float64(1) {
-			t.Fatalf("expected %s minimum=1, got %#v", field, prop)
-		}
-	}
-}
-
-func TestApplyPostReadinessSchemaRequirementsIsIdempotent(t *testing.T) {
-	tools := []llama.Tool{{
-		Type: "function",
-		Function: llama.ToolFunction{
-			Name:       "search_content",
-			Parameters: json.RawMessage(`{"type":"object","properties":{"pattern":{"type":"string"}},"required":["pattern"]}`),
-		},
-	}}
-	first := applyPostReadinessSchemaRequirements(tools)
-	second := applyPostReadinessSchemaRequirements(first)
-	if string(first[0].Function.Parameters) != string(second[0].Function.Parameters) {
-		t.Fatalf("expected applyPostReadinessSchemaRequirements to be idempotent\nfirst=%s\nsecond=%s", first[0].Function.Parameters, second[0].Function.Parameters)
-	}
-}
-
-func TestStripPostReadinessBroadToolsKeepsExactContentSearch(t *testing.T) {
-	tools := []llama.Tool{
-		{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
-		{Type: "function", Function: llama.ToolFunction{Name: "search_content"}},
-		{Type: "function", Function: llama.ToolFunction{Name: "search_files"}},
-		{Type: "function", Function: llama.ToolFunction{Name: "list_files"}},
-		{Type: "function", Function: llama.ToolFunction{Name: "context_query"}},
-	}
-
-	out := stripPostReadinessBroadTools(tools)
-	got := make([]string, 0, len(out))
-	for _, tool := range out {
-		got = append(got, tool.Function.Name)
-	}
-	for _, want := range []string{"read_file", "search_content", "context_query"} {
-		if !slices.Contains(got, want) {
-			t.Fatalf("expected post-readiness tools to keep %q, got %#v", want, got)
-		}
-	}
-	for _, stripped := range []string{"search_files", "list_files"} {
-		if slices.Contains(got, stripped) {
-			t.Fatalf("expected post-readiness tools to strip %q, got %#v", stripped, got)
-		}
-	}
-}
-
-func TestStripFallbackJSONArtifactsDropsMetadataBlocks(t *testing.T) {
-	input := `- Read internal/agent/runner.go lines 100-140
-- Ran function_tracing discovery query with 11 layer(s); artifact: .idiom/discovery/queries/abc.json
-{
-  "id": "abc",
-  "purpose": "function_tracing",
-  "artifact_path": ".idiom/discovery/queries/abc.json",
-  "layers_run": [
-    "project_behavior_digest:artifact_read"
-  ]
-}
-- Found relevant call site at runner.go:574`
-	out := stripFallbackJSONArtifacts(input)
-	if strings.Contains(out, `"id":`) || strings.Contains(out, `"layers_run":`) {
-		t.Fatalf("expected JSON metadata block to be stripped, got:\n%s", out)
-	}
-	for _, want := range []string{
-		"- Read internal/agent/runner.go lines 100-140",
-		"- Ran function_tracing discovery query",
-		"- Found relevant call site at runner.go:574",
-	} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("expected prose bullet %q to survive, got:\n%s", want, out)
-		}
-	}
-}
-
-func TestStripFallbackJSONArtifactsHandlesTruncatedDump(t *testing.T) {
-	// In the live log the JSON block was cut mid-stream by upstream
-	// truncation (no closing brace). Ensure the stripper still drops it.
-	input := `- Ran discovery query
-{
-  "id": "abc",
-  "layers_run": [
-    "x",
-...
-- Final bullet`
-	out := stripFallbackJSONArtifacts(input)
-	if strings.Contains(out, `"id":`) {
-		t.Fatalf("expected truncated JSON dump to be stripped, got:\n%s", out)
-	}
-	if !strings.Contains(out, "- Final bullet") {
-		t.Fatalf("expected next bullet after truncated JSON to survive, got:\n%s", out)
-	}
-}
-
-func TestStripFallbackJSONArtifactsLeavesProseUnchanged(t *testing.T) {
-	input := `Verified context:
-- Child task completed
-- Inspected internal/agent/runner.go lines 1-40
-
-Best-effort observations:
-- Function runChildTask is the entry point.`
-	out := stripFallbackJSONArtifacts(input)
-	if out != input {
-		t.Fatalf("expected prose-only input to be unchanged\ninput=%q\nout=%q", input, out)
-	}
-}
-
-func TestPostReadinessContinuationContractDisclosesBudget(t *testing.T) {
-	contract := postReadinessContinuationContract("delegated_read_only_answer_ready", 2)
-	if !strings.Contains(contract, "at most 2 targeted probes") {
-		t.Fatalf("expected contract to disclose budget=2, got:\n%s", contract)
-	}
-	if got := postReadinessContinuationContract("delegated_read_only_answer_ready", 1); !strings.Contains(got, "one targeted probe") {
-		t.Fatalf("expected contract to disclose budget=1, got:\n%s", got)
-	}
-	if got := postReadinessContinuationContract("child_packet_available", 0); !strings.Contains(got, "no further reads before answering") {
-		t.Fatalf("expected contract to state zero-budget, got:\n%s", got)
-	}
-	pkt := postReadinessContinuationContract("child_packet_available", 2)
-	if !strings.Contains(pkt, "packet-named path or symbol") {
-		t.Fatalf("expected child_packet contract to mention packet-named path, got:\n%s", pkt)
-	}
-}
-
-func TestStripNestedFallbackTemplateRemovesOuterScaffolding(t *testing.T) {
-	inner := "Partial findings from this turn (the budget was reached before a full synthesis):\n\n" +
-		"Verified context:\n- Read internal/agent/runner.go lines 100-140\n- Found something\n\n" +
-		"Final blocker:\n- Post-readiness follow-up missing named gap: the child packet already contains sufficient evidence...\n\n" +
-		"Recommended next step:\n- if you continue later, name one exact missing claim"
-	stripped := stripNestedFallbackTemplate(inner)
-	if strings.Contains(stripped, "Partial findings from this turn") {
-		t.Fatalf("expected outer header to be stripped, got:\n%s", stripped)
-	}
-	if strings.Contains(stripped, "Recommended next step:") {
-		t.Fatalf("expected trailing 'Recommended next step:' to be stripped, got:\n%s", stripped)
-	}
-	if strings.Contains(stripped, "Final blocker:") {
-		t.Fatalf("expected harness-rejection 'Final blocker:' section to be stripped, got:\n%s", stripped)
-	}
-	if !strings.Contains(stripped, "internal/agent/runner.go lines 100-140") {
-		t.Fatalf("expected substantive evidence to survive stripping, got:\n%s", stripped)
-	}
-	// Idempotent on a clean string.
-	clean := "- Read foo.go\n- Found bar"
-	if got := stripNestedFallbackTemplate(clean); got != clean {
-		t.Fatalf("expected idempotent on clean input, got %q", got)
-	}
-}
-
-func TestIsHarnessRejectionSummaryRecognizesContractRejections(t *testing.T) {
-	for _, summary := range []string{
-		"Post-readiness follow-up missing named gap",
-		"Post-child follow-up missing named gap",
-		"Post-readiness named_gap restates the original question",
-		"Post-readiness search is broader than the current evidence requires",
-		"Post-readiness follow-up is not an exact probe",
-		"Post-child follow-up gap is not packet-anchored",
-		"Broad inspection request rejected",
-		"Chained list_files rejected",
-	} {
-		if !isHarnessRejectionSummary(summary) {
-			t.Errorf("expected %q to be classified as a harness rejection", summary)
-		}
-	}
-	for _, summary := range []string{
-		"Failed to stat path",
-		"File not found",
-		"Edit request rejected",
-	} {
-		if isHarnessRejectionSummary(summary) {
-			t.Errorf("did not expect %q to be classified as a harness rejection (real tool failure)", summary)
-		}
-	}
-}
-
-func TestInvalidPostReadinessGapContentRejectsParaphrase(t *testing.T) {
-	objective := "Explain how this harness uses subagents."
-	gap := "Explain how the harness uses subagents and how delegation works"
-	summary, errorText, rejected := invalidPostReadinessGapContent("delegated_read_only_answer_ready", objective, workspace.ToolRequest{
-		Tool:     "read_file",
-		Path:     "internal/agent/runner_child_tasks.go",
-		NamedGap: gap,
-	})
-	if !rejected {
-		t.Fatalf("expected paraphrase gap to be rejected, got summary=%q error=%q", summary, errorText)
-	}
-	if !strings.Contains(strings.ToLower(summary), "restates the original question") {
-		t.Fatalf("expected rejection summary to mention restated question, got %q", summary)
-	}
-}
-
-func TestInvalidPostReadinessGapContentRejectsExplainerWithoutCodeToken(t *testing.T) {
-	objective := "What is the failure mode here?"
-	gap := "I want to understand how the system handles errors"
-	summary, _, rejected := invalidPostReadinessGapContent("child_packet_available", objective, workspace.ToolRequest{
-		Tool:     "read_file",
-		Path:     "internal/agent/runner.go",
-		NamedGap: gap,
-	})
-	if !rejected {
-		t.Fatalf("expected explainer-without-code-token gap to be rejected, got summary=%q", summary)
-	}
-}
-
-func TestInvalidPostReadinessGapContentAcceptsConcreteGap(t *testing.T) {
-	objective := "Explain how this harness uses subagents."
-	gap := "the body of `Runner.runChildTask` lines 4-36 — confirm budget plumbing"
-	if _, _, rejected := invalidPostReadinessGapContent("child_packet_available", objective, workspace.ToolRequest{
-		Tool:     "go_read_symbol",
-		Path:     "internal/agent/runner_child_tasks.go",
-		Pattern:  "runChildTask",
-		NamedGap: gap,
-	}); rejected {
-		t.Fatal("did not expect a concrete gap (named symbol + line range) to be rejected")
+	if strings.Contains(validity, "core implementation paths") {
+		t.Fatalf("readiness rationale must not overclaim implementation ownership, got %q", validity)
 	}
 }
 
@@ -19976,6 +19372,83 @@ func TestFingerprintNudgeFiresOncePerFingerprint(t *testing.T) {
 	}
 	if got := countEventsByRole(events, "doom_loop_guard"); got != 0 {
 		t.Fatalf("DoomLoopGate should NOT fire on non-consecutive repeats, got %d", got)
+	}
+}
+
+func TestConversationSamePathFixationNudgesOnVariedRanges(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/app/app.go", "package app\n"); err != nil {
+		t.Fatalf("write seed: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":1,"end_line":50}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":51,"end_line":100}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":101,"end_line":150}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":151,"end_line":200}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":201,"end_line":250}`,
+		`{"tool":"read_file","path":"internal/app/app.go","start_line":251,"end_line":300}`,
+		"The input handling path is internal/app/app.go.",
+	}
+
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request (%d)", requests)
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	var events []RunEvent
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root: root,
+			CWD:  root,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 12},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "conversation",
+			Contract:          "direct_answer",
+			PermissionProfile: "read_only_workspace",
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+
+	answer, err := runner.Run(
+		context.Background(),
+		[]llama.ChatMessage{{Role: "user", Content: "Where is input handling?"}},
+		llama.ChatOptions{},
+		nil,
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if answer != "The input handling path is internal/app/app.go." {
+		t.Fatalf("unexpected answer after same-path nudge: %q", answer)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected nudge to send the model back for final answer, used %d/%d replies", requests, len(replies))
+	}
+	if got := countEventsByRole(events, "same_path_fixation_nudge"); got != 1 {
+		t.Fatalf("expected one same_path_fixation_nudge, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "same_path_fixation_tool_hidden"); got != 1 {
+		t.Fatalf("expected one same_path_fixation_tool_hidden, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "tool_hidden"); got != 1 {
+		t.Fatalf("expected read_file to be hidden after ignored same-path nudge, got %d; events=%s", got, formatRunEventsForTest(events))
+	}
+	if got := countEventsByRole(events, "doom_loop_guard"); got != 0 {
+		t.Fatalf("varied ranges in conversation should not trip doom loop guard, got %d; events=%s", got, formatRunEventsForTest(events))
 	}
 }
 
@@ -22112,6 +21585,16 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 			true,
 		},
 		{
+			"15:41 - short post-readiness source inventory",
+			"For `what would it take to enable up and down arrow keys to iterate through the user's chat history?`, `internal/app/app.go` shows defines `truncateText`, defines `normalizeHistoryRole`, and `normalizeHistoryRole` returns `strings.ToUpper(value[:1]) + value[1:]`.",
+			true,
+		},
+		{
+			"16:13 - inspected body source inventory",
+			"`Model.handleKeyPress` in `internal/app/update_handlers.go` is the clearest inspected implementation anchor. The inspected body shows that it defines `Model.handleKeyPress`, sets `m.history.expanded` to `false`, `Model.handleKeyPress` calls `renderHistoryPanelContent`, sets `m.history.expanded` to `!m.history.expanded`, and sets `m.history.focused` to `false`.",
+			true,
+		},
+		{
 			"legitimate answer (should NOT be blocked)",
 			"Evidence in Idiom is composed of source paths, tool results, and verification status. The harness uses these across all lanes to enforce contracts.",
 			false,
@@ -22124,6 +21607,11 @@ func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {
 		{
 			"legitimate source-citing synthesis (should NOT be blocked)",
 			"The inspected source in `internal/agent/runner.go` contains `looksLikeNonAnswerProse`, which is the shared final-answer guard because `finalAnswerBlockerKind` calls it before accepting answer-tool content.",
+			false,
+		},
+		{
+			"legitimate path-citing mechanism answer (should NOT be blocked)",
+			"For chat-history navigation, `internal/app/model_state.go` would need selection state while `internal/app/update_handlers.go` would route up/down keys through the existing submit flow. That preserves the current message-send path while adding editable recall.",
 			false,
 		},
 		{
@@ -22174,6 +21662,8 @@ func TestFinalAnswerBlockerRejectsLiveNonAnswerShapes(t *testing.T) {
 	cases := []string{
 		`The user is asking me to investigate why a prompt asking "which files and sections should be changed" might be routed as investigate_then_implement with write_intent=yes. I need to find the specific route-planner files/tests responsible and the smallest generic fix shape.`,
 		"The inspected source in `internal/agent/runner_test.go` contains `func TestLooksLikeNonAnswerProseRejectsLiveFailures(t *testing.T) {`, `cases := []struct {` and `name   string`. No files were changed.",
+		"For `what would it take to enable up and down arrow keys to iterate through the user's chat history?`, `internal/app/app.go` shows defines `truncateText`, defines `normalizeHistoryRole`, and `normalizeHistoryRole` returns `strings.ToUpper(value[:1]) + value[1:]`.",
+		"`Model.handleKeyPress` in `internal/app/update_handlers.go` is the clearest inspected implementation anchor. The inspected body shows that it defines `Model.handleKeyPress`, sets `m.history.expanded` to `false`, `Model.handleKeyPress` calls `renderHistoryPanelContent`, sets `m.history.expanded` to `!m.history.expanded`, and sets `m.history.focused` to `false`.",
 	}
 	for _, answer := range cases {
 		blocker, reason := runner.finalAnswerBlockerKind(answer, nil)

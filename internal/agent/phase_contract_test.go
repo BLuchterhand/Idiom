@@ -1234,7 +1234,7 @@ func TestDeriveTurnPhaseContractUnscopedImplementationWriteReadyAfterSymbolBody(
 	assertNotContains(t, contract.AllowedTools, "code_navigate")
 }
 
-func TestDeriveTurnPhaseContractReadOnlyWorkspaceRequiresEvidenceBeforeAnswer(t *testing.T) {
+func TestDeriveTurnPhaseContractReadOnlyWorkspaceAllowsFinalAnswerStrategyWhileEvidencePending(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
 			TaskFamily:        "direct_answer",
@@ -1250,9 +1250,10 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceRequiresEvidenceBeforeAnswer(t 
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
-	assertNotContains(t, contract.TerminalOutcomes, "final answer")
-	assertNotContains(t, contract.RequiredNext, "final answer once evidence is sufficient")
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.TerminalOutcomes, "final answer")
+	assertContains(t, contract.RequiredNext, "final answer from gathered evidence or explicit uncertainty, one bounded read/search for an exact unsupported claim, or <<QUESTION>> with the exact blocker")
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "edit_file")
@@ -1274,7 +1275,8 @@ func TestDeriveTurnPhaseContractReadOnlyConversationWithoutReadinessRequiresEvid
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "edit_file")
@@ -1295,7 +1297,8 @@ func TestDeriveTurnPhaseContractReadOnlyDirectAnswerWithoutReadinessRequiresEvid
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.AllowedTools, "read_file")
 	assertContains(t, contract.AllowedTools, "search_content")
 	assertNotContains(t, contract.AllowedTools, "edit_file")
@@ -1418,7 +1421,8 @@ func TestDeriveTurnPhaseContractReadOnlyConversationKeepsToolsForUnreadNamedPath
 		t.Fatalf("Phase = %q, want read_only_evidence_pending until every named path is read", contract.Phase)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.AllowedTools, "read_file")
 }
 
@@ -1439,7 +1443,8 @@ func TestDeriveTurnPhaseContractReadOnlyWorkspaceStaysPendingAfterShallowDiscove
 	if contract.Phase != "read_only_evidence_pending" {
 		t.Fatalf("Phase = %q, want read_only_evidence_pending after shallow discovery; contract=%#v", contract.Phase, contract)
 	}
-	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionFinalAnswer)
+	assertNotContains(t, contract.ActionPolicy.InvalidActionClasses, actionFinalAnswer)
 	assertContains(t, contract.AllowedTools, "read_file")
 }
 

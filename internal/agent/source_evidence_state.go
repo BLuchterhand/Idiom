@@ -504,8 +504,14 @@ func sourceEvidencePendingRedirectActionLabel(obligation sourceEvidenceObligatio
 		return ""
 	}
 	switch {
-	case tool == "code_navigate":
-		return fmt.Sprintf("%s via code_navigate capability=read_symbol with pattern/symbol, or one file_outline first when the symbol is unknown", path)
+	case tool == workspace.CodeNavigateToolName:
+		return fmt.Sprintf(
+			"%s via %s capability=%s with pattern/symbol, or one %s first when the symbol is unknown",
+			path,
+			workspace.CodeNavigateToolName,
+			workspace.CodeNavigateCapabilityName(workspace.CapReadSymbol),
+			workspace.CodeNavigateCapabilityName(workspace.CapFileOutline),
+		)
 	case tool == "read_only_capability":
 		return fmt.Sprintf("%s via read_only_capability inspect-symbol with pattern/symbol, or one outline first when the symbol is unknown", path)
 	case strings.HasSuffix(tool, "_read_symbol"), strings.HasSuffix(tool, "_extract_body"):

@@ -59,6 +59,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 	deterministicSafeNextAction := firstRecoveryCardString(
 		input.DeterministicSafeNextAction,
 		recoveryCardSafeNextActionFromPhaseContract(contract),
+		recoveryCardStrategyNextActionFromPhaseContract(contract),
 	)
 	return NormalizeRecoveryCard(RecoveryCard{
 		ContractID:  contract.ContractID,
@@ -395,6 +396,22 @@ func recoveryCardSafeNextActionFromPhaseContract(contract TurnPhaseContract) str
 		}
 		return ""
 	}
+}
+
+func recoveryCardStrategyNextActionFromPhaseContract(contract TurnPhaseContract) string {
+	classes := firstNonEmptyRecoveryCardStrings(
+		contract.RuntimeCall.ExpressibleActionClasses,
+		contract.ActionPolicy.AllowedActionClasses,
+	)
+	if !slicesContainRecoveryCardString(classes, actionFinalAnswer) {
+		return ""
+	}
+	phase := strings.TrimSpace(contract.Phase)
+	if strings.HasPrefix(phase, "read_only_") ||
+		slicesContainRecoveryCardString(recoveryCardTerminalOutcomes(contract), actionFinalAnswer) {
+		return "Let the model choose strategy: answer from gathered evidence now, or state uncertainty with the exact unsupported claim and evidence source."
+	}
+	return ""
 }
 
 func recoveryCardActionClassAllowed(contract TurnPhaseContract, class string) bool {

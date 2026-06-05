@@ -672,10 +672,14 @@ func TestPresentableNoToolsFallbackDoesNotUseSearchHitAsSourceBody(t *testing.T)
 
 	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer)
 	if !ok {
-		t.Fatal("expected fallback to convert unsupported scaffold into a blocker")
+		t.Fatal("expected fallback to convert unsupported scaffold into presentable uncertainty")
 	}
-	if !strings.HasPrefix(got, "<<QUESTION>>:") {
-		t.Fatalf("expected blocker for search-only source evidence, got:\n%s", got)
+	if strings.HasPrefix(got, "<<QUESTION>>:") {
+		t.Fatalf("direct-answer search-only evidence must not expose blocker protocol, got:\n%s", got)
+	}
+	if !strings.Contains(got, "not have enough supported evidence") ||
+		!strings.Contains(got, "internal/labels/labels.go") {
+		t.Fatalf("expected presentable uncertainty with candidate context, got:\n%s", got)
 	}
 	if strings.Contains(got, "\"Save changes\"") {
 		t.Fatalf("search hit text must not be promoted to source-body evidence:\n%s", got)
@@ -704,7 +708,7 @@ func TestDecorateFinalAnswerSanitizesReadOnlyQuestionBlocker(t *testing.T) {
 	if strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("user-facing decorator leaked internal blocker protocol:\n%s", got)
 	}
-	for _, want := range []string{"could not produce a supported final answer", "internal/app/rendering.go"} {
+	for _, want := range []string{"not have enough supported evidence", "internal/app/rendering.go"} {
 		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
 			t.Fatalf("decorated blocker missing %q:\n%s", want, got)
 		}
@@ -812,7 +816,7 @@ func TestDecorateFinalAnswerSanitizesInternalReadOnlyRemediationQuestionBlocker(
 			t.Fatalf("decorated blocker leaked internal remediation phrase %q:\n%s", forbidden, got)
 		}
 	}
-	if !strings.Contains(got, "could not produce a supported final answer") || !strings.Contains(got, "logs/conversations/session.jsonl") {
+	if !strings.Contains(got, "not have enough supported evidence") || !strings.Contains(got, "logs/conversations/session.jsonl") {
 		t.Fatalf("decorated blocker should keep user-facing stop context and evidence path, got:\n%s", got)
 	}
 }
@@ -855,7 +859,7 @@ func TestDecorateFinalAnswerSanitizesSynthesizedReadOnlyQuestionBlocker(t *testi
 	if strings.Contains(got, "<<QUESTION>>") {
 		t.Fatalf("decorator leaked synthesized internal blocker protocol:\n%s", got)
 	}
-	if !strings.Contains(got, "could not produce a supported final answer") || !strings.Contains(got, "internal/labels/labels.go") {
+	if !strings.Contains(got, "not have enough supported evidence") || !strings.Contains(got, "internal/labels/labels.go") {
 		t.Fatalf("decorated synthesized blocker lost useful context:\n%s", got)
 	}
 	for _, forbidden := range []string{"required next evidence", "answer with the exact"} {
@@ -1035,8 +1039,8 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 		{Tool: "context_query", Summary: "Context query returned 12 nodes"},
 	}
 	got := synthesizeBriefConversationFallback(brief, results)
-	if !strings.HasPrefix(got, "<<QUESTION>>:") {
-		t.Errorf("fallback should be a typed blocker, got: %q", got)
+	if strings.HasPrefix(got, "<<QUESTION>>:") {
+		t.Errorf("read-only conversation fallback must not expose typed blocker protocol, got: %q", got)
 	}
 	if !strings.Contains(got, "Evidence paths") {
 		t.Errorf("fallback should mention evidence paths: %q", got)
@@ -1047,7 +1051,8 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	if strings.Contains(got, "func (m *Model) resize") {
 		t.Errorf("fallback should not dump source body: %q", got)
 	}
-	if strings.Contains(got, "No files were changed") {
+	if strings.Contains(strings.ToLower(got), "files were changed") ||
+		strings.Contains(strings.ToLower(got), "did not change any files") {
 		t.Errorf("fallback should not contain source-body extraction garbage: %q", got)
 	}
 	if strings.Contains(strings.ToLower(got), "budget") {
@@ -1055,6 +1060,9 @@ func TestSynthesizeBriefConversationFallback(t *testing.T) {
 	}
 	if !strings.Contains(got, "did not retain a concrete user-facing finding") {
 		t.Errorf("fallback should identify the actual failure class: %q", got)
+	}
+	if !strings.Contains(got, "not have enough supported evidence") {
+		t.Errorf("fallback should present uncertainty as normal prose: %q", got)
 	}
 }
 
@@ -1224,6 +1232,182 @@ func TestSynthesizeBriefConversationFallbackAnswersWhatWouldItTakeFromKeyHandler
 	if kind, reason := runner.finalAnswerBlockerKind(got, codeNavigateResults); kind != "" || reason != "" {
 		t.Fatalf("code_navigate TUI fallback answer blocked: kind=%q reason=%q\n%s", kind, reason, got)
 	}
+}
+
+func TestSynthesizeBriefConversationFallbackPrefersObjectiveRelevantExactProbe(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         objective,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleHistoryAudit in internal/app/update_handlers.go lines 1-8",
+				"1:func (m *Model) handleHistoryAudit() (tea.Cmd, bool) {",
+				"2:\tm.recordHistoryAuditEvent()",
+				"3:\treturn nil, false",
+				"4:}",
+			}, "\n"),
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleKeyPress in internal/app/update_handlers.go lines 22-180",
+				"22:func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {",
+				"43:\t\tcase tea.KeyUp:",
+				"49:\t\tcase tea.KeyDown:",
+				"70:\t\t\tif m.history.selected > 0 {",
+				"77:\t\t\tif m.history.selected < len(m.history.entries)-1 {",
+				"172:\t\tm.appendHistoryMessage(\"user\", text, nil)",
+			}, "\n"),
+		},
+	}
+
+	got := synthesizeBriefConversationFallback(brief, results)
+	if !strings.Contains(got, "Model.handleKeyPress") {
+		t.Fatalf("expected key handler to win source-owner selection, got:\n%s", got)
+	}
+	if strings.Contains(got, "Model.handleHistoryAudit") {
+		t.Fatalf("off-objective history audit handler should not win source-owner selection:\n%s", got)
+	}
+}
+
+func TestSynthesizeBriefConversationFallbackDoesNotUseConflictingNavigationOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         objective,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output: strings.Join([]string{
+				"route_summary: Read Model.handleSessionsPanelKey in internal/app/sessions_panel.go lines 205-245",
+				"205:// handleSessionsPanelKey consumes a key press while the Sessions tab",
+				"206:// has focus. Returns (true, cmd) if handled. j/k navigate, Enter",
+				"207:// resumes the selected session.",
+				"208:func (m *Model) handleSessionsPanelKey(msg tea.KeyMsg) (bool, tea.Cmd) {",
+				"211:\tcase tea.KeyUp:",
+				"215:\tcase tea.KeyDown:",
+				"230:\t\tif err := m.ResumeSession(id); err != nil {",
+				"236:\t\t\t// Bounce the panel back to History so the resumed chat",
+			}, "\n"),
+		},
+	}
+
+	got := synthesizeBriefConversationFallback(brief, results)
+	if strings.Contains(got, "It would take") || strings.HasPrefix(got, "<<QUESTION>>") || !strings.Contains(got, "not have enough supported evidence") {
+		t.Fatalf("conflicting navigation owner should not synthesize implementation answer or expose blocker protocol:\n%s", got)
+	}
+}
+
+func TestFinalAnswerDecoratorDoesNotUseDelegatedPacketWithoutImplementationOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         objective,
+	}
+	results := offOwnerDelegatedImplementationPacketResults(objective)
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     "Partial findings from this turn: delegated packet available.",
+		StopReason: "rejection_retry_blocked",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") || !strings.Contains(got, "not have enough supported evidence") {
+		t.Fatalf("implementation-shape delegated packet without owner evidence should not synthesize answer:\n%s", got)
+	}
+}
+
+func TestFallbackHelpersDoNotUseDelegatedPacketWithoutImplementationOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         objective,
+	}
+	results := offOwnerDelegatedImplementationPacketResults(objective)
+
+	if got, ok := immediateBudgetFallbackAnswer("main", brief, "maximum tool steps reached", results); ok {
+		if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") {
+			t.Fatalf("budget fallback should not synthesize off-owner delegated packet:\n%s", got)
+		}
+	}
+	if got, ok := synthesizeNoToolsFallbackAnswer("main", brief, results); ok {
+		if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") {
+			t.Fatalf("no-tools fallback should not synthesize off-owner delegated packet:\n%s", got)
+		}
+	}
+}
+
+func TestFallbackHelpersDoNotLeakLegacyDelegatedTaskWithoutImplementationOwner(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history?"
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "conversation",
+		Contract:          "direct_answer",
+		PermissionProfile: "read_only_workspace",
+		Objective:         objective,
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "task",
+			Summary: "Child task completed",
+			Output: strings.Join([]string{
+				"Question: " + objective,
+				"Inspected paths:",
+				"- `internal/app/help_overlay.go`",
+				"Key findings:",
+				"- `Model.handleHelpOverlayKey` handles up/down key movement while the help overlay has focus.",
+			}, "\n"),
+		},
+		{
+			Tool:    "search_content",
+			Summary: "Found 2 matching line(s).",
+			Output:  "internal/app/help_overlay.go:44: case tea.KeyUp:\ninternal/app/help_overlay.go:47: case tea.KeyDown:",
+		},
+	}
+
+	for name, call := range map[string]func() (string, bool){
+		"budget": func() (string, bool) {
+			return immediateBudgetFallbackAnswer("main", brief, "maximum tool steps reached", results)
+		},
+		"no_tools": func() (string, bool) {
+			return synthesizeNoToolsFallbackAnswer("main", brief, results)
+		},
+	} {
+		got, ok := call()
+		if !ok {
+			continue
+		}
+		if strings.Contains(got, "handleHelpOverlayKey") || strings.Contains(got, "handles up/down") {
+			t.Fatalf("%s fallback leaked off-owner delegated task output:\n%s", name, got)
+		}
+	}
+}
+
+func offOwnerDelegatedImplementationPacketResults(objective string) []workspace.ToolResult {
+	return []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       objective,
+		SourceBodyPaths: []string{"internal/app/help_overlay.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/app/help_overlay.go", Text: "`Model.handleHelpOverlayKey` handles up/down key movement while the help overlay has focus."},
+		},
+		Confidence: "medium",
+	})}
 }
 
 func TestDecorateFinalAnswerConversationFallbackDoesNotInventBudgetExhaustion(t *testing.T) {

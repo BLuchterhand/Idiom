@@ -64,7 +64,7 @@ func TestModelErrorAfterReadOnlyEvidenceReturnsDeterministicFallback(t *testing.
 		t.Fatalf("expected deterministic fallback instead of transport error, got %v", err)
 	}
 	for _, want := range []string{
-		"could not produce a supported final answer",
+		"not have enough supported evidence",
 		"internal/app/rendering.go",
 	} {
 		if !strings.Contains(answer, want) {

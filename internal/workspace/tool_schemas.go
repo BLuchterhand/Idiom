@@ -1,6 +1,11 @@
 package workspace
 
-import "strings"
+import (
+	"encoding/json"
+	"strings"
+
+	"idiom/internal/semantic/languagetools"
+)
 
 // ToolDefinition is the neutral form of an OpenAI-function-calling tool
 // spec. The agent layer converts this to llama.Tool before sending.
@@ -30,7 +35,7 @@ func BuildToolDefinitions(allowedTools []string) []ToolDefinition {
 		}
 	}
 	includeAll := len(allowed) == 0
-	defs := baseToolDefinitions()
+	defs := mergeLanguageToolDefinitions(baseToolDefinitions())
 	out := make([]ToolDefinition, 0, len(defs))
 	for _, def := range defs {
 		if !includeAll {
@@ -71,6 +76,46 @@ func intProp(desc string) string {
 }
 func boolProp(desc string) string {
 	return `{"type":"boolean","description":"` + desc + `"}`
+}
+
+func stringEnumJSON(values []string) string {
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return "[]"
+	}
+	return string(encoded)
+}
+
+func readOnlyCapabilityIDsForSchema() []string {
+	registry := BuildReadOnlyCapabilityRegistry()
+	ids := make([]string, 0, len(registry.Capabilities))
+	for _, capability := range registry.Capabilities {
+		ids = append(ids, capability.ID)
+	}
+	return ids
+}
+
+func mergeLanguageToolDefinitions(defs []ToolDefinition) []ToolDefinition {
+	catalog := languageToolDefinitions()
+	if len(catalog) == 0 {
+		return defs
+	}
+	out := make([]ToolDefinition, 0, len(defs)+len(catalog))
+	inserted := false
+	for _, def := range defs {
+		if isLanguageToolName(def.Name) {
+			if !inserted {
+				out = append(out, catalog...)
+				inserted = true
+			}
+			continue
+		}
+		out = append(out, def)
+	}
+	if !inserted {
+		out = append(out, catalog...)
+	}
+	return out
 }
 
 func submitPlanEditSchema() string {
@@ -183,11 +228,11 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:        "code_navigate",
+			Name:        CodeNavigateToolName,
 			Description: "Route a language-agnostic code navigation request to the best language-aware symbol/navigation tool for the given path or language, with a bounded generic source-text fallback.",
 			ParametersJSON: schemaObj(
 				[]string{"capability"},
-				`"capability":{"type":"string","enum":["file_outline","find_symbol","workspace_symbol","read_symbol","definition","references","calls_from","calls_into","implementations","related_files"],"description":"navigation capability the model needs"},"path":`+strProp("source file or narrow source directory used to infer language and scope")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file_outline/read_symbol-capable routes")+`,"end_line":`+intProp("optional end line for file_outline/read_symbol-capable routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
+				`"capability":{"type":"string","enum":`+stringEnumJSON(languagetools.CodeNavigationCapabilityNames())+`,"description":"navigation capability the model needs"},"path":`+strProp("source file or narrow source directory used to infer language and scope")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file_outline/read_symbol/extract_body-capable routes")+`,"end_line":`+intProp("optional end line for file_outline/read_symbol/extract_body-capable routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
 			),
 		},
 		{
@@ -195,7 +240,7 @@ func baseToolDefinitions() []ToolDefinition {
 			Description: "Invoke a stable read-only capability ID from the capability registry. Routes through existing read-only adapters, preserves adapter fallback/uncertainty in the result wrapper, and leaves direct adapter tools available.",
 			ParametersJSON: schemaObj(
 				[]string{"capability"},
-				`"capability":{"type":"string","enum":["file-outline","inspect-symbol","symbol-lookup","definition","references","calls-from","calls-into","related-files"],"description":"read-only capability ID from the registry; source-sanity is intentionally not accepted here"},"path":`+strProp("source file or narrow source directory used by the underlying adapter")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file-outline/inspect-symbol routes")+`,"end_line":`+intProp("optional end line for file-outline/inspect-symbol routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
+				`"capability":{"type":"string","enum":`+stringEnumJSON(readOnlyCapabilityIDsForSchema())+`,"description":"read-only capability ID from the registry; source-sanity is intentionally not accepted here"},"path":`+strProp("source file or narrow source directory used by the underlying adapter")+`,"pattern":`+strProp("symbol/name/pattern for symbol-shaped capabilities")+`,"query":`+strProp("alternate symbol/name/pattern when pattern is not used")+`,"language":`+strProp("optional language override such as go, cpp, python, typescript, rust, java")+`,"start_line":`+intProp("optional start line for file-outline/inspect-symbol routes")+`,"end_line":`+intProp("optional end line for file-outline/inspect-symbol routes")+`,"limit":`+intProp("max generic fallback matches; default 50"),
 			),
 		},
 		{
@@ -452,698 +497,11 @@ func baseToolDefinitions() []ToolDefinition {
 			),
 		},
 		{
-			Name:           "go_overview",
-			Description:    "Summarize the Go workspace structure.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:           "go_entrypoints",
-			Description:    "List Go program entrypoints.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:        "go_find_symbol",
-			Description: "Find Go symbols matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "go_find_function",
-			Description: "Find Go functions matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function name or regex"),
-			),
-		},
-		{
-			Name:        "go_find_type",
-			Description: "Find Go types matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("type name or regex"),
-			),
-		},
-		{
-			Name:        "go_find_const",
-			Description: "Find Go constants matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("constant name or regex"),
-			),
-		},
-		{
-			Name:        "go_find_package",
-			Description: "Find Go packages matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("package import path or regex"),
-			),
-		},
-		{
-			Name:        "go_related_files",
-			Description: "Find Go files related to a pattern, scoped to a path.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("term")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "go_workspace_symbol",
-			Description: "Workspace-wide Go symbol lookup.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "go_references",
-			Description: "Find references to a Go symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "go_definition",
-			Description: "Find a Go symbol definition.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "go_implementations",
-			Description: "Find implementations of a Go interface.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("interface name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "go_calls_from",
-			Description: "Find outgoing calls from a Go function.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "go_calls_into",
-			Description: "Find incoming calls to a Go function.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "go_read_symbol",
-			Description: "Read the body of a Go symbol. ANCHOR FIRST: confirm the symbol name and file via go_find_symbol, go_workspace_symbol, or a prior tool result before calling this — speculative pattern guesses fail more than half the time and waste a tool step.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern", "path"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "go_extract_body",
-			Description: "Extract the body of a Go function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern", "path"},
-				`"pattern":`+strProp("function name")+`,"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "go_importers",
-			Description: "Find packages that import a given Go package.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("package path"),
-			),
-		},
-		{
-			Name:        "go_diagnostics",
-			Description: "Run Go diagnostics (build/vet/errors) on a file.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:           "cpp_overview",
-			Description:    "Summarize the C/C++ workspace structure.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:        "cpp_entrypoints",
-			Description: "List likely C/C++ anchor files and entrypoints.",
-			ParametersJSON: schemaObj(
-				nil,
-				`"max_depth":`+intProp("optional result limit"),
-			),
-		},
-		{
-			Name:        "cpp_find_symbol",
-			Description: "Find C/C++ symbols matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"),
-			),
-		},
-		{
-			Name:        "cpp_read_symbol",
-			Description: "Read a C/C++ symbol snippet. ANCHOR FIRST: confirm the symbol name and file via cpp_find_symbol, cpp_workspace_symbol, or a prior tool result before calling this — speculative pattern guesses fail more than half the time (observed ~56% failure rate) and waste a tool step.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"),
-			),
-		},
-		{
-			Name:        "cpp_related_files",
-			Description: "Find C/C++ files related to a pattern, scoped to a path.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("term")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"),
-			),
-		},
-		{
-			Name:        "cpp_workspace_symbol",
-			Description: "Workspace-wide C/C++ symbol lookup.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("optional file or directory scope")+`,"max_depth":`+intProp("optional result limit"),
-			),
-		},
-		{
-			Name:        "cpp_definition",
-			Description: "Find a C/C++ symbol definition.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_declaration",
-			Description: "Find a C/C++ symbol declaration.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_implementations",
-			Description: "Find C/C++ implementations or overrides for a symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_references",
-			Description: "Find references to a C/C++ symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_calls_from",
-			Description: "Find outgoing calls from a C/C++ function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function or method name")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_calls_into",
-			Description: "Find incoming calls to a C/C++ function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function or method name")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_extract_body",
-			Description: "Extract the body of a C/C++ function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("optional file or directory scope")+`,"start_line":`+intProp("optional 1-based start")+`,"end_line":`+intProp("optional 1-based end"),
-			),
-		},
-		{
-			Name:        "cpp_includes",
-			Description: "Find direct and transitive C/C++ include dependencies for a file or include pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_who_includes",
-			Description: "Find C/C++ files that directly or transitively include a file or include pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("file path, header name, or include pattern")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_blast_radius",
-			Description: "Estimate C/C++ translation units affected by a file or include pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("file path, header name, symbol, or include pattern")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_dead_symbol",
-			Description: "Check whether a C/C++ symbol appears unused.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_diagnostics",
-			Description: "Run C/C++ diagnostics with clangd when compile_commands.json is available.",
-			ParametersJSON: schemaObj(
-				nil,
-				`"path":`+strProp("optional file or directory scope"),
-			),
-		},
-		{
-			Name:        "cpp_file_outline",
-			Description: "List declarations with line ranges in a C/C++ file.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "go_file_outline",
-			Description: "Inspect declaration boundaries for Go refactors.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
 			Name:        "go_move_declarations",
 			Description: "Mechanically move Go declarations between files by tag or explicit list.",
 			ParametersJSON: schemaObj(
 				[]string{"path", "destination"},
 				`"path":`+strProp("source file")+`,"destination":`+strProp("destination file")+`,"pattern":`+strProp("tag:responsibility or explicit list"),
-			),
-		},
-		{
-			Name:           "python_overview",
-			Description:    "Summarize the Python workspace structure.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:           "python_entrypoints",
-			Description:    "List likely Python entrypoint files (main blocks, app.py, cli.py).",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:        "python_find_symbol",
-			Description: "Find Python symbols (functions, classes, methods) matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "python_workspace_symbol",
-			Description: "Workspace-wide Python symbol lookup (uses pyright/pylsp when available).",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "python_definition",
-			Description: "Find a Python symbol definition.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "python_references",
-			Description: "Find references to a Python symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "python_implementations",
-			Description: "Find subclass implementations of a Python base class.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("base class name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "python_calls_from",
-			Description: "Find outgoing calls from a Python function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function or method name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "python_calls_into",
-			Description: "Find incoming calls to a Python function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function or method name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "python_read_symbol",
-			Description: "Read the body of a Python symbol. ANCHOR FIRST: confirm the symbol name and file via python_find_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern", "path"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "python_related_files",
-			Description: "Find Python files related to a pattern, scoped to a path.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("term")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "python_diagnostics",
-			Description: "Run Python diagnostics when a Python LSP server is available.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "python_file_outline",
-			Description: "List declarations with line ranges in a Python file.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:           "ts_overview",
-			Description:    "Summarize the TypeScript/JavaScript workspace (likely anchors, counts).",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:           "ts_entrypoints",
-			Description:    "List likely TypeScript/JavaScript entrypoint files.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:        "ts_find_symbol",
-			Description: "Find TypeScript/JavaScript symbols by name.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_read_symbol",
-			Description: "Read the body of a TypeScript/JavaScript symbol. ANCHOR FIRST: confirm the symbol name and file via ts_find_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol, e.g. ClassName.method")+`,"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "ts_related_files",
-			Description: "Find TypeScript/JavaScript files related to a concept or symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("keyword or symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_definition",
-			Description: "Find a TypeScript/JavaScript symbol definition.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_implementations",
-			Description: "Find implementations of a TypeScript interface or overriding methods.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("interface or method")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_references",
-			Description: "Find TypeScript/JavaScript references to a symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_calls_from",
-			Description: "Find outgoing calls from a TypeScript/JavaScript function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function or method")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_calls_into",
-			Description: "Find incoming calls to a TypeScript/JavaScript function or method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function or method")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_workspace_symbol",
-			Description: "Workspace-wide TypeScript/JavaScript symbol lookup via typescript-language-server when available.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol pattern")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "ts_diagnostics",
-			Description: "Run TypeScript diagnostics (type errors, lints) on a file or directory.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file or directory path"),
-			),
-		},
-		{
-			Name:        "ts_file_outline",
-			Description: "List declarations with line ranges in a TypeScript/JavaScript file.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:           "rust_overview",
-			Description:    "Summarize the Rust workspace structure.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:           "rust_entrypoints",
-			Description:    "List Rust entrypoints (main, lib root, #[test], #[bench]).",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:        "rust_find_symbol",
-			Description: "Find Rust symbols (fn, struct, enum, trait, impl, macro) matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_workspace_symbol",
-			Description: "Workspace-wide Rust symbol lookup (uses rust-analyzer when available).",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "rust_read_symbol",
-			Description: "Read the body of a Rust symbol. ANCHOR FIRST: confirm the symbol name and file via rust_find_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern", "path"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "rust_related_files",
-			Description: "Find Rust files related to a pattern. Follows the mod-tree from the current file.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("term")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_file_outline",
-			Description: "List declarations with line ranges in a Rust file.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "rust_definition",
-			Description: "Find a Rust symbol definition.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_references",
-			Description: "Find references to a Rust symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_calls_from",
-			Description: "Find outgoing calls from a Rust function.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_calls_into",
-			Description: "Find incoming calls to a Rust function.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("function name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_implementations",
-			Description: "Find implementations of a Rust trait.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("trait name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "rust_diagnostics",
-			Description: "Run Rust diagnostics via cargo check.",
-			ParametersJSON: schemaObj(
-				nil,
-				`"path":`+strProp("optional path to scope the check"),
-			),
-		},
-		{
-			Name:           "java_overview",
-			Description:    "Summarize the Java workspace structure.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:           "java_entrypoints",
-			Description:    "List Java program entrypoints and test classes.",
-			ParametersJSON: `{"type":"object","properties":{}}`,
-		},
-		{
-			Name:        "java_find_symbol",
-			Description: "Find Java symbols matching a pattern.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "java_read_symbol",
-			Description: "Read the body of a Java symbol. ANCHOR FIRST: confirm the symbol name and file via java_find_symbol or java_workspace_symbol or a prior tool result before calling this — speculative pattern guesses fail and waste a tool step.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name")+`,"path":`+strProp("file path"),
-			),
-		},
-		{
-			Name:        "java_related_files",
-			Description: "Find Java files related to a pattern, scoped to a path.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("term")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "java_workspace_symbol",
-			Description: "Workspace-wide Java symbol lookup.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol name or regex"),
-			),
-		},
-		{
-			Name:        "java_definition",
-			Description: "Find a Java symbol definition.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "java_references",
-			Description: "Find references to a Java symbol.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("symbol")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "java_implementations",
-			Description: "Find implementations of a Java interface or class.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("interface or class name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "java_calls_from",
-			Description: "Find outgoing calls from a Java method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("method name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "java_calls_into",
-			Description: "Find incoming calls to a Java method.",
-			ParametersJSON: schemaObj(
-				[]string{"pattern"},
-				`"pattern":`+strProp("method name")+`,"path":`+strProp("scope"),
-			),
-		},
-		{
-			Name:        "java_diagnostics",
-			Description: "Run Java diagnostics (mvn/gradle/javac) on a file or directory.",
-			ParametersJSON: schemaObj(
-				nil,
-				`"path":`+strProp("file or directory path"),
-			),
-		},
-		{
-			Name:        "java_file_outline",
-			Description: "List declarations with line ranges in a Java file.",
-			ParametersJSON: schemaObj(
-				[]string{"path"},
-				`"path":`+strProp("file path"),
 			),
 		},
 	}

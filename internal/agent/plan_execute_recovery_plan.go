@@ -98,7 +98,7 @@ func planThenExecuteGroundingRequiredRecoveryPlan() PlanExecuteRecoveryPlan {
 		Instructions: []string{
 			"Do not repeat `submit_plan`.",
 			"Next visible action must be one read-only localization or source-evidence request, or a terminal closeout.",
-			"For source-evidence requests, use `context_pack`, `product_efforts`, `product_status`, targeted `search_content`, `read_file`, or `code_navigate` with `capability:\"read_symbol\"`/`extract_body`.",
+			"For source-evidence requests, use `context_pack`, `product_efforts`, `product_status`, targeted `search_content`, `read_file`, or `" + workspace.CodeNavigateToolName + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + ".",
 			"For terminal closeout, answer `Decision: source-satisfied` with observed current-state evidence, or answer `<<QUESTION>>:` with the exact blocker.",
 		},
 	}

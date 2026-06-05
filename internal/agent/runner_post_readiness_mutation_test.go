@@ -8,10 +8,10 @@ import (
 )
 
 // TestPostReadinessGapScopeForBriefSeparatesParentContracts covers the core
-// discovery invariant: read-only parent readiness allows exact follow-up probes,
-// but mutation parents and child runners remain advisory because their
-// enclosing contract is not final-answer synthesis.
-func TestPostReadinessGapScopeForBriefSeparatesParentContracts(t *testing.T) {
+// discovery invariant: read-only readiness and child packets are advisory
+// follow-up guidance, not permission gates. Mutation source-refresh contracts
+// are owned by postReadinessToolContractForBrief instead.
+func TestPostReadinessToolContractForBriefSeparatesParentContracts(t *testing.T) {
 	mutationBrief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "implementation",
 		Contract:          "implementation_result",
@@ -21,43 +21,31 @@ func TestPostReadinessGapScopeForBriefSeparatesParentContracts(t *testing.T) {
 		TaskFamily:        "investigation",
 		PermissionProfile: "read_only_workspace",
 	}
-	req := workspace.ToolRequest{Tool: "read_file", Path: "x.go"}
 
-	// Mutation parent + delegated read-only answer ready -> suppressed.
-	if scope := postReadinessGapScopeForBrief("main", true, false, req, mutationBrief); scope != "" {
-		t.Fatalf("mutation parent should suppress answer_readiness_reached scope; got %q", scope)
+	if contract := postReadinessToolContractForBrief(mutationBrief, nil, true, false); !contract.RequireSourceRefreshContract {
+		t.Fatalf("mutation source-refresh contract should be explicit, got %#v", contract)
 	}
 
-	// Read-only parent + delegated read-only answer ready -> exact-probe contract.
-	if scope := postReadinessGapScopeForBrief("main", true, false, req, readOnlyBrief); scope != "answer_readiness_reached" {
-		t.Fatalf("read-only parent should require the post-readiness exact-probe contract; got %q", scope)
+	if contract := postReadinessToolContractForBrief(readOnlyBrief, nil, true, false); contract.RequireSourceRefreshContract || !contract.ReadinessAdvisory {
+		t.Fatalf("read-only parent readiness should be advisory, got %#v", contract)
 	}
 
-	// Child:* agent + read-only answer ready -> also advisory.
-	if scope := postReadinessGapScopeForBrief("child:explorer", true, false, req, mutationBrief); scope != "" {
-		t.Fatalf("child:* agent should not block post-readiness reads; got %q", scope)
+	if contract := postReadinessToolContractForBrief(mutationBrief, nil, false, true); !contract.RequireSourceRefreshContract {
+		t.Fatalf("mutation child-packet source-refresh contract should stay explicit, got %#v", contract)
 	}
 
-	// child_packet_available scope ALSO suppressed on mutation
-	// parents — same reasoning as answer_readiness_reached: the
-	// parent's deliverable is a write, not an answer.
-	if scope := postReadinessGapScopeForBrief("main", false, true, req, mutationBrief); scope != "" {
-		t.Fatalf("child_packet_available should also be suppressed on mutation parent; got %q", scope)
+	if contract := postReadinessToolContractForBrief(readOnlyBrief, nil, false, true); contract.RequireSourceRefreshContract || !contract.ReadinessAdvisory {
+		t.Fatalf("read-only child packet should be advisory, got %#v", contract)
 	}
 
-	// Read-only parent + child packet -> exact-probe contract.
-	if scope := postReadinessGapScopeForBrief("main", false, true, req, readOnlyBrief); scope != "child_packet_available" {
-		t.Fatalf("read-only child_packet_available should require the post-child exact-probe contract; got %q", scope)
-	}
-
-	// Write-class tool: neither scope fires regardless of brief.
+	// Write-class requests do not change the selected post-readiness contract.
 	writeReq := workspace.ToolRequest{Tool: "write_file", Path: "x.md"}
-	if scope := postReadinessGapScopeForBrief("main", true, false, writeReq, mutationBrief); scope != "" {
-		t.Fatalf("write-class tool should never trigger post-readiness scope; got %q", scope)
+	if !workspace.IsWorkspaceWriteTool(writeReq.Tool) {
+		t.Fatalf("test setup should use a write-class tool")
 	}
 }
 
-func TestPostReadinessReadRequestWithoutNamedGapRequiresExactProbeContract(t *testing.T) {
+func TestPostReadinessReadRequestWithoutNamedGapRemainsAdvisory(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "architecture",
 		Contract:          "architecture_assessment",
@@ -70,10 +58,10 @@ func TestPostReadinessReadRequestWithoutNamedGapRequiresExactProbeContract(t *te
 		Symbol: "DebugLogger.sanitizeValue",
 	}
 
-	if postReadinessExactProbeContractPresent(req) {
-		t.Fatal("test setup should omit named_gap and why_not_answering")
+	if gap := postReadinessGap(req); gap != "" {
+		t.Fatalf("test setup should omit post-readiness gap fields, got %q", gap)
 	}
-	if scope := postReadinessGapScopeForBrief("main", true, false, req, brief); scope != "answer_readiness_reached" {
-		t.Fatalf("post-readiness source read should be subject to exact-probe contract, got %q", scope)
+	if contract := postReadinessToolContractForBrief(brief, nil, true, false); contract.RequireSourceRefreshContract || !contract.ReadinessAdvisory {
+		t.Fatalf("post-readiness source read should remain advisory, got %#v", contract)
 	}
 }

@@ -435,10 +435,9 @@ func matchRedirectRule(req workspace.ToolRequest, ws *workspace.Manager) (worksp
 }
 
 // considerConversationReadFileRedirect redirects repeated source-file
-// read_file calls on the same file to code_navigate read_symbol. The model
-// often reads a source file in small chunks when it could use read_symbol to
-// get the full symbol body in one call. Diagnostic logs are deliberately
-// excluded: their useful evidence is temporal windows, not symbols.
+// read_file calls on the same file to the shared code-navigation source-body
+// capability. Diagnostic logs are deliberately excluded: their useful evidence
+// is temporal windows, not symbols.
 func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.ToolRequest, brief workerruntime.WorkerRuntimeBrief) RedirectDecision {
 	if d == nil {
 		return RedirectDecision{}
@@ -466,12 +465,14 @@ func (d *DiscoveryRedirect) considerConversationReadFileRedirect(req workspace.T
 	}
 	d.firedRedirects[fp] = true
 
-	summary := "Redirected repeated read_file to code_navigate"
+	summary := "Redirected repeated read_file to " + workspace.CodeNavigateToolName
 	msg := fmt.Sprintf(
-		"You have read %s %d times this turn. Instead of reading small chunks, use code_navigate read_symbol with the symbol name to get the full body in one call. Try:\n\n"+
-			fmt.Sprintf(`{"tool":"code_navigate","capability":"read_symbol","path":%q,"pattern":"<symbol name>"}`, path)+"\n\n"+
-			"If you don't know the symbol name, use code_navigate file_outline first to list available symbols.",
+		"You have read %s %d times this turn. Instead of reading small chunks, use %s with the symbol name to get the full body in one call. Try:\n\n%s\n\n"+
+			"If you don't know the symbol name, use %s first to list available symbols.",
 		path, fpFires,
+		workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol),
+		workspace.CodeNavigateRequestExample(workspace.CapReadSymbol, path, "<symbol name>"),
+		workspace.CodeNavigateCapabilityInstruction(workspace.CapFileOutline),
 	)
 
 	return RedirectDecision{
