@@ -163,6 +163,12 @@ type Model struct {
 	input    textarea.Model
 	spinner  spinner.Model
 
+	// inputHistory stores previous user inputs for up/down arrow navigation.
+	// inputHistoryIndex is the current position in inputHistory while navigating.
+	// -1 means not navigating (showing current textarea content).
+	inputHistory      []string
+	inputHistoryIndex int
+
 	messages                       []llama.ChatMessage
 	promptStack                    promptstack.Stack
 	composedPrompt                 string

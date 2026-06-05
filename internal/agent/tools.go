@@ -43,8 +43,8 @@ func buildLlamaTools(defs []workspace.ToolDefinition) []llama.Tool {
 
 // postReadinessRequiredFields lists the JSON Schema properties required on
 // read-class source-refresh calls only when the consolidated runner contract
-// selects an explicit mutation/source-refresh surface. Read-only answer
-// readiness and child packets are advisory and must not call this path.
+// selects an explicit mutation/source-refresh surface. Answerable read-only
+// evidence contracts to a final-answer surface instead.
 var postReadinessRequiredFields = []string{"named_gap", "why_not_answering"}
 
 // applyPostReadinessSchemaRequirements rewrites the JSON Schema of every
@@ -95,8 +95,8 @@ func applyPostReadinessSchemaRequirements(tools []llama.Tool) []llama.Tool {
 // stripPostReadinessBroadTools removes tools that are inappropriate under an
 // explicit mutation/source-refresh contract. Broad file discovery
 // (search_files, list_files) encourages rediscovery instead of resolving the
-// scoped write contract. Read-only answer readiness is advisory and must not
-// call this path.
+// scoped write contract. Answerable read-only evidence uses a separate
+// final-answer surface instead of schema-constrained source refresh.
 func stripPostReadinessBroadTools(tools []llama.Tool) []llama.Tool {
 	if len(tools) == 0 {
 		return tools

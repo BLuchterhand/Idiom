@@ -82,6 +82,46 @@ func TestToolIntentValidationRequiresRepairSourceWhenMarkedRepaired(t *testing.T
 	}
 }
 
+func TestActionClassTokensUseCanonicalVocabulary(t *testing.T) {
+	tokens := ActionClassTokens(
+		ActionClassRead,
+		ActionClass("source-satisfaction"),
+		ActionClass("write"),
+		ActionClassRead,
+		ActionClass(" "),
+	)
+
+	if !slices.Equal(tokens, []string{"read", "source_satisfied", "per_edit_write"}) {
+		t.Fatalf("ActionClassTokens() = %#v", tokens)
+	}
+	if ActionClassToken(ActionClass("decision_pass")) != "review_pass" {
+		t.Fatalf("ActionClassToken(decision_pass) = %q", ActionClassToken(ActionClass("decision_pass")))
+	}
+}
+
+func TestIsToolActionClassSeparatesToolBackedAndTerminalClasses(t *testing.T) {
+	toolBacked := []ActionClass{
+		ActionClassRead,
+		ActionClassSearch,
+		ActionClassSubmitPlan,
+		ActionClassPerEditWrite,
+		ActionClassDeliverableWrite,
+		ActionClassVerify,
+		ActionClassGenericProbe,
+		ActionClassDelegate,
+	}
+	for _, class := range toolBacked {
+		if !IsToolActionClass(class) {
+			t.Fatalf("IsToolActionClass(%q) = false, want true", class)
+		}
+	}
+	for _, class := range []ActionClass{ActionClassSourceSatisfied, ActionClassBlocker, ActionClassReviewPass, ActionClassFinalAnswer, ActionClassProseFinal} {
+		if IsToolActionClass(class) {
+			t.Fatalf("IsToolActionClass(%q) = true, want false", class)
+		}
+	}
+}
+
 func TestActionFromIntentBuildsStableNormalizedAction(t *testing.T) {
 	action := ActionFromIntent(ToolIntent{
 		ToolName:    "code_navigate",

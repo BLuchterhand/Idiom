@@ -77,6 +77,48 @@ func TestLoadRepresentativeSWESuiteCoversFrontierFamilies(t *testing.T) {
 	}
 }
 
+func TestLiveSubsetAssertionsDoNotContradictRepresentativeSuiteForSharedTasks(t *testing.T) {
+	liveSuite, err := LoadSWESuite(filepath.Join("..", "..", "testdata", "swe", "live-subset.json"))
+	if err != nil {
+		t.Fatalf("LoadSWESuite live subset: %v", err)
+	}
+	representativeSuite, err := LoadSWESuite(filepath.Join("..", "..", "testdata", "swe", "representative-suite.json"))
+	if err != nil {
+		t.Fatalf("LoadSWESuite representative suite: %v", err)
+	}
+
+	representativeByID := map[string]SWETask{}
+	for _, task := range representativeSuite.Tasks {
+		id := strings.TrimSpace(task.ID)
+		if id != "" {
+			representativeByID[id] = task
+		}
+	}
+
+	for _, liveTask := range liveSuite.Tasks {
+		id := strings.TrimSpace(liveTask.ID)
+		representativeTask, ok := representativeByID[id]
+		if !ok {
+			continue
+		}
+		assertNoScenarioAssertionContradictions(t, id, "live-subset", liveTask.Scenario, "representative-suite", representativeTask.Scenario)
+		assertNoScenarioAssertionContradictions(t, id, "representative-suite", representativeTask.Scenario, "live-subset", liveTask.Scenario)
+	}
+}
+
+func assertNoScenarioAssertionContradictions(t *testing.T, taskID, requiredSuite string, requiredScenario Scenario, forbiddenSuite string, forbiddenScenario Scenario) {
+	t.Helper()
+	for _, required := range requiredScenario.FinalAssistantContains {
+		required = strings.TrimSpace(required)
+		if required == "" {
+			continue
+		}
+		if containsStringFold(forbiddenScenario.ForbidFinalAssistantContains, required) {
+			t.Fatalf("task %q assertion drift: %s requires final answer phrase %q, but %s forbids it", taskID, requiredSuite, required, forbiddenSuite)
+		}
+	}
+}
+
 func TestAnalyzeSWESuiteCoverageReportsMissingContractItems(t *testing.T) {
 	minTasks := 2
 	suite := SWESuite{

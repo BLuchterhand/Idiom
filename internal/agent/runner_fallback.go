@@ -105,6 +105,12 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 		return synthesizeMutationFallbackAnswer(brief, results), true
 	}
 	if !runnerBriefRequiresMutation(brief) && !runnerVerificationRequired(brief) {
+		closeout := readOnlyClosureDecisionForResults(brief, results)
+		if readOnlyDirectAnswerLane(brief) {
+			if answer, ok := closeout.ConcreteFallbackAnswer(); ok {
+				return answer, true
+			}
+		}
 		delegatedOwnerReady := delegatedImplementationShapeSynthesisAllowed(brief, results)
 		if delegatedOwnerReady {
 			if answer, ok := synthesizeDelegatedReadOnlyAnswer(brief.Objective, results); ok {

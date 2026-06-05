@@ -10,6 +10,39 @@ import (
 	"idiom/internal/workspace"
 )
 
+func TestPhaseActionVocabularyUsesAutonomyConstants(t *testing.T) {
+	want := map[string]autonomy.ActionClass{
+		actionRead:             autonomy.ActionClassRead,
+		actionSearch:           autonomy.ActionClassSearch,
+		actionSubmitPlan:       autonomy.ActionClassSubmitPlan,
+		actionPerEditWrite:     autonomy.ActionClassPerEditWrite,
+		actionDeliverableWrite: autonomy.ActionClassDeliverableWrite,
+		actionSourceSatisfied:  autonomy.ActionClassSourceSatisfied,
+		actionBlocker:          autonomy.ActionClassBlocker,
+		actionVerify:           autonomy.ActionClassVerify,
+		actionFinalAnswer:      autonomy.ActionClassFinalAnswer,
+		actionReviewPass:       autonomy.ActionClassReviewPass,
+		actionGenericProbe:     autonomy.ActionClassGenericProbe,
+		actionProseFinal:       autonomy.ActionClassProseFinal,
+	}
+	for got, class := range want {
+		if got != autonomy.ActionClassToken(class) {
+			t.Fatalf("phase action alias %q does not match autonomy class %q", got, class)
+		}
+	}
+}
+
+func TestGenericAllowedActionClassesUsesAutonomyToolMapping(t *testing.T) {
+	classes := genericAllowedActionClasses([]string{"history_range", "history_symbol", "context_status", "apply_patch"})
+
+	assertContains(t, classes, actionRead)
+	assertContains(t, classes, actionSearch)
+	assertContains(t, classes, actionPerEditWrite)
+	assertContains(t, classes, actionFinalAnswer)
+	assertContains(t, classes, actionBlocker)
+	assertNotContains(t, classes, "history")
+}
+
 func TestDeriveTurnPhaseContractPlanExecuteRequiredSource(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
@@ -1399,6 +1432,8 @@ func TestDeriveTurnPhaseContractOmitsHiddenToolsFromCallableSurface(t *testing.T
 	assertContains(t, contract.HiddenTools, "task")
 	assertNotContains(t, contract.AllowedTools, "task")
 	assertNotContains(t, contract.ActionPolicy.CallableToolNames, "task")
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionGenericProbe)
+	assertNotContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionGenericProbe)
 	assertContains(t, contract.ActionPolicy.CallableToolNames, "read_file")
 }
 

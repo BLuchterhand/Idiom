@@ -876,6 +876,35 @@ func TestReadOnlyAnswerabilityRejectsOffObjectiveTypedDelegatedEvidencePacket(t 
 	}
 }
 
+func TestReadOnlyAnswerabilityAcceptsTypedImplementationOwnerPacketWithoutAgentPath(t *testing.T) {
+	objective := "what would it take to enable the up and down arrow keys to iterate through the user's chat history? the intent is to make it easy to find old messages and run them again without typing them out."
+	brief := readOnlyConversationBriefForTest(objective)
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		Question:        brief.Objective,
+		SourceBodyPaths: []string{"internal/app/update_handlers.go"},
+		InspectedPaths:  []string{"internal/app/update_handlers.go"},
+		Confidence:      "high",
+		Findings: []ReadOnlyEvidenceFinding{
+			{
+				Path: "internal/app/update_handlers.go",
+				Text: "Model.handleKeyPress handles tea.KeyUp and tea.KeyDown, reads chat history entries, and appends the selected user message into the input flow.",
+			},
+		},
+	})}
+
+	ledger := readOnlyAnswerabilityForResults(brief, results)
+	if !ledger.Answerable() {
+		t.Fatalf("typed implementation-owner packet should satisfy direct-answer readiness without an internal/agent path: %#v", ledger)
+	}
+	if got := ledger.ImplementationOwnerPaths(); !slices.Contains(got, "internal/app/update_handlers.go") {
+		t.Fatalf("expected typed packet source owner path, got %#v", got)
+	}
+	if role := sourceOwnerRoleForTest(ledger, "internal/app/update_handlers.go"); role != readOnlySourceOwnerMechanism {
+		t.Fatalf("typed packet source should be mechanism owner, got %q in %#v", role, ledger.SourceOwnerEvidence)
+	}
+}
+
 func TestReadOnlyAnswerabilityRejectsGenericToolSchemaPacketForUsefulnessObjective(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "architecture",

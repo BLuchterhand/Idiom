@@ -279,7 +279,88 @@ func readOnlyEvidencePacketAnswerableForObjective(packet ReadOnlyEvidencePacket,
 		readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(body, objective) {
 		return true
 	}
+	if readOnlyEvidencePacketHasObjectiveScopedSourceSupport(packet, objective, findingText) {
+		return true
+	}
 	return false
+}
+
+func readOnlyEvidencePacketHasObjectiveScopedSourceSupport(packet ReadOnlyEvidencePacket, objective string, findingText []string) bool {
+	if len(findingText) == 0 {
+		return false
+	}
+	if objectiveAsksImplementationShape(objective) {
+		return len(readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, objective)) > 0
+	}
+	for _, path := range packet.SourceBodyPaths {
+		body := readOnlyEvidencePacketFindingBodyForPath(packet, path, findingText)
+		if readOnlyEvidencePacketSourcePathScopedToObjective(path, objective, body) &&
+			sourceBodyHasStrongObjectiveToken(body, objective) {
+			return true
+		}
+	}
+	return false
+}
+
+func readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet ReadOnlyEvidencePacket, objective string) []readOnlySourceOwnerEvidence {
+	packet = normalizeReadOnlyEvidencePacket(packet)
+	if !objectiveAsksImplementationShape(objective) {
+		return nil
+	}
+	var findingText []string
+	for _, finding := range packet.Findings {
+		text := strings.TrimSpace(finding.Text)
+		if text != "" {
+			findingText = append(findingText, text)
+		}
+	}
+	if len(findingText) == 0 {
+		return nil
+	}
+	var evidence []readOnlySourceOwnerEvidence
+	for _, path := range packet.SourceBodyPaths {
+		body := readOnlyEvidencePacketFindingBodyForPath(packet, path, findingText)
+		if !readOnlyEvidencePacketSourcePathScopedToObjective(path, objective, body) {
+			continue
+		}
+		owner := readOnlySourceOwnerEvidenceForBody(path, "", objective, body)
+		if !owner.OwnerEligible() {
+			continue
+		}
+		evidence = append(evidence, owner)
+	}
+	return evidence
+}
+
+func readOnlyEvidencePacketSourcePathScopedToObjective(path string, objective string, body string) bool {
+	path = normalizeReadOnlyEvidencePacketPath(path)
+	if path == "" {
+		return false
+	}
+	return implementationSourcePathOverlapsObjective(path, objective) ||
+		sourceEvidencePathSharesObjectiveTerm(path, objective) ||
+		candidateSourcePathStronglyOverlapsObjective(path, objective) ||
+		sourceBodyHasStrongObjectiveToken(body, objective)
+}
+
+func readOnlyEvidencePacketFindingBodyForPath(packet ReadOnlyEvidencePacket, path string, fallback []string) string {
+	path = normalizeReadOnlyEvidencePacketPath(path)
+	var body []string
+	for _, finding := range packet.Findings {
+		findingPath := normalizeReadOnlyEvidencePacketPath(finding.Path)
+		if findingPath != "" && findingPath != path {
+			continue
+		}
+		text := strings.TrimSpace(finding.Text)
+		if text == "" {
+			continue
+		}
+		body = append(body, text)
+	}
+	if len(body) == 0 {
+		body = fallback
+	}
+	return strings.Join(body, "\n")
 }
 
 func readOnlyEvidencePacketNamesObjectiveSource(packet ReadOnlyEvidencePacket, objective string) bool {
@@ -350,7 +431,7 @@ func readOnlyEvidencePacketFindings(answer string, results []workspace.ToolResul
 			return
 		}
 		text = strings.TrimSpace(strings.TrimPrefix(text, "- "))
-		if readOnlyEvidencePacketTransportLine(text) {
+		if readOnlyEvidencePacketTransportLine(text) || looksLikeLineOrientedSourceSnippetLine(text) {
 			return
 		}
 		if !delegatedReadOnlyFindingLineIsUseful(text) {

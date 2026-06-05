@@ -495,25 +495,34 @@ func (s *eventAuditState) addTurnPhaseContract(event Event, phase TurnPhaseContr
 	}
 	incrementStringMap(&s.report.TurnPhaseCoverage.PhaseCounts, phase.PhaseID)
 	incrementStringMap(&s.report.TurnPhaseCoverage.EnforcementModeCounts, phase.EnforcementMode)
-	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, "submit_plan") &&
-		!stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, "submit_plan") {
-		s.addTurnPhaseContradiction(event, phase, "", "submit_plan", "phase allows submit_plan but runtime_call cannot express submit_plan")
+	submitPlanClass := ActionClassToken(ActionClassSubmitPlan)
+	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, submitPlanClass) &&
+		!stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, submitPlanClass) {
+		s.addTurnPhaseContradiction(event, phase, "", submitPlanClass, "phase allows submit_plan but runtime_call cannot express submit_plan")
 	}
-	if strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") && textualPhaseAdvertisesUnexpressibleManifestTool(phase) {
-		s.addTurnPhaseContradiction(event, phase, strings.Join(phase.AllowedTools, ","), "", "textual phase advertised manifest-visible allowed_tools")
+	if strings.EqualFold(phase.RuntimeCall.ToolTransportMode, "textual") {
+		tools := TurnPhaseCallableTools(phase)
+		if textualPhaseAdvertisesUnexpressibleManifestTool(phase, tools) {
+			s.addTurnPhaseContradiction(event, phase, strings.Join(tools, ","), "", "textual phase advertised manifest-visible allowed_tools")
+		}
 	}
-	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, "final_answer") && turnPhaseEvidenceOpen(phase.EvidenceState) {
-		s.addTurnPhaseContradiction(event, phase, "", "final_answer", "phase allows final_answer while evidence_state still has open acceptance, verification, recovery, or blocker evidence")
+	finalAnswerClass := ActionClassToken(ActionClassFinalAnswer)
+	if stringSetContains(phase.ActionPolicy.AllowedActionClasses, finalAnswerClass) && turnPhaseEvidenceOpen(phase.EvidenceState) {
+		s.addTurnPhaseContradiction(event, phase, "", finalAnswerClass, "phase allows final_answer while evidence_state still has open acceptance, verification, recovery, or blocker evidence")
 	}
 }
 
-func textualPhaseAdvertisesUnexpressibleManifestTool(phase TurnPhaseContractEvent) bool {
-	for _, tool := range phase.AllowedTools {
+func textualPhaseAdvertisesUnexpressibleManifestTool(phase TurnPhaseContractEvent, tools []string) bool {
+	for _, tool := range tools {
 		tool = strings.TrimSpace(tool)
 		if tool == "" {
 			continue
 		}
-		if stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, tool) {
+		actionClass := TurnPhaseActionClassForTool(tool)
+		if actionClass == "" {
+			actionClass = tool
+		}
+		if stringSetContains(phase.RuntimeCall.ExpressibleActionClasses, actionClass) {
 			continue
 		}
 		return true
@@ -552,7 +561,7 @@ func (s *eventAuditState) addTurnPhasePolicyObservation(event Event) {
 	if tool == "" {
 		return
 	}
-	actionClass := turnPhaseActionClassForTool(tool)
+	actionClass := TurnPhaseActionClassForTool(tool)
 	if actionClass != "" && stringSetContains(phase.ActionPolicy.InvalidActionClasses, actionClass) {
 		s.addTurnPhaseContradiction(event, phase, tool, actionClass, "observed tool action class is invalid in latest turn_phase_contract")
 		return
@@ -1463,18 +1472,24 @@ func isPolicyToolEvent(eventType EventType) bool {
 	}
 }
 
-func turnPhaseActionClassForTool(tool string) string {
+func TurnPhaseActionClassForTool(tool string) string {
+	return ActionClassToken(TurnPhaseActionClassForToolClass(tool))
+}
+
+func TurnPhaseActionClassForToolClass(tool string) ActionClass {
 	switch strings.TrimSpace(tool) {
-	case "read_file", "code_navigate", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_definition":
-		return "read"
-	case "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom":
-		return "search"
+	case "read_file", "code_navigate", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_definition", "file_stats", "read_only_capability", "history_range", "history_symbol":
+		return ActionClassRead
+	case "list_files", "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom", "context_status", "context_impact", "structural_search", "blame_range", "mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
+		return ActionClassSearch
 	case "submit_plan":
-		return "submit_plan"
-	case "edit_file", "write_file", "append_file", "mkdir", "apply_patch":
-		return "per_edit_write"
-	case "shell", "source_sanity", "go_diagnostics", "cpp_diagnostics":
-		return "verify"
+		return ActionClassSubmitPlan
+	case "edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "delegate_edit":
+		return ActionClassPerEditWrite
+	case "shell", "source_sanity", "git_diff", "git_status", "context_trace_pack", "go_diagnostics", "cpp_diagnostics", "java_diagnostics", "python_diagnostics", "rust_diagnostics", "ts_diagnostics":
+		return ActionClassVerify
+	case "task":
+		return ActionClassGenericProbe
 	default:
 		return ""
 	}

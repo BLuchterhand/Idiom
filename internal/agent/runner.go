@@ -338,9 +338,10 @@ func (r *Runner) Run(
 			}
 		}
 		// One selector owns post-readiness tool contraction so schema
-		// narrowing and runtime recovery cannot drift apart. Read-only
-		// readiness and child packets remain advisory evidence states.
-		if postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).RequireSourceRefreshContract {
+		// narrowing and runtime recovery cannot drift apart.
+		if contract := postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive); contract.AnswerOnly {
+			tools = nil
+		} else if contract.RequireSourceRefreshContract {
 			tools = stripPostReadinessBroadTools(tools)
 			tools = applyPostReadinessSchemaRequirements(tools)
 		}
@@ -1564,6 +1565,21 @@ func (r *Runner) Run(
 		if turnHiddenTools[strings.TrimSpace(req.Tool)] && !recoveryReadAllowanceGrantedThisRequest {
 			hiddenSummary := "Tool hidden by active contract"
 			hiddenError := fmt.Sprintf("%s is hidden for the rest of this turn by the active runtime contract. Use an available tool, or answer with a concrete blocker if the contract prevents completion.", strings.TrimSpace(req.Tool))
+			if strings.TrimSpace(req.Tool) == "task" && postChildPacketClosureReadyWithBrief(r.RuntimeBrief, collectedResults) {
+				answer, err := controller.completeWithoutMoreToolsWithReason("The delegated read-only child packet is already available and answerable. Do not start another child task. Answer directly from the child packet and inspected evidence; qualify only material uncertainty.")
+				return finish(answer, err, "post_child_answerable_task_retry", true)
+			}
+			if strings.TrimSpace(req.Tool) == "task" && requestBudget.readOnlyChildTaskSatisfied && !isWriteChildMode(req.Mode) {
+				result := workspace.ToolResult{
+					Tool:    req.Tool,
+					Summary: "Duplicate child task rejected",
+					Error:   "the delegated read-only child result is already available, and the task tool is no longer callable this turn. Use an available bounded read/search tool for one exact remaining evidence gap, or answer from the child result and inspected evidence with material uncertainty.",
+				}
+				controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+				r.emitEvent(RunEvent{Role: "post_child_duplicate_task_rejected", Content: result.Error})
+				continue
+			}
 			if exactAnchorWriteOnlyActive && !workspace.IsWorkspaceWriteTool(req.Tool) && rejectionRecoveryNudgeUsed {
 				result := workspace.ToolResult{
 					Tool:    req.Tool,
@@ -1694,6 +1710,13 @@ func (r *Runner) Run(
 		surfaceAllowedTools := runnerPlanExecuteTextualAllowedToolsForRequest(currentAllowedTools, r.RuntimeBrief, collectedResults, req)
 		historyRedirectAllowedTools := append(append([]string(nil), surfaceAllowedTools...), "history_range", "history_symbol")
 		if summary, errorText, reject := currentToolSurfaceRejection(req, surfaceAllowedTools); reject && !recoveryReadAllowanceGrantedThisRequest {
+			if postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					return finish(answer, nil, "read_only_answer_only_host_closeout", false)
+				}
+				answer, err := controller.completeWithoutMoreToolsWithReason("The gathered read-only evidence is answerable and the current phase exposes no more tools. Answer directly from the inspected evidence; qualify only material uncertainty.")
+				return finish(answer, err, "read_only_answer_only_tool_attempt", true)
+			}
 			redirected := false
 			if planThenExecuteUnscopedEmptySubmitPlanAttempt(r.RuntimeBrief, req) {
 				result := workspace.ToolResult{
@@ -2601,13 +2624,6 @@ func (r *Runner) Run(
 				}
 			}
 			recorder.record(stepNumber, req, result, "child_task_result", true, true)
-			if strings.TrimSpace(result.Error) == "" &&
-				workerruntime.RuntimeContractIsArchitecture(r.RuntimeBrief.Contract) &&
-				!runnerBriefRequiresMutation(r.RuntimeBrief) {
-				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-					return finish(answer, nil, "child_packet_synthesized_answer", false)
-				}
-			}
 			if policy.shouldStopForNoProgress(consecutiveNoProgress) {
 				answer, err := controller.completeWithoutMoreToolsWithReason("Progress appears stalled after the child task. Tools are now disabled. Use the child-task result and gathered evidence to write the normal final answer. If one exact claim remains unsupported, state that uncertainty after the supported answer.")
 				return finish(answer, err, "no_progress_budget_exhausted", true)
@@ -3322,17 +3338,23 @@ func (r *Runner) Run(
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
 				r.emitEvent(RunEvent{Role: eventRole, Content: nudge})
 			}
-			// Rebuild tools so readiness state can affect explicit
-			// mutation/source-refresh contracts. Read-only readiness is
-			// advisory and must not hide or reshape discovery tools.
-			if justBecameReady {
-				rebuildTools()
+				// Rebuild tools so readiness state can affect explicit
+				// mutation/source-refresh contracts. Read-only readiness is
+				// advisory and must not hide or reshape discovery tools.
+				if justBecameReady {
+					rebuildTools()
+				}
+				if strings.HasPrefix(r.agentName(), "child:") &&
+					postReadinessToolContractForBrief(r.RuntimeBrief, collectedResults, delegatedReadOnlyAnswerReady, postChildPacketActive).AnswerOnly {
+					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+						return finish(answer, nil, "delegated_read_only_host_closeout", false)
+					}
+				}
 			}
-		}
-		if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
-			if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
-				return finish(answer, nil, "read_only_no_match_closeout", false)
-			}
+			if r.readOnlyNoMatchCloseoutApplies(req, result, collectedResults) {
+				if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
+					return finish(answer, nil, "read_only_no_match_closeout", false)
+				}
 			answer, err := controller.completeWithoutMoreToolsWithReason("The latest symbol probe returned no matches after source evidence was already gathered. Tools are now disabled. Answer from the gathered evidence and name any remaining uncertainty after the supported answer.")
 			return finish(answer, err, "read_only_no_match_closeout", true)
 		}
@@ -3364,7 +3386,7 @@ func (r *Runner) Run(
 				r.emitEvent(RunEvent{Role: "note_tool", Content: "Auto findings note rejected: " + err.Error()})
 			}
 		}
-		if childReadyBeforeResult && strings.HasPrefix(r.agentName(), "child:") && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
+		if childReadyBeforeResult && !postChildPacketActive && isReadClassTool(req) && strings.TrimSpace(result.Error) == "" {
 			delegatedReadOnlyPostReadyFollowups++
 			// Diminishing-returns nudge stays as a soft signal; the hard
 			// budget force-finish was a bandaid (per the no-bandaid
@@ -3375,7 +3397,11 @@ func (r *Runner) Run(
 				if nudge := delegatedReadOnlyDiminishingReturnsNudge(r.RuntimeBrief.Objective, collectedResults, delegatedReadOnlyPostReadyFollowups); nudge != "" {
 					delegatedReadOnlyDiminishingNudgeStage = delegatedReadOnlyPostReadyFollowups
 					turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: nudge})
-					r.emitEvent(RunEvent{Role: "delegated_read_only_diminishing_returns_nudge", Content: nudge})
+					role := "read_only_diminishing_returns_nudge"
+					if strings.HasPrefix(r.agentName(), "child:") {
+						role = "delegated_read_only_diminishing_returns_nudge"
+					}
+					r.emitEvent(RunEvent{Role: role, Content: nudge})
 				}
 			}
 		}
@@ -6593,6 +6619,7 @@ func childPacketBoundaryNudge(objective string, results []workspace.ToolResult, 
 type postReadinessToolContract struct {
 	RequireSourceRefreshContract bool
 	ReadinessAdvisory            bool
+	AnswerOnly                   bool
 	Reason                       string
 }
 
@@ -6604,12 +6631,43 @@ func postReadinessToolContractForBrief(brief workerruntime.WorkerRuntimeBrief, r
 		}
 	}
 	if delegatedReadOnlyAnswerReady || postChildPacketActive {
+		if postReadinessReadOnlyAnswerOnlyContractApplies(brief, results, postChildPacketActive) {
+			return postReadinessToolContract{
+				AnswerOnly: true,
+				Reason:     "read_only_answerable_evidence_contract",
+			}
+		}
 		return postReadinessToolContract{
 			ReadinessAdvisory: true,
 			Reason:            "read_only_readiness_advisory",
 		}
 	}
 	return postReadinessToolContract{Reason: "none"}
+}
+
+func postReadinessReadOnlyAnswerOnlyContractApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, postChildPacketActive bool) bool {
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) {
+		return false
+	}
+		if postChildPacketActive && postChildPacketClosureReadyWithBrief(brief, results) {
+			return true
+		}
+		if workerruntime.TaskFamilyMatches(brief.TaskFamily, workerruntime.TaskFamilyDelegatedReadOnly) &&
+			workerruntime.RuntimeContractMatches(brief.Contract, workerruntime.ContractGroundedEvidence) {
+			closure := readOnlyClosureDecisionForResults(brief, results)
+			return closure.Answerable()
+		}
+		if !workerruntime.RuntimeContractIsArchitectureOrReview(brief.Contract) {
+			return false
+		}
+	closure := readOnlyClosureDecisionForResults(brief, results)
+	if !closure.Answerable() {
+		return false
+	}
+	return readOnlyAnalysisHasObjectiveRelevantSourceBody(brief, closure.Evidence)
 }
 
 func postReadinessGap(req workspace.ToolRequest) string {
@@ -6697,7 +6755,7 @@ func delegatedReadOnlyDiminishingReturnsNudge(objective string, results []worksp
 	// Repeating that prose burns context for no behavior change. Emit a
 	// factual probe-budget note instead and let the model decide.
 	paths := closurePromptEvidencePaths(delegatedClosureEvidencePaths(objective, results, 4), 3)
-	line := fmt.Sprintf("Post-readiness probes used: %d. Answer now from the evidence above. This is your final soft warning before the harness disables tools.", followups)
+	line := fmt.Sprintf("Post-readiness probes used: %d. You have already used the post-readiness follow-up budget disclosed for this lane. Answer now from the evidence above; do not spend another tool call for completeness.", followups)
 	if len(paths) > 0 {
 		line += " Inspected paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
 	}
@@ -6866,7 +6924,7 @@ func postChildDiminishingReturnsNudge(objective string, results []workspace.Tool
 	// contract; this is a factual probe-budget note, not another prose
 	// block telling the model what was already said.
 	paths := postChildClosureEvidencePaths(objective, results, 3)
-	line := fmt.Sprintf("Post-child probes used: %d. Answer now from the packet above. This is your final soft warning before the harness disables tools.", followups)
+	line := fmt.Sprintf("Post-child probes used: %d. You have already used the post-child follow-up budget disclosed for this lane. Answer now from the packet above; do not spend another tool call for completeness.", followups)
 	if len(paths) > 0 {
 		line += " Packet paths: " + summarizePostChildEvidencePaths(paths, 3) + "."
 	}
@@ -7207,6 +7265,9 @@ func looksLikeToolResultTranscript(lower string) bool {
 		return true
 	}
 	if looksLikeInspectedBodySourceInventory(lower) {
+		return true
+	}
+	if looksLikeLineOrientedSourceSnippetAnswer(lower) {
 		return true
 	}
 	// " contains `f" where f is any function/symbol name
@@ -13649,51 +13710,13 @@ func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult)
 	if r == nil || runnerBriefRequiresMutation(r.RuntimeBrief) || runnerVerificationRequired(r.RuntimeBrief) {
 		return "", false
 	}
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !readOnlyDirectAnswerLane(brief) {
-		return "", false
-	}
-	if answer, ok := presentableBriefConversationFallbackCandidate(r.agentName(), brief, results); ok {
-		answer = strings.TrimSpace(answer)
-		if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
-			return answer, true
-		}
-	}
-	if answer, ok := deterministicNoToolsAnswer(r.agentName(), brief, results); ok {
-		answer = strings.TrimSpace(answer)
-		if answer != "" && !strings.HasPrefix(answer, "<<QUESTION>>") {
-			return answer, true
-		}
-	}
-	return "", false
+	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).HostOwnedAnswer(r.agentName())
 }
 
 func readOnlyHostCloseoutHasObjectiveRelevantEvidence(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, evidence readOnlyAnswerabilityLedger) bool {
-	if readOnlyAnalysisHasObjectiveRelevantSourceBody(brief, evidence) {
-		return true
-	}
-	objective := strings.ToLower(strings.TrimSpace(delegatedDisplayQuestion(brief.Objective)))
-	if objective == "" {
-		return false
-	}
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
-			for _, finding := range packet.Findings {
-				if textSharesObjectiveTerm(finding.Text, objective) {
-					return true
-				}
-			}
-		}
-		if strings.TrimSpace(result.Tool) == "task" {
-			if textSharesObjectiveTerm(stripDelegatedReadOnlyInternalPacket(result.Output), objective) {
-				return true
-			}
-		}
-	}
-	return false
+	closeout := readOnlyClosureDecisionForResults(brief, results)
+	closeout.Evidence = evidence
+	return closeout.HasObjectiveRelevantEvidence()
 }
 
 func textSharesObjectiveTerm(text string, objective string) bool {
@@ -13714,67 +13737,6 @@ func textSharesObjectiveTerm(text string, objective string) bool {
 	return false
 }
 
-func enrichHostReadOnlyCloseoutAnswer(objective string, answer string, paths []string) string {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return fallbackHostReadOnlyCloseoutAnswer(objective, paths)
-	}
-	var b strings.Builder
-	if question := delegatedDisplayQuestion(objective); question != "" && !strings.Contains(answer, question) {
-		b.WriteString("For the task `")
-		b.WriteString(question)
-		b.WriteString("`, ")
-		b.WriteString(lowercaseFirstSentence(answer))
-	} else {
-		b.WriteString(answer)
-	}
-	if len(paths) > 0 {
-		lower := strings.ToLower(b.String())
-		missingPath := false
-		for _, path := range limitRunnerStrings(paths, 4) {
-			if !strings.Contains(lower, strings.ToLower(path)) {
-				missingPath = true
-				break
-			}
-		}
-		if missingPath {
-			if !strings.HasSuffix(strings.TrimSpace(b.String()), ".") {
-				b.WriteString(".")
-			}
-			b.WriteString(" Evidence paths: ")
-			b.WriteString(formatInlinePathList(paths, 4))
-			b.WriteString(".")
-		}
-	}
-	if aliases := normalizedObjectiveAliases(objective); len(aliases) > 0 {
-		b.WriteString(" Normalized task terms: ")
-		b.WriteString(strings.Join(aliases, ", "))
-		b.WriteString(".")
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func fallbackHostReadOnlyCloseoutAnswer(objective string, paths []string) string {
-	question := delegatedDisplayQuestion(objective)
-	var b strings.Builder
-	if question != "" {
-		b.WriteString("For the task `")
-		b.WriteString(question)
-		b.WriteString("`, ")
-	} else {
-		b.WriteString("For this read-only task, ")
-	}
-	b.WriteString("the gathered evidence supports answering from ")
-	b.WriteString(formatInlinePathList(paths, 4))
-	b.WriteString(". The conclusion is bounded to these inspected or discovered anchors, and no workspace edits were made.")
-	if aliases := normalizedObjectiveAliases(objective); len(aliases) > 0 {
-		b.WriteString(" Normalized task terms: ")
-		b.WriteString(strings.Join(aliases, ", "))
-		b.WriteString(".")
-	}
-	return strings.TrimSpace(b.String())
-}
-
 func lowercaseFirstSentence(value string) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -13785,32 +13747,6 @@ func lowercaseFirstSentence(value string) string {
 		return string(first+'a'-'A') + value[1:]
 	}
 	return value
-}
-
-func normalizedObjectiveAliases(objective string) []string {
-	var aliases []string
-	for _, token := range strings.FieldsFunc(strings.ToLower(objective), func(r rune) bool {
-		return !((r >= 'a' && r <= 'z') || r == '-')
-	}) {
-		token = strings.Trim(token, "-")
-		if token == "" || !strings.Contains(token, "-") {
-			continue
-		}
-		alias := strings.ReplaceAll(token, "-", "")
-		if len(alias) < 5 || alias == token || slices.Contains(aliases, alias) {
-			continue
-		}
-		aliases = append(aliases, alias)
-		if len(aliases) >= 3 {
-			break
-		}
-	}
-	return aliases
-}
-
-func readOnlyCloseoutEvidencePaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) []string {
-	paths := acceptedAnswerEvidencePaths("", results, brief)
-	return closurePromptEvidencePaths(paths, max)
 }
 
 func mentionedEvidencePathsFromToolResults(results []workspace.ToolResult, max int) []string {
@@ -17815,16 +17751,19 @@ func delegatedReadOnlyFindingLines(results []workspace.ToolResult, supportedPath
 }
 
 func delegatedReadOnlyFindingLineSupportedByPaths(line string, supported map[string]struct{}) bool {
+	mentionedAny := false
+	supportedAny := false
 	for _, path := range readOnlySourceLikePaths(pathparse.MentionedWorkspacePaths(normalizeWorkspacePathScanText(line)), 16) {
-		if _, ok := supported[path]; !ok {
-			return false
+		mentionedAny = true
+		if _, ok := supported[path]; ok {
+			supportedAny = true
 		}
 	}
-	return true
+	return !mentionedAny || supportedAny
 }
 
 func delegatedReadOnlyFindingLineIsUseful(line string) bool {
-	if line == "" || delegatedDiscoveryLineIsBarePath(line) {
+	if line == "" || delegatedDiscoveryLineIsBarePath(line) || looksLikeLineOrientedSourceSnippetLine(line) {
 		return false
 	}
 	lower := strings.ToLower(line)
@@ -18452,14 +18391,7 @@ func (r *Runner) hostOwnedReadOnlyCloseoutAccepted(answer string, stopReason str
 	if !readOnlyDirectAnswerLane(brief) || runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
 		return false
 	}
-	answer = strings.TrimSpace(answer)
-	if answer == "" || strings.HasPrefix(answer, "<<QUESTION>>") {
-		return false
-	}
-	if !strings.HasPrefix(strings.ToLower(answer), "i do not have enough supported evidence") {
-		return false
-	}
-	return len(results) > 0
+	return readOnlyClosureDecisionForResults(brief, results).AcceptsHostOwnedAnswer(r.agentName(), answer)
 }
 
 func terminalBlockedStatusShouldEmit(alreadyEmitted bool, lastStatus string, lastBlockerKind string, terminalBlockerKind string) bool {
@@ -20840,74 +20772,23 @@ func presentableFallbackCandidate(agentName string, brief workerruntime.WorkerRu
 	if runnerBriefRequiresMutation(brief) {
 		return answer, true
 	}
-	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(answer) {
-		return presentableBriefConversationFallbackCandidate(agentName, brief, results)
-	}
-	if looksLikeDelegatedGroundedFallbackAnswer(answer) {
-		return answer, true
-	}
-	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
-		if conversationFallbackShouldAvoidSourceBody(brief) && strings.TrimSpace(brief.Objective) == "" {
-			return synthesizeBriefConversationFallback(brief, results), true
-		}
-		if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
-			return presentableOrReadOnlyNonAnswerReplacement(agentName, brief, results, presentable)
-		}
-		return presentableBriefConversationFallbackCandidate(agentName, brief, results)
-	}
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(answer) {
-		if replacement, ok := deterministicNoToolsNonAnswerReplacement(brief, results); ok {
-			return replacement, true
-		}
-		return "", false
-	}
-	if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
-		return cleaned, true
-	}
-	if conversationFallbackShouldAvoidSourceBody(brief) && strings.Contains(strings.ToLower(answer), "source: delegated read-only evidence packet") {
-		return presentableBriefConversationFallbackCandidate(agentName, brief, results)
-	}
-	if presentable, ok := presentableNoToolsFallbackAnswer(brief, results, answer); ok {
-		return presentableOrReadOnlyNonAnswerReplacement(agentName, brief, results, presentable)
-	}
-	answer = strings.TrimSpace(answer)
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(answer) {
-		if replacement, ok := deterministicNoToolsNonAnswerReplacement(brief, results); ok {
-			return replacement, true
-		}
-		return "", false
-	}
-	return answer, answer != ""
+	return readOnlyClosureDecisionForResults(brief, results).PresentableFallbackCandidate(agentName, answer)
 }
 
 func presentableOrReadOnlyNonAnswerReplacement(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) (string, bool) {
-	answer = strings.TrimSpace(answer)
-	if answer == "" {
-		return "", false
-	}
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(answer) {
-		if replacement, ok := deterministicNoToolsNonAnswerReplacement(brief, results); ok {
-			return replacement, true
-		}
-		return "", false
-	}
-	return answer, true
+	return readOnlyClosureDecisionForResults(brief, results).PresentableOrReadOnlyNonAnswerReplacement(agentName, answer)
 }
 
 func presentableBriefConversationFallbackCandidate(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	fallback := strings.TrimSpace(synthesizeBriefConversationFallback(brief, results))
-	if fallback == "" {
-		return "", false
-	}
-	if fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName, brief) && looksLikeNonAnswerProse(fallback) {
-		return deterministicNoToolsNonAnswerReplacement(brief, results)
-	}
-	return fallback, true
+	return readOnlyClosureDecisionForResults(brief, results).PresentableBriefConversationFallbackCandidate(agentName)
 }
 
 func looksLikeDelegatedGroundedFallbackAnswer(answer string) bool {
 	trimmed := strings.TrimSpace(answer)
 	if trimmed == "" {
+		return false
+	}
+	if genericEvidenceAnswerIncludesLineOrientedSourceBody(trimmed) || looksLikeLineOrientedSourceSnippetAnswer(trimmed) {
 		return false
 	}
 	lower := strings.ToLower(trimmed)
@@ -20923,11 +20804,7 @@ func fallbackCandidateUsesReadOnlyNonAnswerReplacement(agentName string, brief w
 }
 
 func deterministicNoToolsNonAnswerReplacement(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	fallback := strings.TrimSpace(synthesizeBriefConversationUncertaintyFallback(brief, results))
-	if fallback != "" && !looksLikeNonAnswerProse(fallback) {
-		return fallback, true
-	}
-	return "", false
+	return readOnlyClosureDecisionForResults(brief, results).NonAnswerReplacement()
 }
 
 func shouldPreferModelBudgetSynthesis(agentName string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {

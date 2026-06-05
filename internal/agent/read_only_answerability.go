@@ -120,7 +120,14 @@ func readOnlyAnswerabilityForResults(brief workerruntime.WorkerRuntimeBrief, res
 		if tool == "task" {
 			if packet, ok := readOnlyEvidencePacketFromResult(result); ok {
 				sourcePaths := readOnlySourceLikePaths(packet.SourceBodyPaths, 8)
-				if readOnlyEvidencePacketAnswerableForObjective(packet, ledger.Objective) {
+				packetAnswerable := readOnlyEvidencePacketAnswerableForObjective(packet, ledger.Objective)
+				if packetAnswerable {
+					for _, evidence := range readOnlyEvidencePacketObjectiveSourceOwnerEvidence(packet, ledger.Objective) {
+						ledger.observeSourceOwnerEvidence(evidence)
+						if evidence.OwnerEligible() {
+							ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, []string{evidence.Path})
+						}
+					}
 					for _, path := range sourcePaths {
 						ledger.addItem(readOnlyEvidenceItem{
 							Kind:    readOnlyEvidenceSourceBody,

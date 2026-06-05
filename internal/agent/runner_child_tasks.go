@@ -44,8 +44,7 @@ func (r *Runner) runChildTask(ctx context.Context, req workspace.ToolRequest, op
 	if agentName == "" {
 		agentName = "child"
 	}
-	prompt = normalizeReadOnlyChildPrompt(prompt)
-	prompt = r.augmentReadOnlyChildPrompt(prompt)
+	prompt = r.prepareReadOnlyChildPrompt(prompt)
 	childPolicy := RunPolicy{MaxToolSteps: 4, MaxNoProgressTurns: 3, MaxModelCalls: 6, MaxDuration: 90 * time.Second}
 	if workerruntime.RuntimeContractIsDirectAnswer(r.RuntimeBrief.Contract) {
 		childPolicy.MaxToolSteps = 4
@@ -181,8 +180,7 @@ func (r *Runner) delegatedChildFallbackSourceRead(ctx context.Context, prompt st
 	if r == nil || r.Workspace == nil {
 		return workspace.ToolRequest{}, workspace.ToolResult{}, false
 	}
-	paths := delegatedDiscoveryQueryEvidencePaths(results, 6)
-	paths = closurePromptEvidencePaths(paths, 6)
+	paths := newDelegatedDiscoveryPlan(prompt).consumableSourceBodyCandidatePaths(results, 6)
 	for _, path := range paths {
 		path = normalizeRunnerPath(path)
 		if path == "" || isNonSourceEvidenceArtifactPath(path) || concreteSourceEvidenceReadForPath(path, results) {
@@ -243,6 +241,31 @@ func normalizeReadOnlyChildPrompt(prompt string) string {
 		return prompt
 	}
 	return strings.Join(kept, "\n")
+}
+
+func (r *Runner) prepareReadOnlyChildPrompt(prompt string) string {
+	prompt = normalizeReadOnlyChildPrompt(prompt)
+	if prompt == "" {
+		return ""
+	}
+	if !readOnlyChildPromptHasPrimaryNamedScope(prompt) && r != nil && r.Workspace != nil {
+		if scope := delegatedReadOnlyLikelySourceScope(prompt, r.Workspace.Root()); scope != "" {
+			prompt += "\nNamed workspace scope: " + scope
+		}
+	}
+	return r.augmentReadOnlyChildPrompt(prompt)
+}
+
+func readOnlyChildPromptHasNamedScope(prompt string) bool {
+	return newDelegatedDiscoveryPlan(prompt).hasNamedScope
+}
+
+func readOnlyChildPromptHasPrimaryNamedScope(prompt string) bool {
+	return newDelegatedDiscoveryPlan(prompt).hasPrimaryScope
+}
+
+func readOnlyChildPromptNamedScopes(prompt string) []string {
+	return newDelegatedDiscoveryPlan(prompt).namedScopes
 }
 
 func normalizeReadOnlyChildLead(line string) string {
@@ -330,53 +353,11 @@ func trimReadOnlyChildLeadAtBroadMarker(line string) string {
 }
 
 func readOnlyChildKeyTerms(prompt string) []string {
-	terms := make([]string, 0, 6)
-	for _, fragment := range pathparse.QuotedFragments(prompt) {
-		fragment = strings.TrimSpace(fragment)
-		if fragment == "" || pathparse.LooksLikeWorkspacePathToken(fragment) {
-			continue
-		}
-		lower := strings.ToLower(fragment)
-		if readOnlyChildKeyTermStopWord(lower) {
-			continue
-		}
-		terms = util.AppendUnique(terms, fragment)
-	}
-	for _, candidate := range strings.Fields(prompt) {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" || pathparse.LooksLikeWorkspacePathToken(candidate) {
-			continue
-		}
-		lower := strings.ToLower(strings.Trim(candidate, "`'\"()[]{}<>,.:;!?"))
-		if readOnlyChildKeyTermStopWord(lower) {
-			continue
-		}
-		if len(lower) < 5 {
-			continue
-		}
-		terms = util.AppendUnique(terms, lower)
-		if len(terms) >= 8 {
-			break
-		}
-	}
-	return terms
+	return newDelegatedDiscoveryPlan(prompt).promptKeyTerms
 }
 
 func readOnlyChildKeyTermStopWord(lower string) bool {
-	switch lower {
-	case "",
-		"how", "does", "this", "explain", "inspect", "explore", "look", "overall", "return", "focus", "specifically", "emphasize",
-		"use", "uses", "used", "using", "utilize", "utilizes", "utilized", "utilise", "utilises", "make", "makes", "made",
-		"files", "file", "paths", "path", "findings", "finding", "confidence", "gap", "gaps",
-		"codebase", "architecture", "config", "configuration", "agent", "agents", "harness",
-		"start", "source", "truth", "source-of-truth", "source_of_truth", "implementation", "before", "tests", "test", "readme", "docs",
-		"named", "workspace", "scope", "key", "terms", "question", "questions", "directly", "materially", "incomplete",
-		"exact", "probe", "sufficient", "evidence", "entry", "entrypoint", "entrypoints", "directory", "directories",
-		"internal", "repository", "relative", "delegated", "guidance", "prefer", "targeted", "symbol", "symbols", "bounded", "read", "reads", "overview", "overviews", "inspected":
-		return true
-	default:
-		return false
-	}
+	return delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordPromptKeyTerm)
 }
 
 func isWriteChildMode(mode string) bool {

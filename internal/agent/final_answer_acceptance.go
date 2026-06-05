@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"path/filepath"
 	"sort"
 	"strings"
 
@@ -67,7 +66,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		}
 		return reject("user_visible_blocker", "user_visible_blocker")
 	}
-	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r) {
+	if looksLikeNonAnswerProse(answer) && !finalAnswerAcceptanceAllowsSourceInventory(acceptance, answer, r, results) {
 		return reject("non_answer_prose", "non_answer_prose")
 	}
 	if r != nil {
@@ -94,23 +93,12 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 	return acceptance
 }
 
-func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance, answer string, r *Runner) bool {
-	if r == nil || !looksLikeLowValueSourceInventoryNonAnswer(answer) {
+func finalAnswerAcceptanceAllowsSourceInventory(acceptance finalAnswerAcceptance, answer string, r *Runner, results []workspace.ToolResult) bool {
+	if r == nil {
 		return false
 	}
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if readOnlyDirectAnswerLane(brief) {
-		return false
-	}
-	if !finalAnswerAcceptanceAllowsArchitectureSourceInventory(brief) {
-		return false
-	}
-	return acceptance.Decision == finalAnswerAcceptanceAccepted
-}
-
-func finalAnswerAcceptanceAllowsArchitectureSourceInventory(brief workerruntime.WorkerRuntimeBrief) bool {
-	return workerruntime.RuntimeContractIsArchitecture(brief.Contract) ||
-		workerruntime.TaskFamilyIsArchitecture(brief.TaskFamily)
+	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).
+		AllowsSourceInventoryAnswer(answer, acceptance.Decision == finalAnswerAcceptanceAccepted)
 }
 
 type readOnlyDirectAnswerRelevance struct {
@@ -125,53 +113,7 @@ func (r *Runner) readOnlyDirectAnswerRelevance(answer string, results []workspac
 	if r == nil {
 		return readOnlyDirectAnswerRelevance{}
 	}
-	brief := workerruntime.NormalizeRuntimeBrief(r.RuntimeBrief)
-	if !readOnlyDirectAnswerAcceptanceApplies(brief) {
-		return readOnlyDirectAnswerRelevance{}
-	}
-	objective := strings.TrimSpace(brief.Objective)
-	if objective == "" {
-		return readOnlyDirectAnswerRelevance{Status: "skipped_empty_objective"}
-	}
-	substantiveAnswer := substantiveAnswerWithoutEchoedObjective(answer, objective)
-	ledger := readOnlyAnswerabilityForResults(readOnlyDirectAnswerAcceptanceLedgerBrief(brief), results)
-	answerSupportedPaths := answerCitedCollectiveSourceBodySupportPaths(answer, ledger)
-	if len(answerSupportedPaths) > 0 {
-		ledger.SourceBodyObjectivePaths = mergeRunnerStateStrings(ledger.SourceBodyObjectivePaths, answerSupportedPaths)
-		ledger.RelevantSourceBodyPaths = mergeRunnerStateStrings(ledger.RelevantSourceBodyPaths, answerSupportedPaths)
-	}
-	relevance := readOnlyDirectAnswerRelevance{
-		Status:                  "checked",
-		RelevantSourceBodyPaths: ledger.RelevantSourceBodyPaths,
-		AnswerObjectiveTerms:    answerObjectiveTerms(substantiveAnswer, objective),
-	}
-	if readOnlyAnswerReportsInsufficientEvidence(substantiveAnswer) {
-		relevance.Status = "insufficient_evidence_answer"
-		if len(ledger.SourceBodyPaths) == 0 && !ledger.DiagnosticEvidence {
-			relevance.BlockerKind = "answer_objective_unmet"
-			relevance.Reason = "the final answer says the evidence is insufficient before inspecting source-body or diagnostic evidence for the user's objective. Gather bounded source-body evidence, or use <<QUESTION>>: with the exact missing evidence source."
-			return relevance
-		}
-		return relevance
-	}
-	if plainNamedFileContentObjective(objective) && answerCitesNamedObjectiveSource(answer, ledger, results) {
-		return relevance
-	}
-	if !ledger.Answerable() || answerLacksObjectiveSourceEvidence(answer, ledger) {
-		if readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) || answerMakesCausalClaimWithoutObjectiveEvidence(answer, ledger) {
-			relevance.BlockerKind = "answer_objective_unmet"
-			relevance.Reason = "the final answer uses inspected source evidence, but that evidence does not establish the user's objective. Answer with the exact objective-relevant source-body evidence, state that the current evidence is insufficient, or use <<QUESTION>>: with the exact missing evidence."
-			return relevance
-		}
-		relevance.Status = "skipped_not_answerable"
-		return relevance
-	}
-	if answerAddressesObjective(substantiveAnswer, objective, ledger, results) && answerSourceCitationsAreObjectiveRelevant(answer, ledger) {
-		return relevance
-	}
-	relevance.BlockerKind = "answer_objective_unmet"
-	relevance.Reason = "the final answer is grounded in inspected evidence, but it does not address the user's objective. Answer using objective-relevant source-body evidence, or use <<QUESTION>>: with the exact missing evidence."
-	return relevance
+	return readOnlyClosureDecisionForResults(r.RuntimeBrief, results).DirectAnswerRelevance(answer)
 }
 
 func readOnlyDirectAnswerAcceptanceApplies(brief workerruntime.WorkerRuntimeBrief) bool {
@@ -199,257 +141,14 @@ func readOnlyDirectAnswerAcceptanceLedgerBrief(brief workerruntime.WorkerRuntime
 	return brief
 }
 
-func answerAddressesObjective(answer string, objective string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
-	answer = strings.TrimSpace(substantiveAnswerWithoutEchoedObjective(answer, objective))
-	if answer == "" {
-		return false
-	}
-	if sourceBodyHasStrongObjectiveToken(answer, objective) {
-		return true
-	}
-	if plainNamedFileContentObjective(objective) && answerCitesNamedObjectiveSource(answer, ledger, results) {
-		return true
-	}
-	if readOnlyCauseObjective(objective) {
-		return false
-	}
-	if readOnlyExplainerObjective(objective) && answerMentionsInspectedCodeSymbol(answer, results) {
-		return true
-	}
-	lower := strings.ToLower(answer)
-	terms := readOnlySearchHitObjectiveTerms(objective)
-	if len(terms) == 0 {
-		return true
-	}
-	for _, term := range longestObjectiveTerms(terms, 2) {
-		if strings.Contains(lower, term) {
-			return true
-		}
-	}
-	objectiveLineMatches := 0
-	for _, term := range sourceEvidenceObjectiveLineTerms(objective) {
-		term = strings.ToLower(strings.TrimSpace(term))
-		if term == "" {
-			continue
-		}
-		if strings.Contains(lower, term) {
-			objectiveLineMatches++
-		}
-	}
-	if objectiveLineMatches >= 2 {
-		return true
-	}
-	return false
-}
-
-func readOnlyExplainerObjective(objective string) bool {
-	lower := strings.ToLower(strings.TrimSpace(objective))
-	return strings.HasPrefix(lower, "explain ") || strings.HasPrefix(lower, "describe ")
-}
-
-func answerMentionsInspectedCodeSymbol(answer string, results []workspace.ToolResult) bool {
-	exactSymbols := exactEvidenceSymbolSet(results)
-	if len(exactSymbols) == 0 {
-		return false
-	}
-	for _, symbol := range explicitAnswerCodeSymbols(answer) {
-		key := normalizedAnswerSymbol(symbol)
-		if key == "" || architectureNonSourceSymbolTerm(key) {
-			continue
-		}
-		if _, ok := exactSymbols[key]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func answerCitesNamedObjectiveSource(answer string, ledger readOnlyAnswerabilityLedger, results []workspace.ToolResult) bool {
-	namedSet := readOnlyPathSet(ledger.NamedSourcePaths)
-	objectiveLower := strings.ToLower(ledger.Objective)
-	for _, path := range readOnlySourceLikePaths(sourceLikePathsFromText(ledger.Objective, 16), 16) {
-		if strings.Contains(objectiveLower, strings.ToLower(path)) || strings.Contains(objectiveLower, strings.ToLower(filepath.Base(filepath.ToSlash(path)))) {
-			namedSet[path] = struct{}{}
-		}
-	}
-	if len(namedSet) == 0 && len(results) == 0 {
-		return false
-	}
-	sourceSet := readOnlyPathSet(ledger.SourceBodyPaths)
-	for _, raw := range sourceGroundingMentionedPaths(answer) {
-		path := normalizeRunnerPath(raw)
-		if path == "" {
-			continue
-		}
-		if _, ok := namedSet[path]; ok {
-			if _, read := sourceSet[path]; read {
-				return true
-			}
-		}
-	}
-	lower := strings.ToLower(answer)
-	for named := range namedSet {
-		if _, read := sourceSet[named]; !read && !sourceEvidenceBodyReadForPath(named, results) {
-			continue
-		}
-		base := strings.ToLower(filepath.Base(filepath.ToSlash(named)))
-		if base != "" && strings.Contains(lower, base) {
-			return true
-		}
-	}
-	for source := range sourceSet {
-		base := strings.ToLower(filepath.Base(filepath.ToSlash(source)))
-		if base == "" || !strings.Contains(lower, base) {
-			continue
-		}
-		if strings.Contains(objectiveLower, strings.ToLower(source)) || strings.Contains(objectiveLower, base) {
-			return true
-		}
-	}
-	for _, result := range results {
-		if strings.TrimSpace(result.Error) != "" {
-			continue
-		}
-		for _, source := range readOnlySourceLikePaths(readPathsFromToolResult(result), 16) {
-			base := strings.ToLower(filepath.Base(filepath.ToSlash(source)))
-			if base == "" || !strings.Contains(lower, base) {
-				continue
-			}
-			if strings.Contains(objectiveLower, strings.ToLower(source)) || strings.Contains(objectiveLower, base) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func answerObjectiveTerms(answer string, objective string) []string {
-	answer = substantiveAnswerWithoutEchoedObjective(answer, objective)
-	lower := strings.ToLower(answer)
-	var matches []string
-	for _, term := range readOnlySearchHitObjectiveTerms(objective) {
-		if strings.Contains(lower, term) {
-			matches = append(matches, term)
-		}
-	}
-	return uniqueSortedStrings(matches)
-}
-
-func answerSourceCitationsAreObjectiveRelevant(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	mentioned := readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)
-	if len(mentioned) == 0 {
-		return true
-	}
-	relevantPaths := ledger.RelevantSourceBodyPaths
-	if ledger.directAnswerConversation() && objectiveAsksImplementationShape(ledger.Objective) {
-		relevantPaths = ledger.ImplementationOwnerPaths()
-	}
-	if readOnlyCauseObjective(ledger.Objective) {
-		relevantPaths = ledger.SourceBodyObjectivePaths
-	}
-	relevantSet := readOnlyPathSet(relevantPaths)
-	if len(relevantSet) == 0 {
-		return len(ledger.SourceBodyPaths) == 0
-	}
-	for _, path := range mentioned {
-		if _, ok := relevantSet[normalizeRunnerPath(path)]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func plainNamedFileContentObjective(objective string) bool {
-	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	if !containsAny(lower, "what is in", "what's in", "show", "summarize", "summary of", "contents of", "list") {
-		return false
-	}
-	if readOnlyCauseObjective(objective) {
-		return false
-	}
-	return len(readOnlySourceLikePaths(sourceLikePathsFromText(objective, 8), 8)) > 0
-}
-
-func readOnlyCauseObjective(objective string) bool {
-	lower := strings.ToLower(strings.Join(strings.Fields(objective), " "))
-	if strings.Contains(lower, "root cause") {
-		return true
-	}
-	words := objectiveWordSet(lower)
-	for _, word := range []string{
-		"why", "cause", "caused", "bug", "failure", "failed", "failing", "regression",
-		"fix", "broken", "break", "breaks", "error", "debugging", "diagnose", "investigate",
-	} {
-		if _, ok := words[word]; ok {
-			return true
-		}
-	}
-	return false
-}
-
-func objectiveWordSet(text string) map[string]struct{} {
-	words := strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
-		return (r < 'a' || r > 'z') && (r < '0' || r > '9')
-	})
-	set := make(map[string]struct{}, len(words))
-	for _, word := range words {
-		word = strings.TrimSpace(word)
-		if word == "" {
-			continue
-		}
-		set[word] = struct{}{}
-	}
-	return set
-}
-
-func readOnlyAnswerUsesInspectedSourceAsAnswer(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	if len(ledger.SourceBodyPaths) == 0 {
-		return false
-	}
-	if len(readOnlySourceLikePaths(sourceGroundingMentionedPaths(answer), 16)) > 0 {
-		return true
-	}
-	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
-	return containsAny(lower,
-		"the relevant code",
-		"the code is",
-		"the implementation is",
-		"the root cause is",
-		"the issue is",
-		"the bug is",
-		"the answer is",
-		"source shows",
-		"source evidence",
-		"inspected source",
-	)
-}
-
-func answerLacksObjectiveSourceEvidence(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	if !readOnlyCauseObjective(ledger.Objective) {
-		return false
-	}
-	if len(ledger.SourceBodyPaths) == 0 {
-		return false
-	}
-	if len(ledger.SourceBodyObjectivePaths) > 0 {
-		return false
-	}
-	return readOnlyAnswerUsesInspectedSourceAsAnswer(answer, ledger) || readOnlyCauseObjective(answer)
-}
-
-func answerMakesCausalClaimWithoutObjectiveEvidence(answer string, ledger readOnlyAnswerabilityLedger) bool {
-	return readOnlyCauseObjective(ledger.Objective) &&
-		len(ledger.SourceBodyPaths) > 0 &&
-		len(ledger.SourceBodyObjectivePaths) == 0 &&
-		readOnlyCauseObjective(answer)
-}
-
 func readOnlyAnswerReportsInsufficientEvidence(answer string) bool {
 	lower := strings.ToLower(strings.Join(strings.Fields(answer), " "))
 	return containsAny(lower,
 		"available evidence is not enough",
+		"could not produce a supported final answer",
 		"evidence is not enough",
 		"insufficient evidence",
+		"not have enough supported evidence",
 		"not enough evidence",
 		"not enough to name",
 		"cannot determine",

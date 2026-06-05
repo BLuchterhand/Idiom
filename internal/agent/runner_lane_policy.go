@@ -37,6 +37,651 @@ type runnerForcedAnswer struct {
 	Prompt string
 }
 
+type delegatedDiscoveryPlan struct {
+	objective       string
+	namedScopes     []string
+	hasNamedScope   bool
+	hasPrimaryScope bool
+	primaryScope    string
+	detailedScopes  []string
+	defaultPurpose  string
+	searchPattern   string
+	symbolPattern   string
+	questionText    string
+	promptKeyTerms  []string
+}
+
+func newDelegatedDiscoveryPlan(objective string) delegatedDiscoveryPlan {
+	objective = strings.TrimSpace(objective)
+	plan := delegatedDiscoveryPlan{objective: objective}
+	plan.namedScopes = plan.parseNamedScopes()
+	plan.hasNamedScope = len(plan.namedScopes) > 0
+	plan.hasPrimaryScope = plan.computeHasPrimaryNamedScope()
+	plan.primaryScope = plan.computePrimaryScope()
+	plan.detailedScopes = plan.computeDetailedNamedScopes()
+	plan.questionText = plan.computeQuestionText()
+	plan.defaultPurpose = plan.computePurpose()
+	plan.searchPattern = plan.computeSearchPattern()
+	plan.symbolPattern = plan.computeSymbolPattern()
+	plan.promptKeyTerms = plan.computePromptKeyTerms()
+	return plan
+}
+
+func (p delegatedDiscoveryPlan) repairDiscoveryQuery(req workspace.ToolRequest) (workspace.ToolRequest, bool) {
+	repaired := req
+	changed := false
+	if purpose := p.normalizePurpose(repaired.Purpose); purpose != strings.TrimSpace(repaired.Purpose) {
+		repaired.Purpose = purpose
+		changed = true
+	}
+	if p.shouldReplacePath(repaired.Path) {
+		repaired.Path = p.primaryScope
+		changed = true
+	}
+	if strings.TrimSpace(repaired.Pattern) == "" {
+		repaired.Pattern = p.searchPattern
+		changed = true
+	}
+	if repaired.MaxDepth <= 0 {
+		repaired.MaxDepth = 2
+		changed = true
+	}
+	return repaired, changed
+}
+
+func (p delegatedDiscoveryPlan) candidateConsumptionRequest(results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, bool) {
+	if !containsRunnerTool(allowedTools, "read_file") || len(delegatedReadOnlySourceBodyEvidencePaths(results)) > 0 {
+		return workspace.ToolRequest{}, false
+	}
+	paths := p.consumableSourceBodyCandidatePaths(results, 6)
+	for _, path := range paths {
+		path = normalizeRunnerPath(path)
+		if path == "" || concreteSourceEvidenceReadForPath(path, results) {
+			continue
+		}
+		return workspace.ToolRequest{
+			Tool:            "read_file",
+			Path:            path,
+			StartLine:       1,
+			EndLine:         160,
+			NamedGap:        "source-body evidence for delegated read-only synthesis",
+			WhyNotAnswering: "the prior discovery query returned candidates but not source-body evidence",
+		}, true
+	}
+	return workspace.ToolRequest{}, false
+}
+
+type delegatedDiscoveryConsumableCandidate struct {
+	path       string
+	score      int
+	firstIndex int
+}
+
+func (p delegatedDiscoveryPlan) consumableSourceBodyCandidatePaths(results []workspace.ToolResult, max int) []string {
+	if max <= 0 {
+		max = 4
+	}
+	terms := p.consumableCandidateTerms()
+	best := map[string]delegatedDiscoveryConsumableCandidate{}
+	seenIndex := 0
+	for _, summary := range delegatedDiscoverySummaries(results) {
+		for _, evidence := range summary.Evidence {
+			layerName := strings.TrimSpace(evidence.Name)
+			summaryText := strings.TrimSpace(evidence.Summary)
+			text := normalizeWorkspacePathScanText(strings.TrimSpace(evidence.Summary + "\n" + evidence.OutputExcerpt))
+			for _, rawLine := range strings.Split(text, "\n") {
+				line := strings.TrimSpace(rawLine)
+				if line == "" {
+					continue
+				}
+				for _, path := range delegatedDiscoveryLineCandidatePaths(line) {
+					path = normalizeDelegatedDiscoveryEvidencePath(path)
+					if !delegatedDiscoveryConsumableSourcePath(path) {
+						continue
+					}
+					score := p.consumableCandidateScore(path, layerName, line, summaryText, terms)
+					if score <= 0 {
+						continue
+					}
+					candidate := delegatedDiscoveryConsumableCandidate{path: path, score: score, firstIndex: seenIndex}
+					seenIndex++
+					if prior, ok := best[path]; ok && (prior.score > score || (prior.score == score && prior.firstIndex <= candidate.firstIndex)) {
+						continue
+					}
+					best[path] = candidate
+				}
+			}
+		}
+	}
+	candidates := make([]delegatedDiscoveryConsumableCandidate, 0, len(best))
+	for _, candidate := range best {
+		candidates = append(candidates, candidate)
+	}
+	if len(candidates) == 0 {
+		return nil
+	}
+	sortDelegatedDiscoveryConsumableCandidates(candidates)
+	paths := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		paths = append(paths, candidate.path)
+	}
+	return closurePromptEvidencePaths(paths, max)
+}
+
+func delegatedDiscoveryLineCandidatePaths(line string) []string {
+	var paths []string
+	for _, path := range pathparse.MentionedWorkspacePaths(line) {
+		paths = util.AppendUnique(paths, path)
+	}
+	for _, match := range delegatedPacketPathLinePattern.FindAllString(line, -1) {
+		paths = util.AppendUnique(paths, match)
+	}
+	return paths
+}
+
+func delegatedDiscoveryConsumableSourcePath(path string) bool {
+	path = normalizeDelegatedDiscoveryEvidencePath(path)
+	if path == "" || strings.HasPrefix(path, ".idiom/") || strings.HasPrefix(path, ".") {
+		return false
+	}
+	if !delegatedDiscoveryLooksLikeEvidencePath(path) {
+		return false
+	}
+	if !strings.Contains(path, "/") && !strings.HasSuffix(path, ".go") {
+		return false
+	}
+	return true
+}
+
+func (p delegatedDiscoveryPlan) consumableCandidateTerms() []string {
+	var terms []string
+	for _, term := range recoveryObjectiveSearchWords(p.questionText, 16) {
+		terms = appendDelegatedDiscoveryCandidateTerm(terms, term)
+	}
+	for _, term := range p.promptKeyTerms {
+		terms = appendDelegatedDiscoveryCandidateTerm(terms, term)
+	}
+	for _, term := range delegatedReadOnlyMechanismTerms(p.objective) {
+		terms = appendDelegatedDiscoveryCandidateTerm(terms, term)
+	}
+	return terms
+}
+
+func appendDelegatedDiscoveryCandidateTerm(terms []string, raw string) []string {
+	term := strings.ToLower(strings.TrimSpace(raw))
+	term = strings.Trim(term, "`'\"()[]{}<>,.:;!?")
+	if term == "" || len(term) < 4 || pathparse.LooksLikeWorkspacePathToken(term) {
+		return terms
+	}
+	if delegatedDiscoveryStopWord(term, delegatedDiscoveryStopWordSearchTerm) ||
+		delegatedDiscoveryStopWord(term, delegatedDiscoveryStopWordPromptKeyTerm) {
+		return terms
+	}
+	return util.AppendUnique(terms, term)
+}
+
+func (p delegatedDiscoveryPlan) consumableCandidateScore(path string, layerName string, line string, summary string, terms []string) int {
+	context := strings.TrimSpace(summary + "\n" + line)
+	score := delegatedDiscoveryConsumableLayerScore(layerName)
+	score += delegatedDiscoveryConsumableLineScore(line)
+	score += delegatedDiscoveryConsumablePathShapeScore(path)
+	score += delegatedDiscoveryConsumableObjectiveScore(path, context, terms)
+	score += delegatedDiscoveryConsumableMechanismScore(path, layerName, context)
+	score += delegatedDiscoveryConsumableInventoryScore(layerName, context)
+	if p.pathOutsideDetailedScope(path) {
+		score -= 80
+	}
+	return score
+}
+
+func delegatedDiscoveryConsumableLayerScore(name string) int {
+	switch strings.TrimSpace(name) {
+	case "text_anchor_search":
+		return 80
+	case "go_read_symbol", "cpp_read_symbol", "python_read_symbol", "ts_read_symbol", "rust_read_symbol", "java_read_symbol":
+		return 75
+	case "go_references", "cpp_references", "python_references", "ts_references", "rust_references", "java_references":
+		return 65
+	case "go_definition", "cpp_definition", "python_definition", "ts_definition", "rust_definition", "java_definition":
+		return 60
+	case "go_workspace_symbol", "cpp_workspace_symbol", "python_workspace_symbol", "ts_workspace_symbol", "rust_workspace_symbol", "java_workspace_symbol":
+		return 45
+	case "related_files":
+		return 10
+	case "dependency_graph", "ctags_symbols":
+		return 5
+	case "target_listing":
+		return -45
+	case "project_behavior_digest", "project_context_digest":
+		return -60
+	default:
+		return 5
+	}
+}
+
+func delegatedDiscoveryConsumableLineScore(line string) int {
+	line = strings.TrimSpace(line)
+	lower := strings.ToLower(line)
+	switch {
+	case line == "":
+		return -20
+	case closurePathScopedSymbolPattern.MatchString(line), closurePathCallPattern.MatchString(line):
+		return 45
+	case strings.Contains(lower, "implementation anchor"), strings.Contains(lower, "implementation path"), strings.Contains(lower, "source anchor"):
+		return 40
+	case strings.Contains(lower, "func "):
+		return 35
+	case strings.Contains(lower, "type "):
+		return 20
+	case strings.Contains(lower, "package "):
+		return -25
+	case delegatedDiscoveryLineIsBarePath(line):
+		return -20
+	default:
+		return 0
+	}
+}
+
+func delegatedDiscoveryConsumablePathShapeScore(path string) int {
+	path = strings.ToLower(filepath.ToSlash(strings.TrimSpace(path)))
+	switch {
+	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go") && strings.HasPrefix(path, "internal/"):
+		return 25
+	case strings.HasSuffix(path, ".go") && !strings.HasSuffix(path, "_test.go"):
+		return 20
+	case strings.HasPrefix(path, "internal/"):
+		return 10
+	case strings.HasSuffix(path, "_test.go"):
+		return -30
+	default:
+		return 0
+	}
+}
+
+func delegatedDiscoveryConsumableObjectiveScore(path string, line string, terms []string) int {
+	haystack := strings.ToLower(filepath.ToSlash(path) + "\n" + line)
+	score := 0
+	for _, term := range terms {
+		if term == "" {
+			continue
+		}
+		if strings.Contains(haystack, term) {
+			score += 22
+		}
+	}
+	return score
+}
+
+func delegatedDiscoveryConsumableMechanismScore(path string, layerName string, line string) int {
+	if delegatedDiscoveryConsumableInventoryLayer(layerName) {
+		return 0
+	}
+	haystack := strings.ToLower(filepath.ToSlash(path) + "\n" + line)
+	score := 0
+	if containsAny(haystack,
+		"compose", "composer", "composition", "synthesis", "synthesize", "final response", "final answer",
+		"closeout", "readiness", "completion", "acceptance", "grounded evidence", "mechanism", "contract",
+	) {
+		score += 55
+	}
+	if containsAny(haystack, "implementation path", "implementation anchor", "source anchor", "source-body", "source body") {
+		score += 25
+	}
+	if containsAny(haystack, "capability:", "language:", "symbol index:", "related files:", "found related") {
+		score -= 35
+	}
+	return score
+}
+
+func delegatedDiscoveryConsumableInventoryScore(layerName string, line string) int {
+	lowerLayer := strings.ToLower(strings.TrimSpace(layerName))
+	lower := strings.ToLower(strings.TrimSpace(line))
+	score := 0
+	if delegatedDiscoveryConsumableInventoryLayer(lowerLayer) {
+		score -= 20
+	}
+	if containsAny(lower,
+		"no go workspace symbols matched",
+		"no workspace symbols matched",
+		"no symbols matched",
+		"no related go files matched",
+		"found related go file",
+		"found related go files",
+		"capability:",
+		"language:",
+		"symbol index:",
+		"related files:",
+	) {
+		score -= 45
+	}
+	return score
+}
+
+func delegatedDiscoveryConsumableInventoryLayer(layerName string) bool {
+	lowerLayer := strings.ToLower(strings.TrimSpace(layerName))
+	return lowerLayer == "target_listing" ||
+		lowerLayer == "related_files" ||
+		lowerLayer == "dependency_graph" ||
+		lowerLayer == "ctags_symbols" ||
+		strings.Contains(lowerLayer, "workspace_symbol")
+}
+
+func sortDelegatedDiscoveryConsumableCandidates(candidates []delegatedDiscoveryConsumableCandidate) {
+	for i := 1; i < len(candidates); i++ {
+		current := candidates[i]
+		j := i - 1
+		for ; j >= 0 && delegatedDiscoveryConsumableLess(current, candidates[j]); j-- {
+			candidates[j+1] = candidates[j]
+		}
+		candidates[j+1] = current
+	}
+}
+
+func delegatedDiscoveryConsumableLess(left, right delegatedDiscoveryConsumableCandidate) bool {
+	if left.score != right.score {
+		return left.score > right.score
+	}
+	leftPriority := delegatedDiscoveryPathPriority(left.path)
+	rightPriority := delegatedDiscoveryPathPriority(right.path)
+	if leftPriority != rightPriority {
+		return leftPriority < rightPriority
+	}
+	if left.firstIndex != right.firstIndex {
+		return left.firstIndex < right.firstIndex
+	}
+	return left.path < right.path
+}
+
+func (p delegatedDiscoveryPlan) normalizePurpose(purpose string) string {
+	purpose = strings.TrimSpace(purpose)
+	if delegatedDiscoveryPurposeValid(purpose) && p.purposeSupportedByObjective(purpose) {
+		return purpose
+	}
+	return p.defaultPurpose
+}
+
+func (p delegatedDiscoveryPlan) purposeSupportedByObjective(purpose string) bool {
+	switch strings.TrimSpace(purpose) {
+	case "security_review":
+		lower := strings.ToLower(p.objective)
+		return containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token")
+	default:
+		return true
+	}
+}
+
+func (p delegatedDiscoveryPlan) shouldReplacePath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return true
+	}
+	if path == "." && p.primaryScope != "" && p.primaryScope != "." && p.hasNamedScope {
+		return true
+	}
+	return p.pathOutsideDetailedScope(path) && p.primaryScope != "" && p.primaryScope != "."
+}
+
+func (p delegatedDiscoveryPlan) pathOutsideDetailedScope(path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" || path == "." || len(p.detailedScopes) == 0 {
+		return false
+	}
+	for _, scope := range p.detailedScopes {
+		if postChildPathsOverlap(path, scope) {
+			return false
+		}
+	}
+	return true
+}
+
+func (p delegatedDiscoveryPlan) parseNamedScopes() []string {
+	scopes := make([]string, 0, 4)
+	for _, line := range strings.Split(p.objective, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(line), "named workspace scope:") {
+			continue
+		}
+		for _, candidate := range strings.Split(line[len("Named workspace scope:"):], ",") {
+			candidate = strings.TrimSpace(strings.Trim(candidate, "`'\""))
+			if candidate == "" {
+				continue
+			}
+			candidate = filepath.ToSlash(strings.TrimSuffix(strings.TrimPrefix(candidate, "./"), "/"))
+			scopes = util.AppendUnique(scopes, candidate)
+		}
+	}
+	return scopes
+}
+
+func (p delegatedDiscoveryPlan) computeHasPrimaryNamedScope() bool {
+	for _, scope := range p.namedScopes {
+		if !delegatedReadOnlySecondaryEvidencePath(scope) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p delegatedDiscoveryPlan) computePrimaryScope() string {
+	firstCandidate := ""
+	for _, candidate := range p.namedScopes {
+		if candidate == "" {
+			continue
+		}
+		if firstCandidate == "" {
+			firstCandidate = candidate
+		}
+		if !delegatedReadOnlySecondaryEvidencePath(candidate) {
+			return candidate
+		}
+	}
+	if firstCandidate != "" {
+		return firstCandidate
+	}
+	for _, candidate := range pathparse.MentionedWorkspacePaths(p.objective) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if pathparse.HasWorkspaceFileExtension(candidate) {
+			dir := filepath.ToSlash(filepath.Dir(candidate))
+			if dir != "." && dir != "" {
+				return dir
+			}
+			return candidate
+		}
+		return filepath.ToSlash(candidate)
+	}
+	return "."
+}
+
+func (p delegatedDiscoveryPlan) computeDetailedNamedScopes() []string {
+	var scopes []string
+	for _, candidate := range p.namedScopes {
+		candidate = normalizeRunnerPath(strings.Trim(strings.TrimSpace(candidate), "`'\""))
+		if candidate == "" || candidate == "." || delegatedReadOnlyBroadNamedScope(candidate) {
+			continue
+		}
+		scopes = mergeRunnerStateStrings(scopes, []string{candidate})
+	}
+	return scopes
+}
+
+func (p delegatedDiscoveryPlan) computePurpose() string {
+	lower := strings.ToLower(strings.TrimSpace(p.questionText))
+	if lower == "" {
+		lower = strings.ToLower(p.computeQuestionText())
+	}
+	switch {
+	case containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
+		return "security_review"
+	case containsAny(lower, "git history", "history of", "historical", "evolution", "changed over time", "regression introduced"):
+		return "history_context"
+	case containsAny(lower, "call", "calls", "trace", "tracing", "invoked", "invoke", "entrypoint"):
+		return "function_tracing"
+	case containsAny(lower, "impact", "blast radius", "affected", "change"):
+		return "impact_analysis"
+	default:
+		return "architecture_boundary"
+	}
+}
+
+func (p delegatedDiscoveryPlan) computeQuestionText() string {
+	lines := make([]string, 0, 2)
+	for _, raw := range strings.Split(p.objective, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		lower := strings.ToLower(line)
+		if strings.HasPrefix(lower, "named workspace scope:") ||
+			strings.HasPrefix(lower, "key terms:") ||
+			strings.HasPrefix(lower, "scope guidance:") ||
+			strings.HasPrefix(lower, "start from ") ||
+			strings.HasPrefix(lower, "return ") ||
+			strings.HasPrefix(lower, "- ") {
+			continue
+		}
+		lines = append(lines, line)
+	}
+	if len(lines) == 0 {
+		return p.objective
+	}
+	return strings.Join(lines, " ")
+}
+
+func (p delegatedDiscoveryPlan) computeSearchPattern() string {
+	terms := make([]string, 0, 6)
+	for _, line := range strings.Split(p.objective, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(lower, "key terms:") {
+			continue
+		}
+		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
+			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
+				terms = util.AppendUnique(terms, term)
+			}
+		}
+	}
+	for _, fragment := range pathparse.QuotedFragments(p.objective) {
+		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
+			terms = util.AppendUnique(terms, term)
+		}
+	}
+	if len(terms) == 0 {
+		for _, candidate := range strings.Fields(p.questionText) {
+			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
+				terms = util.AppendUnique(terms, term)
+			}
+			if len(terms) >= 4 {
+				break
+			}
+		}
+	}
+	for _, term := range delegatedReadOnlyMechanismTerms(p.objective) {
+		if normalized, ok := delegatedReadOnlySearchTerm(term); ok {
+			terms = util.AppendUnique(terms, normalized)
+		}
+	}
+	return strings.Join(terms, "|")
+}
+
+func (p delegatedDiscoveryPlan) computeSymbolPattern() string {
+	candidates := make([]string, 0, 6)
+	for _, line := range strings.Split(p.objective, "\n") {
+		line = strings.TrimSpace(line)
+		lower := strings.ToLower(line)
+		if !strings.HasPrefix(lower, "key terms:") {
+			continue
+		}
+		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
+			if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
+				candidates = util.AppendUnique(candidates, symbol)
+			}
+		}
+	}
+	for _, fragment := range pathparse.QuotedFragments(p.objective) {
+		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(fragment); ok {
+			candidates = util.AppendUnique(candidates, symbol)
+		}
+	}
+	if len(candidates) == 0 {
+		return ""
+	}
+	return candidates[0]
+}
+
+func (p delegatedDiscoveryPlan) computePromptKeyTerms() []string {
+	terms := make([]string, 0, 6)
+	for _, fragment := range pathparse.QuotedFragments(p.objective) {
+		fragment = strings.TrimSpace(fragment)
+		if fragment == "" || pathparse.LooksLikeWorkspacePathToken(fragment) {
+			continue
+		}
+		lower := strings.ToLower(fragment)
+		if delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordPromptKeyTerm) {
+			continue
+		}
+		terms = util.AppendUnique(terms, fragment)
+	}
+	for _, candidate := range strings.Fields(p.objective) {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" || pathparse.LooksLikeWorkspacePathToken(candidate) {
+			continue
+		}
+		lower := strings.ToLower(strings.Trim(candidate, "`'\"()[]{}<>,.:;!?"))
+		if delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordPromptKeyTerm) {
+			continue
+		}
+		if len(lower) < 5 {
+			continue
+		}
+		terms = util.AppendUnique(terms, lower)
+		if len(terms) >= 8 {
+			break
+		}
+	}
+	return terms
+}
+
+type delegatedDiscoveryStopWordUse int
+
+const (
+	delegatedDiscoveryStopWordSearchTerm delegatedDiscoveryStopWordUse = iota
+	delegatedDiscoveryStopWordPromptKeyTerm
+	delegatedDiscoveryStopWordSymbol
+)
+
+func delegatedDiscoveryStopWord(lower string, use delegatedDiscoveryStopWordUse) bool {
+	switch strings.TrimSpace(lower) {
+	case "",
+		"agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main",
+		"files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines",
+		"harness", "implementation", "source", "truth", "source-of-truth", "source_of_truth", "before", "tests", "test", "readme", "docs", "start",
+		"internal", "workspace", "named", "scope", "question", "questions", "direct", "directly", "delegated", "repository", "relative",
+		"evidence", "sufficient", "inspected", "guidance", "prefer", "targeted", "symbol", "symbols", "bounded", "read", "reads", "overview", "overviews",
+		"continue", "readiness", "claim", "claims", "probe", "probes", "resolve", "materially", "incomplete":
+		return true
+	}
+	if use == delegatedDiscoveryStopWordPromptKeyTerm {
+		switch strings.TrimSpace(lower) {
+		case "how", "does", "this", "explain", "inspect", "explore", "look", "overall", "return", "focus", "specifically", "emphasize",
+			"use", "uses", "used", "using", "utilize", "utilizes", "utilized", "utilise", "utilises", "make", "makes", "made",
+			"paths", "path", "findings", "finding", "confidence", "gap", "gaps", "key", "terms", "exact", "entrypoint", "agents":
+			return true
+		}
+	}
+	if use == delegatedDiscoveryStopWordSymbol {
+		switch strings.TrimSpace(lower) {
+		case "subagent", "subagents", "delegate", "task", "runner", "package", "import", "const", "type", "func", "return",
+			"use", "uses", "using", "utilize", "utilizes", "utilise", "utilises", "make", "makes":
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Runner) applyLanePreflight(input runnerLanePreflightInput) runnerLanePreflightDecision {
 	decision := runnerLanePreflightDecision{
 		OriginalRequest: input.Request,
@@ -645,40 +1290,41 @@ func hasTruncatedGoReadSymbolResult(results []workspace.ToolResult, path string)
 }
 
 func (r *Runner) delegatedReadOnlyDiscoveryQueryRepairRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" || len(results) > 0 {
+	if r == nil || !strings.HasPrefix(r.agentName(), "child:") || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "delegated_read_only" {
 		return workspace.ToolRequest{}, false
 	}
 	if strings.TrimSpace(req.Tool) != "discovery_query" {
 		return workspace.ToolRequest{}, false
 	}
-	repaired := req
-	changed := false
-	if !validDelegatedDiscoveryPurpose(repaired.Purpose) {
-		repaired.Purpose = delegatedReadOnlyDiscoveryPurpose(r.RuntimeBrief.Objective)
-		changed = true
+	plan := newDelegatedDiscoveryPlan(r.RuntimeBrief.Objective)
+	if redirected, ok := plan.candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools); ok {
+		return redirected, true
 	}
-	if strings.TrimSpace(repaired.Path) == "" {
-		repaired.Path = delegatedReadOnlyBootstrapScope(r.RuntimeBrief.Objective)
-		changed = true
+	return plan.repairDiscoveryQuery(req)
+}
+
+func (r *Runner) delegatedReadOnlyDiscoveryConsumptionRequest(results []workspace.ToolResult) (workspace.ToolRequest, bool) {
+	if r == nil {
+		return workspace.ToolRequest{}, false
 	}
-	if strings.TrimSpace(repaired.Pattern) == "" {
-		repaired.Pattern = delegatedReadOnlyBootstrapPattern(r.RuntimeBrief.Objective)
-		changed = true
-	}
-	if repaired.MaxDepth <= 0 {
-		repaired.MaxDepth = 2
-		changed = true
-	}
-	return repaired, changed
+	return newDelegatedDiscoveryPlan(r.RuntimeBrief.Objective).candidateConsumptionRequest(results, r.RuntimeBrief.AllowedTools)
 }
 
 func validDelegatedDiscoveryPurpose(purpose string) bool {
+	return delegatedDiscoveryPurposeValid(purpose)
+}
+
+func delegatedDiscoveryPurposeValid(purpose string) bool {
 	switch strings.TrimSpace(purpose) {
 	case "impact_analysis", "function_tracing", "architecture_boundary", "security_review", "history_context":
 		return true
 	default:
 		return false
 	}
+}
+
+func delegatedDiscoveryPurposeSupportedByObjective(purpose string, objective string) bool {
+	return newDelegatedDiscoveryPlan(objective).purposeSupportedByObjective(purpose)
 }
 
 func (r *Runner) delegatedReadOnlyBootstrapRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
@@ -725,7 +1371,7 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 		return workspace.ToolRequest{}, false
 	}
 	for _, path := range pathparse.MentionedWorkspacePaths(r.RuntimeBrief.Objective) {
-		if pathparse.HasWorkspaceFileExtension(path) {
+		if pathparse.HasWorkspaceFileExtension(path) && !delegatedReadOnlySecondaryEvidencePath(path) {
 			return workspace.ToolRequest{}, false
 		}
 	}
@@ -743,19 +1389,7 @@ func (r *Runner) delegatedReadOnlyBootstrapQueryRequest(results []workspace.Tool
 }
 
 func delegatedReadOnlyDiscoveryPurpose(objective string) string {
-	lower := strings.ToLower(objective)
-	switch {
-	case containsAny(lower, "security", "unsafe", "vulnerability", "injection", "secret", "token"):
-		return "security_review"
-	case containsAny(lower, "history", "evolution", "changed over time", "regression introduced"):
-		return "history_context"
-	case containsAny(lower, "call", "calls", "trace", "tracing", "invoked", "invoke", "entrypoint"):
-		return "function_tracing"
-	case containsAny(lower, "impact", "blast radius", "affected", "change"):
-		return "impact_analysis"
-	default:
-		return "architecture_boundary"
-	}
+	return newDelegatedDiscoveryPlan(objective).defaultPurpose
 }
 
 func delegatedReadOnlyTaskPrompt(objective string, workspaceRoot string) string {
@@ -846,122 +1480,36 @@ func delegatedReadOnlyBootstrapHasExactStructuredProbe(objective string, allowed
 }
 
 func delegatedReadOnlyBootstrapScope(objective string) string {
-	for _, line := range strings.Split(objective, "\n") {
-		line = strings.TrimSpace(line)
-		lower := strings.ToLower(line)
-		if !strings.HasPrefix(lower, "named workspace scope:") {
-			continue
-		}
-		scopeList := strings.Split(line[len("Named workspace scope:"):], ",")
-		for _, candidate := range scopeList {
-			candidate = strings.TrimSpace(strings.Trim(candidate, "`'\""))
-			if candidate == "" {
-				continue
-			}
-			return filepath.ToSlash(strings.TrimSuffix(candidate, "/"))
-		}
+	return newDelegatedDiscoveryPlan(objective).primaryScope
+}
+
+func delegatedReadOnlyDiscoveryPathOutsideDetailedScope(path string, objective string) bool {
+	return newDelegatedDiscoveryPlan(objective).pathOutsideDetailedScope(path)
+}
+
+func delegatedReadOnlyDetailedNamedScopes(objective string) []string {
+	return newDelegatedDiscoveryPlan(objective).detailedScopes
+}
+
+func delegatedReadOnlyBroadNamedScope(scope string) bool {
+	switch normalizeRunnerPath(scope) {
+	case "internal", "pkg", "src", "cmd", "prompts", "docs":
+		return true
+	default:
+		return false
 	}
-	for _, candidate := range pathparse.MentionedWorkspacePaths(objective) {
-		candidate = strings.TrimSpace(candidate)
-		if candidate == "" {
-			continue
-		}
-		if pathparse.HasWorkspaceFileExtension(candidate) {
-			dir := filepath.ToSlash(filepath.Dir(candidate))
-			if dir != "." && dir != "" {
-				return dir
-			}
-			return candidate
-		}
-		return filepath.ToSlash(candidate)
-	}
-	return "."
 }
 
 func delegatedReadOnlyBootstrapPattern(objective string) string {
-	terms := make([]string, 0, 6)
-	for _, line := range strings.Split(objective, "\n") {
-		line = strings.TrimSpace(line)
-		lower := strings.ToLower(line)
-		if !strings.HasPrefix(lower, "key terms:") {
-			continue
-		}
-		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
-			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
-				terms = util.AppendUnique(terms, term)
-			}
-		}
-	}
-	for _, fragment := range pathparse.QuotedFragments(objective) {
-		if term, ok := delegatedReadOnlySearchTerm(fragment); ok {
-			terms = util.AppendUnique(terms, term)
-		}
-	}
-	if len(terms) == 0 {
-		for _, candidate := range strings.Fields(delegatedReadOnlyQuestionText(objective)) {
-			if term, ok := delegatedReadOnlySearchTerm(candidate); ok {
-				terms = util.AppendUnique(terms, term)
-			}
-			if len(terms) >= 4 {
-				break
-			}
-		}
-	}
-	for _, term := range delegatedReadOnlyMechanismTerms(objective) {
-		if normalized, ok := delegatedReadOnlySearchTerm(term); ok {
-			terms = util.AppendUnique(terms, normalized)
-		}
-	}
-	return strings.Join(terms, "|")
+	return newDelegatedDiscoveryPlan(objective).searchPattern
 }
 
 func delegatedReadOnlyQuestionText(objective string) string {
-	lines := make([]string, 0, 2)
-	for _, raw := range strings.Split(objective, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		lower := strings.ToLower(line)
-		if strings.HasPrefix(lower, "named workspace scope:") ||
-			strings.HasPrefix(lower, "key terms:") ||
-			strings.HasPrefix(lower, "scope guidance:") ||
-			strings.HasPrefix(lower, "start from ") ||
-			strings.HasPrefix(lower, "return ") ||
-			strings.HasPrefix(lower, "- ") {
-			continue
-		}
-		lines = append(lines, line)
-	}
-	if len(lines) == 0 {
-		return objective
-	}
-	return strings.Join(lines, " ")
+	return newDelegatedDiscoveryPlan(objective).questionText
 }
 
 func delegatedReadOnlyBootstrapSymbolPattern(objective string) string {
-	candidates := make([]string, 0, 6)
-	for _, line := range strings.Split(objective, "\n") {
-		line = strings.TrimSpace(line)
-		lower := strings.ToLower(line)
-		if !strings.HasPrefix(lower, "key terms:") {
-			continue
-		}
-		for _, candidate := range strings.Split(line[len("Key terms:"):], ",") {
-			if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(candidate); ok {
-				candidates = util.AppendUnique(candidates, symbol)
-			}
-		}
-	}
-	for _, fragment := range pathparse.QuotedFragments(objective) {
-		if symbol, ok := delegatedReadOnlyLiteralSymbolCandidate(fragment); ok {
-			candidates = util.AppendUnique(candidates, symbol)
-		}
-	}
-	if len(candidates) == 0 {
-		return ""
-	}
-	return candidates[0]
+	return newDelegatedDiscoveryPlan(objective).symbolPattern
 }
 
 func delegatedReadOnlySearchTerm(raw string) (string, bool) {
@@ -971,9 +1519,7 @@ func delegatedReadOnlySearchTerm(raw string) (string, bool) {
 	if value == "" || pathparse.LooksLikeWorkspacePathToken(value) {
 		return "", false
 	}
-	switch value {
-	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "source-of-truth", "source_of_truth", "before", "tests", "test", "readme", "docs", "start",
-		"internal", "workspace", "named", "scope", "question", "questions", "direct", "directly", "delegated", "repository", "relative", "evidence", "sufficient", "inspected", "guidance", "prefer", "targeted", "symbol", "symbols", "bounded", "read", "reads", "overview", "overviews", "continue", "readiness", "claim", "claims", "probe", "probes", "resolve", "materially", "incomplete":
+	if delegatedDiscoveryStopWord(value, delegatedDiscoveryStopWordSearchTerm) {
 		return "", false
 	}
 	if len(value) < 4 {
@@ -1022,8 +1568,7 @@ func delegatedReadOnlyLiteralSymbolCandidate(raw string) (string, bool) {
 		return "", false
 	}
 	lower := strings.ToLower(value)
-	switch lower {
-	case "agent", "codebase", "architecture", "configuration", "config", "configs", "prompt", "prompts", "main", "files", "file", "directory", "directories", "entry", "entrypoints", "line", "lines", "harness", "implementation", "source", "truth", "before", "tests", "test", "readme", "docs", "start", "subagent", "subagents", "delegate", "delegated", "task", "runner", "package", "import", "const", "type", "func", "return", "use", "uses", "using", "utilize", "utilizes", "utilise", "utilises", "make", "makes":
+	if delegatedDiscoveryStopWord(lower, delegatedDiscoveryStopWordSymbol) {
 		return "", false
 	}
 	return value, true

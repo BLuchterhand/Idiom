@@ -244,6 +244,44 @@ func TestFinalAnswerDecoratorComposesFromTypedDelegatedPacketWithoutProseHeading
 	}
 }
 
+func TestFinalAnswerDecoratorReplacesLineOrientedSourceSnippetWithTypedPacket(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "architecture",
+		Contract:          "architecture_assessment",
+		PermissionProfile: "read_only_workspace",
+		Objective:         "Can you tell me how this harness uses subagents?",
+	}
+	results := []workspace.ToolResult{typedReadOnlyTaskResult(ReadOnlyEvidencePacket{
+		Objective:       brief.Objective,
+		SourceBodyPaths: []string{"internal/agent/runner.go", "internal/agent/runner_child_tasks.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The harness uses the `task` tool to delegate read-only subagent work."},
+			{Path: "internal/agent/runner_child_tasks.go", Text: "`runChildTask` builds the bounded subagent child runner and returns its result."},
+		},
+		Confidence: "high",
+	})}
+	answer := "For `Can you tell me how this harness uses subagents?`, 1:package agent. 2:. 3:import (. This is grounded in `internal/agent/runner.go`."
+
+	runner := &Runner{}
+	got := runner.decorateFinalAnswer(FinalAnswerDecorateInput{
+		Answer:     answer,
+		StopReason: "model_stop",
+		Brief:      brief,
+		Results:    results,
+		UserFacing: true,
+	})
+	for _, want := range []string{"task", "runChildTask", "`internal/agent/runner.go`", "`internal/agent/runner_child_tasks.go`"} {
+		if !strings.Contains(strings.ToLower(got), strings.ToLower(want)) {
+			t.Fatalf("decorated typed packet answer missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"1:package", "2:.", "3:import"} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("decorated answer leaked line-oriented source snippet %q:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestFinalAnswerDecoratorDoesNotPromoteOffObjectiveTaskOutput(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        "architecture",
@@ -919,6 +957,19 @@ func TestPresentableNoToolsFallbackRejectsEchoedQuestion(t *testing.T) {
 	got, ok := presentableNoToolsFallbackAnswer(brief, results, answer)
 	if ok {
 		t.Fatalf("expected fallback to reject echoed user question; got ok=true with:\n%s", got)
+	}
+}
+
+func TestPresentableUnsupportedFinalAnswerLeadMatchesTUIContract(t *testing.T) {
+	got := presentableUnsupportedFinalAnswerLead()
+	for _, want := range []string{
+		"could not produce a supported final answer",
+		"run stopped before",
+		"not have enough supported evidence",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("unsupported final-answer lead missing %q:\n%s", want, got)
+		}
 	}
 }
 

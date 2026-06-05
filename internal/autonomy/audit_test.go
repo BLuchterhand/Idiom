@@ -844,6 +844,99 @@ func TestAuditEventsAllowsTextualPhaseCallableToolsWhenActionIsExpressible(t *te
 	}
 }
 
+func TestAuditEventsAllowsTextualReadToolWhenReadActionIsExpressible(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 22, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason:       "turn_phase_contract",
+		AllowedTools: []string{"read_file"},
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "read_only_evidence_pending",
+			AllowedTools:  []string{"read_file"},
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses: []string{"read", "final_answer", "blocker"},
+				CallableToolNames:    []string{"read_file"},
+			},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "source_refresh",
+				ExpectedVisibleOutput:    "visible_text_tool_request",
+				ExpressibleActionClasses: []string{"read", "final_answer", "blocker"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(time.Second), 2))
+
+	report := AuditEvents([]Event{compiled, presented}, EventAuditOptions{})
+
+	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
+		t.Fatalf("textual read tool should reconcile through its action class, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+	if hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
+		t.Fatalf("unexpected contradiction finding for textual read tool: %#v", report.Findings)
+	}
+}
+
+func TestAuditEventsUsesCallableToolsForTextualManifestVisibility(t *testing.T) {
+	contract := newEventTestPhaseContract(t)
+	occurredAt := time.Date(2026, 5, 13, 20, 23, 0, 0, time.UTC)
+	compiled := mustAutonomyEvent(NewContractCompiledEvent(contract, occurredAt, 1))
+	presented := mustAutonomyEvent(NewContractPresentedEvent(contract, ContractLifecycleEvent{
+		Reason:       "turn_phase_contract",
+		AllowedTools: []string{"read_file", "task"},
+		TurnPhaseContract: &TurnPhaseContractEvent{
+			SchemaVersion: "idiom.turn_phase_contract.v1",
+			PhaseID:       "generic",
+			AllowedTools:  []string{"read_file", "task"},
+			HiddenTools:   []string{"task"},
+			ActionPolicy: TurnActionClassPolicyEvent{
+				AllowedActionClasses: []string{"read", "final_answer", "blocker"},
+				CallableToolNames:    []string{"read_file", "task"},
+			},
+			RuntimeCall: RuntimeCallContractEvent{
+				ToolTransportMode:        "textual",
+				ParserContract:           "source_refresh",
+				ExpectedVisibleOutput:    "visible_text_tool_request",
+				ExpressibleActionClasses: []string{"read", "final_answer", "blocker"},
+			},
+			EnforcementMode: "observe_only",
+		},
+	}, occurredAt.Add(time.Second), 2))
+
+	report := AuditEvents([]Event{compiled, presented}, EventAuditOptions{})
+
+	if len(report.TurnPhaseCoverage.Contradictions) != 0 {
+		t.Fatalf("hidden/base-only task should not be audited as manifest-visible, got %#v", report.TurnPhaseCoverage.Contradictions)
+	}
+	if hasEventAuditFinding(report, "turn_phase_contract_contradiction") {
+		t.Fatalf("unexpected contradiction finding for hidden/base-only task: %#v", report.Findings)
+	}
+}
+
+func TestTurnPhaseActionClassForToolCoversProjectionTools(t *testing.T) {
+	cases := map[string]string{
+		"read_file":            ActionClassToken(ActionClassRead),
+		"read_only_capability": ActionClassToken(ActionClassRead),
+		"context_status":       ActionClassToken(ActionClassSearch),
+		"history_range":        ActionClassToken(ActionClassRead),
+		"history_symbol":       ActionClassToken(ActionClassRead),
+		"submit_plan":          ActionClassToken(ActionClassSubmitPlan),
+		"apply_patch":          ActionClassToken(ActionClassPerEditWrite),
+		"go_diagnostics":       ActionClassToken(ActionClassVerify),
+		"task":                 ActionClassToken(ActionClassGenericProbe),
+	}
+	for tool, want := range cases {
+		if got := TurnPhaseActionClassForTool(tool); got != want {
+			t.Fatalf("TurnPhaseActionClassForTool(%q) = %q, want %q", tool, got, want)
+		}
+		if got := ActionClassToken(TurnPhaseActionClassForToolClass(tool)); got != want {
+			t.Fatalf("TurnPhaseActionClassForToolClass(%q) = %q, want %q", tool, got, want)
+		}
+	}
+}
+
 func TestAuditEventsFlagsToolWhenNoManifestToolsAreAllowed(t *testing.T) {
 	contract := newEventTestPhaseContract(t)
 	occurredAt := time.Date(2026, 5, 13, 20, 25, 0, 0, time.UTC)

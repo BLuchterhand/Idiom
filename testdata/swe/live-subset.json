@@ -18,11 +18,13 @@
         "final_assistant_contains": [
           "redacted",
           "debug log",
-          "internal/transcript/debuglog.go"
+          "internal/transcript/debuglog.go",
+          "secret",
+          "path",
+          "metadata"
         ],
         "forbid_final_assistant_contains": [
           "raw secret",
-          "What Gets Redacted",
           "Discovery packet",
           "Relevant source hits",
           "Evidence used"

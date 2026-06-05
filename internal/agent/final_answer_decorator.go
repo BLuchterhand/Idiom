@@ -2,7 +2,6 @@ package agent
 
 import (
 	"encoding/json"
-	"fmt"
 	"slices"
 	"strings"
 
@@ -49,7 +48,10 @@ func (r *Runner) decorateFinalAnswer(input FinalAnswerDecorateInput) string {
 			return present(blocker)
 		}
 	}
-	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) {
+	if genericEvidenceAnswerIncludesLineOrientedSourceBody(answer) || looksLikeLineOrientedSourceSnippetAnswer(answer) {
+		if composed, ok := r.composedFinalAnswerFromEvidence(input); ok {
+			return present(composed)
+		}
 		if presentable, ok := presentableNoToolsFallbackAnswer(input.Brief, input.Results, answer); ok {
 			if checked, ok := presentableOrReadOnlyNonAnswerReplacement(agentName, input.Brief, input.Results, presentable); ok {
 				return present(checked)
@@ -102,6 +104,15 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	if !strings.HasPrefix(reason, "<<QUESTION>>") {
 		return "", false
 	}
+	if answer, ok := deterministicNoToolsAnswer("main", brief, results); ok {
+		answer = strings.TrimSpace(answer)
+		if answer != "" &&
+			!strings.HasPrefix(answer, "<<QUESTION>>") &&
+			!readOnlyAnswerReportsInsufficientEvidence(answer) &&
+			presentableQuestionBlockerDeterministicAnswerSupported(brief, results, answer) {
+			return answer, true
+		}
+	}
 	reason = strings.TrimPrefix(reason, "<<QUESTION>>")
 	reason = strings.TrimLeft(strings.TrimSpace(reason), ": ")
 	internalReason := questionBlockerReasonLooksInternal(reason)
@@ -115,7 +126,7 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 	evidenceLabel, paths := questionBlockerContextPaths(brief, results, 4)
 
 	var b strings.Builder
-	b.WriteString("I do not have enough supported evidence to answer that fully from this run.")
+	b.WriteString(presentableUnsupportedFinalAnswerLead())
 	if reason != "" {
 		b.WriteString(" The unresolved evidence gap was: ")
 		b.WriteString(lowercaseFirstSentence(reason))
@@ -131,6 +142,10 @@ func presentableNonMutationQuestionBlocker(brief workerruntime.WorkerRuntimeBrie
 		b.WriteString(".")
 	}
 	return strings.TrimSpace(b.String()), true
+}
+
+func presentableQuestionBlockerDeterministicAnswerSupported(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, answer string) bool {
+	return readOnlyClosureDecisionForResults(brief, results).SupportsPresentableQuestionBlockerAnswer(answer)
 }
 
 func questionBlockerContextPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, max int) (string, []string) {
@@ -387,26 +402,19 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 	}
 	closure := readOnlyClosureDecisionForResults(brief, results)
 	if readOnlyFallbackNeedsAnswerableEvidence(brief, internalAnswer) && !closure.Answerable() {
-		return presentableReadOnlyClosureUncertainty(brief, closure), true
+		return closure.UserFacingUncertainty(), true
 	}
 	if conversationFallbackShouldAvoidSourceBody(brief) && isDeterministicFallbackAnswer(internalAnswer) {
-		if strings.TrimSpace(brief.Objective) != "" && closure.Answerable() {
-			if exact, ok := presentableExactProbeAnswer(brief, results); ok {
-				return exact, true
-			}
-			if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
-				return sourceBody, true
-			}
-			if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
-				return prose, true
-			}
+		if concrete, ok := closure.ConcreteFallbackAnswer(); ok {
+			return concrete, true
 		}
 		return synthesizeBriefConversationFallback(brief, results), true
 	}
 	if conversationFallbackShouldAvoidSourceBody(brief) && looksLikeSourceBodyFallbackAnswer(internalAnswer) {
 		return synthesizeBriefConversationFallback(brief, results), true
 	}
-	lineOrientedGenericAnswer := genericEvidenceAnswerIncludesLineOrientedSourceBody(internalAnswer)
+	lineOrientedGenericAnswer := genericEvidenceAnswerIncludesLineOrientedSourceBody(internalAnswer) ||
+		looksLikeLineOrientedSourceSnippetAnswer(internalAnswer)
 	if !lineOrientedGenericAnswer {
 		if cleaned, ok := cleanedSubstantiveFinalAnswer(internalAnswer); ok {
 			return cleaned, true
@@ -477,34 +485,16 @@ func presentableNoToolsFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, re
 		return "", false
 	}
 	if !closure.Answerable() {
-		return presentableReadOnlyClosureUncertainty(brief, closure), true
+		return closure.UserFacingUncertainty(), true
 	}
-	return "I do not have enough supported evidence from this run to answer that fully. The current read-only answer has relevant evidence in " +
+	return presentableUnsupportedFinalAnswerLead() + " The current read-only answer has relevant evidence in " +
 		formatInlinePathList(paths, 4) +
 		", but no concrete user-facing finding was retained.", true
 }
 
 func presentableReadOnlyClosureUncertainty(brief workerruntime.WorkerRuntimeBrief, closure readOnlyClosureDecision) string {
-	if !readOnlyDirectAnswerLane(brief) {
-		return closure.BlockerText()
-	}
-	evidence := closure.Evidence
-	switch closure.Reason {
-	case readOnlyClosureReasonHighCardinalitySearch:
-		if strings.TrimSpace(evidence.Objective) != "" {
-			return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The search only localized `%s`: it returned %d hit(s), and one objective-relevant source candidate such as %s still needs a source-body read.", evidence.Objective, evidence.SearchHitCount, formatInlinePathList(closure.PrioritizedCandidatePaths(), 3))
-		}
-		return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The search only localized candidates: it returned %d hit(s), and one objective-relevant source candidate such as %s still needs a source-body read.", evidence.SearchHitCount, formatInlinePathList(closure.PrioritizedCandidatePaths(), 3))
-	case readOnlyClosureReasonMissingNamedSourceBody:
-		return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. Source-body evidence is still missing for named path(s): %s.", formatInlinePathList(evidence.MissingNamedSourcePaths, 4))
-	case readOnlyClosureReasonCandidatesNeedSource:
-		return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The run found candidate paths such as %s, but did not inspect objective-relevant source body.", formatInlinePathList(evidence.CandidatePaths, 3))
-	default:
-		if paths := readOnlyClosureKnownEvidencePaths(evidence); len(paths) > 0 {
-			return fmt.Sprintf("I do not have enough supported evidence from this run to answer that fully. The run gathered evidence in %s, but it was not relevant source-body or diagnostic evidence for the requested claim.", formatInlinePathList(paths, 4))
-		}
-		return "I do not have enough supported evidence from this run to answer that fully. The run did not retain relevant source-body or diagnostic evidence for the requested claim."
-	}
+	_ = brief
+	return closure.UserFacingUncertainty()
 }
 
 func presentableReadFileSourceAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
@@ -821,14 +811,23 @@ func presentableSourceBodyFactsAnswer(objective string, path string, output stri
 	if objective = strings.TrimSpace(objective); objective != "" {
 		b.WriteString("For `")
 		b.WriteString(objective)
-		b.WriteString("`, ")
+		b.WriteString("`, the answer is grounded in ")
 	}
 	b.WriteString("`")
 	b.WriteString(path)
-	b.WriteString("` shows ")
-	b.WriteString(joinFallbackFacts(facts))
+	if objective != "" {
+		b.WriteString("`: it shows ")
+	} else {
+		b.WriteString("` shows ")
+	}
+	factText := joinFallbackFacts(facts)
+	b.WriteString(factText)
 	b.WriteString(".")
-	return strings.TrimSpace(b.String()), true
+	answer := strings.TrimSpace(b.String())
+	if objectiveAsksBehaviorSummary(objective) && looksLikeLowValueSourceInventoryFallback(factText) {
+		return "", false
+	}
+	return answer, true
 }
 
 func sourceBodySemanticFacts(lines []string, max int) []string {
@@ -1208,9 +1207,7 @@ func presentableExactProbeAnswer(brief workerruntime.WorkerRuntimeBrief, results
 	b.WriteString(joinFallbackFacts(facts))
 	b.WriteString(".")
 	answer := strings.TrimSpace(b.String())
-	if readOnlyDirectAnswerLane(brief) &&
-		objectiveAsksImplementationShape(brief.Objective) &&
-		looksLikeLowValueSourceInventoryNonAnswer(answer) {
+	if objectiveAsksBehaviorSummary(brief.Objective) && looksLikeLowValueSourceInventoryNonAnswer(answer) {
 		return "", false
 	}
 	return answer, true
@@ -1671,6 +1668,9 @@ func finalAnswerNeedsDecoration(answer string) bool {
 	if looksLikeRawToolResultTranscript(answer) {
 		return true
 	}
+	if looksLikeLineOrientedSourceSnippetAnswer(answer) {
+		return true
+	}
 	if looksLikeTextualToolCall(answer) {
 		return true
 	}
@@ -2049,65 +2049,11 @@ func isDeterministicFallbackAnswer(answer string) bool {
 // answer is available. It avoids the source-body extraction path that
 // produces misleading code-fragment answers.
 func synthesizeBriefConversationFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	if strings.TrimSpace(brief.Objective) != "" && readOnlyClosureDecisionForResults(brief, results).Answerable() {
-		if exact, ok := presentableExactProbeAnswer(brief, results); ok {
-			return exact
-		}
-		if sourceBody, ok := presentableReadFileSourceAnswer(brief, results); ok {
-			return sourceBody
-		}
-		if prose, ok := presentableProseEvidenceAnswer(brief, results); ok {
-			return prose
-		}
-	}
-	return synthesizeBriefConversationUncertaintyFallback(brief, results)
+	return readOnlyClosureDecisionForResults(brief, results).ConversationFallback()
 }
 
 func synthesizeBriefConversationUncertaintyFallback(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	// Collect inspected paths for context.
-	var inspectedPaths []string
-	var anchors []string
-	for _, r := range results {
-		paths := readPathsFromToolResult(r)
-		for _, p := range paths {
-			if isNonSourceEvidenceArtifactPath(p) {
-				continue
-			}
-			if p != "" && !slices.Contains(inspectedPaths, p) {
-				inspectedPaths = append(inspectedPaths, p)
-			}
-		}
-		if anchor := conversationFallbackEvidenceAnchor(r); anchor != "" && !slices.Contains(anchors, anchor) {
-			anchors = append(anchors, anchor)
-		}
-	}
-
-	if len(inspectedPaths) == 0 && len(anchors) == 0 {
-		return "I do not have enough supported evidence from this run to answer that fully. The next useful step is one bounded source-body or diagnostic probe tied to the exact claim."
-	}
-
-	var b strings.Builder
-	b.WriteString("I do not have enough supported evidence from this run to answer that fully. The run collected evidence but did not retain a concrete user-facing finding.")
-	if len(inspectedPaths) == 0 {
-		b.WriteString("\n\nEvidence paths:\n- relevant source files")
-	} else {
-		b.WriteString("\n\nEvidence paths:\n")
-		for _, path := range limitStrings(inspectedPaths, 6) {
-			b.WriteString("- `")
-			b.WriteString(path)
-			b.WriteString("`\n")
-		}
-	}
-	if len(anchors) > 0 {
-		b.WriteString("\nSource anchors:\n")
-		for _, anchor := range limitStrings(anchors, 6) {
-			b.WriteString("- ")
-			b.WriteString(anchor)
-			b.WriteString("\n")
-		}
-	}
-
-	return strings.TrimSpace(b.String())
+	return readOnlyClosureDecisionForResults(brief, results).ConversationUncertaintyFallback()
 }
 
 func conversationFallbackEvidenceAnchor(result workspace.ToolResult) string {

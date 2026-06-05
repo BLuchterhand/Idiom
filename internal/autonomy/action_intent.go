@@ -58,6 +58,53 @@ const (
 	ActionClassDelegate         ActionClass = "delegate"
 )
 
+func ActionClassToken(value ActionClass) string {
+	if strings.TrimSpace(string(value)) == "" {
+		return ""
+	}
+	value = CanonicalActionClass(value)
+	if value == "" {
+		return ""
+	}
+	return string(value)
+}
+
+func ActionClassTokens(values ...ActionClass) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		token := ActionClassToken(value)
+		if token == "" {
+			continue
+		}
+		if _, ok := seen[token]; ok {
+			continue
+		}
+		seen[token] = struct{}{}
+		out = append(out, token)
+	}
+	return out
+}
+
+func IsToolActionClass(value ActionClass) bool {
+	switch CanonicalActionClass(value) {
+	case ActionClassRead,
+		ActionClassSearch,
+		ActionClassSubmitPlan,
+		ActionClassPerEditWrite,
+		ActionClassDeliverableWrite,
+		ActionClassVerify,
+		ActionClassGenericProbe,
+		ActionClassDelegate:
+		return true
+	default:
+		return false
+	}
+}
+
 // ToolIntent is the canonical, passive description of what a model or sidecar
 // tried to do before policy enforcement. It records transport and repair facts
 // separately from the action class so parser recovery never masquerades as user

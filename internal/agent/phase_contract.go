@@ -30,18 +30,18 @@ const (
 )
 
 const (
-	actionRead             = "read"
-	actionSearch           = "search"
-	actionSubmitPlan       = "submit_plan"
-	actionPerEditWrite     = "per_edit_write"
-	actionDeliverableWrite = "deliverable_write"
-	actionSourceSatisfied  = "source_satisfied"
-	actionBlocker          = "blocker"
-	actionVerify           = "verify"
-	actionFinalAnswer      = "final_answer"
-	actionReviewPass       = "review_pass"
-	actionGenericProbe     = "generic_probe"
-	actionProseFinal       = "prose_final"
+	actionRead             = string(autonomy.ActionClassRead)
+	actionSearch           = string(autonomy.ActionClassSearch)
+	actionSubmitPlan       = string(autonomy.ActionClassSubmitPlan)
+	actionPerEditWrite     = string(autonomy.ActionClassPerEditWrite)
+	actionDeliverableWrite = string(autonomy.ActionClassDeliverableWrite)
+	actionSourceSatisfied  = string(autonomy.ActionClassSourceSatisfied)
+	actionBlocker          = string(autonomy.ActionClassBlocker)
+	actionVerify           = string(autonomy.ActionClassVerify)
+	actionFinalAnswer      = string(autonomy.ActionClassFinalAnswer)
+	actionReviewPass       = string(autonomy.ActionClassReviewPass)
+	actionGenericProbe     = string(autonomy.ActionClassGenericProbe)
+	actionProseFinal       = string(autonomy.ActionClassProseFinal)
 )
 
 // TurnPhaseContract is a shadow projection over the current runner/runtime
@@ -266,6 +266,10 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	if len(input.HiddenTools) > 0 {
 		contract.AllowedTools = removePhaseTools(contract.AllowedTools, input.HiddenTools)
 		contract.ActionPolicy.CallableToolNames = removePhaseTools(contract.ActionPolicy.CallableToolNames, input.HiddenTools)
+	}
+	if len(input.HiddenTools) > 0 || len(contract.ActionPolicy.CallableToolNames) > 0 {
+		contract.ActionPolicy.AllowedActionClasses = pruneToolActionClassesWithoutCallableTool(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.CallableToolNames)
+		contract.RuntimeCall.ExpressibleActionClasses = pruneToolActionClassesWithoutCallableTool(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.CallableToolNames)
 	}
 	contract.AllowedTools = uniquePhaseStrings(contract.AllowedTools)
 	contract.HiddenTools = uniquePhaseStrings(append(contract.HiddenTools, hiddenPhaseTools(baseTools, contract.AllowedTools)...))
@@ -734,22 +738,41 @@ func applyGenericTurnPhase(contract *TurnPhaseContract, brief workerruntime.Work
 func genericAllowedActionClasses(tools []string) []string {
 	classes := []string{actionFinalAnswer, actionBlocker}
 	for _, tool := range tools {
-		switch strings.TrimSpace(tool) {
-		case "read_file", "code_navigate", "go_read_symbol", "go_extract_body", "cpp_read_symbol", "cpp_definition", "file_stats", "read_only_capability":
-			classes = append(classes, actionRead)
-		case "list_files", "search_files", "search_content", "rg", "grep", "discovery_query", "context_pack", "context_query", "context_zoom", "structural_search", "mcp:exa/web_fetch_exa", "mcp:exa/web_search_exa":
-			classes = append(classes, actionSearch)
-		case "submit_plan":
-			classes = append(classes, actionSubmitPlan)
-		case "edit_file", "write_file", "append_file", "mkdir", "apply_patch", "go_move_declarations", "delegate_edit":
-			classes = append(classes, actionPerEditWrite)
-		case "shell", "source_sanity", "git_diff", "git_status", "context_trace_pack":
-			classes = append(classes, actionVerify)
-		case "task":
-			classes = append(classes, actionGenericProbe)
+		if actionClass := autonomy.TurnPhaseActionClassForTool(tool); actionClass != "" {
+			classes = append(classes, actionClass)
 		}
 	}
 	return uniquePhaseStrings(classes)
+}
+
+func pruneToolActionClassesWithoutCallableTool(classes []string, callableTools []string) []string {
+	if len(classes) == 0 {
+		return nil
+	}
+	callableClasses := make(map[string]struct{})
+	for _, tool := range callableTools {
+		if actionClass := autonomy.TurnPhaseActionClassForTool(tool); actionClass != "" {
+			callableClasses[actionClass] = struct{}{}
+		}
+	}
+	var out []string
+	for _, class := range classes {
+		class = strings.TrimSpace(class)
+		if class == "" {
+			continue
+		}
+		if isToolActionClass(class) {
+			if _, ok := callableClasses[class]; !ok {
+				continue
+			}
+		}
+		out = append(out, class)
+	}
+	return uniquePhaseStrings(out)
+}
+
+func isToolActionClass(class string) bool {
+	return autonomy.IsToolActionClass(autonomy.ActionClass(strings.TrimSpace(class)))
 }
 
 func removePhaseActionClass(classes []string, remove string) []string {

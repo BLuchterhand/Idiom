@@ -109,12 +109,9 @@ func (r *turnPhaseSurfaceReconciler) checkIdentity() {
 }
 
 func (r *turnPhaseSurfaceReconciler) checkToolVisibility() {
-	callable := r.phase.ActionPolicy.CallableToolNames
-	if len(callable) == 0 {
-		callable = r.phase.AllowedTools
-	}
+	callable := TurnPhaseCallableTools(r.phase)
 	for _, tool := range r.surface.CallableTools {
-		actionClass := turnPhaseActionClassForTool(tool)
+		actionClass := TurnPhaseActionClassForTool(tool)
 		if actionClass != "" && stringSetContains(r.phase.ActionPolicy.InvalidActionClasses, actionClass) {
 			r.add(tool, actionClass, "turn_phase.tool_visibility.invalid_action_class", "surface advertised callable tool whose action class is invalid in turn_phase_contract")
 			continue
@@ -123,6 +120,41 @@ func (r *turnPhaseSurfaceReconciler) checkToolVisibility() {
 			r.add(tool, actionClass, "turn_phase.tool_visibility.disallowed_tool", "surface advertised callable tool absent from turn_phase_contract")
 		}
 	}
+}
+
+func TurnPhaseCallableTools(phase TurnPhaseContractEvent) []string {
+	var tools []string
+	if len(phase.ActionPolicy.CallableToolNames) > 0 {
+		tools = append([]string(nil), phase.ActionPolicy.CallableToolNames...)
+	} else {
+		tools = append([]string(nil), phase.AllowedTools...)
+	}
+	return removeTurnPhaseHiddenTools(tools, phase.HiddenTools)
+}
+
+func removeTurnPhaseHiddenTools(tools []string, hidden []string) []string {
+	if len(tools) == 0 || len(hidden) == 0 {
+		return compactStrings(tools)
+	}
+	hiddenSet := make(map[string]struct{}, len(hidden))
+	for _, tool := range hidden {
+		tool = strings.TrimSpace(tool)
+		if tool != "" {
+			hiddenSet[tool] = struct{}{}
+		}
+	}
+	var out []string
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		if _, ok := hiddenSet[tool]; ok {
+			continue
+		}
+		out = append(out, tool)
+	}
+	return compactStrings(out)
 }
 
 func (r *turnPhaseSurfaceReconciler) checkActionClasses() {
@@ -190,19 +222,19 @@ func turnPhaseActionClassesForTerminalOutcomes(outcomes []string) []string {
 			continue
 		}
 		if strings.Contains(lower, "submit_plan") {
-			classes = append(classes, "submit_plan")
+			classes = append(classes, ActionClassToken(ActionClassSubmitPlan))
 		}
 		if strings.Contains(lower, "source-satisfied") {
-			classes = append(classes, "source_satisfied")
+			classes = append(classes, ActionClassToken(ActionClassSourceSatisfied))
 		}
 		if strings.Contains(lower, "<<question>>") || strings.Contains(lower, "blocker") {
-			classes = append(classes, "blocker")
+			classes = append(classes, ActionClassToken(ActionClassBlocker))
 		}
 		if strings.Contains(lower, "decision: pass") {
-			classes = append(classes, "review_pass")
+			classes = append(classes, ActionClassToken(ActionClassReviewPass))
 		}
 		if strings.Contains(lower, "final answer") || strings.Contains(lower, "answer directly") || strings.Contains(lower, "answer from") {
-			classes = append(classes, "final_answer")
+			classes = append(classes, ActionClassToken(ActionClassFinalAnswer))
 		}
 	}
 	return compactStrings(classes)

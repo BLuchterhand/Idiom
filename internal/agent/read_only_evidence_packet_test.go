@@ -204,6 +204,34 @@ func TestBuildReadOnlyEvidencePacketKeepsFoundFindingBullets(t *testing.T) {
 	}
 }
 
+func TestBuildReadOnlyEvidencePacketDropsLineOrientedSourceFindings(t *testing.T) {
+	answer := strings.Join([]string{
+		"Grounded findings:",
+		"- 1:package agent",
+		"- 2:",
+		"- 3:import (",
+	}, "\n")
+	childResults := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read internal/agent/runner.go lines 1-20",
+		Output:  "1:package agent\n2:\n3:import (\n",
+	}}
+
+	packet, ok := buildReadOnlyEvidencePacket("Explain runner behavior.", answer, childResults)
+	if !ok {
+		t.Fatal("expected packet to retain source-body path context")
+	}
+	if readOnlyEvidencePacketAnswerable(packet) {
+		t.Fatalf("raw line-oriented source snippets must not become answerable findings: %#v", packet)
+	}
+	if len(packet.Findings) != 0 {
+		t.Fatalf("line-oriented source snippets leaked into packet findings: %#v", packet.Findings)
+	}
+	if got, want := packet.SourceBodyPaths, []string{"internal/agent/runner.go"}; !slices.Equal(got, want) {
+		t.Fatalf("SourceBodyPaths = %#v, want %#v", got, want)
+	}
+}
+
 func TestReadOnlyEvidencePacketAnswerableForObjectiveAcceptsSubagentWorkPacket(t *testing.T) {
 	packet := ReadOnlyEvidencePacket{
 		Objective:       "Explain how subagents work.",
@@ -246,6 +274,22 @@ func TestReadOnlyObjectiveAnswerEvidenceSupportedAcceptsRunnerReadiness(t *testi
 	if !readOnlyObjectiveAnswerEvidenceSupportedByNamedSource(text, objective) {
 		t.Fatalf("expected named-source runner readiness text to support objective: terms=%#v text=%q",
 			readOnlyObjectivePromotionTerms(objective), text)
+	}
+}
+
+func TestReadOnlyEvidencePacketRejectsPathPrefixWithoutObjectiveSupport(t *testing.T) {
+	packet := ReadOnlyEvidencePacket{
+		Objective:       "Explain runner readiness.",
+		Question:        "Explain runner readiness.",
+		SourceBodyPaths: []string{"internal/agent/runner.go"},
+		Findings: []ReadOnlyEvidenceFinding{
+			{Path: "internal/agent/runner.go", Text: "The source body was inspected."},
+		},
+		Confidence: "medium",
+	}
+
+	if readOnlyEvidencePacketAnswerableForObjective(packet, "Explain runner readiness.") {
+		t.Fatalf("path prefix and source-body presence alone must not satisfy objective answerability: %#v", packet)
 	}
 }
 
