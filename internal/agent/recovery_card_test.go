@@ -186,6 +186,53 @@ func TestBuildRecoveryCardDerivesCallableSurfaceFromPhaseContract(t *testing.T) 
 	assertRecoveryCardOmitsProjectWorkflowTerms(t, RenderRecoveryCard(card))
 }
 
+func TestBuildRecoveryCardDoesNotAdvertiseBlockerWhenSubmitCorrectionRequiresPlanOnly(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+			RequiredEditPaths: []string{"a.go"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: required edit path coverage mismatch",
+				Error:   "missing required edit path(s): `a.go`.",
+			},
+		},
+		BaseAllowedTools:  []string{"read_file", "code_navigate", "submit_plan"},
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+		ResponseFormat:    "json",
+	})
+	card := BuildRecoveryCard(RecoveryCardInput{
+		PhaseContract:       contract,
+		CurrentAllowedTools: []string{"submit_plan"},
+		RejectedRequest:     workspace.ToolRequest{Tool: "submit_plan"},
+		RejectedResult: workspace.ToolResult{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `a.go`.",
+		},
+		ExactBlockerShape: "<<QUESTION>>: stale blocker escape hatch",
+	})
+	got := RenderRecoveryCard(card)
+
+	assertRecoveryCardContains(t, got,
+		"invariant: parser.submit_plan_required: The active phase requires one parser-readable submit_plan action that satisfies the current phase contract.",
+		"currently callable action classes: submit_plan",
+		"deterministic safe next action: Emit one parser-readable planner outcome: corrected submit_plan",
+		"exact blocker shape: none available",
+	)
+	if strings.Contains(got, "supported terminal blocker") ||
+		strings.Contains(got, "stale blocker escape hatch") ||
+		strings.Contains(got, "currently callable action classes: submit_plan, blocker") {
+		t.Fatalf("submit-correction recovery card advertised blocker despite submit_plan-only contract:\n%s", got)
+	}
+}
+
 func TestRecoveryCardForTextualReadOnlyEvidencePendingKeepsReadTools(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

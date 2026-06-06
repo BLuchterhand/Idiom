@@ -551,6 +551,40 @@ func TestDeriveTurnPhaseContractSubmitCorrectionIsSubmitPlanOnly(t *testing.T) {
 	assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, []string{actionSubmitPlan})
 	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, []string{"submit_plan"})
 	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan})
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+}
+
+func TestTurnPhaseContractInvalidActionClassesWinDuringNormalization(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"submit_plan"},
+			RequiredEditPaths: []string{"a.go"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: required edit path coverage mismatch",
+				Error:   "missing required edit path(s): `a.go`.",
+			},
+		},
+		TextualToolParser: true,
+	})
+	contract.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
+	contract.ActionPolicy.InvalidActionClasses = []string{actionBlocker}
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionBlocker}
+
+	contract.ActionPolicy.AllowedActionClasses = actionClassesAllowedByPolicy(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.InvalidActionClasses)
+	contract.RuntimeCall.ExpressibleActionClasses = actionClassesAllowedByPolicy(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.InvalidActionClasses)
+
+	assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, []string{actionSubmitPlan})
+	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan})
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
 }
 
 func TestDeriveTurnPhaseContractMalformedSubmitPlanRecoveryUsesTextualOutput(t *testing.T) {

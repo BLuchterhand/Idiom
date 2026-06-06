@@ -871,6 +871,20 @@ func TestDecodeToolRequestJSONRepairsStringifiedEmptyStructuredArrays(t *testing
 	}
 }
 
+func TestDecodeToolRequestJSONRepairsObjectEvidenceForSubmitPlan(t *testing.T) {
+	payload := []byte(`{"tool":"submit_plan","rationale":"plan","evidence":{"native/tests/test_quality_inventory_bindings.cpp":"read lines 1-180"},"edits":[{"path":"native/tests/test_quality_inventory_bindings.cpp","old_text":"old","new_text":"new","purpose":"replace test expectation"}]}`)
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should tolerate object evidence metadata: %v", err)
+	}
+	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
+		t.Fatalf("unexpected repaired submit_plan request: %#v", req)
+	}
+	if len(req.Evidence) != 1 || !strings.Contains(req.Evidence[0], "native/tests/test_quality_inventory_bindings.cpp") {
+		t.Fatalf("object evidence should be preserved as compact evidence text, got %#v", req.Evidence)
+	}
+}
+
 func TestDecodeToolRequestJSONRejectsMalformedStringifiedSubmitPlanEdits(t *testing.T) {
 	payload, err := json.Marshal(map[string]any{
 		"rationale": "plan",

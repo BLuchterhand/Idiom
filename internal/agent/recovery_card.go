@@ -81,7 +81,7 @@ func BuildRecoveryCard(input RecoveryCardInput) RecoveryCard {
 		CallableActionClasses:       recoveryCardCallableActionClasses(contract, input.CurrentAllowedTools),
 		TerminalOutcomes:            recoveryCardTerminalOutcomes(contract),
 		DeterministicSafeNextAction: deterministicSafeNextAction,
-		ExactBlockerShape:           firstRecoveryCardString(input.ExactBlockerShape, recoveryCardBlockerShape(contract)),
+		ExactBlockerShape:           recoveryCardExactBlockerShape(input.ExactBlockerShape, contract),
 	})
 }
 
@@ -157,7 +157,7 @@ func (card RecoveryCard) Render() string {
 	writeRecoveryCardLine(&b, "currently callable tools", recoveryCardListLabel(card.CallableTools, "none"))
 	writeRecoveryCardLine(&b, "currently callable action classes", recoveryCardListLabel(card.CallableActionClasses, "none"))
 	writeRecoveryCardLine(&b, "deterministic safe next action", recoveryCardOptionalLabel(card.DeterministicSafeNextAction, "none available"))
-	writeRecoveryCardLine(&b, "exact blocker shape", recoveryCardOptionalLabel(card.ExactBlockerShape, "<<QUESTION>>: State the exact unsupported claim and the concrete evidence source that is unavailable or failed."))
+	writeRecoveryCardLine(&b, "exact blocker shape", recoveryCardOptionalLabel(card.ExactBlockerShape, "none available"))
 	return strings.TrimRight(b.String(), "\n")
 }
 
@@ -337,6 +337,9 @@ func recoveryCardInvariantText(invariantID string, contract TurnPhaseContract) s
 	case "completion.phase_contract":
 		return "Completion must satisfy the active phase contract before a final answer is accepted."
 	case "parser.submit_plan_required":
+		if !recoveryCardBlockerAllowed(contract) {
+			return "The active phase requires one parser-readable submit_plan action that satisfies the current phase contract."
+		}
 		return "The active phase requires one parser-readable submit_plan action or a supported terminal blocker."
 	case "surface.current_phase_tools":
 		return "Only the tools and action classes exposed by the current phase contract are callable."
@@ -549,11 +552,12 @@ func recoveryCardCallableActionClasses(contract TurnPhaseContract, currentAllowe
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
 	)
+	contractClasses = actionClassesAllowedByPolicy(contractClasses, contract.ActionPolicy.InvalidActionClasses)
 	toolClasses := recoveryCardCallableActionClassesForTools(recoveryCardCallableTools(contract, currentAllowedTools), contractClasses)
 	if len(toolClasses) == 0 {
 		return contractClasses
 	}
-	return mergeRecoveryCardStrings(toolClasses, contractClasses)
+	return actionClassesAllowedByPolicy(mergeRecoveryCardStrings(toolClasses, contractClasses), contract.ActionPolicy.InvalidActionClasses)
 }
 
 func recoveryCardTerminalOutcomes(contract TurnPhaseContract) []string {
@@ -598,6 +602,9 @@ func recoveryCardCallableActionClassesForTools(tools []string, contractClasses [
 }
 
 func recoveryCardBlockerShape(contract TurnPhaseContract) string {
+	if !recoveryCardBlockerAllowed(contract) {
+		return ""
+	}
 	classes := firstNonEmptyRecoveryCardStrings(
 		contract.RuntimeCall.ExpressibleActionClasses,
 		contract.ActionPolicy.AllowedActionClasses,
@@ -613,6 +620,33 @@ func recoveryCardBlockerShape(contract TurnPhaseContract) string {
 		}
 	}
 	return "<<QUESTION>>: State the exact unsupported claim and the concrete evidence source that is unavailable or failed."
+}
+
+func recoveryCardExactBlockerShape(shape string, contract TurnPhaseContract) string {
+	if !recoveryCardBlockerAllowed(contract) {
+		return ""
+	}
+	return firstRecoveryCardString(shape, recoveryCardBlockerShape(contract))
+}
+
+func recoveryCardBlockerAllowed(contract TurnPhaseContract) bool {
+	if slicesContainRecoveryCardString(contract.ActionPolicy.InvalidActionClasses, actionBlocker) {
+		return false
+	}
+	classes := firstNonEmptyRecoveryCardStrings(
+		contract.RuntimeCall.ExpressibleActionClasses,
+		contract.ActionPolicy.AllowedActionClasses,
+	)
+	classes = actionClassesAllowedByPolicy(classes, contract.ActionPolicy.InvalidActionClasses)
+	if slicesContainRecoveryCardString(classes, actionBlocker) {
+		return true
+	}
+	for _, outcome := range recoveryCardTerminalOutcomes(contract) {
+		if strings.Contains(outcome, "<<QUESTION>>") {
+			return true
+		}
+	}
+	return false
 }
 
 func recoveryCardEvidenceRefsFromContract(contract TurnPhaseContract) []string {

@@ -280,10 +280,34 @@ func deriveTurnPhaseContract(input TurnPhaseContractInput) TurnPhaseContract {
 	contract.Constraints = uniquePhaseStrings(contract.Constraints)
 	contract.ActionPolicy.AllowedActionClasses = uniquePhaseStrings(contract.ActionPolicy.AllowedActionClasses)
 	contract.ActionPolicy.InvalidActionClasses = uniquePhaseStrings(contract.ActionPolicy.InvalidActionClasses)
+	contract.ActionPolicy.AllowedActionClasses = actionClassesAllowedByPolicy(contract.ActionPolicy.AllowedActionClasses, contract.ActionPolicy.InvalidActionClasses)
 	contract.ActionPolicy.TerminalResponseShapes = uniquePhaseStrings(contract.ActionPolicy.TerminalResponseShapes)
 	contract.ActionPolicy.CallableToolNames = uniquePhaseStrings(contract.ActionPolicy.CallableToolNames)
 	contract.RuntimeCall.ExpressibleActionClasses = uniquePhaseStrings(contract.RuntimeCall.ExpressibleActionClasses)
+	contract.RuntimeCall.ExpressibleActionClasses = actionClassesAllowedByPolicy(contract.RuntimeCall.ExpressibleActionClasses, contract.ActionPolicy.InvalidActionClasses)
 	return contract
+}
+
+func actionClassesAllowedByPolicy(allowed []string, invalid []string) []string {
+	invalidSet := make(map[string]struct{}, len(invalid))
+	for _, value := range invalid {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			invalidSet[value] = struct{}{}
+		}
+	}
+	out := make([]string, 0, len(allowed))
+	for _, value := range allowed {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, blocked := invalidSet[value]; blocked {
+			continue
+		}
+		out = append(out, value)
+	}
+	return uniquePhaseStrings(out)
 }
 
 func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {

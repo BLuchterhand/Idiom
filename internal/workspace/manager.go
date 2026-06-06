@@ -1600,6 +1600,7 @@ func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
 			repairMalformedToolNameObjectPayload,
 			repairRawJSONControlChars,
 			repairStringifiedJSONToolFields,
+			repairObjectEvidenceToolField,
 			repairSingletonArrayToolFields,
 			repairStringArrayToolFields,
 			repairNumericStringToolFields,
@@ -1702,6 +1703,27 @@ func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {
 	if !repaired {
 		return nil, false
 	}
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func repairObjectEvidenceToolField(payload []byte) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false
+	}
+	raw, ok := obj["evidence"]
+	if !ok || len(bytes.TrimSpace(raw)) == 0 || bytes.TrimSpace(raw)[0] != '{' {
+		return nil, false
+	}
+	encoded, err := json.Marshal([]string{string(bytes.TrimSpace(raw))})
+	if err != nil {
+		return nil, false
+	}
+	obj["evidence"] = encoded
 	out, err := json.Marshal(obj)
 	if err != nil {
 		return nil, false

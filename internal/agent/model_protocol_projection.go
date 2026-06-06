@@ -69,6 +69,8 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 	if !phaseSpecified && len(callableTools) == 0 {
 		callableTools = append([]string(nil), allowedTools...)
 	}
+	callableActionClasses := actionClassesAllowedByPolicy(phase.ActionPolicy.AllowedActionClasses, phase.ActionPolicy.InvalidActionClasses)
+	invalidActionClasses := uniquePhaseStrings(phase.ActionPolicy.InvalidActionClasses)
 	return contractcompile.PlanExecutePlannerInput{
 		ParentID:             strings.TrimSpace(parentID),
 		Lane:                 util.FirstNonEmpty(strings.TrimSpace(brief.Lane), contractcompile.DefaultPlanExecuteLane),
@@ -129,8 +131,8 @@ func runnerPlanExecutePlannerInput(brief workerruntime.WorkerRuntimeBrief, resul
 			VisibleTools:           visibleTools,
 			CallableTools:          callableTools,
 			CallableToolsSpecified: true,
-			CallableActionClasses:  append([]string(nil), phase.ActionPolicy.AllowedActionClasses...),
-			InvalidActionClasses:   append([]string(nil), phase.ActionPolicy.InvalidActionClasses...),
+			CallableActionClasses:  callableActionClasses,
+			InvalidActionClasses:   invalidActionClasses,
 			TerminalResponseShapes: append([]string(nil), phase.ActionPolicy.TerminalResponseShapes...),
 			StructuredSchemaNames:  modelProtocolStructuredSchemas(phase),
 			MalformedOutputPolicy:  "retry_same_protocol_hash",

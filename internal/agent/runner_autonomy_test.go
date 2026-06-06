@@ -631,6 +631,50 @@ func TestPlanExecuteHistoryPendingModelProtocolUsesCanonicalReadAction(t *testin
 	}
 }
 
+func TestPlanExecuteModelProtocolDropsContradictoryCallableActionClasses(t *testing.T) {
+	runner := &Runner{}
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "plan-execute",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "submit_plan",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go"},
+		AllowedTools:      []string{"submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `a.go`.",
+		},
+	}
+	phase := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+		ResponseFormat:    "json",
+	})
+	phase.ActionPolicy.AllowedActionClasses = []string{actionSubmitPlan, actionBlocker}
+	phase.ActionPolicy.InvalidActionClasses = uniquePhaseStrings(append(phase.ActionPolicy.InvalidActionClasses, actionBlocker))
+
+	protocol, ok := runner.compileModelProtocolProjection(brief, results, phase, RunPolicy{}, true)
+	if !ok {
+		t.Fatal("contradictory phase action classes should be sanitized before model protocol compile")
+	}
+	if slices.Contains(protocol.CallableActionClasses, actionBlocker) {
+		t.Fatalf("invalid blocker action must not remain callable in submit-correction protocol: %#v", protocol.CallableActionClasses)
+	}
+	if !slices.Contains(protocol.CallableActionClasses, actionSubmitPlan) {
+		t.Fatalf("submit_plan must remain callable: %#v", protocol.CallableActionClasses)
+	}
+	if !slices.Contains(protocol.InvalidActionClasses, actionBlocker) {
+		t.Fatalf("blocker must remain invalid for submit-correction: %#v", protocol.InvalidActionClasses)
+	}
+}
+
 func TestPlanExecuteRequiredSourceModelProtocolDoesNotLeakSubmitPlan(t *testing.T) {
 	runner := &Runner{}
 	brief := workerruntime.WorkerRuntimeBrief{
