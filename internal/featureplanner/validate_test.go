@@ -860,6 +860,36 @@ func assertRejectedPlanExecuteCompletion(t *testing.T, state FeatureState, atom 
 	}
 }
 
+func TestRunReconcilesActiveRunsBeforeResumeActiveRun(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "resume",
+		MaxPlanningIterations: 3,
+		ReconcileActiveRuns: func(state *FeatureState) []Event {
+			return ApplyImplementorOutput(state, &state.Atoms[0], `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: target.txt source evidence unavailable","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
+		},
+	}, func(_ string, taskFamily string) (string, error) {
+		t.Fatalf("runner should not be called after active-run reconciliation, taskFamily=%s", taskFamily)
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStateRecoveryOpen {
+		t.Fatalf("feature state = %q, want recovery-open", result.State.Status)
+	}
+	if len(result.State.ActiveRuns) != 0 {
+		t.Fatalf("active run should be folded by reconciliation: %+v", result.State.ActiveRuns)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.plan_execute_completion_rejected" {
+		t.Fatalf("expected reconciled terminal event, got %+v", result.Events)
+	}
+	if !containsString(result.State.Continuation.BlockedAtoms, atom.ID) {
+		t.Fatalf("atom should be blocked after reconciliation: %+v", result.State.Continuation)
+	}
+}
+
 func TestRunResumesDispatchingStateWithoutReplacingPlan(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	events := ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())

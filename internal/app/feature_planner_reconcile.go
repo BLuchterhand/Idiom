@@ -160,10 +160,10 @@ func parsePlanExecuteProgressTime(value string) time.Time {
 
 func encodePlanExecuteProgressCompletion(progress planexecute.ProgressState, progressPath string) string {
 	fields := map[string]any{
-		"tool":             featureplanner.ToolPlanExecuteComplete,
-		"lane_family":      "plan-execute",
-		"status":           strings.TrimSpace(progress.Status),
-		"phase":            strings.TrimSpace(progress.Phase),
+		"tool":              featureplanner.ToolPlanExecuteComplete,
+		"lane_family":       "plan-execute",
+		"status":            strings.TrimSpace(progress.Status),
+		"phase":             strings.TrimSpace(progress.Phase),
 		"completion_source": "durable_plan_execute_progress",
 		"progress_path":     strings.TrimSpace(progressPath),
 	}

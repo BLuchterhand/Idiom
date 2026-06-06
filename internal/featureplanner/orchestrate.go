@@ -42,6 +42,9 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	}
 	if opts.ReconcileActiveRuns != nil && len(state.ActiveRuns) > 0 {
 		events = append(events, opts.ReconcileActiveRuns(&state)...)
+		if state.Status != FeatureStateDispatching {
+			return RunResult{State: state, Events: events}, nil
+		}
 	}
 	if len(state.ActiveRuns) > 0 {
 		return RunResult{
