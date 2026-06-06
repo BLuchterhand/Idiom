@@ -463,17 +463,17 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 	contract.Phase = "anchor_refresh"
 	contract.DerivationReason = "rejected_submit_plan_needs_source_refresh"
 	contract.AllowedTools = filterPhaseTools(baseTools, planThenExecuteAnchorRefreshToolNames()...)
-	contract.RequiredNext = []string{"bounded source-body refresh for the stale or missing anchor, or <<QUESTION>> with the exact blocker"}
+	contract.RequiredNext = []string{"bounded source-body refresh for the stale or missing anchor, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
-	contract.TerminalOutcomes = []string{"<<QUESTION>>:"}
+	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
 	contract.ActionPolicy = TurnActionClassPolicy{
-		AllowedActionClasses:   []string{actionRead, actionBlocker},
+		AllowedActionClasses:   []string{actionRead, actionSourceSatisfied, actionBlocker},
 		InvalidActionClasses:   []string{actionSubmitPlan, actionSearch, actionPerEditWrite},
-		TerminalResponseShapes: []string{"<<QUESTION>>:"},
+		TerminalResponseShapes: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
 		CallableToolNames:      contract.AllowedTools,
 	}
 	contract.RuntimeCall.ParserContract = firstPhaseString(input.ParserContract, "source_refresh")
-	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionBlocker}
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 }
 
 func applyReviewRepairTerminal(contract *TurnPhaseContract, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {

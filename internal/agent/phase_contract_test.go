@@ -428,7 +428,11 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+	assertContains(t, contract.TerminalOutcomes, "Decision: source-satisfied")
+	assertContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
+	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied)
 	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
 }
 
