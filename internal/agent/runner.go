@@ -2307,6 +2307,7 @@ func (r *Runner) Run(
 				rebuildTools()
 				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
 				syncPlanThenExecuteRecoveryAllowedTools()
+				r.refreshPlanThenExecuteTerminalToolSurface(&turnMessages, collectedResults, "corrected_submit_plan_required")
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: errorText})
 				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_required", Content: errorText})
 			}

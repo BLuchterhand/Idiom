@@ -12387,6 +12387,70 @@ func TestPlanExecuteRecoveryForcesSubmitPlanOnlyAfterRejectedPlan(t *testing.T) 
 	}
 }
 
+func TestPlanExecuteRejectedPlanRefreshThenExtraReadStillAcceptsCorrectedPlan(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte("before\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt"}`,
+		`{"tool":"read_file","path":"b.txt"}`,
+		`{"tool":"submit_plan","rationale":"Update only one path so the guard rejects missing required edit coverage.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after a\n","purpose":"replace a fixture"}]}`,
+		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
+		`{"tool":"submit_plan","rationale":"Correct the rejected stale anchor and cover every required path.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after a\n","purpose":"replace a fixture"},{"path":"b.txt","old_text":"before\n","new_text":"after b\n","purpose":"replace b fixture"}]}`,
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 10, MaxNoProgressTurns: 10},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected corrected submit_plan after rejected post-refresh read, got %d request(s)", requests)
+	}
+	if !strings.Contains(answer, "Plan submitted with 2 edit") {
+		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
+	}
+}
+
 func TestPlanExecutePartialNoopSubmitPlanFallsThroughToCorrection(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{"a.txt", "b.txt"} {
