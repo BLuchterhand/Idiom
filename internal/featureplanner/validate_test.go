@@ -291,8 +291,9 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 	prompt := BuildImplementorPrompt(FeatureAtomState{FeatureAtomPlan: plan.Atoms[0]}, plan)
 
 	for _, want := range []string{
-		`question_for_planner`,
-		`Decision: source-satisfied`,
+		`This atom brief is consumed by plan-execute`,
+		`Plan-execute owns the terminal response protocol`,
+		`do not emit feature-planner completion JSON`,
 		`Do not claim files were edited or tests were run`,
 		`unsupported edit/test claims are rejected as recovery-open`,
 		`Requested verification commands for executor phase:`,
@@ -302,6 +303,14 @@ func TestBuildImplementorPromptRejectsUnsupportedEditTestClaims(t *testing.T) {
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("implementor prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, stale := range []string{
+		`"tool":"question_for_planner"`,
+		`You may answer with JSON`,
+	} {
+		if strings.Contains(prompt, stale) {
+			t.Fatalf("implementor prompt retained feature-planner terminal surface %q:\n%s", stale, prompt)
 		}
 	}
 }

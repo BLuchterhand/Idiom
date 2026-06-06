@@ -351,7 +351,7 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	body, _ := json.MarshalIndent(atom.FeatureAtomPlan, "", "  ")
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement one feature atom from feature plan %q.\n", plan.Summary)
-	b.WriteString("You may answer with JSON {\"tool\":\"question_for_planner\",...} when blocked, or with Decision: source-satisfied when no edit is required.\n")
+	b.WriteString("This atom brief is consumed by plan-execute. Plan-execute owns the terminal response protocol; do not emit feature-planner completion JSON from inside the atom brief.\n")
 	b.WriteString("Do not claim files were edited or tests were run unless those effects were produced by tool-backed execution visible to the harness; unsupported edit/test claims are rejected as recovery-open.\n")
 	b.WriteString("TDD baseline commands that must exist before execution:\n")
 	for _, command := range atom.TestFirst.Commands {
@@ -652,64 +652,18 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 }
 
 func planExecuteCompletionIsSuccess(completion planExecuteCompletion) (bool, string) {
-	status := canonicalPlanExecuteStatus(completion.Status)
-	if status == "" {
-		return false, "missing required nested plan-execute status"
-	}
-	if completion.FailureKind != "" || completion.FailureReason != "" {
-		return false, "nested plan-execute reported failure details"
-	}
-	if containsBlockingPlanExecuteSignal(status) ||
-		containsBlockingPlanExecuteSignal(completion.Phase) ||
-		containsBlockingPlanExecuteSignal(completion.ReviewStatus) {
-		return false, "nested plan-execute status is not success-shaped"
-	}
-	if status == "skipped" && !completion.ReviewRepairSkipped {
-		return false, "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design"
-	}
-	if canonicalPlanExecuteStatus(completion.ReviewStatus) == "skipped" && !completion.ReviewRepairSkipped {
-		return false, "nested plan-execute skipped review is not explicitly marked by design"
-	}
-	switch status {
-	case "completed", "success", "succeeded", "degraded":
+	decision := PlanExecuteCompletionTerminalDecision(map[string]any{
+		"status":                completion.Status,
+		"phase":                 completion.Phase,
+		"review_status":         completion.ReviewStatus,
+		"failure_kind":          completion.FailureKind,
+		"failure_reason":        completion.FailureReason,
+		"review_repair_skipped": completion.ReviewRepairSkipped,
+	})
+	if decision.Class == PlanExecuteTerminalCompleted {
 		return true, ""
-	case "skipped":
-		return true, ""
-	default:
-		return false, fmt.Sprintf("ambiguous nested plan-execute status %q", completion.Status)
 	}
-}
-
-func canonicalPlanExecuteStatus(status string) string {
-	status = strings.TrimSpace(strings.ToLower(status))
-	status = strings.ReplaceAll(status, "_", "-")
-	switch status {
-	case "complete":
-		return "completed"
-	case "successful":
-		return "success"
-	default:
-		return status
-	}
-}
-
-func containsBlockingPlanExecuteSignal(value string) bool {
-	value = canonicalPlanExecuteStatus(value)
-	for _, signal := range []string{
-		"failed",
-		"failure",
-		"model-error",
-		"review-model-error",
-		"recovery-open",
-		"blocked",
-		"blocker",
-		"running",
-	} {
-		if strings.Contains(value, signal) {
-			return true
-		}
-	}
-	return false
+	return false, decision.Reason
 }
 
 func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion) []Event {

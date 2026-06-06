@@ -14,6 +14,7 @@ import (
 	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/config"
 	"idiom/internal/lanehistory"
+	"idiom/internal/planexecute"
 	"idiom/internal/readiness"
 	"idiom/internal/telemetry"
 	"idiom/internal/writerroute"
@@ -99,7 +100,7 @@ func cliWriterRouteRoleAliases(projectRoot string, profileName string) map[strin
 }
 
 func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
-	return planexecutecmd.UniqueRequiredPaths(requiredEditPaths)
+	return planexecute.PlanExecuteUniqueRequiredPaths(requiredEditPaths)
 }
 
 func newPlanExecuteSessionID() string {

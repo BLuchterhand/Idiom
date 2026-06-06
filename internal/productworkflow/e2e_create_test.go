@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -365,7 +366,7 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	if len(atom.TDDObligations) != 1 || atom.TDDObligations[0] != "TDD-001" {
 		t.Errorf("atom TDD obligations: %v", atom.TDDObligations)
 	}
-	if len(atom.RequiredEditPaths) != 1 || atom.RequiredEditPaths[0] != "internal/auth/login.go" {
+	if !slices.Equal(atom.RequiredEditPaths, []string{"internal/auth/login.go", "internal/auth/login_test.go"}) {
 		t.Errorf("required_edit_paths: %v", atom.RequiredEditPaths)
 	}
 

@@ -77,20 +77,87 @@ const (
 	PlanExecuteTerminalBlocked   PlanExecuteTerminalClass = "blocked"
 )
 
+type PlanExecuteCompletionDecision struct {
+	Class  PlanExecuteTerminalClass
+	Reason string
+}
+
 func PlanExecuteCompletionTerminalClass(fields map[string]any) PlanExecuteTerminalClass {
-	if CompletionFieldString(fields, "failure_kind") != "" || CompletionFieldString(fields, "failure_reason") != "" {
-		return PlanExecuteTerminalBlocked
+	return PlanExecuteCompletionTerminalDecision(fields).Class
+}
+
+func PlanExecuteCompletionTerminalDecision(fields map[string]any) PlanExecuteCompletionDecision {
+	status := canonicalPlanExecuteCompletionStatus(CompletionFieldString(fields, "status"))
+	if status == "" {
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "missing required nested plan-execute status"}
 	}
-	status := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(CompletionFieldString(fields, "status")), "_", "-"))
+	if CompletionFieldString(fields, "failure_kind") != "" || CompletionFieldString(fields, "failure_reason") != "" {
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute reported failure details"}
+	}
+	if containsBlockingPlanExecuteCompletionSignal(status) ||
+		containsBlockingPlanExecuteCompletionSignal(CompletionFieldString(fields, "phase")) ||
+		containsBlockingPlanExecuteCompletionSignal(CompletionFieldString(fields, "review_status")) {
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute status is not success-shaped"}
+	}
+	if status == "skipped" && !completionFieldBool(fields, "review_repair_skipped") {
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design"}
+	}
+	if canonicalPlanExecuteCompletionStatus(CompletionFieldString(fields, "review_status")) == "skipped" && !completionFieldBool(fields, "review_repair_skipped") {
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute skipped review is not explicitly marked by design"}
+	}
 	switch status {
-	case "complete", "completed", "success", "successful", "succeeded", "degraded":
-		return PlanExecuteTerminalCompleted
-	case "skipped":
-		if fields["review_repair_skipped"] == true {
-			return PlanExecuteTerminalCompleted
+	case "completed", "success", "succeeded", "degraded", "skipped":
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalCompleted}
+	default:
+		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: fmt.Sprintf("ambiguous nested plan-execute status %q", CompletionFieldString(fields, "status"))}
+	}
+}
+
+func canonicalPlanExecuteCompletionStatus(status string) string {
+	status = strings.TrimSpace(strings.ToLower(status))
+	status = strings.ReplaceAll(status, "_", "-")
+	switch status {
+	case "complete":
+		return "completed"
+	case "successful":
+		return "success"
+	default:
+		return status
+	}
+}
+
+func containsBlockingPlanExecuteCompletionSignal(value string) bool {
+	value = canonicalPlanExecuteCompletionStatus(value)
+	for _, signal := range []string{
+		"failed",
+		"failure",
+		"model-error",
+		"review-model-error",
+		"recovery-open",
+		"blocked",
+		"blocker",
+		"running",
+	} {
+		if strings.Contains(value, signal) {
+			return true
 		}
 	}
-	return PlanExecuteTerminalBlocked
+	return false
+}
+
+func completionFieldBool(fields map[string]any, key string) bool {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return false
+	}
+	switch typed := value.(type) {
+	case bool:
+		return typed
+	case string:
+		return strings.EqualFold(strings.TrimSpace(typed), "true")
+	default:
+		return strings.EqualFold(strings.TrimSpace(fmt.Sprint(value)), "true")
+	}
 }
 
 func planExecuteCompletionRecordRelevant(recordType string, role string, content string, stopReason string) bool {

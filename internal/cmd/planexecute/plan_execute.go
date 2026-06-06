@@ -67,21 +67,6 @@ func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 	}
 }
 
-func runPlanExecuteResumeReviewRepair(
-	cfg config.Config,
-	opts planExecuteOptions,
-	_ string,
-	_ []string,
-	_ planexecute.ProgressState,
-	_ string,
-	stdout io.Writer,
-	stderr io.Writer,
-	promptRun cmdruntime.PromptRunner,
-	rec *telemetry.Recorder,
-) int {
-	return planexecute.Run(cfg, opts, adaptPromptRunner(promptRun), rec, stdout, stderr).ExitCode
-}
-
 func toSharedReviewRepairBaseline(baseline reviewRepairBaseline) planexecute.ReviewRepairBaseline {
 	return baseline
 }
@@ -300,21 +285,6 @@ func planExecuteExactPlanEditsForWorkspace(prompt string, requiredEditPaths []st
 
 func planExecuteUniqueRequiredPaths(requiredEditPaths []string) []string {
 	return planexecute.PlanExecuteUniqueRequiredPaths(requiredEditPaths)
-}
-
-func UniqueRequiredPaths(requiredEditPaths []string) []string {
-	return planExecuteUniqueRequiredPaths(requiredEditPaths)
-}
-
-// planExecuteAcquireQueueSlot delegates to the shared plan-execute queue
-// admission helper so the CLI and TUI in-process paths keep the same
-// best-effort gate behavior.
-func planExecuteAcquireQueueSlot(cfg config.Config, opts planExecuteOptions, sessionID string, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) func() {
-	return planexecute.AcquireQueueSlot(cfg, planexecute.QueueAcquireOptions{
-		JSONEvents: opts.JSONEvents,
-		Resume:     opts.Resume,
-		SessionID:  sessionID,
-	}, rec, stdout, stderr)
 }
 
 // newPlanExecuteSessionID returns a fresh, unguessable session
