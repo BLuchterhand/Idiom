@@ -372,10 +372,58 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 		b.WriteString(strings.TrimSpace(atom.Prompt))
 		b.WriteString("\n")
 	}
+	if scope := strings.TrimSpace(buildFeaturePlannerAtomScopeSection(atom.RequiredEditPaths, atom.AllowedEditPaths)); scope != "" {
+		b.WriteString("\nCanonical plan-execute edit scope:\n")
+		b.WriteString(scope)
+		b.WriteString("\n")
+	}
 	b.WriteString("\nAtom contract:\n")
 	b.Write(body)
 	b.WriteString("\n")
 	return b.String()
+}
+
+func buildFeaturePlannerAtomScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
+	required := normalizeEditScopeList(requiredEditPaths)
+	allowed := featurePlannerAllowedScopeExcludingRequired(normalizeEditScopeList(allowedEditPaths), required)
+	if len(required) == 0 && len(allowed) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	if len(required) > 0 {
+		b.WriteString("## Files to Modify\n\n")
+		b.WriteString("required_edit_paths:\n")
+		for _, path := range required {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	if len(allowed) > 0 {
+		if b.Len() > 0 {
+			b.WriteByte('\n')
+		}
+		b.WriteString("## Candidate Edit Scope From Target References\n\n")
+		b.WriteString("allowed_edit_paths:\n")
+		for _, path := range allowed {
+			b.WriteString("- ")
+			b.WriteString(path)
+			b.WriteByte('\n')
+		}
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func featurePlannerAllowedScopeExcludingRequired(paths []string, required []string) []string {
+	requiredSet := normalizedStringSet(required)
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if requiredSet[path] {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw string) []Event {

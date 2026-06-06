@@ -94,6 +94,11 @@ func TestTextualWriteGatePlanExecutePointsAtSubmitPlan(t *testing.T) {
 	if strings.Contains(got.Error, "`path`, `old_text`, `new_text`") {
 		t.Fatalf("plan-execute gate must not point at per-edit write JSON: %q", got.Error)
 	}
+	for _, forbidden := range []string{"Decision: source-satisfied", "<<QUESTION>>"} {
+		if strings.Contains(got.Error, forbidden) {
+			t.Fatalf("plan-execute gate advertised stale terminal exit %q: %q", forbidden, got.Error)
+		}
+	}
 }
 
 func TestTextualWriteGateReadOnlyKeepsGenericToolMarkupRejection(t *testing.T) {

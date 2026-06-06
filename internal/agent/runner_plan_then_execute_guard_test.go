@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sort"
 	"slices"
 	"strconv"
 	"strings"
@@ -213,6 +214,11 @@ func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsMissingRequiredPath(t *tes
 	}
 	if !strings.Contains(got.Result.Error, "corrected plan") {
 		t.Fatalf("rejection should be recoverable, got %q", got.Result.Error)
+	}
+	for _, forbidden := range []string{"Decision: source-satisfied", "<<QUESTION>>"} {
+		if strings.Contains(got.Result.Error, forbidden) {
+			t.Fatalf("coverage rejection advertised stale terminal exit %q: %q", forbidden, got.Result.Error)
+		}
 	}
 }
 
@@ -1421,6 +1427,18 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 	if !strings.Contains(errorText, "No further read/search/discovery action is currently allowed") {
 		t.Fatalf("second anchor refresh should clearly require corrected submit_plan, got %q", errorText)
 	}
+	for _, forbidden := range []string{
+		"report a path-specific blocker",
+		"answer `<<QUESTION>>:`",
+		"Only use `<<QUESTION>>:`",
+	} {
+		if strings.Contains(errorText, forbidden) {
+			t.Fatalf("submit-correction refresh note must not reopen blocker/question exit %q, got %q", forbidden, errorText)
+		}
+	}
+	if strings.Contains(errorText, "Do not answer <<QUESTION>>") && !strings.Contains(errorText, "submit corrected edits now") {
+		t.Fatalf("submit-correction refresh note must not reopen blocker/question exits, got %q", errorText)
+	}
 }
 
 func TestPlanThenExecutePostReadinessRecoverySkipsMissingPlanPathRefreshWithSourceBodyEvidence(t *testing.T) {
@@ -1566,8 +1584,13 @@ func TestPlanThenExecutePlannerToolGuardRejectsShellAndVerification(t *testing.T
 		if !got.Intercepted {
 			t.Fatalf("planner phase must reject %q, got %#v", tool, got)
 		}
-		if !strings.Contains(got.Result.Error, "source-satisfied") {
-			t.Fatalf("rejection should name the source-satisfied closeout, got %q", got.Result.Error)
+		if !strings.Contains(got.Result.Error, "current planner terminal contract") || !strings.Contains(got.Result.Error, "submit_plan") {
+			t.Fatalf("rejection should point at the active planner contract, got %q", got.Result.Error)
+		}
+		for _, forbidden := range []string{"Decision: source-satisfied", "<<QUESTION>>"} {
+			if strings.Contains(got.Result.Error, forbidden) {
+				t.Fatalf("planner tool rejection advertised stale terminal exit %q: %q", forbidden, got.Result.Error)
+			}
 		}
 	}
 }
@@ -4471,6 +4494,56 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejection(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSubmitCorrectionSubmitPlanOnlySurfaceRejectsStaleExits(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "a_test.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-20 (total lines: 20)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 a_test.go lines 1-20 (total lines: 20)", Output: "1:package a\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `a_test.go`.",
+		},
+	}
+
+	summary, errorText, prompt, reject := runner.planThenExecuteSubmitPlanOnlySurfaceRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "a_test.go", StartLine: 1, EndLine: 20},
+		results,
+		[]string{"submit_plan"},
+	)
+	if !reject {
+		t.Fatal("submit-correction mode should reject further reads on submit_plan-only surface")
+	}
+	if summary != "Corrected submit_plan required" {
+		t.Fatalf("summary = %q", summary)
+	}
+	joined := errorText + "\n" + prompt
+	for _, want := range []string{
+		"submit-correction mode",
+		"exactly one parser-readable `submit_plan`",
+		"one edit per required path",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("submit-correction submit-plan-only rejection missing %q:\n%s", want, joined)
+		}
+	}
+	for _, forbidden := range []string{
+		"Only use `Decision: source-satisfied`",
+		"Only use `<<QUESTION>>:`",
+		"true terminal exception",
+		"path-specific blocker",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("submit-correction submit-plan-only rejection advertised stale exit %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
 func TestPlanExecuteCandidateReadyTerminalPromptIncludesSubmitSkeleton(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -4494,6 +4567,36 @@ func TestPlanExecuteCandidateReadyTerminalPromptIncludesSubmitSkeleton(t *testin
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("terminal candidate prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionTerminalPromptIsSubmitPlanOnly(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.go`.",
+		},
+	}
+
+	prompt := runner.planThenExecuteSubmitReadyTerminalPrompt("Corrected submit_plan required", results, false)
+	for _, want := range []string{"submit-correction mode", "exactly one parser-readable `submit_plan`", "required edit path: a.go", "required edit path: b.go"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("submit-correction terminal prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"exactly one terminal outcome", "or `<<QUESTION>>:` naming", "source-satisfied citing"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("submit-correction terminal prompt advertised stale exit %q:\n%s", forbidden, prompt)
 		}
 	}
 }
@@ -5930,6 +6033,159 @@ func TestPlanExecuteRejectedMissingSourceGroundingRequiresRefreshForRejectedEdit
 	})
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("successful source read after the rejected plan should close missing-grounding refresh")
+	}
+}
+
+func TestPlanExecuteGroundingCorrectionReadyNudgeIsSubmitPlanOnly(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/productworkflow/tdd.go"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: edit paths lack source grounding",
+		Error: "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `internal/productworkflow/tdd.go`. " +
+			"Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan. " +
+			"If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
+	}
+	results := []workspace.ToolResult{
+		rejected,
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 internal/productworkflow/tdd.go lines 1-50 (total lines: 120)",
+			Output:  "1:package productworkflow\n",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction; state=%+v", state.Mode, state)
+	}
+	if !slices.Equal(state.LastInvalidPaths, []string{"internal/productworkflow/tdd.go"}) {
+		t.Fatalf("last invalid paths = %#v, want grounding path", state.LastInvalidPaths)
+	}
+	nudge := planThenExecuteReadyToSubmitNudge(brief, results)
+	for _, want := range []string{
+		"PLANNER SUBMIT-CORRECTION READY",
+		"exactly one parser-readable `submit_plan`",
+		"missing source-body evidence for `internal/productworkflow/tdd.go`",
+	} {
+		if !strings.Contains(nudge, want) {
+			t.Fatalf("grounding correction nudge missing %q:\n%s", want, nudge)
+		}
+	}
+	for _, forbidden := range []string{
+		"Narrow exceptions only",
+		"Use `Decision: source-satisfied`",
+		"Use `<<QUESTION>>:`",
+		"Read each existing edit path",
+		"If the feature is already present",
+		"if no concrete path can be identified",
+	} {
+		if strings.Contains(nudge, forbidden) {
+			t.Fatalf("grounding correction nudge advertised stale exit %q:\n%s", forbidden, nudge)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitPlanDiagnosticsKeepExtensionlessPathsAndDropProtocolTokens(t *testing.T) {
+	coverageRejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "missing required edit path(s): `.gitignore`, `go.work`; invalid edit anchor(s): `Brewfile: old_text not found in current source`, `Cargo.lock: old_text not found in current source`. Use `Decision: source-satisfied` or `<<QUESTION>>:` only as generic exceptions.",
+	}
+	if got := sortedRunnerPathKeys(submitPlanMissingRequiredPaths(coverageRejected)); !slices.Equal(got, []string{".gitignore", "go.work"}) {
+		t.Fatalf("missing required diagnostics should retain extensionless path, got %#v", got)
+	}
+	if got := sortedRunnerPathKeys(submitPlanInvalidAnchorPaths(coverageRejected)); !slices.Equal(got, []string{"Brewfile", "Cargo.lock"}) {
+		t.Fatalf("invalid anchor diagnostics should retain extensionless path, got %#v", got)
+	}
+
+	groundingRejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: edit paths lack source grounding",
+		Error: "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `.dockerignore`, `Pipfile`, `Rakefile`, `yarn.lock`. " +
+			"Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan. " +
+			"If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
+	}
+	got := sortedRunnerPathKeys(submitPlanMissingSourceGroundingPaths(groundingRejected))
+	if !slices.Equal(got, []string{".dockerignore", "Pipfile", "Rakefile", "yarn.lock"}) {
+		t.Fatalf("grounding diagnostics should retain extensionless paths and drop protocol tokens, got %#v", got)
+	}
+	for _, forbidden := range []string{"Decision", "<<QUESTION>>", "read_file", "code_navigate", "read_symbol", "extract_body"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("grounding diagnostics retained protocol token %q: %#v", forbidden, got)
+		}
+	}
+
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:       PlanThenExecutePlannerTaskFamily,
+		AllowedEditPaths: []string{".gitignore", "Brewfile"},
+	}
+	if got := candidateRecoveryScopePaths(brief, nil, 4); !slices.Equal(got, []string{".gitignore", "Brewfile"}) {
+		t.Fatalf("candidate recovery scope should retain extensionless allowed paths, got %#v", got)
+	}
+	refreshScope := planThenExecuteRefreshScopePathsForRejectedPlan(brief, []workspace.ToolResult{groundingRejected}, submitPlanMissingSourceGroundingPaths(groundingRejected))
+	sort.Strings(refreshScope)
+	if !slices.Equal(refreshScope, []string{".dockerignore", ".gitignore", "Brewfile", "Pipfile", "Rakefile", "yarn.lock"}) {
+		t.Fatalf("rejected-plan refresh scope should retain extensionless diagnostic paths, got %#v", refreshScope)
+	}
+}
+
+func TestPlanExecuteGroundingPostReadinessRejectionSanitizesStaleRecoveryText(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"internal/productworkflow/tdd.go"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: edit paths lack source grounding",
+			Error: "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `internal/productworkflow/tdd.go`. " +
+				"Read each existing edit path with `read_file` or `code_navigate` `read_symbol`/`extract_body`, then submit a corrected plan. " +
+				"If the feature is already present, answer `Decision: source-satisfied` with the observed current-state evidence; if no concrete path can be identified, answer `<<QUESTION>>:` with the exact blocker.",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read Target in internal/productworkflow/tdd.go lines 1-50\n1:package productworkflow\n",
+		},
+	}
+
+	summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "internal/productworkflow/tdd.go",
+		StartLine: 1,
+		EndLine:   50,
+	}, brief, results)
+	if !reject {
+		t.Fatal("extra read after grounding refresh should be rejected")
+	}
+	if summary != "Corrected submit_plan required" {
+		t.Fatalf("summary = %q, want Corrected submit_plan required", summary)
+	}
+	for _, want := range []string{
+		"missing source-body evidence for `internal/productworkflow/tdd.go`",
+		"submit corrected edits now",
+	} {
+		if !strings.Contains(errorText, want) {
+			t.Fatalf("grounding post-readiness rejection missing %q:\n%s", want, errorText)
+		}
+	}
+	for _, forbidden := range []string{
+		"Read each existing edit path",
+		"If the feature is already present",
+		"if no concrete path can be identified",
+		"Use `Decision: source-satisfied`",
+		"Use `<<QUESTION>>:`",
+	} {
+		if strings.Contains(errorText, forbidden) {
+			t.Fatalf("grounding post-readiness rejection replayed stale text %q:\n%s", forbidden, errorText)
+		}
 	}
 }
 
@@ -8452,6 +8708,59 @@ func TestPlanExecuteLoopBudgetRecoveryKeepsUnreadCandidateReadsAvailable(t *test
 	}
 }
 
+func TestPlanExecuteSubmitCorrectionLoopBudgetRecoveryIsSubmitPlanOnly(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.go`.",
+		},
+	}
+
+	recovery, ok := runner.planThenExecuteLoopBudgetRecoveryPrompt(
+		workspace.ToolRequest{Tool: "read_file", Path: "b.go"},
+		results,
+		"read_file repeated after submit_plan coverage rejection",
+		false,
+	)
+	if !ok {
+		t.Fatal("expected submit-correction loop-budget recovery")
+	}
+	if !recovery.TerminalOnly {
+		t.Fatalf("submit-correction loop recovery should force terminal-only surface:\n%s", recovery.Prompt)
+	}
+	for _, want := range []string{
+		"Submit-correction mode is already ready",
+		"exactly one parser-readable `submit_plan`",
+		"required edit path: a.go",
+		"required edit path: b.go",
+	} {
+		if !strings.Contains(recovery.Prompt, want) {
+			t.Fatalf("submit-correction loop recovery missing %q:\n%s", want, recovery.Prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"exactly one terminal outcome",
+		"`Decision: source-satisfied` citing",
+		"`<<QUESTION>>:` naming",
+		"current-state evidence",
+	} {
+		if strings.Contains(recovery.Prompt, forbidden) {
+			t.Fatalf("submit-correction loop recovery advertised stale exit %q:\n%s", forbidden, recovery.Prompt)
+		}
+	}
+}
+
 func TestPlanExecuteIgnoredLoopBudgetRecoveryForcesTerminalPlannerOutcome(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -8492,6 +8801,59 @@ func TestPlanExecuteIgnoredLoopBudgetRecoveryForcesTerminalPlannerOutcome(t *tes
 	} {
 		if !strings.Contains(recovery.Prompt, want) {
 			t.Fatalf("expected recovery prompt to contain %q:\n%s", want, recovery.Prompt)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionIgnoredLoopBudgetRecoveryIsSubmitPlanOnly(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.go`.",
+		},
+	}
+
+	recovery, ok := runner.planThenExecuteIgnoredLoopBudgetRecoveryPrompt(
+		workspace.ToolRequest{Tool: "read_file", Path: "b.go"},
+		results,
+		"read_file repeated after submit_plan coverage rejection",
+		false,
+	)
+	if !ok {
+		t.Fatal("expected ignored submit-correction loop-budget recovery")
+	}
+	if !recovery.TerminalOnly {
+		t.Fatalf("ignored submit-correction loop recovery should force terminal-only surface:\n%s", recovery.Prompt)
+	}
+	for _, want := range []string{
+		"Submit-correction mode is already ready",
+		"exactly one parser-readable `submit_plan`",
+		"required edit path: a.go",
+		"required edit path: b.go",
+	} {
+		if !strings.Contains(recovery.Prompt, want) {
+			t.Fatalf("ignored submit-correction loop recovery missing %q:\n%s", want, recovery.Prompt)
+		}
+	}
+	for _, forbidden := range []string{
+		"exactly one terminal planner outcome",
+		"`Decision: source-satisfied` citing",
+		"`<<QUESTION>>:` naming",
+		"current-state evidence",
+	} {
+		if strings.Contains(recovery.Prompt, forbidden) {
+			t.Fatalf("ignored submit-correction loop recovery advertised stale exit %q:\n%s", forbidden, recovery.Prompt)
 		}
 	}
 }
@@ -10136,6 +10498,80 @@ func TestPlanExecutePlanningStateCorrectionSelectsInvalidArtifactPaths(t *testin
 	}
 	if !strings.Contains(skeleton, "required edit path: a.go") {
 		t.Fatalf("correction skeleton should preserve all required paths:\n%s", skeleton)
+	}
+	if !slices.Equal(state.TerminalResponseShapes, []string{"submit_plan"}) {
+		t.Fatalf("submit correction must expose only submit_plan, got %#v", state.TerminalResponseShapes)
+	}
+	if slices.Contains(state.AllowedActionClasses, actionSourceSatisfied) || slices.Contains(state.AllowedActionClasses, actionBlocker) {
+		t.Fatalf("submit correction should not advertise escape hatches after sufficient source evidence: %#v", state.AllowedActionClasses)
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionRejectsSourceSatisfiedCloseout(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `b.go`.",
+		},
+	}
+	answer := "Decision: source-satisfied\n- a.go: requested final state is already present.\n- b.go: requested final state is already present."
+
+	if !planThenExecuteSubmitCorrectionActive(runner.RuntimeBrief, results) {
+		t.Fatal("expected submit-correction mode")
+	}
+	if runner.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
+		t.Fatal("submit-correction must not accept source-satisfied closeout after a rejected submit_plan")
+	}
+
+	blocker := "<<QUESTION>>: exact blocker: a.go and b.go cannot be updated from the rejected submit_plan evidence."
+	result, rejected := runner.requiredPathCompletionRecoveryRejection(blocker, results)
+	if !rejected {
+		t.Fatal("submit-correction must reject blocker closeout after a rejected submit_plan")
+	}
+	if !strings.Contains(result.Error, "exactly one valid outcome") || !strings.Contains(result.Error, "submit_plan") {
+		t.Fatalf("submit-correction blocker rejection should force submit_plan, got %#v", result)
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `b.go`.",
+		},
+	}
+
+	brief := runner.planThenExecuteTerminalToolBrief(results)
+	if !slices.Contains(brief.ReadinessGate, "submit_plan_correction_required") {
+		t.Fatalf("submit-correction terminal brief missing strict readiness: %#v", brief.ReadinessGate)
+	}
+	joinedNext := strings.Join(brief.RequiredNext, "\n")
+	if !strings.Contains(joinedNext, "corrected submit_plan") {
+		t.Fatalf("submit-correction terminal brief missing strict next action: %#v", brief.RequiredNext)
+	}
+	for _, forbidden := range []string{"submit_plan_or_source_satisfied_or_blocker_reported", "source_satisfied_or_blocker_only_with_per_path_evidence"} {
+		if slices.Contains(brief.ReadinessGate, forbidden) || slices.Contains(brief.FinalCritic, forbidden) {
+			t.Fatalf("submit-correction terminal brief advertised stale exit %q: readiness=%#v final=%#v", forbidden, brief.ReadinessGate, brief.FinalCritic)
+		}
+	}
+	for _, forbidden := range []string{"Decision: source-satisfied with per-path evidence", "submit_plan with one ordered edit entry for every required_edit_paths entry, Decision: source-satisfied"} {
+		if strings.Contains(joinedNext, forbidden) || strings.Contains(strings.Join(brief.InvalidActions, "\n"), "final answer before submit_plan succeeds unless it is a source-satisfied closeout") {
+			t.Fatalf("submit-correction terminal brief retained stale next/invalid guidance %q: next=%#v invalid=%#v", forbidden, brief.RequiredNext, brief.InvalidActions)
+		}
 	}
 }
 
@@ -12694,6 +13130,11 @@ func TestPlanExecuteLargeInsertAfterLineRecoveryNamesLineRangeAlternative(t *tes
 	}
 	if strings.Contains(correction, `"insert_after_line":42`) {
 		t.Fatalf("large insertion recovery should not render generic insertion example:\n%s", correction)
+	}
+	for _, forbidden := range []string{"<<QUESTION>>", "path-specific blocker"} {
+		if strings.Contains(correction, forbidden) {
+			t.Fatalf("large insertion submit-correction prompt advertised stale exit %q:\n%s", forbidden, correction)
+		}
 	}
 	if !strings.Contains(answer, "Plan submitted with 2 edit") {
 		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)

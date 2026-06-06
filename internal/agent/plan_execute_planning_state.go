@@ -215,6 +215,11 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.AllowedActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionRead, actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
 		state.TerminalResponseShapes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+		if state.Mode == PlanExecutePlanningModeSubmitCorrection {
+			state.AllowedActionClasses = []string{actionSubmitPlan}
+			state.InvalidActionClasses = []string{actionRead, actionSearch, actionSourceSatisfied, actionBlocker, actionVerify, actionPerEditWrite, actionGenericProbe, actionProseFinal}
+			state.TerminalResponseShapes = []string{"submit_plan"}
+		}
 		if planExecuteSubmitReadyNativeRequired(transport) {
 			state.PhaseID = turnPhaseSubmitReadyNativeRequired
 			state.Phase = "submit_ready_native"
@@ -361,6 +366,11 @@ func planThenExecuteLastInvalidSubmitPlanPaths(results []workspace.ToolResult) [
 		}
 	}
 	for path := range submitPlanMissingRequiredPaths(rejected) {
+		if normalized := normalizeRunnerPath(path); normalized != "" {
+			pathSet[normalized] = struct{}{}
+		}
+	}
+	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
 		if normalized := normalizeRunnerPath(path); normalized != "" {
 			pathSet[normalized] = struct{}{}
 		}

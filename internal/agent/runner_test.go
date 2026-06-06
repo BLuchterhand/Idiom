@@ -2280,6 +2280,44 @@ func TestPlanExecuteRequiredPathRecoveryNudgeNamesSubmitPlan(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSubmitCorrectionRecoveryNudgeIsSubmitPlanOnly(t *testing.T) {
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/energy.cpp lines 1-10 (total lines: 10)", Output: "1:int x;\n"},
+		{Tool: "read_file", Summary: "Read f2 native/tests/test_energy.cpp lines 1-10 (total lines: 10)", Output: "1:int y;\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `native/tests/test_energy.cpp`.",
+		},
+	}
+	nudge := buildRejectionRecoveryNudge(
+		workspace.ToolRequest{Tool: "read_file", Path: "native/tests/test_energy.cpp"},
+		results,
+		nil,
+		workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{
+				"native/src/energy.cpp",
+				"native/tests/test_energy.cpp",
+			},
+		},
+		"main",
+		false,
+		false,
+	)
+	if !strings.Contains(nudge, "Submit-correction mode has exactly one valid outcome") ||
+		!strings.Contains(nudge, "parser-readable `submit_plan`") {
+		t.Fatalf("expected strict submit-correction recovery nudge, got:\n%s", nudge)
+	}
+	for _, forbidden := range []string{"current-state evidence", "<<QUESTION>> naming"} {
+		if strings.Contains(nudge, forbidden) {
+			t.Fatalf("submit-correction nudge advertised stale exit %q:\n%s", forbidden, nudge)
+		}
+	}
+}
+
 func TestTargetInspectionRecoveryNudgeStaysInsideTarget(t *testing.T) {
 	results := []workspace.ToolResult{
 		{Tool: "go_file_outline", Summary: "Outlined 15 top-level declaration(s) in internal/app/turn_planner.go.", Output: "package app"},

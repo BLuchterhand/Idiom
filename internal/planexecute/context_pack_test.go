@@ -292,6 +292,20 @@ func TestAppendPlanExecuteScopeToBriefBodyMakesAllowedPathsParseable(t *testing.
 	}
 }
 
+func TestAppendPlanExecuteScopeToBriefBodyDoesNotRepeatRequiredAsAllowed(t *testing.T) {
+	got := appendPlanExecuteScopeToBriefBody("Implement it.", []string{"pkg/feature.go", "pkg/feature_test.go"}, []string{"pkg/feature_test.go", "pkg/optional.go"})
+	if strings.Count(got, "pkg/feature_test.go") != 1 {
+		t.Fatalf("required path should appear once in canonical scope:\n%s", got)
+	}
+	allowed := AllowedEditPathsFromPrompt(got)
+	if slices.Contains(allowed, "pkg/feature_test.go") {
+		t.Fatalf("required path must not remain allowed candidate scope: %#v\n%s", allowed, got)
+	}
+	if !slices.Contains(allowed, "pkg/optional.go") {
+		t.Fatalf("optional allowed path missing from prompt: %#v\n%s", allowed, got)
+	}
+}
+
 func TestRenderPromptContextPackSectionOmitsCacheArtifactPath(t *testing.T) {
 	output := `{
   "pack_id": "abc123",

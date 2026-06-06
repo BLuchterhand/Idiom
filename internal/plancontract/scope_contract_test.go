@@ -42,3 +42,15 @@ func TestPlanScopeContractIDTracksNormalizedContent(t *testing.T) {
 		t.Fatalf("contract id should be regenerated from normalized content, got %q original=%q", contract.ContractID, originalID)
 	}
 }
+
+func TestPlanScopeContractRequiredPathsWinOverAllowedCandidates(t *testing.T) {
+	contract := NewPlanScopeContract(
+		[]string{"pkg/required.go", "pkg/test.go"},
+		[]string{"pkg/test.go", "pkg/optional.go"},
+		nil,
+	)
+
+	if want := []string{"pkg/optional.go"}; !slices.Equal(contract.AllowedCandidatePaths, want) {
+		t.Fatalf("allowed candidate paths = %#v, want %#v", contract.AllowedCandidatePaths, want)
+	}
+}

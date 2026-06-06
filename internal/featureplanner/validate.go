@@ -271,7 +271,10 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 		allowed := normalizeEditScopeList(atom.AllowedEditPaths)
 		keptAllowed := make([]string, 0, len(allowed))
 		for _, path := range allowed {
-			if requiredSet[path] || grounding.pathGrounded(path) {
+			if requiredSet[path] {
+				continue
+			}
+			if grounding.pathGrounded(path) {
 				keptAllowed = append(keptAllowed, path)
 			}
 		}

@@ -521,6 +521,38 @@ func TestDeriveTurnPhaseContractSubmitCorrectionAfterAnchorRefresh(t *testing.T)
 	}
 }
 
+func TestDeriveTurnPhaseContractSubmitCorrectionIsSubmitPlanOnly(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan"},
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+		Results: []workspace.ToolResult{
+			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
+			{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)"},
+			{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: required edit path coverage mismatch",
+				Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `b.go`.",
+			},
+		},
+		TextualToolParser: true,
+	})
+
+	if contract.PhaseID != turnPhaseSubmitReadyTextual {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSubmitReadyTextual)
+	}
+	if contract.DerivationReason != "plan_execute_submit_plan_correction" {
+		t.Fatalf("DerivationReason = %q, want plan_execute_submit_plan_correction", contract.DerivationReason)
+	}
+	assertEqualSet(t, contract.TerminalOutcomes, []string{"submit_plan"})
+	assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, []string{actionSubmitPlan})
+	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, []string{"submit_plan"})
+	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSubmitPlan})
+}
+
 func TestDeriveTurnPhaseContractMalformedSubmitPlanRecoveryUsesTextualOutput(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

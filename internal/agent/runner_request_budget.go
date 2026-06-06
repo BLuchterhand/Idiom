@@ -461,11 +461,21 @@ func (s *runnerRequestBudgetState) terminalArtifactRejectedRetryDecision(req wor
 		Handled:      true,
 		EventRole:    "terminal_artifact_retry_recovery",
 		EventContent: fmt.Sprintf("model retried %s after terminal artifact recovery rejected it", tool),
-		Nudge: fmt.Sprintf(
-			"The repeated %s request was already rejected because the current planner phase requires a terminal plan artifact. Do not report that rejected request as a blocker. Emit the currently allowed terminal artifact (`submit_plan`) now, or use `Decision: source-satisfied` / `<<QUESTION>>:` only for a true terminal exception grounded in the evidence already gathered.",
-			tool,
-		),
+		Nudge:        terminalArtifactRejectedRetryNudge(tool, priorSummary),
 	}
+}
+
+func terminalArtifactRejectedRetryNudge(tool string, priorSummary string) string {
+	if strings.TrimSpace(priorSummary) == "Corrected submit_plan required" {
+		return fmt.Sprintf(
+			"The repeated %s request was already rejected because submit-correction mode requires a corrected terminal plan artifact. Emit the currently allowed terminal artifact (`submit_plan`) now. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not report the rejected request as a blocker.",
+			tool,
+		)
+	}
+	return fmt.Sprintf(
+		"The repeated %s request was already rejected because the current planner phase requires a terminal plan artifact. Do not report that rejected request as a blocker. Emit the currently allowed terminal artifact (`submit_plan`) now, or use `Decision: source-satisfied` / `<<QUESTION>>:` only for a true terminal exception grounded in the evidence already gathered.",
+		tool,
+	)
 }
 
 func terminalArtifactRequiredRejectionSummary(summary string) bool {

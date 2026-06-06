@@ -423,6 +423,11 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.RequiredNext = []string{"submit_plan with one ordered edit entry for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"read/search/source-refresh after plan-execute submit_plan readiness", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
+	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
+		contract.RequiredNext = []string{"corrected submit_plan with one ordered edit entry for every required_edit_path and complete executable edit bodies"}
+		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "Decision: source-satisfied after an incomplete submit_plan", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
+		contract.TerminalOutcomes = []string{"submit_plan"}
+	}
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),
 		InvalidActionClasses:   append([]string(nil), state.InvalidActionClasses...),
@@ -432,6 +437,9 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.RuntimeCall.ParserContract = firstPhaseString(contract.RuntimeCall.ParserContract, "submit_plan_json")
 	contract.RuntimeCall.ResponseFormat = firstPhaseString(contract.RuntimeCall.ResponseFormat, "json")
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
+		contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan}
+	}
 	if nativeRequired {
 		contract.PhaseID = turnPhaseSubmitReadyNativeRequired
 		contract.Phase = "submit_ready_native"

@@ -145,6 +145,14 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 		if !strings.Contains(prompt, "Implement one feature atom") || !strings.Contains(prompt, "docs/feature-planner-plan-execute.txt") {
 			t.Fatalf("plan-execute prompt missing atom contract: %s", prompt)
 		}
+		if !strings.Contains(prompt, "Canonical plan-execute edit scope") ||
+			!strings.Contains(prompt, "required_edit_paths:") ||
+			!strings.Contains(prompt, "cmd/idiom/feature_planner_test.go") {
+			t.Fatalf("plan-execute prompt missing normalized canonical scope: %s", prompt)
+		}
+		if strings.Contains(prompt, "allowed_edit_paths:") {
+			t.Fatalf("promoted required paths must not also be emitted as allowed scope: %s", prompt)
+		}
 		body, _ := json.Marshal(map[string]any{
 			"tool":              featureplanner.ToolPlanExecuteComplete,
 			"lane_family":       "plan-execute",

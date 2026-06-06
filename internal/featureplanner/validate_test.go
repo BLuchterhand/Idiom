@@ -87,11 +87,13 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 	plan.Atoms[0].AllowedEditPaths = []string{
 		"internal/labels/labels.go",
 		"internal/labels/labels_test.go",
+		"internal/labels/labels_extra.go",
 		"adrs/ADR-draft.md",
 		".planning/campaign-status.md",
 	}
 	brief := validProductWorkflowBrief()
 	brief.AcceptedADRPaths = []string{"adrs/ADR-draft.md"}
+	brief.FilesToModify = append(brief.FilesToModify, "internal/labels/labels_extra.go")
 
 	normalized := NormalizePlanProductWorkflowContext(plan, brief)
 	if err := ValidatePlanProductWorkflowContext(normalized, brief); err != nil {
@@ -103,9 +105,14 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 			t.Fatalf("context-only doc %q leaked into allowed edit scope: %#v", forbidden, allowed)
 		}
 	}
-	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
+	for _, want := range []string{"internal/labels/labels_extra.go"} {
 		if !containsString(allowed, want) {
 			t.Fatalf("grounded allowed edit path %q was not preserved: %#v", want, allowed)
+		}
+	}
+	for _, forbidden := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
+		if containsString(allowed, forbidden) {
+			t.Fatalf("required edit path %q leaked into allowed scope: %#v", forbidden, allowed)
 		}
 	}
 }
@@ -124,6 +131,9 @@ func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *test
 		if !containsString(required, want) {
 			t.Fatalf("required TDD edit path %q missing from required scope: %#v", want, required)
 		}
+	}
+	if containsString(normalized.Atoms[0].AllowedEditPaths, "internal/labels/labels_test.go") {
+		t.Fatalf("promoted TDD edit path must not remain optional allowed scope: %#v", normalized.Atoms[0].AllowedEditPaths)
 	}
 }
 

@@ -27,6 +27,7 @@ func NewPlanScopeContract(requiredCoveragePaths []string, allowedCandidatePaths 
 func (contract PlanScopeContract) Normalized() PlanScopeContract {
 	contract.RequiredCoveragePaths = UniqueScopePaths(contract.RequiredCoveragePaths)
 	contract.AllowedCandidatePaths = UniqueScopePaths(contract.AllowedCandidatePaths)
+	contract.AllowedCandidatePaths = scopePathsExcludingRequired(contract.AllowedCandidatePaths, contract.RequiredCoveragePaths)
 	contract.WriteAllowedPaths = UniqueScopePaths(contract.WriteAllowedPaths)
 	contract.EditSetObligations = contract.EditSetObligations.Normalized()
 	contract.ContractID = ""
@@ -80,6 +81,26 @@ func UniqueScopePaths(paths []string) []string {
 			continue
 		}
 		seen[path] = struct{}{}
+		out = append(out, path)
+	}
+	return out
+}
+
+func scopePathsExcludingRequired(paths []string, required []string) []string {
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, path := range required {
+		if normalized := NormalizeScopePath(path); normalized != "" {
+			requiredSet[normalized] = struct{}{}
+		}
+	}
+	if len(requiredSet) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, ok := requiredSet[path]; ok {
+			continue
+		}
 		out = append(out, path)
 	}
 	return out

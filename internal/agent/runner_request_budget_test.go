@@ -104,6 +104,29 @@ func TestRunnerRequestBudgetDoesNotForceNoToolsForTerminalArtifactRetry(t *testi
 	}
 }
 
+func TestRunnerRequestBudgetSubmitCorrectionRetryDoesNotAdvertiseTerminalExceptions(t *testing.T) {
+	state := newRunnerRequestBudgetState(2)
+	req := workspace.ToolRequest{Tool: "read_file", Path: "README.md"}
+	fingerprint := "read_file|README.md"
+	state.fingerprint.rejected[fingerprint] = "Corrected submit_plan required"
+	state.noteFingerprint(fingerprint)
+	state.noteFingerprint(fingerprint)
+	state.noteFingerprint(fingerprint)
+
+	decision := state.fingerprintDecision(RunPolicy{FingerprintNudgeAt: 2}, req, fingerprint)
+	if !decision.Handled {
+		t.Fatal("expected submit-correction retry to be handled")
+	}
+	if !strings.Contains(decision.Nudge, "submit-correction mode") || !strings.Contains(decision.Nudge, "submit_plan") {
+		t.Fatalf("expected submit-correction nudge, got %#v", decision)
+	}
+	for _, forbidden := range []string{"true terminal exception", "or use `Decision: source-satisfied` / `<<QUESTION>>:`"} {
+		if strings.Contains(decision.Nudge, forbidden) {
+			t.Fatalf("submit-correction retry nudge advertised stale exception %q: %s", forbidden, decision.Nudge)
+		}
+	}
+}
+
 func TestRunnerRequestBudgetEarlyBlocksRepeatedRangeLessReadRetry(t *testing.T) {
 	for _, summary := range []string{
 		"Repeated range-less read_file redirected to bounded source request",

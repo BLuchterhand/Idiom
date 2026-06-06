@@ -294,6 +294,7 @@ func appendPlanExecuteScopeToBriefBody(prompt string, requiredEditPaths []string
 func planExecuteScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
 	required := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	allowed := planExecuteUniqueRequiredPaths(allowedEditPaths)
+	allowed = planExecuteScopePathsExcludingRequired(allowed, required)
 	if len(required) == 0 && len(allowed) == 0 {
 		return ""
 	}
@@ -320,6 +321,26 @@ func planExecuteScopeSection(requiredEditPaths []string, allowedEditPaths []stri
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func planExecuteScopePathsExcludingRequired(paths []string, required []string) []string {
+	requiredSet := make(map[string]struct{}, len(required))
+	for _, path := range required {
+		if path != "" {
+			requiredSet[path] = struct{}{}
+		}
+	}
+	if len(requiredSet) == 0 {
+		return paths
+	}
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if _, ok := requiredSet[path]; ok {
+			continue
+		}
+		out = append(out, path)
+	}
+	return out
 }
 
 func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
