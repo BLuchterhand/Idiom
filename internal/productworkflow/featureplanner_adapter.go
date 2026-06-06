@@ -11,6 +11,7 @@ func FeaturePlannerBriefFromImplementationHandoff(handoff ImplementationHandoff)
 		CoverageTier:              handoff.CoverageTier,
 		CoverageGatePassed:        handoff.CoverageGatePassed,
 		CoverageBlockers:          append([]string(nil), handoff.CoverageBlockers...),
+		CoverageBlockerKinds:      append([]string(nil), handoff.CoverageBlockerKinds...),
 		AcceptedADRIDs:            append([]string(nil), handoff.AcceptedADRIDs...),
 		AcceptedADRPaths:          append([]string(nil), handoff.AcceptedADRPaths...),
 		FilesToModify:             append([]string(nil), handoff.FilesToModify...),

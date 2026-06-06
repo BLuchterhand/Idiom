@@ -15,6 +15,7 @@ type ImplementationHandoff struct {
 	CoverageTier         string
 	CoverageGatePassed   bool
 	CoverageBlockers     []string
+	CoverageBlockerKinds []string
 	PRDRequirements      []ImplementationHandoffPRDRequirement
 	AcceptedADRIDs       []string
 	AcceptedADRPaths     []string
@@ -114,6 +115,7 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		CoverageTier:         coverageTier,
 		CoverageGatePassed:   strings.EqualFold(strings.TrimSpace(input.CoverageEvaluation.Status), "pass"),
 		CoverageBlockers:     coverageBlockerMessages(input.CoverageEvaluation),
+		CoverageBlockerKinds: coverageBlockerKinds(input.CoverageEvaluation),
 		FilesToModify:        append([]string{}, generated.FilesToModify...),
 		ContextEvidencePaths: briefUniqueSortedStrings(input.WorkflowState.Context.ReferencedPaths),
 		RequiredBehavior:     append([]string{}, generated.RequiredBehavior...),
@@ -228,6 +230,16 @@ func coverageBlockerMessages(evaluation CoverageGateEvaluation) []string {
 		messages = append(messages, blocker.Message)
 	}
 	return briefUniqueSortedStrings(messages)
+}
+
+func coverageBlockerKinds(evaluation CoverageGateEvaluation) []string {
+	kinds := make([]string, 0, len(evaluation.Blockers))
+	for _, blocker := range evaluation.Blockers {
+		if kind := strings.TrimSpace(blocker.Kind); kind != "" {
+			kinds = append(kinds, kind)
+		}
+	}
+	return briefUniqueSortedStrings(kinds)
 }
 
 func firstNonEmptyHandoffString(values ...string) string {

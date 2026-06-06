@@ -2,10 +2,12 @@ package productworkflow
 
 import (
 	"encoding/json"
+	"idiom/internal/featureplanner"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildImplementationHandoffUsesGeneratedDispatchSemantics(t *testing.T) {
@@ -70,6 +72,45 @@ func TestBuildImplementationHandoffCarriesCoverageBlockers(t *testing.T) {
 	}
 	if !handoffTestStringSliceContains(handoff.CoverageBlockers, "coverage evidence is missing") {
 		t.Fatalf("expected coverage blocker in handoff, got %#v", handoff.CoverageBlockers)
+	}
+}
+
+func TestBuildImplementationHandoffAllowsPendingTDDEvidenceFeaturePlannerDispatch(t *testing.T) {
+	input := implementationHandoffInput(t.TempDir())
+	input.ImplementationRecords = input.ImplementationRecords[:1]
+	input.CoverageEvaluation = CoverageGateEvaluation{
+		Status:       "blocked",
+		CoverageTier: "unit",
+		Blockers: []CoverageGateBlocker{{
+			Kind:      "coverage_tdd_evidence_missing",
+			Criterion: "tdd_evidence",
+			Message:   "expected all 1 TDD obligations to have verification evidence",
+			File:      "tdd.json",
+		}},
+	}
+
+	handoff := BuildImplementationHandoff(input)
+	if handoff.CoverageGatePassed {
+		t.Fatal("missing TDD evidence should keep the coverage gate status blocked")
+	}
+	if !handoffTestStringSliceContains(handoff.CoverageBlockerKinds, "coverage_tdd_evidence_missing") {
+		t.Fatalf("expected typed coverage blocker kind in handoff, got %#v", handoff.CoverageBlockerKinds)
+	}
+	if handoffTestStringSliceContains(handoff.Blockers, "coverage gate is blocked; run `idiom product tdd --effort-root <path> --evaluate-coverage --json` and resolve blockers") {
+		t.Fatalf("TDD-only pending evidence must not become a generic product blocker: %#v", handoff.Blockers)
+	}
+
+	brief := FeaturePlannerBriefFromImplementationHandoff(handoff)
+	if !brief.AllowsFeaturePlanDispatch() {
+		t.Fatalf("typed TDD-only pending evidence should allow feature-planner dispatch: %#v", brief)
+	}
+	state := featureplanner.NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	prompt := featureplanner.BuildPlannerPrompt("build feature", state, brief)
+	if !strings.Contains(prompt, "Required submit_feature_plan shape") {
+		t.Fatalf("prompt should expose submit_feature_plan for pending TDD evidence:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Do not produce a feature plan") {
+		t.Fatalf("prompt must not block planning for TDD-only pending evidence:\n%s", prompt)
 	}
 }
 
