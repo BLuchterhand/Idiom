@@ -27,6 +27,7 @@ const (
 	ProgressStatusCompleted = "completed"
 	ProgressStatusFailed    = "failed"
 	ProgressStatusDegraded  = "degraded"
+	ProgressStatusBlocked   = "blocked"
 	ProgressStatusSkipped   = "skipped"
 )
 
@@ -319,6 +320,12 @@ func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, revie
 		s.Status = ProgressStatusDegraded
 		return
 	}
+	if strings.Contains(strings.ToLower(report.Status), "blocked") {
+		s.Status = ProgressStatusBlocked
+		s.FailureKind = "review_repair_blocked"
+		s.FailureReason = sanitizeProgressReason(s.Review.Status)
+		return
+	}
 	if report.Skipped {
 		s.Status = ProgressStatusSkipped
 		return
@@ -360,7 +367,7 @@ func (s ProgressState) ReviewResumeReady() bool {
 				s.Executor.Status == ProgressStatusCompleted)
 	case ProgressPhaseReviewRepair:
 		switch s.Status {
-		case ProgressStatusRunning, ProgressStatusFailed, ProgressStatusDegraded:
+		case ProgressStatusRunning, ProgressStatusFailed, ProgressStatusDegraded, ProgressStatusBlocked:
 			return true
 		}
 	}

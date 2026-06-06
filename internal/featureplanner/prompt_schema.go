@@ -37,8 +37,8 @@ func productSubmitFeaturePlanShape(coverageTier string) string {
 		ADRRefs:          "[\"ADR-001\"]",
 		Acceptance:       "[\"...\"]",
 		Command:          "use-only-product-grounded-test-command",
-		RequiredPath:     "use-only-product-grounded-paths",
-		AllowedPath:      "use-only-product-grounded-paths-or-sibling-tests",
+		RequiredPath:     "use-only-product-grounded-source-or-required-tdd-test-paths",
+		AllowedPath:      "use-only-product-grounded-optional-edit-paths",
 		TestArtifactPath: "use-only-product-grounded-test-artifact-paths",
 	})
 }

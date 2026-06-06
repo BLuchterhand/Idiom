@@ -554,6 +554,9 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		fmt.Fprintln(stderr, reviewErr)
 		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: progress.FailureKind, FailureReason: progress.FailureReason}
 	}
+	if progress.Status == ProgressStatusBlocked {
+		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: progress.FailureKind, FailureReason: progress.FailureReason}
+	}
 	return RunResult{ExitCode: 0, SessionID: sessionID, ResumeStatePath: progressPath}
 }
 
@@ -637,6 +640,9 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	if reviewErr != nil {
 		fmt.Fprintln(stderr, reviewErr)
 		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath}
+	}
+	if state.Status == ProgressStatusBlocked {
+		return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: state.FailureKind, FailureReason: state.FailureReason}
 	}
 	return RunResult{ExitCode: 0, SessionID: sessionID, ResumeStatePath: progressPath}
 }

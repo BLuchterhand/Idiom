@@ -539,6 +539,54 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 	}
 }
 
+func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("old\n"), 0o644); err != nil {
+		t.Fatalf("seed a.txt: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	prompt := "Make a.txt say new."
+
+	var stdout, stderr bytes.Buffer
+	result := Run(cfg, Options{
+		Prompt:     prompt,
+		JSONEvents: true,
+	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		switch opts.TaskFamily {
+		case agent.PlanThenExecutePlannerTaskFamily:
+			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
+				{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
+			}, "change a.txt")
+			return "submitted plan", nil
+		case agent.PlanThenExecuteReviewRepairTaskFamily:
+			return "<<QUESTION>>: a.txt review found behavior outside the allowed repair scope.", nil
+		default:
+			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+			return "", nil
+		}
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 || result.FailureKind != "review_repair_blocked" {
+		t.Fatalf("expected blocked review result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+	state, _, err := LoadProgressState(root, result.SessionID)
+	if err != nil {
+		t.Fatalf("load progress state: %v", err)
+	}
+	if state.Phase != ProgressPhaseReviewRepair || state.Status != ProgressStatusBlocked {
+		t.Fatalf("expected blocked review progress, got phase=%s status=%s state=%#v", state.Phase, state.Status, state)
+	}
+	if !strings.Contains(state.Review.Status, "a.txt review found behavior") || state.Review.Error != "" {
+		t.Fatalf("review blocker should be typed status, not error: %#v", state.Review)
+	}
+	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.review_repair_blocked"`) {
+		t.Fatalf("expected review_repair_blocked event, got stdout=%s", stdout.String())
+	}
+}
+
 func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestFeature(t *testing.T) {}\n"), 0o644); err != nil {

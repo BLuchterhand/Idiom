@@ -110,6 +110,23 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 	}
 }
 
+func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
+	brief := validProductWorkflowBrief()
+
+	normalized := NormalizePlanProductWorkflowContext(plan, brief)
+	if err := ValidatePlanProductWorkflowContext(normalized, brief); err != nil {
+		t.Fatalf("normalized plan should validate: %v", err)
+	}
+	required := normalized.Atoms[0].RequiredEditPaths
+	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
+		if !containsString(required, want) {
+			t.Fatalf("required TDD edit path %q missing from required scope: %#v", want, required)
+		}
+	}
+}
+
 func TestBuildPlannerPromptHidesSubmitShapeWhenProductBriefHasBlockers(t *testing.T) {
 	brief := validProductWorkflowBrief()
 	brief.Blockers = []string{"implementation-affecting claim lacks resolved evidence"}
@@ -144,7 +161,8 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 		"required_before: implementation",
 		`required_before to the exact scalar string "implementation"`,
 		"planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs",
-		"use-only-product-grounded-paths",
+		"use-only-product-grounded-source-or-required-tdd-test-paths",
+		"use-only-product-grounded-optional-edit-paths",
 		"The schema example path placeholders are not authority",
 		"Repo grounding is required:",
 		"context evidence only",

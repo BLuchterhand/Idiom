@@ -261,6 +261,13 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 		atom := &plan.Atoms[i]
 		required := normalizeEditScopeList(atom.RequiredEditPaths)
 		requiredSet := normalizedStringSet(required)
+		for _, path := range productAtomRequiredTestArtifactPaths(*atom) {
+			if requiredSet[path] || !grounding.pathGrounded(path) {
+				continue
+			}
+			required = append(required, path)
+			requiredSet[path] = true
+		}
 		allowed := normalizeEditScopeList(atom.AllowedEditPaths)
 		keptAllowed := make([]string, 0, len(allowed))
 		for _, path := range allowed {
@@ -272,6 +279,21 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 		atom.AllowedEditPaths = normalizeEditScopeList(keptAllowed)
 	}
 	return plan
+}
+
+func productAtomRequiredTestArtifactPaths(atom FeatureAtomPlan) []string {
+	var paths []string
+	if atom.TestFirst.BaselineRequired ||
+		len(atom.TestFirst.ObligationRefs) > 0 ||
+		len(atom.TDDObligations) > 0 ||
+		strings.EqualFold(strings.TrimSpace(atom.TestFirst.ExpectedPreExecutionResult), "red-confirmed") {
+		paths = append(paths, atom.TestFirst.TestArtifactPaths...)
+	}
+	if len(atom.PlannedTDDSnapshot.ObligationIDs) > 0 ||
+		len(atom.PlannedTDDSnapshot.ExpectedPreExecutionResults) > 0 {
+		paths = append(paths, atom.PlannedTDDSnapshot.TestArtifactPaths...)
+	}
+	return normalizeEditScopeList(paths)
 }
 
 func normalizeEditScopeList(paths []string) []string {

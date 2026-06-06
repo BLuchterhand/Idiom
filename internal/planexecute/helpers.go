@@ -1041,7 +1041,16 @@ func RunReviewRepairPhase(
 			return ReviewRepairPhaseReport{Status: "pass (no corrective edits)", AutoRepairs: autoRepair.Lines, ChecklistFound: true}, nil
 		}
 		if reviewAnswerDeclaresBlocker(answer) {
-			return ReviewRepairPhaseReport{Status: "blocked"}, fmt.Errorf("review-repair phase reported a blocker without a corrective plan")
+			blocker := reviewRepairBlockerSummary(answer)
+			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "review_repair_blocked", map[string]any{
+				"status":  "blocked",
+				"blocker": blocker,
+			})
+			status := "blocked"
+			if blocker != "" {
+				status += ": " + blocker
+			}
+			return ReviewRepairPhaseReport{Status: status}, nil
 		}
 		return ReviewRepairPhaseReport{Status: "inconclusive"}, fmt.Errorf("review-repair phase produced no corrective plan and no `Decision: pass` with `Verification Checklist`")
 	}
@@ -1643,6 +1652,10 @@ func mergePlanExecutePaths(groups ...[]string) []string {
 func reviewAnswerDeclaresBlocker(answer string) bool {
 	lower := strings.ToLower(answer)
 	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
+}
+
+func reviewRepairBlockerSummary(answer string) string {
+	return planExecuteBlockerSummary(answer)
 }
 
 func planExecuteAnswerDeclaresBlocker(answer string) bool {
