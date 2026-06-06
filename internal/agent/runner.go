@@ -996,8 +996,13 @@ func (r *Runner) Run(
 						r.emitEvent(RunEvent{Role: "mutation_visible_write_mode", Content: "textual mutation recovery produced hidden-only output after concrete source evidence; retrying once with hidden thinking disabled for the terminal write/blocker action"})
 					} else if implementationRequiredPathHiddenOnlyRecoveryStall(r.RuntimeBrief, collectedResults, assistantMessage, priorGateRejections, terminalSubmitPlanNativeTools()) {
 						opts = forceVisibleActionChatOptions(opts)
-						prompt = "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce the required visible tool JSON or a visible `<<QUESTION>>:` blocker now.\n\n" + prompt
-						r.emitEvent(RunEvent{Role: "required_edit_paths_visible_write_mode", Content: "anchor-ready textual recovery produced hidden-only output; retrying once with hidden thinking disabled for the terminal write/blocker action"})
+						if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, collectedResults) {
+							prompt = planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(prompt)
+							r.emitEvent(RunEvent{Role: "plan_then_execute_submit_correction_visible_mode", Content: "submit-correction recovery produced hidden-only output; retrying once with hidden thinking disabled for the terminal submit_plan action"})
+						} else {
+							prompt = "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce the required visible tool JSON or a visible `<<QUESTION>>:` blocker now.\n\n" + prompt
+							r.emitEvent(RunEvent{Role: "required_edit_paths_visible_write_mode", Content: "anchor-ready textual recovery produced hidden-only output; retrying once with hidden thinking disabled for the terminal write/blocker action"})
+						}
 					}
 					if hideReads {
 						implementationWriteOnlyRecoveryActive = true
@@ -2090,13 +2095,29 @@ func (r *Runner) Run(
 		}
 
 		toolKey := toolRequestKey(req)
+		if prompt, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req, lastToolResult, collectedResults, terminalSubmitPlanNativeTools()); ok && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] < 2 {
+			replayedToolRequests[toolKey]++
+			refreshPlanThenExecuteTerminalSurface("submit_plan_replayed_invalid")
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			rebuildTools()
+			opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			syncPlanThenExecuteRecoveryAllowedTools()
+			r.emitEvent(RunEvent{Role: "plan_then_execute_repeated_submit_plan_correction", Content: prompt})
+			continue
+		}
 		if shouldRejectExactReplayBeforeLoopGate(req) && toolKey != "" && toolKey == lastToolKey && replayedToolRequests[toolKey] > 0 {
+			summary := "Repeated tool request rejected"
+			errorText := "this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker."
+			if replaySummary, replayError, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req, lastToolResult, collectedResults); ok {
+				summary = replaySummary
+				errorText = replayError
+			}
 			answer, err, done := controller.rejectTool(
 				stepNumber,
 				activeToolCall,
 				req,
-				"Repeated tool request rejected",
-				"this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker.",
+				summary,
+				errorText,
 			)
 			if done {
 				return finish(answer, err, "repeated_tool_budget_exhausted", true)
@@ -2514,12 +2535,18 @@ func (r *Runner) Run(
 						continue
 					}
 					if replayedToolRequests[toolKey] > 0 {
+						summary := "Repeated tool request rejected"
+						errorText := "this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker."
+						if replaySummary, replayError, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req, lastToolResult, collectedResults); ok {
+							summary = replaySummary
+							errorText = replayError
+						}
 						answer, err, done := controller.rejectTool(
 							stepNumber,
 							activeToolCall,
 							req,
-							"Repeated tool request rejected",
-							"this exact request already replayed prior evidence once. Do not call it again. Choose a materially different tool or target, edit within the approved scope, request a target-scope update, or answer with the concrete blocker.",
+							summary,
+							errorText,
 						)
 						if done {
 							return finish(answer, err, "repeated_tool_budget_exhausted", true)
@@ -9233,6 +9260,9 @@ func (r *Runner) completionGateRetryLimit(results []workspace.ToolResult) int {
 	if r != nil && r.unscopedNoWriteCompletionRecoveryApplies(results) {
 		return 2
 	}
+	if r != nil && planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
+		return 2
+	}
 	if r != nil && r.planThenExecutePlannerPhase() && len(r.RuntimeBrief.RequiredEditPaths) > 0 && successfulSubmitPlanResultCount(results) == 0 {
 		return 1
 	}
@@ -13829,6 +13859,46 @@ func (r *Runner) completionGateRepeatedBlockerAnswer(result workspace.ToolResult
 		b.WriteString("\n\nRequired next evidence: compiler-backed source-sanity or language diagnostics for source edits, one cheap non-build sanity check for non-source edits, or a concrete planner-owned verification blocker. `git diff --check` and generic source-sanity fallback are only patch hygiene for source edits.")
 	}
 	return strings.TrimSpace(b.String())
+}
+
+func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace.ToolRequest, lastResult *workspace.ToolResult, results []workspace.ToolResult, nativeSubmitPlan bool) (string, bool) {
+	if r == nil || lastResult == nil || !r.planThenExecutePlannerPhase() {
+		return "", false
+	}
+	if strings.TrimSpace(req.Tool) != "submit_plan" || !planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
+		return "", false
+	}
+	if !planThenExecuteSubmitPlanRejectedForCorrection(req, *lastResult) {
+		return "", false
+	}
+	if planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
+		return "", false
+	}
+	if nativeSubmitPlan {
+		return planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, *lastResult), true
+	}
+	prompt := "The last request repeated the same invalid `submit_plan`; it was not executed again. " +
+		lastSubmitPlanRejectionBrief(*lastResult) +
+		"Submit a corrected parser-readable `submit_plan` now with one edit entry for every required_edit_path. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose. " +
+		planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, *lastResult)
+	return prompt, true
+}
+
+func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(req workspace.ToolRequest, lastResult *workspace.ToolResult, results []workspace.ToolResult) (string, string, bool) {
+	if _, ok := r.planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req, lastResult, results, false); !ok {
+		return "", "", false
+	}
+	reason := ""
+	if lastResult != nil {
+		reason = lastSubmitPlanRejectionBrief(*lastResult)
+	}
+	return "Repeated invalid submit_plan rejected",
+		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan` with one edit entry for every required_edit_path. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool.",
+		true
+}
+
+func planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt(base string) string {
+	return "The previous retry produced hidden-only output with no parser-readable action. Hidden thinking is disabled for this retry; produce exactly one visible parser-readable `submit_plan` request now. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery.\n\n" + base
 }
 
 func (r *Runner) hostOwnedReadOnlyCloseoutAnswer(results []workspace.ToolResult) (string, bool) {

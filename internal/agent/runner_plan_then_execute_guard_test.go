@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"sort"
 	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -8664,6 +8664,30 @@ func TestCompletionGateRetryLimitCutsOverPlanExecuteSubmitPlanRecovery(t *testin
 	}
 }
 
+func TestCompletionGateRetryLimitAllowsSubmitCorrectionRepeatRecovery(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go"},
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `b.go`.",
+		},
+	}
+
+	if got := runner.completionGateRetryLimit(results); got != 2 {
+		t.Fatalf("submit-correction retry limit = %d, want 2", got)
+	}
+}
+
 func TestPlanExecuteLoopBudgetRecoveryKeepsUnreadCandidateReadsAvailable(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -13411,6 +13435,135 @@ func TestPlanExecuteParseRecoveryForcesSubmitPlanOnlyAfterUnrepairableStringifie
 	}
 	if !strings.Contains(answer, "Plan submitted with 2 edit") {
 		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteRepeatedInvalidSubmitPlanGetsStrictCorrectionRetry(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte("before\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	invalidPlan := `{"tool":"submit_plan","rationale":"No edit entries yet.","edits":[]}`
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt"}`,
+		`{"tool":"read_file","path":"b.txt"}`,
+		invalidPlan,
+		invalidPlan,
+		`{"tool":"submit_plan","rationale":"Corrected after strict repeat recovery.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace a fixture"},{"path":"b.txt","old_text":"before\n","new_text":"after\n","purpose":"replace b fixture"}]}`,
+	}
+	var requests int
+	var sawRepeatCorrection bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "plan_then_execute_repeated_submit_plan_correction" {
+				sawRepeatCorrection = true
+				if !strings.Contains(event.Content, "read/search/discovery") {
+					t.Fatalf("repeat correction prompt should forbid renewed discovery:\n%s", event.Content)
+				}
+				if strings.Contains(event.Content, "Only use `Decision: source-satisfied`") || strings.Contains(event.Content, "Only use `<<QUESTION>>:`") {
+					t.Fatalf("repeat correction prompt should not advertise stale terminal exits:\n%s", event.Content)
+				}
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "search_content"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if !sawRepeatCorrection {
+		t.Fatalf("expected repeated invalid submit_plan correction event")
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected corrected plan after repeated invalid submit_plan, got %d request(s)", requests)
+	}
+	if !strings.Contains(answer, "Plan submitted with 2 edit") {
+		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteRepeatedSubmitPlanExhaustedRejectionStaysSubmitPlanOnly(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-2 (total lines: 2)", Output: "before\n"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-2 (total lines: 2)", Output: "before\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `a.txt`, `b.txt`.",
+		},
+	}
+	last := results[len(results)-1]
+	summary, errorText, ok := runner.planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(workspace.ToolRequest{Tool: "submit_plan"}, &last, results)
+	if !ok {
+		t.Fatal("expected exhausted repeated submit_plan rejection")
+	}
+	if summary != "Repeated invalid submit_plan rejected" {
+		t.Fatalf("summary = %q", summary)
+	}
+	for _, forbidden := range []string{"Choose a materially different tool", "concrete blocker", "target-scope update"} {
+		if strings.Contains(errorText, forbidden) {
+			t.Fatalf("submit-correction replay rejection leaked generic fallback %q:\n%s", forbidden, errorText)
+		}
+	}
+	if !strings.Contains(errorText, "only valid next action is a corrected parser-readable `submit_plan`") {
+		t.Fatalf("submit-correction replay rejection should stay submit_plan-only:\n%s", errorText)
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionHiddenOnlyPromptIsSubmitPlanOnly(t *testing.T) {
+	prompt := planThenExecuteSubmitCorrectionHiddenOnlyVisiblePrompt("Corrected submit_plan required.")
+
+	for _, want := range []string{"exactly one visible parser-readable `submit_plan`", "Do not answer `Decision: source-satisfied`", "do not answer `<<QUESTION>>:`", "do not call read/search/discovery"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("hidden-only submit-correction prompt missing %q:\n%s", want, prompt)
+		}
+	}
+	for _, forbidden := range []string{"visible `<<QUESTION>>:` blocker", "or a visible `<<QUESTION>>:`", "tool JSON or"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("hidden-only submit-correction prompt advertised stale exit %q:\n%s", forbidden, prompt)
+		}
 	}
 }
 
