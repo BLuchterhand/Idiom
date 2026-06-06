@@ -176,11 +176,15 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			fmt.Fprintf(&b, "Coverage blockers: %s\n", strings.Join(brief.CoverageBlockers, "; "))
 		}
 
-		if brief.CoverageGatePassed && len(brief.Blockers) == 0 && len(brief.CoverageBlockers) == 0 {
+		if brief.AllowsFeaturePlanDispatch() {
 			b.WriteString("\nRequired submit_feature_plan shape:\n")
 			b.WriteString(productSubmitFeaturePlanShape(brief.CoverageTier))
 			b.WriteString("Your FeaturePlan SDD refs MUST reference only PRD requirement IDs and ADR IDs from the context above.\n")
 			b.WriteString("Your TDD obligations MUST reference only the obligation IDs listed above.\n")
+			if brief.coveragePendingImplementationVerification() {
+				b.WriteString("The coverage gate is pending only because implementation verification evidence is not recorded yet; treat the listed TDD obligations as test-first acceptance for this dispatch, and do not ask a planner question solely for missing pre-implementation verification evidence.\n")
+				b.WriteString("Do not include a blocked coverage_gate_result in the plan; the pending evidence is carried by tdd_contract and planned_tdd_snapshot.\n")
+			}
 			b.WriteString("Set tdd_contract.obligations[].required_before to the exact scalar string \"implementation\". Do not use an array for required_before.\n")
 			b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
 			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, source/context evidence paths, sibling files inside those existing package roots, or authorized new package roots.\n")

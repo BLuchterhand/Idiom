@@ -1,5 +1,7 @@
 package featureplanner
 
+import "strings"
+
 // ProductWorkflowBrief carries the product-workflow evidence the planner
 // needs to produce a grounded feature plan. The CLI layer populates it
 // from the product workflow effort artifacts and passes it through RunOptions.
@@ -41,4 +43,47 @@ type TDDObligationBrief struct {
 	Command        string `json:"command"`
 	RequiredBefore string `json:"required_before"`
 	Status         string `json:"status"`
+}
+
+func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
+	if len(brief.Blockers) > 0 {
+		return false
+	}
+	if brief.CoverageGatePassed && len(brief.CoverageBlockers) == 0 {
+		return true
+	}
+	return brief.coveragePendingImplementationVerification()
+}
+
+func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bool {
+	if brief.CoverageGatePassed || len(brief.CoverageBlockers) == 0 || len(brief.TDDObligations) == 0 {
+		return false
+	}
+	for _, blocker := range brief.CoverageBlockers {
+		lower := strings.ToLower(strings.TrimSpace(blocker))
+		if !strings.Contains(lower, "tdd") || !strings.Contains(lower, "verification evidence") {
+			return false
+		}
+	}
+	for _, obligation := range brief.TDDObligations {
+		if !obligation.isDispatchReadyPendingImplementationTDD() {
+			return false
+		}
+	}
+	return true
+}
+
+func (obligation TDDObligationBrief) isDispatchReadyPendingImplementationTDD() bool {
+	if strings.TrimSpace(obligation.ID) == "" || !looksExecutableCommand(obligation.Command) {
+		return false
+	}
+	if !requiredBeforeImplementation(obligation.RequiredBefore) {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(obligation.Status)) {
+	case "", "pending", "planned", "open":
+		return true
+	default:
+		return false
+	}
 }

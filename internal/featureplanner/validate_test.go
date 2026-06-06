@@ -47,6 +47,34 @@ func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
 	}
 }
 
+func TestValidatePlanProductWorkflowContextAllowsPendingTDDVerificationDispatch(t *testing.T) {
+	plan := validProductContextPlan()
+	brief := validProductWorkflowBrief()
+	brief.CoverageGatePassed = false
+	brief.CoverageBlockers = []string{"expected all 1 TDD obligations to have verification evidence"}
+
+	if err := ValidatePlanProductWorkflowContext(plan, brief); err != nil {
+		t.Fatalf("pending TDD verification evidence should not block implementation dispatch: %v", err)
+	}
+}
+
+func TestValidatePlanProductWorkflowContextRejectsNonTDDCoverageBlocker(t *testing.T) {
+	plan := validProductContextPlan()
+	brief := validProductWorkflowBrief()
+	brief.CoverageGatePassed = false
+	brief.CoverageBlockers = []string{"expected EARS requirements to map to evidence"}
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected non-TDD coverage blocker to reject feature plan")
+	}
+	for _, want := range []string{"coverage gate is blocked", "expected EARS requirements"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
 func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	plan := validPlan()

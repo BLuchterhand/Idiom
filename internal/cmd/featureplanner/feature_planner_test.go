@@ -543,6 +543,37 @@ func TestFeaturePlanner_ProductWorkflowIntegration_CoverageGateBlocked(t *testin
 	}
 }
 
+func TestFeaturePlanner_ProductWorkflowIntegration_TDDVerificationPendingCanDispatch(t *testing.T) {
+	brief := &featureplanner.ProductWorkflowBrief{
+		EffortID:           "test-effort",
+		CoverageTier:       "contract_high",
+		CoverageGatePassed: false,
+		CoverageBlockers:   []string{"expected all 1 TDD obligations to have verification evidence"},
+		TDDObligations: []featureplanner.TDDObligationBrief{{
+			ID:             "TDD-1",
+			Behavior:       "prove the feature",
+			Command:        "go test ./...",
+			RequiredBefore: "implementation",
+			Status:         "planned",
+		}},
+		FilesToModify: []string{"internal/labels/labels.go"},
+		Tests:         []string{"go test ./..."},
+	}
+
+	state := featureplanner.NewState("test-session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	prompt := featureplanner.BuildPlannerPrompt("Add a thing", state, brief)
+
+	if !strings.Contains(prompt, "Required submit_feature_plan shape") {
+		t.Fatalf("prompt should allow implementation dispatch when only TDD verification evidence is pending:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "pending only because implementation verification evidence is not recorded yet") {
+		t.Fatalf("prompt should explain pending verification evidence:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Do not produce a feature plan") {
+		t.Fatalf("prompt must not block implementation dispatch for pending TDD verification evidence:\n%s", prompt)
+	}
+}
+
 func TestFeaturePlanner_ProductWorkflowIntegration_StandaloneMode(t *testing.T) {
 	// Without ProductWorkflowBrief (nil), the prompt should use acceptance
 	// criteria fallback and NOT contain the hallucination template.

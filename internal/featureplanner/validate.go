@@ -173,13 +173,14 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) error {
 	var errs []error
 	plan = NormalizePlanProductWorkflowContext(plan, brief)
-	if !brief.CoverageGatePassed {
+	allowDispatch := brief.AllowsFeaturePlanDispatch()
+	if !allowDispatch {
 		errs = append(errs, errors.New("feature plan submitted while product workflow coverage gate is blocked"))
 	}
 	if len(brief.Blockers) > 0 {
 		errs = append(errs, fmt.Errorf("product workflow brief has blockers: %s", strings.Join(brief.Blockers, "; ")))
 	}
-	if len(brief.CoverageBlockers) > 0 {
+	if len(brief.CoverageBlockers) > 0 && !allowDispatch {
 		errs = append(errs, fmt.Errorf("product workflow coverage blockers: %s", strings.Join(brief.CoverageBlockers, "; ")))
 	}
 
