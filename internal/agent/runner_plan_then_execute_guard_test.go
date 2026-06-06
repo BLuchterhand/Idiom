@@ -10333,6 +10333,52 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	}
 }
 
+func TestPlanExecutePartialRequiredHistoryDoesNotAdvertiseSubmitPlanReadiness(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.go", "b.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{Tool: "history_range", Summary: "Read git history for a.go lines 1-10", Output: "commit abc123\n\n    explain current behavior"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeHistoryPending {
+		t.Fatalf("mode with one required path still missing history = %q, want history_pending", state.Mode)
+	}
+	if slices.Contains(state.ParserVisibleTools, "submit_plan") {
+		t.Fatalf("partial history must not advertise submit_plan: %#v", state.ParserVisibleTools)
+	}
+	if got := planThenExecuteReadyToSubmitNudge(brief, results); got != "" {
+		t.Fatalf("partial history must not emit submit-readiness nudge:\n%s", got)
+	}
+	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
+		t.Fatal("partial history must not be submit-plan-only ready")
+	}
+	pending := planThenExecuteHistoryPendingPaths(brief, results, nil)
+	assertEqualSet(t, pending, []string{"b.go"})
+
+	runner := &Runner{RuntimeBrief: brief}
+	prompt, hideReads, ok := runner.completionGateRecoveryPrompt(results)
+	if !ok {
+		t.Fatal("history-pending completion rejection should produce recovery guidance")
+	}
+	if hideReads {
+		t.Fatalf("history-pending recovery must keep history tools available, prompt:\n%s", prompt)
+	}
+	for _, want := range []string{"history-pending", "history_range", "b.go", "Do not call `submit_plan` yet"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("history recovery prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestPlanExecutePostReadinessAllowsRequiredHistoryRead(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,

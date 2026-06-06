@@ -2530,6 +2530,9 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		if len(observedSelected) > 0 {
 			paths = uniqueSortedRunnerPaths(observedSelected)
 		}
+		if len(planThenExecuteHistoryPendingPaths(brief, results, paths)) > 0 {
+			return ""
+		}
 		unreadCandidateLine := "Allowed/candidate paths are not coverage obligations: do not read every allowed path by default."
 		readActionLine := "  2. One bounded source-read/search for a different candidate path, but only when it names one concrete edit-safety fact still needed before the plan."
 		finalLine := "Do not reread a candidate path that already has source-body evidence before the first valid `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:` blocker."
@@ -2563,6 +2566,9 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 		}
 	}
 	if len(readyPaths) == 0 {
+		return ""
+	}
+	if len(planThenExecuteHistoryPendingPaths(brief, results, readyPaths)) > 0 {
 		return ""
 	}
 	return strings.Join([]string{

@@ -3151,7 +3151,8 @@ func (r *Runner) Run(
 			r.emitEvent(RunEvent{Role: "post_write_verification_required", Content: prompt})
 		}
 		if !terminalSubmitPlanNativeTools() && len(r.remainingRequiredEditPaths(collectedResults)) > 0 &&
-			implementationRequiredPathAnchorsReady(r.RuntimeBrief, collectedResults) {
+			implementationRequiredPathAnchorsReady(r.RuntimeBrief, collectedResults) &&
+			(!r.planThenExecutePlannerPhase() || planThenExecuteSubmitPlanOnlyReady(r.RuntimeBrief, collectedResults)) {
 			opts = completionGateRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, false)
 			r.emitEvent(RunEvent{Role: "required_edit_paths_visible_write_mode", Content: "all remaining required edit paths have anchor-ready source evidence; textual backend recovery will disable hidden thinking and require visible write/blocker output"})
 		}
@@ -9381,6 +9382,14 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 					"The completion gate rejected a final answer before every required_edit_path produced source-body evidence.",
 					"Do not draft `submit_plan` from outline/search hits. The next visible message must be exactly one parser-readable source-body tool call for the unread required path, or <<QUESTION>> with the exact path-specific blocker.",
 					nudge,
+				}, "\n\n"), false, true
+			}
+			if pending := planThenExecuteHistoryPendingPaths(r.RuntimeBrief, results, nil); len(pending) > 0 {
+				return strings.Join([]string{
+					"The completion gate rejected a final answer before required git-history evidence was produced for every required_edit_path.",
+					"Source-body evidence is complete, but the planner is still in history-pending state. Do not call `submit_plan` yet and do not perform additional source reads.",
+					"Your next visible message must be exactly one parser-readable `history_range` or `history_symbol` request for one pending path, or `<<QUESTION>>:` with the exact path-specific blocker.",
+					"Pending git-history path(s): " + strings.Join(pending, ", "),
 				}, "\n\n"), false, true
 			}
 			correction := planThenExecuteSubmitPlanVisibleJSONInstruction()
