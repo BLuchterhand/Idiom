@@ -206,6 +206,7 @@ type Model struct {
 	forcedReadinessOpenObligations []string
 	planExecuteActive              bool
 	planExecuteScopeContract       planexecute.PlanScopeContract
+	planExecuteWriteEnvelope       []string
 	modelThinkingFloor             bool
 	modelSwapped                   bool
 	traceMode                      traceDisplayMode

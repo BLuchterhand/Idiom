@@ -1850,15 +1850,20 @@ func RunExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.Pl
 		ExplicitCommands: verificationCommands,
 		ChangedPaths:     planChangedPaths(plan),
 	})
-	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
 func RunExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	plan = workspace.NormalizeLoadedPlanArtifact(plan)
-	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, nil, verificationPlan, jsonEvents, stdout, progress...)
 }
 
-func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
+func RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
+	plan = workspace.NormalizeLoadedPlanArtifact(plan)
+	return runExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, writeAllowedPaths, verificationPlan, jsonEvents, stdout, progress...)
+}
+
+func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, writeAllowedPaths []string, verificationPlan VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...EditProgressFunc) (ExecutorPhaseReport, error) {
 	report := ExecutorPhaseReport{Total: len(plan.Edits)}
 	if len(plan.Edits) == 0 {
 		return report, fmt.Errorf("plan has no edits")
@@ -1883,6 +1888,17 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 			fmt.Fprintf(stdout, "  preflight FAILED on approval/scope %s: %s\n", mismatch.Path, mismatch.Reason)
 		}
 		return report, fmt.Errorf("plan approval/scope preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
+	}
+	if mismatch := preflightPlanWriteAllowedPaths(writeAllowedPaths, plan); mismatch != nil {
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
+			"edit_index": mismatch.Index,
+			"path":       mismatch.Path,
+			"reason":     mismatch.Reason,
+		})
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "  preflight FAILED on write_allowed_paths %s: %s\n", mismatch.Path, mismatch.Reason)
+		}
+		return report, fmt.Errorf("plan write_allowed_paths preflight failed (%s): %s", mismatch.Path, mismatch.Reason)
 	}
 	if mismatch := preflightPlanRequiredEditPaths(requiredEditPaths, plan); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
@@ -2072,7 +2088,31 @@ func RunVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, st
 }
 
 func runPlanExecuteVerificationPlan(root string, plan VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []PhaseEvidenceCheck, error) {
-	evidence := make([]PhaseEvidenceCheck, 0, len(plan.Commands))
+	evidence := make([]PhaseEvidenceCheck, 0, len(plan.Commands)+len(plan.Rejects))
+	for _, reject := range plan.Rejects {
+		check := PhaseEvidenceCheck{
+			Kind:    "verification",
+			Command: strings.TrimSpace(reject.Command),
+			Status:  "failed",
+			Error:   strings.TrimSpace(reject.Reason),
+			Summary: "requested verification command was rejected before execution",
+		}
+		evidence = append(evidence, check)
+		event := map[string]any{
+			"command": check.Command,
+			"status":  check.Status,
+			"summary": check.Summary,
+			"error":   check.Error,
+		}
+		if strings.TrimSpace(reject.Source) != "" {
+			event["source"] = strings.TrimSpace(reject.Source)
+		}
+		emitPlanExecuteJSONEvent(stdout, jsonEvents, "verification", event)
+		if !jsonEvents {
+			fmt.Fprintf(stdout, "  verification %s ... failed\n", check.Command)
+		}
+		return len(evidence), evidence, fmt.Errorf("verification rejected for %q: %s", check.Command, firstNonEmptyString(check.Error, check.Summary))
+	}
 	for _, command := range plan.Commands {
 		check := runPlanExecuteVerificationCommand(root, command)
 		evidence = append(evidence, check)
@@ -2380,6 +2420,43 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 			Index:  -1,
 			Path:   path,
 			Reason: "plan does not include an edit for this required_edit_paths entry",
+		}
+	}
+	return nil
+}
+
+func preflightPlanWriteAllowedPaths(writeAllowed []string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+	coverage, err := autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		AllowedCandidatePaths: writeAllowed,
+		Source:                "planexecute.write_scope_preflight",
+	})
+	if err != nil {
+		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
+	}
+	if len(coverage.AllowedCandidatePaths) == 0 {
+		return nil
+	}
+	candidatePaths, invalid := preflightPlanCandidatePaths(plan)
+	if invalid != nil {
+		return invalid
+	}
+	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
+		AllowedCandidatePaths:  coverage.AllowedCandidatePaths,
+		CandidateCoveragePaths: candidatePaths,
+		Source:                 "planexecute.write_scope_preflight",
+	})
+	if err != nil {
+		return &PlanEditPreflightMismatch{Index: -1, Reason: err.Error()}
+	}
+	coverageByPath := planScopeCandidateCoverageByPath(coverage.CandidateCoverage)
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if !coverageByPath[path].WithinAllowedCandidatePath {
+			return &PlanEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: "plan edit path is outside write_allowed_paths envelope",
+			}
 		}
 	}
 	return nil

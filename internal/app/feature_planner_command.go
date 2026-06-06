@@ -44,6 +44,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		m.logMessage("idiom.feature_planner.product_context", fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
 	}
 
+	writeEnvelope := featurePlannerProductWriteEnvelope(productBrief)
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                objective,
 		MaxPlanningIterations: 3,
@@ -52,7 +53,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
-			return m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
+			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope)
 		}
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
@@ -175,11 +176,20 @@ func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, tas
 }
 
 func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt string) (string, error) {
+	return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, nil)
+}
+
+func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Context, prompt string, writeEnvelope []string) (string, error) {
 	m.logFeaturePlannerPlanExecuteGitHistoryRequirement()
 
 	priorSuppressTranscript := m.suppressPromptTranscript
+	priorWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
 	m.suppressPromptTranscript = true
-	defer func() { m.suppressPromptTranscript = priorSuppressTranscript }()
+	m.planExecuteWriteEnvelope = appendUniqueBriefStrings(nil, writeEnvelope...)
+	defer func() {
+		m.suppressPromptTranscript = priorSuppressTranscript
+		m.planExecuteWriteEnvelope = priorWriteEnvelope
+	}()
 
 	answer, err := m.runPlanExecuteCommandOnce(ctx, prompt)
 	if err != nil {
@@ -194,6 +204,17 @@ func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt str
 	}
 	m.logMessage(featurePlannerPlanExecuteCompletionLogType(completion), completion)
 	return completion, nil
+}
+
+func featurePlannerProductWriteEnvelope(brief *featureplanner.ProductWorkflowBrief) []string {
+	if brief == nil {
+		return nil
+	}
+	var paths []string
+	paths = appendUniqueBriefStrings(paths, brief.FilesToModify...)
+	paths = appendUniqueBriefStrings(paths, brief.ContextEvidencePaths...)
+	paths = appendUniqueBriefStrings(paths, brief.AuthorizedNewPackageRoots...)
+	return paths
 }
 
 const featurePlannerPlanExecuteGitHistoryRequirementRole = "idiom.feature_planner.plan_execute_git_history_requirement"

@@ -921,6 +921,80 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 	}
 }
 
+func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "approved.txt"), []byte("approved\n"), 0o644); err != nil {
+		t.Fatalf("seed approved.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "generated.txt"), []byte("generated\n"), 0o644); err != nil {
+		t.Fatalf("seed generated.txt: %v", err)
+	}
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Edits: []workspace.PlanEdit{{
+			Path:    "generated.txt",
+			OldText: "generated",
+			NewText: "changed",
+			Purpose: "generated atom tried to widen scope",
+		}},
+	}
+	var stdout bytes.Buffer
+	_, err := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(
+		cfg,
+		plan,
+		[]string{"generated.txt"},
+		nil,
+		[]string{"approved.txt"},
+		VerificationPlan{},
+		true,
+		&stdout,
+	)
+	if err == nil {
+		t.Fatal("expected write envelope preflight rejection")
+	}
+	if !strings.Contains(err.Error(), "write_allowed_paths") {
+		t.Fatalf("expected write_allowed_paths rejection, got %v", err)
+	}
+	if got := readFileStringForRunTest(t, filepath.Join(root, "generated.txt")); got != "generated\n" {
+		t.Fatalf("out-of-envelope edit must not be applied, got:\n%s", got)
+	}
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.preflight_failed")
+	if !ok {
+		t.Fatalf("expected preflight_failed event, got %s", stdout.String())
+	}
+	if event["reason"] != "plan edit path is outside write_allowed_paths envelope" {
+		t.Fatalf("unexpected rejection event: %#v", event)
+	}
+}
+
+func TestVerificationPlanRejectsFailExecutorVerification(t *testing.T) {
+	var stdout bytes.Buffer
+	checked, evidence, err := RunVerificationPlan(t.TempDir(), VerificationPlan{
+		Rejects: []VerificationReject{{
+			Command: "bin/colony_tests -ts=quality_inventory_bindings",
+			Source:  VerificationCommandSourcePrompt,
+			Reason:  VerificationRejectUnsupportedCmd,
+		}},
+	}, true, &stdout)
+	if err == nil {
+		t.Fatal("expected unsupported requested verification to fail")
+	}
+	if checked != 1 || len(evidence) != 1 {
+		t.Fatalf("checked/evidence = %d/%d, want 1/1", checked, len(evidence))
+	}
+	if evidence[0].Status != "failed" || evidence[0].Error != VerificationRejectUnsupportedCmd {
+		t.Fatalf("unexpected evidence: %#v", evidence[0])
+	}
+	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.verification"`) {
+		t.Fatalf("expected verification event, got %s", stdout.String())
+	}
+}
+
 func TestRunReviewRepairPhaseRejectsPassWhenRequestedTestEditMissing(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "pkg.go"), []byte("package demo\n\nfunc Hardened() bool { return true }\n"), 0o644); err != nil {

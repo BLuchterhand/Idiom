@@ -78,6 +78,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	scopeContract := planExecuteScopeContract(opts, prompt)
 	requiredEditPaths := scopeContract.RequiredCoveragePaths
 	allowedEditPaths := scopeContract.AllowedCandidatePaths
+	writeAllowedPaths := scopeContract.WriteAllowedPaths
 	editSetObligations := scopeContract.EditSetObligations
 	verificationPlan := PlanVerification(VerificationPlannerInput{
 		WorkspaceRoot: cfg.Workspace.Root,
@@ -115,6 +116,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 
 	progress := NewProgressState(sessionID, prompt, opts.PromptFile, requiredEditPaths, allowedEditPaths, time.Now().UTC())
+	progress.SetWriteAllowedPaths(writeAllowedPaths)
 	progress.EditSetObligations = editSetObligations
 	progressPath, err := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 	if err != nil {
@@ -448,7 +450,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			opts.OnEditProgress(step, total, path, succeeded)
 		}
 	}
-	report, runErr := RunExecutorPhaseScopedWithVerificationPlan(cfg, plan, executorRequiredEditPaths, allowedEditPaths, verificationPlan, opts.JSONEvents, stdout, progressCallback)
+	report, runErr := RunExecutorPhaseScopedWithVerificationPlanAndWriteScope(cfg, plan, executorRequiredEditPaths, allowedEditPaths, writeAllowedPaths, verificationPlan, opts.JSONEvents, stdout, progressCallback)
 	if runErr == nil && progressSaveErr != nil {
 		runErr = progressSaveErr
 	}
@@ -598,7 +600,8 @@ func runResumeReviewRepair(cfg config.Config, opts Options, prompt string, state
 	reviewOpts.RequiredEditPaths = MultiFlag(requiredEditPaths)
 	reviewOpts.AllowedEditPaths = MultiFlag(allowedEditPaths)
 	reviewOpts.EditSetObligations = state.EditSetObligations
-	reviewOpts.ScopeContract = NewPlanScopeContract(requiredEditPaths, allowedEditPaths, state.EditSetObligations)
+	writeAllowedPaths := mergeProgressPaths(state.WriteAllowedPaths, planExecuteHostWriteAllowedPaths(opts))
+	reviewOpts.ScopeContract = NewPlanScopeContract(requiredEditPaths, allowedEditPaths, state.EditSetObligations).WithWriteAllowedPaths(writeAllowedPaths)
 	report := state.ExecutorPhaseReport()
 	reviewBaseline := state.ReviewBaseline
 	reviewReport, reviewErr := RunReviewRepairPhase(cfg, prompt, plan, requiredEditPaths, &reviewBaseline, report, reviewOpts, stdout, promptRun, rec)

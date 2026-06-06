@@ -46,6 +46,7 @@ type ProgressState struct {
 	PackID             string               `json:"pack_id,omitempty"`
 	RequiredEditPaths  []string             `json:"required_edit_paths,omitempty"`
 	AllowedEditPaths   []string             `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths  []string             `json:"write_allowed_paths,omitempty"`
 	EditSetObligations EditSetObligations   `json:"edit_set_obligations,omitempty"`
 	ChangedPaths       []string             `json:"changed_paths,omitempty"`
 	TotalEdits         int                  `json:"total_edits,omitempty"`
@@ -104,6 +105,14 @@ func NewProgressState(sessionID string, prompt string, promptFile string, requir
 		RequiredEditPaths: append([]string(nil), requiredEditPaths...),
 		AllowedEditPaths:  append([]string(nil), allowedEditPaths...),
 	}
+}
+
+func (s *ProgressState) SetWriteAllowedPaths(paths []string) {
+	if s == nil {
+		return
+	}
+	s.WriteAllowedPaths = mergePlanExecutePaths(paths)
+	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 }
 
 func ProgressPromptSHA256(prompt string) string {
@@ -399,6 +408,9 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	}
 	if len(state.AllowedEditPaths) > 0 {
 		fields["allowed_edit_paths"] = append([]string(nil), state.AllowedEditPaths...)
+	}
+	if len(state.WriteAllowedPaths) > 0 {
+		fields["write_allowed_paths"] = append([]string(nil), state.WriteAllowedPaths...)
 	}
 	if len(state.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)

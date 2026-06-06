@@ -3172,6 +3172,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorEventStream := m.eventStream
 	priorPlanExecuteActive := m.planExecuteActive
 	priorPlanExecuteScopeContract := m.planExecuteScopeContract
+	priorPlanExecuteWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking ||
 		(strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily && m.shouldDisableThinkingForPlanExecutePlanner())
 	m.planExecuteActive = true
@@ -3203,6 +3204,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 		m.SetDisableThinkingOverride(priorDisableThinkingOverride)
 		m.SetForcedReadinessOpenObligations(priorForcedReadinessOpenObligations)
 		m.planExecuteScopeContract = priorPlanExecuteScopeContract
+		m.planExecuteWriteEnvelope = priorPlanExecuteWriteEnvelope
 		m.eventStream = priorEventStream
 	}
 }
@@ -3516,6 +3518,9 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 	var editSetObligations planexecute.EditSetObligations
 	scopeContract := planexecute.NewPlanScopeContract(requiredPaths, allowedPaths, editSetObligations)
+	if len(m.planExecuteWriteEnvelope) > 0 {
+		scopeContract = scopeContract.WithWriteAllowedPaths(m.planExecuteWriteEnvelope)
+	}
 	opts := planexecute.Options{
 		Prompt:             brief,
 		RequiredEditPaths:  requiredPaths,

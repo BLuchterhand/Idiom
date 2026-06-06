@@ -12,6 +12,7 @@ type PlanScopeContract struct {
 	ContractID            string             `json:"contract_id,omitempty"`
 	RequiredCoveragePaths []string           `json:"required_coverage_paths,omitempty"`
 	AllowedCandidatePaths []string           `json:"allowed_candidate_paths,omitempty"`
+	WriteAllowedPaths     []string           `json:"write_allowed_paths,omitempty"`
 	EditSetObligations    EditSetObligations `json:"edit_set_obligations,omitempty"`
 }
 
@@ -26,6 +27,7 @@ func NewPlanScopeContract(requiredCoveragePaths []string, allowedCandidatePaths 
 func (contract PlanScopeContract) Normalized() PlanScopeContract {
 	contract.RequiredCoveragePaths = UniqueScopePaths(contract.RequiredCoveragePaths)
 	contract.AllowedCandidatePaths = UniqueScopePaths(contract.AllowedCandidatePaths)
+	contract.WriteAllowedPaths = UniqueScopePaths(contract.WriteAllowedPaths)
 	contract.EditSetObligations = contract.EditSetObligations.Normalized()
 	contract.ContractID = ""
 	if contract.HasContent() {
@@ -37,6 +39,7 @@ func (contract PlanScopeContract) Normalized() PlanScopeContract {
 func (contract PlanScopeContract) HasContent() bool {
 	return len(contract.RequiredCoveragePaths) > 0 ||
 		len(contract.AllowedCandidatePaths) > 0 ||
+		len(contract.WriteAllowedPaths) > 0 ||
 		len(contract.EditSetObligations.Normalized()) > 0
 }
 
@@ -48,6 +51,16 @@ func (contract PlanScopeContract) RequiredEditPaths() []string {
 func (contract PlanScopeContract) AllowedEditPaths() []string {
 	contract = contract.Normalized()
 	return append([]string(nil), contract.AllowedCandidatePaths...)
+}
+
+func (contract PlanScopeContract) WriteEnvelopePaths() []string {
+	contract = contract.Normalized()
+	return append([]string(nil), contract.WriteAllowedPaths...)
+}
+
+func (contract PlanScopeContract) WithWriteAllowedPaths(paths []string) PlanScopeContract {
+	contract.WriteAllowedPaths = append([]string(nil), paths...)
+	return contract.Normalized()
 }
 
 func (contract PlanScopeContract) WithEditSetObligation(kind EditSetObligationKind, source string) PlanScopeContract {
