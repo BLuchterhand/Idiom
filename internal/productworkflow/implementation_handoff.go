@@ -83,8 +83,8 @@ func LoadImplementationHandoff(effortRoot string) (ImplementationHandoff, error)
 	traceability := loadImplementationHandoffTraceability(root)
 	implementationRecords := loadImplementationHandoffLedger(root)
 
-	knownTDDIDs := BuildKnownTDDObligationIDs(tdd, implementationRecords, prd.FrontMatter.TaskID)
-	coverage := EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability, knownTDDIDs)
+	satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(tdd, implementationRecords)
+	coverage := EvaluateCoverageGate(prd, adrIndex, parsedADRs, tdd, traceability, satisfiedTDDIDs)
 
 	return BuildImplementationHandoff(BriefGenerationInput{
 		EffortRoot:            root,

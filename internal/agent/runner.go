@@ -6084,6 +6084,7 @@ func toolRequestNormalizerTransportIsModelTextual(transport string) bool {
 		toolRequestNormalizerTransportFunctionCall,
 		toolRequestNormalizerTransportNestedArguments,
 		toolRequestNormalizerTransportIdiomCLI,
+		toolRequestNormalizerTransportXMLToolMarkup,
 		toolRequestNormalizerTransportStringifiedSubmitRepair:
 		return true
 	default:

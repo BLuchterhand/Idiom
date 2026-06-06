@@ -1415,6 +1415,9 @@ func TestSubmitPlanRejectsSourceSatisfiedPlaceholderRationale(t *testing.T) {
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("source-satisfied placeholder rationale should be rejected")
 	}
+	if result.Code != SubmitPlanSourceSatisfiedTerminalRequiredCode {
+		t.Fatalf("source-satisfied placeholder rationale code = %q, want %q", result.Code, SubmitPlanSourceSatisfiedTerminalRequiredCode)
+	}
 	for _, want := range []string{"source-satisfied", "placeholder"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("rejection should point to %q, got %q", want, result.Error)

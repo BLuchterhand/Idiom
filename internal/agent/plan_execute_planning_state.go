@@ -117,7 +117,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	switch {
 	case candidateReadyRejection:
 		state.Mode = PlanExecutePlanningModeSubmitReady
-	case len(state.LastInvalidPaths) > 0 && planThenExecuteRejectedPlanCorrectionOnly(brief, results):
+	case planThenExecuteRejectedPlanCorrectionOnly(brief, results):
 		state.Mode = PlanExecutePlanningModeSubmitCorrection
 	case len(state.RequiredCoveragePaths) > 0:
 		if len(workerruntime.NormalizeRuntimeBrief(brief).RequiredEditSnippets) > 0 || planThenExecuteSubmitPlanOnlyReady(brief, results) {

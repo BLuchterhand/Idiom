@@ -173,11 +173,13 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
 	if planRationaleClaimsNoEditsNeeded(artifact.Rationale) {
-		return withToolFailure(ToolResult{
+		result := withToolFailure(ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied rationale",
 			Error:   "submit_plan rationale says the requested final state is already present or that edits are placeholders. Do not submit verification/placeholder edits; answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact blocker.",
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
+		result.Code = SubmitPlanSourceSatisfiedTerminalRequiredCode
+		return result
 	}
 	if len(artifact.Edits) == 0 {
 		result := toolInvalidArgumentResult("submit_plan", "submit_plan rejected", "submit_plan requires at least one edit in the edits array")

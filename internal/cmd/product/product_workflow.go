@@ -1570,8 +1570,8 @@ func runProductTDD(args []string, stdout io.Writer, stderr io.Writer, rec *telem
 			Blockers:     []productworkflow.CoverageGateBlocker{},
 		}
 		if len(findings) == 0 {
-			knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(ledger, implementationRecords, prdDoc.FrontMatter.TaskID)
-			eval = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(prdDoc, adrIndex, parsedADRs, ledger, traceability, lintResult.Findings, knownTDDIDs)
+			satisfiedTDDIDs := productworkflow.BuildSatisfiedTDDObligationIDs(ledger, implementationRecords)
+			eval = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(prdDoc, adrIndex, parsedADRs, ledger, traceability, lintResult.Findings, satisfiedTDDIDs)
 		} else {
 			for _, f := range findings {
 				msg := f.Message
@@ -2618,9 +2618,9 @@ func loadBriefGenerationInput(effortRoot string) (productworkflow.BriefGeneratio
 		}
 	}
 	if len(blockers) == 0 {
-		knownTDDIDs := productworkflow.BuildKnownTDDObligationIDs(in.TDD, in.ImplementationRecords, in.PRD.FrontMatter.TaskID)
+		satisfiedTDDIDs := productworkflow.BuildSatisfiedTDDObligationIDs(in.TDD, in.ImplementationRecords)
 		lintResult := productworkflow.LintEffortFolder(effortRoot)
-		in.CoverageEvaluation = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(in.PRD, in.ADRIndex, in.ADRs, in.TDD, in.Traceability, lintResult.Findings, knownTDDIDs)
+		in.CoverageEvaluation = productworkflow.EvaluateCoverageGateWithAuthorityPreflight(in.PRD, in.ADRIndex, in.ADRs, in.TDD, in.Traceability, lintResult.Findings, satisfiedTDDIDs)
 		if productworkflow.CoverageGateHasBlockers(in.CoverageEvaluation) {
 			blockers = append(blockers, "coverage gate evaluation is blocked")
 		}

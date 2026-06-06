@@ -174,13 +174,13 @@ func TestE2ECreateFullPipeline(t *testing.T) {
 	// Parse implementation ledger for TDD evidence coverage.
 	ledgerData, _ := os.ReadFile(filepath.Join(root, "implementation_ledger.jsonl"))
 	ledgerRecords, _ := ParseImplementationLedgerJSONL(ledgerData)
-	knownTDDIDs := BuildKnownTDDObligationIDs(diskTDD, ledgerRecords, "E2E-001")
+	satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(diskTDD, ledgerRecords)
 
 	var matrix TraceabilityMatrix
 	matrixData, _ := os.ReadFile(filepath.Join(root, "evidence", "traceability_matrix.json"))
 	matrix, _ = ParseTraceabilityMatrixJSON(matrixData)
 
-	coverage := EvaluateCoverageGate(diskPRD, diskIdx, acceptedADRs, diskTDD, matrix, knownTDDIDs)
+	coverage := EvaluateCoverageGate(diskPRD, diskIdx, acceptedADRs, diskTDD, matrix, satisfiedTDDIDs)
 
 	brief := &featureplanner.ProductWorkflowBrief{
 		EffortID:           ws.EffortID,

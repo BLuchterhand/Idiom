@@ -25,6 +25,7 @@ const (
 	toolRequestNormalizerTransportFunctionCall            = "function_call"
 	toolRequestNormalizerTransportNestedArguments         = "nested_arguments"
 	toolRequestNormalizerTransportIdiomCLI                = "idiom_cli"
+	toolRequestNormalizerTransportXMLToolMarkup           = "xml_tool_markup"
 	toolRequestNormalizerTransportStringifiedSubmitRepair = "stringified_submit_plan_repair"
 )
 
@@ -89,6 +90,10 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 		}
 		result.EventOutcome = toolRequestNormalizerOutcomeUnsupportedShape
 		result.EventTransport = toolRequestNormalizerTransportTextual
+		if looksLikeXMLToolCall(message.Content) {
+			result.EventOutcome = toolRequestNormalizerOutcomeUnsafeToInfer
+			result.EventTransport = toolRequestNormalizerTransportXMLToolMarkup
+		}
 		result.ParserFailureClass = toolRequestParserFailureClass(result.Raw, parseErr)
 		return result
 	}
@@ -109,6 +114,9 @@ func normalizeToolRequestSyntax(message llama.ChatMessage) toolRequestSyntaxNorm
 			result.EventOutcome = toolRequestNormalizerOutcomeMissingToolInferred
 		}
 		result.EventTransport = toolRequestNormalizerTransportTextual
+		if looksLikeXMLToolCall(message.Content) {
+			result.EventTransport = toolRequestNormalizerTransportXMLToolMarkup
+		}
 		return result
 	}
 	if nested := normalizeNestedArgumentsToolRequestSyntax(message.Content); nested.EventOutcome != "" {

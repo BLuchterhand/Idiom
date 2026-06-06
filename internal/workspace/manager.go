@@ -1286,6 +1286,9 @@ func ParseToolRequest(text string) (ToolRequest, string, bool, error) {
 	if !ok {
 		var err error
 		payload, ok, err = extractQwenXMLToolPayload(text)
+		if !ok && err == nil {
+			payload, ok, err = extractDeepSeekXMLToolPayload(text)
+		}
 		if !ok {
 			if candidate := strings.TrimSpace(text); strings.HasPrefix(candidate, "{") && strings.HasSuffix(candidate, "}") && strings.Contains(candidate, `"tool"`) {
 				payload, ok = candidate, true
@@ -2627,6 +2630,8 @@ func extractPlainToolPrefixPayload(text string) (string, bool) {
 var (
 	qwenXMLFunctionPattern         = regexp.MustCompile(`(?s)^<function=([^>\s]+)>(.*)</function>$`)
 	qwenXMLParameterPattern        = regexp.MustCompile(`(?s)<parameter=([^>\s]+)>(.*?)</parameter>`)
+	deepSeekXMLInvokePattern       = regexp.MustCompile(`(?is)<[^>\s]*(?:invoke|function)\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</[^>]*(?:invoke|function)\s*>`)
+	deepSeekXMLParameterPattern    = regexp.MustCompile(`(?is)<[^>\s]*(?:parameter)\s+name\s*=\s*["']([^"']+)["'][^>]*>(.*?)</[^>]*(?:parameter)\s*>`)
 	lineAnchoredToolJSONPattern    = regexp.MustCompile(`(?m)(^|\n)\s*tool\s*:\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*(\{)`)
 	malformedToolNameObjectPattern = regexp.MustCompile(`(?s)^\{\s*"tool"\s*:\s*"([A-Za-z_][A-Za-z0-9_.-]*)"\s*:\s*\{(.*)\}\s*\}$`)
 	knownBareJSONToolNamesOnce     sync.Once
@@ -2760,6 +2765,59 @@ func extractQwenXMLToolPayload(text string) (string, bool, error) {
 		return payload, ok, err
 	}
 	return extractQwenXMLFunctionPayload(envelope)
+}
+
+func extractDeepSeekXMLToolPayload(text string) (string, bool, error) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", false, nil
+	}
+	lower := strings.ToLower(trimmed)
+	if !strings.Contains(lower, "invoke") && !strings.Contains(lower, "dsml") && !strings.Contains(lower, "tool_calls") {
+		return "", false, nil
+	}
+	match := deepSeekXMLInvokePattern.FindStringSubmatch(trimmed)
+	if len(match) != 3 {
+		if strings.Contains(lower, "dsml") || strings.Contains(lower, "tool_calls") || strings.Contains(lower, "_invoke") {
+			return trimmed, true, fmt.Errorf("malformed DeepSeek XML tool request")
+		}
+		return "", false, nil
+	}
+	tool := strings.TrimSpace(match[1])
+	if tool == "" || !xmlToolNameIsSafe(tool) {
+		return trimmed, true, fmt.Errorf("DeepSeek XML tool request is missing a safe tool name")
+	}
+	if !IsReadTool(tool) {
+		return trimmed, true, fmt.Errorf("DeepSeek XML tool request %q is not a read/search/discovery tool", tool)
+	}
+	fields := map[string]json.RawMessage{}
+	toolRaw, _ := json.Marshal(tool)
+	fields["tool"] = toolRaw
+	for _, param := range deepSeekXMLParameterPattern.FindAllStringSubmatch(match[2], -1) {
+		if len(param) != 3 {
+			continue
+		}
+		name := strings.TrimSpace(param[1])
+		if name == "" {
+			continue
+		}
+		if !xmlToolNameIsSafe(name) {
+			return trimmed, true, fmt.Errorf("DeepSeek XML tool request has unsafe parameter name %q", name)
+		}
+		if name == "operation" {
+			name = "capability"
+		}
+		raw, err := qwenXMLParameterRaw(name, param[2])
+		if err != nil {
+			return trimmed, true, err
+		}
+		fields[name] = raw
+	}
+	data, err := json.Marshal(fields)
+	if err != nil {
+		return trimmed, true, err
+	}
+	return string(data), true, nil
 }
 
 func extractQwenXMLPrefixedToolPayload(text string) (string, bool, error) {

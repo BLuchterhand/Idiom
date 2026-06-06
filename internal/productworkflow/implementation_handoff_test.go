@@ -233,6 +233,15 @@ func implementationHandoffInput(root string) BriefGenerationInput {
 				Implementor:          &ImplementorAssignment{ID: "impl", Runtime: "codex", Model: "test", Command: "run"},
 				Reviewer:             &ReviewerAssignment{ID: "rev", Runtime: "codex", Model: "test", ReasoningEffort: "medium"},
 			},
+			{
+				RecordType:              "verification_completed",
+				TaskID:                  "impl-handoff",
+				EffortID:                "effort-handoff",
+				Timestamp:               "2026-06-03T00:05:00Z",
+				TDDObligationsSatisfied: []string{"TDD-HANDOFF"},
+				VerificationStatus:      "pass",
+				VerificationCommandsRun: []string{"go test ./internal/productworkflow"},
+			},
 		},
 		CoverageEvaluation:    CoverageGateEvaluation{Status: "pass", CoverageTier: "unit"},
 		ExistingWorkspacePath: map[string]bool{"internal/productworkflow/implementation_handoff.go": true},
@@ -258,11 +267,16 @@ func writeImplementationHandoffEffort(t *testing.T, root string) {
 		t.Fatalf("mkdir evidence: %v", err)
 	}
 	writeImplementationHandoffJSON(t, filepath.Join(root, "evidence", "traceability_matrix.json"), input.Traceability)
-	recordData, err := json.Marshal(input.ImplementationRecords[0])
-	if err != nil {
-		t.Fatalf("marshal implementation ledger: %v", err)
+	var ledgerLines []byte
+	for _, record := range input.ImplementationRecords {
+		recordData, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("marshal implementation ledger: %v", err)
+		}
+		ledgerLines = append(ledgerLines, recordData...)
+		ledgerLines = append(ledgerLines, '\n')
 	}
-	if err := os.WriteFile(filepath.Join(root, "implementation_ledger.jsonl"), append(recordData, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "implementation_ledger.jsonl"), ledgerLines, 0o644); err != nil {
 		t.Fatalf("write implementation ledger: %v", err)
 	}
 }

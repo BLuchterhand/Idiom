@@ -1126,6 +1126,37 @@ func TestParseToolRequestAcceptsDeepSeekNativeJSONFormat(t *testing.T) {
 	}
 }
 
+func TestParseToolRequestAcceptsDeepSeekXMLReadTools(t *testing.T) {
+	text := `<｜tool_calls_begin｜><｜tool_call_begin｜><function name="read_file">
+<parameter name="path">internal/agent/runner.go</parameter>
+<parameter name="start_line">1</parameter>
+<parameter name="end_line">20</parameter>
+</function><｜tool_call_end｜><｜tool_calls_end｜>`
+	req, _, ok, err := ParseToolRequest(text)
+	if err != nil {
+		t.Fatalf("ParseToolRequest: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected DeepSeek XML read_file request to parse")
+	}
+	if req.Tool != "read_file" || req.Path != "internal/agent/runner.go" || req.StartLine != 1 || req.EndLine != 20 {
+		t.Fatalf("unexpected request: %#v", req)
+	}
+}
+
+func TestParseToolRequestRejectsDeepSeekXMLWriteTools(t *testing.T) {
+	text := `<｜tool_calls_begin｜><｜tool_call_begin｜><function name="submit_plan">
+<parameter name="rationale">submit edits</parameter>
+</function><｜tool_call_end｜><｜tool_calls_end｜>`
+	_, _, ok, err := ParseToolRequest(text)
+	if !ok || err == nil {
+		t.Fatalf("expected DeepSeek XML write tool to be rejected, ok=%t err=%v", ok, err)
+	}
+	if !strings.Contains(err.Error(), "not a read/search/discovery tool") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 // TestParseToolRequestAcceptsAllQwenFormatsAfterGuard verifies that every
 // Qwen tool-call format continues to parse correctly after the XML guard
 // that rejects descriptive prose.

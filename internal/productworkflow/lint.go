@@ -323,11 +323,7 @@ func LintEffortFolder(root string) LintSummaryResult {
 	}
 
 	if parsedTDD != nil && len(parsedTDD.Obligations) > 0 {
-		taskID := strings.TrimSpace(parsedTDD.TaskID)
-		if parsedPRD != nil && strings.TrimSpace(parsedPRD.FrontMatter.TaskID) != "" {
-			taskID = strings.TrimSpace(parsedPRD.FrontMatter.TaskID)
-		}
-		satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(*parsedTDD, parsedLedger, taskID)
+		satisfiedTDDIDs := BuildSatisfiedTDDObligationIDs(*parsedTDD, parsedLedger)
 		if len(satisfiedTDDIDs) == 0 {
 			addFinding(
 				"coverage_tdd_evidence_missing",

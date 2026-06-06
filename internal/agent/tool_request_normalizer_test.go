@@ -97,6 +97,86 @@ func TestNormalizeToolRequestSyntaxTextualJSON(t *testing.T) {
 	}
 }
 
+func TestNormalizeToolRequestSyntaxDeepSeekDSMLReadFile(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `<｜｜DSML｜｜tool_calls>
+<｜｜DSML｜｜invoke name="read_file">
+<｜｜DSML｜｜parameter name="path" string="true">prompts/profiles/deepseek-v4-pro.md</｜｜DSML｜｜parameter>
+<｜｜DSML｜｜parameter name="start_line" string="true">1</｜｜DSML｜｜parameter>
+<｜｜DSML｜｜parameter name="end_line" string="true">80</｜｜DSML｜｜parameter>
+</｜｜DSML｜｜invoke>
+</｜｜DSML｜｜tool_calls>`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected DSML read_file request to normalize")
+	}
+	if result.Request.Tool != "read_file" ||
+		result.Request.Path != "prompts/profiles/deepseek-v4-pro.md" ||
+		result.Request.StartLine != 1 ||
+		result.Request.EndLine != 80 {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeNormalized ||
+		result.EventTransport != toolRequestNormalizerTransportXMLToolMarkup {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxJanusCodeNavigate(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `<janus_tool_calls>
+<janus_invoke name="code_navigate">
+<janus_parameter name="capability" string="true">read_symbol</janus_parameter>
+<janus_parameter name="path" string="true">internal/agent/runner.go</janus_parameter>
+<janus_parameter name="symbol" string="true">Runner</janus_parameter>
+</janus_invoke>
+</janus_tool_calls>`,
+	})
+
+	if result.ParseErr != nil {
+		t.Fatalf("NormalizeToolRequestSyntax: %v", result.ParseErr)
+	}
+	if !result.OK {
+		t.Fatal("expected janus code_navigate request to normalize")
+	}
+	if result.Request.Tool != "code_navigate" ||
+		result.Request.Capability != "read_symbol" ||
+		result.Request.Path != "internal/agent/runner.go" ||
+		result.Request.Symbol != "Runner" {
+		t.Fatalf("unexpected request: %#v", result.Request)
+	}
+	if result.EventTransport != toolRequestNormalizerTransportXMLToolMarkup {
+		t.Fatalf("transport=%q, want %q", result.EventTransport, toolRequestNormalizerTransportXMLToolMarkup)
+	}
+}
+
+func TestNormalizeToolRequestSyntaxDeepSeekXMLWriteDoesNotNormalize(t *testing.T) {
+	result := normalizeToolRequestSyntax(llama.ChatMessage{
+		Content: `<n_tool_calls>
+<n_invoke name="edit_file">
+<n_parameter name="path" string="true">README.md</n_parameter>
+<n_parameter name="old_text" string="true">old</n_parameter>
+<n_parameter name="new_text" string="true">new</n_parameter>
+</n_invoke>
+</n_tool_calls>`,
+	})
+
+	if strings.TrimSpace(result.Request.Tool) != "" {
+		t.Fatalf("DeepSeek XML write request must not normalize: %#v", result.Request)
+	}
+	if result.ParseErr == nil || !strings.Contains(result.ParseErr.Error(), "not a read/search/discovery tool") {
+		t.Fatalf("expected read-only XML parser error, got %v", result.ParseErr)
+	}
+	if result.EventOutcome != toolRequestNormalizerOutcomeUnsafeToInfer ||
+		result.EventTransport != toolRequestNormalizerTransportXMLToolMarkup {
+		t.Fatalf("unexpected event metadata: outcome=%q transport=%q", result.EventOutcome, result.EventTransport)
+	}
+}
+
 func TestNormalizeToolRequestSyntaxReadFileLinesAlias(t *testing.T) {
 	result := normalizeToolRequestSyntax(llama.ChatMessage{
 		Content: `{"tool":"read_file","path":"logs/conversations/recent.jsonl","lines":"1-51"}`,

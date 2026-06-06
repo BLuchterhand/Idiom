@@ -571,32 +571,17 @@ func evaluateEvidenceAndAcceptanceCoverage(prd PRDDocument, adrIndex ADRIndex, a
 }
 
 func evaluateTDDEvidenceCoverage(ledger TDDLedger, knownTDDIDs ...map[string]bool) bool {
-	// Collect all known TDD obligation IDs from the ledger and any extra provided maps.
 	allTDDIDs := knownTDDObligationIDs(ledger, knownTDDIDs...)
 	if len(allTDDIDs) == 0 {
 		return true
 	}
 
-	// Check if any of the known TDD obligations are satisfied by verification records.
-	// We look at the ledger's Obligations to see which ones have been satisfied.
-	// If the ledger itself tracks satisfaction, we use that. Otherwise, we rely on
-	// the fact that if an obligation is in the ledger but not marked as satisfied,
-	// it's missing evidence.
-	// However, the standard pattern in this codebase is that ledger.Obligations contains
-	// the planned obligations. Satisfaction is tracked via ImplementationLedgerRecord
-	// or via a field on the obligation itself if available.
-	// Looking at BuildKnownTDDObligationIDs, it filters records by RecordType == "verification_completed"
-	// and collects TDDObligationsSatisfied.
-	// The EvaluateCoverageGate function receives `knownTDDIDs` which are typically built from
-	// verification records. If `knownTDDIDs` is empty or doesn't contain the obligation ID,
-	// it means no verification record satisfied it.
-
-	// If no extra knownTDDIDs are provided, we assume no evidence is present.
+	// The extra maps passed here are satisfied obligation IDs from verification
+	// records. Ledger obligations are known obligations, not evidence.
 	if len(knownTDDIDs) == 0 {
 		return false
 	}
 
-	// Check if all TDD IDs from the ledger are present in the knownTDDIDs (which represent satisfied ones).
 	for id := range allTDDIDs {
 		found := false
 		for _, extra := range knownTDDIDs {

@@ -1294,8 +1294,15 @@ func planThenExecuteSubmitPlanRejectedResult(result workspace.ToolResult) bool {
 }
 
 func planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result workspace.ToolResult) bool {
-	return strings.TrimSpace(result.Tool) == "submit_plan" &&
-		strings.TrimSpace(result.Code) == workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode
+	if strings.TrimSpace(result.Tool) != "submit_plan" {
+		return false
+	}
+	if strings.TrimSpace(result.Code) == workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode {
+		return true
+	}
+	text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, "\n"))
+	return strings.Contains(text, "source-satisfied terminal shape required") ||
+		strings.Contains(text, "source-satisfied rationale")
 }
 
 func planThenExecuteSourceSatisfiedTerminalRequiredPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {

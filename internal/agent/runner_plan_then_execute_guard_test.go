@@ -10684,6 +10684,38 @@ func TestPlanExecuteSourceSatisfiedSubmitPlanRejectionDoesNotEnterSubmitCorrecti
 	}
 }
 
+func TestPlanExecuteSourceSatisfiedRationaleRejectionDoesNotEnterSubmitCorrection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied rationale",
+			Error:   "submit_plan rationale says the requested final state is already present or that edits are placeholders. Do not submit verification/placeholder edits; answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact blocker.",
+		},
+	}
+	answer := "Decision: source-satisfied\n- a.go: requested final state is already present.\n- b.go: requested final state is already present."
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("mode = %q, want submit_ready", state.Mode)
+	}
+	if planThenExecuteSubmitCorrectionActive(brief, results) {
+		t.Fatal("source-satisfied rationale rejection should not enter submit-correction mode")
+	}
+	if !slices.Contains(state.TerminalResponseShapes, "Decision: source-satisfied") {
+		t.Fatalf("source-satisfied answer shape should remain available: %#v", state.TerminalResponseShapes)
+	}
+	if !runner.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
+		t.Fatal("explicit source-satisfied answer should remain available after source-satisfied rationale rejection")
+	}
+}
+
 func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -10739,6 +10771,28 @@ func TestPlanExecutePlanningStateDerivesTextualJSONTerminalTransport(t *testing.
 	}
 	if !state.RuntimePolicy.ResponseFormatJSON || state.RuntimePolicy.EffectiveMaxTokens != 4096 || state.RuntimePolicy.TimeoutMillis != 300000 {
 		t.Fatalf("runtime policy not preserved: %#v", state.RuntimePolicy)
+	}
+}
+
+func TestPlanExecuteDuplicateRejectedPlanStaysInSubmitCorrection(t *testing.T) {
+	state := DerivePlanExecutePlanningState(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}, []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[1]: edit would introduce adjacent duplicate code line 7 in b.go: \"const ready = true\"",
+		},
+	}, PlanExecutePlanningTransport{TextualToolParser: true})
+
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction", state.Mode)
+	}
+	if !slices.Contains(state.InvalidActionClasses, actionSourceSatisfied) {
+		t.Fatalf("source-satisfied should be invalid after an untyped duplicate/no-op rejection: %#v", state.InvalidActionClasses)
 	}
 }
 
@@ -13105,7 +13159,7 @@ func TestPlanExecutePartialNoopSubmitPlanFallsThroughToCorrection(t *testing.T) 
 		t.Fatalf("expected recovery to request a corrected submit_plan, got %d request(s)", requests)
 	}
 	if !sawSubmitPlanRequired {
-		t.Fatalf("expected plan_then_execute_submit_plan_required event")
+		t.Fatalf("expected submit-correction recovery event")
 	}
 	if !strings.Contains(answer, "Plan submitted with 2 edit") {
 		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
