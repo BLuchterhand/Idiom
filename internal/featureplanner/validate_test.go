@@ -82,6 +82,34 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	}
 }
 
+func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].AllowedEditPaths = []string{
+		"internal/labels/labels.go",
+		"internal/labels/labels_test.go",
+		"adrs/ADR-draft.md",
+		".planning/campaign-status.md",
+	}
+	brief := validProductWorkflowBrief()
+	brief.AcceptedADRPaths = []string{"adrs/ADR-draft.md"}
+
+	normalized := NormalizePlanProductWorkflowContext(plan, brief)
+	if err := ValidatePlanProductWorkflowContext(normalized, brief); err != nil {
+		t.Fatalf("normalized plan should validate: %v", err)
+	}
+	allowed := normalized.Atoms[0].AllowedEditPaths
+	for _, forbidden := range []string{"adrs/ADR-draft.md", ".planning/campaign-status.md"} {
+		if containsString(allowed, forbidden) {
+			t.Fatalf("context-only doc %q leaked into allowed edit scope: %#v", forbidden, allowed)
+		}
+	}
+	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
+		if !containsString(allowed, want) {
+			t.Fatalf("grounded allowed edit path %q was not preserved: %#v", want, allowed)
+		}
+	}
+}
+
 func TestBuildPlannerPromptHidesSubmitShapeWhenProductBriefHasBlockers(t *testing.T) {
 	brief := validProductWorkflowBrief()
 	brief.Blockers = []string{"implementation-affecting claim lacks resolved evidence"}
@@ -119,6 +147,8 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 		"use-only-product-grounded-paths",
 		"The schema example path placeholders are not authority",
 		"Repo grounding is required:",
+		"context evidence only",
+		"allowed_edit_paths is still edit scope",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("product prompt missing %q:\n%s", want, prompt)

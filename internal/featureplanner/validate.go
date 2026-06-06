@@ -172,6 +172,7 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 
 func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) error {
 	var errs []error
+	plan = NormalizePlanProductWorkflowContext(plan, brief)
 	if !brief.CoverageGatePassed {
 		errs = append(errs, errors.New("feature plan submitted while product workflow coverage gate is blocked"))
 	}
@@ -217,6 +218,11 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 		}
 	}
 	for i, atom := range plan.Atoms {
+		if len(normalizedStringList(atom.RequiredEditPaths)) == 0 &&
+			len(normalizedStringList(atom.AllowedEditPaths)) == 0 &&
+			!atom.ImplementationRequired {
+			errs = append(errs, fmt.Errorf("atom %d has no product-grounded required_edit_paths or allowed_edit_paths after context-only paths were removed", i))
+		}
 		errs = append(errs, repoGrounding.validateAtomEditScope(i, atom)...)
 		errs = append(errs, repoGrounding.validateAtomTestArtifactScope(i, atom)...)
 		if readinessErrs := validateProductTDDReadiness(i, atom, productTDD); len(readinessErrs) > 0 {
@@ -247,6 +253,39 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) FeaturePlan {
+	grounding := newRepoGrounding(brief)
+	for i := range plan.Atoms {
+		atom := &plan.Atoms[i]
+		required := normalizeEditScopeList(atom.RequiredEditPaths)
+		requiredSet := normalizedStringSet(required)
+		allowed := normalizeEditScopeList(atom.AllowedEditPaths)
+		keptAllowed := make([]string, 0, len(allowed))
+		for _, path := range allowed {
+			if requiredSet[path] || grounding.pathGrounded(path) {
+				keptAllowed = append(keptAllowed, path)
+			}
+		}
+		atom.RequiredEditPaths = required
+		atom.AllowedEditPaths = normalizeEditScopeList(keptAllowed)
+	}
+	return plan
+}
+
+func normalizeEditScopeList(paths []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, raw := range paths {
+		path := normalizeWorkspacePath(raw)
+		if path == "" || seen[path] {
+			continue
+		}
+		seen[path] = true
+		out = append(out, path)
+	}
+	return out
 }
 
 type productRepoGrounding struct {

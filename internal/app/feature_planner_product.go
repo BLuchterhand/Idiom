@@ -257,6 +257,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		state.Blockers = append(state.Blockers, briefErr.Error())
 		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: briefErr.Error()})
 	} else if parsed.Kind == featureplanner.ToolSubmitFeaturePlan && brief != nil {
+		parsed.Plan = featureplanner.NormalizePlanProductWorkflowContext(parsed.Plan, *brief)
 		if err := featureplanner.ValidatePlanProductWorkflowContext(parsed.Plan, *brief); err != nil {
 			state.Status = featureplanner.FeatureStatePlanningRepair
 			state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
