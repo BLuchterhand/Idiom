@@ -61,6 +61,27 @@ func planThenExecuteReviewRepairFailedPhaseObligations(brief workerruntime.Worke
 	return out
 }
 
+func (r *Runner) reviewRepairDoomLoopTerminalCloseout(results []workspace.ToolResult) (answer string, stopReason string, exhausted bool, ok bool) {
+	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != PlanThenExecuteReviewRepairTaskFamily {
+		return "", "", false, false
+	}
+	if reviewRepairCompletionGateRejectionCount(results) == 0 {
+		return "", "", false, false
+	}
+	answer = reviewRepairNoopSubmitPlanDeterministicCloseout(r.RuntimeBrief, workspace.ToolResult{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error:   "review-repair repeated discovery after the terminal closeout gate instead of choosing `Decision: pass`, corrective `submit_plan`, or `<<QUESTION>>:`.",
+	})
+	if strings.HasPrefix(strings.TrimSpace(answer), "Decision: pass") {
+		return answer, "review_repair_terminal_doom_loop_pass", false, true
+	}
+	if strings.HasPrefix(strings.TrimSpace(answer), "<<QUESTION>>:") {
+		return answer, "review_repair_terminal_doom_loop_blocker", true, true
+	}
+	return "", "", false, false
+}
+
 func reviewRepairPhaseEvidencePacket(objective string) []string {
 	evidence := reviewRepairPhaseEvidenceFromObjective(objective)
 	if evidence == "" {

@@ -2203,6 +2203,10 @@ func (r *Runner) Run(
 					// User approved — reset the streak and let this call execute.
 					requestBudget.fingerprint.identicalRun = 0
 				} else {
+					if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(collectedResults); ok {
+						r.emitEvent(RunEvent{Role: "plan_then_execute_review_repair_doom_loop_closeout", Content: reason})
+						return finish(answer, nil, reason, exhausted)
+					}
 					if answer, ok := r.hostOwnedReadOnlyCloseoutAnswer(collectedResults); ok {
 						return finish(answer, nil, "host_read_only_closeout", true)
 					}
@@ -2223,6 +2227,10 @@ func (r *Runner) Run(
 					return finish(answer, err, "doom_loop_guard", true)
 				}
 			} else {
+				if answer, reason, exhausted, ok := r.reviewRepairDoomLoopTerminalCloseout(collectedResults); ok {
+					r.emitEvent(RunEvent{Role: "plan_then_execute_review_repair_doom_loop_closeout", Content: reason})
+					return finish(answer, nil, reason, exhausted)
+				}
 				answer, err, done := controller.rejectTool(
 					stepNumber,
 					activeToolCall,

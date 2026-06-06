@@ -2769,6 +2769,92 @@ func TestReviewRepairNoopSubmitPlanDeterministicCloseoutPassesWhenPhaseEvidenceA
 	}
 }
 
+func TestReviewRepairDoomLoopTerminalCloseoutSynthesizesPassAfterCloseoutGate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+			ChangedPaths:      []string{"internal/labels/labels.go"},
+			AllowedEditPaths:  []string{"internal/labels/labels.go"},
+			Objective: reviewRepairPhaseEvidenceObjectiveForTest(
+				"schema: idiom.phase_evidence.v1",
+				"phase: review_repair",
+				"changed_paths: internal/labels/labels.go",
+				"allowed_repair_paths: internal/labels/labels.go",
+				"edit_set_obligations: (none)",
+				"",
+				"submitted_plan_state:",
+				"- `internal/labels/labels.go` status=applied summary=edit 1/1: submitted new_text is present error=",
+				"source_sanity:",
+				"- `internal/labels/labels.go` status=ok summary=Source sanity passed for 1 file(s) error=",
+				"verification:",
+				"- `go test ./...` status=ok summary=ok example.com/frozen-label-repo/internal/labels error=",
+				"patch_hygiene: status=passed",
+			),
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected final answer",
+		Error:   "review-repair must close with Decision: pass, submit_plan, or <<QUESTION>>.",
+	}}
+	answer, reason, exhausted, ok := runner.reviewRepairDoomLoopTerminalCloseout(results)
+	if !ok {
+		t.Fatal("expected review-repair doom-loop closeout after terminal gate")
+	}
+	if reason != "review_repair_terminal_doom_loop_pass" || exhausted {
+		t.Fatalf("unexpected closeout metadata reason=%q exhausted=%v", reason, exhausted)
+	}
+	if !strings.HasPrefix(answer, "Decision: pass\n\nVerification Checklist:") {
+		t.Fatalf("expected deterministic pass, got:\n%s", answer)
+	}
+}
+
+func TestReviewRepairDoomLoopTerminalCloseoutRequiresCloseoutGate(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+		},
+	}
+	if answer, reason, _, ok := runner.reviewRepairDoomLoopTerminalCloseout(nil); ok {
+		t.Fatalf("must not synthesize review closeout before completion gate, answer=%q reason=%q", answer, reason)
+	}
+}
+
+func TestReviewRepairDoomLoopTerminalCloseoutPreservesFailedObligationBlocker(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			Contract:          "review_findings",
+			PermissionProfile: "plan_submission_review",
+			Readiness: &workerruntime.ReadinessState{
+				OpenObligations: []string{"verification_failed:go test ./..."},
+			},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "completion_gate",
+		Summary: "Review-repair completion gate rejected contradictory pass",
+		Error:   "verification failed",
+	}}
+	answer, reason, exhausted, ok := runner.reviewRepairDoomLoopTerminalCloseout(results)
+	if !ok {
+		t.Fatal("expected failed-obligation blocker after terminal gate")
+	}
+	if reason != "review_repair_terminal_doom_loop_blocker" || !exhausted {
+		t.Fatalf("unexpected closeout metadata reason=%q exhausted=%v", reason, exhausted)
+	}
+	if !strings.HasPrefix(answer, "<<QUESTION>>:") || !strings.Contains(answer, "verification_failed:go test ./...") {
+		t.Fatalf("failed obligations must stay blocker-only, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Decision: pass") {
+		t.Fatalf("failed obligations must not become a pass:\n%s", answer)
+	}
+}
+
 func TestReviewRepairNoopSubmitPlanGuardSuppressesAlreadyAppliedPlan(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "widget_config.json"), []byte("{\n  \"labels\": [\"alpha\", \"beta\"]\n}\n"), 0o644); err != nil {
