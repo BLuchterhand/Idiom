@@ -127,6 +127,29 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 	if strings.Contains(prompt, `"path_test.go"`) {
 		t.Fatalf("product prompt must not contain copyable fake test artifact paths:\n%s", prompt)
 	}
+	exampleStart := strings.Index(prompt, "Required submit_feature_plan shape:")
+	if exampleStart < 0 {
+		t.Fatalf("product prompt missing submit_feature_plan shape:\n%s", prompt)
+	}
+	schemaExample := prompt[exampleStart:]
+	if strings.Contains(schemaExample, "go test ./...") {
+		t.Fatalf("product prompt schema example must not contain language-specific test command placeholders:\n%s", prompt)
+	}
+}
+
+func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.T) {
+	prompt := BuildPlannerPrompt("build feature", NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC()), nil)
+
+	for _, forbidden := range []string{"internal/example/source.go", "internal/example/source_test.go", "path_test.go", "go test ./..."} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("standalone prompt must not contain language-specific placeholder %q:\n%s", forbidden, prompt)
+		}
+	}
+	for _, want := range []string{"project/source-file.ext", "project/test-file.ext", "project-specific-test-command"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("standalone prompt missing neutral placeholder %q:\n%s", want, prompt)
+		}
+	}
 }
 
 func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *testing.T) {
