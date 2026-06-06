@@ -792,6 +792,23 @@ func TestApplyImplementorOutputRejectsPlanExecuteModelError(t *testing.T) {
 	}
 }
 
+func TestApplyImplementorOutputPromotesNestedPlanExecuteFailureDetailToBlocker(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"planner_blocked","failure_reason":"<<QUESTION>>: target.txt source evidence unavailable","progress_path":".idiom/plan-execute/sessions/pe.json"}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details: planner_blocked - <<QUESTION>>: target.txt source evidence unavailable")
+	if len(atom.Blockers) == 0 || !strings.Contains(atom.Blockers[0], "target.txt source evidence unavailable") {
+		t.Fatalf("atom blocker should preserve nested failure detail, blockers=%+v", atom.Blockers)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "planner_blocked" {
+		t.Fatalf("nested_failure_kind = %q, want planner_blocked", got)
+	}
+	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/sessions/pe.json" {
+		t.Fatalf("progress_path = %q, want child progress state", got)
+	}
+}
+
 func TestApplyImplementorOutputRejectsImplicitSkippedReview(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 

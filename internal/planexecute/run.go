@@ -147,9 +147,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	if autoExact.SourceSatisfied {
 		if reason := editSetObligations.RejectionReason(autoExact.AppliedPaths); reason != "" {
 			message := EditSetObligationFailureMessage(reason)
-			progress.Status = ProgressStatusFailed
-			progress.FailureKind = reason
-			progress.FailureReason = sanitizeProgressReason(message)
+			progress.MarkPlanningFailed(reason, message)
 			_, _ = saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved")
 			emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
 				"reason":                          reason,
@@ -250,9 +248,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			ScopeContract:            scopeContract,
 		}, stdout)
 		if err != nil {
-			progress.Status = ProgressStatusFailed
-			progress.FailureKind = "planner_failed"
-			progress.FailureReason = sanitizeProgressReason(err.Error())
+			progress.MarkPlanningFailed("planner_failed", err.Error())
 			if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
 				if savedPath != "" {
 					progressPath = savedPath
@@ -270,9 +266,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		if plancontract.SourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
 			if reason := editSetObligations.RejectionReason(sourceSatisfiedPaths); reason != "" {
 				message := EditSetObligationFailureMessage(reason)
-				progress.Status = ProgressStatusFailed
-				progress.FailureKind = reason
-				progress.FailureReason = sanitizeProgressReason(message)
+				progress.MarkPlanningFailed(reason, message)
 				if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
 					if savedPath != "" {
 						progressPath = savedPath
@@ -314,9 +308,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			return RunResult{ExitCode: 0, SessionID: sessionID, ResumeStatePath: progressPath}
 		}
 		if planExecuteAnswerDeclaresBlocker(answer) {
-			progress.Status = ProgressStatusFailed
-			progress.FailureKind = RunFailurePlannerBlocked
-			progress.FailureReason = planExecuteBlockerSummary(answer)
+			progress.MarkPlanningFailed(RunFailurePlannerBlocked, planExecuteBlockerSummary(answer))
 			if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
 				if savedPath != "" {
 					progressPath = savedPath
@@ -347,9 +339,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		if !opts.JSONEvents {
 			fmt.Fprintln(stdout, answer)
 		}
-		progress.Status = ProgressStatusFailed
-		progress.FailureKind = "plan_artifact_missing"
-		progress.FailureReason = sanitizeProgressReason(err.Error())
+		progress.MarkPlanningFailed("plan_artifact_missing", err.Error())
 		if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
 			if savedPath != "" {
 				progressPath = savedPath
@@ -372,9 +362,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 			"reason": err.Error(),
 		})
 		fmt.Fprintln(stderr, fmt.Errorf("read plan artifact %q: %w", planPath, err))
-		progress.Status = ProgressStatusFailed
-		progress.FailureKind = "plan_artifact_invalid"
-		progress.FailureReason = sanitizeProgressReason(err.Error())
+		progress.MarkPlanningFailed("plan_artifact_invalid", err.Error())
 		if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
 			if savedPath != "" {
 				progressPath = savedPath

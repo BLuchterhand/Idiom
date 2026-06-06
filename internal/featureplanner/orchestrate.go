@@ -709,6 +709,9 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 
 func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
 	fields := planExecuteCompletionFields(completion)
+	if detail := planExecuteCompletionFailureDetail(completion); detail != "" {
+		reason = strings.TrimSpace(reason + ": " + detail)
+	}
 	return recoverAtom(state, atom, reason, "repair_nested_plan_execute_completion", "idiom.feature_planner.plan_execute_completion_rejected", fields)
 }
 
@@ -782,6 +785,21 @@ func planExecuteCompletionFields(completion planExecuteCompletion) map[string]an
 		fields["review_repair_skipped"] = true
 	}
 	return fields
+}
+
+func planExecuteCompletionFailureDetail(completion planExecuteCompletion) string {
+	kind := strings.TrimSpace(completion.FailureKind)
+	reason := strings.TrimSpace(completion.FailureReason)
+	switch {
+	case kind != "" && reason != "":
+		return kind + " - " + reason
+	case kind != "":
+		return kind
+	case reason != "":
+		return reason
+	default:
+		return ""
+	}
 }
 
 func claimsUnverifiedEditOrTestEvidence(raw string) bool {

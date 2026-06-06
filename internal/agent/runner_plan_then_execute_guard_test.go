@@ -4534,7 +4534,7 @@ func TestPlanExecuteTextualAllowedToolsKeepsHistoryWhenCandidateReadyNeedsHistor
 	}
 }
 
-func TestPlanExecuteTextualAllowedToolsKeepsReadToolsWhenHistoryPending(t *testing.T) {
+func TestPlanExecuteTextualAllowedToolsRestrictsToHistoryToolsWhenHistoryPending(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"pkg/feature.go"},
@@ -4556,9 +4556,14 @@ func TestPlanExecuteTextualAllowedToolsKeepsReadToolsWhenHistoryPending(t *testi
 	}
 
 	allowed := runnerPlanExecuteTextualAllowedTools([]string{"history_range", "history_symbol", "submit_plan"}, brief, results)
-	for _, want := range []string{"read_file", "code_navigate", "history_range", "history_symbol"} {
+	for _, want := range []string{"history_range", "history_symbol"} {
 		if !slices.Contains(allowed, want) {
-			t.Fatalf("history-pending surface should preserve %s for exact missing edit-safety evidence: %#v", want, allowed)
+			t.Fatalf("history-pending surface should preserve %s for git history evidence: %#v", want, allowed)
+		}
+	}
+	for _, forbidden := range []string{"read_file", "code_navigate"} {
+		if slices.Contains(allowed, forbidden) {
+			t.Fatalf("history-pending surface must not expose source-read tool %s after source evidence is satisfied: %#v", forbidden, allowed)
 		}
 	}
 	if slices.Contains(allowed, "submit_plan") {
@@ -10223,10 +10228,13 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	if slices.Contains(state.ParserVisibleTools, "submit_plan") {
 		t.Fatalf("history-pending phase must not advertise submit_plan before git history evidence: %#v", state.ParserVisibleTools)
 	}
-	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
+	for _, want := range []string{"history_range", "history_symbol"} {
 		if !slices.Contains(state.ParserVisibleTools, want) {
 			t.Fatalf("history-pending phase missing %s: %#v", want, state.ParserVisibleTools)
 		}
+	}
+	if slices.Contains(state.ParserVisibleTools, "read_file") {
+		t.Fatalf("history-pending phase must not advertise read_file after source evidence is satisfied: %#v", state.ParserVisibleTools)
 	}
 	if !slices.Contains(state.AllowedActionClasses, actionRead) {
 		t.Fatalf("history-pending phase should expose history tools as read actions: %#v", state.AllowedActionClasses)
@@ -10249,10 +10257,13 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 	if slices.Contains(contract.AllowedTools, "submit_plan") {
 		t.Fatalf("history-pending contract must not advertise submit_plan before git history evidence: %#v", contract.AllowedTools)
 	}
-	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
+	for _, want := range []string{"history_range", "history_symbol"} {
 		if !slices.Contains(contract.AllowedTools, want) {
 			t.Fatalf("history-pending contract missing %s: %#v", want, contract.AllowedTools)
 		}
+	}
+	if slices.Contains(contract.AllowedTools, "read_file") {
+		t.Fatalf("history-pending contract must not advertise read_file after source evidence is satisfied: %#v", contract.AllowedTools)
 	}
 	if slices.Contains(contract.TerminalOutcomes, "submit_plan") {
 		t.Fatalf("history-pending contract must not list submit_plan as a terminal outcome: %#v", contract.TerminalOutcomes)
@@ -10273,10 +10284,13 @@ func TestPlanExecutePlanningStateRequiresHistoryAfterSourceEvidence(t *testing.T
 		TextualToolParser: true,
 		ToolTransportMode: "textual",
 	})
-	for _, want := range []string{"read_file", "history_range", "history_symbol"} {
+	for _, want := range []string{"history_range", "history_symbol"} {
 		if !slices.Contains(textualContract.AllowedTools, want) {
 			t.Fatalf("textual history-pending contract missing %s: %#v", want, textualContract.AllowedTools)
 		}
+	}
+	if slices.Contains(textualContract.AllowedTools, "read_file") {
+		t.Fatalf("textual history-pending contract must not advertise read_file after source evidence is satisfied: %#v", textualContract.AllowedTools)
 	}
 	if slices.Contains(textualContract.AllowedTools, "submit_plan") {
 		t.Fatalf("textual history-pending contract must hide submit_plan before git history evidence: %#v", textualContract.AllowedTools)

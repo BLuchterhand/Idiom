@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -367,6 +368,56 @@ func TestSaveRunProgressStateWritesRecoveryDecompositionPacket(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), `"type":"idiom.plan_execute.recovery_decomposition_packet_written"`) {
 		t.Fatalf("packet event missing from stdout=%s statePath=%s", stdout.String(), statePath)
+	}
+}
+
+func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+	result := Run(cfg, Options{
+		Prompt:            "Update target.txt.",
+		RequiredEditPaths: []string{"target.txt"},
+		JSONEvents:        true,
+	}, func(_ config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+		}
+		return "<<QUESTION>>: target.txt: required source evidence is unavailable.", nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 || result.FailureKind != RunFailurePlannerBlocked {
+		t.Fatalf("expected planner_blocked result, got %#v stdout=%s stderr=%s", result, stdout.String(), stderr.String())
+	}
+	state, _, err := LoadProgressState(root, result.SessionID)
+	if err != nil {
+		t.Fatalf("load progress state: %v", err)
+	}
+	if state.Phase != ProgressPhasePlanning || state.Status != ProgressStatusFailed || state.FailureKind != RunFailurePlannerBlocked {
+		t.Fatalf("expected structured planning failure state, got %#v", state)
+	}
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	var event map[string]any
+	for _, candidate := range events {
+		if candidate["type"] == "idiom.plan_execute.resume_state_saved" && candidate["status"] == ProgressStatusFailed {
+			event = candidate
+		}
+	}
+	if event == nil {
+		t.Fatalf("expected resume_state_saved event, got %s", stdout.String())
+	}
+	if event["failure_kind"] != RunFailurePlannerBlocked {
+		t.Fatalf("resume state event missing failure_kind: %#v", event)
+	}
+	if got := fmt.Sprint(event["failure_reason"]); !strings.Contains(got, "target.txt") {
+		t.Fatalf("resume state event missing concrete failure reason: %#v", event)
+	}
+	if got, _ := event["required_edit_paths"].([]any); len(got) != 1 || got[0] != "target.txt" {
+		t.Fatalf("resume state event missing required paths: %#v", event)
 	}
 }
 

@@ -209,6 +209,13 @@ func (s *ProgressState) MarkPlanLoaded(root string, planPath string, plan worksp
 	}
 }
 
+func (s *ProgressState) MarkPlanningFailed(kind string, reason string) {
+	s.Phase = ProgressPhasePlanning
+	s.Status = ProgressStatusFailed
+	s.FailureKind = strings.TrimSpace(kind)
+	s.FailureReason = sanitizeProgressReason(reason)
+}
+
 func (s *ProgressState) MarkEditProgress(step int, total int, path string, succeeded bool) {
 	if step <= 0 {
 		return
@@ -380,6 +387,21 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	}
 	if state.PlanPath != "" {
 		fields["plan_path"] = state.PlanPath
+	}
+	if state.FailureKind != "" {
+		fields["failure_kind"] = state.FailureKind
+	}
+	if state.FailureReason != "" {
+		fields["failure_reason"] = state.FailureReason
+	}
+	if len(state.RequiredEditPaths) > 0 {
+		fields["required_edit_paths"] = append([]string(nil), state.RequiredEditPaths...)
+	}
+	if len(state.AllowedEditPaths) > 0 {
+		fields["allowed_edit_paths"] = append([]string(nil), state.AllowedEditPaths...)
+	}
+	if len(state.ChangedPaths) > 0 {
+		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
 	}
 	if state.TotalEdits > 0 {
 		fields["total_edits"] = state.TotalEdits
