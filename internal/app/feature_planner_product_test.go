@@ -779,6 +779,59 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 	}
 }
 
+func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
+	root := t.TempDir()
+	startedAt := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	state := featureplanner.NewState("feature-session", "prompt", "", 3, startedAt)
+	state.Status = featureplanner.FeatureStateDispatching
+	state.Atoms = []featureplanner.FeatureAtomState{{
+		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
+			ID:                "atom-1",
+			RequiredEditPaths: []string{"pkg/feature.go"},
+		},
+		State:     featureplanner.AtomStateImplementing,
+		LastRunID: "atom-1-run-1",
+	}}
+	state.ActiveRuns = []featureplanner.ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        "atom-1",
+		LaneSessionID: "atom-1-run-1",
+		LaneFamily:    "plan-execute",
+		State:         "running",
+		StartedAt:     startedAt.Format(time.RFC3339Nano),
+	}}
+	progress := planexecute.NewProgressState("pe-session", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
+	progress.Phase = planexecute.ProgressPhaseComplete
+	progress.Status = planexecute.ProgressStatusCompleted
+	progress.Review.Status = planexecute.ProgressStatusSkipped
+	progressPath, err := planexecute.SaveProgressState(root, &progress)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+
+	model := &Model{cfg: config.Config{Chat: config.Chat{ProjectRoot: root}, Workspace: config.Workspace{Root: root}}}
+	events := model.reconcileFeaturePlannerActivePlanExecuteRuns(&state)
+
+	if state.Status != featureplanner.FeatureStateComplete {
+		t.Fatalf("feature state = %q, want complete; events=%+v blockers=%+v", state.Status, events, state.Blockers)
+	}
+	if state.Atoms[0].State != featureplanner.AtomStateComplete {
+		t.Fatalf("atom state = %q, want complete; events=%+v blockers=%+v", state.Atoms[0].State, events, state.Atoms[0].Blockers)
+	}
+	if len(state.ActiveRuns) != 0 {
+		t.Fatalf("active run should be folded after durable terminal progress: %+v", state.ActiveRuns)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := events[0].Fields["review_repair_skipped"]; got != true {
+		t.Fatalf("review_repair_skipped = %v, want true; fields=%+v", got, events[0].Fields)
+	}
+	if got := events[0].Fields["progress_path"]; got != progressPath {
+		t.Fatalf("progress_path = %v, want %s; fields=%+v", got, progressPath, events[0].Fields)
+	}
+}
+
 func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.T) {
 	root := t.TempDir()
 	state := planexecute.NewProgressState("pe-session", "prompt", "", []string{"internal/app/product_status.go"}, nil, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))

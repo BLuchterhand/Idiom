@@ -348,33 +348,35 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	if stateID == "" {
 		stateID = strings.TrimSuffix(filepath.Base(filepath.ToSlash(strings.TrimSpace(result.ResumeStatePath))), ".json")
 	}
-	state, _, found, err := planexecute.TryLoadProgressState(root, stateID)
+	state, statePath, found, err := planexecute.TryLoadProgressState(root, stateID)
 	if err != nil || !found {
 		return
 	}
-	if strings.TrimSpace(state.Status) != "" {
-		fields["status"] = strings.TrimSpace(state.Status)
+	progressFields := planexecute.ProgressStateEventFields(state, statePath)
+	overlayFeaturePlannerPlanExecuteProgressFields(fields, progressFields)
+}
+
+func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progressFields map[string]any) {
+	for _, key := range []string{"status", "phase", "review_status"} {
+		if value := featureplanner.CompletionFieldString(progressFields, key); value != "" {
+			fields[key] = value
+		}
 	}
-	if strings.TrimSpace(state.Phase) != "" {
-		fields["phase"] = strings.TrimSpace(state.Phase)
+	for _, key := range []string{"failure_kind", "failure_reason"} {
+		if value := featureplanner.CompletionFieldString(progressFields, key); value != "" && featureplanner.CompletionFieldString(fields, key) == "" {
+			fields[key] = value
+		}
 	}
-	if strings.TrimSpace(state.FailureKind) != "" && featureplanner.CompletionFieldString(fields, "failure_kind") == "" {
-		fields["failure_kind"] = strings.TrimSpace(state.FailureKind)
+	if value := featureplanner.CompletionFieldString(progressFields, "state_path"); value != "" && featureplanner.CompletionFieldString(fields, "progress_path") == "" {
+		fields["progress_path"] = value
 	}
-	if strings.TrimSpace(state.FailureReason) != "" && featureplanner.CompletionFieldString(fields, "failure_reason") == "" {
-		fields["failure_reason"] = strings.TrimSpace(state.FailureReason)
+	if value, ok := progressFields["review_repair_skipped"]; ok {
+		fields["review_repair_skipped"] = value
 	}
-	if strings.TrimSpace(state.Review.Status) != "" {
-		fields["review_status"] = strings.TrimSpace(state.Review.Status)
-	}
-	if len(state.RequiredEditPaths) > 0 {
-		fields["required_edit_paths"] = append([]string(nil), state.RequiredEditPaths...)
-	}
-	if len(state.AllowedEditPaths) > 0 {
-		fields["allowed_edit_paths"] = append([]string(nil), state.AllowedEditPaths...)
-	}
-	if len(state.ChangedPaths) > 0 {
-		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
+	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "changed_paths"} {
+		if value, ok := progressFields[key]; ok {
+			fields[key] = value
+		}
 	}
 }
 

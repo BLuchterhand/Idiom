@@ -337,6 +337,51 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableProgressStateForSparse
 	}
 }
 
+func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableSkippedReviewState(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_review_skipped", "prompt", "", nil, nil, time.Now().UTC())
+	state.Phase = planexecute.ProgressPhaseComplete
+	state.Status = planexecute.ProgressStatusCompleted
+	state.Review.Status = planexecute.ProgressStatusSkipped
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        0,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute returned without terminal JSONL")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatalf("decode completion payload: %v", err)
+	}
+	for key, want := range map[string]string{
+		"status":        "completed",
+		"phase":         "complete",
+		"review_status": "skipped",
+		"progress_path": statePath,
+	} {
+		if got := fmt.Sprint(fields[key]); got != want {
+			t.Fatalf("%s = %q, want %q in payload %s", key, got, want, payload)
+		}
+	}
+	if got := fields["review_repair_skipped"]; got != true {
+		t.Fatalf("review_repair_skipped = %v, want true in payload %s", got, payload)
+	}
+	if got := featureplanner.PlanExecuteCompletionTerminalClass(fields); got != featureplanner.PlanExecuteTerminalCompleted {
+		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
+	}
+}
+
 func TestFeaturePlannerTUIPlanExecuteCompletionLogTypeIsStatusAware(t *testing.T) {
 	tests := []struct {
 		name string

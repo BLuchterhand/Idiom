@@ -159,22 +159,25 @@ func parsePlanExecuteProgressTime(value string) time.Time {
 }
 
 func encodePlanExecuteProgressCompletion(progress planexecute.ProgressState, progressPath string) string {
-	fields := map[string]any{
-		"tool":              featureplanner.ToolPlanExecuteComplete,
-		"lane_family":       "plan-execute",
-		"status":            strings.TrimSpace(progress.Status),
-		"phase":             strings.TrimSpace(progress.Phase),
-		"completion_source": "durable_plan_execute_progress",
-		"progress_path":     strings.TrimSpace(progressPath),
+	fields := planexecute.ProgressStateEventFields(progress, strings.TrimSpace(progressPath))
+	if fields == nil {
+		fields = map[string]any{}
 	}
-	if strings.TrimSpace(progress.Review.Status) != "" {
-		fields["review_status"] = strings.TrimSpace(progress.Review.Status)
+	if strings.TrimSpace(progressPath) == "" {
+		progressPath = strings.TrimSpace(featureplanner.CompletionFieldString(fields, "state_path"))
 	}
-	if strings.TrimSpace(progress.FailureKind) != "" {
-		fields["failure_kind"] = strings.TrimSpace(progress.FailureKind)
+	delete(fields, "state_path")
+	fields["tool"] = featureplanner.ToolPlanExecuteComplete
+	fields["lane_family"] = "plan-execute"
+	fields["completion_source"] = "durable_plan_execute_progress"
+	if strings.TrimSpace(progressPath) != "" {
+		fields["progress_path"] = strings.TrimSpace(progressPath)
 	}
-	if strings.TrimSpace(progress.FailureReason) != "" {
-		fields["failure_reason"] = strings.TrimSpace(progress.FailureReason)
+	if featureplanner.CompletionFieldString(fields, "status") == "" {
+		fields["status"] = strings.TrimSpace(progress.Status)
+	}
+	if featureplanner.CompletionFieldString(fields, "phase") == "" {
+		fields["phase"] = strings.TrimSpace(progress.Phase)
 	}
 	body, _ := json.Marshal(fields)
 	return string(body)

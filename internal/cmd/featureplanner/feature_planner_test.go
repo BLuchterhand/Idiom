@@ -191,7 +191,7 @@ func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T)
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","phase":"executor","status":"running","state_path":".idiom/plan-execute/first/state.json"}`,
 		`not json`,
-		`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","state_path":".idiom/plan-execute/final/state.json"}`,
+		`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","review_repair_skipped":true,"state_path":".idiom/plan-execute/final/state.json"}`,
 		`{"type":"message","state_path":"ignored"}`,
 	}, "\n")
 
@@ -207,6 +207,9 @@ func TestFeaturePlannerPlanExecuteProgressPathUsesLatestStateEvent(t *testing.T)
 	}
 	if got := fmt.Sprint(fields["review_status"]); got != "skipped" {
 		t.Fatalf("review_status = %q, want skipped; fields=%+v", got, fields)
+	}
+	if got := fields["review_repair_skipped"]; got != true {
+		t.Fatalf("review_repair_skipped = %v, want true; fields=%+v", got, fields)
 	}
 }
 

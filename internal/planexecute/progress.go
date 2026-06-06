@@ -434,6 +434,9 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	if state.Review.Status != "" {
 		fields["review_status"] = state.Review.Status
 	}
+	if state.Review.Status == ProgressStatusSkipped {
+		fields["review_repair_skipped"] = true
+	}
 	if state.Review.Repairs > 0 {
 		fields["review_repairs"] = state.Review.Repairs
 	}

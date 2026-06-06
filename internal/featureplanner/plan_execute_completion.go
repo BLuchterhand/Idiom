@@ -24,6 +24,7 @@ func PlanExecuteCompletionFields(output string) map[string]any {
 			Phase         string `json:"phase"`
 			Status        string `json:"status"`
 			ReviewStatus  string `json:"review_status"`
+			ReviewSkipped bool   `json:"review_repair_skipped"`
 			FailureKind   string `json:"failure_kind"`
 			FailureReason string `json:"failure_reason"`
 			ReasonClass   string `json:"reason_class"`
@@ -46,6 +47,9 @@ func PlanExecuteCompletionFields(output string) map[string]any {
 		}
 		if strings.TrimSpace(record.ReviewStatus) != "" {
 			fields["review_status"] = strings.TrimSpace(record.ReviewStatus)
+		}
+		if record.ReviewSkipped {
+			fields["review_repair_skipped"] = true
 		}
 		if strings.TrimSpace(record.FailureKind) != "" {
 			fields["failure_kind"] = strings.TrimSpace(record.FailureKind)
