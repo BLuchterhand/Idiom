@@ -310,7 +310,8 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 		applyCandidateSource(contract, baseTools, planningState)
 	case strings.TrimSpace(brief.TaskFamily) == PlanThenExecuteReviewRepairTaskFamily &&
 		(strings.TrimSpace(input.PhaseHint) == turnPhaseReviewRepairTerminal ||
-			len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0):
+			len(planThenExecuteReviewRepairFailedPhaseObligations(brief)) > 0 ||
+			reviewRepairCompletionGateRejectionCount(input.Results) > 0):
 		applyReviewRepairTerminal(contract, brief, baseTools)
 	case implementationTargetSourceWriteReady(brief, input.Results):
 		applyImplementationTargetWriteReady(contract, brief, baseTools, input.Results)

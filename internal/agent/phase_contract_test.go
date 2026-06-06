@@ -589,6 +589,37 @@ func TestDeriveTurnPhaseContractReviewRepairFailedEvidenceStartsTerminal(t *test
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionReviewPass)
 }
 
+func TestDeriveTurnPhaseContractReviewRepairCompletionGateStartsTerminal(t *testing.T) {
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecuteReviewRepairTaskFamily,
+			PermissionProfile: "plan_submission_review",
+			AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+		},
+		Results: []workspace.ToolResult{
+			{
+				Tool:    "completion_gate",
+				Summary: "Review-repair completion gate rejected final answer",
+				Error:   "review-repair must close with exactly one terminal outcome",
+			},
+		},
+	})
+
+	if contract.PhaseID != turnPhaseReviewRepairTerminal {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseReviewRepairTerminal)
+	}
+	assertEqualSet(t, contract.AllowedTools, []string{"submit_plan"})
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionReviewPass)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionBlocker)
+	assertContains(t, contract.TerminalOutcomes, "Decision: pass")
+	assertContains(t, contract.TerminalOutcomes, "submit_plan")
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSearch)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSearch)
+}
+
 func TestDeriveTurnPhaseContractImplementationWriteReady(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{
