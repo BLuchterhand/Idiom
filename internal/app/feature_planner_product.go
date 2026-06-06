@@ -984,6 +984,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 		MaxPlanningIterations: 3,
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  brief,
+		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
 			if implementorBlocked {

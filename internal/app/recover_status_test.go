@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -280,6 +281,58 @@ func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testin
 	} {
 		if !strings.Contains(payload, want) {
 			t.Fatalf("expected %s in payload %s", want, payload)
+		}
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableProgressStateForSparseOutput(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("nested_planner_blocked", "prompt", "", []string{"pkg/feature.go"}, []string{"pkg/feature_test.go"}, time.Now().UTC())
+	state.Phase = planexecute.ProgressPhasePlanning
+	state.Status = planexecute.ProgressStatusFailed
+	state.FailureKind = planexecute.RunFailurePlannerBlocked
+	state.FailureReason = "<<QUESTION>>: pkg/feature.go source evidence unavailable"
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        1,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+		},
+	}
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion("plan-execute returned without terminal JSONL")
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatalf("decode completion payload: %v", err)
+	}
+	for key, want := range map[string]string{
+		"status":         "failed",
+		"phase":          "planning",
+		"failure_kind":   "planner_blocked",
+		"failure_reason": "<<QUESTION>>: pkg/feature.go source evidence unavailable",
+		"progress_path":  statePath,
+	} {
+		if got := fmt.Sprint(fields[key]); got != want {
+			t.Fatalf("%s = %q, want %q in payload %s", key, got, want, payload)
+		}
+	}
+	for key, want := range map[string]string{
+		"required_edit_paths": "pkg/feature.go",
+		"allowed_edit_paths":  "pkg/feature_test.go",
+		"changed_paths":       "pkg/feature.go",
+	} {
+		values, _ := fields[key].([]any)
+		if len(values) != 1 || fmt.Sprint(values[0]) != want {
+			t.Fatalf("%s = %#v, want [%s] in payload %s", key, fields[key], want, payload)
 		}
 	}
 }

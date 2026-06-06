@@ -45,6 +45,14 @@ func gitHistoryEvidenceTool(tool string) bool {
 	}
 }
 
+func planExecuteHistoryPendingToolNames() []string {
+	return []string{"history_range", "history_symbol"}
+}
+
+func planExecuteHistoryPendingToolListForPrompt() string {
+	return "`history_range` or `history_symbol`"
+}
+
 func mutationHistoryEvidenceRequired(brief workerruntime.WorkerRuntimeBrief) bool {
 	brief = workerruntime.NormalizeRuntimeBrief(brief)
 	for _, label := range brief.RequiredEvidence {

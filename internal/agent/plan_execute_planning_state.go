@@ -198,8 +198,8 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.PhaseID = turnPhaseHistoryPending
 		state.Phase = "history_pending"
 		state.DerivationReason = "plan_execute_history_evidence_pending"
-		state.ParserVisibleTools = []string{"history_range", "history_symbol"}
-		state.CallableTools = []string{"history_range", "history_symbol"}
+		state.ParserVisibleTools = planExecuteHistoryPendingToolNames()
+		state.CallableTools = planExecuteHistoryPendingToolNames()
 		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
 		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}

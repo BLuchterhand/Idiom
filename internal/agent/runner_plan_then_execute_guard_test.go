@@ -2833,6 +2833,29 @@ func TestMutationCompletionGateAcceptsPlannerSourceSatisfiedWithReadEvidence(t *
 	}
 }
 
+func TestPlanThenExecuteHarnessDiagnosticDoesNotSatisfyRequiredPathBlockerEvidence(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "autonomy_event",
+			Summary: `{"type":"gate_decision","gate":{"gate":"completion_gate","safe_alternatives":["<<QUESTION>>:","Decision: source-satisfied"],"observed_facts":["path_ref:target_refs=a.txt:pending","path_ref:target_refs=b.txt:pending"]}}`,
+		},
+	}
+
+	unread := planThenExecuteUnreadRequiredPaths(brief, results)
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if _, ok := unread[path]; !ok {
+			t.Fatalf("harness diagnostic must not satisfy required source coverage for %s: %#v", path, unread)
+		}
+		if planThenExecuteRequiredPathState(brief, results, path) != planThenExecuteRequiredPathExistingSourceBodyRequired {
+			t.Fatalf("harness diagnostic must not become blocker evidence for %s", path)
+		}
+	}
+}
+
 func TestMutationCompletionGateAcceptsUnscopedPlannerSourceSatisfiedWithReadEvidence(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -10333,7 +10356,7 @@ func TestPlanExecutePostReadinessAllowsRequiredHistoryRead(t *testing.T) {
 	}
 }
 
-func TestPlanExecutePostReadinessDoesNotForceSubmitBeforeHistory(t *testing.T) {
+func TestPlanExecutePostReadinessRejectsSourceReadBeforeHistory(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		RequiredEditPaths: []string{"a.go"},
@@ -10351,8 +10374,14 @@ func TestPlanExecutePostReadinessDoesNotForceSubmitBeforeHistory(t *testing.T) {
 		EndLine:   10,
 	}
 
-	if summary, errText, reject := planThenExecutePostReadinessDiscoveryRejection(req, brief, results); reject {
-		t.Fatalf("source-ready but history-pending phase should not force submit_plan yet, got %q: %s", summary, errText)
+	summary, errText, reject := planThenExecutePostReadinessDiscoveryRejection(req, brief, results)
+	if !reject {
+		t.Fatalf("source-ready but history-pending phase should reject additional source reads")
+	}
+	for _, want := range []string{"Git history evidence required", "history_range", "history_symbol", "Do not perform additional source reads"} {
+		if !strings.Contains(summary+"\n"+errText, want) {
+			t.Fatalf("history-pending rejection missing %q, got %q: %s", want, summary, errText)
+		}
 	}
 }
 

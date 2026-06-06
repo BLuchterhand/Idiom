@@ -915,8 +915,13 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
 		return "", "", false
 	}
-	if len(planThenExecuteHistoryPendingPaths(brief, results, nil)) > 0 {
-		return "", "", false
+	if pendingHistory := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pendingHistory) > 0 {
+		if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
+			return "", "", false
+		}
+		return "Git history evidence required",
+			"every required_edit_path has satisfied its source-body obligation, but git history evidence is still required before submit_plan. Do not perform additional source reads or search. Call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ", answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
+			true
 	}
 	if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
 		return "", "", false
@@ -1384,6 +1389,9 @@ func planThenExecuteRequiredPathHasBlockerEvidence(path string, results []worksp
 		return false
 	}
 	for _, result := range results {
+		if planThenExecuteResultIsHarnessDiagnostic(result) {
+			continue
+		}
 		if strings.TrimSpace(result.Tool) == "submit_plan" || strings.TrimSpace(result.Tool) == "completion_gate" {
 			continue
 		}
@@ -1397,6 +1405,24 @@ func planThenExecuteRequiredPathHasBlockerEvidence(path string, results []worksp
 			strings.Contains(lower, "blocked required") {
 			return true
 		}
+	}
+	return false
+}
+
+func planThenExecuteResultIsHarnessDiagnostic(result workspace.ToolResult) bool {
+	tool := strings.ToLower(strings.TrimSpace(result.Tool))
+	if strings.Contains(tool, "autonomy") ||
+		strings.Contains(tool, "gate") ||
+		strings.Contains(tool, "guard") {
+		return true
+	}
+	text := strings.ToLower(strings.TrimSpace(result.Summary + "\n" + result.Error + "\n" + result.Output))
+	if strings.Contains(text, `"safe_alternatives"`) ||
+		strings.Contains(text, `"gate"`) ||
+		strings.Contains(text, `"guard_friction"`) ||
+		strings.Contains(text, "runner_completion_gate") ||
+		strings.Contains(text, "runner_budget_gate") {
+		return true
 	}
 	return false
 }

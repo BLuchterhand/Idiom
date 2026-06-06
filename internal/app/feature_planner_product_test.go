@@ -716,6 +716,69 @@ func TestProductWorkflowFeaturePlannerRecoveryAllowsCompleteState(t *testing.T) 
 	}
 }
 
+func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t *testing.T) {
+	root := t.TempDir()
+	startedAt := time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC)
+	state := featureplanner.NewState("feature-session", "prompt", "", 3, startedAt)
+	state.Status = featureplanner.FeatureStateDispatching
+	state.Atoms = []featureplanner.FeatureAtomState{{
+		FeatureAtomPlan: featureplanner.FeatureAtomPlan{
+			ID:                "atom-1",
+			RequiredEditPaths: []string{"pkg/feature.go"},
+		},
+		State:     featureplanner.AtomStateImplementing,
+		LastRunID: "atom-1-run-1",
+	}}
+	state.ActiveRuns = []featureplanner.ActiveRun{{
+		RunID:         "atom-1-run-1",
+		AtomID:        "atom-1",
+		LaneSessionID: "atom-1-run-1",
+		LaneFamily:    "plan-execute",
+		State:         "running",
+		StartedAt:     startedAt.Format(time.RFC3339Nano),
+	}}
+	progress := planexecute.NewProgressState("pe-session", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
+	progress.Phase = planexecute.ProgressPhasePlanning
+	progress.Status = planexecute.ProgressStatusFailed
+	progress.FailureKind = planexecute.RunFailurePlannerBlocked
+	progress.FailureReason = "<<QUESTION>>: pkg/feature.go source evidence unavailable"
+	progressPath, err := planexecute.SaveProgressState(root, &progress)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+
+	model := &Model{cfg: config.Config{Chat: config.Chat{ProjectRoot: root}, Workspace: config.Workspace{Root: root}}}
+	events := model.reconcileFeaturePlannerActivePlanExecuteRuns(&state)
+
+	if state.Status != featureplanner.FeatureStateRecoveryOpen {
+		t.Fatalf("feature state = %q, want recovery-open", state.Status)
+	}
+	if state.Atoms[0].State != featureplanner.AtomStateRecoveryOpen {
+		t.Fatalf("atom state = %q, want recovery-open", state.Atoms[0].State)
+	}
+	if len(state.ActiveRuns) != 0 {
+		t.Fatalf("active run should be folded after durable terminal progress: %+v", state.ActiveRuns)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.plan_execute_completion_rejected" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	for _, want := range []string{
+		"nested plan-execute reported failure details",
+		"planner_blocked",
+		"pkg/feature.go source evidence unavailable",
+	} {
+		if !strings.Contains(events[0].Message, want) {
+			t.Fatalf("event message missing %q: %+v", want, events[0])
+		}
+	}
+	if got := events[0].Fields["completion_source"]; got != "durable_plan_execute_progress" {
+		t.Fatalf("completion_source = %v, want durable_plan_execute_progress; fields=%+v", got, events[0].Fields)
+	}
+	if got := events[0].Fields["progress_path"]; got != progressPath {
+		t.Fatalf("progress_path = %v, want %s; fields=%+v", got, progressPath, events[0].Fields)
+	}
+}
+
 func TestPlanExecuteExecutionRecoveryOpenMessageSurfacesSourceSanity(t *testing.T) {
 	root := t.TempDir()
 	state := planexecute.NewProgressState("pe-session", "prompt", "", []string{"internal/app/product_status.go"}, nil, time.Date(2026, 5, 31, 12, 0, 0, 0, time.UTC))

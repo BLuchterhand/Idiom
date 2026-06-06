@@ -49,6 +49,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		MaxPlanningIterations: 3,
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  productBrief,
+		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
 			return m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
@@ -344,6 +345,15 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	}
 	if strings.TrimSpace(state.Review.Status) != "" {
 		fields["review_status"] = strings.TrimSpace(state.Review.Status)
+	}
+	if len(state.RequiredEditPaths) > 0 {
+		fields["required_edit_paths"] = append([]string(nil), state.RequiredEditPaths...)
+	}
+	if len(state.AllowedEditPaths) > 0 {
+		fields["allowed_edit_paths"] = append([]string(nil), state.AllowedEditPaths...)
+	}
+	if len(state.ChangedPaths) > 0 {
+		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
 	}
 }
 

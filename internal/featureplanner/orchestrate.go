@@ -18,6 +18,7 @@ type RunOptions struct {
 	ResumeAnswer          string
 	Now                   time.Time
 	ProductWorkflowBrief  *ProductWorkflowBrief
+	ReconcileActiveRuns   func(state *FeatureState) []Event
 }
 
 type RunResult struct {
@@ -38,6 +39,9 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		if state.Status == FeatureStatePlanningQuestion {
 			return RunResult{State: state, Events: events}, nil
 		}
+	}
+	if opts.ReconcileActiveRuns != nil && len(state.ActiveRuns) > 0 {
+		events = append(events, opts.ReconcileActiveRuns(&state)...)
 	}
 	if len(state.ActiveRuns) > 0 {
 		return RunResult{
