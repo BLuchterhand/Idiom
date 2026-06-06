@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"idiom/internal/config"
+	"idiom/internal/frontier/pathparse"
 	"idiom/internal/plancontract"
 	"idiom/internal/workspace"
 )
@@ -177,6 +178,105 @@ func planExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditP
 
 func PlanExecuteMissingSourceSatisfiedCoveragePaths(answer string, requiredEditPaths []string) []string {
 	return planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths)
+}
+
+func planExecuteSourceSatisfiedUnsupportedEvidenceMarkers() []string {
+	return []string{
+		"not shown in full",
+		"implied by",
+		"not shown",
+		"assumed",
+		"likely",
+		"probably",
+		"appears to",
+		"seems to",
+		"should already",
+	}
+}
+
+func planExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer string, evidencePaths []string) string {
+	pathSet := planExecutePathSet(evidencePaths)
+	for _, line := range strings.Split(answer, "\n") {
+		if len(pathSet) > 0 {
+			linePaths := planExecuteUniqueRequiredPaths(pathparse.MentionedWorkspacePaths(line))
+			matchesEvidencePath := false
+			for _, path := range linePaths {
+				if _, ok := pathSet[path]; ok {
+					matchesEvidencePath = true
+					break
+				}
+			}
+			if !matchesEvidencePath {
+				continue
+			}
+		}
+		if marker := planExecuteSourceSatisfiedUnsupportedMarkerInText(line); marker != "" {
+			return marker
+		}
+	}
+	return ""
+}
+
+func planExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt() string {
+	var quoted []string
+	for _, marker := range planExecuteSourceSatisfiedUnsupportedEvidenceMarkers() {
+		quoted = append(quoted, "`"+marker+"`")
+	}
+	return strings.Join(quoted, ", ")
+}
+
+func PlanExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer string, evidencePaths []string) string {
+	return planExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer, evidencePaths)
+}
+
+func PlanExecuteSourceSatisfiedUnsupportedEvidenceMarkers() []string {
+	return planExecuteSourceSatisfiedUnsupportedEvidenceMarkers()
+}
+
+func PlanExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt() string {
+	return planExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt()
+}
+
+func planExecuteSourceSatisfiedUnsupportedMarkerInText(text string) string {
+	lower := strings.ToLower(text)
+	for _, marker := range planExecuteSourceSatisfiedUnsupportedEvidenceMarkers() {
+		if planExecuteTextContainsUnsupportedEvidenceMarker(lower, marker) {
+			return marker
+		}
+	}
+	return ""
+}
+
+func planExecuteTextContainsUnsupportedEvidenceMarker(lowerText string, marker string) bool {
+	start := 0
+	for {
+		idx := strings.Index(lowerText[start:], marker)
+		if idx < 0 {
+			return false
+		}
+		idx += start
+		before := idx - 1
+		after := idx + len(marker)
+		if planExecuteUnsupportedMarkerBoundary(lowerText, before) &&
+			planExecuteUnsupportedMarkerBoundary(lowerText, after) {
+			return true
+		}
+		start = idx + len(marker)
+		if start >= len(lowerText) {
+			return false
+		}
+	}
+}
+
+func planExecuteUnsupportedMarkerBoundary(text string, idx int) bool {
+	if idx < 0 || idx >= len(text) {
+		return true
+	}
+	ch := text[idx]
+	return !((ch >= 'a' && ch <= 'z') ||
+		(ch >= '0' && ch <= '9') ||
+		ch == '_' ||
+		ch == '-')
 }
 
 func planExecuteAutoPlanScanTexts(prompt string) []string {

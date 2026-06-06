@@ -24,9 +24,10 @@ type RunResult struct {
 }
 
 const (
-	RunFailurePlannerBlocked       = "planner_blocked"
-	RunFailureSourceSanityFailed   = "source_sanity_failed"
-	RunFailureVerificationRequired = "verification_failed"
+	RunFailurePlannerBlocked                     = "planner_blocked"
+	RunFailureSourceSanityFailed                 = "source_sanity_failed"
+	RunFailureSourceSatisfiedUnsupportedEvidence = "source_satisfied_unsupported_evidence"
+	RunFailureVerificationRequired               = "verification_failed"
 )
 
 func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) RunResult {
@@ -266,6 +267,29 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	if err != nil {
 		sourceSatisfiedPaths := planExecuteSourceSatisfiedEvidencePaths(answer, requiredEditPaths, allowedEditPaths)
 		if plancontract.SourceSatisfiedAnswerCoversPaths(answer, sourceSatisfiedPaths) {
+			if marker := planExecuteSourceSatisfiedUnsupportedEvidenceMarker(answer, sourceSatisfiedPaths); marker != "" {
+				message := fmt.Sprintf("%s: source-satisfied evidence includes unsupported inference marker %q; submit a grounded plan or report a typed blocker", RunFailureSourceSatisfiedUnsupportedEvidence, marker)
+				progress.MarkPlanningFailed(RunFailureSourceSatisfiedUnsupportedEvidence, message)
+				if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+					if savedPath != "" {
+						progressPath = savedPath
+					}
+					fmt.Fprintln(stderr, saveErr)
+				}
+				emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "source_satisfied_rejected", map[string]any{
+					"reason":                          RunFailureSourceSatisfiedUnsupportedEvidence,
+					"unsupported_evidence_marker":     marker,
+					"required_edit_paths":             requiredEditPaths,
+					"allowed_edit_paths":              allowedEditPaths,
+					"source_satisfied_evidence_paths": sourceSatisfiedPaths,
+					"missing_edit_set_obligations":    editSetObligations.MissingOpenObligations(sourceSatisfiedPaths),
+					"missing_required_edit_paths":     planExecuteMissingSourceSatisfiedCoveragePaths(answer, requiredEditPaths),
+					"edit_set_obligations":            editSetObligations,
+					"edit_set_obligation_count":       len(editSetObligations),
+				})
+				fmt.Fprintln(stderr, message)
+				return RunResult{ExitCode: 1, SessionID: sessionID, ResumeStatePath: progressPath, FailureKind: RunFailureSourceSatisfiedUnsupportedEvidence, FailureReason: sanitizeProgressReason(message)}
+			}
 			if reason := editSetObligations.RejectionReason(sourceSatisfiedPaths); reason != "" {
 				message := EditSetObligationFailureMessage(reason)
 				progress.MarkPlanningFailed(reason, message)

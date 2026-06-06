@@ -235,7 +235,11 @@ func TestRunAcceptsSourceSatisfiedAnswerWithInferredEvidencePaths(t *testing.T) 
 
 	var stdout, stderr bytes.Buffer
 	result := Run(cfg, Options{
-		Prompt:     "Reject temp symlinks and add regression tests proving no partial mutation.",
+		Prompt: "Reject temp symlinks and add regression tests proving no partial mutation.",
+		RequiredEditPaths: MultiFlag{
+			"internal/productworkflow/migration_apply.go",
+			"internal/productworkflow/migration_apply_test.go",
+		},
 		JSONEvents: true,
 	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
 		return "Decision: source-satisfied\n- internal/productworkflow/migration_apply.go: no changes needed.\n- internal/productworkflow/migration_apply_test.go: no changes needed.", nil
@@ -254,6 +258,80 @@ func TestRunAcceptsSourceSatisfiedAnswerWithInferredEvidencePaths(t *testing.T) 
 	}
 	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 2 {
 		t.Fatalf("expected source-satisfied evidence paths in telemetry, got %#v", event)
+	}
+}
+
+func TestRunAcceptsSourceSatisfiedAnswerWithBenignUnsupportedWordOutsideEvidence(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+	result := Run(cfg, Options{
+		Prompt: "Reject temp symlinks and add regression tests proving no partial mutation.",
+		RequiredEditPaths: MultiFlag{
+			"internal/productworkflow/migration_apply.go",
+			"internal/productworkflow/migration_apply_test.go",
+		},
+		JSONEvents: true,
+	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+		return strings.Join([]string{
+			"Decision: source-satisfied",
+			"Context: this code uses a LikelyPrefix helper name elsewhere, but it is not source-satisfied evidence.",
+			"- internal/productworkflow/migration_apply.go: already present; current source rejects temp symlinks before mutation through LikelyPrefix handling.",
+			"- internal/productworkflow/migration_apply_test.go: already present; current tests cover no partial mutation on rejection.",
+		}, "\n"), nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 0 {
+		t.Fatalf("source-satisfied answer with benign non-evidence marker word should pass, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
+	}
+	if strings.Contains(stdout.String(), `"type":"idiom.plan_execute.source_satisfied_rejected"`) {
+		t.Fatalf("benign non-evidence marker should not reject source-satisfied answer, stdout=%s", stdout.String())
+	}
+}
+
+func TestRunRejectsSourceSatisfiedAnswerWithUnsupportedInference(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+
+	var stdout, stderr bytes.Buffer
+	result := Run(cfg, Options{
+		Prompt:     "Implement item tooltip display and native binding coverage.",
+		JSONEvents: true,
+	}, func(_ config.Config, _ string, _ RunOptions, _ io.Writer) (string, error) {
+		return strings.Join([]string{
+			"Decision: source-satisfied",
+			"- native/src/core/colony_sim.h: binding fields are already present.",
+			"- native/tests/test_quality_inventory_bindings.cpp: coverage is not shown in full but implied by passing tests.",
+			"- scripts/ui/ui_helpers.gd: tooltip surface likely already uses the same dictionary fields.",
+		}, "\n"), nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 {
+		t.Fatalf("expected unsupported source-satisfied rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
+	}
+	if result.FailureKind != RunFailureSourceSatisfiedUnsupportedEvidence {
+		t.Fatalf("expected %s, result=%#v stderr=%s", RunFailureSourceSatisfiedUnsupportedEvidence, result, stderr.String())
+	}
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.source_satisfied_rejected")
+	if !ok {
+		t.Fatalf("expected source_satisfied_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != RunFailureSourceSatisfiedUnsupportedEvidence {
+		t.Fatalf("expected unsupported-evidence reason, got %#v", event)
+	}
+	if event["unsupported_evidence_marker"] != "not shown in full" {
+		t.Fatalf("expected rejected marker in telemetry, got %#v", event)
+	}
+	if got, _ := event["source_satisfied_evidence_paths"].([]any); len(got) != 3 {
+		t.Fatalf("expected rejected source-satisfied evidence paths, got %#v", event)
 	}
 }
 
