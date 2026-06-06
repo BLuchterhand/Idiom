@@ -4915,16 +4915,16 @@ func planExecutePlannerRecoveryRetryInstruction(failure implementationDispatchPl
 	var b strings.Builder
 	paths := uniqueImplementationDispatchPaths(append(append([]string{}, failure.RequiredPaths...), failure.Options.RequiredEditPaths...))
 	if path, ok := planExecuteRequiredSourceReadBlockerPath(failure); ok {
-		fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range, then produce one valid `submit_plan` call", path)
+		fmt.Fprintf(&b, "First read source for `%s` using `code_navigate` `read_symbol` or a bounded `read_file` range", path)
 		if len(paths) > 0 {
-			fmt.Fprintf(&b, " whose edits include at least one real edit for each required path listed above (%s), with no outside paths.", strings.Join(paths, ", "))
+			fmt.Fprintf(&b, "; then satisfy runtime-required git history evidence for every existing required path listed above (%s); then produce one valid `submit_plan` call whose edits include at least one real edit for each required path, with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(paths, ", "))
 		} else {
-			b.WriteString(" grounded in the objective and target references.")
+			b.WriteString("; then satisfy any runtime-required git history evidence for selected existing edit paths; then produce one valid `submit_plan` call grounded in the objective and target references. Do not treat a source read or history read as plan coverage.")
 		}
 	} else {
 		switch {
 		case len(paths) > 0:
-			fmt.Fprintf(&b, "After this retry has satisfied source-body obligations for every existing required path and any runtime-required git history evidence, produce one valid `submit_plan` call whose edits include at least one real edit for each required path listed above (%s), with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(paths, ", "))
+			fmt.Fprintf(&b, "After this retry has satisfied source-body obligations and runtime-required git history evidence for every existing required path listed above (%s), produce one valid `submit_plan` call whose edits include at least one real edit for each required path, with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(paths, ", "))
 		case len(failure.AllowedPaths) > 0 || len(failure.Options.AllowedEditPaths) > 0:
 			allowed := uniqueImplementationDispatchPaths(append(append([]string{}, failure.AllowedPaths...), failure.Options.AllowedEditPaths...))
 			fmt.Fprintf(&b, "Produce one valid `submit_plan` call using the allowed candidate paths listed above (%s) as the edit allowlist; do not treat every candidate path as mandatory coverage.", strings.Join(allowed, ", "))

@@ -105,6 +105,18 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	scope := r.planThenExecuteRequiredEditScope()
 	scopeActive := len(scope.coverage) > 0 || len(scope.allowedExact) > 0 || len(scope.directoryScopes) > 0
 	edits := planThenExecuteEffectiveSubmitPlanEdits(req)
+	if len(edits) == 0 && workspace.SubmitPlanRequestClaimsSourceSatisfied(req) {
+		return verificationInterceptResult{
+			Intercepted: true,
+			Result: workspace.ToolResult{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: source-satisfied terminal shape required",
+				Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+				Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+			},
+			Reason: "plan-then-execute planner phase: source-satisfied closeout used submit_plan transport",
+		}
+	}
 	planned := make(map[string]struct{}, len(edits))
 	var outside []string
 	var missingPathEdits []string
@@ -1255,6 +1267,9 @@ func successfulSourceBodyReadPathBefore(results []workspace.ToolResult, index in
 func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (workspace.ToolResult, int, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
+		if planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
+			continue
+		}
 		if planThenExecuteSubmitPlanRejectedResult(result) {
 			return result, i, true
 		}
@@ -1263,7 +1278,9 @@ func lastRejectedSubmitPlanCoverageResult(results []workspace.ToolResult) (works
 }
 
 func planThenExecuteSubmitPlanRejectedForCorrection(req workspace.ToolRequest, result workspace.ToolResult) bool {
-	return strings.TrimSpace(req.Tool) == "submit_plan" && planThenExecuteSubmitPlanRejectedResult(result)
+	return strings.TrimSpace(req.Tool) == "submit_plan" &&
+		planThenExecuteSubmitPlanRejectedResult(result) &&
+		!planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result)
 }
 
 func planThenExecuteSubmitPlanRejectedResult(result workspace.ToolResult) bool {
@@ -1274,6 +1291,32 @@ func planThenExecuteSubmitPlanRejectedResult(result workspace.ToolResult) bool {
 		return true
 	}
 	return strings.Contains(result.Summary, "submit_plan rejected") || strings.Contains(result.Error, "submit_plan must include")
+}
+
+func planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result workspace.ToolResult) bool {
+	return strings.TrimSpace(result.Tool) == "submit_plan" &&
+		strings.TrimSpace(result.Code) == workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode
+}
+
+func planThenExecuteSourceSatisfiedTerminalRequiredPrompt(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
+	required := planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")
+	scopeLine := "Use the relevant selected edit paths from gathered current-source evidence."
+	if len(required) > 0 {
+		scopeLine = "Required path(s): " + strings.Join(required, ", ") + "."
+	}
+	return strings.Join([]string{
+		"The previous `submit_plan` attempted a source-satisfied/no-op closeout using the wrong transport. That rejected tool call is not a valid plan artifact and is not an accepted source-satisfied terminal answer.",
+		"",
+		lastSubmitPlanRejectionBrief(result),
+		scopeLine,
+		"",
+		"The next visible action must be exactly one terminal outcome:",
+		"1. `Decision: source-satisfied` with per-path current-state evidence if every required or selected path already contains the requested final state.",
+		"2. `submit_plan` with real executable edits for every required or selected path if changes are needed.",
+		"3. `<<QUESTION>>:` with the exact path-specific blocker.",
+		"",
+		"Do not repeat an empty `submit_plan`, and do not treat the rejected tool call as plan coverage.",
+	}, "\n")
 }
 
 func planThenExecuteSubmitPlanGroundingRejectedResult(result workspace.ToolResult) bool {

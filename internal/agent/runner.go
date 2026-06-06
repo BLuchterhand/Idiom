@@ -3277,6 +3277,16 @@ func (r *Runner) Run(
 			})
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
+		if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
+			prompt := planThenExecuteSourceSatisfiedTerminalRequiredPrompt(r.RuntimeBrief, result)
+			refreshPlanThenExecuteTerminalSurface("source_satisfied_terminal_required")
+			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
+			rebuildTools()
+			opts = forceVisibleActionChatOptions(opts)
+			syncPlanThenExecuteRecoveryAllowedTools()
+			r.emitEvent(RunEvent{Role: "plan_then_execute_source_satisfied_terminal_required", Content: prompt})
+			continue
+		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteCandidateSourceReadyResult(result) {
 			prompt := r.planThenExecuteSubmitReadyTerminalPrompt(result.Error, collectedResults, chatOptionsExposeTool(opts, "submit_plan"))
 			opts = forceVisibleActionChatOptions(opts)

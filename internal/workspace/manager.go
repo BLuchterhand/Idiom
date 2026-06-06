@@ -118,6 +118,7 @@ type ToolRequest struct {
 	Capability        string              `json:"capability,omitempty"`
 	Operation         string              `json:"operation,omitempty"`
 	Action            string              `json:"action,omitempty"`
+	Decision          string              `json:"decision,omitempty"`
 	Language          string              `json:"language,omitempty"`
 	Glob              string              `json:"glob,omitempty"`
 	Workdir           string              `json:"workdir,omitempty"`

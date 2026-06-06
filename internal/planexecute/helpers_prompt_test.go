@@ -33,6 +33,7 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"never placeholders",
 		"Required `submit_plan` coverage for this run: 2 required path(s)",
 		"After every existing required path has satisfied its source-body obligation, do not perform additional source reads",
+		"history evidence is present for every selected existing edit path",
 		"Do not treat a source read or history read as plan coverage",
 	} {
 		if !strings.Contains(got, want) {
@@ -43,6 +44,7 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"Prefer numeric line-range edits for existing source/test changes",
 		"line-range shape) for non-trivial existing-path edits",
 		"path/from/required_edit_paths",
+		"After any required history evidence is present",
 	} {
 		if strings.Contains(got, stale) {
 			t.Fatalf("planner addendum retained stale wording %q:\n%s", stale, got)

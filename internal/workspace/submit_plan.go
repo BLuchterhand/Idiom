@@ -13,7 +13,10 @@ import (
 	"idiom/internal/failures"
 )
 
-const SubmitPlanEmptyEditsCode = "submit_plan.empty_edits"
+const (
+	SubmitPlanEmptyEditsCode                      = "submit_plan.empty_edits"
+	SubmitPlanSourceSatisfiedTerminalRequiredCode = "submit_plan.source_satisfied_terminal_required"
+)
 
 // PlanEdit is one edit spec inside a plan-then-execute artifact. The
 // planner emits these via the submit_plan tool; the executor phase
@@ -148,6 +151,15 @@ const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: sour
 // default.
 func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if req.PlanArtifact == nil && len(req.Edits) == 0 {
+		if SubmitPlanRequestClaimsSourceSatisfied(req) {
+			result := toolInvalidArgumentResult(
+				"submit_plan",
+				"submit_plan rejected: source-satisfied terminal shape required",
+				"submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			)
+			result.Code = SubmitPlanSourceSatisfiedTerminalRequiredCode
+			return result
+		}
 		result := toolInvalidArgumentResult("submit_plan", "submit_plan rejected", "submit_plan requires at least one edit in the edits array")
 		result.Code = SubmitPlanEmptyEditsCode
 		return result
@@ -238,6 +250,18 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		Summary: fmt.Sprintf("Plan submitted with %d edit(s); the executor phase will dispatch them.", len(artifact.Edits)),
 		Output:  fmt.Sprintf("plan_path: %s\nedits: %d\nschema_version: %s\ncontent_refs: %d\n%s", path, len(artifact.Edits), PlanArtifactSchemaVersion, spilled, audit.SummaryLine()),
 	}
+}
+
+// SubmitPlanRequestClaimsSourceSatisfied reports whether a submit_plan request
+// is trying to encode the terminal source-satisfied closeout instead of a real
+// edit plan.
+func SubmitPlanRequestClaimsSourceSatisfied(req ToolRequest) bool {
+	decision := strings.ToLower(strings.TrimSpace(req.Decision))
+	decision = strings.ReplaceAll(decision, "_", "-")
+	if decision == "source-satisfied" || decision == "source satisfied" {
+		return true
+	}
+	return planRationaleClaimsNoEditsNeeded(req.Rationale)
 }
 
 // validatePlanEdit ensures one of the recognized edit shapes is

@@ -2601,7 +2601,7 @@ func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *test
 
 	got := appendPlanExecutePlannerRecoveryAddendum(failure.Brief, failure, decision, `{"decision":"retry"}`)
 	for _, want := range []string{
-		"After this retry has satisfied source-body obligations for every existing required path",
+		"After this retry has satisfied source-body obligations and runtime-required git history evidence for every existing required path",
 		"produce one valid `submit_plan` call",
 		"cmd/idiom/product_workflow.go",
 		"cmd/idiom/product_workflow_test.go",
@@ -2618,6 +2618,7 @@ func TestPlanExecutePlannerRecoveryAddendumUsesHarnessOwnedRetryContract(t *test
 		"include the full file content",
 		"Recovery controller observation",
 		"Produce one valid `submit_plan` call whose edits include at least one real edit for each required path",
+		"After this retry has satisfied source-body obligations for every existing required path and any runtime-required git history evidence",
 	} {
 		if strings.Contains(got, forbidden) {
 			t.Fatalf("recovery addendum leaked controller contract text %q:\n%s", forbidden, got)
@@ -2649,8 +2650,11 @@ func TestPlanExecutePlannerRecoveryAddendumPrioritizesRequiredSourceReadBlocker(
 	if !strings.Contains(got, "First read source for `cmd/idiom/product_workflow_test.go`") {
 		t.Fatalf("recovery addendum should prioritize the required source read:\n%s", got)
 	}
-	if idxRead, idxSubmit := strings.Index(got, "First read source"), strings.Index(got, "then produce one valid `submit_plan`"); idxRead < 0 || idxSubmit < 0 || idxRead > idxSubmit {
-		t.Fatalf("source read instruction should precede submit_plan instruction:\n%s", got)
+	idxRead := strings.Index(got, "First read source")
+	idxHistory := strings.Index(got, "then satisfy runtime-required git history evidence")
+	idxSubmit := strings.Index(got, "then produce one valid `submit_plan`")
+	if idxRead < 0 || idxHistory < 0 || idxSubmit < 0 || idxRead > idxHistory || idxHistory > idxSubmit {
+		t.Fatalf("source read instruction should precede history evidence, then submit_plan:\n%s", got)
 	}
 }
 

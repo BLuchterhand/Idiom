@@ -10658,6 +10658,32 @@ func TestPlanExecuteSubmitCorrectionRejectsSourceSatisfiedCloseout(t *testing.T)
 	}
 }
 
+func TestPlanExecuteSourceSatisfiedSubmitPlanRejectionDoesNotEnterSubmitCorrection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-1 (total lines: 1)", Output: "package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-1 (total lines: 1)", Output: "package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+	answer := "Decision: source-satisfied\n- a.go: requested final state is already present.\n- b.go: requested final state is already present."
+
+	if planThenExecuteSubmitCorrectionActive(brief, results) {
+		t.Fatal("source-satisfied terminal-shape rejection should not enter submit-correction mode")
+	}
+	if !runner.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
+		t.Fatal("explicit source-satisfied answer should remain available after typed terminal-shape rejection")
+	}
+}
+
 func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
@@ -12322,15 +12348,15 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedAcceptsExistingFileRationa
 	}
 }
 
-func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing.T) {
+func TestPlanExecuteRunnerRedirectsEmptySubmitPlanSourceSatisfiedToTerminalAnswer(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
 		t.Fatalf("write a.txt: %v", err)
 	}
 	replies := []string{
 		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
-		`{"tool":"submit_plan","rationale":"The current source already contains the requested final state and is source-satisfied; no changes are needed.","edits":[]}`,
-		`{"tool":"submit_plan","rationale":"Corrected plan after invalid empty submit_plan.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace fixture text"}]}`,
+		`{"tool":"submit_plan","decision":"source-satisfied","rationale":"The current source already contains the requested final state and is source-satisfied; no changes are needed.","edits":[]}`,
+		"Decision: source-satisfied\n- a.txt: current source already contains the requested final state.",
 	}
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -12348,6 +12374,7 @@ func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing
 	defer server.Close()
 
 	var sawShortCircuit bool
+	var sawTerminalRedirect bool
 	runner := &Runner{
 		Client: llama.NewClient(server.URL, time.Second),
 		Workspace: workspace.NewManager(config.Workspace{
@@ -12366,6 +12393,9 @@ func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing
 			if event.Role == "plan_then_execute_source_satisfied_short_circuit" {
 				sawShortCircuit = true
 			}
+			if event.Role == "plan_then_execute_source_satisfied_terminal_required" {
+				sawTerminalRedirect = true
+			}
 		},
 	}
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
@@ -12380,12 +12410,15 @@ func TestPlanExecuteRunnerShortCircuitsEmptySubmitPlanSourceSatisfied(t *testing
 		t.Fatalf("Run: %v", err)
 	}
 	if requests != len(replies) {
-		t.Fatalf("runner should require an explicit corrected terminal action after empty submit_plan, got %d request(s)", requests)
+		t.Fatalf("runner should require an explicit terminal answer after source-satisfied submit_plan, got %d request(s)", requests)
 	}
 	if sawShortCircuit {
 		t.Fatal("empty submit_plan must not short-circuit as source-satisfied")
 	}
-	for _, want := range []string{"Plan submitted"} {
+	if !sawTerminalRedirect {
+		t.Fatal("source-satisfied submit_plan rejection should trigger terminal-shape recovery")
+	}
+	for _, want := range []string{"Decision: source-satisfied", "a.txt"} {
 		if !strings.Contains(answer, want) {
 			t.Fatalf("answer missing %q:\n%s", want, answer)
 		}

@@ -138,6 +138,31 @@ func TestSubmitPlanEmptyEditsReturnsTypedCode(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanEmptySourceSatisfiedUsesTerminalRequiredCode(t *testing.T) {
+	mgr, _ := newSubmitPlanTestManager(t)
+	result := mgr.submitPlan(ToolRequest{
+		Tool:     "submit_plan",
+		Decision: "source-satisfied",
+	})
+	if result.Code != SubmitPlanSourceSatisfiedTerminalRequiredCode {
+		t.Fatalf("source-satisfied empty submit_plan Code = %q, want %q; result=%#v", result.Code, SubmitPlanSourceSatisfiedTerminalRequiredCode, result)
+	}
+	if !strings.Contains(result.Error, "Decision: source-satisfied") {
+		t.Fatalf("source-satisfied empty submit_plan should point to terminal answer shape: %#v", result)
+	}
+}
+
+func TestSubmitPlanEmptySourceSatisfiedRationaleUsesTerminalRequiredCode(t *testing.T) {
+	mgr, _ := newSubmitPlanTestManager(t)
+	result := mgr.submitPlan(ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "The current source already contains the requested final state, so no changes are needed.",
+	})
+	if result.Code != SubmitPlanSourceSatisfiedTerminalRequiredCode {
+		t.Fatalf("source-satisfied rationale Code = %q, want %q; result=%#v", result.Code, SubmitPlanSourceSatisfiedTerminalRequiredCode, result)
+	}
+}
+
 func TestSubmitPlanRejectsUnsupportedProofClaimsAtIntake(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "tests/panel_contract.gd", "func test_contract():\n\tpass\n")
@@ -1363,7 +1388,7 @@ func TestSubmitPlanRejectsEmptyEditList(t *testing.T) {
 	mgr, _ := newSubmitPlanTestManager(t)
 	result := mgr.Execute(context.Background(), ToolRequest{
 		Tool:      "submit_plan",
-		Rationale: "no work to do",
+		Rationale: "empty plan should be rejected",
 	})
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("empty edits should be rejected")
