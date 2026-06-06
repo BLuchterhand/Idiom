@@ -24,6 +24,8 @@ import (
 // uses the workspace dispatch directly.
 const PlanThenExecutePlannerTaskFamily = string(workerruntime.TaskFamilyPlanThenExecutePlanner)
 
+const planThenExecuteAnchorRefreshMaxTokens = 2048
+
 // PlanThenExecuteReviewRepairTaskFamily marks the post-executor
 // action-capable review phase. It shares the submit_plan surface for
 // corrective edits, but unlike the planner phase it may also close with a

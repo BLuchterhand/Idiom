@@ -13464,9 +13464,7 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 			opts.ForceNativeTools = false
 			opts.ResponseFormatJSON = false
 		}
-		if opts.MaxTokens <= 0 || opts.MaxTokens > 768 {
-			opts.MaxTokens = 768
-		}
+		opts = planExecuteSetExactMaxTokens(opts, planThenExecuteAnchorRefreshMaxTokens)
 		return opts
 	}
 	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) == 0 {

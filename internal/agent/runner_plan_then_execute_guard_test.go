@@ -6333,8 +6333,16 @@ func TestPlanExecuteSourceRefreshRecoveryClearsStaleSubmitOnlySurface(t *testing
 	if chatOptionsExposeTool(opts, "submit_plan") || opts.ToolChoice != "" || opts.ForceNativeTools || opts.ResponseFormatJSON {
 		t.Fatalf("source-refresh recovery must clear stale submit-only surface, got force=%v json=%v choice=%q tools=%#v", opts.ForceNativeTools, opts.ResponseFormatJSON, opts.ToolChoice, opts.Tools)
 	}
-	if opts.MaxTokens != 768 {
-		t.Fatalf("source-refresh recovery should clamp retry budget to 768 tokens, got %d", opts.MaxTokens)
+	if opts.MaxTokens != planThenExecuteAnchorRefreshMaxTokens {
+		t.Fatalf("source-refresh recovery should clamp retry budget to %d tokens, got %d", planThenExecuteAnchorRefreshMaxTokens, opts.MaxTokens)
+	}
+	opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
+		MaxTokens:  768,
+		Tools:      []llama.Tool{{Type: "function", Function: llama.ToolFunction{Name: "read_file"}}},
+		ToolChoice: "auto",
+	}, brief, results, true)
+	if opts.MaxTokens != planThenExecuteAnchorRefreshMaxTokens {
+		t.Fatalf("source-refresh recovery should raise inherited short retry budget to %d tokens, got %d", planThenExecuteAnchorRefreshMaxTokens, opts.MaxTokens)
 	}
 }
 
@@ -6372,7 +6380,7 @@ func TestPlanExecutePostReadinessRecoveryAllowsCandidateAnchorRefresh(t *testing
 	if len(opts.Tools) != 2 || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || chatOptionsExposeTool(opts, "search_content") || chatOptionsExposeTool(opts, "submit_plan") {
 		t.Fatalf("candidate anchor-refresh recovery should expose only source-body read tools, got %#v", opts.Tools)
 	}
-	if opts.MaxTokens > 768 {
+	if opts.MaxTokens > planThenExecuteAnchorRefreshMaxTokens {
 		t.Fatalf("candidate anchor-refresh recovery should cap retry budget, got %d", opts.MaxTokens)
 	}
 }
