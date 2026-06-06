@@ -82,3 +82,62 @@ func TestProductWorkflowBrief_MinimalRoundTrip(t *testing.T) {
 		t.Errorf("EffortID: got %q want minimal", roundTripped.EffortID)
 	}
 }
+
+func TestProductWorkflowBrief_AllowsDispatchForPendingImplementationTDDEvidence(t *testing.T) {
+	brief := ProductWorkflowBrief{
+		CoverageGatePassed: false,
+		CoverageBlockers:   []string{"expected all 1 TDD obligations to have verification evidence"},
+		TDDObligations: []TDDObligationBrief{{
+			ID:             "TDD-1",
+			Command:        "go test ./...",
+			RequiredBefore: "implementation",
+			Status:         "planned",
+		}},
+	}
+
+	if !brief.AllowsFeaturePlanDispatch() {
+		t.Fatal("expected pending implementation TDD verification to allow feature plan dispatch")
+	}
+}
+
+func TestProductWorkflowBrief_RejectsAmbiguousTDDEvidenceDispatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		obligation TDDObligationBrief
+	}{
+		{
+			name:       "missing command",
+			obligation: TDDObligationBrief{ID: "TDD-1", RequiredBefore: "implementation", Status: "planned"},
+		},
+		{
+			name:       "close only obligation",
+			obligation: TDDObligationBrief{ID: "TDD-1", Command: "go test ./...", RequiredBefore: "close", Status: "planned"},
+		},
+		{
+			name:       "failed obligation",
+			obligation: TDDObligationBrief{ID: "TDD-1", Command: "go test ./...", RequiredBefore: "implementation", Status: "failed"},
+		},
+		{
+			name:       "blocked obligation",
+			obligation: TDDObligationBrief{ID: "TDD-1", Command: "go test ./...", RequiredBefore: "implementation", Status: "blocked"},
+		},
+		{
+			name:       "already passed obligation",
+			obligation: TDDObligationBrief{ID: "TDD-1", Command: "go test ./...", RequiredBefore: "implementation", Status: "passed"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			brief := ProductWorkflowBrief{
+				CoverageGatePassed: false,
+				CoverageBlockers:   []string{"expected all 1 TDD obligations to have verification evidence"},
+				TDDObligations:     []TDDObligationBrief{tt.obligation},
+			}
+
+			if brief.AllowsFeaturePlanDispatch() {
+				t.Fatalf("expected %s to keep feature plan dispatch blocked", tt.name)
+			}
+		})
+	}
+}
