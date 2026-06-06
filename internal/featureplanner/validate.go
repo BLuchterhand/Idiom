@@ -172,6 +172,7 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 
 func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) error {
 	var errs []error
+	errs = append(errs, validatePlanCoversFilesToModify(plan, brief)...)
 	plan = NormalizePlanProductWorkflowContext(plan, brief)
 	allowDispatch := brief.AllowsFeaturePlanDispatch()
 	if !allowDispatch {
@@ -262,14 +263,14 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 		atom := &plan.Atoms[i]
 		required := normalizeEditScopeList(atom.RequiredEditPaths)
 		requiredSet := normalizedStringSet(required)
-		for _, path := range productAtomRequiredTestArtifactPaths(*atom) {
+		allowed := normalizeEditScopeList(atom.AllowedEditPaths)
+		for _, path := range productAtomRequiredEditPaths(plan, brief, *atom, allowed) {
 			if requiredSet[path] || !grounding.pathGrounded(path) {
 				continue
 			}
 			required = append(required, path)
 			requiredSet[path] = true
 		}
-		allowed := normalizeEditScopeList(atom.AllowedEditPaths)
 		keptAllowed := make([]string, 0, len(allowed))
 		for _, path := range allowed {
 			if requiredSet[path] {
@@ -285,6 +286,22 @@ func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflow
 	return plan
 }
 
+func productAtomRequiredEditPaths(plan FeaturePlan, brief ProductWorkflowBrief, atom FeatureAtomPlan, allowed []string) []string {
+	paths := productAtomRequiredTestArtifactPaths(atom)
+	filesToModify := normalizeEditScopeList(brief.FilesToModify)
+	if len(plan.Atoms) == 1 {
+		paths = append(paths, filesToModify...)
+	} else {
+		filesToModifySet := normalizedStringSet(filesToModify)
+		for _, path := range allowed {
+			if filesToModifySet[path] {
+				paths = append(paths, path)
+			}
+		}
+	}
+	return normalizeEditScopeList(paths)
+}
+
 func productAtomRequiredTestArtifactPaths(atom FeatureAtomPlan) []string {
 	var paths []string
 	if atom.TestFirst.BaselineRequired ||
@@ -298,6 +315,33 @@ func productAtomRequiredTestArtifactPaths(atom FeatureAtomPlan) []string {
 		paths = append(paths, atom.PlannedTDDSnapshot.TestArtifactPaths...)
 	}
 	return normalizeEditScopeList(paths)
+}
+
+func validatePlanCoversFilesToModify(plan FeaturePlan, brief ProductWorkflowBrief) []error {
+	filesToModify := normalizeEditScopeList(brief.FilesToModify)
+	if len(filesToModify) == 0 {
+		return nil
+	}
+	requiredByAnyAtom := map[string]bool{}
+	allowedByAnyAtom := map[string]bool{}
+	for _, atom := range plan.Atoms {
+		for _, path := range normalizeEditScopeList(atom.RequiredEditPaths) {
+			requiredByAnyAtom[path] = true
+		}
+		for _, path := range normalizeEditScopeList(atom.AllowedEditPaths) {
+			allowedByAnyAtom[path] = true
+		}
+	}
+	var errs []error
+	for _, path := range filesToModify {
+		if allowedByAnyAtom[path] {
+			errs = append(errs, fmt.Errorf("product workflow Files to modify path %q must not appear in atom.allowed_edit_paths; Files to modify are required implementation scope", path))
+		}
+		if !requiredByAnyAtom[path] {
+			errs = append(errs, fmt.Errorf("product workflow Files to modify path %q must be covered by atom.required_edit_paths, not omitted or demoted to allowed_edit_paths", path))
+		}
+	}
+	return errs
 }
 
 func normalizeEditScopeList(paths []string) []string {

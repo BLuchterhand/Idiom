@@ -134,12 +134,13 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 			t.Fatalf("context-only doc %q leaked into allowed edit scope: %#v", forbidden, allowed)
 		}
 	}
-	for _, want := range []string{"internal/labels/labels_extra.go"} {
-		if !containsString(allowed, want) {
-			t.Fatalf("grounded allowed edit path %q was not preserved: %#v", want, allowed)
+	required := normalized.Atoms[0].RequiredEditPaths
+	for _, want := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go", "internal/labels/labels_extra.go"} {
+		if !containsString(required, want) {
+			t.Fatalf("Files to modify path %q was not promoted to required scope: %#v", want, required)
 		}
 	}
-	for _, forbidden := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go"} {
+	for _, forbidden := range []string{"internal/labels/labels.go", "internal/labels/labels_test.go", "internal/labels/labels_extra.go"} {
 		if containsString(allowed, forbidden) {
 			t.Fatalf("required edit path %q leaked into allowed scope: %#v", forbidden, allowed)
 		}
@@ -163,6 +164,60 @@ func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *test
 	}
 	if containsString(normalized.Atoms[0].AllowedEditPaths, "internal/labels/labels_test.go") {
 		t.Fatalf("promoted TDD edit path must not remain optional allowed scope: %#v", normalized.Atoms[0].AllowedEditPaths)
+	}
+}
+
+func TestValidateProductPlanRequiresFilesToModifyCoverageAcrossAtoms(t *testing.T) {
+	plan := validProductContextPlan()
+	second := plan.Atoms[0]
+	second.ID = "atom-2"
+	second.RequiredEditPaths = []string{"internal/labels/labels_test.go"}
+	plan.Atoms = append(plan.Atoms, second)
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = append(brief.FilesToModify, "internal/labels/labels_extra.go")
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected missing Files to modify coverage to reject product plan")
+	}
+	if !strings.Contains(err.Error(), "internal/labels/labels_extra.go") ||
+		!strings.Contains(err.Error(), "atom.required_edit_paths") {
+		t.Fatalf("validation error should identify missing required Files to modify coverage, got %v", err)
+	}
+}
+
+func TestValidateProductPlanRejectsDemotedFilesToModifyBeforeNormalization(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go"}
+	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
+	brief := validProductWorkflowBrief()
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected demoted Files to modify path to reject product plan")
+	}
+	if !strings.Contains(err.Error(), "internal/labels/labels_test.go") ||
+		!strings.Contains(err.Error(), "not omitted or demoted to allowed_edit_paths") {
+		t.Fatalf("validation error should identify demoted Files to modify path, got %v", err)
+	}
+}
+
+func TestValidateProductPlanRejectsFilesToModifyAllowedInAnotherAtom(t *testing.T) {
+	plan := validProductContextPlan()
+	second := plan.Atoms[0]
+	second.ID = "atom-2"
+	second.RequiredEditPaths = []string{"internal/labels/labels.go", "internal/labels/labels_test.go"}
+	second.AllowedEditPaths = []string{"internal/labels/labels.go"}
+	plan.Atoms = append(plan.Atoms, second)
+	brief := validProductWorkflowBrief()
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected Files to modify path in allowed scope to reject product plan")
+	}
+	if !strings.Contains(err.Error(), "internal/labels/labels.go") ||
+		!strings.Contains(err.Error(), "must not appear in atom.allowed_edit_paths") {
+		t.Fatalf("validation error should identify Files to modify allowed-scope demotion, got %v", err)
 	}
 }
 
@@ -204,6 +259,7 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 		"use-only-product-grounded-optional-edit-paths",
 		"The schema example path placeholders are not authority",
 		"Repo grounding is required:",
+		"Every path listed under Files to modify is required implementation scope",
 		"context evidence only",
 		"allowed_edit_paths is still edit scope",
 	} {
@@ -1128,7 +1184,7 @@ func validPlan() FeaturePlan {
 			ID:                "atom-1",
 			Title:             "Short label",
 			Summary:           "Change label",
-			RequiredEditPaths: []string{"internal/labels/labels.go"},
+			RequiredEditPaths: []string{"internal/labels/labels.go", "internal/labels/labels_test.go"},
 			SDDRefs:           []string{"REQ-1"},
 			TestFirst: TestFirstPlan{
 				ObligationRefs:             []string{"TDD-1"},
