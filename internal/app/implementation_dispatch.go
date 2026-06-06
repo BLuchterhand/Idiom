@@ -4924,7 +4924,7 @@ func planExecutePlannerRecoveryRetryInstruction(failure implementationDispatchPl
 	} else {
 		switch {
 		case len(paths) > 0:
-			fmt.Fprintf(&b, "After this retry has satisfied source-body obligations for every existing required path, produce one valid `submit_plan` call whose edits include at least one real edit for each required path listed above (%s), with no outside paths. Do not treat a source read as plan coverage.", strings.Join(paths, ", "))
+			fmt.Fprintf(&b, "After this retry has satisfied source-body obligations for every existing required path and any runtime-required git history evidence, produce one valid `submit_plan` call whose edits include at least one real edit for each required path listed above (%s), with no outside paths. Do not treat a source read or history read as plan coverage.", strings.Join(paths, ", "))
 		case len(failure.AllowedPaths) > 0 || len(failure.Options.AllowedEditPaths) > 0:
 			allowed := uniqueImplementationDispatchPaths(append(append([]string{}, failure.AllowedPaths...), failure.Options.AllowedEditPaths...))
 			fmt.Fprintf(&b, "Produce one valid `submit_plan` call using the allowed candidate paths listed above (%s) as the edit allowlist; do not treat every candidate path as mandatory coverage.", strings.Join(allowed, ", "))

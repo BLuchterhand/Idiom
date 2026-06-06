@@ -207,6 +207,31 @@ func (r *Runner) submitPlanBeforeGitHistoryEvidenceRedirect(req workspace.ToolRe
 	return gitHistoryEvidenceRedirectRequest(missing, results, allowedTools)
 }
 
+func (r *Runner) sourceReadBeforeGitHistoryEvidenceRedirect(req workspace.ToolRequest, results []workspace.ToolResult, allowedTools []string) (workspace.ToolRequest, string, bool) {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || !mutationHistoryEvidenceRequired(r.RuntimeBrief) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if !isReadClassTool(req) || gitHistoryEvidenceTool(req.Tool) {
+		return workspace.ToolRequest{}, "", false
+	}
+	if len(planThenExecuteRequiredCoveragePaths(r.RuntimeBrief.RequiredEditPaths, "")) == 0 ||
+		len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, results)) > 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	pending := planThenExecuteHistoryPendingPaths(r.RuntimeBrief, results, nil)
+	if len(pending) == 0 {
+		return workspace.ToolRequest{}, "", false
+	}
+	if target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req)); target != "" {
+		for _, path := range pending {
+			if normalizeRunnerPath(path) == target {
+				return gitHistoryEvidenceRedirectRequest([]string{target}, results, allowedTools)
+			}
+		}
+	}
+	return gitHistoryEvidenceRedirectRequest(pending, results, allowedTools)
+}
+
 func planThenExecuteSubmitPlanHasRequiredPathCoverageProblem(requiredPaths []string, req workspace.ToolRequest) bool {
 	required := make([]string, 0, len(requiredPaths))
 	for _, raw := range requiredPaths {

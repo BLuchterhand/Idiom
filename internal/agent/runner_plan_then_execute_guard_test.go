@@ -10385,6 +10385,65 @@ func TestPlanExecutePostReadinessRejectsSourceReadBeforeHistory(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSourceReadBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.go", "b.go"},
+			RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read f1 a.go lines 10-20 (total lines: 40)",
+			Output:  "10:package a\n",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read f2 b.go lines 30-45 (total lines: 80)",
+			Output:  "30:package b\n",
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "b.go",
+		StartLine: 30,
+		EndLine:   45,
+	}
+
+	redirected, _, ok := runner.sourceReadBeforeGitHistoryEvidenceRedirect(req, results, []string{"history_range", "history_symbol"})
+	if !ok {
+		t.Fatal("expected stale source read in history-pending phase to redirect to history evidence")
+	}
+	if redirected.Tool != "history_range" || redirected.Path != "b.go" || redirected.StartLine != 30 || redirected.EndLine != 45 {
+		t.Fatalf("unexpected redirect: %#v", redirected)
+	}
+}
+
+func TestPlanExecuteSourceReadBeforeHistoryDoesNotBypassUnreadRequiredSource(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.go", "b.go"},
+			RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f1 a.go lines 1-10 (total lines: 20)",
+		Output:  "1:package a\n",
+	}}
+	req := workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "b.go",
+	}
+
+	if redirected, _, ok := runner.sourceReadBeforeGitHistoryEvidenceRedirect(req, results, []string{"history_range", "history_symbol"}); ok {
+		t.Fatalf("must not redirect to history while required source body remains unread: %#v", redirected)
+	}
+}
+
 func TestPlanExecuteSubmitBeforeHistoryRedirectsToHistoryRange(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{

@@ -1768,6 +1768,23 @@ func (r *Runner) Run(
 				raw = redirectedRaw
 				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
 				redirected = true
+			} else if redirectedReq, redirectedRaw, ok := r.sourceReadBeforeGitHistoryEvidenceRedirect(req, collectedResults, historyRedirectAllowedTools); ok {
+				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{
+					"agent":          r.agentName(),
+					"original_tool":  strings.TrimSpace(req.Tool),
+					"rewritten_tool": strings.TrimSpace(redirectedReq.Tool),
+					"original_raw":   strings.TrimSpace(raw),
+					"rewritten_raw":  strings.TrimSpace(redirectedRaw),
+					"reason":         "plan_execute_source_read_before_history",
+				}))
+				turnMessages = append(turnMessages, llama.ChatMessage{
+					Role:    "system",
+					Content: rewriteVisibilityNote(req.Tool, redirectedReq.Tool),
+				})
+				req = redirectedReq
+				raw = redirectedRaw
+				currentFingerprint = req.Tool + "|" + normalizedToolRequestRaw(req)
+				redirected = true
 			} else if redirectedReq, ok := postWriteSourceSanityRedirect(req, r.RuntimeBrief, collectedResults, surfaceAllowedTools); ok {
 				redirectedRaw := marshalToolRequestRaw(redirectedReq)
 				r.emitEvent(marshalRunEvent("tool_request_rewrite", map[string]any{

@@ -2672,6 +2672,27 @@ func TestPlanExecutePlannerRecoveryInstructionKeepsAllowedCandidatesNonMandatory
 	}
 }
 
+func TestPlanExecutePlannerRecoveryInstructionPreservesHistoryGate(t *testing.T) {
+	got := planExecutePlannerRecoveryRetryInstruction(implementationDispatchPlanExecuteFailure{
+		RequiredPaths: []string{"internal/app/rendering.go"},
+		Options: planexecute.Options{
+			RequiredEditPaths: []string{"internal/app/rendering.go"},
+		},
+	})
+	for _, want := range []string{
+		"runtime-required git history evidence",
+		"Do not treat a source read or history read as plan coverage",
+		"one valid `submit_plan` call",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("required-scope retry instruction missing %q:\n%s", want, got)
+		}
+	}
+	if idxHistory, idxSubmit := strings.Index(got, "runtime-required git history evidence"), strings.Index(got, "one valid `submit_plan` call"); idxHistory < 0 || idxSubmit < 0 || idxHistory > idxSubmit {
+		t.Fatalf("history evidence instruction should precede submit_plan instruction:\n%s", got)
+	}
+}
+
 func TestPlanExecuteMissingEditRecoveryUsesTypedFailureKindOnly(t *testing.T) {
 	tests := []struct {
 		name           string
