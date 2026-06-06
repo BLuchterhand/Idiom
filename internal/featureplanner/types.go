@@ -3,6 +3,7 @@ package featureplanner
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 const SchemaVersion = "idiom.feature_planner.state.v1"
@@ -179,6 +180,73 @@ type SDDContract struct {
 	Acceptance         []string `json:"acceptance,omitempty"`           // acceptance criteria strings
 	PRDRequirementRefs []string `json:"prd_requirement_refs,omitempty"` // PRD requirement IDs
 	ADRRefs            []string `json:"adr_refs,omitempty"`             // ADR IDs
+}
+
+func (contract *SDDContract) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Refs               []string        `json:"refs,omitempty"`
+		Acceptance         json.RawMessage `json:"acceptance,omitempty"`
+		PRDRequirementRefs []string        `json:"prd_requirement_refs,omitempty"`
+		ADRRefs            []string        `json:"adr_refs,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	acceptance, err := decodeAcceptanceList(raw.Acceptance)
+	if err != nil {
+		return err
+	}
+	contract.Refs = raw.Refs
+	contract.Acceptance = acceptance
+	contract.PRDRequirementRefs = raw.PRDRequirementRefs
+	contract.ADRRefs = raw.ADRRefs
+	return nil
+}
+
+func decodeAcceptanceList(raw json.RawMessage) ([]string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return nil, nil
+	}
+	var list []string
+	if err := json.Unmarshal(raw, &list); err == nil {
+		return nonEmptyFeaturePlannerStrings(list), nil
+	}
+	var scalar string
+	if err := json.Unmarshal(raw, &scalar); err == nil {
+		return splitFeaturePlannerAcceptance(scalar), nil
+	}
+	return nil, fmt.Errorf("sdd_contract.acceptance must be an array of strings or a scalar acceptance string")
+}
+
+func splitFeaturePlannerAcceptance(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ";")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func nonEmptyFeaturePlannerStrings(values []string) []string {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 type TDDContract struct {

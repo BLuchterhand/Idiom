@@ -3,6 +3,7 @@ package featureplanner
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -230,6 +231,24 @@ func TestParsePlannerOutputCoercesSingletonRequiredBeforeArray(t *testing.T) {
 	}
 	if got := parsed.Plan.TDDContract.Obligations[0].RequiredBefore; got != "implementation" {
 		t.Fatalf("RequiredBefore = %q, want implementation", got)
+	}
+}
+
+func TestParsePlannerOutputCoercesScalarAcceptanceString(t *testing.T) {
+	raw := strings.Replace(
+		mustPlanJSON(t, validPlan()),
+		`"refs":["REQ-1"]`,
+		`"refs":["REQ-1"],"acceptance":"REQ-1 metric: works.; REQ-1 testability: covered."`,
+		1,
+	)
+
+	parsed, err := ParsePlannerOutput(raw)
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	}
+	want := []string{"REQ-1 metric: works.", "REQ-1 testability: covered."}
+	if got := parsed.Plan.SDDContract.Acceptance; !slices.Equal(got, want) {
+		t.Fatalf("Acceptance = %#v, want %#v", got, want)
 	}
 }
 
