@@ -23,18 +23,32 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		m.emitJSONError("server_not_ready", err.Error())
 		return "", err
 	}
+	productBrief, effortRoot, err := m.loadFeaturePlannerProductContext(objective)
+	if err != nil {
+		m.emitJSONError("product_context_unavailable", err.Error())
+		return "", err
+	}
 	sessionID := m.featurePlannerSessionID()
 	state := featureplanner.NewState(sessionID, objective, "", 3, time.Now().UTC())
+	if productBrief != nil {
+		state.EffortID = productBrief.EffortID
+		state.EffortRoot = effortRoot
+		m.featurePlannerEffortRoot = effortRoot
+	}
 	operatorCommand := "/feature-planner " + objective
 	m.messages = append(m.messages, llama.ChatMessage{Role: "user", Content: operatorCommand})
 	m.logMessage("user", operatorCommand)
 	m.logMessage("route_plan", "initial=feature-planner reason=typed_feature_planner_command route_source=typed_command")
 	m.logMessage("idiom.feature_planner.start", objective)
+	if productBrief != nil {
+		m.logMessage("idiom.feature_planner.product_context", fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
+	}
 
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                objective,
 		MaxPlanningIterations: 3,
 		Now:                   time.Now().UTC(),
+		ProductWorkflowBrief:  productBrief,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if taskFamily == "feature_planner_implementor" {
 			return m.runFeaturePlannerAtomPlanExecute(ctx, prompt)
@@ -62,6 +76,73 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
 	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
 	return m.finishPromptOnceReply(answer), nil
+}
+
+func (m *Model) loadFeaturePlannerProductContext(objective string) (*featureplanner.ProductWorkflowBrief, string, error) {
+	effortRoot, found := featurePlannerEffortRootFromObjective(objective)
+	if !found {
+		effortRoot = strings.TrimSpace(m.featurePlannerEffortRoot)
+		found = effortRoot != ""
+	}
+	if !found {
+		return nil, "", nil
+	}
+	effortRoot = m.resolveFeaturePlannerEffortRoot(effortRoot)
+	brief, err := loadDirectFeaturePlannerProductBrief(effortRoot)
+	if err != nil {
+		return nil, effortRoot, fmt.Errorf("load product workflow implementation handoff from %s: %w", effortRoot, err)
+	}
+	return brief, effortRoot, nil
+}
+
+func (m *Model) resolveFeaturePlannerEffortRoot(effortRoot string) string {
+	effortRoot = cleanFeaturePlannerEffortPathToken(effortRoot)
+	if filepath.IsAbs(effortRoot) {
+		return filepath.Clean(effortRoot)
+	}
+	if root := strings.TrimSpace(m.projectRoot()); root != "" {
+		return filepath.Clean(filepath.Join(root, effortRoot))
+	}
+	return filepath.Clean(effortRoot)
+}
+
+func featurePlannerEffortRootFromObjective(objective string) (string, bool) {
+	fields := strings.Fields(objective)
+	for idx, field := range fields {
+		if field != "--effort-root" {
+			continue
+		}
+		if idx+1 >= len(fields) {
+			return "", false
+		}
+		candidate := cleanFeaturePlannerEffortPathToken(fields[idx+1])
+		return candidate, candidate != ""
+	}
+	for _, field := range fields {
+		candidate := cleanFeaturePlannerEffortPathToken(field)
+		if featurePlannerLooksLikeProductEffortRoot(candidate) {
+			return candidate, true
+		}
+	}
+	return "", false
+}
+
+func cleanFeaturePlannerEffortPathToken(token string) string {
+	return strings.Trim(strings.TrimSpace(token), "`'\".,;:()[]{}<>")
+}
+
+func featurePlannerLooksLikeProductEffortRoot(path string) bool {
+	path = filepath.ToSlash(path)
+	for _, prefix := range []string{
+		"docs/product-workflows/efforts/started/",
+		"docs/product-workflows/efforts/proposed/",
+		"docs/product-workflows/efforts/closed/",
+	} {
+		if strings.Contains(path, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Model) sendFeaturePlannerCommandAsync(objective string) {

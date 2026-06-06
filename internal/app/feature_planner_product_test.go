@@ -1,15 +1,53 @@
 package app
 
 import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"idiom/internal/config"
 	"idiom/internal/featureplanner"
 	"idiom/internal/planexecute"
 	"idiom/internal/productworkflow"
+	"idiom/internal/workspace"
 )
+
+func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot(t *testing.T) {
+	projectRoot := t.TempDir()
+	effortRel := filepath.Join("docs", "product-workflows", "efforts", "started", "native-quality")
+	effortRoot := filepath.Join(projectRoot, effortRel)
+	writeNativeQualityEffort(t, effortRoot)
+
+	m := &Model{
+		client: &scriptedLLMClient{responses: []string{featurePlannerCommandBadGoPlanJSON(t)}},
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	answer, err := m.runFeaturePlannerCommandOnce(context.Background(), "Continue existing effort at "+filepath.ToSlash(effortRel)+".")
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStatePlanningRepair) {
+		t.Fatalf("expected planning-repair answer, got:\n%s", answer)
+	}
+	for _, want := range []string{"internal/qcb/binding.go", "TDD-1"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected blocker to mention %q, got:\n%s", want, answer)
+		}
+	}
+	if m.lastPlanExecuteRunResult != nil {
+		t.Fatalf("plan-execute should not be dispatched after product context rejection")
+	}
+}
 
 func TestSanitizeEffortSlug(t *testing.T) {
 	tests := []struct {
@@ -40,6 +78,258 @@ func TestSanitizeEffortSlug(t *testing.T) {
 				t.Errorf("sanitizeEffortSlug(%q) = %q, want %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func writeNativeQualityEffort(t *testing.T, effortRoot string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(effortRoot, "adrs"), 0o755); err != nil {
+		t.Fatalf("mkdir adrs: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(effortRoot, "evidence"), 0o755); err != nil {
+		t.Fatalf("mkdir evidence: %v", err)
+	}
+	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "workflow_state.json"), productworkflow.WorkflowState{
+		SchemaVersion: "idiom.product_workflow_state.v1",
+		EffortID:      "native-quality",
+		TaskID:        "mwe-1.3b-native-quality",
+		Title:         "Native quality contributor breakdown",
+		CreatedAt:     "2026-06-05T00:00:00Z",
+		UpdatedAt:     "2026-06-05T00:00:00Z",
+		StatusBucket:  "started",
+		CurrentPhase:  productworkflow.PhaseTDDSynthesis,
+		CurrentState:  "planning",
+		ArtifactPaths: map[string]string{"prd": "prd.md", "tdd": "tdd.json"},
+		Context: productworkflow.WorkflowContext{
+			ContextPackID:   "native-pack",
+			FreshnessState:  "current",
+			ReferencedPaths: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"},
+		},
+		Coverage:         productworkflow.CoverageState{CoverageTier: "unit"},
+		Privacy:          productworkflow.PrivacyState{RedactionStatus: "clean"},
+		FolderPath:       effortRoot,
+		DurabilityLevel:  "source_controlled",
+		NextValidActions: []string{"feature-planner"},
+	})
+	if err := productworkflow.WritePRDMarkdown(effortRoot, productworkflow.PRDDocument{
+		FrontMatter: productworkflow.PRDFrontMatter{
+			SchemaVersion:     "idiom.prd.v1",
+			PRDID:             "native-quality",
+			Status:            "accepted",
+			TaskID:            "mwe-1.3b-native-quality",
+			CreatedAt:         "2026-06-05T00:00:00Z",
+			AcceptedAt:        "2026-06-05T00:01:00Z",
+			AcceptedBy:        "test",
+			AcceptanceProfile: "human-review",
+		},
+		Requirements: []productworkflow.PRDRequirement{{
+			ID:             "REQ-NATIVE",
+			Priority:       "P1",
+			Statement:      "Expose quality contributor breakdown through the native inventory binding.",
+			EvidenceRefs:   []string{"EV-NATIVE"},
+			TDDObligations: []string{"TDD-NATIVE"},
+			OwnerAlignment: "Players need legible quality provenance.",
+			Testability:    "bin/colony_tests -ts=quality_inventory_bindings",
+			Metric:         "Native binding reports contributor rows.",
+		}},
+	}); err != nil {
+		t.Fatalf("write prd.md: %v", err)
+	}
+	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "adrs", "index.json"), productworkflow.ADRIndex{
+		SchemaVersion: "idiom.adr_index.v1",
+		EffortID:      "native-quality",
+		ADRs: []productworkflow.ADRIndexEntry{{
+			ADRID:        "ADR-NATIVE",
+			Title:        "Use native bindings",
+			Status:       "accepted",
+			Path:         "001-native-binding.md",
+			CoverageTier: "unit",
+			PRDRefs:      []string{"REQ-NATIVE"},
+		}},
+	})
+	if err := productworkflow.WriteADRMarkdown(effortRoot, "001-native-binding.md", productworkflow.ADRDocument{
+		FrontMatter: productworkflow.ADRFrontMatter{
+			SchemaVersion:     "idiom.adr.v1",
+			ADRID:             "ADR-NATIVE",
+			Status:            "accepted",
+			PRDRefs:           []string{"REQ-NATIVE"},
+			EvidenceRefs:      []string{"EV-NATIVE"},
+			TDDObligations:    []string{"TDD-NATIVE"},
+			CoverageTier:      "unit",
+			AcceptedAt:        "2026-06-05T00:02:00Z",
+			AcceptedBy:        "test",
+			AcceptanceProfile: "human-review",
+		},
+		BodyMarkdown: strings.Join([]string{
+			"## Context",
+			"The product atom targets Colony native bindings.",
+			"## Decision",
+			"Keep implementation scope in native C++ and test files.",
+			"## Alternatives Considered",
+			"Creating a new Go package was rejected.",
+			"## Evidence",
+			"EV-NATIVE",
+			"## Consequences",
+			"The planner must keep edit paths in native scope.",
+			"## Compatibility and Migration",
+			"No migration.",
+			"## TDD Obligations",
+			"TDD-NATIVE",
+			"## Rollback",
+			"Revert native binding changes.",
+			"## Open Questions",
+			"None.",
+		}, "\n\n"),
+	}); err != nil {
+		t.Fatalf("write ADR: %v", err)
+	}
+	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "tdd.json"), productworkflow.TDDLedger{
+		SchemaVersion: "idiom.tdd_ledger.v1",
+		EffortID:      "native-quality",
+		TaskID:        "mwe-1.3b-native-quality",
+		CoverageTier:  "unit",
+		Coverage: productworkflow.TDDCoverage{
+			EARSTotal:        1,
+			EARSMapped:       1,
+			GatesPassed:      []string{"contract"},
+			MutationScore:    featurePlannerCommandFloatPtr(1),
+			MutationMinScore: 1,
+		},
+		Obligations: []productworkflow.TDDObligation{{
+			ID:             "TDD-NATIVE",
+			Type:           "regression",
+			Behavior:       "Quality contributor rows are visible through native bindings.",
+			Owner:          "native/tests/test_quality_inventory_bindings.cpp",
+			Command:        "bin/colony_tests -ts=quality_inventory_bindings",
+			RequiredBefore: "implementation",
+			Status:         "planned",
+		}},
+	})
+	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "evidence", "traceability_matrix.json"), productworkflow.TraceabilityMatrix{
+		SchemaVersion: "idiom.traceability_matrix.v1",
+		EffortID:      "native-quality",
+		TaskID:        "mwe-1.3b-native-quality",
+		CreatedAt:     "2026-06-05T00:03:00Z",
+		Matrix: []productworkflow.TraceabilityRow{{
+			EvidenceCard:   "EV-NATIVE",
+			PRDRequirement: "REQ-NATIVE",
+			ADR:            "ADR-NATIVE",
+			TDDObligation:  "TDD-NATIVE",
+			Brief:          "briefs/mwe-1.3b-quality-contributor-breakdown.md",
+			Report:         "reports/mwe-1.3b.json",
+		}},
+	})
+	records := []productworkflow.ImplementationLedgerRecord{{
+		RecordType:           "atom_planned",
+		TaskID:               "mwe-1.3b-native-quality",
+		EffortID:             "native-quality",
+		Timestamp:            "2026-06-05T00:04:00Z",
+		ComplexityTier:       "C1",
+		ContextPackID:        "native-pack",
+		Scope:                &productworkflow.AtomScope{ExpectedFiles: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"}},
+		RequiredVerification: []string{"bin/colony_tests -ts=quality_inventory_bindings"},
+	}, {
+		RecordType:              "verification_completed",
+		TaskID:                  "mwe-1.3b-native-quality",
+		EffortID:                "native-quality",
+		Timestamp:               "2026-06-05T00:05:00Z",
+		TDDObligationsSatisfied: []string{"TDD-NATIVE"},
+	}}
+	writeFeaturePlannerCommandJSONL(t, filepath.Join(effortRoot, "implementation_ledger.jsonl"), records)
+}
+
+func featurePlannerCommandFloatPtr(value float64) *float64 {
+	return &value
+}
+
+func featurePlannerCommandBadGoPlanJSON(t *testing.T) string {
+	t.Helper()
+	plan := featureplanner.FeaturePlan{
+		Tool:          featureplanner.ToolSubmitFeaturePlan,
+		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
+		FeatureID:     "feature-qcb",
+		SourceTask:    featureplanner.SourceTask{Kind: "operator_prompt", Summary: "native quality contributor breakdown"},
+		Summary:       "Expose quality contributor breakdown.",
+		TopLevelScope: featureplanner.TopLevelScope{
+			Objective:       "Expose quality contributor breakdown.",
+			SuccessCriteria: []string{"Contributor rows are visible."},
+		},
+		SDDContract: featureplanner.SDDContract{
+			PRDRequirementRefs: []string{"REQ-NATIVE"},
+			ADRRefs:            []string{"ADR-NATIVE"},
+			Acceptance:         []string{"Contributor rows are visible."},
+		},
+		TDDContract: featureplanner.TDDContract{
+			CoverageTier:                 "unit",
+			RequiredBeforeImplementation: true,
+			Obligations: []featureplanner.TDDObligation{{
+				ID:             "TDD-1",
+				Behavior:       "Go binding returns contributors.",
+				Command:        "go test ./internal/qcb/...",
+				RequiredBefore: "implementation",
+			}},
+		},
+		Atoms: []featureplanner.FeatureAtomPlan{{
+			SchemaVersion:     featureplanner.FeatureAtomSchemaVersion,
+			ID:                "atom-qcb-go",
+			Title:             "Add Go QCB binding",
+			Summary:           "Adds an invented Go binding.",
+			RequiredEditPaths: []string{"internal/qcb/binding.go"},
+			AllowedEditPaths:  []string{"internal/qcb/binding.go", "internal/qcb/binding_test.go"},
+			SDDRefs:           []string{"REQ-NATIVE", "ADR-NATIVE"},
+			TDDObligations:    []string{"TDD-1"},
+			RequiredTests:     []string{"go test ./internal/qcb/..."},
+			TestFirst: featureplanner.TestFirstPlan{
+				ObligationRefs:             []string{"TDD-1"},
+				Commands:                   []string{"go test ./internal/qcb/..."},
+				BaselineRequired:           true,
+				TestArtifactPaths:          []string{"internal/qcb/binding_test.go"},
+				PreExecutionEventIDs:       []string{"evt-tdd-go"},
+				ExpectedPreExecutionResult: "red-confirmed",
+				CoverageGateEventID:        "evt-tdd-go",
+			},
+			PlannedTDDSnapshot: featureplanner.PlannedTDDSnapshot{
+				SnapshotID:                   "snap-qcb-go",
+				SnapshotDigest:               "sha256:test",
+				ObligationIDs:                []string{"TDD-1"},
+				TestCommands:                 []string{"go test ./internal/qcb/..."},
+				TestArtifactPaths:            []string{"internal/qcb/binding_test.go"},
+				ExpectedPreExecutionResults:  []string{"red-confirmed"},
+				CreatedBeforeDispatchEventID: "evt-tdd-go",
+			},
+			Prompt: "Implement the binding in Go.",
+		}},
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		t.Fatalf("marshal bad plan: %v", err)
+	}
+	return string(data)
+}
+
+func writeFeaturePlannerCommandJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func writeFeaturePlannerCommandJSONL(t *testing.T, path string, records []productworkflow.ImplementationLedgerRecord) {
+	t.Helper()
+	var lines []string
+	for _, record := range records {
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("marshal ledger record: %v", err)
+		}
+		lines = append(lines, string(data))
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
