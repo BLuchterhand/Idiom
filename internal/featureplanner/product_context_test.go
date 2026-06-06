@@ -87,6 +87,9 @@ func TestProductWorkflowBrief_AllowsDispatchForPendingImplementationTDDEvidence(
 	brief := ProductWorkflowBrief{
 		CoverageGatePassed: false,
 		CoverageBlockers:   []string{"expected all 1 TDD obligations to have verification evidence"},
+		CoverageBlockerKinds: []string{
+			"coverage_tdd_evidence_missing",
+		},
 		TDDObligations: []TDDObligationBrief{{
 			ID:             "TDD-1",
 			Command:        "go test ./...",
@@ -97,6 +100,26 @@ func TestProductWorkflowBrief_AllowsDispatchForPendingImplementationTDDEvidence(
 
 	if !brief.AllowsFeaturePlanDispatch() {
 		t.Fatal("expected pending implementation TDD verification to allow feature plan dispatch")
+	}
+}
+
+func TestProductWorkflowBrief_TypedCoverageBlockerKindsOverrideProse(t *testing.T) {
+	brief := ProductWorkflowBrief{
+		CoverageGatePassed: false,
+		CoverageBlockers:   []string{"TDD verification evidence text in an unrelated blocker"},
+		CoverageBlockerKinds: []string{
+			"coverage_evidence_acceptance_incomplete",
+		},
+		TDDObligations: []TDDObligationBrief{{
+			ID:             "TDD-1",
+			Command:        "go test ./...",
+			RequiredBefore: "implementation",
+			Status:         "planned",
+		}},
+	}
+
+	if brief.AllowsFeaturePlanDispatch() {
+		t.Fatal("typed non-TDD coverage blocker must keep feature plan dispatch blocked")
 	}
 }
 

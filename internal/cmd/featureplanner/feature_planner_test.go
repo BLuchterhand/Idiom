@@ -566,7 +566,7 @@ func TestFeaturePlanner_ProductWorkflowIntegration_TDDVerificationPendingCanDisp
 	if !strings.Contains(prompt, "Required submit_feature_plan shape") {
 		t.Fatalf("prompt should allow implementation dispatch when only TDD verification evidence is pending:\n%s", prompt)
 	}
-	if !strings.Contains(prompt, "pending only because implementation verification evidence is not recorded yet") {
+	if !strings.Contains(prompt, "pending only because TDD pre-execution evidence is not recorded yet") {
 		t.Fatalf("prompt should explain pending verification evidence:\n%s", prompt)
 	}
 	if strings.Contains(prompt, "Do not produce a feature plan") {

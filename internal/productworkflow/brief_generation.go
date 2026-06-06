@@ -29,7 +29,7 @@ func GenerateImplementationBrief(input BriefGenerationInput) BriefGenerationResu
 	if !isAcceptedArtifact(input.PRD.FrontMatter.Status) {
 		out.Blockers = append(out.Blockers, "prd.md must be accepted before generating a dispatch brief")
 	}
-	if CoverageGateHasBlockers(input.CoverageEvaluation) {
+	if CoverageGateHasBlockers(input.CoverageEvaluation) && !CoverageGateHasOnlyTDDEvidenceBlockers(input.CoverageEvaluation) {
 		out.Blockers = append(out.Blockers, "coverage gate is blocked; run `idiom product tdd --effort-root <path> --evaluate-coverage --json` and resolve blockers")
 	}
 

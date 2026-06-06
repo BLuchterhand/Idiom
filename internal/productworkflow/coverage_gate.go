@@ -209,6 +209,21 @@ func CoverageGateHasBlockers(eval CoverageGateEvaluation) bool {
 	return strings.EqualFold(strings.TrimSpace(eval.Status), "blocked") || len(eval.Blockers) > 0
 }
 
+func CoverageGateHasOnlyTDDEvidenceBlockers(eval CoverageGateEvaluation) bool {
+	if !CoverageGateHasBlockers(eval) || len(eval.Blockers) == 0 {
+		return false
+	}
+	for _, blocker := range eval.Blockers {
+		if strings.TrimSpace(blocker.Kind) != "coverage_tdd_evidence_missing" {
+			return false
+		}
+		if criterion := strings.TrimSpace(blocker.Criterion); criterion != "" && criterion != "tdd_evidence" {
+			return false
+		}
+	}
+	return true
+}
+
 func EvaluateCoverageGateWithAuthorityPreflight(prd PRDDocument, adrIndex ADRIndex, adrs []ParsedADR, ledger TDDLedger, traceability TraceabilityMatrix, lintFindings []LintSummaryFinding, knownTDDIDs ...map[string]bool) CoverageGateEvaluation {
 	eval := EvaluateCoverageGate(prd, adrIndex, adrs, ledger, traceability, knownTDDIDs...)
 	return ApplyCoverageGateAuthorityPreflight(eval, lintFindings)

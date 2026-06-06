@@ -170,6 +170,43 @@ func TestBriefGenerationBlocksWhenCoverageOrAcceptedInputsMissing(t *testing.T) 
 	}
 }
 
+func TestBriefGenerationAllowsPendingTDDEvidenceImplementationDispatch(t *testing.T) {
+	out := GenerateImplementationBrief(BriefGenerationInput{
+		WorkflowState: WorkflowState{TaskID: "impl-1"},
+		PRD: PRDDocument{
+			FrontMatter: PRDFrontMatter{Status: "accepted"},
+			Requirements: []PRDRequirement{
+				{ID: "REQ-1", Statement: "Do the thing"},
+			},
+		},
+		ADRs: []ParsedADR{{Doc: ADRDocument{FrontMatter: ADRFrontMatter{ADRID: "ADR-1", Status: "accepted"}}}},
+		TDD:  TDDLedger{TaskID: "impl-1", Obligations: []TDDObligation{{ID: "TDD-1", Owner: "thing_test.go", Command: "go test ./internal/thing"}}},
+		ImplementationRecords: []ImplementationLedgerRecord{
+			{RecordType: "atom_planned", TaskID: "impl-1", Scope: &AtomScope{ExpectedFiles: []string{"internal/thing/thing.go", "internal/thing/thing_test.go"}}},
+		},
+		CoverageEvaluation: CoverageGateEvaluation{
+			Status:       "blocked",
+			CoverageTier: "unit",
+			Blockers: []CoverageGateBlocker{{
+				Kind:      "coverage_tdd_evidence_missing",
+				Criterion: "tdd_evidence",
+				Message:   "expected all 1 TDD obligations to have verification evidence",
+			}},
+		},
+		ExistingWorkspacePath: map[string]bool{
+			"internal/thing/thing.go":      true,
+			"internal/thing/thing_test.go": true,
+		},
+	})
+
+	if out.Status != "pass" {
+		t.Fatalf("expected pending TDD evidence to allow implementation dispatch, got %q blockers=%v", out.Status, out.Blockers)
+	}
+	if strings.Contains(strings.Join(out.Blockers, "\n"), "coverage gate is blocked") {
+		t.Fatalf("pending TDD evidence should not emit generic coverage blocker: %#v", out.Blockers)
+	}
+}
+
 func TestBriefGenerationDoesNotTreatHumanOwnerAsReadPath(t *testing.T) {
 	out := GenerateImplementationBrief(BriefGenerationInput{
 		WorkflowState: WorkflowState{TaskID: "impl-1"},

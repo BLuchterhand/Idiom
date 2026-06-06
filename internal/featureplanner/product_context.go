@@ -16,6 +16,7 @@ type ProductWorkflowBrief struct {
 	CoverageTier              string                `json:"coverage_tier"`
 	CoverageGatePassed        bool                  `json:"coverage_gate_passed"`
 	CoverageBlockers          []string              `json:"coverage_blockers"`
+	CoverageBlockerKinds      []string              `json:"coverage_blocker_kinds,omitempty"`
 	FilesToModify             []string              `json:"files_to_modify"`
 	ContextEvidencePaths      []string              `json:"context_evidence_paths,omitempty"`
 	AuthorizedNewPackageRoots []string              `json:"authorized_new_package_roots,omitempty"`
@@ -59,10 +60,18 @@ func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bo
 	if brief.CoverageGatePassed || len(brief.CoverageBlockers) == 0 || len(brief.TDDObligations) == 0 {
 		return false
 	}
-	for _, blocker := range brief.CoverageBlockers {
-		lower := strings.ToLower(strings.TrimSpace(blocker))
-		if !strings.Contains(lower, "tdd") || !strings.Contains(lower, "verification evidence") {
-			return false
+	if len(brief.CoverageBlockerKinds) > 0 {
+		for _, kind := range brief.CoverageBlockerKinds {
+			if strings.TrimSpace(kind) != "coverage_tdd_evidence_missing" {
+				return false
+			}
+		}
+	} else {
+		for _, blocker := range brief.CoverageBlockers {
+			lower := strings.ToLower(strings.TrimSpace(blocker))
+			if !strings.Contains(lower, "tdd") || !strings.Contains(lower, "verification evidence") {
+				return false
+			}
 		}
 	}
 	for _, obligation := range brief.TDDObligations {
