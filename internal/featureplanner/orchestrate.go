@@ -129,7 +129,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		if len(brief.TDDObligations) > 0 {
 			b.WriteString("TDD Obligations:\n")
 			for _, obl := range brief.TDDObligations {
-				fmt.Fprintf(&b, "  - %s: %s (command: %s, status: %s)\n", obl.ID, obl.Behavior, obl.Command, obl.Status)
+				fmt.Fprintf(&b, "  - %s: %s (command: %s, required_before: %s, status: %s)\n", obl.ID, obl.Behavior, obl.Command, obl.RequiredBefore, obl.Status)
 			}
 		}
 		if len(brief.RequiredBehavior) > 0 {
@@ -170,9 +170,11 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 
 		if brief.CoverageGatePassed && len(brief.Blockers) == 0 && len(brief.CoverageBlockers) == 0 {
 			b.WriteString("\nRequired submit_feature_plan shape:\n")
-			fmt.Fprintf(&b, "{\"tool\":\"submit_feature_plan\",\"schema_version\":\"idiom.feature_plan.v2\",\"feature_id\":\"feature-id\",\"source_task\":{\"kind\":\"operator_prompt\",\"summary\":\"...\"},\"summary\":\"...\",\"top_level_scope\":{\"objective\":\"...\",\"success_criteria\":[\"...\"]},\"sdd_contract\":{\"prd_requirement_refs\":[\"REQ-001\"],\"adr_refs\":[\"ADR-001\"],\"acceptance\":[\"...\"]},\"tdd_contract\":{\"coverage_tier\":\"%s\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-1\",\"behavior\":\"...\",\"command\":\"use-only-product-grounded-test-command\",\"required_before\":\"implementation\"}],\"coverage_gate_event_id\":\"evt-cov-1\"},\"atoms\":[{\"schema_version\":\"idiom.feature_atom.v1\",\"id\":\"atom-1\",\"title\":\"...\",\"summary\":\"...\",\"required_edit_paths\":[\"use-only-product-grounded-paths\"],\"allowed_edit_paths\":[\"use-only-product-grounded-paths-or-sibling-tests\"],\"sdd_refs\":[\"REQ-001\"],\"tdd_obligations\":[\"TDD-1\"],\"required_tests\":[\"use-only-product-grounded-test-command\"],\"test_first\":{\"obligation_refs\":[\"TDD-1\"],\"commands\":[\"use-only-product-grounded-test-command\"],\"baseline_required\":true,\"test_artifact_paths\":[\"use-only-product-grounded-test-artifact-paths\"],\"pre_execution_event_ids\":[\"evt-tdd-1\"],\"expected_pre_execution_result\":\"red-confirmed\",\"coverage_gate_event_id\":\"evt-tdd-1\"},\"planned_tdd_snapshot\":{\"snapshot_id\":\"snap-tdd-1\",\"snapshot_digest\":\"sha256:...\",\"obligation_ids\":[\"TDD-1\"],\"test_commands\":[\"use-only-product-grounded-test-command\"],\"test_artifact_paths\":[\"use-only-product-grounded-test-artifact-paths\"],\"expected_pre_execution_results\":[\"red-confirmed\"],\"created_before_dispatch_event_id\":\"evt-tdd-1\"},\"prompt\":\"...\"}]}\n", brief.CoverageTier)
+			b.WriteString(productSubmitFeaturePlanShape(brief.CoverageTier))
 			b.WriteString("Your FeaturePlan SDD refs MUST reference only PRD requirement IDs and ADR IDs from the context above.\n")
 			b.WriteString("Your TDD obligations MUST reference only the obligation IDs listed above.\n")
+			b.WriteString("Set tdd_contract.obligations[].required_before to the exact scalar string \"implementation\". Do not use an array for required_before.\n")
+			b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
 			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, source/context evidence paths, sibling files inside those existing package roots, or authorized new package roots.\n")
 			b.WriteString("The schema example path placeholders are not authority. Do not copy or invent paths from examples.\n")
 			if len(brief.FilesToModify) == 0 && len(brief.ContextEvidencePaths) == 0 && len(brief.AuthorizedNewPackageRoots) == 0 {
@@ -185,7 +187,9 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		}
 	} else {
 		b.WriteString("\nRequired submit_feature_plan shape:\n")
-		b.WriteString("{\"tool\":\"submit_feature_plan\",\"schema_version\":\"idiom.feature_plan.v2\",\"feature_id\":\"feature-id\",\"source_task\":{\"kind\":\"operator_prompt\",\"summary\":\"...\"},\"summary\":\"...\",\"top_level_scope\":{\"objective\":\"...\",\"success_criteria\":[\"...\"]},\"sdd_contract\":{\"prd_requirement_refs\":[],\"adr_refs\":[],\"acceptance\":[\"your-acceptance-criteria-here\"]},\"tdd_contract\":{\"coverage_tier\":\"contract_high\",\"required_before_implementation\":true,\"obligations\":[{\"id\":\"TDD-1\",\"behavior\":\"...\",\"command\":\"project-specific-test-command\",\"required_before\":\"implementation\"}]},\"atoms\":[{\"schema_version\":\"idiom.feature_atom.v1\",\"id\":\"atom-1\",\"title\":\"...\",\"summary\":\"...\",\"required_edit_paths\":[\"project/source-file.ext\"],\"allowed_edit_paths\":[\"project/source-file.ext\",\"project/test-file.ext\"],\"sdd_refs\":[],\"tdd_obligations\":[\"TDD-1\"],\"required_tests\":[\"project-specific-test-command\"],\"test_first\":{\"obligation_refs\":[\"TDD-1\"],\"commands\":[\"project-specific-test-command\"],\"baseline_required\":true,\"test_artifact_paths\":[\"project/test-file.ext\"],\"pre_execution_event_ids\":[\"evt-tdd-1\"],\"expected_pre_execution_result\":\"red-confirmed\",\"coverage_gate_event_id\":\"evt-tdd-1\"},\"planned_tdd_snapshot\":{\"snapshot_id\":\"snap-tdd-1\",\"snapshot_digest\":\"sha256:...\",\"obligation_ids\":[\"TDD-1\"],\"test_commands\":[\"project-specific-test-command\"],\"test_artifact_paths\":[\"project/test-file.ext\"],\"expected_pre_execution_results\":[\"red-confirmed\"],\"created_before_dispatch_event_id\":\"evt-tdd-1\"},\"prompt\":\"...\"}]}\n")
+		b.WriteString(standaloneSubmitFeaturePlanShape())
+		b.WriteString("Set tdd_contract.obligations[].required_before to the scalar string \"implementation\". Do not use an array for required_before.\n")
+		b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
 		b.WriteString("No upstream design docs are available. Use acceptance criteria strings in sdd_contract.acceptance instead of file paths.\n")
 		b.WriteString("Do NOT invent file paths like docs/path.md — acceptance criteria strings are valid and preferred when no docs exist.\n")
 	}

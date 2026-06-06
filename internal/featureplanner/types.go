@@ -1,5 +1,10 @@
 package featureplanner
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 const SchemaVersion = "idiom.feature_planner.state.v1"
 const (
 	FeatureStateSchemaVersion    = "idiom.feature_state.v1"
@@ -188,6 +193,42 @@ type TDDObligation struct {
 	Behavior       string `json:"behavior"`
 	Command        string `json:"command"`
 	RequiredBefore string `json:"required_before"`
+}
+
+func (obligation *TDDObligation) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID             string          `json:"id"`
+		Behavior       string          `json:"behavior"`
+		Command        string          `json:"command"`
+		RequiredBefore json.RawMessage `json:"required_before"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	requiredBefore, err := decodeRequiredBefore(raw.RequiredBefore)
+	if err != nil {
+		return err
+	}
+	obligation.ID = raw.ID
+	obligation.Behavior = raw.Behavior
+	obligation.Command = raw.Command
+	obligation.RequiredBefore = requiredBefore
+	return nil
+}
+
+func decodeRequiredBefore(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil
+	}
+	var scalar string
+	if err := json.Unmarshal(raw, &scalar); err == nil {
+		return scalar, nil
+	}
+	var singleton []string
+	if err := json.Unmarshal(raw, &singleton); err == nil && len(singleton) == 1 {
+		return singleton[0], nil
+	}
+	return "", fmt.Errorf("required_before must be the scalar string \"implementation\"")
 }
 
 // CoverageGateResult carries the pass/fail status from the upstream

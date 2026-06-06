@@ -113,6 +113,9 @@ func TestBuildPlannerPromptProductExampleUsesNonAuthoritativePlaceholders(t *tes
 		"Acceptance:",
 		"Accepted decisions:",
 		"Source/context evidence paths:",
+		"required_before: implementation",
+		`required_before to the exact scalar string "implementation"`,
+		"planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs",
 		"use-only-product-grounded-paths",
 		"The schema example path placeholders are not authority",
 		"Repo grounding is required:",
@@ -149,6 +152,26 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("standalone prompt missing neutral placeholder %q:\n%s", want, prompt)
 		}
+	}
+	for _, want := range []string{
+		`required_before to the scalar string "implementation"`,
+		"planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("standalone prompt missing schema invariant %q:\n%s", want, prompt)
+		}
+	}
+}
+
+func TestParsePlannerOutputCoercesSingletonRequiredBeforeArray(t *testing.T) {
+	raw := strings.Replace(mustPlanJSON(t, validPlan()), `"required_before":"implementation"`, `"required_before":["implementation"]`, 1)
+
+	parsed, err := ParsePlannerOutput(raw)
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	}
+	if got := parsed.Plan.TDDContract.Obligations[0].RequiredBefore; got != "implementation" {
+		t.Fatalf("RequiredBefore = %q, want implementation", got)
 	}
 }
 
