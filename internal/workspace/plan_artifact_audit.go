@@ -198,6 +198,7 @@ func (a *planArtifactAuditor) checkScopeEvidence() {
 	for _, path := range a.artifact.Contract.RequiredEditPaths {
 		required[path] = struct{}{}
 	}
+	sourceSatisfied := planArtifactAuditStringSet(a.artifact.Paths.SourceSatisfied)
 	editable := planArtifactAuditStringSet(a.artifact.Paths.Editable)
 	for _, path := range a.artifact.Paths.Changed {
 		editable[path] = struct{}{}
@@ -224,8 +225,23 @@ func (a *planArtifactAuditor) checkScopeEvidence() {
 			}
 		}
 	}
+	for path := range sourceSatisfied {
+		if _, ok := forbidden[path]; ok {
+			a.add("error", "scope_path_mismatch", "source-satisfied path targets a forbidden path", []string{path})
+			a.metrics.ScopePathMismatches++
+		}
+		if len(required) > 0 {
+			if _, ok := required[path]; !ok {
+				a.add(enforcedSeverity(a.opts), "scope_path_mismatch", "source-satisfied path is missing from required scope", []string{path})
+				a.metrics.ScopePathMismatches++
+			}
+		}
+	}
 	for path := range required {
 		if !planArtifactAuditContainsString(editPaths, path) {
+			if _, ok := sourceSatisfied[path]; ok {
+				continue
+			}
 			a.add(enforcedSeverity(a.opts), "scope_path_mismatch", "required scope path has no submitted edit", []string{path})
 			a.metrics.ScopePathMismatches++
 		}

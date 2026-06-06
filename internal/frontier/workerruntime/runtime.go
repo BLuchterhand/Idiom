@@ -199,7 +199,7 @@ func BuildActionGuidance(input ActionGuidanceInput) ActionGuidance {
 	}
 	if planExecuteSubmitReady {
 		guidance.InvalidNext = appendUnique(guidance.InvalidNext, "read/search/source-refresh after plan-execute submit_plan readiness")
-		guidance.ValidNext = appendUnique(guidance.ValidNext, "submit_plan with one ordered edit entry for every required_edit_paths entry")
+		guidance.ValidNext = appendUnique(guidance.ValidNext, "submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: Decision: source-satisfied only with current-state evidence for every required path")
 		guidance.ValidNext = appendUnique(guidance.ValidNext, "narrow exception: <<QUESTION>> only with exact path-specific blockers")
 		if containsAny(statusCombined, "malformed tool request", "tool_parse") {

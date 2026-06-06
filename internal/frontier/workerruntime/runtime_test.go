@@ -232,7 +232,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 	}
 	joined := strings.Join(guidance.ValidNext, "\n")
 	for _, want := range []string{
-		"submit_plan with one ordered edit entry",
+		"submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry",
 		"Decision: source-satisfied",
 		"<<QUESTION>>",
 	} {
@@ -276,7 +276,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 			})
 			joined := strings.Join(guidance.ValidNext, "\n")
 			for _, want := range []string{
-				"submit_plan with one ordered edit entry",
+				"submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry",
 				"Decision: source-satisfied",
 				"<<QUESTION>>",
 			} {
@@ -308,7 +308,7 @@ func TestBuildActionGuidanceForPlanExecuteSubmitReady(t *testing.T) {
 	if strings.Contains(joinedPlan, "one exact tool-shaped follow-up") {
 		t.Fatalf("submit-ready recovery must not suggest another probe: %#v", plan.ValidNext)
 	}
-	if !strings.Contains(joinedPlan, "submit_plan with one ordered edit entry") {
+	if !strings.Contains(joinedPlan, "submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry") {
 		t.Fatalf("submit-ready recovery must keep submit_plan closeout, got %#v", plan.ValidNext)
 	}
 

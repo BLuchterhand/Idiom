@@ -355,7 +355,7 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
-	b.WriteString("After every existing required path has satisfied its source-body obligation, do not perform additional source reads. Read runtime-required git history evidence for every listed existing required path (new files satisfy this automatically), then your first successful `submit_plan.edits` array must include at least one real edit for every path above, with no outside paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	b.WriteString("After every existing required path has satisfied its source-body obligation, do not perform additional source reads. Read runtime-required git history evidence for every listed existing required path (new files satisfy this automatically), then your first successful `submit_plan` must cover every path above with either one real executable edit or a `source_satisfied_paths` entry when that path already contains the requested final state. Do not submit no-op edits for source-satisfied paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
 	return strings.TrimSpace(b.String())
 }
 
@@ -2329,6 +2329,25 @@ func preflightPlanDeclaredScope(plan workspace.PlanArtifact) *PlanEditPreflightM
 	approved := planExecutePathSet(plan.Approval.ApprovedPaths)
 	pending := planExecutePathSet(plan.Approval.PendingPaths)
 	seen := map[string]struct{}{}
+	for path := range planExecutePathSet(plan.Paths.SourceSatisfied) {
+		if _, ok := forbidden[path]; ok {
+			return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is forbidden"}
+		}
+		if _, ok := pending[path]; ok {
+			return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is still pending approval"}
+		}
+		if len(approved) > 0 {
+			if _, ok := approved[path]; !ok {
+				return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is outside approved scope"}
+			}
+		}
+		if len(required) > 0 {
+			if _, ok := required[path]; !ok {
+				return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is outside required plan scope"}
+			}
+		}
+		seen[path] = struct{}{}
+	}
 	for i, edit := range plan.Edits {
 		path := normalizePlanExecutePath(edit.Path)
 		if path == "" {
@@ -2430,6 +2449,21 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 	if invalid != nil {
 		return invalid
 	}
+	requiredSet := planExecutePathSet(coverage.RequiredCoveragePaths)
+	for _, rawPath := range plan.Paths.SourceSatisfied {
+		path := normalizePlanExecutePath(rawPath)
+		if path == "" {
+			continue
+		}
+		if _, ok := requiredSet[path]; !ok {
+			return &PlanEditPreflightMismatch{
+				Index:  -1,
+				Path:   path,
+				Reason: "source-satisfied path is outside required_edit_paths allowlist",
+			}
+		}
+	}
+	candidatePaths = append(candidatePaths, plan.Paths.SourceSatisfied...)
 	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{
 		RequiredEditPaths:      coverage.RequiredCoveragePaths,
 		CandidateCoveragePaths: candidatePaths,

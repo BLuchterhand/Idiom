@@ -297,7 +297,7 @@ func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
 		"Required `submit_plan` coverage for this run: 2 required path(s).",
 		"- a.cpp",
 		"- b.cpp",
-		"must include at least one real edit for every path above",
+		"must cover every path above with either one real executable edit or a `source_satisfied_paths` entry",
 		"Do not submit a partial plan",
 	} {
 		if !strings.Contains(addendum, want) {

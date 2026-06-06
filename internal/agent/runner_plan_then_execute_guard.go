@@ -117,9 +117,18 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 			Reason: "plan-then-execute planner phase: source-satisfied closeout used submit_plan transport",
 		}
 	}
-	planned := make(map[string]struct{}, len(edits))
+	sourceSatisfiedPaths := planThenExecuteEffectiveSubmitPlanSourceSatisfiedPaths(req)
+	planned := make(map[string]struct{}, len(edits)+len(sourceSatisfiedPaths))
 	var outside []string
 	var missingPathEdits []string
+	for _, path := range sourceSatisfiedPaths {
+		if normalized := normalizeRunnerPath(path); normalized != "" {
+			planned[normalized] = struct{}{}
+			if scopeActive && !scope.allowsPlanPath(normalized) {
+				outside = append(outside, normalized)
+			}
+		}
+	}
 	for i, edit := range edits {
 		path := normalizeRunnerPath(edit.Path)
 		if path == "" {
@@ -184,7 +193,7 @@ func (r *Runner) preflightPlanThenExecuteSubmitPlanCoverageGuard(req workspace.T
 	}
 	requirement := "submit_plan edit entries must include `path` and executable edit bodies with valid current-source anchors or line ranges"
 	if scopeActive {
-		requirement = "submit_plan must include at least one edit entry for every required_edit_paths coverage entry when required paths are present, no edits outside " + scopeName + ", and coverage for every required_edit_snippets final-state snippet"
+		requirement = "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry when the path already contains the requested final state, no edits outside " + scopeName + ", and coverage for every required_edit_snippets final-state snippet"
 	}
 	return verificationInterceptResult{
 		Intercepted: true,
@@ -629,6 +638,15 @@ func planThenExecuteEffectiveSubmitPlanEdits(req workspace.ToolRequest) []worksp
 		return append([]workspace.PlanEdit(nil), req.PlanArtifact.Edits...)
 	}
 	return append([]workspace.PlanEdit(nil), req.Edits...)
+}
+
+func planThenExecuteEffectiveSubmitPlanSourceSatisfiedPaths(req workspace.ToolRequest) []string {
+	var paths []string
+	if req.PlanArtifact != nil && len(req.PlanArtifact.Paths.SourceSatisfied) > 0 {
+		paths = append(paths, req.PlanArtifact.Paths.SourceSatisfied...)
+	}
+	paths = append(paths, req.SourceSatisfiedPaths...)
+	return paths
 }
 
 func readPlanProjectionBase(root string, path string) string {
@@ -2618,7 +2636,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 			"PLANNER SUBMIT-CORRECTION READY: every required_edit_path has source-body evidence, but the previous `submit_plan` was rejected before it became a valid plan artifact.",
 			"",
 			lastSubmitPlanRejectionBrief(rejected),
-			"The next visible action MUST be exactly one parser-readable `submit_plan` request with one edit entry for every required_edit_path.",
+			"The next visible action MUST be exactly one parser-readable `submit_plan` request covering every required_edit_path with real edits or source_satisfied_paths entries.",
 			planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, rejected),
 			"",
 			"Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not describe the correction in prose outside the parser-readable action.",
@@ -2690,7 +2708,7 @@ func planThenExecuteReadyToSubmitNudge(brief workerruntime.WorkerRuntimeBrief, r
 	return strings.Join([]string{
 		"PLANNER READINESS REACHED: every required_edit_path is ready for a terminal planner outcome; existing files have anchor-ready source evidence and missing/new files have explicit new-file evidence.",
 		"",
-		"Next visible action MUST be exactly one parser-readable `submit_plan` request with the full ordered edits[] array: one edit entry for every required_edit_path, insertion, substring, replacement-only line-range, or whole-file/new-file shape, plus a one-sentence purpose per edit.",
+		"Next visible action MUST be exactly one parser-readable `submit_plan` request covering every required_edit_path with real edits or source_satisfied_paths entries: insertion, substring, replacement-only line-range, whole-file/new-file shape, or source_satisfied_paths for paths already at final state.",
 		"Use the smallest executable edit body that satisfies the objective. Prefer exact `old_text`/`new_text` for small unique replacements; use line-range `content` only for multi-line replacements or large insertions anchored to unchanged source lines. Do not replace whole functions or files when a smaller anchored edit is enough.",
 		planThenExecuteSubmitPlanVisibleJSONInstruction() + " For a missing/new source or test file, the brief must provide a substantial inline body or explicit replacement edit shape.",
 		"",
@@ -2956,7 +2974,7 @@ func planThenExecuteCodeNavigateMissingAnchorCapability(req workspace.ToolReques
 }
 
 func planThenExecuteSubmitPlanVisibleJSONInstruction() string {
-	return "Textual-tool backends must emit exactly one visible JSON object with top-level `\"tool\":\"submit_plan\"` and top-level `edits` as a JSON array, not a quoted string. Every edit path must be a real required or selected path from gathered source evidence, and every edit body must be executable final source. Keep edit bodies as small as executable: prefer exact `old_text`/`new_text` for small unique replacements; use numeric `start_line`/`end_line` plus complete `content` for multi-line source/test edits and large additions anchored to unchanged source lines. For small insertions/appends, use `insert_after_line` plus inline non-empty `content` only after an existing line. Do not replace whole functions or files when a smaller anchored edit is enough."
+	return "Textual-tool backends must emit exactly one visible JSON object with top-level `\"tool\":\"submit_plan\"` and top-level `edits` as a JSON array, not a quoted string. Cover every required edit path with either one real executable edit or a top-level `source_satisfied_paths` entry when that path already contains the requested final state; do not submit no-op edits for source-satisfied paths. Every edit path must be a real required or selected path from gathered source evidence, and every edit body must be executable final source. Keep edit bodies as small as executable: prefer exact `old_text`/`new_text` for small unique replacements; use numeric `start_line`/`end_line` plus complete `content` for multi-line source/test edits and large additions anchored to unchanged source lines. For small insertions/appends, use `insert_after_line` plus inline non-empty `content` only after an existing line. Do not replace whole functions or files when a smaller anchored edit is enough."
 }
 
 func planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) string {
@@ -3011,16 +3029,16 @@ func planThenExecuteSubmitPlanCorrectionChecklist(brief workerruntime.WorkerRunt
 			} else if _, ok := invalid[path]; ok {
 				b.WriteString("invalid-anchor-or-syntax")
 			} else {
-				b.WriteString("must-keep-valid-entry")
+				b.WriteString("must-keep-valid-coverage")
 			}
 		case invalid != nil:
 			if _, ok := invalid[path]; ok {
 				b.WriteString("invalid-anchor-or-syntax")
 			} else {
-				b.WriteString("must-keep-valid-entry")
+				b.WriteString("must-keep-valid-coverage")
 			}
 		default:
-			b.WriteString("must-have-one-valid-entry")
+			b.WriteString("must-have-valid-edit-or-source_satisfied_paths-entry")
 		}
 		b.WriteString(";")
 	}

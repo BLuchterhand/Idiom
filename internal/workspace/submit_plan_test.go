@@ -276,8 +276,9 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	writeSubmitPlanFixture(t, root, "b.txt", "original\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:      "submit_plan",
-		Rationale: "add donkey across the codebase",
+		Tool:                 "submit_plan",
+		Rationale:            "add feature across the codebase",
+		SourceSatisfiedPaths: []string{"c.txt"},
 		Edits: []PlanEdit{
 			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "first edit"},
 			{Path: "b.txt", StartLine: 1, EndLine: 1, Content: "rewritten\n", Purpose: "second edit"},
@@ -347,6 +348,9 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	}
 	if !submitPlanTestContains(artifact.Paths.Editable, "a.txt") || !submitPlanTestContains(artifact.Paths.Changed, "b.txt") {
 		t.Fatalf("durable artifact paths should include planned edit paths: %#v", artifact.Paths)
+	}
+	if !submitPlanTestContains(artifact.Paths.SourceSatisfied, "c.txt") {
+		t.Fatalf("durable artifact should preserve source-satisfied coverage paths: %#v", artifact.Paths)
 	}
 	if len(artifact.Evidence) == 0 {
 		t.Fatalf("durable artifact should include bounded evidence")
@@ -581,7 +585,8 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool: "submit_plan",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		Tool:                 "submit_plan",
 		PlanArtifact: &PlanArtifact{
 			SchemaVersion: PlanArtifactSchemaVersion,
 			PlanID:        "plan-structured",
@@ -641,8 +646,71 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 	if len(plan.UnresolvedQuestions) != 1 || len(plan.VerificationObligations) != 1 {
 		t.Fatalf("structured question/verification fields not preserved: %#v %#v", plan.UnresolvedQuestions, plan.VerificationObligations)
 	}
+	if !submitPlanTestContains(plan.Paths.SourceSatisfied, "b.txt") {
+		t.Fatalf("top-level source_satisfied_paths should merge into structured artifact paths: %#v", plan.Paths)
+	}
+	if !submitPlanTestContains(plan.Paths.Required, "b.txt") {
+		t.Fatalf("top-level source_satisfied_paths should merge into structured artifact required scope: %#v", plan.Paths)
+	}
 	if !strings.Contains(result.Output, "audit_ok=true") {
 		t.Fatalf("accepted structured artifact should report passing audit, got %q", result.Output)
+	}
+}
+
+func TestSubmitPlanMergesStructuredSourceSatisfiedWithContractRequiredScope(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:                 "submit_plan",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			Task:          PlanArtifactTask{Summary: "mixed structured coverage"},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				RequiredEditPaths: []string{"a.txt"},
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "planner",
+			},
+			Paths: PlanArtifactPaths{
+				Editable: []string{"a.txt"},
+				Changed:  []string{"a.txt"},
+			},
+			Evidence: []PlanArtifactEvidence{{
+				Kind:    "planner_submission",
+				Summary: "current evidence covers b.txt",
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				ID:       "verification-1",
+				Kind:     "focused_tests",
+				Command:  "go test ./...",
+				Owner:    "executor",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{
+				{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "Update the fixture."},
+			},
+		},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("submit_plan rejected structured mixed coverage artifact: %s", result.Error)
+	}
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load submitted plan: %v", err)
+	}
+	for _, want := range []string{"a.txt", "b.txt"} {
+		if !submitPlanTestContains(plan.Paths.Required, want) {
+			t.Fatalf("structured required scope should preserve %s with source_satisfied merge: %#v", want, plan.Paths)
+		}
+		if !submitPlanTestContains(plan.Approval.ApprovedPaths, want) {
+			t.Fatalf("approved scope should preserve %s with source_satisfied merge: %#v", want, plan.Approval)
+		}
 	}
 }
 
@@ -1440,6 +1508,32 @@ func TestSubmitPlanAllowsNegatedSourceSatisfiedRationale(t *testing.T) {
 	})
 	if strings.TrimSpace(result.Error) != "" {
 		t.Fatalf("negated source-satisfied rationale should be allowed, got %q", result.Error)
+	}
+}
+
+func TestSubmitPlanAllowsMixedSourceSatisfiedCoverageRationale(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:                 "submit_plan",
+		Rationale:            "Update a.txt; b.txt already contains the requested final state from current source evidence.",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		Edits: []PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before",
+			NewText: "after",
+			Purpose: "Replace the old value with the requested value.",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("mixed source_satisfied_paths coverage rationale should be allowed, got %q", result.Error)
+	}
+	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
+	if err != nil {
+		t.Fatalf("load submitted plan: %v", err)
+	}
+	if !submitPlanTestContains(plan.Paths.SourceSatisfied, "b.txt") {
+		t.Fatalf("source_satisfied_paths should persist on plan artifact: %#v", plan.Paths)
 	}
 }
 

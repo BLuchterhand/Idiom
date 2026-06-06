@@ -172,7 +172,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if err != nil {
 		return toolFailureFromMaybeTypedErrorResult("submit_plan", "submit_plan rejected", err, failures.InvalidArgument, reasonPlanSubmissionRejected)
 	}
-	if planRationaleClaimsNoEditsNeeded(artifact.Rationale) {
+	if planRationaleClaimsNoEditsNeeded(artifact.Rationale) && !planArtifactAllowsMixedSourceSatisfiedRationale(artifact) {
 		result := withToolFailure(ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied rationale",
@@ -264,6 +264,20 @@ func SubmitPlanRequestClaimsSourceSatisfied(req ToolRequest) bool {
 		return true
 	}
 	return planRationaleClaimsNoEditsNeeded(req.Rationale)
+}
+
+func planArtifactAllowsMixedSourceSatisfiedRationale(artifact PlanArtifact) bool {
+	if len(artifact.Edits) == 0 || len(artifact.Paths.SourceSatisfied) == 0 {
+		return false
+	}
+	rationale := planRationaleText(artifact.Rationale)
+	if rationale == "" {
+		return false
+	}
+	if planRationaleClaimsPlaceholderEdits(rationale) || planRationaleClaimsUnscopedNoWork(rationale) {
+		return false
+	}
+	return planRationaleClaimsSourceSatisfied(rationale)
 }
 
 // validatePlanEdit ensures one of the recognized edit shapes is
@@ -649,10 +663,20 @@ func planEditLineNumberAtByte(content string, offset int) int {
 }
 
 func planRationaleClaimsNoEditsNeeded(rationale string) bool {
-	text := strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(rationale))), " ")
+	text := planRationaleText(rationale)
 	if text == "" {
 		return false
 	}
+	return planRationaleClaimsPlaceholderEdits(text) ||
+		planRationaleClaimsUnscopedNoWork(text) ||
+		planRationaleClaimsSourceSatisfied(text)
+}
+
+func planRationaleText(rationale string) string {
+	return strings.Join(strings.Fields(strings.ToLower(strings.TrimSpace(rationale))), " ")
+}
+
+func planRationaleClaimsPlaceholderEdits(text string) bool {
 	for _, needle := range []string{
 		"placeholder edit",
 		"placeholder edits",
@@ -663,6 +687,10 @@ func planRationaleClaimsNoEditsNeeded(rationale string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func planRationaleClaimsUnscopedNoWork(text string) bool {
 	for _, needle := range []string{
 		"no edits are needed",
 		"no edit is needed",
@@ -674,6 +702,10 @@ func planRationaleClaimsNoEditsNeeded(rationale string) bool {
 			return true
 		}
 	}
+	return false
+}
+
+func planRationaleClaimsSourceSatisfied(text string) bool {
 	sourceSatisfiedNeedles := []string{
 		"source-satisfied",
 		"source satisfied",

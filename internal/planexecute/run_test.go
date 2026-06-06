@@ -152,6 +152,78 @@ func TestPreflightPlanEditsRejectsStaleAnchorProvenance(t *testing.T) {
 	}
 }
 
+func TestPreflightPlanRequiredEditPathsAcceptsSourceSatisfiedCoverage(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			SourceSatisfied: []string{"a.go"},
+		},
+		Edits: []workspace.PlanEdit{
+			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
+		},
+	}
+
+	if got := preflightPlanRequiredEditPaths([]string{"a.go", "b.go"}, plan); got != nil {
+		t.Fatalf("source_satisfied_paths should cover already-satisfied required paths, got %#v", got)
+	}
+}
+
+func TestPreflightPlanDeclaredScopeAcceptsSourceSatisfiedRequiredPath(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			Required:        []string{"a.go", "b.go"},
+			Editable:        []string{"b.go"},
+			Changed:         []string{"b.go"},
+			SourceSatisfied: []string{"a.go"},
+		},
+		Edits: []workspace.PlanEdit{
+			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
+		},
+	}
+
+	if got := preflightPlanDeclaredScope(plan); got != nil {
+		t.Fatalf("source_satisfied_paths should satisfy declared required scope coverage, got %#v", got)
+	}
+}
+
+func TestPreflightPlanRequiredEditPathsRejectsOutOfScopeSourceSatisfiedPath(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			SourceSatisfied: []string{"outside.go"},
+		},
+		Edits: []workspace.PlanEdit{
+			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
+		},
+	}
+
+	got := preflightPlanRequiredEditPaths([]string{"a.go", "b.go"}, plan)
+	if got == nil || got.Path != "outside.go" || got.Reason != "source-satisfied path is outside required_edit_paths allowlist" {
+		t.Fatalf("expected out-of-scope source_satisfied_paths rejection, got %#v", got)
+	}
+}
+
+func TestPreflightPlanDeclaredScopeRejectsOutOfScopeSourceSatisfiedPath(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			Required:        []string{"a.go", "b.go"},
+			Editable:        []string{"b.go"},
+			Changed:         []string{"b.go"},
+			SourceSatisfied: []string{"outside.go"},
+		},
+		Edits: []workspace.PlanEdit{
+			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
+		},
+	}
+
+	got := preflightPlanDeclaredScope(plan)
+	if got == nil || got.Path != "outside.go" || got.Reason != "source-satisfied path is outside required plan scope" {
+		t.Fatalf("expected declared-scope source_satisfied_paths rejection, got %#v", got)
+	}
+}
+
 func TestRunExecutorPhaseAppliesInsertAfterLinePlanEdit(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "feature_test.go"), []byte("package demo\n\nfunc TestExisting(t *testing.T) {}\n"), 0o644); err != nil {

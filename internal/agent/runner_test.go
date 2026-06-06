@@ -2268,7 +2268,7 @@ func TestPlanExecuteRequiredPathRecoveryNudgeNamesSubmitPlan(t *testing.T) {
 		false,
 		false,
 	)
-	for _, want := range []string{"plan-execute planner", "successful `submit_plan` edit entry", "`submit_plan` with one edit entry"} {
+	for _, want := range []string{"plan-execute planner", "successful `submit_plan` coverage", "`submit_plan` with real edits or source_satisfied_paths entries"} {
 		if !strings.Contains(nudge, want) {
 			t.Fatalf("expected plan-execute recovery nudge to contain %q, got:\n%s", want, nudge)
 		}

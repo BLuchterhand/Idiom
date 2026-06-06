@@ -419,7 +419,7 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
-				Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+				Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
 			},
 		},
 	})
@@ -449,7 +449,7 @@ func TestDeriveTurnPhaseContractStaleAnchorRefreshWinsOverUnreadRequiredSource(t
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
-				Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+				Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
 			},
 		},
 	})
@@ -504,7 +504,7 @@ func TestDeriveTurnPhaseContractSubmitCorrectionAfterAnchorRefresh(t *testing.T)
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
-				Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+				Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
 			},
 			{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read Target in a.go lines 1-10\n1:package a"},
 		},
@@ -535,7 +535,7 @@ func TestDeriveTurnPhaseContractSubmitCorrectionIsSubmitPlanOnly(t *testing.T) {
 			{
 				Tool:    "submit_plan",
 				Summary: "submit_plan rejected: required edit path coverage mismatch",
-				Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `b.go`.",
+				Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `b.go`.",
 			},
 		},
 		TextualToolParser: true,

@@ -200,6 +200,10 @@ type ToolRequest struct {
 	// (the planner phase of plan-then-execute mode). Each entry is
 	// one edit the executor phase should dispatch in order.
 	Edits []PlanEdit `json:"edits,omitempty"`
+	// SourceSatisfiedPaths declares required edit paths whose requested final
+	// state is already present. These paths satisfy submit_plan coverage but
+	// are not executable edits.
+	SourceSatisfiedPaths []string `json:"source_satisfied_paths,omitempty"`
 	// Rationale is the planner's free-text explanation of WHY the
 	// plan looks the way it does. Captured alongside the plan so the
 	// executor (and any reviewer) can read the plan as a single

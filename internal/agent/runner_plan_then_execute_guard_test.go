@@ -1329,7 +1329,7 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
-			Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; missing required edit path(s): `internal/productworkflow/coverage_gate.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+			Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `internal/productworkflow/coverage_gate.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
 	}
 	summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
@@ -3152,8 +3152,8 @@ func TestCompletionGateRecoveryPromptPreservesSubmitPlanRejectionDetails(t *test
 		"Previous rejected submit_plan drafts do not count as coverage",
 		"Last submit_plan rejection",
 		"Next submit_plan coverage checklist",
-		"a.txt=must-keep-valid-entry",
-		"b.txt=must-keep-valid-entry",
+		"a.txt=must-keep-valid-coverage",
+		"b.txt=must-keep-valid-coverage",
 		"Do not repeat `insert_after_line`",
 		"`content_ref`",
 		"start_line",
@@ -3820,7 +3820,7 @@ func TestPlanExecuteReadySourceRefreshRequiresRejectedPlanAnchorGap(t *testing.T
 	results = append(results, workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 	})
 	if !runner.planThenExecuteReadySourceRefreshAllowed(req, results, 0) {
 		t.Fatalf("bounded required-path source refresh should be allowed after rejected submit_plan identifies a stale anchor")
@@ -4567,7 +4567,7 @@ func TestPlanExecuteSubmitPlanOnlySurfaceRejection(t *testing.T) {
 	if summary != "Plan-execute submit_plan required" {
 		t.Fatalf("summary = %q", summary)
 	}
-	for _, want := range []string{"source-ready", "submit_plan", "one edit per required path", "Do not call `read_file`"} {
+	for _, want := range []string{"source-ready", "submit_plan", "one real edit or source_satisfied_paths entry per required path", "Do not call `read_file`"} {
 		if !strings.Contains(errorText+"\n"+prompt, want) {
 			t.Fatalf("expected submit-plan-only rejection to contain %q, got error=%q prompt=%q", want, errorText, prompt)
 		}
@@ -4612,7 +4612,7 @@ func TestPlanExecuteSubmitCorrectionSubmitPlanOnlySurfaceRejectsStaleExits(t *te
 	for _, want := range []string{
 		"submit-correction mode",
 		"exactly one parser-readable `submit_plan`",
-		"one edit per required path",
+		"one real edit or source_satisfied_paths entry per required path",
 	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("submit-correction submit-plan-only rejection missing %q:\n%s", want, joined)
@@ -5333,7 +5333,7 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 
 	state := buildRunnerNextActionState("main", 3, "tool_rejected", req, rejected, results, false, brief)
 	joinedState := strings.Join(state.NextValidActions, "\n")
-	if !strings.Contains(joinedState, "submit_plan with one ordered edit entry") {
+	if !strings.Contains(joinedState, "source_satisfied_paths") {
 		t.Fatalf("submit-ready next_action_state should point at submit_plan, got %#v", state.NextValidActions)
 	}
 	if strings.Contains(joinedState, "one exact tool-shaped follow-up") {
@@ -5344,7 +5344,7 @@ func TestPlanExecuteSubmitReadyFailureFeedbackDoesNotSuggestGenericProbe(t *test
 	}
 	packet := buildRunnerFailureFeedbackPacket("main", 3, "tool_rejected", req, rejected, results, false, brief)
 	joinedFeedback := strings.Join(packet.ValidNext, "\n")
-	if !strings.Contains(joinedFeedback, "submit_plan with one ordered edit entry") {
+	if !strings.Contains(joinedFeedback, "source_satisfied_paths") {
 		t.Fatalf("submit-ready failure feedback should point at submit_plan, got %#v", packet.ValidNext)
 	}
 	if strings.Contains(joinedFeedback, "one exact tool-shaped follow-up") {
@@ -5384,7 +5384,7 @@ func TestPlanExecuteSubmitReadyStateDoesNotAdvertiseReadProbes(t *testing.T) {
 	readyBrief := runnerBriefWithRequiredEditPathHints(brief, results)
 	joinedNext := strings.Join(readyBrief.RequiredNext, "\n")
 	joinedPolicy := strings.Join(readyBrief.SearchPolicy, "\n")
-	if !strings.Contains(joinedNext, "submit_plan with one ordered edit entry") {
+	if !strings.Contains(joinedNext, "source_satisfied_paths") {
 		t.Fatalf("submit-ready brief should keep terminal submit_plan action, got %#v", readyBrief.RequiredNext)
 	}
 	if !strings.Contains(joinedPolicy, "no read/search/discovery action is valid after submit_plan readiness") {
@@ -5404,7 +5404,7 @@ func TestPlanExecuteSubmitReadyStateDoesNotAdvertiseReadProbes(t *testing.T) {
 	lastResult := results[len(results)-1]
 	state := buildRunnerNextActionState("main", 2, "tool_result", lastReq, lastResult, results, false, brief)
 	joinedState := strings.Join(state.NextValidActions, "\n")
-	if !strings.Contains(joinedState, "submit_plan with one ordered edit entry") {
+	if !strings.Contains(joinedState, "source_satisfied_paths") {
 		t.Fatalf("submit-ready next_action_state should point at submit_plan, got %#v", state.NextValidActions)
 	}
 	for _, forbidden := range []string{
@@ -6916,7 +6916,7 @@ func TestPlanThenExecuteRequiredPathHintsSwitchToSubmitPlanAfterSourceEvidence(t
 	})
 
 	joined := strings.Join(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), "\n")
-	if !strings.Contains(joined, "submit_plan with one ordered edit entry for every required_edit_paths entry") {
+	if !strings.Contains(joined, "submit_plan") || !strings.Contains(joined, "source_satisfied_paths") {
 		t.Fatalf("planner-phase hints should require submit_plan once required paths are read, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
 	}
 	if strings.Contains(joined, "read required_edit_path a.txt with source-body evidence before submit_plan") {
@@ -6932,7 +6932,7 @@ func TestPlanThenExecuteRequiredPathHintsClearStaleSourceReadLanguageAfterReadin
 		RequiredTools:     []string{"submit_plan"},
 		RequiredEditPaths: []string{"a.txt", "b.txt"},
 		RequiredNext: []string{
-			"read required_edit_path a.txt with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan with one ordered edit entry for every required path",
+			"read required_edit_path a.txt with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan covering every required path with real edits or source_satisfied_paths entries",
 		},
 		InvalidActions: []string{
 			"submit_plan before every existing required_edit_path has satisfied its source-body obligation",
@@ -6948,7 +6948,7 @@ func TestPlanThenExecuteRequiredPathHintsClearStaleSourceReadLanguageAfterReadin
 	})
 
 	joined := strings.Join(append(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), brief.SearchPolicy...), "\n")
-	if !strings.Contains(joined, "submit_plan with one ordered edit entry for every required_edit_paths entry") {
+	if !strings.Contains(joined, "submit_plan") || !strings.Contains(joined, "source_satisfied_paths") {
 		t.Fatalf("planner-phase hints should require submit_plan once source evidence is complete, got %s", joined)
 	}
 	for _, stale := range []string{
@@ -7051,7 +7051,7 @@ func TestPlanThenExecuteRequiredPathHintsDoNotReadTerminalMissingPath(t *testing
 	})
 
 	joined := strings.Join(append(append([]string{}, brief.RequiredNext...), brief.InvalidActions...), "\n")
-	if !strings.Contains(joined, "submit_plan with one ordered edit entry for every required_edit_paths entry") {
+	if !strings.Contains(joined, "submit_plan") || !strings.Contains(joined, "source_satisfied_paths") {
 		t.Fatalf("terminal missing-file evidence should move planner toward submit_plan/question, got %#v / %#v", brief.RequiredNext, brief.InvalidActions)
 	}
 	if strings.Contains(joined, "read required_edit_path new_file.go with source-body evidence before submit_plan") {
@@ -9487,7 +9487,7 @@ func TestPlanExecuteRequiredPathReadinessNudgeMakesSubmitPlanPrimary(t *testing.
 	nudge := planThenExecuteReadyToSubmitNudge(brief, results)
 	for _, want := range []string{
 		"Next visible action MUST be exactly one parser-readable `submit_plan` request",
-		"one edit entry for every required_edit_path",
+		"real edits or source_satisfied_paths entries",
 		"Narrow exceptions only",
 		"Use `Decision: source-satisfied` only when every required path already contains the requested final state",
 		"Use `<<QUESTION>>:` only when one exact path-specific blocker prevents drafting any valid `submit_plan` edit",
@@ -10636,7 +10636,7 @@ func TestPlanExecuteSubmitCorrectionRejectsSourceSatisfiedCloseout(t *testing.T)
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
-			Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `b.go`.",
+			Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `b.go`.",
 		},
 	}
 	answer := "Decision: source-satisfied\n- a.go: requested final state is already present.\n- b.go: requested final state is already present."
@@ -10727,7 +10727,7 @@ func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) 
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
-			Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `b.go`.",
+			Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `b.go`.",
 		},
 	}
 
@@ -10744,7 +10744,7 @@ func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) 
 			t.Fatalf("submit-correction terminal brief advertised stale exit %q: readiness=%#v final=%#v", forbidden, brief.ReadinessGate, brief.FinalCritic)
 		}
 	}
-	for _, forbidden := range []string{"Decision: source-satisfied with per-path evidence", "submit_plan with one ordered edit entry for every required_edit_paths entry, Decision: source-satisfied"} {
+	for _, forbidden := range []string{"Decision: source-satisfied with per-path evidence", "submit_plan covering every required_edit_path with real edits or source_satisfied_paths entries, Decision: source-satisfied"} {
 		if strings.Contains(joinedNext, forbidden) || strings.Contains(strings.Join(brief.InvalidActions, "\n"), "final answer before submit_plan succeeds unless it is a source-satisfied closeout") {
 			t.Fatalf("submit-correction terminal brief retained stale next/invalid guidance %q: next=%#v invalid=%#v", forbidden, brief.RequiredNext, brief.InvalidActions)
 		}
@@ -12358,7 +12358,7 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedSynthesizesAnswerWithRequi
 	result := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
 	}
 	results := []workspace.ToolResult{
 		{
@@ -12387,7 +12387,7 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedAcceptsExistingFileRationa
 	result := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
 	}
 	results := []workspace.ToolResult{
 		{
@@ -12492,7 +12492,7 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedRequiresAnchorReadyEvidenc
 	result := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
 	}
 	results := []workspace.ToolResult{
 		{
@@ -12523,7 +12523,7 @@ func TestPlanThenExecuteEmptySubmitPlanSourceSatisfiedSkipsRequiredSnippetBriefs
 	result := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `internal/writerroute/decision_test.go`.",
 	}
 	results := []workspace.ToolResult{
 		{
@@ -12551,7 +12551,7 @@ func TestPlanThenExecuteEmptySubmitPlanWithoutSourceSatisfiedIntentStaysRejected
 	result := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `a.txt`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `a.txt`.",
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-1 (total lines: 1)", Output: "before\n"}}
 
@@ -12569,7 +12569,7 @@ func TestPlanThenExecuteEmptySubmitPlanNegatedSourceSatisfiedRationaleStaysRejec
 	result := workspace.ToolResult{
 		Tool:    "submit_plan",
 		Summary: "submit_plan rejected: required edit path coverage mismatch",
-		Error:   "submit_plan must include at least one edit entry for every required_edit_paths coverage entry; missing required edit path(s): `a.txt`.",
+		Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; missing required edit path(s): `a.txt`.",
 	}
 	results := []workspace.ToolResult{{Tool: "read_file", Summary: "Read f1 a.txt lines 1-1 (total lines: 1)", Output: "before\n"}}
 
@@ -13025,6 +13025,107 @@ func TestPlanExecuteRecoveryForcesSubmitPlanOnlyAfterRejectedPlan(t *testing.T) 
 	}
 	if !strings.Contains(answer, "Plan submitted with 2 edit") {
 		t.Fatalf("expected successful corrected plan summary, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteRejectedPlanAllowsSourceSatisfiedCoverageCorrection(t *testing.T) {
+	root := t.TempDir()
+	for _, path := range []string{"a.txt", "b.txt"} {
+		if err := os.WriteFile(filepath.Join(root, path), []byte("before\n"), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt"}`,
+		`{"tool":"read_file","path":"b.txt"}`,
+		`{"tool":"submit_plan","rationale":"Update only one path so the required-scope gate rejects it.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace a fixture"}]}`,
+		`{"tool":"submit_plan","rationale":"Correct the rejected plan: a.txt needs a real edit while b.txt already contains the requested final state from the source evidence.","source_satisfied_paths":["b.txt"],"edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace a fixture"}]}`,
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("expected corrected mixed-coverage submit_plan, got %d request(s)", requests)
+	}
+	if !strings.Contains(answer, "Plan submitted with 1 edit") {
+		t.Fatalf("expected successful mixed coverage plan summary, got:\n%s", answer)
+	}
+}
+
+func TestPlanExecuteSubmitPlanCoverageAcceptsArtifactSourceSatisfiedPaths(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &workspace.PlanArtifact{
+			Paths: workspace.PlanArtifactPaths{SourceSatisfied: []string{"b.txt"}},
+			Edits: []workspace.PlanEdit{
+				{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "replace a fixture"},
+			},
+		},
+	}
+
+	if result := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(req); result.Intercepted {
+		t.Fatalf("artifact paths.source_satisfied should satisfy required coverage, got %#v", result.Result)
+	}
+}
+
+func TestPlanExecuteSubmitPlanCoverageRejectsOutOfScopeSourceSatisfiedPaths(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt"},
+	}}
+	req := workspace.ToolRequest{
+		Tool:                 "submit_plan",
+		SourceSatisfiedPaths: []string{"outside.txt"},
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "replace a fixture"},
+		},
+	}
+
+	result := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(req)
+	if !result.Intercepted || !strings.Contains(result.Result.Error, "path(s) outside required_edit_paths: `outside.txt`") {
+		t.Fatalf("expected out-of-scope source_satisfied_paths rejection, got %#v", result)
 	}
 }
 
@@ -13957,7 +14058,7 @@ func TestPlanExecuteCompletionBlockerKindDistinguishesInvalidSubmitPlan(t *testi
 		{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: required edit path coverage mismatch",
-			Error:   "submit_plan must include at least one edit entry for every required_edit_paths entry",
+			Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry",
 		},
 	}
 	if got := runner.completionGateRepeatedBlockerKind(results); got != "completion_gate_submit_plan_invalid_repeated" {

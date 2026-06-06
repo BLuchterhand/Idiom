@@ -355,7 +355,7 @@ func TestRecoveryCardDerivesWriteReadySafeNextFromSourcedEvidence(t *testing.T) 
 func TestBuildRecoveryCardDerivesSafeNextForClosedPlannerPhase(t *testing.T) {
 	contract := TurnPhaseContract{
 		PhaseID:      turnPhaseMalformedSubmitPlanRecovery,
-		RequiredNext: []string{"parser-readable submit_plan with one ordered edit entry for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"},
+		RequiredNext: []string{"parser-readable submit_plan with real edits or source_satisfied_paths entries for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"},
 		ActionPolicy: TurnActionClassPolicy{
 			AllowedActionClasses:   []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker},
 			InvalidActionClasses:   []string{actionRead, actionSearch, actionPerEditWrite},
@@ -379,7 +379,7 @@ func TestBuildRecoveryCardDerivesSafeNextForClosedPlannerPhase(t *testing.T) {
 	assertRecoveryCardContains(t, got,
 		"phase_id=plan_execute.malformed_submit_plan_recovery",
 		"currently callable tools: submit_plan",
-		"deterministic safe next action: Emit one parser-readable planner outcome: parser-readable submit_plan with one ordered edit entry for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker",
+		"deterministic safe next action: Emit one parser-readable planner outcome: parser-readable submit_plan with real edits or source_satisfied_paths entries for every required_edit_path, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker",
 	)
 	if strings.Contains(got, "deterministic safe next action: none available") {
 		t.Fatalf("closed planner recovery card should not advertise no safe action, got:\n%s", got)

@@ -54,6 +54,7 @@ type PlanArtifactPacket struct {
 type PlanArtifactPaths struct {
 	Editable         []string `json:"editable,omitempty"`
 	Required         []string `json:"required,omitempty"`
+	SourceSatisfied  []string `json:"source_satisfied,omitempty"`
 	ReadOnlyEvidence []string `json:"read_only_evidence,omitempty"`
 	Forbidden        []string `json:"forbidden,omitempty"`
 	Changed          []string `json:"changed,omitempty"`
@@ -175,6 +176,11 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 		if len(artifact.Edits) == 0 && len(req.Edits) > 0 {
 			artifact.Edits = append([]PlanEdit(nil), req.Edits...)
 		}
+		if len(artifact.Paths.Required) == 0 && len(artifact.Contract.RequiredEditPaths) > 0 {
+			artifact.Paths.Required = append([]string(nil), artifact.Contract.RequiredEditPaths...)
+		}
+		artifact.Paths.SourceSatisfied = append(append([]string(nil), artifact.Paths.SourceSatisfied...), req.SourceSatisfiedPaths...)
+		artifact.Paths.Required = append(append([]string(nil), artifact.Paths.Required...), req.SourceSatisfiedPaths...)
 		artifact.Edits = planEditsWithoutAnchorProvenance(artifact.Edits)
 		if strings.TrimSpace(artifact.Rationale) == "" {
 			artifact.Rationale = req.Rationale
@@ -208,6 +214,9 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 		},
 		Packet: PlanArtifactPacket{
 			PackID: strings.TrimSpace(req.PackID),
+		},
+		Paths: PlanArtifactPaths{
+			SourceSatisfied: req.SourceSatisfiedPaths,
 		},
 		Approval: PlanArtifactApproval{
 			Required:         false,
@@ -294,6 +303,7 @@ func normalizePlanArtifactForSubmit(artifact PlanArtifact, sessionID string, cre
 	artifact.Paths.Editable = normalizePlanArtifactPaths(firstNonEmptyStrings(artifact.Paths.Editable, editPaths))
 	artifact.Paths.Changed = normalizePlanArtifactPaths(firstNonEmptyStrings(artifact.Paths.Changed, editPaths))
 	artifact.Paths.Required = normalizePlanArtifactPaths(firstNonEmptyStrings(artifact.Paths.Required, artifact.Contract.RequiredEditPaths))
+	artifact.Paths.SourceSatisfied = normalizePlanArtifactPaths(artifact.Paths.SourceSatisfied)
 	artifact.Paths.ReadOnlyEvidence = normalizePlanArtifactPaths(artifact.Paths.ReadOnlyEvidence)
 	artifact.Paths.Forbidden = normalizePlanArtifactPaths(firstNonEmptyStrings(artifact.Paths.Forbidden, artifact.Contract.ForbiddenPaths))
 	artifact.Evidence = normalizePlanArtifactEvidence(artifact.Evidence)
@@ -449,6 +459,7 @@ func ValidatePlanArtifact(artifact PlanArtifact) error {
 	}
 	validatePlanArtifactPathList(&errs, "paths.editable", artifact.Paths.Editable)
 	validatePlanArtifactPathList(&errs, "paths.required", artifact.Paths.Required)
+	validatePlanArtifactPathList(&errs, "paths.source_satisfied", artifact.Paths.SourceSatisfied)
 	validatePlanArtifactPathList(&errs, "paths.read_only_evidence", artifact.Paths.ReadOnlyEvidence)
 	validatePlanArtifactPathList(&errs, "paths.forbidden", artifact.Paths.Forbidden)
 	validatePlanArtifactPathList(&errs, "paths.changed", artifact.Paths.Changed)
