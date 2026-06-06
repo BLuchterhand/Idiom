@@ -125,6 +125,7 @@
           "cache_size": 4,
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
+          "request_timeout_seconds": 900,
           "extra_args": [
             "--temp",
             "0.6",
@@ -167,12 +168,13 @@
       "models": [
         {
           "alias": "qwen3.6-27b",
-          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
           "model_path": "/Users/ben/models/qwen3.6-27b-mlx-6bit",
           "port": 47783,
           "cache_size": 4,
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
+          "request_timeout_seconds": 900,
           "extra_args": [
             "--temp",
             "0.6",
@@ -190,12 +192,13 @@
         },
         {
           "alias": "qwen3-coder-30b",
-          "binary": "/Users/ben/.venv/mlx-lm/bin/mlx_lm.server",
+          "binary": "/Users/ben/scripts/vmlx-idiom-launch.sh",
           "model_path": "/Users/ben/models/qwen3-coder-30b-a3b-mlx-4bit-dwq",
           "port": 47781,
           "cache_size": 4,
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
+          "request_timeout_seconds": 900,
           "extra_args": [
             "--temp",
             "0.7",
@@ -230,6 +233,7 @@
           "cache_size": 4,
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
+          "request_timeout_seconds": 900,
           "extra_args": [
             "--temp",
             "0.6",
@@ -261,6 +265,7 @@
           "cache_size": 4,
           "cache_bytes": 12884901888,
           "max_tokens": 8192,
+          "request_timeout_seconds": 900,
           "extra_args": [
             "--temp",
             "0.6",

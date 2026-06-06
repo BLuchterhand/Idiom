@@ -52,22 +52,26 @@ type Profile struct {
 // fallback in AliasForRole will route every role to it; a multi-model
 // project tags each Model with the roles it owns.
 type Model struct {
-	Alias           string   `json:"alias"`
-	Binary          string   `json:"binary"`
-	ModelPath       string   `json:"model_path"`
-	Model           string   `json:"model,omitempty"`
-	Port            int      `json:"port"`
-	Host            string   `json:"host,omitempty"`
-	Kind            string   `json:"kind,omitempty"`
-	BaseURL         string   `json:"base_url,omitempty"`
-	APIKeyEnv       string   `json:"api_key_env,omitempty"`
-	ReasoningEffort string   `json:"reasoning_effort,omitempty"`
-	Verbosity       string   `json:"verbosity,omitempty"`
-	CacheSize       int      `json:"cache_size,omitempty"`
-	CacheBytes      int64    `json:"cache_bytes,omitempty"`
-	MaxTokens       int      `json:"max_tokens,omitempty"`
-	ExtraArgs       []string `json:"extra_args,omitempty"`
-	Roles           []string `json:"roles,omitempty"`
+	Alias           string `json:"alias"`
+	Binary          string `json:"binary"`
+	ModelPath       string `json:"model_path"`
+	Model           string `json:"model,omitempty"`
+	Port            int    `json:"port"`
+	Host            string `json:"host,omitempty"`
+	Kind            string `json:"kind,omitempty"`
+	BaseURL         string `json:"base_url,omitempty"`
+	APIKeyEnv       string `json:"api_key_env,omitempty"`
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	Verbosity       string `json:"verbosity,omitempty"`
+	CacheSize       int    `json:"cache_size,omitempty"`
+	CacheBytes      int64  `json:"cache_bytes,omitempty"`
+	MaxTokens       int    `json:"max_tokens,omitempty"`
+	// RequestTimeoutSeconds maps to vmlx-compatible local backend server
+	// request timeouts such as vmlx's --timeout. It is separate from
+	// chat.request_timeout_seconds, which bounds the idiom-side HTTP client.
+	RequestTimeoutSeconds int      `json:"request_timeout_seconds,omitempty"`
+	ExtraArgs             []string `json:"extra_args,omitempty"`
+	Roles                 []string `json:"roles,omitempty"`
 }
 
 // Proxy describes the alias-routing layer that fronts the per-model

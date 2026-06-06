@@ -47,7 +47,14 @@ type LaunchResult struct {
 //
 //	<binary> --model <model_path> --host 127.0.0.1 --port <port>
 //	  [--prompt-cache-size N] [--prompt-cache-bytes N]
-//	  [--max-tokens N]
+//	  [--max-tokens N] [--timeout N for vmlx-compatible launchers]
+//	  <extra_args...>
+//
+// Direct `vmlx` binaries use the native shape instead:
+//
+//	vmlx serve <model_path> --host 127.0.0.1 --port <port>
+//	  [--prefix-cache-size N] [--prefix-cache-max-bytes N]
+//	  [--max-tokens N] [--timeout N]
 //	  <extra_args...>
 //
 // The cache/token flags are emitted only when the schema field is
@@ -64,21 +71,51 @@ func BuildLaunchSpec(m Model) (LaunchSpec, error) {
 		return LaunchSpec{}, fmt.Errorf("backends: model %q has invalid port %d", m.Alias, m.Port)
 	}
 	argv := []string{m.Binary}
+	directVmlx := launchSpecUsesDirectVmlxServe(m)
 	if path := strings.TrimSpace(m.ModelPath); path != "" {
-		argv = append(argv, "--model", expandHome(path))
+		if directVmlx {
+			argv = append(argv, "serve", expandHome(path))
+		} else {
+			argv = append(argv, "--model", expandHome(path))
+		}
 	}
 	argv = append(argv, "--host", modelHost(m), "--port", strconv.Itoa(m.Port))
 	if m.CacheSize > 0 {
-		argv = append(argv, "--prompt-cache-size", strconv.Itoa(m.CacheSize))
+		if directVmlx {
+			argv = append(argv, "--prefix-cache-size", strconv.Itoa(m.CacheSize))
+		} else {
+			argv = append(argv, "--prompt-cache-size", strconv.Itoa(m.CacheSize))
+		}
 	}
 	if m.CacheBytes > 0 {
-		argv = append(argv, "--prompt-cache-bytes", strconv.FormatInt(m.CacheBytes, 10))
+		if directVmlx {
+			argv = append(argv, "--prefix-cache-max-bytes", strconv.FormatInt(m.CacheBytes, 10))
+		} else {
+			argv = append(argv, "--prompt-cache-bytes", strconv.FormatInt(m.CacheBytes, 10))
+		}
 	}
 	if m.MaxTokens > 0 {
 		argv = append(argv, "--max-tokens", strconv.Itoa(m.MaxTokens))
 	}
+	if m.RequestTimeoutSeconds > 0 && launchSpecSupportsRequestTimeout(m) {
+		argv = append(argv, "--timeout", strconv.Itoa(m.RequestTimeoutSeconds))
+	}
 	argv = append(argv, m.ExtraArgs...)
 	return LaunchSpec{Alias: m.Alias, Argv: argv, Port: m.Port}, nil
+}
+
+func launchSpecSupportsRequestTimeout(m Model) bool {
+	kind := strings.ToLower(strings.TrimSpace(m.Kind))
+	if kind == "vmlx" {
+		return true
+	}
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(m.Binary)))
+	return strings.Contains(base, "vmlx")
+}
+
+func launchSpecUsesDirectVmlxServe(m Model) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(m.Binary)))
+	return base == "vmlx"
 }
 
 func isHostedModelKind(kind string) bool {

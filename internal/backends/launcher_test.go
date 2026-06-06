@@ -48,6 +48,86 @@ func TestBuildLaunchSpecMLXCanonical(t *testing.T) {
 	}
 }
 
+func TestBuildLaunchSpecVmlxIncludesRequestTimeout(t *testing.T) {
+	m := Model{
+		Alias:                 "qwen3.6-35b",
+		Binary:                "/usr/local/bin/vmlx-idiom-launch.sh",
+		ModelPath:             "/abs/models/qwen3.6-35b",
+		Port:                  47780,
+		MaxTokens:             8192,
+		RequestTimeoutSeconds: 900,
+	}
+	spec, err := BuildLaunchSpec(m)
+	if err != nil {
+		t.Fatalf("BuildLaunchSpec: %v", err)
+	}
+	for i, arg := range spec.Argv {
+		if arg == "--timeout" && i+1 < len(spec.Argv) {
+			if spec.Argv[i+1] != "900" {
+				t.Fatalf("--timeout = %q, want 900", spec.Argv[i+1])
+			}
+			return
+		}
+	}
+	t.Fatalf("vmlx launcher should receive --timeout, got argv %v", spec.Argv)
+}
+
+func TestBuildLaunchSpecDirectVmlxUsesServeAndNativeFlags(t *testing.T) {
+	m := Model{
+		Alias:                 "minimax-m2.7-jang",
+		Binary:                "/usr/local/bin/vmlx",
+		ModelPath:             "/abs/models/minimax-m2.7-jang",
+		Port:                  47784,
+		CacheSize:             4,
+		CacheBytes:            12884901888,
+		MaxTokens:             8192,
+		RequestTimeoutSeconds: 900,
+		ExtraArgs:             []string{"--served-model-name", "minimax-m2.7-jang"},
+	}
+	spec, err := BuildLaunchSpec(m)
+	if err != nil {
+		t.Fatalf("BuildLaunchSpec: %v", err)
+	}
+	want := []string{
+		"/usr/local/bin/vmlx",
+		"serve", "/abs/models/minimax-m2.7-jang",
+		"--host", "127.0.0.1",
+		"--port", "47784",
+		"--prefix-cache-size", "4",
+		"--prefix-cache-max-bytes", "12884901888",
+		"--max-tokens", "8192",
+		"--timeout", "900",
+		"--served-model-name", "minimax-m2.7-jang",
+	}
+	if len(spec.Argv) != len(want) {
+		t.Fatalf("argv length mismatch: got %v\nwant %v", spec.Argv, want)
+	}
+	for i := range spec.Argv {
+		if spec.Argv[i] != want[i] {
+			t.Fatalf("argv[%d] = %q, want %q (full: %v)", i, spec.Argv[i], want[i], spec.Argv)
+		}
+	}
+}
+
+func TestBuildLaunchSpecMlxServerOmitsRequestTimeout(t *testing.T) {
+	m := Model{
+		Alias:                 "qwen3.6-35b",
+		Binary:                "mlx_lm.server",
+		ModelPath:             "/abs/models/qwen3.6-35b",
+		Port:                  47780,
+		RequestTimeoutSeconds: 900,
+	}
+	spec, err := BuildLaunchSpec(m)
+	if err != nil {
+		t.Fatalf("BuildLaunchSpec: %v", err)
+	}
+	for _, arg := range spec.Argv {
+		if arg == "--timeout" {
+			t.Fatalf("raw mlx_lm.server must not receive unsupported --timeout: %v", spec.Argv)
+		}
+	}
+}
+
 // TestBuildLaunchSpecOmitsZeroFlags verifies the contract: schema
 // fields left at the zero value don't produce argv entries. A
 // non-MLX launcher that doesn't recognize cache flags shouldn't
@@ -58,7 +138,7 @@ func TestBuildLaunchSpecOmitsZeroFlags(t *testing.T) {
 	if err != nil {
 		t.Fatalf("BuildLaunchSpec: %v", err)
 	}
-	for _, flag := range []string{"--prompt-cache-size", "--prompt-cache-bytes", "--max-tokens"} {
+	for _, flag := range []string{"--prompt-cache-size", "--prompt-cache-bytes", "--max-tokens", "--timeout"} {
 		for _, arg := range spec.Argv {
 			if arg == flag {
 				t.Fatalf("zero field should omit %s, got argv %v", flag, spec.Argv)
