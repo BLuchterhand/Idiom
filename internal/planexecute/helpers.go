@@ -349,13 +349,13 @@ func planExecuteRequiredPathChecklist(requiredEditPaths []string) string {
 		return ""
 	}
 	var b strings.Builder
-	fmt.Fprintf(&b, "Required `submit_plan` coverage for this run: %d required path(s).\n", len(paths))
+	fmt.Fprintf(&b, "Required path coverage for this run: %d required path(s).\n", len(paths))
 	for _, path := range paths {
 		b.WriteString("- ")
 		b.WriteString(path)
 		b.WriteByte('\n')
 	}
-	b.WriteString("After every existing required path has satisfied its source-body obligation, do not perform additional source reads. Read runtime-required git history evidence for every listed existing required path (new files satisfy this automatically), then your first successful `submit_plan` must cover every path above with either one real executable edit or a `source_satisfied_paths` entry when that path already contains the requested final state. Do not submit no-op edits for source-satisfied paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
+	b.WriteString("After every existing required path has satisfied its source-body obligation, do not perform additional source reads. Read runtime-required git history evidence for every listed existing required path (new files satisfy this automatically). If at least one required path needs a change, your first successful `submit_plan` must cover every path above with real executable edits for changed paths and top-level `source_satisfied_paths` only for already-final paths. If every required path already contains the requested final state, do not call `submit_plan`; answer `Decision: source-satisfied` with per-path current-state evidence. Do not submit no-op edits for source-satisfied paths. Do not treat a source read or history read as plan coverage. Do not submit a partial plan and do not answer in prose while any listed path remains uncovered.")
 	return strings.TrimSpace(b.String())
 }
 

@@ -31,7 +31,7 @@ func TestPlanExecutePlannerSystemAddendumFrontloadsPlannerProtocol(t *testing.T)
 		"`insert_after_line` with inline content",
 		"real required or selected path",
 		"never placeholders",
-		"Required `submit_plan` coverage for this run: 2 required path(s)",
+		"Required path coverage for this run: 2 required path(s)",
 		"After every existing required path has satisfied its source-body obligation, do not perform additional source reads",
 		"history evidence is present for every selected existing edit path",
 		"Do not treat a source read or history read as plan coverage",

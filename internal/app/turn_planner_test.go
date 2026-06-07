@@ -3984,20 +3984,20 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			default:
 				plannerPromptRequests.Add(1)
 				if !strings.Contains(requestText, "### .idiom/refine/") ||
-					!strings.Contains(requestText, "Required `submit_plan` coverage for this run") {
+					!strings.Contains(requestText, "Required path coverage for this run") {
 					t.Fatalf("planner request did not receive refined atom brief with required scope:\n%s", requestText)
 				}
 				sawAtomPrompt.Store(true)
 				readPaths := []string{}
 				switch {
-				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
-					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
+				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
+					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
 					readPaths = []string{"pkg/a.go"}
-				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/b.go\\n") ||
-					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/b.go\n"):
+				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/b.go\\n") ||
+					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/b.go\n"):
 					readPaths = []string{"pkg/b.go"}
-				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/c.go\\n") ||
-					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/c.go\n"):
+				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/c.go\\n") ||
+					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/c.go\n"):
 					readPaths = []string{"pkg/c.go"}
 				}
 				if readReply, ok := planExecuteSourceReadFixtureReply(requestText, sourceReadReplies, readPaths...); ok {
@@ -4005,16 +4005,16 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 					break
 				}
 				switch {
-				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
-					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
+				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/a.go\\n") ||
+					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/a.go\n"):
 					reply = "<tool_call>\n" +
 						`{"tool":"submit_plan","rationale":"Apply atom for pkg/a.go.","edits":[{"path":"pkg/a.go","old_text":"const A = \"old\"\n","new_text":"const A = \"new\"\n","purpose":"replace A fixture text"}]}`
-				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/b.go\\n") ||
-					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/b.go\n"):
+				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/b.go\\n") ||
+					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/b.go\n"):
 					reply = "<tool_call>\n" +
 						`{"tool":"submit_plan","rationale":"Apply atom for pkg/b.go.","edits":[{"path":"pkg/b.go","old_text":"const B = \"old\"\n","new_text":"const B = \"new\"\n","purpose":"replace B fixture text"}]}`
-				case strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\\n- pkg/c.go\\n") ||
-					strings.Contains(requestText, "Required `submit_plan` coverage for this run: 1 required path(s).\n- pkg/c.go\n"):
+				case strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\\n- pkg/c.go\\n") ||
+					strings.Contains(requestText, "Required path coverage for this run: 1 required path(s).\n- pkg/c.go\n"):
 					reply = "<tool_call>\n" +
 						`{"tool":"submit_plan","rationale":"Apply atom for pkg/c.go.","edits":[{"path":"pkg/c.go","replace_all":true,"old_text":"","new_text":"package pkg\n\nconst C = \"new\"\n","purpose":"create C fixture text"}]}`
 				default:
@@ -4905,7 +4905,7 @@ func TestRunPromptOncePlanExecuteRecoversFromMissingPackageOutlineForNewRequired
 					`{"tool":"submit_plan","rationale":"Create the new package file from the referenced plan document.","edits":[{"path":"internal/newpkg/decision.go","replace_all":true,"old_text":"","new_text":"package newpkg\n\nfunc Decision() string {\n\treturn \"ok\"\n}\n","purpose":"create the decision helper"}]}`
 			default:
 				initialPlannerRequests.Add(1)
-				if !strings.Contains(requestText, "Required `submit_plan` coverage for this run") ||
+				if !strings.Contains(requestText, "Required path coverage for this run") ||
 					!strings.Contains(requestText, "- internal/newpkg/decision.go") {
 					t.Fatalf("planner request missing required new-file scope:\n%s", requestText)
 				}

@@ -294,10 +294,12 @@ func TestPlanExecutePlannerAddendumIncludesRequiredPathChecklist(t *testing.T) {
 	addendum := planExecutePlannerSystemAddendum([]string{"a.cpp", "b.cpp", "a.cpp"}, nil)
 
 	for _, want := range []string{
-		"Required `submit_plan` coverage for this run: 2 required path(s).",
+		"Required path coverage for this run: 2 required path(s).",
 		"- a.cpp",
 		"- b.cpp",
-		"must cover every path above with either one real executable edit or a `source_satisfied_paths` entry",
+		"If at least one required path needs a change",
+		"top-level `source_satisfied_paths` only for already-final paths",
+		"If every required path already contains the requested final state, do not call `submit_plan`; answer `Decision: source-satisfied`",
 		"Do not submit a partial plan",
 	} {
 		if !strings.Contains(addendum, want) {
