@@ -339,6 +339,25 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 	}
 }
 
+func TestBuildPlannerPromptAdvertisesSourceSatisfiedNoEditGate(t *testing.T) {
+	prompt := BuildPlannerPrompt(
+		"Please first check whether the existing source already satisfies this. If it is already satisfied, report source-satisfied and do not edit.",
+		NewState("session", "check feature", "", 3, time.Unix(1, 0).UTC()),
+		nil,
+	)
+
+	for _, want := range []string{
+		"Valid tools: submit_feature_plan, source_satisfied, or ask_planner_question.",
+		`"tool":"source_satisfied"`,
+		"preserve that gate",
+		"Do not rewrite that request into unconditional implementation work.",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("planner prompt missing source-satisfied contract %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestParsePlannerOutputCoercesSingletonRequiredBeforeArray(t *testing.T) {
 	raw := strings.Replace(mustPlanJSON(t, validPlan()), `"required_before":"implementation"`, `"required_before":["implementation"]`, 1)
 
@@ -379,6 +398,76 @@ func TestParsePlannerOutputAcceptsQuestionAlias(t *testing.T) {
 	}
 	if parsed.Question.QuestionSummary != "Which source paths should be used for the tooltip?" {
 		t.Fatalf("question summary not populated from alias: %+v", parsed.Question)
+	}
+}
+
+func TestParsePlannerOutputAcceptsSourceSatisfiedCloseout(t *testing.T) {
+	raw := `{"tool":"source_satisfied","summary":"tooltip already shows contributors","reason":"current helper contains the score breakdown","evidence_paths":["scripts/ui/ui_helpers.gd"],"test_paths":["tests/e2e/suites/ui_overhaul_suite.gd"]}`
+
+	parsed, err := ParsePlannerOutput(raw)
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	}
+	if parsed.Kind != ToolSourceSatisfied {
+		t.Fatalf("kind = %q, want source_satisfied", parsed.Kind)
+	}
+	if parsed.SourceSatisfied.Summary != "tooltip already shows contributors" || !slices.Equal(parsed.SourceSatisfied.EvidencePaths, []string{"scripts/ui/ui_helpers.gd"}) {
+		t.Fatalf("unexpected source-satisfied payload: %+v", parsed.SourceSatisfied)
+	}
+}
+
+func TestRunSourceSatisfiedCloseoutSkipsAtomDispatch(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "func build_item_detail_tooltip(): pass\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
+	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "First check whether current source already satisfies this and do not edit if so.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+			t.Fatal("source-satisfied planner closeout must not dispatch an atom")
+		}
+		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"],"test_paths":["tests/e2e/suites/ui_overhaul_suite.gd"]}`, nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStateSourceSatisfied {
+		t.Fatalf("state.Status = %q, want source-satisfied; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.State.Atoms) != 0 || len(result.State.ActiveRuns) != 0 {
+		t.Fatalf("source-satisfied closeout should not create dispatch state: atoms=%+v active=%+v", result.State.Atoms, result.State.ActiveRuns)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != EventPlannerSourceSatisfied {
+		t.Fatalf("events = %+v, want planner source-satisfied event", result.Events)
+	}
+}
+
+func TestRunRejectsSourceSatisfiedMissingWorkspaceEvidence(t *testing.T) {
+	root := t.TempDir()
+	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "First check whether current source already satisfies this and do not edit if so.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
+		}
+		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["missing.gd"]}`, nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair", result.State.Status)
+	}
+	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "missing.gd") {
+		t.Fatalf("blocker should name missing evidence path: %+v", result.State.Blockers)
 	}
 }
 

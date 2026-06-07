@@ -80,12 +80,14 @@ const (
 
 const (
 	ToolSubmitFeaturePlan   = "submit_feature_plan"
+	ToolSourceSatisfied     = "source_satisfied"
 	ToolAskPlannerQuestion  = "ask_planner_question"
 	ToolQuestionForPlanner  = "question_for_planner"
 	ToolPlanExecuteComplete = "plan_execute_completed"
 )
 
 const (
+	EventPlannerSourceSatisfied = "idiom.feature_planner.planner_source_satisfied"
 	EventProductSourceSatisfied = "idiom.feature_planner.product_source_satisfied"
 )
 
@@ -158,6 +160,14 @@ type FeaturePlan struct {
 	TDDContract        TDDContract         `json:"tdd_contract"`
 	Atoms              []FeatureAtomPlan   `json:"atoms"`
 	CoverageGateResult *CoverageGateResult `json:"coverage_gate_result,omitempty"`
+}
+
+type SourceSatisfiedCloseout struct {
+	Tool          string   `json:"tool,omitempty"`
+	Summary       string   `json:"summary"`
+	Reason        string   `json:"reason,omitempty"`
+	EvidencePaths []string `json:"evidence_paths"`
+	TestPaths     []string `json:"test_paths,omitempty"`
 }
 
 type SourceTask struct {

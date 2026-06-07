@@ -13,10 +13,11 @@ import (
 )
 
 type ParsedPlannerOutput struct {
-	Kind     string
-	Plan     FeaturePlan
-	Question PlannerQuestion
-	Raw      string
+	Kind            string
+	Plan            FeaturePlan
+	Question        PlannerQuestion
+	SourceSatisfied SourceSatisfiedCloseout
+	Raw             string
 }
 
 func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
@@ -47,6 +48,13 @@ func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 			return ParsedPlannerOutput{}, fmt.Errorf("decode submit_feature_plan: %w", err)
 		}
 		return ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan, Raw: trimmed}, nil
+	case ToolSourceSatisfied:
+		var closeout SourceSatisfiedCloseout
+		if err := json.Unmarshal([]byte(trimmed), &closeout); err != nil {
+			return ParsedPlannerOutput{}, fmt.Errorf("decode source_satisfied: %w", err)
+		}
+		closeout.Tool = ToolSourceSatisfied
+		return ParsedPlannerOutput{Kind: ToolSourceSatisfied, SourceSatisfied: closeout, Raw: trimmed}, nil
 	case ToolAskPlannerQuestion:
 		var question PlannerQuestion
 		if err := json.Unmarshal([]byte(trimmed), &question); err != nil {
@@ -58,6 +66,46 @@ func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 	default:
 		return ParsedPlannerOutput{}, fmt.Errorf("unsupported feature planner tool %q", envelope.Tool)
 	}
+}
+
+func ValidateSourceSatisfiedCloseout(closeout SourceSatisfiedCloseout) error {
+	var errs []error
+	require(&errs, closeout.Summary, "source_satisfied missing summary")
+	if len(nonEmptyFeaturePlannerStrings(closeout.EvidencePaths)) == 0 {
+		errs = append(errs, errors.New("source_satisfied missing evidence_paths"))
+	}
+	return errors.Join(errs...)
+}
+
+func ValidateSourceSatisfiedWorkspaceContext(closeout SourceSatisfiedCloseout, workspaceRoot string) error {
+	if strings.TrimSpace(workspaceRoot) == "" {
+		return nil
+	}
+	var errs []error
+	for _, path := range append(closeout.EvidencePaths, closeout.TestPaths...) {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if filepath.IsAbs(path) {
+			errs = append(errs, fmt.Errorf("source_satisfied evidence path %q must be repo-relative", path))
+			continue
+		}
+		clean := filepath.Clean(filepath.FromSlash(path))
+		full := filepath.Join(workspaceRoot, clean)
+		if rel, err := filepath.Rel(workspaceRoot, full); err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			errs = append(errs, fmt.Errorf("source_satisfied evidence path %q escapes workspace", path))
+			continue
+		}
+		if _, err := os.Stat(full); err != nil {
+			if os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf("source_satisfied evidence path %q does not exist", path))
+				continue
+			}
+			errs = append(errs, fmt.Errorf("source_satisfied evidence path %q unavailable: %w", path, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 func plannerQuestionFromAliasFields(raw string, question PlannerQuestion) PlannerQuestion {
@@ -773,6 +821,31 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		state.Status = FeatureStatePlanningQuestion
 		state.PlanningLoop.State = FeatureStatePlanningQuestion
 		return []Event{{Type: "idiom.feature_planner.planner_question_opened", SessionID: state.SessionID, Message: question.QuestionSummary}}
+	case ToolSourceSatisfied:
+		closeout := normalizeSourceSatisfiedCloseout(parsed.SourceSatisfied)
+		if err := ValidateSourceSatisfiedCloseout(closeout); err != nil {
+			state.Status = FeatureStatePlanningRepair
+			state.PlanningLoop.State = FeatureStatePlanningRepair
+			state.Blockers = append(state.Blockers, err.Error())
+			return []Event{{Type: "idiom.feature_planner.source_satisfied_rejected", SessionID: state.SessionID, Message: err.Error()}}
+		}
+		state.Status = FeatureStateSourceSatisfied
+		state.PlanningLoop.State = FeatureStateSourceSatisfied
+		state.Blockers = nil
+		state.OpenQuestions = nil
+		state.OpenRecoveryPackets = nil
+		state.DerivedNextValidActions = DeriveNextValidActions(*state)
+		fields := map[string]any{
+			"summary":        closeout.Summary,
+			"evidence_paths": closeout.EvidencePaths,
+		}
+		if closeout.Reason != "" {
+			fields["reason"] = closeout.Reason
+		}
+		if len(closeout.TestPaths) > 0 {
+			fields["test_paths"] = closeout.TestPaths
+		}
+		return []Event{{Type: EventPlannerSourceSatisfied, SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
 	case ToolSubmitFeaturePlan:
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
 		if err := ValidateDurablePlan(parsed.Plan); err != nil {
@@ -811,6 +884,15 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		state.LastError = "unsupported parsed planner output"
 		return []Event{{Type: "idiom.feature_planner.malformed_structured_output", SessionID: state.SessionID, Message: state.LastError}}
 	}
+}
+
+func normalizeSourceSatisfiedCloseout(closeout SourceSatisfiedCloseout) SourceSatisfiedCloseout {
+	closeout.Tool = ToolSourceSatisfied
+	closeout.Summary = strings.TrimSpace(closeout.Summary)
+	closeout.Reason = strings.TrimSpace(closeout.Reason)
+	closeout.EvidencePaths = nonEmptyFeaturePlannerStrings(closeout.EvidencePaths)
+	closeout.TestPaths = nonEmptyFeaturePlannerStrings(closeout.TestPaths)
+	return closeout
 }
 
 func recordTDDPreExecutionEvidence(state *FeatureState, now time.Time) []Event {

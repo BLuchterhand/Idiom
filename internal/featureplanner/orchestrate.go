@@ -115,6 +115,17 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			}, nil
 		}
 	}
+	if parsed.Kind == ToolSourceSatisfied {
+		if err := ValidateSourceSatisfiedWorkspaceContext(parsed.SourceSatisfied, opts.WorkspaceRoot); err != nil {
+			state.Status = FeatureStatePlanningRepair
+			state.PlanningLoop.State = FeatureStatePlanningRepair
+			state.Blockers = append(state.Blockers, err.Error())
+			return RunResult{
+				State:  state,
+				Events: []Event{{Type: "idiom.feature_planner.source_satisfied_rejected", SessionID: state.SessionID, Message: err.Error()}},
+			}, nil
+		}
+	}
 	events = append(events, ApplyPlannerOutput(&state, parsed, opts.Now)...)
 	if state.Status != FeatureStateDispatching {
 		return RunResult{State: state, Events: events}, nil
@@ -127,10 +138,12 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWorkflowBrief) string {
 	var b strings.Builder
 	b.WriteString("You are the feature planner. Produce exactly one JSON object.\n")
-	b.WriteString("Valid tools: submit_feature_plan or ask_planner_question.\n")
+	b.WriteString("Valid tools: submit_feature_plan, source_satisfied, or ask_planner_question.\n")
 	b.WriteString("For submit_feature_plan, return the FeaturePlan object itself with tool=\"submit_feature_plan\" at the top level. Do not nest the plan under a plan, payload, arguments, or input field.\n")
+	b.WriteString("For source_satisfied, return {\"tool\":\"source_satisfied\",\"summary\":\"requested final state is already present\",\"reason\":\"short evidence-based reason\",\"evidence_paths\":[\"repo/path\"],\"test_paths\":[\"repo/test_path\"]}. Use it only when current source/test evidence paths prove no implementation atom should be dispatched.\n")
 	b.WriteString("For ask_planner_question, return {\"tool\":\"ask_planner_question\",\"question_summary\":\"...\",\"blocking_claim\":\"what blocks a safe plan\",\"requested_decision\":\"exact operator/source decision needed\",\"question_kind\":\"external_answer_required\",\"authority_required\":\"operator_approval\",\"required_before\":\"plan_approval\"}. Do not use a bare question field.\n")
 	b.WriteString("Every atom must name at least one concrete required_edit_paths or allowed_edit_paths entry. A no-mutation planning test still names the intended source or test paths as allowed scope; do not return both arrays empty.\n")
+	b.WriteString("If the operator explicitly asks to check whether the work is already satisfied before editing, preserve that gate. Either return source_satisfied with concrete current-state evidence paths, or create an atom whose prompt starts with the same source-satisfied check and no-edit-if-satisfied instruction. Do not rewrite that request into unconditional implementation work.\n")
 
 	if brief != nil {
 		b.WriteString("\nProduct Workflow Context:\n")
