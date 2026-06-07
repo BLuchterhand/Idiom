@@ -1231,6 +1231,7 @@ func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.
 		[]string{"generated.txt"},
 		nil,
 		[]string{"approved.txt"},
+		true,
 		VerificationPlan{},
 		true,
 		&stdout,

@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	tea "github.com/charmbracelet/bubbletea"
 	"idiom/internal/config"
+	"idiom/internal/transcript"
 )
 
 func TestInputHistoryNavigationUsesSubmittedPrompts(t *testing.T) {
@@ -170,6 +171,36 @@ func TestLoadHistoryFromSessionSeedsInputHistory(t *testing.T) {
 	}
 	if got := strings.Join(model.inputHistory, "|"); got != "first prompt|second prompt" {
 		t.Fatalf("input history = %q", got)
+	}
+}
+
+func TestInputHistoryLoadsSubmittedInputBeforeLaneNormalizedUserMessages(t *testing.T) {
+	dir := t.TempDir()
+	cfg := config.Config{Chat: config.Chat{DebugLogDir: dir}}
+	logger, err := transcript.NewDebugLogger(transcript.DebugLoggerOptions{
+		Dir:  dir,
+		Mode: transcript.DebugLogModeFull,
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+
+	model := &Model{debugLogger: logger}
+	model.recordInputSubmission("/plan-execute fix the up arrow history")
+	if err := logger.LogMessage("user", "fix the up arrow history"); err != nil {
+		t.Fatalf("LogMessage: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	got, err := inputHistoryFromRecordedSessions(cfg, maxInputHistoryEntries)
+	if err != nil {
+		t.Fatalf("inputHistoryFromRecordedSessions: %v", err)
+	}
+	want := []string{"/plan-execute fix the up arrow history"}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("history = %#v, want %#v", got, want)
 	}
 }
 

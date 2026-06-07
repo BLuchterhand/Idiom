@@ -175,6 +175,22 @@ func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *t
 	}
 }
 
+func TestPlanExecuteCompletionFieldsKeepsNestedSourceSatisfiedTerminal(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.completed","status":"completed","phase":"review_repair"}`,
+		`{"type":"idiom.plan_execute.source_satisfied","status":"source-satisfied","phase":"complete"}`,
+	}, "\n")
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
+		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
+	}
+	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
+		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
+	}
+}
+
 func TestOverlayPlanExecuteCompletionFieldsNestedFailureOverridesWrapperCompleted(t *testing.T) {
 	fields := map[string]any{
 		"status":        "completed",

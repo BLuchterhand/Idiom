@@ -33,6 +33,17 @@ type ProductWorkflowBrief struct {
 	ArtifactRootPath          string                `json:"artifact_root_path"`
 }
 
+func ProductWriteEnvelopePaths(brief *ProductWorkflowBrief) []string {
+	if brief == nil {
+		return nil
+	}
+	paths := append([]string(nil), brief.FilesToModify...)
+	for _, root := range normalizedStringList(brief.AuthorizedNewPackageRoots) {
+		paths = append(paths, strings.TrimSuffix(root, "/")+"/**")
+	}
+	return normalizedStringList(paths)
+}
+
 type PRDRequirementBrief struct {
 	ID          string   `json:"id"`
 	Priority    string   `json:"priority"`

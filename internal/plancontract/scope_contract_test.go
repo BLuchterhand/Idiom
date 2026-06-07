@@ -43,6 +43,20 @@ func TestPlanScopeContractIDTracksNormalizedContent(t *testing.T) {
 	}
 }
 
+func TestPlanScopeContractPreservesExplicitEmptyWriteEnvelope(t *testing.T) {
+	contract := NewPlanScopeContract([]string{"pkg/a.go"}, nil, nil).WithWriteAllowedPaths(nil)
+
+	if !contract.WriteAllowedExplicit {
+		t.Fatalf("explicit empty write envelope was not preserved: %+v", contract)
+	}
+	if len(contract.WriteAllowedPaths) != 0 {
+		t.Fatalf("write allowed paths = %#v, want empty", contract.WriteAllowedPaths)
+	}
+	if contract.ContractID == "" {
+		t.Fatalf("explicit empty write envelope should contribute contract content")
+	}
+}
+
 func TestPlanScopeContractRequiredPathsWinOverAllowedCandidates(t *testing.T) {
 	contract := NewPlanScopeContract(
 		[]string{"pkg/required.go", "pkg/test.go"},

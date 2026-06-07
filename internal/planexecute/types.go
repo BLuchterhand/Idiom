@@ -44,27 +44,28 @@ type PhaseFunc func(phase, detail string)
 type EditProgressFunc func(step, total int, path string, succeeded bool)
 
 type Options struct {
-	ConfigPath               string
-	Prompt                   string
-	PromptFile               string
-	Model                    string
-	Resume                   string
-	ReviewSessionID          string
-	JSONEvents               bool
-	DisableThinking          bool
-	UseActiveModel           bool
-	MaxTokens                int
-	RequiredEditPaths        MultiFlag
-	AllowedEditPaths         MultiFlag
-	WriteAllowedPaths        MultiFlag
-	EditSetObligations       EditSetObligations
-	ScopeContract            PlanScopeContract
-	PlannerOwnedVerification bool
-	AllowBuildTests          bool
-	SkipReviewRepair         bool
-	SessionID                string
-	OnPhase                  PhaseFunc
-	OnEditProgress           EditProgressFunc
+	ConfigPath                string
+	Prompt                    string
+	PromptFile                string
+	Model                     string
+	Resume                    string
+	ReviewSessionID           string
+	JSONEvents                bool
+	DisableThinking           bool
+	UseActiveModel            bool
+	MaxTokens                 int
+	RequiredEditPaths         MultiFlag
+	AllowedEditPaths          MultiFlag
+	WriteAllowedPaths         MultiFlag
+	WriteAllowedPathsExplicit bool
+	EditSetObligations        EditSetObligations
+	ScopeContract             PlanScopeContract
+	PlannerOwnedVerification  bool
+	AllowBuildTests           bool
+	SkipReviewRepair          bool
+	SessionID                 string
+	OnPhase                   PhaseFunc
+	OnEditProgress            EditProgressFunc
 }
 
 const (

@@ -82,8 +82,8 @@ func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testi
 		AuthorizedNewPackageRoots: []string{"native/tests/generated"},
 	}
 
-	got := featurePlannerProductWriteEnvelope(brief)
-	for _, want := range []string{"native/src/core/colony_sim.h", "native/tests/generated"} {
+	got := featureplanner.ProductWriteEnvelopePaths(brief)
+	for _, want := range []string{"native/src/core/colony_sim.h", "native/tests/generated/**"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("write envelope missing authorized mutation path %q: %#v", want, got)
 		}
@@ -862,7 +862,7 @@ func TestFeaturePlannerReconcilesStaleActiveRunFromTerminalPlanExecuteProgress(t
 		State:         "running",
 		StartedAt:     startedAt.Format(time.RFC3339Nano),
 	}}
-	progress := planexecute.NewProgressState("pe-session", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
+	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
 	progress.Phase = planexecute.ProgressPhasePlanning
 	progress.Status = planexecute.ProgressStatusFailed
 	progress.FailureKind = planexecute.RunFailurePlannerBlocked
@@ -925,7 +925,7 @@ func TestFeaturePlannerReconcilesSkippedReviewProgressAsComplete(t *testing.T) {
 		State:         "running",
 		StartedAt:     startedAt.Format(time.RFC3339Nano),
 	}}
-	progress := planexecute.NewProgressState("pe-session", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
+	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, startedAt.Add(time.Minute))
 	progress.Phase = planexecute.ProgressPhaseComplete
 	progress.Status = planexecute.ProgressStatusCompleted
 	progress.Review.Status = planexecute.ProgressStatusSkipped

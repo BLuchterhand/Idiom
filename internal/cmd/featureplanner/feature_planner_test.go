@@ -343,9 +343,10 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedReviewedCompletion(t *testi
 func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T) {
 	var gotArgs []string
 	req := featurePlannerRequest{
-		ConfigPath:           "config.json",
-		SessionID:            "feature-session",
-		ProductWriteEnvelope: []string{"native/src/core/colony_sim.h", "native/tests/generated"},
+		ConfigPath:                   "config.json",
+		SessionID:                    "feature-session",
+		ProductWriteEnvelope:         []string{"native/src/core/colony_sim.h", "native/tests/generated/**"},
+		ProductWriteEnvelopeExplicit: true,
 		Deps: Dependencies{
 			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
 				gotArgs = append([]string(nil), args...)
@@ -358,13 +359,42 @@ func TestDefaultFeaturePlannerPlanExecutePassesProductWriteEnvelope(t *testing.T
 	if _, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard); err != nil {
 		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
 	}
-	for _, want := range []string{"native/src/core/colony_sim.h", "native/tests/generated"} {
+	for _, want := range []string{"native/src/core/colony_sim.h", "native/tests/generated/**"} {
 		if !featurePlannerArgsContainPair(gotArgs, "-write-allowed-path", want) {
 			t.Fatalf("missing write envelope path %q in args %#v", want, gotArgs)
 		}
 	}
 	if featurePlannerArgsContainPair(gotArgs, "-allowed-edit-path", "native/src/core/colony_sim.h") {
 		t.Fatalf("write envelope must not be passed as candidate edit scope: %#v", gotArgs)
+	}
+	if !featurePlannerArgsContainFlag(gotArgs, "-write-allowed-paths-explicit") {
+		t.Fatalf("product write envelope must be marked explicit: %#v", gotArgs)
+	}
+}
+
+func TestDefaultFeaturePlannerPlanExecutePassesExplicitEmptyProductWriteEnvelope(t *testing.T) {
+	var gotArgs []string
+	req := featurePlannerRequest{
+		ConfigPath:                   "config.json",
+		SessionID:                    "feature-session",
+		ProductWriteEnvelopeExplicit: true,
+		Deps: Dependencies{
+			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
+				gotArgs = append([]string(nil), args...)
+				_, _ = stdout.Write([]byte(`{"type":"idiom.plan_execute.source_satisfied","status":"source-satisfied","outcome":"source_satisfied","phase":"complete"}` + "\n"))
+				return 0
+			},
+		},
+	}
+
+	if _, err := defaultFeaturePlannerPlanExecute(context.Background(), req, "implement atom", io.Discard); err != nil {
+		t.Fatalf("defaultFeaturePlannerPlanExecute returned error: %v", err)
+	}
+	if !featurePlannerArgsContainFlag(gotArgs, "-write-allowed-paths-explicit") {
+		t.Fatalf("empty product write envelope must still be marked explicit: %#v", gotArgs)
+	}
+	if featurePlannerArgsContainFlag(gotArgs, "-write-allowed-path") {
+		t.Fatalf("empty product write envelope should not synthesize path flags: %#v", gotArgs)
 	}
 }
 
@@ -670,6 +700,15 @@ func testContainsString(values []string, want string) bool {
 func featurePlannerArgsContainPair(args []string, flag string, value string) bool {
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == flag && args[i+1] == value {
+			return true
+		}
+	}
+	return false
+}
+
+func featurePlannerArgsContainFlag(args []string, flag string) bool {
+	for _, arg := range args {
+		if arg == flag {
 			return true
 		}
 	}

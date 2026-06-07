@@ -274,7 +274,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		state.Blockers = append(state.Blockers, "direct product feature plan is missing product workflow context")
 		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: "direct product feature plan is missing product workflow context"})
 	}
-	writeEnvelope := featurePlannerProductWriteEnvelope(brief)
+	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(brief)
 	implementorBlocked := false
 	if state.Status == featureplanner.FeatureStateDispatching {
 		events = append(events, featureplanner.DispatchReadyAtoms(&state, 0, func(prompt string, taskFamily string) (string, error) {
@@ -282,7 +282,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 				if implementorBlocked {
 					return encodeFeaturePlannerSiblingDispatchPaused(), nil
 				}
-				answer, runErr := m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope)
+				answer, runErr := m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope, brief != nil)
 				if runErr != nil || featurePlannerPlanExecuteOutputBlocks(answer) {
 					implementorBlocked = true
 				}
@@ -982,7 +982,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 
 	m.logMessage("idiom.feature_planner.start", "Planning from product workflow artifacts")
 
-	writeEnvelope := featurePlannerProductWriteEnvelope(brief)
+	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(brief)
 	implementorBlocked := false
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                "Implement the feature described by the product workflow context.",
@@ -996,7 +996,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 			if implementorBlocked {
 				return encodeFeaturePlannerSiblingDispatchPaused(), nil
 			}
-			answer, runErr := m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope)
+			answer, runErr := m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope, brief != nil)
 			if runErr != nil || featurePlannerPlanExecuteOutputBlocks(answer) {
 				implementorBlocked = true
 			}

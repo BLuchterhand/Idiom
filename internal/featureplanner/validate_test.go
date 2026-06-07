@@ -163,6 +163,23 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 	}
 }
 
+func TestValidateProductPlanRejectsContextEvidenceAsEditScope(t *testing.T) {
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go", "internal/context/context.go"}
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = []string{"internal/labels/labels.go"}
+	brief.ContextEvidencePaths = []string{"internal/context/context.go"}
+
+	err := ValidatePlanProductWorkflowContext(plan, brief)
+	if err == nil {
+		t.Fatal("expected context evidence path in edit scope to reject product plan")
+	}
+	if !strings.Contains(err.Error(), "internal/context/context.go") ||
+		!strings.Contains(err.Error(), "files_to_modify") {
+		t.Fatalf("validation error should identify context evidence as non-edit scope, got %v", err)
+	}
+}
+
 func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *testing.T) {
 	plan := validProductContextPlan()
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
@@ -653,6 +670,33 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	}
 }
 
+func TestDispatchUsesPlanExecuteSafeRunIDForUnsafeAtomID(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	plan := validPlan()
+	plan.Atoms[0].ID = "atoms/1.3c"
+	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: plan}, time.Unix(2, 0).UTC())
+	var prompt string
+
+	events := DispatchReadyAtoms(&state, 1, func(gotPrompt string, _ string) (string, error) {
+		prompt = gotPrompt
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","summary":"done"}`, nil
+	})
+
+	if len(events) != 2 {
+		t.Fatalf("events = %+v, want dispatch and complete", events)
+	}
+	runID := events[0].ActiveRunDeltas[0].LaneSessionID
+	if runID == "" || strings.ContainsAny(runID, "/.") {
+		t.Fatalf("run id = %q, want session-safe id", runID)
+	}
+	if !strings.Contains(prompt, "Plan-execute session id: "+runID) {
+		t.Fatalf("implementor prompt missing bound session id %q:\n%s", runID, prompt)
+	}
+	if state.Atoms[0].LastRunID != runID {
+		t.Fatalf("atom LastRunID = %q, want %q", state.Atoms[0].LastRunID, runID)
+	}
+}
+
 func TestDispatchRejectsRawSourceSatisfiedWithoutTypedPlanExecuteEvidence(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
@@ -1140,10 +1184,21 @@ func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testi
 	}
 }
 
+func TestApplyImplementorOutputUsesNestedPlanExecuteTerminalClass(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","plan_execute":{"lane_family":"plan-execute","status":"completed","terminal_class":"recovery_required","outcome":"review_degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json"}}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute terminal class requires recovery")
+	if got := fmt.Sprint(events[0].Fields["terminal_class"]); got != "recovery_required" {
+		t.Fatalf("terminal_class = %q, want recovery_required; fields=%+v", got, events[0].Fields)
+	}
+}
+
 func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
-	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","outcome":"source_satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`)
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`)
 
 	if atom.State != AtomStateSourceSatisfied {
 		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
@@ -1189,17 +1244,12 @@ func TestApplyImplementorOutputRejectsPlanExecuteCompletionWithoutNestedStatus(t
 	}
 }
 
-func TestApplyImplementorOutputAcceptsDegradedPlanExecuteReview(t *testing.T) {
+func TestApplyImplementorOutputRejectsDegradedPlanExecuteReview(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json","summary":"review repair degraded"}`)
 
-	if atom.State != AtomStateComplete {
-		t.Fatalf("atom state = %q, want complete; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
-	}
-	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_completed" {
-		t.Fatalf("unexpected events: %+v", events)
-	}
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "ambiguous nested plan-execute status \"degraded\"")
 	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "degraded" {
 		t.Fatalf("nested_status = %q, want degraded", got)
 	}

@@ -51,7 +51,8 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		}
 	}
 
-	writeEnvelope := featurePlannerProductWriteEnvelope(productBrief)
+	writeEnvelope := featureplanner.ProductWriteEnvelopePaths(productBrief)
+	writeEnvelopeExplicit := productBrief != nil
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
 		Prompt:                objective,
 		MaxPlanningIterations: 3,
@@ -61,7 +62,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		WorkspaceRoot:         m.projectRoot(),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
-			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope)
+			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope, writeEnvelopeExplicit)
 		}
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
 	})
@@ -192,19 +193,22 @@ func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, tas
 }
 
 func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt string) (string, error) {
-	return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, nil)
+	return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, nil, false)
 }
 
-func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Context, prompt string, writeEnvelope []string) (string, error) {
+func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Context, prompt string, writeEnvelope []string, writeEnvelopeExplicit bool) (string, error) {
 	m.logFeaturePlannerPlanExecuteGitHistoryRequirement()
 
 	priorSuppressTranscript := m.suppressPromptTranscript
 	priorWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
+	priorWriteEnvelopeExplicit := m.planExecuteWriteEnvelopeExplicit
 	m.suppressPromptTranscript = true
 	m.planExecuteWriteEnvelope = appendUniqueBriefStrings(nil, writeEnvelope...)
+	m.planExecuteWriteEnvelopeExplicit = writeEnvelopeExplicit
 	defer func() {
 		m.suppressPromptTranscript = priorSuppressTranscript
 		m.planExecuteWriteEnvelope = priorWriteEnvelope
+		m.planExecuteWriteEnvelopeExplicit = priorWriteEnvelopeExplicit
 	}()
 
 	answer, err := m.runPlanExecuteCommandOnce(ctx, prompt)
@@ -220,16 +224,6 @@ func (m *Model) runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx context.Co
 	}
 	m.logMessage(featurePlannerPlanExecuteCompletionLogType(completion), completion)
 	return completion, nil
-}
-
-func featurePlannerProductWriteEnvelope(brief *featureplanner.ProductWorkflowBrief) []string {
-	if brief == nil {
-		return nil
-	}
-	var paths []string
-	paths = appendUniqueBriefStrings(paths, brief.FilesToModify...)
-	paths = appendUniqueBriefStrings(paths, brief.AuthorizedNewPackageRoots...)
-	return paths
 }
 
 const featurePlannerPlanExecuteGitHistoryRequirementRole = "idiom.feature_planner.plan_execute_git_history_requirement"

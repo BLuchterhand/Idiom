@@ -13,7 +13,7 @@ func NewPlanScopeContract(requiredCoveragePaths []string, allowedCandidatePaths 
 
 func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
 	scope := opts.ScopeContract
-	writeAllowed := planExecuteHostWriteAllowedPaths(opts)
+	writeAllowed, writeAllowedExplicit := planExecuteHostWriteAllowedPaths(opts)
 	required := append([]string(nil), scope.RequiredCoveragePaths...)
 	required = append(required, []string(opts.RequiredEditPaths)...)
 	required = append(required, RequiredEditPathsFromPrompt(prompt)...)
@@ -30,18 +30,25 @@ func planExecuteScopeContract(opts Options, prompt string) PlanScopeContract {
 		Source:                "planexecute.scope_contract",
 	})
 	if err != nil {
-		return plancontract.NewPlanScopeContract(required, allowed, obligations).WithWriteAllowedPaths(writeAllowed)
+		return planExecuteContractWithWriteEnvelope(plancontract.NewPlanScopeContract(required, allowed, obligations), writeAllowed, writeAllowedExplicit)
 	}
-	return plancontract.NewPlanScopeContract(coverage.RequiredCoveragePaths, coverage.AllowedCandidatePaths, obligations).WithWriteAllowedPaths(writeAllowed)
+	return planExecuteContractWithWriteEnvelope(plancontract.NewPlanScopeContract(coverage.RequiredCoveragePaths, coverage.AllowedCandidatePaths, obligations), writeAllowed, writeAllowedExplicit)
 }
 
-func planExecuteHostWriteAllowedPaths(opts Options) []string {
-	scope := opts.ScopeContract.Normalized()
-	if len(scope.WriteAllowedPaths) > 0 {
-		return plancontract.UniqueScopePaths(scope.WriteAllowedPaths)
+func planExecuteContractWithWriteEnvelope(contract PlanScopeContract, writeAllowed []string, explicit bool) PlanScopeContract {
+	if explicit {
+		return contract.WithWriteAllowedPaths(writeAllowed)
 	}
-	if len(opts.WriteAllowedPaths) > 0 {
-		return plancontract.UniqueScopePaths([]string(opts.WriteAllowedPaths))
+	return contract
+}
+
+func planExecuteHostWriteAllowedPaths(opts Options) ([]string, bool) {
+	scope := opts.ScopeContract.Normalized()
+	if scope.WriteAllowedExplicit {
+		return plancontract.UniqueScopePaths(scope.WriteAllowedPaths), true
+	}
+	if opts.WriteAllowedPathsExplicit || len(opts.WriteAllowedPaths) > 0 {
+		return plancontract.UniqueScopePaths([]string(opts.WriteAllowedPaths)), true
 	}
 	var paths []string
 	if len(scope.RequiredCoveragePaths) > 0 || len(scope.AllowedCandidatePaths) > 0 {
@@ -50,5 +57,5 @@ func planExecuteHostWriteAllowedPaths(opts Options) []string {
 	}
 	paths = append(paths, []string(opts.RequiredEditPaths)...)
 	paths = append(paths, []string(opts.AllowedEditPaths)...)
-	return plancontract.UniqueScopePaths(paths)
+	return plancontract.UniqueScopePaths(paths), false
 }

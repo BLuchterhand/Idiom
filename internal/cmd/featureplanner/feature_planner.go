@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/featureplannerplanexecute"
 	"idiom/internal/featureplannerproduct"
 	"idiom/internal/featureplannerruntime"
 	"idiom/internal/frontier/workerruntime"
@@ -39,19 +40,20 @@ type featurePlannerOptions struct {
 }
 
 type featurePlannerRequest struct {
-	Config                config.Config
-	ConfigPath            string
-	Prompt                string
-	PromptFile            string
-	Resume                string
-	SessionID             string
-	JSONEvents            bool
-	MaxPlanningIterations int
-	MaxAtoms              int
-	EffortRoot            string
-	EffortID              string
-	ProductWriteEnvelope  []string
-	Deps                  Dependencies
+	Config                       config.Config
+	ConfigPath                   string
+	Prompt                       string
+	PromptFile                   string
+	Resume                       string
+	SessionID                    string
+	JSONEvents                   bool
+	MaxPlanningIterations        int
+	MaxAtoms                     int
+	EffortRoot                   string
+	EffortID                     string
+	ProductWriteEnvelope         []string
+	ProductWriteEnvelopeExplicit bool
+	Deps                         Dependencies
 }
 
 type featurePlannerResult struct {
@@ -188,7 +190,8 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		}
 		state.EffortRoot = strings.TrimSpace(effortRoot)
 		state.EffortID = firstNonEmpty(strings.TrimSpace(req.EffortID), strings.TrimSpace(pwBrief.EffortID), strings.TrimSpace(state.EffortID))
-		req.ProductWriteEnvelope = featurePlannerProductWriteEnvelope(pwBrief)
+		req.ProductWriteEnvelope = featureplanner.ProductWriteEnvelopePaths(pwBrief)
+		req.ProductWriteEnvelopeExplicit = true
 		if pwBrief.IsClosedSourceSatisfied() {
 			return closeFeaturePlannerSourceSatisfied(req, state, *pwBrief, stdout)
 		}
@@ -203,6 +206,9 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  pwBrief,
 		WorkspaceRoot:         req.Config.Workspace.Root,
+		ReconcileActiveRuns: func(state *featureplanner.FeatureState) []featureplanner.Event {
+			return featureplannerplanexecute.ReconcileActiveRuns(state, req.Config.Workspace.Root)
+		},
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
@@ -352,8 +358,14 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		"-prompt-file", promptPath,
 		"-json",
 	}
+	if sessionID := featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt); sessionID != "" {
+		args = append(args, "-session", sessionID)
+	}
 	for _, path := range featurePlannerWriteEnvelopeFlags(req.ProductWriteEnvelope) {
 		args = append(args, "-write-allowed-path", path)
+	}
+	if req.ProductWriteEnvelopeExplicit {
+		args = append(args, "-write-allowed-paths-explicit")
 	}
 	code := req.Deps.RunPlanExecute(args, &planStdout, &planStderr)
 	if req.JSONEvents && stdout != nil {
@@ -393,16 +405,6 @@ func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Wr
 		return "", err
 	}
 	return string(body), nil
-}
-
-func featurePlannerProductWriteEnvelope(brief *featureplanner.ProductWorkflowBrief) []string {
-	if brief == nil {
-		return nil
-	}
-	var paths []string
-	paths = appendUniqueFeaturePlannerStrings(paths, brief.FilesToModify...)
-	paths = appendUniqueFeaturePlannerStrings(paths, brief.AuthorizedNewPackageRoots...)
-	return paths
 }
 
 func featurePlannerWriteEnvelopeFlags(paths []string) []string {

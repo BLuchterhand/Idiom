@@ -169,7 +169,7 @@ func (m *Model) handleKeyPress(msg tea.KeyMsg) (tea.Cmd, bool) {
 			break
 		}
 		if !m.streaming {
-			m.recordInputHistory(text)
+			m.recordInputSubmission(text)
 		}
 		m.input.SetValue("")
 		if strings.HasPrefix(text, "/") {

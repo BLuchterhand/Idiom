@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"idiom/internal/plancontract"
+	"idiom/internal/workspace"
 )
 
 func TestPromptScopeWrappersMatchPlanContract(t *testing.T) {
@@ -121,6 +122,41 @@ func TestPlanScopeContractWriteAllowedFlagIsNotExpandedByPromptScope(t *testing.
 		if !slices.Contains(append(append([]string{}, contract.RequiredCoveragePaths...), contract.AllowedCandidatePaths...), want) {
 			t.Fatalf("prompt path %q should remain planning scope/evidence, contract=%#v", want, contract)
 		}
+	}
+}
+
+func TestPlanScopeContractExplicitEmptyWriteEnvelopeDisablesFallback(t *testing.T) {
+	opts := Options{
+		WriteAllowedPathsExplicit: true,
+	}
+	prompt := `
+## Files To Modify
+
+- pkg/generated.go
+`
+	contract := planExecuteScopeContract(opts, prompt)
+	if !contract.WriteAllowedExplicit {
+		t.Fatalf("write envelope should be explicit: %#v", contract)
+	}
+	if len(contract.WriteAllowedPaths) != 0 {
+		t.Fatalf("write envelope = %#v, want empty", contract.WriteAllowedPaths)
+	}
+	if !slices.Contains(contract.RequiredCoveragePaths, "pkg/generated.go") {
+		t.Fatalf("prompt path should remain planning coverage, contract=%#v", contract)
+	}
+}
+
+func TestPreflightExplicitEmptyWriteEnvelopeRejectsEdits(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		Edits: []workspace.PlanEdit{{Path: "pkg/generated.go", NewText: "package pkg\n"}},
+	}
+
+	mismatch := preflightPlanWriteAllowedPaths(nil, true, plan)
+	if mismatch == nil {
+		t.Fatal("expected explicit empty write envelope to reject edits")
+	}
+	if mismatch.Path != "pkg/generated.go" {
+		t.Fatalf("mismatch path = %q, want pkg/generated.go", mismatch.Path)
 	}
 }
 

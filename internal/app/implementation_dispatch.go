@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/featureplanner"
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
@@ -3169,6 +3170,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorPlanExecuteActive := m.planExecuteActive
 	priorPlanExecuteScopeContract := m.planExecuteScopeContract
 	priorPlanExecuteWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
+	priorPlanExecuteWriteEnvelopeExplicit := m.planExecuteWriteEnvelopeExplicit
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking ||
 		(workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) && m.shouldDisableThinkingForPlanExecutePlanner())
 	m.planExecuteActive = true
@@ -3201,6 +3203,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 		m.SetForcedReadinessOpenObligations(priorForcedReadinessOpenObligations)
 		m.planExecuteScopeContract = priorPlanExecuteScopeContract
 		m.planExecuteWriteEnvelope = priorPlanExecuteWriteEnvelope
+		m.planExecuteWriteEnvelopeExplicit = priorPlanExecuteWriteEnvelopeExplicit
 		m.eventStream = priorEventStream
 	}
 }
@@ -3514,11 +3517,12 @@ func (m *Model) runSingleImplementationPlanExecute(ctx context.Context, prompt s
 
 	var editSetObligations planexecute.EditSetObligations
 	scopeContract := planexecute.NewPlanScopeContract(requiredPaths, allowedPaths, editSetObligations)
-	if len(m.planExecuteWriteEnvelope) > 0 {
+	if m.planExecuteWriteEnvelopeExplicit {
 		scopeContract = scopeContract.WithWriteAllowedPaths(m.planExecuteWriteEnvelope)
 	}
 	opts := planexecute.Options{
 		Prompt:             brief,
+		SessionID:          featureplanner.PlanExecuteSessionIDFromImplementorPrompt(prompt),
 		RequiredEditPaths:  requiredPaths,
 		AllowedEditPaths:   allowedPaths,
 		EditSetObligations: editSetObligations,

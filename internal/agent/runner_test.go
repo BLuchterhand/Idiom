@@ -2614,6 +2614,58 @@ func TestDebugLogPreflightRedirectsToSelectedLogTail(t *testing.T) {
 	}
 }
 
+func TestConversationLogInvestigationPreflightSkipsCurrentSessionLog(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "logs/conversations/20260607-132011.621.jsonl", "{\"event\":\"prior\"}\n"); err != nil {
+		t.Fatalf("write prior log file: %v", err)
+	}
+	if err := writeTestFile(root, "logs/conversations/20260607-132703.112.jsonl", "{\"event\":\"active\"}\n"); err != nil {
+		t.Fatalf("write active log file: %v", err)
+	}
+	mgr := workspace.NewManager(config.Workspace{
+		Root:                root,
+		CWD:                 root,
+		MaxDirectoryEntries: 64,
+		SessionID:           "20260607-132703.112",
+	})
+	search := mgr.Execute(context.Background(), workspace.ToolRequest{
+		Tool:    "search_files",
+		Pattern: "logs/**/*",
+		Path:    ".",
+	})
+	if search.Error != "" {
+		t.Fatalf("search_files failed: %#v", search)
+	}
+	stable, ok := latestStableDebugLogSelection([]workspace.ToolResult{search}, mgr.SessionID())
+	if !ok {
+		t.Fatalf("expected a stable prior log selection in %#v", search)
+	}
+	if currentSessionDebugLogPath(stable.Path, mgr.SessionID()) {
+		t.Fatalf("stable selection should not be the active session log: %#v", stable)
+	}
+
+	runner := &Runner{
+		Workspace: mgr,
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:         "conversation",
+			Contract:           "direct_answer",
+			PermissionProfile:  "read_only_workspace",
+			Objective:          "Investigate the newest recent conversation/log failure involving a read attempt.",
+			ReadOnlyConstraint: true,
+		},
+	}
+	redirected, ok := runner.debugLogPreflightRequest([]workspace.ToolResult{search}, workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "logs/conversations/20260607-132703.112.jsonl",
+	})
+	if !ok {
+		t.Fatal("expected conversation log investigation to redirect away from the active session log")
+	}
+	if !debugLogRequestTargetsSelection(redirected, stable) {
+		t.Fatalf("redirect should target stable prior log %#v, got %#v", stable, redirected)
+	}
+}
+
 func TestDebugLogPhaseScopeRejectsSourceDriftAfterTail(t *testing.T) {
 	root := t.TempDir()
 	if err := writeTestFile(root, "logs/conversations/recent.jsonl", strings.Repeat("{\"event\":\"x\"}\n", 20)); err != nil {
@@ -2666,6 +2718,88 @@ func TestDebugLogPhaseScopeRejectsSourceDriftAfterTail(t *testing.T) {
 		EndLine:   20,
 	}, results, brief); !reject {
 		t.Fatal("expected second selected-log read without a concrete hit to be rejected")
+	}
+}
+
+func TestConversationLogInvestigationReusesDebugLogScopeGate(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "logs/conversations/recent.jsonl", strings.Repeat("{\"event\":\"x\"}\n", 20)); err != nil {
+		t.Fatalf("write log file: %v", err)
+	}
+	mgr := workspace.NewManager(config.Workspace{
+		Root:                root,
+		CWD:                 root,
+		MaxDirectoryEntries: 64,
+		MaxFileBytes:        1 << 20,
+	})
+	search := mgr.Execute(context.Background(), workspace.ToolRequest{
+		Tool:    "search_files",
+		Pattern: "logs/**/*",
+		Path:    ".",
+	})
+	if search.Error != "" {
+		t.Fatalf("search_files failed: %#v", search)
+	}
+	selection, ok := parseDebugLogFileSelection(search)
+	if !ok {
+		t.Fatalf("expected search result to expose a log selection: %#v", search)
+	}
+	read := mgr.Execute(context.Background(), debugLogTailRequest(selection))
+	if read.Error != "" {
+		t.Fatalf("read_file failed: %#v", read)
+	}
+	results := []workspace.ToolResult{search, read}
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "Identify the recent conversation log failure.",
+		ReadOnlyConstraint: true,
+	}
+
+	if phase := debugLogPhase(brief, results); phase != "selected_log_analysis" {
+		t.Fatalf("conversation log investigation phase = %q, want selected_log_analysis", phase)
+	}
+	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
+		Tool:    "search_content",
+		Pattern: "chosen_tool",
+		Glob:    "*.go",
+	}, results, brief); !reject {
+		t.Fatal("expected conversation log investigation to reject source drift after selected-log tail")
+	}
+	if _, _, reject := debugLogPhaseScopeRejection(workspace.ToolRequest{
+		Tool: "read_file",
+		ID:   selection.Handle,
+	}, results, brief); !reject {
+		t.Fatal("expected conversation log investigation to reject blind selected-log reread")
+	}
+}
+
+func TestConceptualDebugLogQuestionDoesNotEnterLogInvestigationContract(t *testing.T) {
+	root := t.TempDir()
+	if err := writeTestFile(root, "internal/transcript/debuglog.go", "package transcript\n"); err != nil {
+		t.Fatalf("write source file: %v", err)
+	}
+	mgr := workspace.NewManager(config.Workspace{
+		Root: root,
+		CWD:  root,
+	})
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:         "conversation",
+		Contract:           "direct_answer",
+		PermissionProfile:  "read_only_workspace",
+		Objective:          "What does the debug log redacted mode alternative do?",
+		ReadOnlyConstraint: true,
+	}
+	if debugLogContractApplies(brief, nil) {
+		t.Fatal("conceptual debug-log source question should not become a diagnostic-log investigation")
+	}
+	runner := &Runner{Workspace: mgr, RuntimeBrief: brief}
+	if redirected, ok := runner.debugLogPreflightRequest(nil, workspace.ToolRequest{
+		Tool: "read_file",
+		Path: "internal/transcript/debuglog.go",
+	}); ok {
+		t.Fatalf("conceptual source read should not redirect to log discovery: %#v", redirected)
 	}
 }
 

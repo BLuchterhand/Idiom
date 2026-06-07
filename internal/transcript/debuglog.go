@@ -509,6 +509,15 @@ func (l *DebugLogger) LogMessage(role, content string) error {
 	return l.writeMessageRecord(role, content, record)
 }
 
+func (l *DebugLogger) LogInputSubmission(content string) error {
+	content = l.sanitizeText(content)
+	return l.writeRecord(map[string]any{
+		"ts":      time.Now().Format(time.RFC3339Nano),
+		"type":    "input_submission",
+		"content": content,
+	})
+}
+
 func (l *DebugLogger) LogRunEvent(role, content string) error {
 	content = l.sanitizeText(content)
 	return l.writeRecord(map[string]any{

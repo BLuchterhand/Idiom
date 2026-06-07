@@ -3,6 +3,7 @@ package featureplanner
 import (
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"strings"
 	"time"
@@ -205,14 +206,14 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 			}
 			b.WriteString("Set tdd_contract.obligations[].required_before to the exact scalar string \"implementation\". Do not use an array for required_before.\n")
 			b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
-			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, source/context evidence paths, sibling files inside those existing package roots, or authorized new package roots.\n")
+			b.WriteString("Repo grounding is required: required_edit_paths and allowed_edit_paths must come from Files to modify, sibling files inside those existing package roots, or authorized new package roots.\n")
 			b.WriteString("Every path listed under Files to modify is required implementation scope: cover each one in atom.required_edit_paths across the submitted plan. For a one-atom dispatch, put every Files to modify path in that atom.required_edit_paths. Do not demote Files to modify into allowed_edit_paths.\n")
 			b.WriteString("When test_first.baseline_required is true or a TDD obligation is required before implementation, include every grounded test_first.test_artifact_paths entry in required_edit_paths; these tests are required coverage, not optional allowed scope.\n")
 			b.WriteString("Accepted ADR paths, PRD/TDD files, and product workflow planning/tracker files are context evidence only unless they are explicitly listed under Files to modify; do not put context-only docs in required_edit_paths or allowed_edit_paths.\n")
 			b.WriteString("allowed_edit_paths is still edit scope, not an evidence/reference list. Put design references in sdd_refs, tdd_obligations, acceptance, decisions, or prompt text instead.\n")
 			b.WriteString("The schema example path placeholders are not authority. Do not copy or invent paths from examples.\n")
-			if len(brief.FilesToModify) == 0 && len(brief.ContextEvidencePaths) == 0 && len(brief.AuthorizedNewPackageRoots) == 0 {
-				b.WriteString("No Files to modify, source/context evidence paths, or authorized new package roots are present. Use ask_planner_question for localization repair instead of concrete required_edit_paths or allowed_edit_paths.\n")
+			if len(brief.FilesToModify) == 0 && len(brief.AuthorizedNewPackageRoots) == 0 {
+				b.WriteString("No Files to modify or authorized new package roots are present. Use ask_planner_question for localization repair instead of concrete required_edit_paths or allowed_edit_paths; source/context evidence paths are read-only evidence.\n")
 			}
 		} else if !brief.CoverageGatePassed {
 			b.WriteString("\nThe coverage gate has NOT passed. Do not produce a feature plan; instead, use ask_planner_question to report the blocked gate.\n")
@@ -286,7 +287,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 		atom.Attempt++
 		featureFrom := state.Status
 		atom.State = AtomStateImplementing
-		runID := fmt.Sprintf("%s-run-%d", atom.ID, atom.Attempt)
+		runID := planExecuteRunIDForAtom(atom.ID, atom.Attempt)
 		startedAt := time.Now().UTC().Format(time.RFC3339Nano)
 		atom.LastRunID = runID
 		state.ActiveRuns = append(state.ActiveRuns, ActiveRun{
@@ -375,6 +376,9 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	body, _ := json.MarshalIndent(atom.FeatureAtomPlan, "", "  ")
 	var b strings.Builder
 	fmt.Fprintf(&b, "Implement one feature atom from feature plan %q.\n", plan.Summary)
+	if runID := strings.TrimSpace(atom.LastRunID); runID != "" {
+		fmt.Fprintf(&b, "Plan-execute session id: %s\n", runID)
+	}
 	b.WriteString("This atom brief is consumed by plan-execute. Plan-execute owns the terminal response protocol; do not emit feature-planner completion JSON from inside the atom brief.\n")
 	b.WriteString("Do not claim files were edited or tests were run unless those effects were produced by tool-backed execution visible to the harness; unsupported edit/test claims are rejected as recovery-open.\n")
 	b.WriteString("TDD baseline commands that must exist before execution:\n")
@@ -405,6 +409,45 @@ func BuildImplementorPrompt(atom FeatureAtomState, plan FeaturePlan) string {
 	b.Write(body)
 	b.WriteString("\n")
 	return b.String()
+}
+
+func planExecuteRunIDForAtom(atomID string, attempt int) string {
+	stem := strings.Trim(strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r
+		case r >= '0' && r <= '9':
+			return r
+		case r == '-' || r == '_':
+			return r
+		default:
+			return '-'
+		}
+	}, strings.TrimSpace(atomID)), "-_")
+	if stem == "" {
+		stem = "atom"
+	}
+	if stem != strings.TrimSpace(atomID) {
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(strings.TrimSpace(atomID)))
+		stem = fmt.Sprintf("%s-%08x", stem, h.Sum32())
+	}
+	runID := fmt.Sprintf("%s-run-%d", stem, attempt)
+	if len(runID) <= 128 {
+		return runID
+	}
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(runID))
+	maxStem := 128 - len("-run-") - len(fmt.Sprint(attempt)) - 9
+	if maxStem < 4 {
+		maxStem = 4
+	}
+	if len(stem) > maxStem {
+		stem = stem[:maxStem]
+	}
+	return fmt.Sprintf("%s-%08x-run-%d", strings.Trim(stem, "-_"), h.Sum32(), attempt)
 }
 
 func buildFeaturePlannerAtomScopeSection(requiredEditPaths []string, allowedEditPaths []string) string {
@@ -539,6 +582,7 @@ type implementorOutputEnvelope struct {
 	Status              string                       `json:"status"`
 	Phase               string                       `json:"phase"`
 	ReviewStatus        string                       `json:"review_status"`
+	TerminalClass       string                       `json:"terminal_class"`
 	Outcome             string                       `json:"outcome"`
 	FailureKind         string                       `json:"failure_kind"`
 	FailureReason       string                       `json:"failure_reason"`
@@ -561,6 +605,7 @@ type nestedPlanExecuteCompletion struct {
 	Status              string `json:"status"`
 	Phase               string `json:"phase"`
 	ReviewStatus        string `json:"review_status"`
+	TerminalClass       string `json:"terminal_class"`
 	Outcome             string `json:"outcome"`
 	FailureKind         string `json:"failure_kind"`
 	FailureReason       string `json:"failure_reason"`
@@ -579,6 +624,7 @@ type planExecuteCompletion struct {
 	Status              string
 	Phase               string
 	ReviewStatus        string
+	TerminalClass       string
 	Outcome             string
 	FailureKind         string
 	FailureReason       string
@@ -611,6 +657,7 @@ func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteComplet
 			Status:              nested.Status,
 			Phase:               nested.Phase,
 			ReviewStatus:        nested.ReviewStatus,
+			TerminalClass:       nested.TerminalClass,
 			Outcome:             nested.Outcome,
 			FailureKind:         nested.FailureKind,
 			FailureReason:       nested.FailureReason,
@@ -635,7 +682,11 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.Status = strings.TrimSpace(completion.Status)
 	completion.Phase = strings.TrimSpace(completion.Phase)
 	completion.ReviewStatus = strings.TrimSpace(completion.ReviewStatus)
+	completion.TerminalClass = strings.TrimSpace(completion.TerminalClass)
 	completion.Outcome = strings.TrimSpace(completion.Outcome)
+	if strings.EqualFold(completion.Status, "source-satisfied") && completion.Outcome == "" {
+		completion.Outcome = "source_satisfied"
+	}
 	completion.FailureKind = strings.TrimSpace(completion.FailureKind)
 	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
 	if planExecuteCompletionSourceSatisfied(completion) && completion.FailureKind == "" && completion.FailureReason == "" {
@@ -657,6 +708,7 @@ func planExecuteCompletionSummaryFromEnvelope(envelope implementorOutputEnvelope
 		Status:              envelope.Status,
 		Phase:               envelope.Phase,
 		ReviewStatus:        envelope.ReviewStatus,
+		TerminalClass:       envelope.TerminalClass,
 		Outcome:             envelope.Outcome,
 		FailureKind:         envelope.FailureKind,
 		FailureReason:       envelope.FailureReason,
@@ -677,6 +729,7 @@ func (completion planExecuteCompletion) summary() PlanExecuteCompletionSummary {
 		Status:              completion.Status,
 		Phase:               completion.Phase,
 		ReviewStatus:        completion.ReviewStatus,
+		TerminalClass:       completion.TerminalClass,
 		Outcome:             completion.Outcome,
 		FailureKind:         completion.FailureKind,
 		FailureReason:       completion.FailureReason,
@@ -697,6 +750,7 @@ func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) plan
 		Status:              summary.Status,
 		Phase:               summary.Phase,
 		ReviewStatus:        summary.ReviewStatus,
+		TerminalClass:       summary.TerminalClass,
 		Outcome:             summary.Outcome,
 		FailureKind:         summary.FailureKind,
 		FailureReason:       summary.FailureReason,
@@ -715,6 +769,7 @@ func planExecuteCompletionIsSuccess(completion planExecuteCompletion) (bool, str
 		"outcome":               completion.Outcome,
 		"phase":                 completion.Phase,
 		"review_status":         completion.ReviewStatus,
+		"terminal_class":        completion.TerminalClass,
 		"failure_kind":          completion.FailureKind,
 		"failure_reason":        completion.FailureReason,
 		"review_repair_skipped": completion.ReviewRepairSkipped,
@@ -754,6 +809,9 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 	}
 	if completion.Outcome != "" {
 		fields["outcome"] = completion.Outcome
+	}
+	if completion.TerminalClass != "" {
+		fields["terminal_class"] = completion.TerminalClass
 	}
 	if completion.ProgressPath != "" {
 		fields["progress_path"] = completion.ProgressPath
@@ -857,6 +915,9 @@ func planExecuteCompletionFields(completion planExecuteCompletion) map[string]an
 	}
 	if completion.Outcome != "" {
 		fields["outcome"] = completion.Outcome
+	}
+	if completion.TerminalClass != "" {
+		fields["terminal_class"] = completion.TerminalClass
 	}
 	if completion.FailureKind != "" {
 		fields["nested_failure_kind"] = completion.FailureKind

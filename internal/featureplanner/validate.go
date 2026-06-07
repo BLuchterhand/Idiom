@@ -436,7 +436,6 @@ func normalizeEditScopeList(paths []string) []string {
 
 type productRepoGrounding struct {
 	filesToModify             map[string]bool
-	contextEvidencePaths      map[string]bool
 	authorizedNewPackageRoots map[string]bool
 	packageRoots              map[string]bool
 	hasLocalization           bool
@@ -445,15 +444,11 @@ type productRepoGrounding struct {
 func newRepoGrounding(brief ProductWorkflowBrief) productRepoGrounding {
 	grounding := productRepoGrounding{
 		filesToModify:             normalizedStringSet(brief.FilesToModify),
-		contextEvidencePaths:      normalizedStringSet(brief.ContextEvidencePaths),
 		authorizedNewPackageRoots: normalizedStringSet(brief.AuthorizedNewPackageRoots),
 		packageRoots:              map[string]bool{},
 	}
-	grounding.hasLocalization = len(grounding.filesToModify) > 0 || len(grounding.contextEvidencePaths) > 0 || len(grounding.authorizedNewPackageRoots) > 0
+	grounding.hasLocalization = len(grounding.filesToModify) > 0 || len(grounding.authorizedNewPackageRoots) > 0
 	for path := range grounding.filesToModify {
-		grounding.addExistingPackageRoot(path)
-	}
-	for path := range grounding.contextEvidencePaths {
 		grounding.addExistingPackageRoot(path)
 	}
 	return grounding
@@ -483,7 +478,7 @@ func (g productRepoGrounding) validateAtomEditScope(atomIndex int, atom FeatureA
 		if g.pathGrounded(scopedPath) {
 			continue
 		}
-		errs = append(errs, fmt.Errorf("atom %d edit path %q is ungrounded by files_to_modify, context/source evidence, existing grounded package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
+		errs = append(errs, fmt.Errorf("atom %d edit path %q is ungrounded by files_to_modify, existing files_to_modify package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
 	}
 	return errs
 }
@@ -503,7 +498,7 @@ func (g productRepoGrounding) validateAtomTestArtifactScope(atomIndex int, atom 
 		if g.pathGrounded(scopedPath) {
 			continue
 		}
-		errs = append(errs, fmt.Errorf("atom %d test artifact path %q is ungrounded by files_to_modify, context/source evidence, existing grounded package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
+		errs = append(errs, fmt.Errorf("atom %d test artifact path %q is ungrounded by files_to_modify, existing files_to_modify package roots, or authorized new package roots; use ask_planner_question for planning repair", atomIndex, scopedPath))
 	}
 	return errs
 }
@@ -513,7 +508,7 @@ func (g productRepoGrounding) pathGrounded(path string) bool {
 	if path == "" {
 		return false
 	}
-	if g.filesToModify[path] || g.contextEvidencePaths[path] {
+	if g.filesToModify[path] {
 		return true
 	}
 	if pathWithinAnyRoot(path, g.authorizedNewPackageRoots) {

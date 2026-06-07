@@ -32,29 +32,30 @@ const (
 )
 
 type ProgressState struct {
-	SchemaVersion      string               `json:"schema_version"`
-	SessionID          string               `json:"session_id"`
-	CreatedAt          string               `json:"created_at"`
-	UpdatedAt          string               `json:"updated_at"`
-	PromptSHA256       string               `json:"prompt_sha256,omitempty"`
-	PromptFile         string               `json:"prompt_file,omitempty"`
-	Phase              string               `json:"phase"`
-	Status             string               `json:"status"`
-	FailureKind        string               `json:"failure_kind,omitempty"`
-	FailureReason      string               `json:"failure_reason,omitempty"`
-	PlanPath           string               `json:"plan_path,omitempty"`
-	PlanID             string               `json:"plan_id,omitempty"`
-	PackID             string               `json:"pack_id,omitempty"`
-	RequiredEditPaths  []string             `json:"required_edit_paths,omitempty"`
-	AllowedEditPaths   []string             `json:"allowed_edit_paths,omitempty"`
-	WriteAllowedPaths  []string             `json:"write_allowed_paths,omitempty"`
-	EditSetObligations EditSetObligations   `json:"edit_set_obligations,omitempty"`
-	ChangedPaths       []string             `json:"changed_paths,omitempty"`
-	TotalEdits         int                  `json:"total_edits,omitempty"`
-	Edits              []ProgressEdit       `json:"edits,omitempty"`
-	Executor           ProgressExecutor     `json:"executor,omitempty"`
-	Review             ProgressReviewRepair `json:"review_repair,omitempty"`
-	ReviewBaseline     ReviewRepairBaseline `json:"review_baseline,omitempty"`
+	SchemaVersion        string               `json:"schema_version"`
+	SessionID            string               `json:"session_id"`
+	CreatedAt            string               `json:"created_at"`
+	UpdatedAt            string               `json:"updated_at"`
+	PromptSHA256         string               `json:"prompt_sha256,omitempty"`
+	PromptFile           string               `json:"prompt_file,omitempty"`
+	Phase                string               `json:"phase"`
+	Status               string               `json:"status"`
+	FailureKind          string               `json:"failure_kind,omitempty"`
+	FailureReason        string               `json:"failure_reason,omitempty"`
+	PlanPath             string               `json:"plan_path,omitempty"`
+	PlanID               string               `json:"plan_id,omitempty"`
+	PackID               string               `json:"pack_id,omitempty"`
+	RequiredEditPaths    []string             `json:"required_edit_paths,omitempty"`
+	AllowedEditPaths     []string             `json:"allowed_edit_paths,omitempty"`
+	WriteAllowedPaths    []string             `json:"write_allowed_paths,omitempty"`
+	WriteAllowedExplicit bool                 `json:"write_allowed_explicit,omitempty"`
+	EditSetObligations   EditSetObligations   `json:"edit_set_obligations,omitempty"`
+	ChangedPaths         []string             `json:"changed_paths,omitempty"`
+	TotalEdits           int                  `json:"total_edits,omitempty"`
+	Edits                []ProgressEdit       `json:"edits,omitempty"`
+	Executor             ProgressExecutor     `json:"executor,omitempty"`
+	Review               ProgressReviewRepair `json:"review_repair,omitempty"`
+	ReviewBaseline       ReviewRepairBaseline `json:"review_baseline,omitempty"`
 }
 
 type ProgressEdit struct {
@@ -113,6 +114,15 @@ func (s *ProgressState) SetWriteAllowedPaths(paths []string) {
 		return
 	}
 	s.WriteAllowedPaths = mergePlanExecutePaths(paths)
+	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+}
+
+func (s *ProgressState) SetWriteAllowedEnvelope(paths []string, explicit bool) {
+	if s == nil {
+		return
+	}
+	s.WriteAllowedPaths = mergePlanExecutePaths(paths)
+	s.WriteAllowedExplicit = explicit
 	s.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
 }
 
@@ -318,6 +328,8 @@ func (s *ProgressState) MarkReviewComplete(report ReviewRepairPhaseReport, revie
 	}
 	if strings.Contains(strings.ToLower(report.Status), "degraded") {
 		s.Status = ProgressStatusDegraded
+		s.FailureKind = firstProgressNonEmptyString(report.ReasonClass, "review_repair_degraded")
+		s.FailureReason = sanitizeProgressReason(report.Status)
 		return
 	}
 	if strings.Contains(strings.ToLower(report.Status), "blocked") {
@@ -419,6 +431,9 @@ func ProgressStateEventFields(state ProgressState, statePath string) map[string]
 	if len(state.WriteAllowedPaths) > 0 {
 		fields["write_allowed_paths"] = append([]string(nil), state.WriteAllowedPaths...)
 	}
+	if state.WriteAllowedExplicit {
+		fields["write_allowed_explicit"] = true
+	}
 	if len(state.ChangedPaths) > 0 {
 		fields["changed_paths"] = append([]string(nil), state.ChangedPaths...)
 	}
@@ -516,6 +531,15 @@ func sanitizeProgressReasons(values []string) []string {
 
 func sanitizeProgressReason(reason string) string {
 	return truncateProgressReason(recovery.RedactRecoveryText(reason))
+}
+
+func firstProgressNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func truncateProgressReason(reason string) string {

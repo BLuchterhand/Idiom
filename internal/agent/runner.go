@@ -5380,7 +5380,7 @@ func runnerLivePhase(brief workerruntime.WorkerRuntimeBrief, req workspace.ToolR
 }
 
 func debugLogPhase(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {
-	if strings.TrimSpace(brief.TaskFamily) != "debug_logs" {
+	if !debugLogContractApplies(brief, results) {
 		return ""
 	}
 	if debugLogEvidenceSatisfied(brief, results) {
@@ -19801,11 +19801,11 @@ func synthesizeVerificationOnlyAnswer(req workspace.ToolRequest, result workspac
 }
 
 func (r *Runner) debugLogPreflightRequest(results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if r == nil || strings.TrimSpace(r.RuntimeBrief.TaskFamily) != "debug_logs" || debugLogEvidenceSatisfied(r.RuntimeBrief, results) {
+	if r == nil || !debugLogContractApplies(r.RuntimeBrief, results) || debugLogEvidenceSatisfied(r.RuntimeBrief, results) {
 		return workspace.ToolRequest{}, false
 	}
 	discovery, _ := debugLogDiscoveryRequest(r.Workspace)
-	selection, ok := latestDebugLogSelection(results)
+	selection, ok := latestStableDebugLogSelection(results, currentDebugLogSessionID(r.Workspace))
 	if !ok {
 		if debugLogRequestMatchesDiscovery(req, discovery) || isConcreteDebugLogArtifactRequest(req) {
 			return workspace.ToolRequest{}, false
@@ -19820,7 +19820,7 @@ func (r *Runner) debugLogPreflightRequest(results []workspace.ToolResult, req wo
 	}
 	if _, ok := latestDebugLogSearchHit(results); !ok {
 		if shouldDeepenDebugLogSearch(results, selection) {
-			if next, ok := nextDebugLogSelection(results, selection); ok {
+			if next, ok := nextStableDebugLogSelection(results, selection, currentDebugLogSessionID(r.Workspace)); ok {
 				if strings.TrimSpace(req.Tool) == "read_file" && debugLogRequestTargetsSelection(req, next) {
 					return workspace.ToolRequest{}, false
 				}
@@ -20066,7 +20066,7 @@ type debugLogReadWindow struct {
 var singleSearchContentSummaryRE = regexp.MustCompile(`^Found 1 matching line at (.+):([0-9]+)\.`)
 
 func debugLogEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if strings.TrimSpace(brief.TaskFamily) != "debug_logs" {
+	if !debugLogContractApplies(brief, results) {
 		return false
 	}
 	hit, ok := latestDebugLogSearchHit(results)
@@ -20077,7 +20077,7 @@ func debugLogEvidenceSatisfied(brief workerruntime.WorkerRuntimeBrief, results [
 }
 
 func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.ToolResult, brief workerruntime.WorkerRuntimeBrief) (string, string, bool) {
-	if strings.TrimSpace(brief.TaskFamily) != "debug_logs" || debugLogEvidenceSatisfied(brief, results) {
+	if !debugLogContractApplies(brief, results) || debugLogEvidenceSatisfied(brief, results) {
 		return "", "", false
 	}
 	selection, ok := latestDebugLogSelection(results)
@@ -20101,7 +20101,7 @@ func debugLogPhaseScopeRejection(req workspace.ToolRequest, results []workspace.
 }
 
 func debugLogFollowupRequest(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, req workspace.ToolRequest) (workspace.ToolRequest, bool) {
-	if strings.TrimSpace(brief.TaskFamily) != "debug_logs" {
+	if !debugLogContractApplies(brief, results) {
 		return workspace.ToolRequest{}, false
 	}
 	hit, ok := latestDebugLogSearchHit(results)
@@ -20170,6 +20170,34 @@ func parseDebugLogFileSelections(result workspace.ToolResult) []debugLogFileSele
 	return selections
 }
 
+func latestStableDebugLogSelection(results []workspace.ToolResult, sessionID string) (debugLogFileSelection, bool) {
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		switch strings.TrimSpace(result.Tool) {
+		case "read_file":
+			window, ok := parseDebugLogReadWindow(result)
+			if !ok || !isStrictDebugLogArtifactPath(window.Path) || currentSessionDebugLogPath(window.Path, sessionID) {
+				continue
+			}
+			return debugLogFileSelection{Handle: window.Handle, Path: window.Path}, true
+		case "search_content":
+			hit, ok := parseDebugLogSearchHit(result)
+			if !ok || !isStrictDebugLogArtifactPath(hit.Path) || currentSessionDebugLogPath(hit.Path, sessionID) {
+				continue
+			}
+			return debugLogFileSelection{Handle: hit.Handle, Path: hit.Path}, true
+		case "search_files":
+			for _, selection := range parseDebugLogFileSelections(result) {
+				if currentSessionDebugLogPath(selection.Path, sessionID) {
+					continue
+				}
+				return selection, true
+			}
+		}
+	}
+	return debugLogFileSelection{}, false
+}
+
 func parseSearchFilesSelectionLine(line string) (string, string) {
 	line = strings.TrimSpace(line)
 	if line == "" {
@@ -20207,6 +20235,10 @@ func hasDebugLogReadForSelection(results []workspace.ToolResult, selection debug
 }
 
 func nextDebugLogSelection(results []workspace.ToolResult, current debugLogFileSelection) (debugLogFileSelection, bool) {
+	return nextStableDebugLogSelection(results, current, "")
+}
+
+func nextStableDebugLogSelection(results []workspace.ToolResult, current debugLogFileSelection, sessionID string) (debugLogFileSelection, bool) {
 	for i := len(results) - 1; i >= 0; i-- {
 		result := results[i]
 		if strings.TrimSpace(result.Tool) != "search_files" || strings.TrimSpace(result.Error) != "" {
@@ -20219,6 +20251,9 @@ func nextDebugLogSelection(results []workspace.ToolResult, current debugLogFileS
 				continue
 			}
 			for nextIdx := idx + 1; nextIdx < len(selections); nextIdx++ {
+				if currentSessionDebugLogPath(selections[nextIdx].Path, sessionID) {
+					continue
+				}
 				if !hasDebugLogReadForSelection(results, selections[nextIdx]) {
 					return selections[nextIdx], true
 				}
@@ -20226,6 +20261,70 @@ func nextDebugLogSelection(results []workspace.ToolResult, current debugLogFileS
 		}
 	}
 	return debugLogFileSelection{}, false
+}
+
+func debugLogContractApplies(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	if strings.TrimSpace(brief.TaskFamily) == "debug_logs" {
+		return true
+	}
+	if runnerBriefRequiresMutation(brief) || runnerVerificationRequired(brief) {
+		return false
+	}
+	if !workerruntime.PermissionProfileIsReadOnlyWorkspace(brief.PermissionProfile) &&
+		!workerruntime.RuntimeContractIsDirectAnswer(brief.Contract) &&
+		!workerruntime.RuntimeContractIsArchitecture(brief.Contract) &&
+		!workerruntime.RuntimeContractIsReviewFindings(brief.Contract) {
+		return false
+	}
+	if !objectiveRequestsDiagnosticLogInspection(brief.Objective) {
+		return false
+	}
+	return true
+}
+
+func objectiveRequestsDiagnosticLogInspection(objective string) bool {
+	words := " " + strings.ToLower(strings.TrimSpace(objective)) + " "
+	if strings.TrimSpace(words) == "" {
+		return false
+	}
+	hasArtifact := strings.Contains(words, " log") ||
+		strings.Contains(words, "logs") ||
+		strings.Contains(words, "telemetry") ||
+		strings.Contains(words, "conversation") ||
+		strings.Contains(words, "session")
+	if !hasArtifact {
+		return false
+	}
+	for _, marker := range []string{
+		"latest", "recent", "newest", "previous", "prior", "last",
+		"failure", "failed", "error", "attempt", "session", "run",
+		"what happened", "why did", "why the", "hit some",
+	} {
+		if strings.Contains(words, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func currentDebugLogSessionID(mgr *workspace.Manager) string {
+	if mgr == nil {
+		return ""
+	}
+	return strings.TrimSpace(mgr.SessionID())
+}
+
+func currentSessionDebugLogPath(path string, sessionID string) bool {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return false
+	}
+	clean := strings.TrimPrefix(filepath.ToSlash(strings.TrimSpace(path)), "./")
+	if !isStrictDebugLogArtifactPath(clean) {
+		return false
+	}
+	base := strings.TrimSuffix(filepath.Base(clean), filepath.Ext(clean))
+	return base == sessionID || strings.HasPrefix(base, sessionID+"-")
 }
 
 func sameDebugLogSelection(a debugLogFileSelection, b debugLogFileSelection) bool {

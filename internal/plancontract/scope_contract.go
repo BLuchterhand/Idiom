@@ -13,6 +13,7 @@ type PlanScopeContract struct {
 	RequiredCoveragePaths []string           `json:"required_coverage_paths,omitempty"`
 	AllowedCandidatePaths []string           `json:"allowed_candidate_paths,omitempty"`
 	WriteAllowedPaths     []string           `json:"write_allowed_paths,omitempty"`
+	WriteAllowedExplicit  bool               `json:"write_allowed_explicit,omitempty"`
 	EditSetObligations    EditSetObligations `json:"edit_set_obligations,omitempty"`
 }
 
@@ -41,6 +42,7 @@ func (contract PlanScopeContract) HasContent() bool {
 	return len(contract.RequiredCoveragePaths) > 0 ||
 		len(contract.AllowedCandidatePaths) > 0 ||
 		len(contract.WriteAllowedPaths) > 0 ||
+		contract.WriteAllowedExplicit ||
 		len(contract.EditSetObligations.Normalized()) > 0
 }
 
@@ -61,6 +63,7 @@ func (contract PlanScopeContract) WriteEnvelopePaths() []string {
 
 func (contract PlanScopeContract) WithWriteAllowedPaths(paths []string) PlanScopeContract {
 	contract.WriteAllowedPaths = append([]string(nil), paths...)
+	contract.WriteAllowedExplicit = true
 	return contract.Normalized()
 }
 

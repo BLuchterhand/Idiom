@@ -19,6 +19,14 @@ func (m *Model) recordInputHistory(text string) {
 	m.resetInputHistoryNavigation()
 }
 
+func (m *Model) recordInputSubmission(text string) {
+	m.recordInputHistory(text)
+	if m == nil || m.debugLogger == nil {
+		return
+	}
+	_ = m.debugLogger.LogInputSubmission(text)
+}
+
 func (m *Model) loadInputHistoryFromLogs() error {
 	if m == nil {
 		return nil
@@ -77,7 +85,7 @@ func inputHistoryFromRecordedSessions(cfg config.Config, limit int) ([]string, e
 	}
 	var history []string
 	for i := len(sessions) - 1; i >= 0; i-- {
-		messages, err := userMessagesFromSessionLog(sessions[i].Path)
+		messages, err := inputHistoryValuesFromSessionLog(sessions[i].Path)
 		if err != nil {
 			continue
 		}
@@ -88,25 +96,40 @@ func inputHistoryFromRecordedSessions(cfg config.Config, limit int) ([]string, e
 	return history, nil
 }
 
-func userMessagesFromSessionLog(path string) ([]string, error) {
+func inputHistoryValuesFromSessionLog(path string) ([]string, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return nil, nil
 	}
+	var submissions []string
 	var messages []string
 	err := util.ScanFile(path, func(raw json.RawMessage) error {
 		var record map[string]any
 		if err := json.Unmarshal(raw, &record); err != nil {
 			return nil
 		}
-		if sessionStringField(record, "type") != "message" || sessionStringField(record, "role") != "user" {
-			return nil
-		}
-		content := strings.TrimSpace(sessionStringField(record, "content"))
-		if content != "" {
-			messages = append(messages, content)
+		switch sessionStringField(record, "type") {
+		case "input_submission":
+			content := strings.TrimSpace(sessionStringField(record, "content"))
+			if content != "" {
+				submissions = append(submissions, content)
+			}
+		case "message":
+			if sessionStringField(record, "role") != "user" {
+				return nil
+			}
+			content := strings.TrimSpace(sessionStringField(record, "content"))
+			if content != "" {
+				messages = append(messages, content)
+			}
 		}
 		return nil
 	})
-	return messages, err
+	if err != nil {
+		return nil, err
+	}
+	if len(submissions) > 0 {
+		return submissions, nil
+	}
+	return messages, nil
 }
