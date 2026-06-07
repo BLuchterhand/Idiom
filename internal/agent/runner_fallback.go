@@ -101,6 +101,9 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 	if len(results) == 0 {
 		return "", false
 	}
+	if answer, ok := synthesizePlanThenExecutePlannerFallbackAnswer(brief, results); ok {
+		return answer, true
+	}
 	if runnerBriefRequiresMutation(brief) {
 		return synthesizeMutationFallbackAnswer(brief, results), true
 	}
@@ -129,6 +132,45 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 		}
 	}
 	return synthesizeFallbackAnswer(agentName, results)
+}
+
+func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
+	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+		return "", false
+	}
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
+		return strings.TrimSpace("<<QUESTION>>: Plan-execute anchor refresh is still required before a corrected submit_plan can be accepted.\n\n" +
+			"Remaining bounded refresh paths:\n" + bulletList(state.RefreshPaths) + "\n" +
+			"Next valid action: re-run with enough budget and issue exactly one bounded read_file or code_navigate source-body request for a remaining refresh path; do not answer source-satisfied or blocker before that refresh returns."), true
+	}
+	if planThenExecuteSubmitCorrectionActive(brief, results) {
+		return strings.TrimSpace("<<QUESTION>>: Plan-execute submit correction is still required; no valid plan artifact has been accepted.\n\n" +
+			"Next valid action: emit one parser-readable submit_plan covering every required edit path with real executable edits or top-level source_satisfied_paths for already-final paths."), true
+	}
+	if pending := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pending) > 0 {
+		return strings.TrimSpace("<<QUESTION>>: Plan-execute git history evidence is still required before submit_plan.\n\n" +
+			"Remaining history paths:\n" + bulletList(pending)), true
+	}
+	if unread := planThenExecuteUnreadRequiredPaths(brief, results); len(unread) > 0 {
+		return strings.TrimSpace("<<QUESTION>>: Plan-execute source-body evidence is still required before submit_plan.\n\n" +
+			"Remaining source paths:\n" + bulletList(mapKeys(unread))), true
+	}
+	return "", false
+}
+
+func bulletList(values []string) string {
+	var b strings.Builder
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		b.WriteString("- ")
+		b.WriteString(value)
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n")
 }
 
 func synthesizeMutationFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) string {

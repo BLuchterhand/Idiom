@@ -105,6 +105,9 @@ func (r *Runner) effectivePolicy() RunPolicy {
 		policy = scaleMaxToolStepsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
 		policy = scaleMaxModelCallsByRequiredPaths(policy, len(r.RuntimeBrief.RequiredEditPaths))
 	}
+	if briefLimit := r.RuntimeBrief.Budget.MaxToolSteps; briefLimit > 0 && (policy.MaxToolSteps <= 0 || briefLimit < policy.MaxToolSteps) {
+		policy.MaxToolSteps = briefLimit
+	}
 	if briefLimit := r.RuntimeBrief.Budget.MaxModelCalls; briefLimit > 0 && (policy.MaxModelCalls <= 0 || briefLimit < policy.MaxModelCalls) {
 		policy.MaxModelCalls = briefLimit
 	}
@@ -113,7 +116,7 @@ func (r *Runner) effectivePolicy() RunPolicy {
 
 // scaleMaxToolStepsByRequiredPaths grows the per-run tool-step ceiling for
 // multi-file briefs. Single-file atoms keep the configured default; atoms
-// with N required edit paths expand to base + 2*(N-1) capped at the
+// with N required edit paths expand to base + 4*(N-1) capped at the
 // ceiling.
 //
 // Scoping rules:
@@ -127,7 +130,7 @@ func scaleMaxToolStepsByRequiredPaths(policy RunPolicy, pathCount int) RunPolicy
 	if pathCount <= 1 {
 		return policy
 	}
-	scaled := maxToolStepsBase + 2*(pathCount-1)
+	scaled := maxToolStepsBase + 4*(pathCount-1)
 	if scaled > maxToolStepsCeiling {
 		scaled = maxToolStepsCeiling
 	}
@@ -160,11 +163,12 @@ const (
 	// maxToolStepsBase is the conservative default budget for a single-file
 	// implementation atom. Multi-file briefs scale up via
 	// scaleMaxToolStepsByRequiredPaths so a 5-file atom doesn't run out of
-	// tool steps doing legitimate per-file orientation reads.
+	// tool steps doing legitimate per-file source/history reads plus a
+	// submit_plan correction or bounded anchor-refresh recovery.
 	maxToolStepsBase = 16
 	// maxToolStepsCeiling caps the scaled budget so a sprawling brief
 	// can't run away even if it slipped past the brief lint.
-	maxToolStepsCeiling = 40
+	maxToolStepsCeiling = 56
 	// maxModelCallsBase is the smallest normal mutation-lane model budget.
 	// Values below it are treated as deliberately tight tests or operator
 	// limits; values at or above it scale with required edit paths.

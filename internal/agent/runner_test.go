@@ -12805,6 +12805,67 @@ func TestMutationDeterministicFallbackStartsForWriteReadyRequiredPaths(t *testin
 	}
 }
 
+func TestPlanThenExecuteFallbackPreservesAnchorRefreshContract(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "plan_then_execute",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-10 (total lines: 10)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `a.txt: old_text not found in current source`, `b.txt: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read a.txt lines 1-10 (total lines: 10)"},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic plan-execute fallback")
+	}
+	for _, want := range []string{"Plan-execute anchor refresh is still required", "b.txt", "bounded read_file or code_navigate"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("plan-execute fallback missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "Implementation incomplete") || strings.Contains(answer, "Changed paths: none") {
+		t.Fatalf("plan-execute fallback must not use direct implementation blocker:\n%s", answer)
+	}
+}
+
+func TestPlanThenExecuteFallbackPreservesSubmitCorrectionContract(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "plan_then_execute",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-10 (total lines: 10)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[1]: edit would not change b.txt; for b.txt: remove no-op edit; use `source_satisfied_paths`: [\"b.txt\"] if final; use `Decision: source-satisfied` only if all paths are final; else submit real edit",
+		},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic plan-execute fallback")
+	}
+	for _, want := range []string{"Plan-execute submit correction is still required", "submit_plan", "source_satisfied_paths"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("plan-execute submit-correction fallback missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "Implementation incomplete") || strings.Contains(answer, "Changed paths: none") {
+		t.Fatalf("plan-execute fallback must not use direct implementation blocker:\n%s", answer)
+	}
+}
+
 func TestSynthesizeMutationFallbackReportsMissingRequiredPathsAndPlannerOwnedVerification(t *testing.T) {
 	answer := synthesizeMutationFallbackAnswer(workerruntime.WorkerRuntimeBrief{
 		TaskFamily:           "implementation",

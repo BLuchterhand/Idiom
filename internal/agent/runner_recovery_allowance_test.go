@@ -17,9 +17,9 @@ func TestScaleMaxToolStepsByRequiredPathsCurve(t *testing.T) {
 	}{
 		{0, maxToolStepsBase, maxToolStepsBase, "no required paths leaves base alone"},
 		{1, maxToolStepsBase, maxToolStepsBase, "single-file atom uses base"},
-		{2, maxToolStepsBase, 18, "5+2*(N-1) for two paths"},
-		{5, maxToolStepsBase, 24, "5-file atom gets a meaningful expansion"},
-		{12, maxToolStepsBase, 38, "12-file atom near ceiling"},
+		{2, maxToolStepsBase, 20, "base+4*(N-1) for two paths"},
+		{5, maxToolStepsBase, 32, "5-file atom gets source/history plus correction room"},
+		{12, maxToolStepsBase, maxToolStepsCeiling, "12-file atom reaches ceiling"},
 		{15, maxToolStepsBase, maxToolStepsCeiling, "above-scale atoms cap"},
 	}
 	for _, tc := range cases {
@@ -102,6 +102,24 @@ func TestEffectivePolicyBriefModelCallBudgetCapsScaledMutationBudget(t *testing.
 	}
 	if got := runner.effectivePolicy().MaxModelCalls; got != 5 {
 		t.Fatalf("brief MaxModelCalls must cap scaled mutation budget, got %d", got)
+	}
+}
+
+func TestEffectivePolicyBriefToolStepBudgetCapsScaledMutationBudget(t *testing.T) {
+	runner := &Runner{
+		Policy: RunPolicy{MaxToolSteps: maxToolStepsBase},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        "implementation",
+			Contract:          "implementation_result",
+			PermissionProfile: "workspace_write",
+			RequiredEditPaths: []string{"a.go", "b.go", "c.go", "d.go", "e.go"},
+			Budget: workerruntime.BudgetBrief{
+				MaxToolSteps: 20,
+			},
+		},
+	}
+	if got := runner.effectivePolicy().MaxToolSteps; got != 20 {
+		t.Fatalf("brief MaxToolSteps must cap scaled mutation budget, got %d", got)
 	}
 }
 
