@@ -312,17 +312,18 @@ func actionClassesAllowedByPolicy(allowed []string, invalid []string) []string {
 
 func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, brief workerruntime.WorkerRuntimeBrief, baseTools []string) {
 	planningTransport := planExecutePlanningTransportFromPhaseInput(input)
-	planningState := DerivePlanExecutePlanningState(brief, input.Results, planningTransport)
+	recoverySurface := DerivePlanExecuteRecoverySurface(brief, input.Results, planningTransport)
+	planningState := recoverySurface.State
 	switch {
 	case strings.TrimSpace(input.PhaseHint) == turnPhaseProductAcceptanceCloseout:
 		applyProductAcceptanceCloseout(contract)
 	case artifactFinalAnswerBrief(brief):
 		applyArtifactFinalAnswer(contract)
-	case planningState.Mode == PlanExecutePlanningModeHistoryPending:
-		applyHistoryPending(contract, baseTools, planningState)
-	case planningState.Mode == PlanExecutePlanningModeAnchorRefresh:
+	case recoverySurface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh:
 		applyStaleAnchorRefresh(contract, input, baseTools, planningState)
-	case planningState.Mode == PlanExecutePlanningModeSubmitCorrection:
+	case recoverySurface.Kind == PlanExecuteRecoverySurfaceHistoryPending:
+		applyHistoryPending(contract, baseTools, planningState)
+	case recoverySurface.Kind == PlanExecuteRecoverySurfaceSubmitCorrection:
 		applySubmitReady(contract, input, baseTools, planningState)
 	case planThenExecuteSubmitReadyParseFailureSeen(brief, input.Results):
 		applyMalformedSubmitPlanRecovery(contract, input, baseTools)

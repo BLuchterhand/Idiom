@@ -1909,7 +1909,7 @@ func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspac
 	report.Handoff = handoff
 	emitExecutorHandoffPacketEvents(stdout, jsonEvents, handoff)
 
-	if mismatch := preflightPlanApprovalAndScope(plan); mismatch != nil {
+	if mismatch := preflightPlanApprovalAndScope(plan, requiredEditPaths); mismatch != nil {
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "plan_scope_drift", planScopeDriftEventFields(handoff, mismatch))
 		emitPlanExecuteJSONEvent(stdout, jsonEvents, "preflight_failed", map[string]any{
 			"edit_index":        mismatch.Index,
@@ -2267,7 +2267,7 @@ func runPlanExecuteSourceSanity(ctx context.Context, mgr *workspace.Manager, roo
 	return checked, evidence, nil
 }
 
-func preflightPlanApprovalAndScope(plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+func preflightPlanApprovalAndScope(plan workspace.PlanArtifact, requiredEditPaths []string) *PlanEditPreflightMismatch {
 	if strings.TrimSpace(plan.Handoff.ID) == "" {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "handoff id is missing"}
 	}
@@ -2289,7 +2289,7 @@ func preflightPlanApprovalAndScope(plan workspace.PlanArtifact) *PlanEditPreflig
 	if plan.Approval.ExecutionPermission == "blocked" {
 		return &PlanEditPreflightMismatch{Index: -1, Reason: "approval execution permission is blocked"}
 	}
-	return preflightPlanDeclaredScope(plan)
+	return preflightPlanDeclaredScope(plan, requiredEditPaths)
 }
 
 func preflightPlanPartialApprovalScope(plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
@@ -2322,29 +2322,37 @@ func preflightPlanPartialApprovalScope(plan workspace.PlanArtifact) *PlanEditPre
 	return nil
 }
 
-func preflightPlanDeclaredScope(plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+func preflightPlanDeclaredScope(plan workspace.PlanArtifact, originalRequiredPaths ...[]string) *PlanEditPreflightMismatch {
 	forbidden := planExecutePathSet(append(append([]string(nil), plan.Paths.Forbidden...), plan.Contract.ForbiddenPaths...))
 	required := planExecutePathSet(append(append([]string(nil), plan.Paths.Required...), plan.Contract.RequiredEditPaths...))
+	for _, paths := range originalRequiredPaths {
+		for _, path := range paths {
+			if normalized := normalizePlanExecutePath(path); normalized != "" {
+				required[normalized] = struct{}{}
+			}
+		}
+	}
 	planned := planExecutePathSet(append(append([]string(nil), plan.Paths.Editable...), plan.Paths.Changed...))
 	approved := planExecutePathSet(plan.Approval.ApprovedPaths)
 	pending := planExecutePathSet(plan.Approval.PendingPaths)
+	sourceSatisfiedViolations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
+		RequiredPaths:        planExecuteSetStrings(required),
+		SourceSatisfiedPaths: plan.Paths.SourceSatisfied,
+		Evidence:             workspace.PlanArtifactSourceSatisfiedEvidenceRefs(plan),
+		ApprovedPaths:        plan.Approval.ApprovedPaths,
+		PendingPaths:         plan.Approval.PendingPaths,
+		RequireEvidence:      true,
+	})
+	if mismatch := preflightPlanSourceSatisfiedViolationMismatch(sourceSatisfiedViolations); mismatch != nil {
+		if mismatch.Reason == "source-satisfied path is outside declared required scope" {
+			mismatch.Reason = "source-satisfied path is outside required plan scope"
+		}
+		return mismatch
+	}
 	seen := map[string]struct{}{}
 	for path := range planExecutePathSet(plan.Paths.SourceSatisfied) {
 		if _, ok := forbidden[path]; ok {
 			return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is forbidden"}
-		}
-		if _, ok := pending[path]; ok {
-			return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is still pending approval"}
-		}
-		if len(approved) > 0 {
-			if _, ok := approved[path]; !ok {
-				return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is outside approved scope"}
-			}
-		}
-		if len(required) > 0 {
-			if _, ok := required[path]; !ok {
-				return &PlanEditPreflightMismatch{Index: -1, Path: path, Reason: "source-satisfied path is outside required plan scope"}
-			}
 		}
 		seen[path] = struct{}{}
 	}
@@ -2392,6 +2400,31 @@ func planExecutePathSet(paths []string) map[string]struct{} {
 		}
 	}
 	return out
+}
+
+func planExecuteSetStrings(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func preflightPlanSourceSatisfiedPaths(input plancontract.SourceSatisfiedPathCoverageInput) *PlanEditPreflightMismatch {
+	return preflightPlanSourceSatisfiedViolationMismatch(plancontract.ValidateSourceSatisfiedPathCoverage(input))
+}
+
+func preflightPlanSourceSatisfiedViolationMismatch(violations []plancontract.SourceSatisfiedPathViolation) *PlanEditPreflightMismatch {
+	if len(violations) == 0 {
+		return nil
+	}
+	violation := violations[0]
+	return &PlanEditPreflightMismatch{
+		Index:  -1,
+		Path:   normalizePlanExecutePath(violation.Path),
+		Reason: violation.Reason,
+	}
 }
 
 func planExecuteApprovalSatisfied(status string) bool {
@@ -2449,19 +2482,18 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 	if invalid != nil {
 		return invalid
 	}
-	requiredSet := planExecutePathSet(coverage.RequiredCoveragePaths)
-	for _, rawPath := range plan.Paths.SourceSatisfied {
-		path := normalizePlanExecutePath(rawPath)
-		if path == "" {
-			continue
+	if mismatch := preflightPlanSourceSatisfiedPaths(plancontract.SourceSatisfiedPathCoverageInput{
+		RequiredPaths:        coverage.RequiredCoveragePaths,
+		SourceSatisfiedPaths: plan.Paths.SourceSatisfied,
+		Evidence:             workspace.PlanArtifactSourceSatisfiedEvidenceRefs(plan),
+		ApprovedPaths:        plan.Approval.ApprovedPaths,
+		PendingPaths:         plan.Approval.PendingPaths,
+		RequireEvidence:      true,
+	}); mismatch != nil {
+		if mismatch.Reason == "source-satisfied path is outside declared required scope" {
+			mismatch.Reason = "source-satisfied path is outside required_edit_paths allowlist"
 		}
-		if _, ok := requiredSet[path]; !ok {
-			return &PlanEditPreflightMismatch{
-				Index:  -1,
-				Path:   path,
-				Reason: "source-satisfied path is outside required_edit_paths allowlist",
-			}
-		}
+		return mismatch
 	}
 	candidatePaths = append(candidatePaths, plan.Paths.SourceSatisfied...)
 	coverage, err = autonomy.ResolvePlanScopePathRoleObligations(autonomy.PlanScopePathRoleObligationInput{

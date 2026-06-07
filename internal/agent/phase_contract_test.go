@@ -536,6 +536,50 @@ func TestPlanExecutePlanningStateAnchorRefreshWinsOverCandidateReadyAndHistory(t
 	}
 }
 
+func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `a.go: old_text not found in current source`.",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+
+	surface := DerivePlanExecuteRecoverySurface(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if surface.Kind != PlanExecuteRecoverySurfaceAnchorRefresh {
+		t.Fatalf("surface kind = %q, want anchor_refresh; state=%#v", surface.Kind, surface.State)
+	}
+	assertEqualSet(t, surface.State.CallableTools, []string{"read_file", "code_navigate"})
+	assertNotContains(t, surface.State.TerminalResponseShapes, "Decision: source-satisfied")
+
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+	})
+	if contract.PhaseID != turnPhaseStaleAnchorRefresh {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
+	}
+	assertNotContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
+	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
+}
+
 func TestDeriveTurnPhaseContractGroundingRejectedPlanUsesSourceRefresh(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

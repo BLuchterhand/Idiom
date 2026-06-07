@@ -275,8 +275,8 @@ func TestFeaturePlannerTUIPlanExecuteCompletionEncodesNonzeroRunResult(t *testin
 		`"status":"failed"`,
 		`"phase":"review_repair"`,
 		`"review_status":"review_model_error"`,
-		`"failure_kind":"model_error"`,
-		`"failure_reason":"plan-execute exited nonzero"`,
+		`"failure_kind":"review_model_error"`,
+		`"failure_reason":"model returned malformed review"`,
 		`"progress_path":"` + statePath + `"`,
 	} {
 		if !strings.Contains(payload, want) {
@@ -334,6 +334,58 @@ func TestFeaturePlannerTUIPlanExecuteCompletionUsesDurableProgressStateForSparse
 		if len(values) != 1 || fmt.Sprint(values[0]) != want {
 			t.Fatalf("%s = %#v, want [%s] in payload %s", key, fields[key], want, payload)
 		}
+	}
+}
+
+func TestFeaturePlannerTUIPlanExecuteCompletionPrefersDurableReviewRepairProgress(t *testing.T) {
+	root := t.TempDir()
+	state := planexecute.NewProgressState("active_review_repair", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+	state.Phase = planexecute.ProgressPhaseReviewRepair
+	state.Status = planexecute.ProgressStatusBlocked
+	state.FailureKind = "review_repair_blocked"
+	state.FailureReason = "review repair remained blocked"
+	state.ChangedPaths = []string{"pkg/feature.go"}
+	state.Review.Status = planexecute.ProgressStatusBlocked
+	statePath, err := planexecute.SaveProgressState(root, &state)
+	if err != nil {
+		t.Fatalf("SaveProgressState: %v", err)
+	}
+	model := &Model{
+		cfg: config.Config{Workspace: config.Workspace{Root: root}},
+		lastPlanExecuteRunResult: &planexecute.RunResult{
+			ExitCode:        1,
+			SessionID:       state.SessionID,
+			ResumeStatePath: statePath,
+		},
+	}
+	fallbackOutput := `{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`
+
+	payload, err := model.encodeFeaturePlannerPlanExecuteCompletion(fallbackOutput)
+	if err != nil {
+		t.Fatalf("encodeFeaturePlannerPlanExecuteCompletion: %v", err)
+	}
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil {
+		t.Fatalf("decode completion payload: %v", err)
+	}
+	for key, want := range map[string]string{
+		"status":         "blocked",
+		"phase":          "review_repair",
+		"review_status":  "blocked",
+		"failure_kind":   "review_repair_blocked",
+		"failure_reason": "review repair remained blocked",
+		"progress_path":  statePath,
+	} {
+		if got := fmt.Sprint(fields[key]); got != want {
+			t.Fatalf("%s = %q, want %q in payload %s", key, got, want, payload)
+		}
+	}
+	if strings.Contains(payload, "plan_artifact_missing") || strings.Contains(payload, "planning/no plan artifact") {
+		t.Fatalf("stale planning fallback leaked into payload: %s", payload)
+	}
+	changed, _ := fields["changed_paths"].([]any)
+	if len(changed) != 1 || fmt.Sprint(changed[0]) != "pkg/feature.go" {
+		t.Fatalf("changed_paths = %#v, want active changed path in payload %s", fields["changed_paths"], payload)
 	}
 }
 

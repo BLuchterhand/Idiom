@@ -158,6 +158,7 @@ func TestPreflightPlanRequiredEditPathsAcceptsSourceSatisfiedCoverage(t *testing
 		Paths: workspace.PlanArtifactPaths{
 			SourceSatisfied: []string{"a.go"},
 		},
+		Evidence: []workspace.PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "a.go"}},
 		Edits: []workspace.PlanEdit{
 			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
 		},
@@ -177,6 +178,7 @@ func TestPreflightPlanDeclaredScopeAcceptsSourceSatisfiedRequiredPath(t *testing
 			Changed:         []string{"b.go"},
 			SourceSatisfied: []string{"a.go"},
 		},
+		Evidence: []workspace.PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "a.go"}},
 		Edits: []workspace.PlanEdit{
 			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
 		},
@@ -221,6 +223,36 @@ func TestPreflightPlanDeclaredScopeRejectsOutOfScopeSourceSatisfiedPath(t *testi
 	got := preflightPlanDeclaredScope(plan)
 	if got == nil || got.Path != "outside.go" || got.Reason != "source-satisfied path is outside required plan scope" {
 		t.Fatalf("expected declared-scope source_satisfied_paths rejection, got %#v", got)
+	}
+}
+
+func TestPreflightPlanDeclaredScopeRejectsPendingPartialApprovalSourceSatisfiedPath(t *testing.T) {
+	plan := workspace.PlanArtifact{
+		SchemaVersion: workspace.PlanArtifactSchemaVersion,
+		Paths: workspace.PlanArtifactPaths{
+			Required:        []string{"a.go", "b.go"},
+			Editable:        []string{"b.go"},
+			Changed:         []string{"b.go"},
+			SourceSatisfied: []string{"a.go"},
+		},
+		Evidence: []workspace.PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "a.go"}},
+		Approval: workspace.PlanArtifactApproval{
+			Required:            true,
+			Status:              "partial",
+			ScopeID:             "scope-1",
+			ApprovedPaths:       []string{"b.go"},
+			PendingPaths:        []string{"a.go"},
+			ExecutionPermission: "execute_approved_scope",
+		},
+		Handoff: workspace.PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits: []workspace.PlanEdit{
+			{Path: "b.go", OldText: "before", NewText: "after", Purpose: "update b"},
+		},
+	}
+
+	got := preflightPlanDeclaredScope(plan)
+	if got == nil || got.Path != "a.go" || got.Reason != "source-satisfied path is still pending approval" {
+		t.Fatalf("expected pending-approval source_satisfied_paths rejection, got %#v", got)
 	}
 }
 

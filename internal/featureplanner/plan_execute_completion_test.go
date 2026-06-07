@@ -1,6 +1,10 @@
 package featureplanner
 
-import "testing"
+import (
+	"fmt"
+	"strings"
+	"testing"
+)
 
 func TestPlanExecuteCompletionTerminalClass(t *testing.T) {
 	tests := []struct {
@@ -76,5 +80,83 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 				t.Fatalf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestPlanExecuteCompletionFieldsPrefersLaterConcreteReviewRepairState(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.resume_state_saved","ts":"2026-06-07T12:00:00Z","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`,
+		`{"type":"idiom.plan_execute.review_repair_blocked","ts":"2026-06-07T12:01:00Z","state_path":".idiom/plan-execute/sessions/active.json","phase":"review_repair","status":"blocked","review_status":"blocked","failure_kind":"review_repair_blocked","failure_reason":"review repair remained blocked","changed_paths":["internal/app/feature.go"]}`,
+	}, "\n")
+
+	fields := PlanExecuteCompletionFields(output)
+
+	for key, want := range map[string]string{
+		"status":         "blocked",
+		"phase":          "review_repair",
+		"review_status":  "blocked",
+		"failure_kind":   "review_repair_blocked",
+		"failure_reason": "review repair remained blocked",
+		"progress_path":  ".idiom/plan-execute/sessions/active.json",
+	} {
+		if got := fmt.Sprint(fields[key]); got != want {
+			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		}
+	}
+	changed, _ := fields["changed_paths"].([]string)
+	if len(changed) != 1 || changed[0] != "internal/app/feature.go" {
+		t.Fatalf("changed_paths = %#v, want active changed path; fields=%+v", fields["changed_paths"], fields)
+	}
+}
+
+func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`,
+		`{"type":"idiom.plan_execute.completed","state_path":".idiom/plan-execute/sessions/active.json","phase":"complete","status":"completed","review_status":"skipped","review_repair_skipped":true}`,
+	}, "\n")
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := fmt.Sprint(fields["status"]); got != "completed" {
+		t.Fatalf("status = %q, want completed; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "failure_kind"); got != "" {
+		t.Fatalf("failure_kind = %q, want cleared earlier planning failure; fields=%+v", got, fields)
+	}
+	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
+		t.Fatalf("progress_path = %q, want active progress path; fields=%+v", got, fields)
+	}
+	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalCompleted {
+		t.Fatalf("terminal class = %q, want completed; fields=%+v", got, fields)
+	}
+}
+
+func TestOverlayPlanExecuteCompletionFieldsNestedFailureOverridesWrapperCompleted(t *testing.T) {
+	fields := map[string]any{
+		"status":        "completed",
+		"phase":         "complete",
+		"progress_path": ".idiom/plan-execute/sessions/wrapper.json",
+	}
+	OverlayPlanExecuteCompletionFields(fields, map[string]any{
+		"status":         "failed",
+		"phase":          "planning",
+		"failure_kind":   "plan_artifact_missing",
+		"failure_reason": "nested plan-execute failed before handoff",
+		"progress_path":  ".idiom/plan-execute/sessions/nested.json",
+	})
+
+	for key, want := range map[string]string{
+		"status":         "failed",
+		"phase":          "planning",
+		"failure_kind":   "plan_artifact_missing",
+		"failure_reason": "nested plan-execute failed before handoff",
+		"progress_path":  ".idiom/plan-execute/sessions/nested.json",
+	} {
+		if got := fmt.Sprint(fields[key]); got != want {
+			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		}
+	}
+	if got := PlanExecuteCompletionTerminalClass(fields); got != PlanExecuteTerminalBlocked {
+		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }

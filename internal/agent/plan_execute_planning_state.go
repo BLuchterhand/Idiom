@@ -24,6 +24,17 @@ const (
 	PlanExecutePlanningModeDone             PlanExecutePlanningMode = "done"
 )
 
+type PlanExecuteRecoverySurfaceKind string
+
+const (
+	PlanExecuteRecoverySurfaceNone                    PlanExecuteRecoverySurfaceKind = ""
+	PlanExecuteRecoverySurfaceAnchorRefresh           PlanExecuteRecoverySurfaceKind = "anchor_refresh"
+	PlanExecuteRecoverySurfaceHistoryPending          PlanExecuteRecoverySurfaceKind = "history_pending"
+	PlanExecuteRecoverySurfaceSubmitCorrection        PlanExecuteRecoverySurfaceKind = "submit_correction"
+	PlanExecuteRecoverySurfaceSubmitReady             PlanExecuteRecoverySurfaceKind = "submit_ready"
+	PlanExecuteRecoverySurfaceSourceSatisfiedTerminal PlanExecuteRecoverySurfaceKind = "source_satisfied_terminal"
+)
+
 type PlanExecuteTransportMode string
 
 const (
@@ -74,12 +85,57 @@ type PlanExecutePlanningState struct {
 	LastInvalidPaths       []string
 }
 
+type PlanExecuteRecoverySurface struct {
+	Kind  PlanExecuteRecoverySurfaceKind
+	State PlanExecutePlanningState
+}
+
 func DerivePlanExecutePlanningActionState(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport, req workspace.ToolRequest) PlanExecutePlanningState {
 	state := DerivePlanExecutePlanningState(brief, results, transport)
 	if reason, ok := planThenExecuteLowValueActionReason(req, brief, results, state); ok {
 		state.LowValueActions = []string{reason}
 	}
 	return state
+}
+
+func DerivePlanExecuteRecoverySurface(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport) PlanExecuteRecoverySurface {
+	state := DerivePlanExecutePlanningState(brief, results, transport)
+	return PlanExecuteRecoverySurface{
+		Kind:  planExecuteRecoverySurfaceKind(brief, results, state),
+		State: state,
+	}
+}
+
+func planExecuteRecoverySurfaceKind(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, state PlanExecutePlanningState) PlanExecuteRecoverySurfaceKind {
+	if !planThenExecutePlannerBrief(brief) {
+		return PlanExecuteRecoverySurfaceNone
+	}
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
+		return PlanExecuteRecoverySurfaceAnchorRefresh
+	}
+	if state.Mode == PlanExecutePlanningModeHistoryPending {
+		return PlanExecuteRecoverySurfaceHistoryPending
+	}
+	if planExecuteSourceSatisfiedTerminalEvidenceComplete(brief, results, state) {
+		return PlanExecuteRecoverySurfaceSourceSatisfiedTerminal
+	}
+	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
+		return PlanExecuteRecoverySurfaceSubmitCorrection
+	}
+	if state.Mode == PlanExecutePlanningModeSubmitReady || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		return PlanExecuteRecoverySurfaceSubmitReady
+	}
+	return PlanExecuteRecoverySurfaceNone
+}
+
+func planExecuteSourceSatisfiedTerminalEvidenceComplete(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, state PlanExecutePlanningState) bool {
+	if !planThenExecuteSourceSatisfiedTerminalRequiredActive(results) || len(state.RefreshPaths) > 0 {
+		return false
+	}
+	if len(state.RequiredCoveragePaths) > 0 {
+		return len(planThenExecuteUnreadRequiredPaths(brief, results)) == 0
+	}
+	return len(state.EvidencePaths) > 0 || len(state.SelectedEditPaths) > 0
 }
 
 func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, transport PlanExecutePlanningTransport) PlanExecutePlanningState {

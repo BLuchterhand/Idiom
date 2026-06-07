@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"idiom/internal/failures"
+	"idiom/internal/plancontract"
 	"idiom/internal/util"
 )
 
@@ -180,7 +181,6 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 			artifact.Paths.Required = append([]string(nil), artifact.Contract.RequiredEditPaths...)
 		}
 		artifact.Paths.SourceSatisfied = append(append([]string(nil), artifact.Paths.SourceSatisfied...), req.SourceSatisfiedPaths...)
-		artifact.Paths.Required = append(append([]string(nil), artifact.Paths.Required...), req.SourceSatisfiedPaths...)
 		artifact.Edits = planEditsWithoutAnchorProvenance(artifact.Edits)
 		if strings.TrimSpace(artifact.Rationale) == "" {
 			artifact.Rationale = req.Rationale
@@ -238,6 +238,17 @@ func newPlanArtifactFromSubmitPlanRequest(req ToolRequest, sessionID string, cre
 		return PlanArtifact{}, err
 	}
 	return artifact, nil
+}
+
+func PlanArtifactSourceSatisfiedEvidenceRefs(artifact PlanArtifact) []plancontract.SourceSatisfiedEvidenceRef {
+	refs := make([]plancontract.SourceSatisfiedEvidenceRef, 0, len(artifact.Evidence))
+	for _, evidence := range artifact.Evidence {
+		refs = append(refs, plancontract.SourceSatisfiedEvidenceRef{
+			Path: evidence.Path,
+			Kind: evidence.Kind,
+		})
+	}
+	return refs
 }
 
 func planEditsWithoutAnchorProvenance(edits []PlanEdit) []PlanEdit {

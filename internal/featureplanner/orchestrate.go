@@ -606,18 +606,7 @@ type planExecuteCompletion struct {
 }
 
 func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planExecuteCompletion {
-	completion := planExecuteCompletion{
-		LaneFamily:          envelope.LaneFamily,
-		Summary:             envelope.Summary,
-		ProgressPath:        envelope.ProgressPath,
-		Status:              envelope.Status,
-		Phase:               envelope.Phase,
-		ReviewStatus:        envelope.ReviewStatus,
-		FailureKind:         envelope.FailureKind,
-		FailureReason:       envelope.FailureReason,
-		CompletionSource:    envelope.CompletionSource,
-		ReviewRepairSkipped: envelope.ReviewRepairSkipped,
-	}
+	completion := planExecuteCompletionFromSummary(planExecuteCompletionSummaryFromEnvelope(envelope))
 	if envelope.PlanExecute != nil {
 		completion.overlay(*envelope.PlanExecute)
 	}
@@ -628,16 +617,22 @@ func planExecuteCompletionFromEnvelope(envelope implementorOutputEnvelope) planE
 }
 
 func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteCompletion) {
-	completion.LaneFamily = firstNonEmpty(nested.LaneFamily, completion.LaneFamily)
-	completion.Summary = firstNonEmpty(nested.Summary, completion.Summary)
-	completion.ProgressPath = firstNonEmpty(nested.ProgressPath, completion.ProgressPath)
-	completion.Status = firstNonEmpty(nested.Status, completion.Status)
-	completion.Phase = firstNonEmpty(nested.Phase, completion.Phase)
-	completion.ReviewStatus = firstNonEmpty(nested.ReviewStatus, completion.ReviewStatus)
-	completion.FailureKind = firstNonEmpty(nested.FailureKind, completion.FailureKind)
-	completion.FailureReason = firstNonEmpty(nested.FailureReason, completion.FailureReason)
-	completion.CompletionSource = firstNonEmpty(nested.CompletionSource, completion.CompletionSource)
-	completion.ReviewRepairSkipped = completion.ReviewRepairSkipped || nested.ReviewRepairSkipped
+	merged := MergePlanExecuteCompletionSummaries(
+		completion.summary(),
+		PlanExecuteCompletionSummary{
+			LaneFamily:          nested.LaneFamily,
+			Summary:             nested.Summary,
+			ProgressPath:        nested.ProgressPath,
+			Status:              nested.Status,
+			Phase:               nested.Phase,
+			ReviewStatus:        nested.ReviewStatus,
+			FailureKind:         nested.FailureKind,
+			FailureReason:       nested.FailureReason,
+			CompletionSource:    nested.CompletionSource,
+			ReviewRepairSkipped: nested.ReviewRepairSkipped,
+		},
+	)
+	*completion = planExecuteCompletionFromSummary(merged)
 }
 
 func (completion planExecuteCompletion) normalized() planExecuteCompletion {
@@ -654,6 +649,51 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
 	completion.CompletionSource = strings.TrimSpace(completion.CompletionSource)
 	return completion
+}
+
+func planExecuteCompletionSummaryFromEnvelope(envelope implementorOutputEnvelope) PlanExecuteCompletionSummary {
+	return PlanExecuteCompletionSummary{
+		LaneFamily:          envelope.LaneFamily,
+		Summary:             envelope.Summary,
+		ProgressPath:        envelope.ProgressPath,
+		Status:              envelope.Status,
+		Phase:               envelope.Phase,
+		ReviewStatus:        envelope.ReviewStatus,
+		FailureKind:         envelope.FailureKind,
+		FailureReason:       envelope.FailureReason,
+		CompletionSource:    envelope.CompletionSource,
+		ReviewRepairSkipped: envelope.ReviewRepairSkipped,
+	}
+}
+
+func (completion planExecuteCompletion) summary() PlanExecuteCompletionSummary {
+	return PlanExecuteCompletionSummary{
+		LaneFamily:          completion.LaneFamily,
+		Summary:             completion.Summary,
+		ProgressPath:        completion.ProgressPath,
+		Status:              completion.Status,
+		Phase:               completion.Phase,
+		ReviewStatus:        completion.ReviewStatus,
+		FailureKind:         completion.FailureKind,
+		FailureReason:       completion.FailureReason,
+		CompletionSource:    completion.CompletionSource,
+		ReviewRepairSkipped: completion.ReviewRepairSkipped,
+	}
+}
+
+func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) planExecuteCompletion {
+	return planExecuteCompletion{
+		LaneFamily:          summary.LaneFamily,
+		Summary:             summary.Summary,
+		ProgressPath:        summary.ProgressPath,
+		Status:              summary.Status,
+		Phase:               summary.Phase,
+		ReviewStatus:        summary.ReviewStatus,
+		FailureKind:         summary.FailureKind,
+		FailureReason:       summary.FailureReason,
+		CompletionSource:    summary.CompletionSource,
+		ReviewRepairSkipped: summary.ReviewRepairSkipped,
+	}.normalized()
 }
 
 func planExecuteCompletionIsSuccess(completion planExecuteCompletion) (bool, string) {

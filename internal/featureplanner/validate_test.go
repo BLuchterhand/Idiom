@@ -979,6 +979,26 @@ func TestApplyImplementorOutputPromotesNestedPlanExecuteFailureDetailToBlocker(t
 	}
 }
 
+func TestApplyImplementorOutputPrefersNestedReviewRepairFailureOverPlanningFallback(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"failed","phase":"planning","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact","progress_path":".idiom/plan-execute/sessions/fallback.json","plan_execute":{"lane_family":"plan-execute","status":"blocked","phase":"review_repair","review_status":"blocked","failure_kind":"review_repair_blocked","failure_reason":"review repair remained blocked","progress_path":".idiom/plan-execute/sessions/active.json"}}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute reported failure details: review_repair_blocked - review repair remained blocked")
+	if got := fmt.Sprint(events[0].Fields["nested_failure_kind"]); got != "review_repair_blocked" {
+		t.Fatalf("nested_failure_kind = %q, want review_repair_blocked; fields=%+v", got, events[0].Fields)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_phase"]); got != "review_repair" {
+		t.Fatalf("nested_phase = %q, want review_repair; fields=%+v", got, events[0].Fields)
+	}
+	if got := fmt.Sprint(events[0].Fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
+		t.Fatalf("progress_path = %q, want active progress state; fields=%+v", got, events[0].Fields)
+	}
+	if strings.Contains(events[0].Message, "plan_artifact_missing") || strings.Contains(events[0].Message, "planning/no plan artifact") {
+		t.Fatalf("stale planning fallback leaked into rejection message: %q", events[0].Message)
+	}
+}
+
 func TestApplyImplementorOutputRejectsImplicitSkippedReview(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 

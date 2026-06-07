@@ -265,7 +265,6 @@ func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (strin
 	}
 	fields["tool"] = featureplanner.ToolPlanExecuteComplete
 	fields["lane_family"] = "plan-execute"
-	fields["summary"] = strings.TrimSpace(summary)
 	if featureplanner.CompletionFieldString(fields, "status") == "" {
 		fields["status"] = "ambiguous"
 		fields["failure_kind"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(fields, "failure_kind"), "missing_nested_plan_execute_status")
@@ -274,11 +273,25 @@ func (m *Model) encodeFeaturePlannerPlanExecuteCompletion(summary string) (strin
 	if featureplanner.CompletionFieldString(fields, "completion_source") == "" {
 		fields["completion_source"] = "tui_plan_execute_returned"
 	}
+	fields["summary"] = featurePlannerPlanExecuteCompletionSummary(fields)
 	body, err := json.Marshal(fields)
 	if err != nil {
 		return "", err
 	}
 	return string(body), nil
+}
+
+func featurePlannerPlanExecuteCompletionSummary(fields map[string]any) string {
+	var parts []string
+	for _, key := range []string{"status", "phase", "review_status", "failure_kind", "progress_path"} {
+		if value := featureplanner.CompletionFieldString(fields, key); value != "" {
+			parts = append(parts, key+"="+value)
+		}
+	}
+	if len(parts) == 0 {
+		return "plan-execute returned without typed terminal fields"
+	}
+	return "plan-execute " + strings.Join(parts, " ")
 }
 
 func encodeFeaturePlannerSiblingDispatchPaused() string {
@@ -357,22 +370,7 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 }
 
 func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progressFields map[string]any) {
-	for _, key := range []string{"status", "phase", "review_status"} {
-		if value := featureplanner.CompletionFieldString(progressFields, key); value != "" {
-			fields[key] = value
-		}
-	}
-	for _, key := range []string{"failure_kind", "failure_reason"} {
-		if value := featureplanner.CompletionFieldString(progressFields, key); value != "" && featureplanner.CompletionFieldString(fields, key) == "" {
-			fields[key] = value
-		}
-	}
-	if value := featureplanner.CompletionFieldString(progressFields, "state_path"); value != "" && featureplanner.CompletionFieldString(fields, "progress_path") == "" {
-		fields["progress_path"] = value
-	}
-	if value, ok := progressFields["review_repair_skipped"]; ok {
-		fields["review_repair_skipped"] = value
-	}
+	featureplanner.OverlayPlanExecuteCompletionFields(fields, progressFields)
 	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "changed_paths"} {
 		if value, ok := progressFields[key]; ok {
 			fields[key] = value

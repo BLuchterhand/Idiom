@@ -12,6 +12,7 @@ import (
 	"idiom/internal/frontier/pathparse"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/plancontract"
+	"idiom/internal/util"
 	"idiom/internal/workspace"
 )
 
@@ -664,6 +665,105 @@ func planThenExecuteEffectiveSubmitPlanSourceSatisfiedPaths(req workspace.ToolRe
 	}
 	paths = append(paths, req.SourceSatisfiedPaths...)
 	return paths
+}
+
+func (r *Runner) planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req workspace.ToolRequest, results []workspace.ToolResult) workspace.ToolRequest {
+	if r == nil || !r.planThenExecutePlanSubmissionPhase() || strings.TrimSpace(req.Tool) != "submit_plan" {
+		return req
+	}
+	sourceSatisfiedPaths := plancontract.UniqueScopePaths(planThenExecuteEffectiveSubmitPlanSourceSatisfiedPaths(req))
+	if len(sourceSatisfiedPaths) == 0 {
+		return req
+	}
+	artifact := workspace.PlanArtifact{}
+	if req.PlanArtifact != nil {
+		artifact = *req.PlanArtifact
+	}
+	if len(artifact.Edits) == 0 && len(req.Edits) > 0 {
+		artifact.Edits = append([]workspace.PlanEdit(nil), req.Edits...)
+	}
+	if strings.TrimSpace(artifact.Task.Summary) == "" {
+		artifact.Task.Summary = util.FirstNonEmpty(strings.TrimSpace(req.Rationale), "legacy submit_plan request")
+	}
+	artifact.Contract.Kind = util.FirstNonEmpty(strings.TrimSpace(artifact.Contract.Kind), "plan_then_execute")
+	artifact.Contract.StrategyOwner = util.FirstNonEmpty(strings.TrimSpace(artifact.Contract.StrategyOwner), "model")
+	artifact.Contract.ContractOwner = util.FirstNonEmpty(strings.TrimSpace(artifact.Contract.ContractOwner), "harness")
+	artifact.Contract.PermissionProfile = util.FirstNonEmpty(strings.TrimSpace(artifact.Contract.PermissionProfile), "plan_then_execute")
+	artifact.Contract.VerificationOwner = util.FirstNonEmpty(strings.TrimSpace(artifact.Contract.VerificationOwner), "planner")
+	artifact.Paths.SourceSatisfied = plancontract.UniqueScopePaths(append(artifact.Paths.SourceSatisfied, sourceSatisfiedPaths...))
+	if len(artifact.Paths.Required) == 0 {
+		artifact.Paths.Required = plancontract.UniqueScopePaths(r.RuntimeBrief.RequiredEditPaths)
+	}
+	if len(artifact.Contract.RequiredEditPaths) == 0 {
+		artifact.Contract.RequiredEditPaths = append([]string(nil), artifact.Paths.Required...)
+	}
+	if len(artifact.VerificationObligations) == 0 {
+		artifact.VerificationObligations = []workspace.PlanArtifactVerificationObligation{{
+			ID:       "verification-1",
+			Kind:     "executor_lane_sanity",
+			Owner:    artifact.Contract.VerificationOwner,
+			Status:   "open",
+			Required: true,
+		}}
+	}
+	sourceSatisfiedSet := map[string]struct{}{}
+	for _, path := range sourceSatisfiedPaths {
+		if normalized := normalizeRunnerPath(path); normalized != "" {
+			sourceSatisfiedSet[normalized] = struct{}{}
+		}
+	}
+	filteredEvidence := artifact.Evidence[:0]
+	for _, evidence := range artifact.Evidence {
+		path := normalizeRunnerPath(evidence.Path)
+		if _, sourceSatisfied := sourceSatisfiedSet[path]; sourceSatisfied {
+			continue
+		}
+		filteredEvidence = append(filteredEvidence, evidence)
+	}
+	artifact.Evidence = filteredEvidence
+	knownEvidence := map[string]struct{}{}
+	for _, evidence := range artifact.Evidence {
+		path := normalizeRunnerPath(evidence.Path)
+		kind := strings.TrimSpace(evidence.Kind)
+		if path != "" && kind != "" {
+			knownEvidence[path+"|"+kind] = struct{}{}
+		}
+	}
+	for _, path := range sourceSatisfiedPaths {
+		evidence := planThenExecuteObservedSourceEvidenceForPath(results, path)
+		if evidence.Level != planThenExecuteEvidenceAnchorReady {
+			continue
+		}
+		kind := "harness_observed_source"
+		key := normalizeRunnerPath(path) + "|" + kind
+		if _, ok := knownEvidence[key]; ok {
+			continue
+		}
+		artifact.Evidence = append(artifact.Evidence, workspace.PlanArtifactEvidence{
+			Kind:       kind,
+			Path:       path,
+			Summary:    util.FirstNonEmpty(strings.TrimSpace(evidence.Detail), "current-state source evidence") + " via " + util.FirstNonEmpty(strings.TrimSpace(evidence.Source), "source tool"),
+			Confidence: "observed",
+		})
+		knownEvidence[key] = struct{}{}
+	}
+	req.PlanArtifact = &artifact
+	return req
+}
+
+func planThenExecuteObservedSourceEvidenceForPath(results []workspace.ToolResult, path string) planThenExecuteSourceEvidence {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return planThenExecuteSourceEvidence{}
+	}
+	best := planThenExecuteSourceEvidence{Path: path}
+	for _, result := range results {
+		evidence := planThenExecuteToolResultSourceEvidence(result, path)
+		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
+			best = evidence
+		}
+	}
+	return best
 }
 
 func readPlanProjectionBase(root string, path string) string {

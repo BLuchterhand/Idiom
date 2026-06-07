@@ -415,9 +415,8 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	writeSubmitPlanFixture(t, root, "b.txt", "original\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
-		Tool:                 "submit_plan",
-		Rationale:            "add feature across the codebase",
-		SourceSatisfiedPaths: []string{"c.txt"},
+		Tool:      "submit_plan",
+		Rationale: "add feature across the codebase",
 		Edits: []PlanEdit{
 			{Path: "a.txt", OldText: "before", NewText: "after", Purpose: "first edit"},
 			{Path: "b.txt", StartLine: 1, EndLine: 1, Content: "rewritten\n", Purpose: "second edit"},
@@ -487,9 +486,6 @@ func TestSubmitPlanWritesArtifactWithSchemaVersion(t *testing.T) {
 	}
 	if !submitPlanTestContains(artifact.Paths.Editable, "a.txt") || !submitPlanTestContains(artifact.Paths.Changed, "b.txt") {
 		t.Fatalf("durable artifact paths should include planned edit paths: %#v", artifact.Paths)
-	}
-	if !submitPlanTestContains(artifact.Paths.SourceSatisfied, "c.txt") {
-		t.Fatalf("durable artifact should preserve source-satisfied coverage paths: %#v", artifact.Paths)
 	}
 	if len(artifact.Evidence) == 0 {
 		t.Fatalf("durable artifact should include bounded evidence")
@@ -724,8 +720,7 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	writeSubmitPlanContextView(t, root, "feedfacecafebeef", "a.txt")
 	result := mgr.Execute(context.Background(), ToolRequest{
-		SourceSatisfiedPaths: []string{"b.txt"},
-		Tool:                 "submit_plan",
+		Tool: "submit_plan",
 		PlanArtifact: &PlanArtifact{
 			SchemaVersion: PlanArtifactSchemaVersion,
 			PlanID:        "plan-structured",
@@ -785,18 +780,12 @@ func TestSubmitPlanAcceptsStructuredDurablePlanArtifact(t *testing.T) {
 	if len(plan.UnresolvedQuestions) != 1 || len(plan.VerificationObligations) != 1 {
 		t.Fatalf("structured question/verification fields not preserved: %#v %#v", plan.UnresolvedQuestions, plan.VerificationObligations)
 	}
-	if !submitPlanTestContains(plan.Paths.SourceSatisfied, "b.txt") {
-		t.Fatalf("top-level source_satisfied_paths should merge into structured artifact paths: %#v", plan.Paths)
-	}
-	if !submitPlanTestContains(plan.Paths.Required, "b.txt") {
-		t.Fatalf("top-level source_satisfied_paths should merge into structured artifact required scope: %#v", plan.Paths)
-	}
 	if !strings.Contains(result.Output, "audit_ok=true") {
 		t.Fatalf("accepted structured artifact should report passing audit, got %q", result.Output)
 	}
 }
 
-func TestSubmitPlanMergesStructuredSourceSatisfiedWithContractRequiredScope(t *testing.T) {
+func TestSubmitPlanRejectsSourceSatisfiedOutsideOriginalRequiredScope(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
@@ -818,8 +807,8 @@ func TestSubmitPlanMergesStructuredSourceSatisfiedWithContractRequiredScope(t *t
 				Changed:  []string{"a.txt"},
 			},
 			Evidence: []PlanArtifactEvidence{{
-				Kind:    "planner_submission",
-				Summary: "current evidence covers b.txt",
+				Kind: "harness_observed_source",
+				Path: "b.txt",
 			}},
 			VerificationObligations: []PlanArtifactVerificationObligation{{
 				ID:       "verification-1",
@@ -836,20 +825,14 @@ func TestSubmitPlanMergesStructuredSourceSatisfiedWithContractRequiredScope(t *t
 			},
 		},
 	})
-	if strings.TrimSpace(result.Error) != "" {
-		t.Fatalf("submit_plan rejected structured mixed coverage artifact: %s", result.Error)
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("source_satisfied_paths outside original required scope should be rejected")
 	}
-	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
-	if err != nil {
-		t.Fatalf("load submitted plan: %v", err)
+	if !strings.Contains(result.Error, "scope_path_mismatch") {
+		t.Fatalf("expected source_satisfied_paths scope rejection, got %q", result.Error)
 	}
-	for _, want := range []string{"a.txt", "b.txt"} {
-		if !submitPlanTestContains(plan.Paths.Required, want) {
-			t.Fatalf("structured required scope should preserve %s with source_satisfied merge: %#v", want, plan.Paths)
-		}
-		if !submitPlanTestContains(plan.Approval.ApprovedPaths, want) {
-			t.Fatalf("approved scope should preserve %s with source_satisfied merge: %#v", want, plan.Approval)
-		}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected submit_plan should not persist last.plan.json; stat err=%v", err)
 	}
 }
 
@@ -1151,6 +1134,46 @@ func TestPlanArtifactPartialApprovalBlocksPendingScopePrivately(t *testing.T) {
 		if strings.Contains(string(encoded), leaked) {
 			t.Fatalf("partial approval audit leaked sensitive marker %q: %s", leaked, encoded)
 		}
+	}
+}
+
+func TestPlanArtifactAuditRejectsPendingPartialApprovalSourceSatisfiedPath(t *testing.T) {
+	result := AuditPlanArtifact(t.TempDir(), PlanArtifact{
+		SchemaVersion: PlanArtifactSchemaVersion,
+		PlanID:        "plan-partial-source-satisfied",
+		Task:          PlanArtifactTask{Summary: "Block pending partial approval source-satisfied scope"},
+		Contract:      PlanArtifactContract{Kind: "plan_then_execute"},
+		Paths: PlanArtifactPaths{
+			Editable:        []string{"b.txt"},
+			Changed:         []string{"b.txt"},
+			Required:        []string{"a.txt", "b.txt"},
+			SourceSatisfied: []string{"a.txt"},
+		},
+		Evidence: []PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "a.txt"}},
+		VerificationObligations: []PlanArtifactVerificationObligation{{
+			Kind:     "focused_tests",
+			Status:   "open",
+			Required: true,
+		}},
+		Approval: PlanArtifactApproval{
+			Required:            true,
+			Status:              "partial",
+			ScopeID:             "scope-1",
+			ApprovedPaths:       []string{"b.txt"},
+			PendingPaths:        []string{"a.txt"},
+			ExecutionPermission: "execute_approved_scope",
+		},
+		Handoff: PlanArtifactHandoff{ID: "handoff-1", Status: "ready", Ready: true},
+		Edits:   []PlanEdit{{Path: "b.txt", OldText: "before", NewText: "after"}},
+	}, PlanArtifactAuditOptions{})
+	if result.OK {
+		t.Fatalf("pending partial approval source_satisfied_paths should fail audit")
+	}
+	if result.Metrics.ApprovalScopeMismatches == 0 {
+		t.Fatalf("expected approval scope mismatch, got %#v", result.Metrics)
+	}
+	if !strings.Contains(result.ErrorSummary(), "approval_scope_mismatch") {
+		t.Fatalf("expected approval scope error summary, got %#v", result)
 	}
 }
 
@@ -1679,7 +1702,7 @@ func TestSubmitPlanAllowsNegatedSourceSatisfiedRationale(t *testing.T) {
 	}
 }
 
-func TestSubmitPlanAllowsMixedSourceSatisfiedCoverageRationale(t *testing.T) {
+func TestSubmitPlanRejectsMixedSourceSatisfiedCoverageWithoutEvidence(t *testing.T) {
 	mgr, root := newSubmitPlanTestManager(t)
 	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
 	result := mgr.Execute(context.Background(), ToolRequest{
@@ -1693,15 +1716,67 @@ func TestSubmitPlanAllowsMixedSourceSatisfiedCoverageRationale(t *testing.T) {
 			Purpose: "Replace the old value with the requested value.",
 		}},
 	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("mixed source_satisfied_paths without current-state evidence should be rejected")
+	}
+	if !strings.Contains(result.Error, "source_satisfied_evidence_mismatch") {
+		t.Fatalf("expected evidence mismatch rejection, got %q", result.Error)
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected submit_plan should not persist last.plan.json; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanAllowsMixedSourceSatisfiedCoverageWithCurrentStateEvidence(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "a.txt", "before\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:                 "submit_plan",
+		Rationale:            "Update a.txt; b.txt already contains the requested final state from current source evidence.",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		PlanArtifact: &PlanArtifact{
+			SchemaVersion: PlanArtifactSchemaVersion,
+			Task:          PlanArtifactTask{Summary: "mixed source-satisfied coverage"},
+			Contract: PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "planner",
+			},
+			Paths: PlanArtifactPaths{
+				Editable: []string{"a.txt"},
+				Changed:  []string{"a.txt"},
+				Required: []string{"a.txt", "b.txt"},
+			},
+			Evidence: []PlanArtifactEvidence{{
+				Kind: "harness_observed_source",
+				Path: "b.txt",
+			}},
+			VerificationObligations: []PlanArtifactVerificationObligation{{
+				Kind:     "focused_tests",
+				Status:   "open",
+				Required: true,
+			}},
+			Approval: PlanArtifactApproval{Required: true, Status: "approved", ScopeID: "scope-1", Mode: "local"},
+			Handoff:  PlanArtifactHandoff{ID: "handoff-1", From: "planner", To: "executor", Status: "ready", Ready: true},
+			Edits: []PlanEdit{{
+				Path:    "a.txt",
+				OldText: "before",
+				NewText: "after",
+				Purpose: "Replace the old value with the requested value.",
+			}},
+		},
+	})
 	if strings.TrimSpace(result.Error) != "" {
-		t.Fatalf("mixed source_satisfied_paths coverage rationale should be allowed, got %q", result.Error)
+		t.Fatalf("mixed source_satisfied_paths with current-state evidence should be allowed, got %q", result.Error)
 	}
 	plan, err := LoadPlanArtifact(filepath.Join(root, ".idiom", "plans", "last.plan.json"))
 	if err != nil {
 		t.Fatalf("load submitted plan: %v", err)
 	}
-	if !submitPlanTestContains(plan.Paths.SourceSatisfied, "b.txt") {
-		t.Fatalf("source_satisfied_paths should persist on plan artifact: %#v", plan.Paths)
+	if !submitPlanTestContains(plan.Paths.SourceSatisfied, "b.txt") || !submitPlanTestContains(plan.Paths.Required, "b.txt") {
+		t.Fatalf("source_satisfied_paths should persist without synthesizing required scope: %#v", plan.Paths)
 	}
 }
 
@@ -1862,7 +1937,7 @@ func TestLoadPlanArtifactAttachesMissingCurrentAnchorProvenance(t *testing.T) {
 		Contract:      PlanArtifactContract{Kind: "implementation"},
 		Packet:        PlanArtifactPacket{Status: "not_used"},
 		Paths:         PlanArtifactPaths{Editable: []string{"x.txt"}},
-		Evidence:      []PlanArtifactEvidence{{Kind: "source", Path: "x.txt", Summary: "current source"}},
+		Evidence:      []PlanArtifactEvidence{{Kind: "harness_observed_source", Path: "x.txt", Summary: "current source"}},
 		VerificationObligations: []PlanArtifactVerificationObligation{{
 			Command: "go test ./...",
 			Kind:    "command",

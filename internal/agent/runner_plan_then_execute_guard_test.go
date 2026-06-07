@@ -10624,6 +10624,105 @@ func TestPlanExecuteSourceSatisfiedTerminalSurfaceDoesNotAdvertiseSubmitPlanOnly
 	}
 }
 
+func TestPlanExecuteSourceSatisfiedRejectionAfterInvalidAnchorKeepsAnchorRefreshSurface(t *testing.T) {
+	var refreshEvents []string
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+		RequiredEditPaths: []string{"a.go", "b.go"},
+	}
+	runner := &Runner{
+		RuntimeBrief: brief,
+		OnEvent: func(event RunEvent) {
+			if strings.Contains(event.Role, "plan_then_execute") {
+				refreshEvents = append(refreshEvents, event.Role+":"+event.Content)
+			}
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+
+	surface := DerivePlanExecuteRecoverySurface(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if surface.Kind != PlanExecuteRecoverySurfaceAnchorRefresh {
+		t.Fatalf("surface kind = %q, want anchor refresh; state=%#v", surface.Kind, surface.State)
+	}
+	if !slices.Equal(surface.State.RefreshPaths, []string{"a.go"}) {
+		t.Fatalf("refresh paths = %#v, want a.go", surface.State.RefreshPaths)
+	}
+
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, true)
+	if opts.ToolChoice != "required" || chatOptionsExposeTool(opts, "submit_plan") || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") {
+		t.Fatalf("source-satisfied rejection with open anchor refresh must expose only refresh tools, choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
+	}
+	if opts.MaxTokens != planThenExecuteAnchorRefreshMaxTokens {
+		t.Fatalf("anchor-refresh recovery should use refresh token cap, got %d", opts.MaxTokens)
+	}
+
+	if allowed := runnerPlanExecuteTextualAllowedTools(nil, brief, results); !slices.Equal(allowed, []string{"read_file", "code_navigate"}) {
+		t.Fatalf("textual allowed tools = %#v, want anchor-refresh read tools", allowed)
+	}
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	if contract.PhaseID != turnPhaseStaleAnchorRefresh || slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) {
+		t.Fatalf("phase contract should stay anchor-refresh/read-only, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
+	}
+
+	messages := []llama.ChatMessage{
+		{Role: "system", Content: "# Terminal Plan-Execute Outcome Surface\nNext visible action must be exactly one terminal outcome."},
+		{Role: "system", Content: "# Terminal Plan-Execute Native Tool Surface\nNative `submit_plan` is the only exposed tool in this request."},
+	}
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "source_satisfied_terminal_required")
+	joined := planExecuteJoinedMessages(messages)
+	if !strings.Contains(joined, "# Plan-Execute Anchor Refresh Surface") ||
+		!strings.Contains(joined, "Refresh only: a.go") ||
+		!strings.Contains(joined, "Do not emit `submit_plan` until this bounded refresh returns") {
+		t.Fatalf("refreshed surface should present only anchor-refresh guidance:\n%s", joined)
+	}
+	for _, forbidden := range []string{
+		"# Terminal Plan-Execute Outcome Surface",
+		"# Terminal Plan-Execute Native Tool Surface",
+		"with per-path current-state evidence if every required path already contains the requested final state",
+		"Next visible action must be exactly one terminal outcome",
+		"Native `submit_plan` is the only exposed tool",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("anchor-refresh surface retained contradictory guidance %q:\n%s", forbidden, joined)
+		}
+	}
+	if len(refreshEvents) != 1 ||
+		!strings.Contains(refreshEvents[0], "plan_then_execute_anchor_refresh_surface_refreshed") ||
+		!strings.Contains(refreshEvents[0], `"allowed_tools":["read_file","code_navigate"]`) {
+		t.Fatalf("expected one anchor-refresh surface event, got %#v", refreshEvents)
+	}
+}
+
 func planExecuteJoinedMessages(messages []llama.ChatMessage) string {
 	var b strings.Builder
 	for _, msg := range messages {
@@ -13918,6 +14017,7 @@ func TestPlanExecuteRejectedPlanAllowsSourceSatisfiedCoverageCorrection(t *testi
 		`{"tool":"submit_plan","rationale":"Correct the rejected plan: a.txt needs a real edit while b.txt already contains the requested final state from the source evidence.","source_satisfied_paths":["b.txt"],"edits":[{"path":"a.txt","old_text":"before\n","new_text":"after\n","purpose":"replace a fixture"}]}`,
 	}
 	var requests int
+	var toolTrace []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
@@ -13954,15 +14054,132 @@ func TestPlanExecuteRejectedPlanAllowsSourceSatisfiedCoverageCorrection(t *testi
 			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
 		},
 		ToolChoice: "auto",
-	}, nil, nil, nil)
+	}, nil, func(event ToolRequestEvent) {
+		toolTrace = append(toolTrace, "request "+event.Request.Tool+": "+event.Raw)
+	}, func(event ToolResultEvent) {
+		toolTrace = append(toolTrace, "result "+event.Request.Tool+": "+event.Result.Summary+" | "+event.Result.Error)
+	})
 	if err != nil {
-		t.Fatalf("Run: %v", err)
+		t.Fatalf("Run: %v\ntrace:\n%s", err, strings.Join(toolTrace, "\n"))
 	}
 	if requests != len(replies) {
-		t.Fatalf("expected corrected mixed-coverage submit_plan, got %d request(s)", requests)
+		t.Fatalf("expected corrected mixed-coverage submit_plan, got %d request(s)\ntrace:\n%s", requests, strings.Join(toolTrace, "\n"))
 	}
 	if !strings.Contains(answer, "Plan submitted with 1 edit") {
-		t.Fatalf("expected successful mixed coverage plan summary, got:\n%s", answer)
+		t.Fatalf("expected successful mixed coverage plan summary, got:\n%s\ntrace:\n%s", answer, strings.Join(toolTrace, "\n"))
+	}
+}
+
+func TestPlanExecuteSubmitPlanSourceSatisfiedEvidenceBridgeRejectsBodyWindow(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}}
+	req := workspace.ToolRequest{
+		Tool:                 "submit_plan",
+		Rationale:            "Update a.txt; b.txt already contains the requested final state.",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before\n",
+			NewText: "after\n",
+			Purpose: "replace a fixture",
+		}},
+	}
+	bridged := runner.planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f2 b.txt lines 1-200 (total lines: 1000)",
+		Output:  "b.txt\n" + strings.Repeat("body\n", 10),
+	}})
+
+	if bridged.PlanArtifact == nil {
+		t.Fatalf("expected legacy submit_plan to be normalized into an artifact")
+	}
+	for _, evidence := range bridged.PlanArtifact.Evidence {
+		if evidence.Path == "b.txt" {
+			t.Fatalf("body-window source evidence must not be durable source_satisfied proof: %#v", bridged.PlanArtifact.Evidence)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitPlanSourceSatisfiedBridgeStripsModelSuppliedEvidence(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}}
+	req := workspace.ToolRequest{
+		Tool:                 "submit_plan",
+		Rationale:            "Update a.txt; b.txt already contains the requested final state.",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		PlanArtifact: &workspace.PlanArtifact{
+			Task: workspace.PlanArtifactTask{Summary: "mixed source-satisfied coverage"},
+			Contract: workspace.PlanArtifactContract{
+				Kind:              "plan_then_execute",
+				StrategyOwner:     "model",
+				ContractOwner:     "harness",
+				PermissionProfile: "plan_then_execute",
+				VerificationOwner: "planner",
+			},
+			Paths: workspace.PlanArtifactPaths{Required: []string{"a.txt", "b.txt"}},
+			Evidence: []workspace.PlanArtifactEvidence{{
+				Kind: "read_file",
+				Path: "b.txt",
+			}},
+			Edits: []workspace.PlanEdit{{
+				Path:    "a.txt",
+				OldText: "before\n",
+				NewText: "after\n",
+				Purpose: "replace a fixture",
+			}},
+			VerificationObligations: []workspace.PlanArtifactVerificationObligation{{
+				Kind:     "executor_lane_sanity",
+				Owner:    "planner",
+				Status:   "open",
+				Required: true,
+			}},
+		},
+	}
+	bridged := runner.planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req, []workspace.ToolResult{{
+		Tool:    "read_file",
+		Summary: "Read f2 b.txt lines 1-200 (total lines: 1000)",
+		Output:  "b.txt\n" + strings.Repeat("body\n", 10),
+	}})
+
+	for _, evidence := range bridged.PlanArtifact.Evidence {
+		if evidence.Path == "b.txt" {
+			t.Fatalf("model-supplied source_satisfied evidence must be replaced by harness-observed anchor-ready evidence, got %#v", bridged.PlanArtifact.Evidence)
+		}
+	}
+}
+
+func TestPlanExecuteSubmitPlanSourceSatisfiedBridgeRejectsSnippetOnlyEvidence(t *testing.T) {
+	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+		RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+			{Path: "b.txt", Content: "already final"},
+		},
+	}}
+	req := workspace.ToolRequest{
+		Tool:                 "submit_plan",
+		Rationale:            "Update a.txt; b.txt already contains the requested final state.",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		Edits: []workspace.PlanEdit{{
+			Path:    "a.txt",
+			OldText: "before\n",
+			NewText: "after\n",
+			Purpose: "replace a fixture",
+		}},
+	}
+	bridged := runner.planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req, nil)
+
+	if bridged.PlanArtifact == nil {
+		t.Fatalf("expected legacy submit_plan to be normalized into an artifact")
+	}
+	for _, evidence := range bridged.PlanArtifact.Evidence {
+		if evidence.Path == "b.txt" {
+			t.Fatalf("required_edit_snippet must not be durable source_satisfied proof without observed source evidence: %#v", bridged.PlanArtifact.Evidence)
+		}
 	}
 }
 

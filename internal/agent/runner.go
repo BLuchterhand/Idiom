@@ -363,26 +363,29 @@ func (r *Runner) Run(
 		if !opts.ForceNativeTools &&
 			r.planThenExecutePlannerPhase() &&
 			len(opts.Tools) == 0 {
-			state := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
-			if state.Mode == PlanExecutePlanningModeAnchorRefresh {
-				currentAllowedTools = append(currentAllowedTools[:0], planThenExecuteAnchorRefreshToolNames()...)
-			} else if state.Mode == PlanExecutePlanningModeHistoryPending {
-				currentAllowedTools = append(currentAllowedTools[:0], planExecuteHistoryPendingToolNames()...)
-			} else if state.Mode == PlanExecutePlanningModeSubmitReady ||
-				state.Mode == PlanExecutePlanningModeSubmitCorrection ||
-				planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, collectedResults) {
+			surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+			switch surface.Kind {
+			case PlanExecuteRecoverySurfaceAnchorRefresh:
+				currentAllowedTools = append(currentAllowedTools[:0], surface.State.CallableTools...)
+			case PlanExecuteRecoverySurfaceHistoryPending:
+				currentAllowedTools = append(currentAllowedTools[:0], surface.State.CallableTools...)
+			case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
 				currentAllowedTools = append(currentAllowedTools[:0], "submit_plan")
 			}
 			setCurrentAllowedTools(currentAllowedTools)
 		}
 	}
 	refreshPlanThenExecuteTerminalSurface := func(reason string) {
-		state := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
-		if state.Mode == PlanExecutePlanningModeAnchorRefresh {
+		surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+		switch surface.Kind {
+		case PlanExecuteRecoverySurfaceAnchorRefresh:
 			r.refreshPlanThenExecuteAnchorRefreshSurface(&turnMessages, collectedResults, reason)
 			return
-		}
-		if !planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, collectedResults) {
+		case PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
+			r.refreshPlanThenExecuteTerminalOutcomeSurface(&turnMessages, collectedResults, reason)
+			return
+		case PlanExecuteRecoverySurfaceSubmitReady, PlanExecuteRecoverySurfaceSubmitCorrection:
+		default:
 			r.prunePlanThenExecuteTerminalSurfaceHistory(&turnMessages, reason)
 			return
 		}
@@ -2978,6 +2981,7 @@ func (r *Runner) Run(
 				Content: intercept.Reason,
 			})
 		} else {
+			req = r.planThenExecuteAttachSubmitPlanSourceSatisfiedEvidence(req, collectedResults)
 			switch precheck := r.preflightApplyPatchAgainstChangedPaths(req, collectedResults); precheck.Action {
 			case applyPatchPreflightAllSkipped:
 				result = precheck.Result
@@ -3293,13 +3297,25 @@ func (r *Runner) Run(
 			return finish(answer, nil, "plan_source_satisfied_short_circuit", false)
 		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
+			surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 			prompt := planThenExecuteSourceSatisfiedTerminalRequiredPrompt(r.RuntimeBrief, result)
+			eventRole := "plan_then_execute_source_satisfied_terminal_required"
+			if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh {
+				if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(collectedResults); ok {
+					prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, collectedResults, rejected, rejectedAt)
+				}
+				eventRole = "plan_then_execute_anchor_refresh_required"
+			}
 			refreshPlanThenExecuteTerminalSurface("source_satisfied_terminal_required")
 			turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
 			rebuildTools()
-			opts = forceVisibleActionChatOptions(opts)
+			if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh || surface.Kind == PlanExecuteRecoverySurfaceHistoryPending {
+				opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			} else {
+				opts = planThenExecuteReadyToSubmitChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+			}
 			syncPlanThenExecuteRecoveryAllowedTools()
-			r.emitEvent(RunEvent{Role: "plan_then_execute_source_satisfied_terminal_required", Content: prompt})
+			r.emitEvent(RunEvent{Role: eventRole, Content: prompt})
 			continue
 		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteCandidateSourceReadyResult(result) {
@@ -7705,11 +7721,16 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil {
 		return
 	}
-	if strings.TrimSpace(reason) == "source_satisfied_terminal_required" {
+	surface := DerivePlanExecuteRecoverySurface(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh {
+		r.refreshPlanThenExecuteAnchorRefreshSurface(messages, results, reason)
+		return
+	}
+	if surface.Kind == PlanExecuteRecoverySurfaceSourceSatisfiedTerminal {
 		r.refreshPlanThenExecuteTerminalOutcomeSurface(messages, results, reason)
 		return
 	}
-	if !planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results) {
+	if surface.Kind != PlanExecuteRecoverySurfaceSubmitReady && surface.Kind != PlanExecuteRecoverySurfaceSubmitCorrection {
 		r.prunePlanThenExecuteTerminalSurfaceHistory(messages, reason)
 		return
 	}
@@ -8397,6 +8418,7 @@ func planThenExecuteDropTerminalTextualScaffoldingMessage(message llama.ChatMess
 	return strings.HasPrefix(content, "# Textual Tool Call Protocol") ||
 		strings.HasPrefix(content, "# Terminal Plan-Execute Textual Tool Surface") ||
 		strings.HasPrefix(content, "# Terminal Plan-Execute Native Tool Surface") ||
+		strings.HasPrefix(content, "# Terminal Plan-Execute Outcome Surface") ||
 		strings.HasPrefix(content, planThenExecuteCurrentSubmitPlanSkeletonPrefix) ||
 		strings.HasPrefix(content, "[frontier step instruction]") ||
 		strings.HasPrefix(content, "[frontier runtime brief]") ||
@@ -13193,8 +13215,8 @@ func completionGateRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief w
 		return opts
 	}
 	if planThenExecutePlannerBrief(brief) {
-		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
-		if state.Mode == PlanExecutePlanningModeAnchorRefresh || state.Mode == PlanExecutePlanningModeHistoryPending {
+		surface := DerivePlanExecuteRecoverySurface(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
+		if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh || surface.Kind == PlanExecuteRecoverySurfaceHistoryPending {
 			return planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 		}
 		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
@@ -13489,14 +13511,18 @@ func (r *Runner) planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(modelErr er
 }
 
 func planThenExecuteReadyToSubmitChatOptionsForBackend(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) llama.ChatOptions {
+	surface := DerivePlanExecuteRecoverySurface(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
+	switch surface.Kind {
+	case PlanExecuteRecoverySurfaceAnchorRefresh, PlanExecuteRecoverySurfaceHistoryPending:
+		return planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, brief, results, supportsNativeTools)
+	case PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
+		return planThenExecuteSourceSatisfiedTerminalChatOptions(opts, brief, results)
+	}
 	if planThenExecuteReadyToSubmitNudge(brief, results) == "" {
 		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 	}
 	if len(brief.RequiredEditPaths) == 0 && !planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
 		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
-	}
-	if planThenExecuteSourceSatisfiedTerminalRequiredActive(results) {
-		return planThenExecuteSourceSatisfiedTerminalChatOptions(opts, brief, results)
 	}
 	opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
 	if chatOptionsExposeTool(opts, "submit_plan") {
@@ -13658,8 +13684,8 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 	if planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
 		return planThenExecuteUnscopedEmptySubmitPlanRecoveryChatOptions(opts)
 	}
-	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
-	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
+	surface := DerivePlanExecuteRecoverySurface(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
+	if surface.Kind == PlanExecuteRecoverySurfaceAnchorRefresh {
 		opts = forceVisibleActionChatOptions(opts)
 		refreshTools := planThenExecuteAnchorRefreshToolNames()
 		if chatOptionsExposeAnyTool(opts, refreshTools...) {
@@ -13674,7 +13700,7 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 		opts = planExecuteSetExactMaxTokens(opts, planThenExecuteAnchorRefreshMaxTokens)
 		return opts
 	}
-	if state.Mode == PlanExecutePlanningModeHistoryPending {
+	if surface.Kind == PlanExecuteRecoverySurfaceHistoryPending {
 		opts = forceVisibleActionChatOptions(opts)
 		historyTools := planExecuteHistoryPendingToolNames()
 		if chatOptionsExposeAnyTool(opts, historyTools...) {
@@ -13688,6 +13714,9 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 		}
 		opts = planExecuteSetExactMaxTokens(opts, 1024)
 		return opts
+	}
+	if surface.Kind == PlanExecuteRecoverySurfaceSourceSatisfiedTerminal {
+		return planThenExecuteSourceSatisfiedTerminalChatOptions(opts, brief, results)
 	}
 	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) == 0 {
 		return planThenExecuteCandidateWriteOnlyRecoveryChatOptionsForBackend(opts, brief, results, supportsNativeTools)

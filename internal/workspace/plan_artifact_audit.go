@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"idiom/internal/comprehension"
+	"idiom/internal/plancontract"
 	"idiom/internal/util"
 )
 
@@ -199,6 +200,18 @@ func (a *planArtifactAuditor) checkScopeEvidence() {
 		required[path] = struct{}{}
 	}
 	sourceSatisfied := planArtifactAuditStringSet(a.artifact.Paths.SourceSatisfied)
+	sourceSatisfiedViolations := plancontract.ValidateSourceSatisfiedPathCoverage(plancontract.SourceSatisfiedPathCoverageInput{
+		RequiredPaths:        planArtifactAuditSetStrings(required),
+		SourceSatisfiedPaths: a.artifact.Paths.SourceSatisfied,
+		Evidence:             PlanArtifactSourceSatisfiedEvidenceRefs(a.artifact),
+		ApprovedPaths:        a.artifact.Approval.ApprovedPaths,
+		PendingPaths:         a.artifact.Approval.PendingPaths,
+		RequireEvidence:      true,
+	})
+	validSourceSatisfied := plancontract.SourceSatisfiedCoveragePathSet(a.artifact.Paths.SourceSatisfied, sourceSatisfiedViolations)
+	for _, violation := range sourceSatisfiedViolations {
+		a.addSourceSatisfiedViolation(violation)
+	}
 	editable := planArtifactAuditStringSet(a.artifact.Paths.Editable)
 	for _, path := range a.artifact.Paths.Changed {
 		editable[path] = struct{}{}
@@ -230,16 +243,10 @@ func (a *planArtifactAuditor) checkScopeEvidence() {
 			a.add("error", "scope_path_mismatch", "source-satisfied path targets a forbidden path", []string{path})
 			a.metrics.ScopePathMismatches++
 		}
-		if len(required) > 0 {
-			if _, ok := required[path]; !ok {
-				a.add(enforcedSeverity(a.opts), "scope_path_mismatch", "source-satisfied path is missing from required scope", []string{path})
-				a.metrics.ScopePathMismatches++
-			}
-		}
 	}
 	for path := range required {
 		if !planArtifactAuditContainsString(editPaths, path) {
-			if _, ok := sourceSatisfied[path]; ok {
+			if _, ok := validSourceSatisfied[path]; ok {
 				continue
 			}
 			a.add(enforcedSeverity(a.opts), "scope_path_mismatch", "required scope path has no submitted edit", []string{path})
@@ -274,6 +281,20 @@ func (a *planArtifactAuditor) checkScopeEvidence() {
 		}
 		a.add("warning", "evidence_scope_mismatch", "plan evidence path is outside packet and edit scope", []string{evidence.Path})
 		a.metrics.EvidenceMismatches++
+	}
+}
+
+func (a *planArtifactAuditor) addSourceSatisfiedViolation(violation plancontract.SourceSatisfiedPathViolation) {
+	switch violation.Code {
+	case "missing_current_state_evidence":
+		a.add("error", "source_satisfied_evidence_mismatch", violation.Reason, []string{violation.Path})
+		a.metrics.EvidenceMismatches++
+	case "pending_approval", "outside_approved_scope":
+		a.add("error", "approval_scope_mismatch", violation.Reason, []string{violation.Path})
+		a.metrics.ApprovalScopeMismatches++
+	default:
+		a.add("error", "scope_path_mismatch", violation.Reason, []string{violation.Path})
+		a.metrics.ScopePathMismatches++
 	}
 }
 
@@ -544,6 +565,15 @@ func planArtifactAuditStringSet(values []string) map[string]struct{} {
 			out[value] = struct{}{}
 		}
 	}
+	return out
+}
+
+func planArtifactAuditSetStrings(values map[string]struct{}) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	slices.Sort(out)
 	return out
 }
 
