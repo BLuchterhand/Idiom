@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/productworkflow"
 )
 
 func TestRunFeaturePlannerMainReadsPromptFileAndHonorsJSON(t *testing.T) {
@@ -377,6 +378,128 @@ func TestDefaultHeadlessFeaturePlannerRequiresExplicitProductContext(t *testing.
 	}
 }
 
+func TestDefaultHeadlessFeaturePlannerResumeUsesSavedProductContext(t *testing.T) {
+	root := t.TempDir()
+	effortRoot := filepath.Join(root, "effort")
+	writeFeaturePlannerResumeEffort(t, effortRoot, "resume-effort")
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	originalPlanExecute := runFeaturePlannerPlanExecute
+	t.Cleanup(func() {
+		runFeaturePlannerModelTurn = originalModelTurn
+		runFeaturePlannerPlanExecute = originalPlanExecute
+	})
+
+	modelCalls := 0
+	var resumedPrompt string
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, prompt string, taskFamily string, _ io.Writer) (string, error) {
+		if taskFamily != "feature_planner_planner" {
+			t.Fatalf("unexpected task family %q", taskFamily)
+		}
+		modelCalls++
+		if modelCalls == 1 {
+			if !strings.Contains(prompt, "Product Workflow Context") || !strings.Contains(prompt, "resume-effort") {
+				t.Fatalf("initial product run missing product context:\n%s", prompt)
+			}
+			return featurePlannerResumeProductPlanJSON("resume-effort"), nil
+		}
+		resumedPrompt = prompt
+		return "<<QUESTION>>: resume prompt inspected", nil
+	}
+	runFeaturePlannerPlanExecute = func(_ context.Context, _ featurePlannerRequest, _ string, _ io.Writer) (string, error) {
+		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","completion_source":"test"}`, nil
+	}
+
+	_, err := defaultHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
+		Config:                config.Config{Workspace: config.Workspace{Root: root}},
+		Prompt:                "dispatch product atom",
+		SessionID:             "resume-product",
+		EffortRoot:            effortRoot,
+		MaxPlanningIterations: 3,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("initial product run: %v", err)
+	}
+	state, _, err := featureplanner.LoadState(root, "resume-product")
+	if err != nil {
+		t.Fatalf("load state: %v", err)
+	}
+	if state.EffortRoot != effortRoot || state.EffortID != "resume-effort" {
+		t.Fatalf("product identity was not persisted: effort_root=%q effort_id=%q", state.EffortRoot, state.EffortID)
+	}
+
+	_, err = defaultHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
+		Config:                config.Config{Workspace: config.Workspace{Root: root}},
+		Prompt:                "retry product atom",
+		Resume:                "resume-product",
+		MaxPlanningIterations: 3,
+	}, io.Discard)
+	if err != nil {
+		t.Fatalf("resume product run: %v", err)
+	}
+	if !strings.Contains(resumedPrompt, "Product Workflow Context") || !strings.Contains(resumedPrompt, "resume-effort") {
+		t.Fatalf("resumed run should reload saved product workflow context, got:\n%s", resumedPrompt)
+	}
+}
+
+func TestDefaultHeadlessFeaturePlannerResumeFailsClosedWithMissingSavedProductContext(t *testing.T) {
+	root := t.TempDir()
+	state := featureplanner.NewState("resume-product", "original product atom", "", 3, time.Unix(1, 0).UTC())
+	state.EffortID = "quality-contributor-breakdown"
+	state.EffortRoot = filepath.Join(root, "missing-effort")
+	if _, err := featureplanner.SaveState(root, &state); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+		t.Fatal("resumed product workflow state must not fall back to standalone planning when saved effort context cannot load")
+		return "", nil
+	}
+
+	_, err := defaultHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
+		Config:                config.Config{Workspace: config.Workspace{Root: root}},
+		Prompt:                "retry the atom",
+		Resume:                "resume-product",
+		MaxPlanningIterations: 3,
+	}, io.Discard)
+
+	if err == nil || !strings.Contains(err.Error(), "product workflow context unavailable") {
+		t.Fatalf("expected saved product context error, got %v", err)
+	}
+}
+
+func TestDefaultHeadlessFeaturePlannerResumeRejectsMismatchedProductContext(t *testing.T) {
+	root := t.TempDir()
+	effortRoot := filepath.Join(root, "effort")
+	writeFeaturePlannerResumeEffort(t, effortRoot, "loaded-effort")
+	state := featureplanner.NewState("resume-mismatch", "original product atom", "", 3, time.Unix(1, 0).UTC())
+	state.EffortID = "saved-effort"
+	state.EffortRoot = effortRoot
+	if _, err := featureplanner.SaveState(root, &state); err != nil {
+		t.Fatalf("save state: %v", err)
+	}
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	t.Cleanup(func() { runFeaturePlannerModelTurn = originalModelTurn })
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+		t.Fatal("mismatched product context must fail before planner model call")
+		return "", nil
+	}
+
+	_, err := defaultHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
+		Config:                config.Config{Workspace: config.Workspace{Root: root}},
+		Prompt:                "retry product atom",
+		Resume:                "resume-mismatch",
+		MaxPlanningIterations: 3,
+	}, io.Discard)
+
+	if err == nil || !strings.Contains(err.Error(), "product workflow context mismatch") {
+		t.Fatalf("expected product context mismatch, got %v", err)
+	}
+}
+
 func testContainsString(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -520,6 +643,250 @@ func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
 	if strings.Contains(prompt, "docs/path.md") {
 		t.Error("prompt must not contain the hallucination template docs/path.md")
 	}
+}
+
+func writeFeaturePlannerResumeEffort(t *testing.T, root string, effortID string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(root, "adrs"), 0o755); err != nil {
+		t.Fatalf("mkdir adrs: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "evidence"), 0o755); err != nil {
+		t.Fatalf("mkdir evidence: %v", err)
+	}
+	writeFeaturePlannerJSON(t, filepath.Join(root, "workflow_state.json"), productworkflow.WorkflowState{
+		SchemaVersion:    "idiom.product_workflow_state.v1",
+		EffortID:         effortID,
+		TaskID:           "resume-task",
+		Title:            "Resume product context",
+		StatusBucket:     "started",
+		CurrentPhase:     "phase-test",
+		CurrentState:     "planning",
+		ArtifactPaths:    map[string]string{"events": "events.jsonl"},
+		Coverage:         productworkflow.CoverageState{CoverageTier: "unit"},
+		Privacy:          productworkflow.PrivacyState{RedactionStatus: "applied"},
+		FolderPath:       root,
+		NextValidActions: []string{"feature-planner"},
+		DurabilityLevel:  "source_controlled",
+		Context: productworkflow.WorkflowContext{
+			ContextPackID:   "pack-resume-context",
+			FreshnessState:  "current",
+			ReferencedPaths: []string{"internal/cmd/featureplanner/feature_planner.go"},
+			RefreshPolicy:   "on_demand",
+		},
+	})
+	prd := productworkflow.PRDDocument{
+		FrontMatter: productworkflow.PRDFrontMatter{
+			SchemaVersion:     "idiom.prd.v1",
+			PRDID:             "PRD-RESUME",
+			Status:            "accepted",
+			TaskID:            "resume-task",
+			CreatedAt:         "2026-06-07T00:00:00Z",
+			AcceptedAt:        "2026-06-07T00:01:00Z",
+			AcceptedBy:        "test",
+			AcceptanceProfile: "human-review",
+		},
+		Requirements: []productworkflow.PRDRequirement{{
+			ID:             "REQ-RESUME",
+			Priority:       "must",
+			Statement:      "Resume product workflow context for feature-planner atoms",
+			EvidenceRefs:   []string{"EV-RESUME"},
+			TDDObligations: []string{"TDD-RESUME"},
+			OwnerAlignment: "operator-approved",
+			Testability:    "go test ./internal/cmd/featureplanner",
+			Metric:         "resumed planner prompt contains product context",
+		}},
+	}
+	if err := os.WriteFile(filepath.Join(root, "prd.md"), []byte(productworkflow.RenderPRDMarkdown(prd)), 0o644); err != nil {
+		t.Fatalf("write prd.md: %v", err)
+	}
+	writeFeaturePlannerJSON(t, filepath.Join(root, "tdd.json"), productworkflow.TDDLedger{
+		SchemaVersion: "idiom.tdd_ledger.v1",
+		EffortID:      effortID,
+		TaskID:        "resume-task",
+		CoverageTier:  "unit",
+		Coverage:      productworkflow.TDDCoverage{MutationMinScore: 1},
+		Obligations: []productworkflow.TDDObligation{{
+			ID:             "TDD-RESUME",
+			Type:           "regression",
+			Behavior:       "Feature-planner resume carries saved product context",
+			Owner:          "internal/cmd/featureplanner/feature_planner_test.go",
+			Command:        "go test ./internal/cmd/featureplanner",
+			RequiredBefore: "implementation",
+			Status:         "planned",
+		}},
+	})
+	writeFeaturePlannerJSON(t, filepath.Join(root, "adrs", "index.json"), productworkflow.ADRIndex{
+		SchemaVersion: "idiom.adr_index.v1",
+		EffortID:      effortID,
+		ADRs: []productworkflow.ADRIndexEntry{{
+			ADRID:        "ADR-RESUME",
+			Title:        "Resume product context",
+			Status:       "accepted",
+			Path:         "ADR-RESUME.md",
+			CoverageTier: "unit",
+			PRDRefs:      []string{"REQ-RESUME"},
+		}},
+	})
+	adr := productworkflow.ADRDocument{
+		FrontMatter: productworkflow.ADRFrontMatter{
+			SchemaVersion:     "idiom.adr.v1",
+			ADRID:             "ADR-RESUME",
+			Status:            "accepted",
+			PRDRefs:           []string{"REQ-RESUME"},
+			EvidenceRefs:      []string{"EV-RESUME"},
+			TDDObligations:    []string{"TDD-RESUME"},
+			CoverageTier:      "unit",
+			AcceptedAt:        "2026-06-07T00:02:00Z",
+			AcceptedBy:        "test",
+			AcceptanceProfile: "human-review",
+		},
+		BodyMarkdown: strings.Join([]string{
+			"## Context",
+			"Resumed product workflow atoms need durable context.",
+			"## Decision",
+			"Use saved effort_root when resuming feature-planner state.",
+			"## Alternatives Considered",
+			"Fall back to standalone planning.",
+			"## Evidence",
+			"EV-RESUME",
+			"## Consequences",
+			"Resumed atoms keep product scope authority.",
+			"## Compatibility and Migration",
+			"Existing standalone runs remain standalone.",
+			"## TDD Obligations",
+			"TDD-RESUME",
+			"## Rollback",
+			"Restore explicit-only effort root handling.",
+			"## Open Questions",
+			"None.",
+		}, "\n\n"),
+	}
+	if err := os.WriteFile(filepath.Join(root, "adrs", "ADR-RESUME.md"), []byte(productworkflow.RenderADRMarkdown(adr)), 0o644); err != nil {
+		t.Fatalf("write adr: %v", err)
+	}
+	writeFeaturePlannerJSON(t, filepath.Join(root, "evidence", "traceability_matrix.json"), productworkflow.TraceabilityMatrix{
+		SchemaVersion: "idiom.traceability_matrix.v1",
+		EffortID:      effortID,
+		TaskID:        "resume-task",
+		CreatedAt:     "2026-06-07T00:03:00Z",
+		Matrix: []productworkflow.TraceabilityRow{{
+			EvidenceCard:   "EV-RESUME",
+			PRDRequirement: "REQ-RESUME",
+			ADR:            "ADR-RESUME",
+			TDDObligation:  "TDD-RESUME",
+			Brief:          "briefs/resume.md",
+			Report:         "reports/resume.json",
+		}},
+	})
+	ledger := []productworkflow.ImplementationLedgerRecord{
+		{
+			RecordType:           "atom_planned",
+			TaskID:               "resume-task",
+			EffortID:             effortID,
+			Timestamp:            "2026-06-07T00:04:00Z",
+			ComplexityTier:       "C1",
+			Scope:                &productworkflow.AtomScope{ExpectedFiles: []string{"internal/cmd/featureplanner/feature_planner.go"}},
+			RequiredVerification: []string{"go test ./internal/cmd/featureplanner"},
+		},
+		{
+			RecordType:              "verification_completed",
+			TaskID:                  "resume-task",
+			EffortID:                effortID,
+			Timestamp:               "2026-06-07T00:05:00Z",
+			TDDObligationsSatisfied: []string{"TDD-RESUME"},
+			VerificationStatus:      "pass",
+			VerificationCommandsRun: []string{"go test ./internal/cmd/featureplanner"},
+		},
+	}
+	var ledgerLines []byte
+	for _, record := range ledger {
+		data, err := json.Marshal(record)
+		if err != nil {
+			t.Fatalf("marshal ledger: %v", err)
+		}
+		ledgerLines = append(ledgerLines, data...)
+		ledgerLines = append(ledgerLines, '\n')
+	}
+	if err := os.WriteFile(filepath.Join(root, "implementation_ledger.jsonl"), ledgerLines, 0o644); err != nil {
+		t.Fatalf("write implementation ledger: %v", err)
+	}
+}
+
+func writeFeaturePlannerJSON(t *testing.T, path string, value any) {
+	t.Helper()
+	data, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		t.Fatalf("marshal %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+func featurePlannerResumeProductPlanJSON(effortID string) string {
+	return fmt.Sprintf(`{
+  "tool": "submit_feature_plan",
+  "schema_version": "idiom.feature_plan.v2",
+  "feature_id": %q,
+  "source_task": {"kind": "test", "summary": "Persist and reload product context on feature-planner resume"},
+  "summary": "Persist and reload product context on feature-planner resume",
+  "top_level_scope": {
+    "objective": "Keep product workflow context authoritative across feature-planner resume",
+    "success_criteria": ["resumed planner prompt contains product workflow context"]
+  },
+  "sdd_contract": {
+    "acceptance": ["product context is preserved across resume"],
+    "prd_requirement_refs": ["REQ-RESUME"],
+    "adr_refs": ["ADR-RESUME"]
+  },
+  "tdd_contract": {
+    "coverage_tier": "unit",
+    "required_before_implementation": true,
+    "obligations": [
+      {
+        "id": "TDD-RESUME",
+        "behavior": "Feature-planner resume carries saved product context",
+        "command": "go test ./internal/cmd/featureplanner",
+        "required_before": "implementation"
+      }
+    ]
+  },
+  "atoms": [
+    {
+      "schema_version": "idiom.feature_atom.v1",
+      "feature_id": %q,
+      "id": "atom-resume-context",
+      "title": "Resume Product Context",
+      "summary": "Prove feature-planner persists and reloads product workflow context",
+      "required_edit_paths": [
+        "internal/cmd/featureplanner/feature_planner.go",
+        "internal/cmd/featureplanner/feature_planner_test.go"
+      ],
+      "sdd_refs": ["REQ-RESUME", "ADR-RESUME"],
+      "tdd_obligations": ["TDD-RESUME"],
+      "required_tests": ["go test ./internal/cmd/featureplanner"],
+      "test_first": {
+        "obligation_refs": ["TDD-RESUME"],
+        "commands": ["go test ./internal/cmd/featureplanner"],
+        "baseline_required": true,
+        "test_artifact_paths": ["internal/cmd/featureplanner/feature_planner_test.go"],
+        "pre_execution_event_ids": ["evt-resume-context"],
+        "expected_pre_execution_result": "red-confirmed",
+        "coverage_gate_event_id": "evt-resume-context"
+      },
+      "planned_tdd_snapshot": {
+        "snapshot_id": "snap-resume-context",
+        "snapshot_digest": "sha256:resume-context",
+        "obligation_ids": ["TDD-RESUME"],
+        "test_commands": ["go test ./internal/cmd/featureplanner"],
+        "test_artifact_paths": ["internal/cmd/featureplanner/feature_planner_test.go"],
+        "expected_pre_execution_results": ["red-confirmed"],
+        "created_before_dispatch_event_id": "evt-resume-context"
+      },
+      "prompt": "Keep the product workflow context authoritative across resume."
+    }
+  ]
+}`, effortID, effortID)
 }
 
 func TestFeaturePlanner_ProductWorkflowIntegration_CoverageGateBlocked(t *testing.T) {

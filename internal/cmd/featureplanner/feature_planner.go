@@ -173,16 +173,17 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	if strings.TrimSpace(req.Resume) != "" && hasOpenFeaturePlannerQuestion(state) {
 		resumeAnswer = req.Prompt
 	}
-	effortRoot := ""
-	if strings.TrimSpace(req.EffortRoot) != "" {
-		effortRoot = req.EffortRoot
-	}
+	effortRoot := featurePlannerEffortRoot(req, state)
 	pwBrief, briefErr := loadProductWorkflowBrief(effortRoot)
 	if briefErr != nil {
-		if strings.TrimSpace(req.EffortRoot) != "" {
-			return featurePlannerResult{}, fmt.Errorf("feature-planner product workflow context unavailable: %w", briefErr)
+		return featurePlannerResult{}, fmt.Errorf("feature-planner product workflow context unavailable: %w", briefErr)
+	}
+	if pwBrief != nil {
+		if err := validateFeaturePlannerProductContext(req, state, *pwBrief); err != nil {
+			return featurePlannerResult{}, err
 		}
-		fmt.Fprintf(stdout, "feature-planner: product workflow context unavailable: %v\n", briefErr)
+		state.EffortRoot = strings.TrimSpace(effortRoot)
+		state.EffortID = firstNonEmpty(strings.TrimSpace(req.EffortID), strings.TrimSpace(pwBrief.EffortID), strings.TrimSpace(state.EffortID))
 	}
 
 	result, err := featureplanner.Run(state, featureplanner.RunOptions{
@@ -231,6 +232,37 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 	}
 	answer := featurePlannerAnswer(result.State, statePath)
 	return featurePlannerResult{Answer: answer, Fields: fields}, nil
+}
+
+func featurePlannerEffortRoot(req featurePlannerRequest, state featureplanner.FeatureState) string {
+	if effortRoot := strings.TrimSpace(req.EffortRoot); effortRoot != "" {
+		return effortRoot
+	}
+	return strings.TrimSpace(state.EffortRoot)
+}
+
+func validateFeaturePlannerProductContext(req featurePlannerRequest, state featureplanner.FeatureState, brief featureplanner.ProductWorkflowBrief) error {
+	briefEffortID := strings.TrimSpace(brief.EffortID)
+	if requestedEffortID := strings.TrimSpace(req.EffortID); requestedEffortID != "" && briefEffortID != "" && requestedEffortID != briefEffortID {
+		return fmt.Errorf("feature-planner product workflow context mismatch: requested effort_id %q but effort root loaded %q", requestedEffortID, briefEffortID)
+	}
+	if strings.TrimSpace(req.Resume) == "" {
+		return nil
+	}
+	stateEffortID := strings.TrimSpace(state.EffortID)
+	if stateEffortID != "" && briefEffortID != "" && stateEffortID != briefEffortID {
+		return fmt.Errorf("feature-planner product workflow context mismatch: resumed state effort_id %q but effort root loaded %q", stateEffortID, briefEffortID)
+	}
+	return nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, taskFamily string, stdout io.Writer) (string, error) {
