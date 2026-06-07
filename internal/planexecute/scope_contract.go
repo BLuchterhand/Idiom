@@ -40,6 +40,9 @@ func planExecuteHostWriteAllowedPaths(opts Options) []string {
 	if len(scope.WriteAllowedPaths) > 0 {
 		return plancontract.UniqueScopePaths(scope.WriteAllowedPaths)
 	}
+	if len(opts.WriteAllowedPaths) > 0 {
+		return plancontract.UniqueScopePaths([]string(opts.WriteAllowedPaths))
+	}
 	var paths []string
 	if len(scope.RequiredCoveragePaths) > 0 || len(scope.AllowedCandidatePaths) > 0 {
 		paths = append(paths, scope.RequiredCoveragePaths...)

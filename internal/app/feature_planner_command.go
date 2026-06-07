@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"idiom/internal/featureplanner"
+	"idiom/internal/featureplannerruntime"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
@@ -187,18 +188,7 @@ func (m *Model) sendFeaturePlannerCommandAsync(objective string) {
 }
 
 func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, taskFamily string) (string, error) {
-	m.logMessage("feature_planner_prompt", prompt)
-	opts := m.chatOptions()
-	thinking := false
-	opts.EnableThinking = &thinking
-	opts.ResponseFormatJSON = workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily)
-	opts.MaxTokens = 16384
-	answer, err := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
-	if err != nil {
-		return "", err
-	}
-	m.logMessage("feature_planner_model", answer)
-	return answer, nil
+	return featureplannerruntime.CompleteModelTurn(ctx, m.client, prompt, m.chatOptions(), taskFamily, m.logMessage)
 }
 
 func (m *Model) runFeaturePlannerAtomPlanExecute(ctx context.Context, prompt string) (string, error) {
@@ -238,7 +228,6 @@ func featurePlannerProductWriteEnvelope(brief *featureplanner.ProductWorkflowBri
 	}
 	var paths []string
 	paths = appendUniqueBriefStrings(paths, brief.FilesToModify...)
-	paths = appendUniqueBriefStrings(paths, brief.ContextEvidencePaths...)
 	paths = appendUniqueBriefStrings(paths, brief.AuthorizedNewPackageRoots...)
 	return paths
 }
@@ -471,34 +460,5 @@ func featurePlannerTUITerminalRole(status string) string {
 }
 
 func formatFeaturePlannerTUIAnswer(state featureplanner.FeatureState, statePath string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "feature-planner: %s\n", state.Status)
-	if statePath != "" {
-		fmt.Fprintf(&b, "state: %s\n", statePath)
-	}
-	if len(state.Atoms) > 0 {
-		fmt.Fprintf(&b, "atoms: %d\n", len(state.Atoms))
-		var atomIDs []string
-		for _, atom := range state.Atoms {
-			atomIDs = append(atomIDs, atom.ID)
-		}
-		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
-	}
-	if sddRefs := featureplanner.SDDRefsForSummary(state.Plan); len(sddRefs) > 0 {
-		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(sddRefs, ", "))
-	}
-	if len(state.Plan.TDDContract.Obligations) > 0 {
-		var tddIDs []string
-		for _, obligation := range state.Plan.TDDContract.Obligations {
-			tddIDs = append(tddIDs, obligation.ID)
-		}
-		fmt.Fprintf(&b, "tdd_obligations: %s\n", strings.Join(tddIDs, ", "))
-	}
-	if len(state.Blockers) > 0 {
-		fmt.Fprintf(&b, "blockers: %s\n", strings.Join(state.Blockers, "; "))
-	}
-	if len(state.DerivedNextValidActions) > 0 {
-		fmt.Fprintf(&b, "next: %s\n", strings.Join(state.DerivedNextValidActions, ", "))
-	}
-	return strings.TrimSpace(b.String())
+	return featureplanner.FormatStateSummary(state, statePath)
 }

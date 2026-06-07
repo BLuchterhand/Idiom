@@ -43,6 +43,7 @@ type planExecuteCompletionRecord struct {
 	Phase         string   `json:"phase"`
 	Status        string   `json:"status"`
 	ReviewStatus  string   `json:"review_status"`
+	Outcome       string   `json:"outcome"`
 	ReviewSkipped bool     `json:"review_repair_skipped"`
 	FailureKind   string   `json:"failure_kind"`
 	FailureReason string   `json:"failure_reason"`
@@ -62,6 +63,7 @@ type PlanExecuteCompletionSummary struct {
 	Status              string
 	Phase               string
 	ReviewStatus        string
+	Outcome             string
 	FailureKind         string
 	FailureReason       string
 	FailureID           string
@@ -88,6 +90,7 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 		Status:              CompletionFieldString(fields, "status"),
 		Phase:               CompletionFieldString(fields, "phase"),
 		ReviewStatus:        CompletionFieldString(fields, "review_status"),
+		Outcome:             CompletionFieldString(fields, "outcome"),
 		FailureKind:         CompletionFieldString(fields, "failure_kind"),
 		FailureReason:       CompletionFieldString(fields, "failure_reason"),
 		FailureID:           CompletionFieldString(fields, "failure_id"),
@@ -155,6 +158,7 @@ func OverlayPlanExecuteCompletionFields(fields map[string]any, candidateFields m
 		"status",
 		"phase",
 		"review_status",
+		"outcome",
 		"failure_kind",
 		"failure_reason",
 		"failure_id",
@@ -196,6 +200,9 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 	if summary.ReviewStatus != "" {
 		fields["review_status"] = summary.ReviewStatus
 	}
+	if summary.Outcome != "" {
+		fields["outcome"] = summary.Outcome
+	}
 	if summary.FailureKind != "" {
 		fields["failure_kind"] = summary.FailureKind
 	}
@@ -232,6 +239,7 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 		Status:              record.Status,
 		Phase:               record.Phase,
 		ReviewStatus:        record.ReviewStatus,
+		Outcome:             record.Outcome,
 		ReviewRepairSkipped: record.ReviewSkipped,
 		FailureKind:         FirstNonEmptyString(record.FailureKind, record.ReasonClass),
 		FailureReason:       record.FailureReason,
@@ -252,6 +260,10 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 		summary.ReviewStatus = FirstNonEmptyString(record.ReviewStatus, record.Status, "degraded")
 		summary.FailureKind = FirstNonEmptyString(record.FailureKind, record.ReasonClass, "review_repair_degraded")
 	}
+	if record.Type == "idiom.plan_execute.source_satisfied" || record.Type == "idiom.plan_execute.auto_exact_plan_source_satisfied" {
+		summary.Status = "source-satisfied"
+		summary.Outcome = "source_satisfied"
+	}
 	if planExecuteCompletionModelError(record.StopReason, record.Content) {
 		summary.Status = FirstNonEmptyString(summary.Status, "failed")
 		summary.FailureKind = FirstNonEmptyString(summary.FailureKind, "model_error")
@@ -267,8 +279,12 @@ func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSu
 	summary.Status = strings.TrimSpace(summary.Status)
 	summary.Phase = strings.TrimSpace(summary.Phase)
 	summary.ReviewStatus = strings.TrimSpace(summary.ReviewStatus)
+	summary.Outcome = strings.TrimSpace(summary.Outcome)
 	summary.FailureKind = strings.TrimSpace(summary.FailureKind)
 	summary.FailureReason = strings.TrimSpace(summary.FailureReason)
+	if strings.EqualFold(summary.Outcome, "source_satisfied") && summary.FailureKind == "" && summary.FailureReason == "" {
+		summary.Status = "source-satisfied"
+	}
 	summary.FailureID = strings.TrimSpace(summary.FailureID)
 	summary.RecordPath = strings.TrimSpace(summary.RecordPath)
 	summary.PacketPath = strings.TrimSpace(summary.PacketPath)
@@ -287,6 +303,9 @@ func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecu
 	}
 	if summary.ReviewStatus == "" {
 		summary.ReviewStatus = other.ReviewStatus
+	}
+	if summary.Outcome == "" {
+		summary.Outcome = other.Outcome
 	}
 	if summary.hasFailureOutcome() {
 		if summary.FailureKind == "" {
@@ -334,6 +353,7 @@ func (summary PlanExecuteCompletionSummary) hasConcreteCompletionState() bool {
 		summary.Status != "" ||
 		summary.Phase != "" ||
 		summary.ReviewStatus != "" ||
+		summary.Outcome != "" ||
 		summary.FailureKind != "" ||
 		summary.FailureReason != "" ||
 		summary.FailureID != "" ||
@@ -446,7 +466,7 @@ func PlanExecuteCompletionTerminalDecision(fields map[string]any) PlanExecuteCom
 		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: "nested plan-execute skipped review is not explicitly marked by design"}
 	}
 	switch status {
-	case "completed", "success", "succeeded", "degraded", "skipped":
+	case "completed", "success", "succeeded", "degraded", "skipped", "source-satisfied":
 		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalCompleted}
 	default:
 		return PlanExecuteCompletionDecision{Class: PlanExecuteTerminalBlocked, Reason: fmt.Sprintf("ambiguous nested plan-execute status %q", CompletionFieldString(fields, "status"))}

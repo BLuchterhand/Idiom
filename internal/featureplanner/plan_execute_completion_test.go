@@ -23,6 +23,11 @@ func TestPlanExecuteCompletionTerminalClass(t *testing.T) {
 			want:   PlanExecuteTerminalCompleted,
 		},
 		{
+			name:   "source satisfied status",
+			fields: map[string]any{"status": "source-satisfied", "outcome": "source_satisfied"},
+			want:   PlanExecuteTerminalCompleted,
+		},
+		{
 			name:   "failure details override degraded status",
 			fields: map[string]any{"status": "degraded", "failure_kind": "review_model_error"},
 			want:   PlanExecuteTerminalBlocked,
@@ -80,6 +85,22 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 				t.Fatalf("decision = %#v, want class=%q reason=%q", got, tt.wantClass, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestPlanExecuteCompletionFieldsDerivesSourceSatisfiedOutcome(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/source/state.json","phase":"complete","status":"completed"}`,
+		`{"type":"idiom.plan_execute.source_satisfied","source_satisfied_evidence_paths":["pkg/feature.go"],"reason":"planner reported requested final state already present"}`,
+	}, "\n")
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := CompletionFieldString(fields, "status"); got != "source-satisfied" {
+		t.Fatalf("status = %q, want source-satisfied; fields=%+v", got, fields)
+	}
+	if got := CompletionFieldString(fields, "outcome"); got != "source_satisfied" {
+		t.Fatalf("outcome = %q, want source_satisfied; fields=%+v", got, fields)
 	}
 }
 

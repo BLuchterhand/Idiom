@@ -100,6 +100,30 @@ func TestPlanScopeContractWriteEnvelopeIsNotExpandedByPromptScope(t *testing.T) 
 	}
 }
 
+func TestPlanScopeContractWriteAllowedFlagIsNotExpandedByPromptScope(t *testing.T) {
+	opts := Options{
+		WriteAllowedPaths: MultiFlag{"pkg/approved.go"},
+	}
+	prompt := `
+## Files To Modify
+
+- pkg/generated.go
+
+## Allowed Edit Paths
+
+- pkg/generated_ui.go
+`
+	contract := planExecuteScopeContract(opts, prompt)
+	if got, want := contract.WriteAllowedPaths, []string{"pkg/approved.go"}; !slices.Equal(got, want) {
+		t.Fatalf("write envelope = %#v, want %#v", got, want)
+	}
+	for _, want := range []string{"pkg/generated.go", "pkg/generated_ui.go"} {
+		if !slices.Contains(append(append([]string{}, contract.RequiredCoveragePaths...), contract.AllowedCandidatePaths...), want) {
+			t.Fatalf("prompt path %q should remain planning scope/evidence, contract=%#v", want, contract)
+		}
+	}
+}
+
 func TestPlanExecutePathCompatibilityWrappersMatchPlanContract(t *testing.T) {
 	paths := []string{
 		" ./pkg/a.go ",

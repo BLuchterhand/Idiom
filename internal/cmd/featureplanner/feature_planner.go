@@ -17,6 +17,7 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
 	"idiom/internal/featureplannerproduct"
+	"idiom/internal/featureplannerruntime"
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/productworkflow"
@@ -49,6 +50,7 @@ type featurePlannerRequest struct {
 	MaxAtoms              int
 	EffortRoot            string
 	EffortID              string
+	ProductWriteEnvelope  []string
 	Deps                  Dependencies
 }
 
@@ -186,6 +188,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		}
 		state.EffortRoot = strings.TrimSpace(effortRoot)
 		state.EffortID = firstNonEmpty(strings.TrimSpace(req.EffortID), strings.TrimSpace(pwBrief.EffortID), strings.TrimSpace(state.EffortID))
+		req.ProductWriteEnvelope = featurePlannerProductWriteEnvelope(pwBrief)
 		if pwBrief.IsClosedSourceSatisfied() {
 			return closeFeaturePlannerSourceSatisfied(req, state, *pwBrief, stdout)
 		}
@@ -301,68 +304,23 @@ func firstNonEmpty(values ...string) string {
 }
 
 func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, taskFamily string, stdout io.Writer) (string, error) {
-	emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_prompt", prompt, req.SessionID)
 	timeout := time.Duration(req.Config.Chat.RequestTimeoutSeconds) * time.Second
 	if timeout <= 0 {
 		timeout = 120 * time.Second
 	}
 	client := llama.NewClientForServer(req.Config.LlamaServer, timeout)
-	thinking := false
 	opts := llama.ChatOptions{
-		Model:              req.Config.LlamaServer.Model,
-		Temperature:        req.Config.Chat.Temperature,
-		TopP:               req.Config.Chat.TopP,
-		TopK:               req.Config.Chat.TopK,
-		MinP:               req.Config.Chat.MinP,
-		PresencePenalty:    req.Config.Chat.PresencePenalty,
-		RepetitionPenalty:  req.Config.Chat.RepetitionPenalty,
-		EnableThinking:     &thinking,
-		MaxTokens:          16384,
-		ResponseFormatJSON: workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily),
+		Model:             req.Config.LlamaServer.Model,
+		Temperature:       req.Config.Chat.Temperature,
+		TopP:              req.Config.Chat.TopP,
+		TopK:              req.Config.Chat.TopK,
+		MinP:              req.Config.Chat.MinP,
+		PresencePenalty:   req.Config.Chat.PresencePenalty,
+		RepetitionPenalty: req.Config.Chat.RepetitionPenalty,
 	}
-	reply, err := client.CompleteChatMessage(context.Background(), []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
-	if err != nil {
-		return "", err
-	}
-	answer := strings.TrimSpace(reply.Content)
-	if answer == "" && workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily) {
-		emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_model_empty", featurePlannerEmptyModelMessage(reply.FinishReason, true), req.SessionID)
-		retryOpts := opts
-		retryOpts.ResponseFormatJSON = false
-		retryPrompt := buildFeaturePlannerEmptyRetryPrompt(prompt, reply.FinishReason)
-		reply, err = client.CompleteChatMessage(context.Background(), []llama.ChatMessage{{Role: "user", Content: retryPrompt}}, retryOpts)
-		if err != nil {
-			return "", err
-		}
-		answer = strings.TrimSpace(reply.Content)
-	}
-	if answer == "" {
-		return "", fmt.Errorf("feature-planner model returned empty content after retry (finish_reason=%q)", strings.TrimSpace(reply.FinishReason))
-	}
-	emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_model", answer, req.SessionID)
-	return answer, nil
-}
-
-func featurePlannerEmptyModelMessage(finishReason string, responseFormatJSON bool) string {
-	fields := map[string]any{
-		"finish_reason":        strings.TrimSpace(finishReason),
-		"response_format_json": responseFormatJSON,
-		"retry":                "same planner contract with response_format_json disabled",
-	}
-	data, _ := json.Marshal(fields)
-	return string(data)
-}
-
-func buildFeaturePlannerEmptyRetryPrompt(originalPrompt string, finishReason string) string {
-	var b strings.Builder
-	b.WriteString("The prior feature-planner response had empty visible content")
-	if reason := strings.TrimSpace(finishReason); reason != "" {
-		b.WriteString(" with finish_reason=")
-		b.WriteString(reason)
-	}
-	b.WriteString(". Retry once. Emit exactly one visible JSON object that satisfies the feature-planner contract. Do not put the JSON only in hidden reasoning.\n\n")
-	b.WriteString(originalPrompt)
-	return b.String()
+	return featureplannerruntime.CompleteModelTurn(context.Background(), client, prompt, opts, taskFamily, func(role string, content string) {
+		emitFeaturePlannerMessage(stdout, req.JSONEvents, role, content, req.SessionID)
+	})
 }
 
 func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerRequest, prompt string, stdout io.Writer) (string, error) {
@@ -389,11 +347,15 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	if req.Deps.RunPlanExecute == nil {
 		return "", fmt.Errorf("plan-execute atom dispatch is unavailable")
 	}
-	code := req.Deps.RunPlanExecute([]string{
+	args := []string{
 		"-config", configPath,
 		"-prompt-file", promptPath,
 		"-json",
-	}, &planStdout, &planStderr)
+	}
+	for _, path := range featurePlannerWriteEnvelopeFlags(req.ProductWriteEnvelope) {
+		args = append(args, "-write-allowed-path", path)
+	}
+	code := req.Deps.RunPlanExecute(args, &planStdout, &planStderr)
 	if req.JSONEvents && stdout != nil {
 		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
 	}
@@ -431,6 +393,40 @@ func encodeHeadlessPlanExecuteCompletion(req featurePlannerRequest, stdout io.Wr
 		return "", err
 	}
 	return string(body), nil
+}
+
+func featurePlannerProductWriteEnvelope(brief *featureplanner.ProductWorkflowBrief) []string {
+	if brief == nil {
+		return nil
+	}
+	var paths []string
+	paths = appendUniqueFeaturePlannerStrings(paths, brief.FilesToModify...)
+	paths = appendUniqueFeaturePlannerStrings(paths, brief.AuthorizedNewPackageRoots...)
+	return paths
+}
+
+func featurePlannerWriteEnvelopeFlags(paths []string) []string {
+	return appendUniqueFeaturePlannerStrings(nil, paths...)
+}
+
+func appendUniqueFeaturePlannerStrings(base []string, values ...string) []string {
+	seen := make(map[string]bool, len(base)+len(values))
+	for _, value := range base {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		seen[trimmed] = true
+	}
+	for _, value := range values {
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" || seen[trimmed] {
+			continue
+		}
+		base = append(base, trimmed)
+		seen[trimmed] = true
+	}
+	return base
 }
 
 func featurePlannerPlanExecuteCompletionEventType(fields map[string]any) string {
@@ -482,62 +478,11 @@ func hasOpenFeaturePlannerQuestion(state featureplanner.FeatureState) bool {
 }
 
 func featurePlannerAnswer(state featureplanner.FeatureState, statePath string) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "feature-planner: %s\n", state.Status)
-	if statePath != "" {
-		fmt.Fprintf(&b, "state: %s\n", statePath)
-	}
-	if len(state.Atoms) > 0 {
-		fmt.Fprintf(&b, "atoms: %d\n", len(state.Atoms))
-		var atomIDs []string
-		for _, atom := range state.Atoms {
-			atomIDs = append(atomIDs, atom.ID)
-		}
-		fmt.Fprintf(&b, "atom_ids: %s\n", strings.Join(atomIDs, ", "))
-	}
-	if sddRefs := featureplanner.SDDRefsForSummary(state.Plan); len(sddRefs) > 0 {
-		fmt.Fprintf(&b, "sdd_refs: %s\n", strings.Join(sddRefs, ", "))
-	}
-	if len(state.Plan.TDDContract.Obligations) > 0 {
-		var tddIDs []string
-		for _, obligation := range state.Plan.TDDContract.Obligations {
-			tddIDs = append(tddIDs, obligation.ID)
-		}
-		fmt.Fprintf(&b, "tdd_obligations: %s\n", strings.Join(tddIDs, ", "))
-	}
-	if len(state.OpenQuestions) > 0 {
-		openCount := countOpenFeaturePlannerQuestions(state)
-		if openCount > 0 {
-			fmt.Fprintf(&b, "open questions: %d\n", openCount)
-		} else {
-			fmt.Fprintf(&b, "answered questions: %d\n", len(state.OpenQuestions))
-		}
-		for _, question := range state.OpenQuestions {
-			if strings.TrimSpace(question.QuestionSummary) != "" {
-				fmt.Fprintf(&b, "question: %s\n", question.QuestionSummary)
-			}
-			if strings.TrimSpace(question.Answer) != "" {
-				fmt.Fprintf(&b, "answer: %s\n", question.Answer)
-			}
-		}
-	}
-	if len(state.Blockers) > 0 {
-		fmt.Fprintf(&b, "blockers: %s\n", strings.Join(state.Blockers, "; "))
-	}
-	if len(state.DerivedNextValidActions) > 0 {
-		fmt.Fprintf(&b, "next: %s\n", strings.Join(state.DerivedNextValidActions, ", "))
-	}
-	return strings.TrimSpace(b.String())
+	return featureplanner.FormatStateSummary(state, statePath)
 }
 
 func countOpenFeaturePlannerQuestions(state featureplanner.FeatureState) int {
-	open := 0
-	for _, question := range state.OpenQuestions {
-		if question.Status == "open" {
-			open++
-		}
-	}
-	return open
+	return featureplanner.CountOpenPlannerQuestions(state)
 }
 
 func parseFeaturePlannerOptions(args []string, stderr io.Writer) (featurePlannerOptions, error) {

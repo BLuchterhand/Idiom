@@ -1140,6 +1140,44 @@ func TestApplyImplementorOutputAcceptsNestedPlanExecuteCompletionStatus(t *testi
 	}
 }
 
+func TestApplyImplementorOutputPreservesPlanExecuteSourceSatisfiedAtomState(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","outcome":"source_satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`)
+
+	if atom.State != AtomStateSourceSatisfied {
+		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	}
+	if state.Status != FeatureStateComplete {
+		t.Fatalf("feature state = %q, want complete", state.Status)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := fmt.Sprint(events[0].Fields["outcome"]); got != "source_satisfied" {
+		t.Fatalf("outcome = %q, want source_satisfied; fields=%+v", got, events[0].Fields)
+	}
+	if got := events[0].AtomTo; got != AtomStateSourceSatisfied {
+		t.Fatalf("event AtomTo = %q, want source-satisfied", got)
+	}
+}
+
+func TestApplyImplementorOutputAcceptsOutcomeOnlySourceSatisfiedCompletion(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","outcome":"source_satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`)
+
+	if atom.State != AtomStateSourceSatisfied {
+		t.Fatalf("atom state = %q, want source-satisfied; blockers=%+v events=%+v", atom.State, atom.Blockers, events)
+	}
+	if len(events) != 1 || events[0].Type != "idiom.feature_planner.atom_source_satisfied" {
+		t.Fatalf("unexpected events: %+v", events)
+	}
+	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "source-satisfied" {
+		t.Fatalf("nested_status = %q, want source-satisfied; fields=%+v", got, events[0].Fields)
+	}
+}
+
 func TestApplyImplementorOutputRejectsPlanExecuteCompletionWithoutNestedStatus(t *testing.T) {
 	state, atom := implementingAtomForCompletionTest(t)
 

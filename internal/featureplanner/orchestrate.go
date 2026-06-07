@@ -539,6 +539,7 @@ type implementorOutputEnvelope struct {
 	Status              string                       `json:"status"`
 	Phase               string                       `json:"phase"`
 	ReviewStatus        string                       `json:"review_status"`
+	Outcome             string                       `json:"outcome"`
 	FailureKind         string                       `json:"failure_kind"`
 	FailureReason       string                       `json:"failure_reason"`
 	FailureID           string                       `json:"failure_id"`
@@ -560,6 +561,7 @@ type nestedPlanExecuteCompletion struct {
 	Status              string `json:"status"`
 	Phase               string `json:"phase"`
 	ReviewStatus        string `json:"review_status"`
+	Outcome             string `json:"outcome"`
 	FailureKind         string `json:"failure_kind"`
 	FailureReason       string `json:"failure_reason"`
 	FailureID           string `json:"failure_id"`
@@ -577,6 +579,7 @@ type planExecuteCompletion struct {
 	Status              string
 	Phase               string
 	ReviewStatus        string
+	Outcome             string
 	FailureKind         string
 	FailureReason       string
 	FailureID           string
@@ -608,6 +611,7 @@ func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteComplet
 			Status:              nested.Status,
 			Phase:               nested.Phase,
 			ReviewStatus:        nested.ReviewStatus,
+			Outcome:             nested.Outcome,
 			FailureKind:         nested.FailureKind,
 			FailureReason:       nested.FailureReason,
 			FailureID:           nested.FailureID,
@@ -631,8 +635,12 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.Status = strings.TrimSpace(completion.Status)
 	completion.Phase = strings.TrimSpace(completion.Phase)
 	completion.ReviewStatus = strings.TrimSpace(completion.ReviewStatus)
+	completion.Outcome = strings.TrimSpace(completion.Outcome)
 	completion.FailureKind = strings.TrimSpace(completion.FailureKind)
 	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
+	if planExecuteCompletionSourceSatisfied(completion) && completion.FailureKind == "" && completion.FailureReason == "" {
+		completion.Status = "source-satisfied"
+	}
 	completion.FailureID = strings.TrimSpace(completion.FailureID)
 	completion.RecordPath = strings.TrimSpace(completion.RecordPath)
 	completion.PacketPath = strings.TrimSpace(completion.PacketPath)
@@ -649,6 +657,7 @@ func planExecuteCompletionSummaryFromEnvelope(envelope implementorOutputEnvelope
 		Status:              envelope.Status,
 		Phase:               envelope.Phase,
 		ReviewStatus:        envelope.ReviewStatus,
+		Outcome:             envelope.Outcome,
 		FailureKind:         envelope.FailureKind,
 		FailureReason:       envelope.FailureReason,
 		FailureID:           envelope.FailureID,
@@ -668,6 +677,7 @@ func (completion planExecuteCompletion) summary() PlanExecuteCompletionSummary {
 		Status:              completion.Status,
 		Phase:               completion.Phase,
 		ReviewStatus:        completion.ReviewStatus,
+		Outcome:             completion.Outcome,
 		FailureKind:         completion.FailureKind,
 		FailureReason:       completion.FailureReason,
 		FailureID:           completion.FailureID,
@@ -687,6 +697,7 @@ func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) plan
 		Status:              summary.Status,
 		Phase:               summary.Phase,
 		ReviewStatus:        summary.ReviewStatus,
+		Outcome:             summary.Outcome,
 		FailureKind:         summary.FailureKind,
 		FailureReason:       summary.FailureReason,
 		FailureID:           summary.FailureID,
@@ -701,6 +712,7 @@ func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) plan
 func planExecuteCompletionIsSuccess(completion planExecuteCompletion) (bool, string) {
 	decision := PlanExecuteCompletionTerminalDecision(map[string]any{
 		"status":                completion.Status,
+		"outcome":               completion.Outcome,
 		"phase":                 completion.Phase,
 		"review_status":         completion.ReviewStatus,
 		"failure_kind":          completion.FailureKind,
@@ -715,7 +727,13 @@ func planExecuteCompletionIsSuccess(completion planExecuteCompletion) (bool, str
 
 func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion) []Event {
 	atomFrom := atom.State
-	atom.State = AtomStateComplete
+	atomTo := AtomStateComplete
+	eventType := "idiom.feature_planner.atom_completed"
+	if planExecuteCompletionSourceSatisfied(completion) {
+		atomTo = AtomStateSourceSatisfied
+		eventType = "idiom.feature_planner.atom_source_satisfied"
+	}
+	atom.State = atomTo
 	atom.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	foldActiveRun(state, atom.ID, atom.LastRunID)
 	state.Continuation.CompletedAtoms = appendUnique(state.Continuation.CompletedAtoms, atom.ID)
@@ -734,6 +752,9 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 	if completion.ReviewStatus != "" {
 		fields["nested_review_status"] = completion.ReviewStatus
 	}
+	if completion.Outcome != "" {
+		fields["outcome"] = completion.Outcome
+	}
 	if completion.ProgressPath != "" {
 		fields["progress_path"] = completion.ProgressPath
 	}
@@ -747,24 +768,29 @@ func completeAtomFromPlanExecute(state *FeatureState, atom *FeatureAtomState, co
 		fields["review_repair_skipped"] = true
 	}
 	return []Event{{
-		Type:       "idiom.feature_planner.atom_completed",
+		Type:       eventType,
 		SessionID:  state.SessionID,
 		FeatureTo:  featureTo,
 		AtomID:     atom.ID,
 		AtomFrom:   atomFrom,
-		AtomTo:     AtomStateComplete,
-		AtomDeltas: []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateComplete}},
+		AtomTo:     atomTo,
+		AtomDeltas: []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: atomTo}},
 		ActiveRunDeltas: []ActiveRunDelta{{
 			Op:            "fold_terminal",
 			AtomID:        atom.ID,
 			LaneSessionID: atom.LastRunID,
 			BeforeState:   "running",
-			AfterState:    AtomStateComplete,
+			AfterState:    atomTo,
 			ResultSource:  "plan-execute",
 			ProgressPath:  completion.ProgressPath,
 		}},
 		Fields: fields,
 	}}
+}
+
+func planExecuteCompletionSourceSatisfied(completion planExecuteCompletion) bool {
+	return strings.EqualFold(strings.TrimSpace(completion.Outcome), "source_satisfied") ||
+		strings.EqualFold(strings.TrimSpace(completion.Status), "source-satisfied")
 }
 
 func rejectPlanExecuteCompletion(state *FeatureState, atom *FeatureAtomState, completion planExecuteCompletion, reason string) []Event {
@@ -828,6 +854,9 @@ func planExecuteCompletionFields(completion planExecuteCompletion) map[string]an
 	}
 	if completion.ReviewStatus != "" {
 		fields["nested_review_status"] = completion.ReviewStatus
+	}
+	if completion.Outcome != "" {
+		fields["outcome"] = completion.Outcome
 	}
 	if completion.FailureKind != "" {
 		fields["nested_failure_kind"] = completion.FailureKind

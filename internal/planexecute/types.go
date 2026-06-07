@@ -56,6 +56,7 @@ type Options struct {
 	MaxTokens                int
 	RequiredEditPaths        MultiFlag
 	AllowedEditPaths         MultiFlag
+	WriteAllowedPaths        MultiFlag
 	EditSetObligations       EditSetObligations
 	ScopeContract            PlanScopeContract
 	PlannerOwnedVerification bool

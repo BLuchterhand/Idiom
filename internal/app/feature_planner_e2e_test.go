@@ -14,11 +14,16 @@ import (
 )
 
 type scriptedLLMClient struct {
-	responses []string
-	callCount int
+	responses     []string
+	finishReasons []string
+	messages      [][]llama.ChatMessage
+	options       []llama.ChatOptions
+	callCount     int
 }
 
-func (c *scriptedLLMClient) CompleteChat(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions) (string, error) {
+func (c *scriptedLLMClient) CompleteChat(_ context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (string, error) {
+	c.messages = append(c.messages, append([]llama.ChatMessage(nil), messages...))
+	c.options = append(c.options, opts)
 	if c.callCount >= len(c.responses) {
 		return c.responses[len(c.responses)-1], nil
 	}
@@ -27,9 +32,14 @@ func (c *scriptedLLMClient) CompleteChat(_ context.Context, _ []llama.ChatMessag
 	return resp, nil
 }
 
-func (c *scriptedLLMClient) CompleteChatMessage(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions) (llama.ChatMessage, error) {
-	resp, _ := c.CompleteChat(context.TODO(), nil, llama.ChatOptions{})
-	return llama.ChatMessage{Role: "assistant", Content: resp}, nil
+func (c *scriptedLLMClient) CompleteChatMessage(_ context.Context, messages []llama.ChatMessage, opts llama.ChatOptions) (llama.ChatMessage, error) {
+	callIndex := c.callCount
+	resp, _ := c.CompleteChat(context.TODO(), messages, opts)
+	finishReason := ""
+	if callIndex < len(c.finishReasons) {
+		finishReason = c.finishReasons[callIndex]
+	}
+	return llama.ChatMessage{Role: "assistant", Content: resp, FinishReason: finishReason}, nil
 }
 
 func (c *scriptedLLMClient) StreamChat(_ context.Context, _ []llama.ChatMessage, _ llama.ChatOptions, _ func(string) error) error {

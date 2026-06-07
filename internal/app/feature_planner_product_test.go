@@ -12,6 +12,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/planexecute"
 	"idiom/internal/productworkflow"
 	"idiom/internal/workspace"
@@ -46,6 +47,63 @@ func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot
 	}
 	if m.lastPlanExecuteRunResult != nil {
 		t.Fatalf("plan-execute should not be dispatched after product context rejection")
+	}
+}
+
+func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
+	client := &scriptedLLMClient{
+		responses:     []string{"", `{"tool":"submit_feature_plan","summary":"ok"}`},
+		finishReasons: []string{"length", "stop"},
+	}
+	m := &Model{client: client}
+
+	answer, err := m.runFeaturePlannerTUITurn(context.Background(), "Plan one feature atom.", string(workerruntime.TaskFamilyFeaturePlannerPlanner))
+	if err != nil {
+		t.Fatalf("runFeaturePlannerTUITurn: %v", err)
+	}
+	if answer != `{"tool":"submit_feature_plan","summary":"ok"}` {
+		t.Fatalf("answer = %q", answer)
+	}
+	if client.callCount != 2 {
+		t.Fatalf("model calls = %d, want 2", client.callCount)
+	}
+	if len(client.options) != 2 || !client.options[0].ResponseFormatJSON || client.options[1].ResponseFormatJSON {
+		t.Fatalf("unexpected response format options: %#v", client.options)
+	}
+	if len(client.messages) != 2 || !strings.Contains(client.messages[1][0].Content, "empty visible content") {
+		t.Fatalf("retry prompt did not explain empty response: %#v", client.messages)
+	}
+}
+
+func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testing.T) {
+	brief := &featureplanner.ProductWorkflowBrief{
+		FilesToModify:             []string{"native/src/core/colony_sim.h"},
+		ContextEvidencePaths:      []string{"docs/product-workflows/efforts/started/native-quality/prd.md"},
+		AuthorizedNewPackageRoots: []string{"native/tests/generated"},
+	}
+
+	got := featurePlannerProductWriteEnvelope(brief)
+	for _, want := range []string{"native/src/core/colony_sim.h", "native/tests/generated"} {
+		if !slices.Contains(got, want) {
+			t.Fatalf("write envelope missing authorized mutation path %q: %#v", want, got)
+		}
+	}
+	if slices.Contains(got, "docs/product-workflows/efforts/started/native-quality/prd.md") {
+		t.Fatalf("context evidence path must not become write authority: %#v", got)
+	}
+}
+
+func TestFeaturePlannerTUIAnswerIncludesOpenQuestionDetails(t *testing.T) {
+	state := featureplanner.NewState("question-session", "need scope", "", 3, time.Unix(1, 0).UTC())
+	state.Status = featureplanner.FeatureStatePlanningQuestion
+	state.OpenQuestions = []featureplanner.PlannerQuestion{{
+		Status:          "open",
+		QuestionSummary: "Which tooltip path owns the row?",
+	}}
+
+	answer := formatFeaturePlannerTUIAnswer(state, ".idiom/feature-planner/question-session/state.json")
+	if !strings.Contains(answer, "open questions: 1") || !strings.Contains(answer, "question: Which tooltip path owns the row?") {
+		t.Fatalf("TUI answer omitted question details:\n%s", answer)
 	}
 }
 
