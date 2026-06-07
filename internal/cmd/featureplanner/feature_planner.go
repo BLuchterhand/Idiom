@@ -308,7 +308,7 @@ func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, ta
 	}
 	client := llama.NewClientForServer(req.Config.LlamaServer, timeout)
 	thinking := false
-	answer, err := client.CompleteChat(context.Background(), []llama.ChatMessage{{Role: "user", Content: prompt}}, llama.ChatOptions{
+	opts := llama.ChatOptions{
 		Model:              req.Config.LlamaServer.Model,
 		Temperature:        req.Config.Chat.Temperature,
 		TopP:               req.Config.Chat.TopP,
@@ -319,12 +319,50 @@ func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, ta
 		EnableThinking:     &thinking,
 		MaxTokens:          16384,
 		ResponseFormatJSON: workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily),
-	})
+	}
+	reply, err := client.CompleteChatMessage(context.Background(), []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
 	if err != nil {
 		return "", err
 	}
+	answer := strings.TrimSpace(reply.Content)
+	if answer == "" && workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily) {
+		emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_model_empty", featurePlannerEmptyModelMessage(reply.FinishReason, true), req.SessionID)
+		retryOpts := opts
+		retryOpts.ResponseFormatJSON = false
+		retryPrompt := buildFeaturePlannerEmptyRetryPrompt(prompt, reply.FinishReason)
+		reply, err = client.CompleteChatMessage(context.Background(), []llama.ChatMessage{{Role: "user", Content: retryPrompt}}, retryOpts)
+		if err != nil {
+			return "", err
+		}
+		answer = strings.TrimSpace(reply.Content)
+	}
+	if answer == "" {
+		return "", fmt.Errorf("feature-planner model returned empty content after retry (finish_reason=%q)", strings.TrimSpace(reply.FinishReason))
+	}
 	emitFeaturePlannerMessage(stdout, req.JSONEvents, "feature_planner_model", answer, req.SessionID)
 	return answer, nil
+}
+
+func featurePlannerEmptyModelMessage(finishReason string, responseFormatJSON bool) string {
+	fields := map[string]any{
+		"finish_reason":        strings.TrimSpace(finishReason),
+		"response_format_json": responseFormatJSON,
+		"retry":                "same planner contract with response_format_json disabled",
+	}
+	data, _ := json.Marshal(fields)
+	return string(data)
+}
+
+func buildFeaturePlannerEmptyRetryPrompt(originalPrompt string, finishReason string) string {
+	var b strings.Builder
+	b.WriteString("The prior feature-planner response had empty visible content")
+	if reason := strings.TrimSpace(finishReason); reason != "" {
+		b.WriteString(" with finish_reason=")
+		b.WriteString(reason)
+	}
+	b.WriteString(". Retry once. Emit exactly one visible JSON object that satisfies the feature-planner contract. Do not put the JSON only in hidden reasoning.\n\n")
+	b.WriteString(originalPrompt)
+	return b.String()
 }
 
 func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerRequest, prompt string, stdout io.Writer) (string, error) {

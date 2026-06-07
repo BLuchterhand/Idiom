@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -98,6 +100,68 @@ func TestParseFeaturePlannerOptionsRejectsPromptConflicts(t *testing.T) {
 	_, err = parseFeaturePlannerOptions(nil, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "provide --prompt") {
 		t.Fatalf("expected missing prompt error, got %v", err)
+	}
+}
+
+func TestDefaultFeaturePlannerModelTurnRetriesEmptyPlannerResponse(t *testing.T) {
+	var requests []map[string]any
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests = append(requests, payload)
+		if len(requests) == 1 {
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}]}`))
+			return
+		}
+		body, _ := json.Marshal(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]any{
+					"role":    "assistant",
+					"content": featurePlannerPlanExecuteDispatchPlanJSON(),
+				},
+				"finish_reason": "stop",
+			}},
+		})
+		_, _ = w.Write(body)
+	}))
+	defer server.Close()
+
+	var stdout bytes.Buffer
+	answer, err := defaultFeaturePlannerModelTurn(featurePlannerRequest{
+		Config: config.Config{
+			LlamaServer: config.LlamaServer{
+				Kind:    config.BackendLlama,
+				BaseURL: server.URL,
+				Model:   "planner-model",
+			},
+			Chat: config.Chat{RequestTimeoutSeconds: 5},
+		},
+		JSONEvents: true,
+		SessionID:  "retry-empty-planner",
+	}, "Plan one feature atom.", string(workerruntime.TaskFamilyFeaturePlannerPlanner), &stdout)
+	if err != nil {
+		t.Fatalf("defaultFeaturePlannerModelTurn: %v", err)
+	}
+	if !strings.Contains(answer, `"tool": "submit_feature_plan"`) {
+		t.Fatalf("expected planner JSON answer, got %s", answer)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("model requests = %d, want 2", len(requests))
+	}
+	if _, ok := requests[0]["response_format"].(map[string]any); !ok {
+		t.Fatalf("first request should use JSON response format: %#v", requests[0])
+	}
+	if _, ok := requests[1]["response_format"]; ok {
+		t.Fatalf("retry request should disable backend JSON response format: %#v", requests[1])
+	}
+	if log := stdout.String(); !strings.Contains(log, `"role":"feature_planner_model_empty"`) ||
+		!strings.Contains(log, `"role":"feature_planner_model"`) {
+		t.Fatalf("expected empty-response diagnostic and final model event, got %s", log)
 	}
 }
 
