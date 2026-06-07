@@ -1449,8 +1449,8 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 		StartLine: 1,
 		EndLine:   120,
 	}, brief, outlineOnlyMissingPathResults)
-	if reject {
-		t.Fatal("one bounded read_file on a missing required plan path with only outline evidence should be allowed")
+	if !reject {
+		t.Fatal("bounded read_file on a missing required coverage path with only outline evidence should be rejected; correction must use submit_plan")
 	}
 	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
 		Tool:    "code_navigate",
@@ -1684,7 +1684,7 @@ func TestPlanThenExecutePostReadinessRecoverySkipsMissingPlanPathRefreshWithSour
 	}
 }
 
-func TestPlanThenExecutePostReadinessRecoveryAllowsOutlineOnlyMissingPlanPathRefresh(t *testing.T) {
+func TestPlanThenExecutePostReadinessRecoveryRequiresSubmitForOutlineOnlyMissingCoverage(t *testing.T) {
 	thinkingOn := true
 	opts := planThenExecutePostReadinessRecoveryChatOptions(llama.ChatOptions{
 		EnableThinking:   &thinkingOn,
@@ -1713,13 +1713,16 @@ func TestPlanThenExecutePostReadinessRecoveryAllowsOutlineOnlyMissingPlanPathRef
 	})
 
 	if opts.ToolChoice != "required" {
-		t.Fatalf("outline-only missing-path recovery should force a parser-readable tool request, got %q", opts.ToolChoice)
+		t.Fatalf("outline-only missing-coverage recovery should force submit_plan tool choice, got %q", opts.ToolChoice)
 	}
-	if len(opts.Tools) != 2 || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || chatOptionsExposeTool(opts, "search_content") || chatOptionsExposeTool(opts, "submit_plan") {
-		t.Fatalf("outline-only missing-path recovery should expose only source-body read tools, got %#v", opts.Tools)
+	if len(opts.Tools) != 1 || !chatOptionsExposeTool(opts, "submit_plan") || chatOptionsExposeTool(opts, "read_file") || chatOptionsExposeTool(opts, "code_navigate") || chatOptionsExposeTool(opts, "search_content") {
+		t.Fatalf("outline-only missing-coverage recovery should expose only submit_plan, got %#v", opts.Tools)
 	}
 	if opts.EnableThinking == nil || *opts.EnableThinking {
-		t.Fatalf("outline-only missing-path recovery should force short source-read output, got %#v", opts.EnableThinking)
+		t.Fatalf("outline-only missing-coverage recovery should force visible corrected submit_plan output, got %#v", opts.EnableThinking)
+	}
+	if !opts.ChatTemplateKwargs {
+		t.Fatalf("outline-only missing-coverage recovery should force request-level thinking kwargs")
 	}
 }
 
@@ -6368,6 +6371,45 @@ func TestPlanExecuteRejectedMissingSourceGroundingRequiresRefreshForRejectedEdit
 	})
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("successful source read after the rejected plan should close missing-grounding refresh")
+	}
+}
+
+func TestPlanExecuteRejectedMissingCoverageStaysInSubmitCorrection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; missing required edit path(s): `b.txt`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "before\n"},
+		{Tool: "read_file", Summary: "Read f2 b.txt lines 1-10 (total lines: 10)", Output: "before\n"},
+		rejected,
+	}
+
+	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+		t.Fatal("plain missing required-path coverage should require submit_plan correction, not anchor refresh")
+	}
+	if paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, len(results)-1); len(paths) != 0 {
+		t.Fatalf("missing coverage must not produce refresh paths, got %#v", paths)
+	}
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("mode = %q, want submit_correction; state=%+v", state.Mode, state)
+	}
+	assertEqualSet(t, state.ParserVisibleTools, []string{"submit_plan"})
+	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "b.txt",
+		StartLine: 1,
+		EndLine:   10,
+	}, brief, results); !reject || summary != "Corrected submit_plan required" || !strings.Contains(errorText, "No further read/search/discovery action is currently allowed") {
+		t.Fatalf("post-rejection read should be rejected as submit-correction, got reject=%v summary=%q error=%q", reject, summary, errorText)
 	}
 }
 
@@ -13848,7 +13890,7 @@ func TestPlanExecuteSubmitPlanCoverageRejectsOutOfScopeSourceSatisfiedPaths(t *t
 	}
 }
 
-func TestPlanExecuteRejectedPlanRefreshThenExtraReadStillAcceptsCorrectedPlan(t *testing.T) {
+func TestPlanExecuteRejectedMissingCoverageRequiresCorrectedSubmitPlan(t *testing.T) {
 	root := t.TempDir()
 	for _, path := range []string{"a.txt", "b.txt"} {
 		if err := os.WriteFile(filepath.Join(root, path), []byte("before\n"), 0o644); err != nil {
@@ -13859,9 +13901,7 @@ func TestPlanExecuteRejectedPlanRefreshThenExtraReadStillAcceptsCorrectedPlan(t 
 		`{"tool":"read_file","path":"a.txt"}`,
 		`{"tool":"read_file","path":"b.txt"}`,
 		`{"tool":"submit_plan","rationale":"Update only one path so the guard rejects missing required edit coverage.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after a\n","purpose":"replace a fixture"}]}`,
-		`{"tool":"read_file","path":"b.txt","start_line":1,"end_line":1}`,
-		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
-		`{"tool":"submit_plan","rationale":"Correct the rejected stale anchor and cover every required path.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after a\n","purpose":"replace a fixture"},{"path":"b.txt","old_text":"before\n","new_text":"after b\n","purpose":"replace b fixture"}]}`,
+		`{"tool":"submit_plan","rationale":"Correct the rejected coverage mismatch and cover every required path.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"after a\n","purpose":"replace a fixture"},{"path":"b.txt","old_text":"before\n","new_text":"after b\n","purpose":"replace b fixture"}]}`,
 	}
 	var requests int
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

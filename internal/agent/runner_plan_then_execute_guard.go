@@ -961,23 +961,11 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 	if strings.TrimSpace(req.Tool) == "submit_plan" || !isReadClassTool(req) {
 		return "", "", false
 	}
-	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
-		return "", "", false
-	}
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
-		missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
 		target := normalizeRunnerPath(planThenExecuteRequestTargetPath(req))
 		required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
 		_, inRequiredScope := required[target]
-		if target != "" &&
-			inRequiredScope &&
-			submitPlanInvalidAnchorPathsAllowsRead(missingPlanPaths, target) &&
-			planThenExecuteAnchorRefreshRequestAllowed(req) &&
-			!successfulSourceBodyReadPathBefore(results, rejectedAt, target) &&
-			!successfulSourceEvidencePathAfter(results, rejectedAt, target) {
-			return "", "", false
-		}
 		if submitPlanRejectionHasInvalidAnchor(rejected) &&
 			target != "" &&
 			inRequiredScope &&
@@ -1003,6 +991,9 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 		return "Corrected submit_plan required",
 			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(rejected) + "Submit a corrected parser-readable `submit_plan` request whose coverage includes every required_edit_path with either valid executable edits from existing source-body evidence or `source_satisfied_paths` for paths already at final state. Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, rejected) + " " + refreshNote,
 			true
+	}
+	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
+		return "", "", false
 	}
 	if pendingHistory := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pendingHistory) > 0 {
 		if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
@@ -1038,7 +1029,6 @@ func planThenExecutePostSourceHistoryRequestAllowed(req workspace.ToolRequest, b
 
 func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) string {
 	invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
-	missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
 	refreshable := make([]string, 0, 2)
 	for _, rawPath := range planThenExecuteRefreshScopePaths(brief, results) {
 		path := normalizeRunnerPath(rawPath)
@@ -1048,11 +1038,6 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 		if _, invalid := invalidAnchorPaths[path]; invalid && !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
 			refreshable = append(refreshable, path)
 			continue
-		}
-		if _, missing := missingPlanPaths[path]; missing &&
-			!successfulSourceBodyReadPathBefore(results, rejectedAt, path) &&
-			!successfulSourceEvidencePathAfter(results, rejectedAt, path) {
-			refreshable = append(refreshable, path)
 		}
 	}
 	if len(refreshable) == 0 {
@@ -1092,11 +1077,7 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 	if submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) {
 		return true
 	}
-	missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
-	if !submitPlanInvalidAnchorPathsAllowsRead(missingPlanPaths, target) {
-		return false
-	}
-	return !successfulSourceBodyReadPathBefore(results, rejectedAt, target)
+	return false
 }
 
 func submitPlanRejectionHasInvalidAnchor(result workspace.ToolResult) bool {

@@ -13687,10 +13687,6 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 		return false
 	}
 	refreshPaths := submitPlanInvalidAnchorPaths(rejected)
-	missingPaths := submitPlanMissingRequiredPaths(rejected)
-	for path := range missingPaths {
-		refreshPaths[path] = struct{}{}
-	}
 	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
 		refreshPaths[path] = struct{}{}
 	}
@@ -13700,11 +13696,6 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 	for _, path := range planThenExecuteRefreshScopePathsForRejectedPlan(brief, results, refreshPaths) {
 		normalized := normalizeRunnerPath(path)
 		if _, ok := refreshPaths[normalized]; !ok {
-			continue
-		}
-		_, invalid := submitPlanInvalidAnchorPaths(rejected)[normalized]
-		if _, missing := missingPaths[normalized]; missing && !invalid &&
-			successfulSourceBodyReadPathBefore(results, rejectedAt, normalized) {
 			continue
 		}
 		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[normalized]; invalid {
@@ -13722,10 +13713,6 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 
 func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, rejected workspace.ToolResult, rejectedAt int) []string {
 	refreshPaths := submitPlanInvalidAnchorPaths(rejected)
-	missingPaths := submitPlanMissingRequiredPaths(rejected)
-	for path := range missingPaths {
-		refreshPaths[path] = struct{}{}
-	}
 	for path := range submitPlanMissingSourceGroundingPaths(rejected) {
 		refreshPaths[path] = struct{}{}
 	}
@@ -13742,9 +13729,6 @@ func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBr
 			if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
 				continue
 			}
-		} else if _, missing := missingPaths[path]; missing &&
-			successfulSourceBodyReadPathBefore(results, rejectedAt, path) {
-			continue
 		} else if successfulSourceEvidencePathAfter(results, rejectedAt, path) {
 			continue
 		}
