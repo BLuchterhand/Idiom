@@ -143,7 +143,13 @@ const PlanEditAnchorProvenanceSchemaVersion = "idiom.plan_edit_anchor.v1"
 
 const planInlineTextSpillThreshold = 4096
 
-const submitPlanNoOpEditGuidance = "answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits"
+func submitPlanNoOpEditGuidanceForPath(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "remove any no-op edit object; use top-level `source_satisfied_paths` for already-final paths, submit real edits, or answer `Decision: source-satisfied` if every required path is final"
+	}
+	return fmt.Sprintf("for %s: remove no-op edit; use `source_satisfied_paths`: [%q] if final; use `Decision: source-satisfied` only if all paths are final; else submit real edit", path, path)
+}
 
 // submitPlan persists the planner's edit-plan artifact to disk and
 // returns the path so the caller (orchestrator) can find and execute
@@ -326,7 +332,7 @@ func validatePlanEdit(edit PlanEdit) error {
 		return fmt.Errorf("requires one executable edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content for replacement, insert_after_line+non-empty content for insertion, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref except insert_after_line. If this path is already at the requested final state, remove it from edits[] and put the path in top-level source_satisfied_paths instead of using an edit object")
 	}
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
-		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidance)
+		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidanceForPath(edit.Path))
 	}
 	if field, marker := planEditPlaceholderField(edit); field != "" {
 		return fmt.Errorf("%s contains placeholder edit body marker %q; submit complete executable source text, or answer <<QUESTION>> with the missing body/anchor blocker", field, marker)
@@ -842,7 +848,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 				return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, errorText)
 			}
 		} else {
-			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
+			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
 		}
 		return nil
 	}
@@ -875,7 +881,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, strings.TrimSpace(rejected.Error))
 		}
 	} else {
-		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidance)
+		return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
 	}
 	return nil
 }
@@ -907,7 +913,7 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) err
 			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, previewErr.Error())
 		}
 		if !changed {
-			return fmt.Errorf("edits[%d]: edit would not change %s after applying prior plan edits; %s", i, edit.Path, submitPlanNoOpEditGuidance)
+			return fmt.Errorf("edits[%d]: edit would not change %s after applying prior plan edits; %s", i, edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
 		}
 		if lineNo, line, ok := NewSuspiciousAdjacentDuplicateCodeLine(path, body, []byte(updated)); ok {
 			return fmt.Errorf("edits[%d]: edit would introduce adjacent duplicate code line %d in %s after applying prior plan edits: %q", i, lineNo, edit.Path, line)

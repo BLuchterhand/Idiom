@@ -1786,6 +1786,11 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 			t.Fatalf("no-op rejection should include %q, got %q", want, result.Error)
 		}
 	}
+	for _, want := range []string{"remove no-op edit", "`source_satisfied_paths`: [\"x.txt\"]"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("no-op rejection should include path-specific repair %q, got %q", want, result.Error)
+		}
+	}
 	if strings.Contains(result.Error, "Decision: pass") {
 		t.Fatalf("planner no-op guidance must not leak review-repair pass wording, got %q", result.Error)
 	}
@@ -1847,6 +1852,11 @@ func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
 	for _, want := range []string{"source_satisfied_paths", "Decision: source-satisfied"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op range rejection should include %q, got %q", want, result.Error)
+		}
+	}
+	for _, want := range []string{"remove no-op edit", "`source_satisfied_paths`: [\"x.txt\"]"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("no-op range rejection should include path-specific repair %q, got %q", want, result.Error)
 		}
 	}
 	if strings.Contains(result.Error, "Decision: pass") {
@@ -2022,7 +2032,7 @@ func TestSubmitPlanRejectsNoOpWholeFileEditBeforeWritingArtifactOrAssets(t *test
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("no-op whole-file edit should be rejected")
 	}
-	for _, want := range []string{"edit would not change large.txt", "Decision: source-satisfied"} {
+	for _, want := range []string{"edit would not change large.txt", "Decision: source-satisfied", "`source_satisfied_paths`: [\"large.txt\"]"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op whole-file rejection should include %q, got %q", want, result.Error)
 		}

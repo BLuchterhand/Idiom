@@ -9907,6 +9907,33 @@ func TestPlanExecuteNativeSubmitPlanCorrectionPromptStaysNativeOnly(t *testing.T
 	}
 }
 
+func TestPlanExecuteNativeSubmitPlanCorrectionPromptNamesNoopPathRepair(t *testing.T) {
+	prompt := planThenExecuteNativeSubmitPlanCorrectionPrompt(workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}, workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[1]: edit would not change b.txt; for b.txt: remove no-op edit; use `source_satisfied_paths`: [\"b.txt\"] if final; use `Decision: source-satisfied` only if all paths are final; else submit real edit",
+	})
+
+	for _, forbidden := range []string{"Decision: source-satisfied", "<<QUESTION>>", "visible JSON object"} {
+		if strings.Contains(prompt, forbidden) {
+			t.Fatalf("native submit-correction prompt should not advertise %q:\n%s", forbidden, prompt)
+		}
+	}
+	for _, want := range []string{
+		"b.txt=use-source_satisfied_paths-if-current-state-is-final-or-submit-real-edit",
+		"`source_satisfied_paths`: [\"b.txt\"]",
+		"remove no-op edit; use `source_satisfied_paths`: [\"b.txt\"] if final",
+		"The next tool call must be a corrected `submit_plan`",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("native no-op correction prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestPlanExecuteTextualSkeletonDefaultsExistingFilesToLineRange(t *testing.T) {
 	prompt := planThenExecuteTextualSubmitPlanSkeleton([]planThenExecuteSubmitPlanSkeletonEntry{{
 		Path:      "a.go",

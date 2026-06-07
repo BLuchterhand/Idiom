@@ -1465,10 +1465,15 @@ func lastSubmitPlanCorrectionRejectionBrief(result workspace.ToolResult) string 
 
 func sanitizeSubmitCorrectionRejectionBrief(text string) string {
 	replacements := map[string]string{
-		"answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits": "use `source_satisfied_paths` for already-final paths or submit real edits",
-		"Answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits": "Use `source_satisfied_paths` for already-final paths or submit real edits",
-		"answer `Decision: source-satisfied` with current-state evidence when no changes are needed":                 "use `source_satisfied_paths` for already-final paths or submit real edits",
-		"Answer `Decision: source-satisfied` with current-state evidence when no changes are needed":                 "Use `source_satisfied_paths` for already-final paths or submit real edits",
+		"answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits":                                     "use `source_satisfied_paths` for already-final paths or submit real edits",
+		"Answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits":                                     "Use `source_satisfied_paths` for already-final paths or submit real edits",
+		"answer `Decision: source-satisfied` with current-state evidence when no changes are needed":                                                     "use `source_satisfied_paths` for already-final paths or submit real edits",
+		"Answer `Decision: source-satisfied` with current-state evidence when no changes are needed":                                                     "Use `source_satisfied_paths` for already-final paths or submit real edits",
+		"If every required path is already final, answer `Decision: source-satisfied` with per-path current-state evidence instead of using submit_plan": "Do not use terminal source-satisfied in submit-correction mode",
+		"or answer `Decision: source-satisfied` if every required path is final":                                                                         "or use `source_satisfied_paths` for already-final paths",
+		"answer `Decision: source-satisfied` if all paths are final":                                                                                     "use `source_satisfied_paths` for already-final paths",
+		"if all paths are final answer `Decision: source-satisfied`; else":                                                                               "",
+		"use `Decision: source-satisfied` only if all paths are final; else":                                                                             "",
 	}
 	for old, replacement := range replacements {
 		text = strings.ReplaceAll(text, old, replacement)
