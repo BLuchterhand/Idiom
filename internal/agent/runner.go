@@ -7676,6 +7676,10 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil {
 		return
 	}
+	if strings.TrimSpace(reason) == "source_satisfied_terminal_required" {
+		r.refreshPlanThenExecuteTerminalOutcomeSurface(messages, results, reason)
+		return
+	}
 	if !planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, results) {
 		r.prunePlanThenExecuteTerminalSurfaceHistory(messages, reason)
 		return
@@ -7748,6 +7752,71 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 		"dropped_compact_messages":      compactDropped,
 		"compact_evidence_messages":     compactEvidenceMessages,
 		"allowed_tools":                 []string{"submit_plan"},
+	}))
+}
+
+func (r *Runner) refreshPlanThenExecuteTerminalOutcomeSurface(messages *[]llama.ChatMessage, results []workspace.ToolResult, reason string) {
+	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil {
+		return
+	}
+	terminalBrief := r.planThenExecuteTerminalToolBrief(results)
+	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(*messages)
+	pruned, compactDropped, compactEvidenceMessages := compactPlanThenExecuteTerminalTextualMessages(pruned, terminalBrief, results)
+	terminalState := workerruntime.RunState{
+		Lane:              util.FirstNonEmpty(strings.TrimSpace(terminalBrief.Lane), r.agentName()),
+		TaskFamily:        terminalBrief.TaskFamily,
+		Contract:          terminalBrief.Contract,
+		Phase:             "plan_terminal_outcome",
+		Objective:         terminalBrief.Objective,
+		Permission:        terminalBrief.PermissionProfile,
+		TargetRefs:        append([]string(nil), terminalBrief.TargetRefs...),
+		RequiredEditPaths: append([]string(nil), terminalBrief.RequiredEditPaths...),
+		EvidencePaths:     runnerEvidencePathsForBrief(terminalBrief, results, 6),
+		Constraints:       append([]string(nil), terminalBrief.Constraints...),
+		AllowedTools:      nil,
+		ToolManifest:      nil,
+		RequiredTools:     nil,
+		ReadinessGate:     []string{"terminal_outcome_required"},
+		SearchPolicy:      []string{"no read/search/discovery action is valid after submit_plan readiness"},
+		StopConditions:    []string{"decision_source_satisfied", "textual_submit_plan_returned_ok", "question_blocker_reported"},
+		FinalCritic:       []string{"one_terminal_outcome_only", "per_path_current_state_evidence_for_source_satisfied"},
+		NextActions: []string{
+			"answer `Decision: source-satisfied` with per-path current-state evidence if every required path already contains the requested final state",
+			"or emit one visible textual submit_plan JSON object with real executable edits if changes are still needed",
+			"or answer `<<QUESTION>>:` with the exact path-specific blocker",
+		},
+		InvalidActions: []string{
+			"empty or source-satisfied submit_plan transport",
+			"read/search/discovery after terminal readiness",
+			"verification/build/test in planner phase",
+			"per-edit write in planner phase",
+			"prose-only answer without Decision/source evidence or blocker",
+		},
+		Readiness: terminalBrief.Readiness,
+	}
+	terminalPrompt := strings.Join([]string{
+		"# Terminal Plan-Execute Outcome Surface",
+		"",
+		"This replaces earlier runtime brief and tool protocol examples for this planner turn. Earlier `submit_plan`-only recovery text is stale because the previous `submit_plan` attempted a source-satisfied closeout through the wrong transport.",
+		"",
+		workerruntime.RenderRunState(terminalState),
+		"",
+		"Next visible action must be exactly one terminal outcome:",
+		"1. `Decision: source-satisfied` with per-path current-state evidence if every required path already contains the requested final state.",
+		"2. One visible textual `submit_plan` JSON object with real executable edits if changes are still needed. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
+		"3. `<<QUESTION>>:` with the exact path-specific blocker.",
+		"",
+		"Do not repeat an empty or source-satisfied `submit_plan` object. Do not call read/search/discovery, shell, verification, or per-edit write tools.",
+	}, "\n")
+	*messages = append(pruned, llama.ChatMessage{Role: "system", Content: strings.TrimSpace(terminalPrompt)})
+	r.emitEvent(marshalRunEvent("plan_then_execute_textual_tool_surface_refreshed", map[string]any{
+		"reason":                        strings.TrimSpace(reason),
+		"transport":                     "terminal_outcome",
+		"dropped_tool_request_messages": droppedActions,
+		"dropped_scaffolding_messages":  droppedScaffolding,
+		"dropped_compact_messages":      compactDropped,
+		"compact_evidence_messages":     compactEvidenceMessages,
+		"allowed_tools":                 []string{},
 	}))
 }
 
@@ -13364,6 +13433,9 @@ func planThenExecuteReadyToSubmitChatOptionsForBackend(opts llama.ChatOptions, b
 	if len(brief.RequiredEditPaths) == 0 && !planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
 		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 	}
+	if planThenExecuteSourceSatisfiedTerminalRequiredActive(results) {
+		return planThenExecuteSourceSatisfiedTerminalChatOptions(opts, brief, results)
+	}
 	opts = planThenExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
 	if chatOptionsExposeTool(opts, "submit_plan") {
 		opts.Tools = filterChatOptionsTools(opts.Tools, "submit_plan")
@@ -13374,6 +13446,31 @@ func planThenExecuteReadyToSubmitChatOptionsForBackend(opts llama.ChatOptions, b
 	limit := planThenExecuteRecoveryTokenLimit(brief, results)
 	opts = planExecuteSetExactMaxTokens(opts, limit)
 	return opts
+}
+
+func planThenExecuteSourceSatisfiedTerminalChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
+	opts = forceVisibleActionChatOptions(opts)
+	opts.Tools = nil
+	opts.ToolChoice = ""
+	opts.ForceNativeTools = false
+	opts.ResponseFormatJSON = false
+	limit := planThenExecuteRecoveryTokenLimit(brief, results)
+	opts = planExecuteSetExactMaxTokens(opts, limit)
+	return opts
+}
+
+func planThenExecuteSourceSatisfiedTerminalRequiredActive(results []workspace.ToolResult) bool {
+	for i := len(results) - 1; i >= 0; i-- {
+		result := results[i]
+		if strings.TrimSpace(result.Tool) != "submit_plan" {
+			continue
+		}
+		if strings.TrimSpace(result.Error) == "" {
+			return false
+		}
+		return planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result)
+	}
+	return false
 }
 
 func planThenExecuteTextualSubmitPlanFallbackChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {

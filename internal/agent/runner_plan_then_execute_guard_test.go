@@ -186,6 +186,39 @@ func TestPlanExecuteCompletionGateRecoveryKeepsSubmitPlanBudget(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteSourceSatisfiedTerminalRecoveryChatOptionsHideSubmitPlanTool(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.txt lines 1-10 (total lines: 10)", Output: "before\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+	opts := llama.ChatOptions{
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice:         "required",
+		ForceNativeTools:   true,
+		ResponseFormatJSON: true,
+	}
+
+	got := planThenExecuteReadyToSubmitChatOptionsForBackend(opts, brief, results, true)
+	if len(got.Tools) != 0 || strings.TrimSpace(got.ToolChoice) != "" || got.ForceNativeTools || got.ResponseFormatJSON {
+		t.Fatalf("source-satisfied terminal recovery must not force submit_plan transport: %#v", got)
+	}
+	if got.EnableThinking == nil || *got.EnableThinking {
+		t.Fatalf("source-satisfied terminal recovery should force visible answer mode: %#v", got.EnableThinking)
+	}
+}
+
 func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsMissingRequiredPath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -10141,6 +10174,52 @@ func TestPlanExecutePostRejectionSurfaceKeepsOneSkeletonAndRejectedDraftEvidence
 	}
 	if strings.Contains(joined, "stale.go") || strings.Contains(joined, "stale draft") {
 		t.Fatalf("post-rejection surface retained stale skeleton/evidence:\n%s", joined)
+	}
+}
+
+func TestPlanExecuteSourceSatisfiedTerminalSurfaceDoesNotAdvertiseSubmitPlanOnly(t *testing.T) {
+	var refreshEvent string
+	runner := &Runner{
+		Client: llama.NewClient("http://example.invalid", time.Second).WithBackend(config.BackendMLX),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "plan_then_execute_textual_tool_surface_refreshed" {
+				refreshEvent = event.Content
+			}
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "package a\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+	messages := []llama.ChatMessage{
+		{Role: "system", Content: "# Terminal Plan-Execute Native Tool Surface\nNative `submit_plan` is the only exposed tool in this request."},
+	}
+
+	runner.refreshPlanThenExecuteTerminalToolSurface(&messages, results, "source_satisfied_terminal_required")
+	joined := planExecuteJoinedMessages(messages)
+	if !strings.Contains(joined, "# Terminal Plan-Execute Outcome Surface") ||
+		!strings.Contains(joined, "Decision: source-satisfied") ||
+		!strings.Contains(joined, "One visible textual `submit_plan` JSON object") {
+		t.Fatalf("source-satisfied recovery should render terminal-outcome surface:\n%s", joined)
+	}
+	for _, forbidden := range []string{"Native `submit_plan` is the only exposed tool", "Required tools: submit_plan", "Allowed tools: submit_plan"} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("source-satisfied terminal surface retained submit-plan-only guidance %q:\n%s", forbidden, joined)
+		}
+	}
+	if !strings.Contains(refreshEvent, `"transport":"terminal_outcome"`) || !strings.Contains(refreshEvent, `"allowed_tools":[]`) {
+		t.Fatalf("refresh event should report no forced submit_plan tools, got %q", refreshEvent)
 	}
 }
 
