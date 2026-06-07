@@ -20,18 +20,12 @@ import (
 	"idiom/internal/runtime/agent"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
+	"idiom/internal/surfaces/tui/implementationdispatch"
 	"idiom/internal/workflows/featureplanner"
 	"idiom/internal/workflows/planexecute"
 )
 
-type implementationDispatchPlanDocument struct {
-	Path                string
-	Content             string
-	EditPaths           []string
-	TestObligations     []string
-	ReferenceOnly       bool
-	AllowDirtyAtomScope bool
-}
+type implementationDispatchPlanDocument = implementationdispatch.PlanDocument
 
 type implementationDispatchPlanDocumentPreflightResult struct {
 	Path         string

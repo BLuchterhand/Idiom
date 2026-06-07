@@ -78,6 +78,24 @@ func TestAnalyzeBudgetLedgerFields(t *testing.T) {
 	}
 }
 
+func TestPathStemOfNormalizesWorkspacePath(t *testing.T) {
+	cases := []struct {
+		path string
+		want string
+	}{
+		{path: ` internal\evidence\eval\perf.go `, want: "internal/evidence"},
+		{path: "/README.md/", want: "README.md"},
+		{path: "  ", want: ""},
+	}
+	for _, tt := range cases {
+		t.Run(tt.path, func(t *testing.T) {
+			if got := pathStemOf(tt.path); got != tt.want {
+				t.Fatalf("pathStemOf(%q) = %q, want %q", tt.path, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestDetectDirWalkStreak(t *testing.T) {
 	records := buildSynth("", nil, []synthStep{
 		{tool: "list_files", action: "list_files:.", raw: `{"path":"."}`, summary: "Listed 10 path(s)."},

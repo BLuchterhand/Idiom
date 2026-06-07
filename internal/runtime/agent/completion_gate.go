@@ -7,36 +7,16 @@
 
 package agent
 
-import "idiom/internal/capabilities/workspace"
+import (
+	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/completiongate"
+)
 
-// CompletionGateCheck inspects a model reply and accumulated results,
-// returning a rejection ToolResult with shouldReject=true, or an empty
-// ToolResult with shouldReject=false (pass).
-type CompletionGateCheck func(reply string, results []workspace.ToolResult) (rejection workspace.ToolResult, shouldReject bool)
+type CompletionGateCheck = completiongate.Check
+type CompletionGatePipeline = completiongate.Pipeline
 
-// CompletionGatePipeline evaluates checks in registration order and
-// returns the first rejection. If no check rejects, the pipeline passes.
-type CompletionGatePipeline struct {
-	checks []CompletionGateCheck
-}
-
-// NewCompletionGatePipeline creates a pipeline with the given checks.
 func NewCompletionGatePipeline(checks ...CompletionGateCheck) *CompletionGatePipeline {
-	return &CompletionGatePipeline{checks: append([]CompletionGateCheck(nil), checks...)}
-}
-
-// Evaluate runs all checks in order and returns the first rejection.
-// Returns (zero ToolResult, false) when all checks pass.
-func (p *CompletionGatePipeline) Evaluate(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
-	if p == nil {
-		return workspace.ToolResult{}, false
-	}
-	for _, check := range p.checks {
-		if rejection, rejected := check(reply, results); rejected {
-			return rejection, true
-		}
-	}
-	return workspace.ToolResult{}, false
+	return completiongate.New(checks...)
 }
 
 // CompletionGateChecks returns the runner's gate checks in the order they

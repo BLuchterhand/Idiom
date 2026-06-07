@@ -22,7 +22,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/platform/failures"
@@ -1281,26 +1281,6 @@ func quotePlanExecuteReference(text string) string {
 	return strings.Join(lines, "\n") + "\n"
 }
 
-func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = "phase evidence contradicted the pass decision"
-	}
-	return strings.Join([]string{
-		basePrompt,
-		"",
-		"## Rejected Previous Review Outcome",
-		"",
-		"The previous review-repair answer used `Decision: pass`, but the phase evidence rejected that pass decision: " + truncatePlanExecuteText(reason, 2000) + ".",
-		"",
-		"For this retry, `Decision: pass` is not an allowed terminal outcome. Choose exactly one visible outcome:",
-		"- Corrective plan: call `submit_plan` with only the executable corrective edits needed to resolve the rejected checklist item. The rationale must start with `Verification Checklist:`.",
-		"- Blocker: return `<<QUESTION>>:` with the exact failed checklist item if it cannot be repaired inside Allowed Repair Paths.",
-		"",
-		"Do not repeat `Decision: pass`. Do not add prose before or after the corrective plan or blocker.",
-	}, "\n")
-}
-
 func collectReviewRepairEvidence(root string, paths []string, baseline *ReviewRepairBaseline) ReviewRepairEvidence {
 	if baseline != nil {
 		diff := collectReviewRepairDiffFromBaseline(root, paths, *baseline)
@@ -1651,59 +1631,6 @@ func planChangedPaths(plan workspace.PlanArtifact) []string {
 		paths = append(paths, edit.Path)
 	}
 	return mergePlanExecutePaths(paths)
-}
-
-func mergePlanExecutePaths(groups ...[]string) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	for _, group := range groups {
-		for _, path := range group {
-			normalized := normalizePlanExecutePath(path)
-			if normalized == "" {
-				continue
-			}
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-			seen[normalized] = struct{}{}
-			out = append(out, normalized)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
-func reviewAnswerDeclaresBlocker(answer string) bool {
-	lower := strings.ToLower(answer)
-	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
-}
-
-func reviewRepairBlockerSummary(answer string) string {
-	return planExecuteBlockerSummary(answer)
-}
-
-func planExecuteAnswerDeclaresBlocker(answer string) bool {
-	answer = strings.TrimSpace(answer)
-	lower := strings.ToLower(answer)
-	return strings.Contains(answer, "<<QUESTION>>") ||
-		strings.Contains(lower, "decision: block") ||
-		strings.HasPrefix(lower, "blocker:") ||
-		strings.Contains(lower, "\nblocker:")
-}
-
-func planExecuteBlockerSummary(answer string) string {
-	for _, raw := range strings.Split(answer, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		const max = 240
-		if len(line) > max {
-			return line[:max] + "..."
-		}
-		return line
-	}
-	return "planner stopped with a blocker"
 }
 
 func reviewAnswerPassContradictionReason(answer string) string {

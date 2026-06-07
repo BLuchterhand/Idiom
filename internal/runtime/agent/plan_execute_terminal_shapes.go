@@ -1,6 +1,6 @@
 package agent
 
-import "idiom/internal/contracts/plancontract"
+import "idiom/internal/contracts/plan"
 
 const (
 	planExecuteTerminalSubmitPlan      = "submit_plan"

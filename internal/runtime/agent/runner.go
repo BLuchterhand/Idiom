@@ -18,6 +18,7 @@ import (
 	"idiom/internal/contracts/autonomy"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/llama"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -838,7 +839,8 @@ func (r *Runner) Run(
 			turnMessages = append(turnMessages, assistantToolTurn)
 			r.emitThinkingTrace(stepNumber, "assistant_turn_preserved", assistantToolTurn, opts, true)
 			controller.recordParseFailure(stepNumber, activeToolCall, raw, err)
-			if prompt, ok := r.planThenExecuteSubmitPlanParseRecoveryPrompt(raw, err, collectedResults); ok {
+			if recoveryPlan, ok := r.planThenExecuteSubmitPlanParseRecoveryPlan(raw, err, collectedResults); ok {
+				prompt := RenderPlanExecuteRecoveryPlan(recoveryPlan)
 				implementationWriteOnlyRecoveryActive = true
 				if len(r.remainingRequiredEditPaths(collectedResults)) > 0 {
 					requiredPathCompletionRecoveryActive = true
@@ -851,7 +853,9 @@ func (r *Runner) Run(
 				syncPlanThenExecuteRecoveryAllowedTools()
 				refreshPlanThenExecuteTerminalSurface("parse_recovery")
 				turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: prompt})
-				r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_parse_recovery", Content: prompt})
+				r.emitPlanExecuteSubmitPlanParseRecoveryEvent(recoveryPlan, prompt)
+			} else {
+				r.emitPlanExecuteSubmitPlanParseRecoveryEventForParseFailure(raw, err)
 			}
 			continue
 		}
@@ -5163,40 +5167,13 @@ func textualToolProtocolEntryKey(entry workerruntime.ToolManifestEntry) string {
 }
 
 func exactAnchorPreWriteSurfaceActive(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
-	if planThenExecutePlannerBrief(brief) && !planThenExecuteExactAnchorPlanReady(brief) {
+	if planThenExecutePlannerBrief(brief) {
 		return false
 	}
 	if !exactAnchorImplementationActive(brief) {
 		return false
 	}
 	return len(brief.ChangedPaths) == 0 && len(changedPathsFromToolResults(results)) == 0
-}
-
-func planThenExecuteExactAnchorPlanReady(brief workerruntime.WorkerRuntimeBrief) bool {
-	brief = workerruntime.NormalizeRuntimeBrief(brief)
-	if !planThenExecutePlannerBrief(brief) || len(brief.RequiredEditPaths) == 0 || len(brief.RequiredEditSnippets) == 0 {
-		return false
-	}
-	required := normalizedRequiredEditPathSet(brief.RequiredEditPaths)
-	if len(required) == 0 {
-		return false
-	}
-	covered := make(map[string]struct{}, len(brief.RequiredEditSnippets))
-	for _, snippet := range brief.RequiredEditSnippets {
-		path := normalizeRunnerPath(snippet.Path)
-		if path == "" {
-			continue
-		}
-		if _, ok := required[path]; ok {
-			covered[path] = struct{}{}
-		}
-	}
-	for path := range required {
-		if _, ok := covered[path]; !ok {
-			return false
-		}
-	}
-	return true
 }
 
 func implementationPreWriteRuntimeBrief(brief workerruntime.WorkerRuntimeBrief) workerruntime.WorkerRuntimeBrief {
@@ -5798,13 +5775,7 @@ func scratchpadFailedEvidenceFeedbackApplies(brief workerruntime.WorkerRuntimeBr
 }
 
 func mergeRunnerStateStrings(groups ...[]string) []string {
-	var out []string
-	for _, group := range groups {
-		for _, value := range group {
-			out = util.AppendUnique(out, value)
-		}
-	}
-	return out
+	return stringset.Merge(groups...)
 }
 
 func runnerCurrentAllowedOrBriefTools(currentAllowedTools []string, briefAllowedTools []string) []string {
@@ -13445,6 +13416,23 @@ func submitPlanEditsStringParseError(raw string, parseErr error) bool {
 	return strings.Contains(lower, "toolrequest.edits") && strings.Contains(lower, "string")
 }
 
+func (r *Runner) emitPlanExecuteSubmitPlanParseRecoveryEvent(plan PlanExecuteRecoveryPlan, content string) {
+	if r == nil || plan.Kind != PlanExecuteRecoveryKindSubmitPlanParse {
+		return
+	}
+	r.emitEvent(RunEvent{Role: "plan_then_execute_submit_plan_parse_recovery", Content: strings.TrimSpace(content)})
+}
+
+func (r *Runner) emitPlanExecuteSubmitPlanParseRecoveryEventForParseFailure(raw string, parseErr error) {
+	if r == nil || !r.planThenExecutePlannerPhase() || !submitPlanEditsStringParseError(raw, parseErr) {
+		return
+	}
+	r.emitEvent(RunEvent{
+		Role:    "plan_then_execute_submit_plan_parse_recovery",
+		Content: "submit_plan parse recovery observed: edits was emitted as a quoted non-array string and did not count as a plan artifact",
+	})
+}
+
 func planThenExecuteReadyToSubmitChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
 	return planThenExecuteReadyToSubmitChatOptionsForBackend(opts, brief, results, true)
 }
@@ -18676,10 +18664,7 @@ func delegatedDiscoveryLineIsBarePath(line string) bool {
 }
 
 func limitRunnerStrings(values []string, max int) []string {
-	if max <= 0 || len(values) <= max {
-		return values
-	}
-	return values[:max]
+	return stringset.Prefix(values, max)
 }
 
 func closurePromptEvidencePaths(paths []string, max int) []string {
@@ -19460,7 +19445,11 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 		}
 		return "the answer does not satisfy the required evidence contract. Address each missing obligation, or use <<QUESTION>>: to state a concrete blocker."
 	case "rejected_mutation_paths_remaining":
-		if missing := unresolvedRejectedMutationPaths(results); len(missing) > 0 {
+		var requiredPaths []string
+		if r != nil {
+			requiredPaths = r.RuntimeBrief.RequiredEditPaths
+		}
+		if missing := unresolvedRejectedMutationPaths(results, requiredPaths); len(missing) > 0 {
 			return "the implementation contract is not fulfilled. The model attempted workspace write(s) that were rejected and not later satisfied by successful writes: " + quotedRunnerStrings(missing) + ". Make those intended edits, or report a concrete no-op/blocker with <<QUESTION>>:."
 		}
 		return "the implementation contract is not fulfilled. A rejected workspace write attempt remains unresolved; make the intended edit, or report a concrete no-op/blocker with <<QUESTION>>:."
@@ -21959,14 +21948,7 @@ func requiredNewFileProbeMatches(target string, requiredPaths []string) []string
 }
 
 func appendUniqueRunnerStrings(values []string, additions ...string) []string {
-	for _, value := range additions {
-		value = strings.TrimSpace(value)
-		if value == "" || slices.Contains(values, value) {
-			continue
-		}
-		values = append(values, value)
-	}
-	return values
+	return stringset.AppendUnique(values, additions...)
 }
 
 func changedPathsFromToolResults(results []workspace.ToolResult) map[string]struct{} {
@@ -21985,8 +21967,9 @@ func changedPathsFromToolResults(results []workspace.ToolResult) map[string]stru
 	return paths
 }
 
-func unresolvedRejectedMutationPaths(results []workspace.ToolResult) []string {
+func unresolvedRejectedMutationPaths(results []workspace.ToolResult, requiredPaths []string) []string {
 	changed := changedPathsFromToolResults(results)
+	required := readOnlyPathSet(requiredPaths)
 	var rejected []string
 	for _, result := range results {
 		if strings.TrimSpace(result.Error) == "" || !workspace.IsWorkspaceWriteTool(result.Tool) {
@@ -21998,6 +21981,11 @@ func unresolvedRejectedMutationPaths(results []workspace.ToolResult) []string {
 			path = normalizeRunnerPath(path)
 			if path == "" {
 				continue
+			}
+			if len(required) > 0 {
+				if _, ok := required[path]; !ok {
+					continue
+				}
 			}
 			if _, ok := changed[path]; ok {
 				continue

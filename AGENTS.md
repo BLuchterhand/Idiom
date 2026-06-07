@@ -32,6 +32,17 @@ This repository builds `idiom`, a local coding-agent harness around Qwen, `llama
   default. Prefer the TUI/live operator path when the behavior under test is
   user-facing, and monitor long-running CLI/TUI work by polling slowly and
   reading only small bounded log or telemetry chunks.
+- For local harness or subagent delegation, use a context-efficient supervisor
+  loop by default. Launch each worker with stdout/stderr redirected to a run log,
+  record the PID and expected artifact paths, and poll only process status or a
+  small structured status file while it runs. Do not stream or repeatedly read
+  live progress output into the orchestrator context. Require delegated workers
+  to write bounded artifacts such as `status.json`, `final.md`, `summary.json`,
+  and `blockers.json` when the harness supports it. On success, read the final
+  summary and inspect the resulting diff or declared artifacts; on failure, read
+  only a bounded log tail plus blocker artifacts needed to decide the next
+  orchestration step. Keep research, implementation, and review inside the
+  delegated harness when the user requested that actor boundary.
 - If the issue is in idiom itself, keep the research and fix inside idiom unless
   that bug blocks idiom from proceeding. When idiom is blocked, record the
   session/failure id and blocker, then use the smallest external fallback needed

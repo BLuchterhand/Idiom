@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/runtime/workerruntime"
 )
 

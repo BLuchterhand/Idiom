@@ -1,6 +1,6 @@
 package planexecute
 
-import "idiom/internal/contracts/plancontract"
+import "idiom/internal/contracts/plan"
 
 func RequiredEditPathsFromPrompt(prompt string) []string {
 	return requiredEditPathsFromPrompt(prompt)

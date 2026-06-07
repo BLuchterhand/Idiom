@@ -138,7 +138,7 @@ func (m *Manager) recoveryStatus(ctx context.Context, req ToolRequest) ToolResul
 		PacketID:           packet.PacketID,
 		PartialState:       packet.PartialState,
 		ProductLinks:       packet.ProductLinks,
-		Blockers:           compactRecoveryStrings(blockers),
+		Blockers:           compactNonEmptyStrings(blockers),
 		Gates:              recoveryPacketGates(packet),
 		CandidateAtoms:     candidateAtoms,
 		Reconciliation:     reconciliationRef,
@@ -519,7 +519,7 @@ func recoveryPacketBlockers(packet recovery.DecompositionPacket) []string {
 		blockers = append(blockers, "packet has no candidate recovery atoms")
 	}
 	blockers = append(blockers, recoveryPartialStateBlockers(packet.PartialState)...)
-	return compactRecoveryStrings(blockers)
+	return compactNonEmptyStrings(blockers)
 }
 
 func recoveryPartialStateBlockers(partial recovery.PartialState) []string {
@@ -589,20 +589,6 @@ func sanitizeRecoveryEvidenceRefs(refs []recovery.EvidenceRef) []recovery.Eviden
 		}
 		seen[ref] = true
 		out = append(out, ref)
-	}
-	return out
-}
-
-func compactRecoveryStrings(values []string) []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
 	}
 	return out
 }

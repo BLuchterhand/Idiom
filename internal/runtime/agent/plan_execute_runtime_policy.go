@@ -312,11 +312,3 @@ func planExecuteCapMaxTokens(opts llama.ChatOptions, limit int) llama.ChatOption
 	}
 	return opts
 }
-
-func cloneBoolPtr(value *bool) *bool {
-	if value == nil {
-		return nil
-	}
-	cloned := *value
-	return &cloned
-}

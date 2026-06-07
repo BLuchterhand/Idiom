@@ -4,163 +4,22 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
+	"idiom/internal/capabilities/workspace/patching"
 	"idiom/internal/platform/failures"
 )
 
-type PatchOpKind string
-
 const (
-	PatchOpAdd    PatchOpKind = "add"
-	PatchOpUpdate PatchOpKind = "update"
-	PatchOpDelete PatchOpKind = "delete"
+	PatchOpAdd    = patching.OpAdd
+	PatchOpUpdate = patching.OpUpdate
+	PatchOpDelete = patching.OpDelete
 )
 
-type PatchOp struct {
-	Kind    PatchOpKind
-	Path    string
-	MoveTo  string
-	NewBody string
-	Hunks   []PatchHunk
-}
-
-type PatchHunk struct {
-	ContextHeader string
-	Lines         []PatchLine
-}
-
-type PatchLine struct {
-	Kind LineKind
-	Text string
-}
-
-type LineKind int
-
-const (
-	LineContext LineKind = iota
-	LineDelete
-	LineInsert
-)
-
-const (
-	patchBeginMarker            = "*** Begin Patch"
-	patchEndMarker              = "*** End Patch"
-	patchAddPrefix              = "*** Add File: "
-	patchUpdatePrefix           = "*** Update File: "
-	patchDeletePrefix           = "*** Delete File: "
-	patchMovePrefix             = "*** Move to: "
-	patchHunkMarker             = "@@"
-	patchUnknownDirectivePrefix = "*** "
-)
+type PatchOp = patching.Op
 
 func ParsePatch(text string) ([]PatchOp, error) {
-	text = strings.TrimRight(text, "\n")
-	lines := strings.Split(text, "\n")
-	if len(lines) == 0 || strings.TrimSpace(lines[0]) != patchBeginMarker {
-		return nil, fmt.Errorf("patch must start with %q", patchBeginMarker)
-	}
-	if strings.TrimSpace(lines[len(lines)-1]) != patchEndMarker {
-		return nil, fmt.Errorf("patch must end with %q", patchEndMarker)
-	}
-
-	var ops []PatchOp
-	var current *PatchOp
-	var hunk *PatchHunk
-	addBody := []string{}
-
-	flushAdd := func() {
-		if current != nil && current.Kind == PatchOpAdd {
-			current.NewBody = strings.Join(addBody, "\n")
-		}
-		addBody = nil
-	}
-	flushHunk := func() {
-		if hunk != nil && current != nil {
-			current.Hunks = append(current.Hunks, *hunk)
-		}
-		hunk = nil
-	}
-	closeOp := func() {
-		flushAdd()
-		flushHunk()
-		if current != nil {
-			ops = append(ops, *current)
-		}
-		current = nil
-	}
-
-	for i := 1; i < len(lines)-1; i++ {
-		line := lines[i]
-		switch {
-		case strings.HasPrefix(line, patchAddPrefix):
-			closeOp()
-			current = &PatchOp{Kind: PatchOpAdd, Path: strings.TrimSpace(strings.TrimPrefix(line, patchAddPrefix))}
-		case strings.HasPrefix(line, patchUpdatePrefix):
-			closeOp()
-			current = &PatchOp{Kind: PatchOpUpdate, Path: strings.TrimSpace(strings.TrimPrefix(line, patchUpdatePrefix))}
-		case strings.HasPrefix(line, patchDeletePrefix):
-			closeOp()
-			current = &PatchOp{Kind: PatchOpDelete, Path: strings.TrimSpace(strings.TrimPrefix(line, patchDeletePrefix))}
-		case strings.HasPrefix(line, patchMovePrefix):
-			if current == nil || current.Kind != PatchOpUpdate {
-				return nil, fmt.Errorf("%q is only valid inside an Update File section", patchMovePrefix)
-			}
-			current.MoveTo = strings.TrimSpace(strings.TrimPrefix(line, patchMovePrefix))
-		case strings.HasPrefix(line, patchUnknownDirectivePrefix):
-			// Unknown `*** Foo` directive — likely model commentary or a
-			// non-standard envelope marker (e.g. `*** Sanity Check`). The
-			// documented directives are matched earlier in this switch;
-			// real hunk content always starts with `+`, `-`, ` `, or is
-			// empty, so skipping here cannot swallow legitimate edits.
-			// Silent-tolerate rather than hard-failing the entire patch.
-			continue
-		case current == nil:
-			if strings.TrimSpace(line) == "" {
-				continue
-			}
-			return nil, fmt.Errorf("unexpected line outside of any file section: %q", line)
-		case current.Kind == PatchOpAdd:
-			if !strings.HasPrefix(line, "+") {
-				return nil, fmt.Errorf("add file body lines must start with '+': %q", line)
-			}
-			addBody = append(addBody, strings.TrimPrefix(line, "+"))
-		case current.Kind == PatchOpUpdate:
-			if strings.HasPrefix(line, patchHunkMarker) {
-				flushHunk()
-				header := strings.TrimSpace(strings.TrimPrefix(line, patchHunkMarker))
-				hunk = &PatchHunk{ContextHeader: header}
-				continue
-			}
-			if hunk == nil {
-				return nil, fmt.Errorf("update file body must contain a %q hunk header before content", patchHunkMarker)
-			}
-			switch {
-			case strings.HasPrefix(line, "+"):
-				hunk.Lines = append(hunk.Lines, PatchLine{Kind: LineInsert, Text: strings.TrimPrefix(line, "+")})
-			case strings.HasPrefix(line, "-"):
-				hunk.Lines = append(hunk.Lines, PatchLine{Kind: LineDelete, Text: strings.TrimPrefix(line, "-")})
-			case strings.HasPrefix(line, " "):
-				hunk.Lines = append(hunk.Lines, PatchLine{Kind: LineContext, Text: strings.TrimPrefix(line, " ")})
-			case line == "":
-				hunk.Lines = append(hunk.Lines, PatchLine{Kind: LineContext, Text: ""})
-			default:
-				return nil, fmt.Errorf("hunk lines must start with ' ', '+', '-', or be empty: %q", line)
-			}
-		}
-	}
-	closeOp()
-
-	if len(ops) == 0 {
-		return nil, fmt.Errorf("patch contained no file sections")
-	}
-	for i := range ops {
-		if strings.TrimSpace(ops[i].Path) == "" {
-			return nil, fmt.Errorf("patch op %d has an empty path", i+1)
-		}
-	}
-	return ops, nil
+	return patching.Parse(text)
 }
 
 // SerializePatch reverses ParsePatch: it turns a slice of PatchOp into the
@@ -169,94 +28,18 @@ func ParsePatch(text string) ([]PatchOp, error) {
 // model-issued patch and re-submit the trimmed envelope to applyPatch
 // without changing applyPatch's semantics.
 func SerializePatch(ops []PatchOp) string {
-	var b strings.Builder
-	b.WriteString(patchBeginMarker)
-	b.WriteString("\n")
-	for _, op := range ops {
-		switch op.Kind {
-		case PatchOpAdd:
-			b.WriteString(patchAddPrefix)
-			b.WriteString(strings.TrimSpace(op.Path))
-			b.WriteString("\n")
-			body := op.NewBody
-			if body != "" {
-				for _, line := range strings.Split(body, "\n") {
-					b.WriteString("+")
-					b.WriteString(line)
-					b.WriteString("\n")
-				}
-			}
-		case PatchOpUpdate:
-			b.WriteString(patchUpdatePrefix)
-			b.WriteString(strings.TrimSpace(op.Path))
-			b.WriteString("\n")
-			if mv := strings.TrimSpace(op.MoveTo); mv != "" {
-				b.WriteString(patchMovePrefix)
-				b.WriteString(mv)
-				b.WriteString("\n")
-			}
-			for _, hunk := range op.Hunks {
-				b.WriteString(patchHunkMarker)
-				if header := strings.TrimSpace(hunk.ContextHeader); header != "" {
-					b.WriteString(" ")
-					b.WriteString(header)
-				}
-				b.WriteString("\n")
-				for _, line := range hunk.Lines {
-					switch line.Kind {
-					case LineContext:
-						b.WriteString(" ")
-						b.WriteString(line.Text)
-					case LineInsert:
-						b.WriteString("+")
-						b.WriteString(line.Text)
-					case LineDelete:
-						b.WriteString("-")
-						b.WriteString(line.Text)
-					}
-					b.WriteString("\n")
-				}
-			}
-		case PatchOpDelete:
-			b.WriteString(patchDeletePrefix)
-			b.WriteString(strings.TrimSpace(op.Path))
-			b.WriteString("\n")
-		}
-	}
-	b.WriteString(patchEndMarker)
-	b.WriteString("\n")
-	return b.String()
+	return patching.Serialize(ops)
 }
 
 func PatchOpPaths(ops []PatchOp) []string {
-	seen := make(map[string]struct{}, len(ops)*2)
-	out := make([]string, 0, len(ops)*2)
-	add := func(p string) {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			return
-		}
-		if _, ok := seen[p]; ok {
-			return
-		}
-		seen[p] = struct{}{}
-		out = append(out, p)
-	}
-	for _, op := range ops {
-		add(op.Path)
-		if op.MoveTo != "" {
-			add(op.MoveTo)
-		}
-	}
-	slices.Sort(out)
-	return out
+	return patching.OpPaths(ops)
 }
 
 func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 	if !m.cfg.EnableWrites {
 		return toolWriteDisabledResult("apply_patch", "Patch request rejected", "workspace writes are disabled")
 	}
-	body := normalizePatchEnvelope(req.Content)
+	body := patching.NormalizeEnvelope(req.Content)
 	if strings.TrimSpace(body) == "" {
 		return toolInvalidArgumentResult("apply_patch", "Patch request rejected", "apply_patch requires the patch body in content")
 	}
@@ -305,7 +88,7 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 			if readErr != nil {
 				return toolFailureFromErrorResult("apply_patch", "Patch request rejected", fmt.Errorf("Update File target %s: %w", m.displayPath(path), readErr), failures.NotFound, reasonPlanSubmissionRejected)
 			}
-			updated, applyErr := applyUpdateHunks(string(current), op.Hunks)
+			updated, applyErr := patching.ApplyUpdateHunks(string(current), op.Hunks)
 			if applyErr != nil {
 				return toolFailureFromErrorResult("apply_patch", "Patch hunk did not apply", fmt.Errorf("Update File %s: %w", m.displayPath(path), applyErr), failures.FailedPrecondition, reasonPlanSubmissionRejected)
 			}
@@ -358,71 +141,4 @@ func (m *Manager) applyPatch(req ToolRequest) ToolResult {
 		Summary: fmt.Sprintf("Applied patch with %d op(s)", len(ops)),
 		Output:  strings.Join(summaries, "\n"),
 	}
-}
-
-func normalizePatchEnvelope(text string) string {
-	body := strings.TrimSpace(text)
-	if body == "" || strings.HasPrefix(body, patchBeginMarker) {
-		return text
-	}
-	if !patchStartsWithFileSection(body) {
-		return text
-	}
-	if strings.Contains(body, "\n"+patchBeginMarker) || strings.Contains(body, "\n"+patchEndMarker) {
-		return text
-	}
-	return patchBeginMarker + "\n" + strings.TrimRight(body, "\n") + "\n" + patchEndMarker
-}
-
-func patchStartsWithFileSection(body string) bool {
-	first, _, _ := strings.Cut(body, "\n")
-	first = strings.TrimSpace(first)
-	return strings.HasPrefix(first, patchAddPrefix) ||
-		strings.HasPrefix(first, patchUpdatePrefix) ||
-		strings.HasPrefix(first, patchDeletePrefix)
-}
-
-func applyUpdateHunks(current string, hunks []PatchHunk) (string, error) {
-	if len(hunks) == 0 {
-		return "", fmt.Errorf("update has no hunks")
-	}
-	updated := current
-	for hunkIdx, hunk := range hunks {
-		oldBlock, newBlock := hunkBlocks(hunk)
-		if oldBlock == "" && newBlock == "" {
-			return "", fmt.Errorf("hunk %d is empty", hunkIdx+1)
-		}
-		matches := strings.Count(updated, oldBlock)
-		if matches == 0 {
-			return "", fmt.Errorf("hunk %d context did not match the file", hunkIdx+1)
-		}
-		if matches > 1 {
-			return "", fmt.Errorf("hunk %d context matched %d locations; add more context to disambiguate", hunkIdx+1, matches)
-		}
-		updated = strings.Replace(updated, oldBlock, newBlock, 1)
-	}
-	return updated, nil
-}
-
-func hunkBlocks(hunk PatchHunk) (string, string) {
-	var oldLines, newLines []string
-	for _, l := range hunk.Lines {
-		switch l.Kind {
-		case LineContext:
-			oldLines = append(oldLines, l.Text)
-			newLines = append(newLines, l.Text)
-		case LineDelete:
-			oldLines = append(oldLines, l.Text)
-		case LineInsert:
-			newLines = append(newLines, l.Text)
-		}
-	}
-	return joinHunkLines(oldLines), joinHunkLines(newLines)
-}
-
-func joinHunkLines(lines []string) string {
-	if len(lines) == 0 {
-		return ""
-	}
-	return strings.Join(lines, "\n") + "\n"
 }

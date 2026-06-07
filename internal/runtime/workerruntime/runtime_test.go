@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/contractcompile"
+	"idiom/internal/contracts/compile"
 )
 
 func TestBuildActionGuidanceForBootstrappedReadBlocker(t *testing.T) {

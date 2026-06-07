@@ -2,7 +2,7 @@ package planexecute
 
 import (
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 type PlanScopeContract = plancontract.PlanScopeContract

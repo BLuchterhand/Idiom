@@ -11,7 +11,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 	"idiom/internal/runtime/workerruntime"
 )
@@ -1752,11 +1752,6 @@ func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRunt
 		return planThenExecuteSourceEvidence{}
 	}
 	best := planThenExecuteSourceEvidence{Path: path}
-	if planThenExecuteRequiredEditSnippetCoversPath(brief, path) {
-		best.Level = planThenExecuteEvidenceAnchorReady
-		best.Source = "required_edit_snippet"
-		best.Detail = "exact current-state/edit snippet"
-	}
 	for _, result := range results {
 		evidence := planThenExecuteToolResultSourceEvidence(result, path)
 		if planThenExecuteEvidenceRank(evidence.Level) > planThenExecuteEvidenceRank(best.Level) {
@@ -1764,19 +1759,6 @@ func planThenExecuteRequiredSourceEvidenceForPath(brief workerruntime.WorkerRunt
 		}
 	}
 	return best
-}
-
-func planThenExecuteRequiredEditSnippetCoversPath(brief workerruntime.WorkerRuntimeBrief, path string) bool {
-	path = normalizeRunnerPath(path)
-	if path == "" {
-		return false
-	}
-	for _, snippet := range workerruntime.NormalizeRuntimeBrief(brief).RequiredEditSnippets {
-		if normalizeRunnerPath(snippet.Path) == path && strings.TrimSpace(snippet.Content) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 func planThenExecuteToolResultSourceEvidence(result workspace.ToolResult, path string) planThenExecuteSourceEvidence {

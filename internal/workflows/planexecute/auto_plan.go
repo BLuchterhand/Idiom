@@ -8,7 +8,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/config"
 )
 

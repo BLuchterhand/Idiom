@@ -23,6 +23,20 @@ classifier or fall back conservatively to conversation. Essential lane entry
 points should be slash commands or other typed invocations, with the chosen
 route recorded in the run contract.
 
+For delegated local harness work, "observable" means compact and artifact-led.
+The supervising orchestrator should not ingest a worker's full progress stream
+unless the stream itself is the subject of the investigation. Start workers with
+stdout/stderr redirected to a run log, record the PID and expected artifacts,
+and monitor only process liveness or a bounded `status.json` while work is
+running. Require workers to leave a compact handoff surface where possible:
+`summary.json` for machine-readable facts, `final.md` for human closeout,
+`blockers.json` for typed blockers, and the declared changed paths or artifact
+paths. On completion, the orchestrator reads those artifacts and checks the diff
+or verification evidence. On failure, it reads only blocker artifacts and a
+small tail of the run log. This keeps research, implementation, and review
+inside the delegated harness while preserving enough evidence to make the next
+orchestration decision.
+
 When a capable model suddenly appears weak, repetitive, or unable to complete a
 task shape it normally handles, treat that as an alignment symptom before
 blaming model quality. Inspect the runtime configuration, selected role/model,

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/evidence/telemetry"
 	"idiom/internal/platform/config"
 	"idiom/internal/runtime/workerruntime"

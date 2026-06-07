@@ -133,6 +133,64 @@ func TestAnalyzeExtractsMetricsFromRecords(t *testing.T) {
 	}
 }
 
+func TestScenarioRoundTripFileHelpers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "scenario.json")
+	scenario := Scenario{
+		Name:                    "grounding-smoke",
+		PromptContains:          []string{"inspect evidence"},
+		RequireTools:            []string{"read_file"},
+		RequireEvidencePaths:    []string{"internal/evidence/answergrounding/grounding.go"},
+		RequireChangedFiles:     []string{"internal/evidence/answergrounding/grounding_test.go"},
+		RequireRunEvents:        []string{"readiness_check"},
+		RequireDiscoveryTools:   []string{"context_pack"},
+		RequireDiscoveryClasses: []string{"semantic_context"},
+	}
+
+	if err := WriteScenario(path, scenario); err != nil {
+		t.Fatalf("WriteScenario: %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read scenario file: %v", err)
+	}
+	if !strings.HasSuffix(string(data), "\n") {
+		t.Fatalf("WriteScenario should emit newline-terminated JSON, got %q", string(data))
+	}
+
+	got, err := LoadScenario(path)
+	if err != nil {
+		t.Fatalf("LoadScenario: %v", err)
+	}
+	if got.Name != scenario.Name || !containsStringFold(got.RequireTools, "read_file") || !containsStringFold(got.RequireEvidencePaths, "internal/evidence/answergrounding/grounding.go") {
+		t.Fatalf("scenario round trip mismatch: %#v", got)
+	}
+}
+
+func TestLoadRecordsNormalizesLegacyPayloadRecords(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "conversation.jsonl")
+	lines := []string{
+		`{"kind":"message","payload":{"role":"user","content":"hello"},"ts":"2026-06-07T00:00:00Z","session_id":"s1"}`,
+		`{"type":"tool_result","tool":"read_file","summary":"Read internal/evidence/eval/eval.go"}`,
+	}
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		t.Fatalf("write log: %v", err)
+	}
+
+	records, err := LoadRecords(path)
+	if err != nil {
+		t.Fatalf("LoadRecords: %v", err)
+	}
+	if len(records) != 2 {
+		t.Fatalf("records length = %d, want 2", len(records))
+	}
+	if records[0].Type != "message" || records[0].Data["type"] != "message" || records[0].Data["kind"] != "message" || records[0].Data["session_id"] != "s1" {
+		t.Fatalf("legacy record was not normalized: %#v", records[0])
+	}
+	if records[1].Type != "tool_result" || records[1].Data["tool"] != "read_file" {
+		t.Fatalf("typed record should pass through: %#v", records[1])
+	}
+}
+
 func TestAnalyzeIncludesLiveContractRollbackChangedFiles(t *testing.T) {
 	records := []Record{
 		{Type: "message", Data: map[string]any{"role": "user", "content": "shorten the label"}},
@@ -1063,6 +1121,22 @@ func TestEvaluateScenarioRequireRunEventsMatchesOrchestratorEventTypes(t *testin
 	}
 	if got := report.Metrics.RecordTypes["idiom.plan_execute.preflight_failed"]; got != 1 {
 		t.Fatalf("expected RecordTypes to count preflight_failed once, got %d", got)
+	}
+}
+
+func TestEvaluateScenarioRequireRunEventsAcceptsFeaturePlannerSourceSatisfiedCompletionAlias(t *testing.T) {
+	records := []Record{
+		{Type: "message", Data: map[string]any{"role": "user", "content": "dispatch the atom"}},
+		{Type: "idiom.feature_planner.atom_source_satisfied", Data: map[string]any{"atom_id": "atom-1", "outcome": "source_satisfied"}},
+		{Type: "message", Data: map[string]any{"role": "assistant", "content": "feature-planner: complete"}},
+	}
+
+	report := Evaluate("log.jsonl", records, Scenario{
+		Name:             "source-satisfied atom completes feature-planner atom",
+		RequireRunEvents: []string{"idiom.feature_planner.atom_completed"},
+	})
+	if !report.Passed {
+		t.Fatalf("expected source-satisfied atom event to satisfy atom_completed requirement, got findings %v", report.Findings)
 	}
 }
 

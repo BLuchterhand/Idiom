@@ -3,7 +3,7 @@ package planexecute
 import (
 	"strings"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 type EditSetObligationKind = plancontract.EditSetObligationKind

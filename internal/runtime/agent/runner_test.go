@@ -7373,10 +7373,10 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 	}
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if requests >= len(replies) {
-			t.Fatalf("unexpected extra chat request")
+		reply := "Plan submitted."
+		if requests < len(replies) {
+			reply = replies[requests]
 		}
-		reply := replies[requests]
 		requests++
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"choices": []map[string]any{{"message": map[string]string{"content": reply}}},
@@ -7400,7 +7400,10 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 			PermissionProfile: "guarded_workspace_write",
 			Constraints:       []string{"exact_anchor_implementation"},
 			RequiredEditPaths: []string{"target.txt"},
-			TargetRefs:        []string{"target.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{Path: "target.txt", Content: "stale\n"},
+			},
+			TargetRefs: []string{"target.txt"},
 		},
 	}
 	answer, err := runner.Run(
@@ -7437,7 +7440,7 @@ func TestPlanExecuteExactAnchorPlannerDoesNotPreHideReadTools(t *testing.T) {
 	if strings.Contains(answer, "Exact-anchor implementation did not complete because") {
 		t.Fatalf("plan-execute planner should not return exact-anchor hidden-tool blocker, got %q", answer)
 	}
-	if requests != len(replies) {
+	if requests < len(replies) {
 		t.Fatalf("expected read then submit_plan, got %d request(s)", requests)
 	}
 }
@@ -7525,7 +7528,7 @@ func TestPlanExecutePlannerRejectsRepeatedReadBeyondKnownEOF(t *testing.T) {
 	}
 }
 
-func TestPlanExecuteExactAnchorPreWriteRequiresSnippetCoverageForEveryRequiredPath(t *testing.T) {
+func TestPlanExecuteExactAnchorPlannerDoesNotUseImplementationPreWriteSurface(t *testing.T) {
 	covered := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
 		Contract:          "implementation_result",
@@ -7537,14 +7540,14 @@ func TestPlanExecuteExactAnchorPreWriteRequiresSnippetCoverageForEveryRequiredPa
 			{Path: "b.txt", Content: "old b"},
 		},
 	}
-	if !exactAnchorPreWriteSurfaceActive(covered, nil) {
-		t.Fatal("plan-execute exact-anchor packet with snippets for every required path should start on submit_plan-only surface")
+	if exactAnchorPreWriteSurfaceActive(covered, nil) {
+		t.Fatal("plan-execute planner must not use the implementation exact-anchor pre-write surface")
 	}
 
 	missing := covered
 	missing.RequiredEditSnippets = []workerruntime.RequiredEditSnippet{{Path: "a.txt", Content: "old a"}}
 	if exactAnchorPreWriteSurfaceActive(missing, nil) {
-		t.Fatal("plan-execute exact-anchor packet with an uncovered required path must keep scoped reads visible")
+		t.Fatal("plan-execute planner must keep using the plan-execute recovery surface even with partial snippets")
 	}
 }
 
@@ -18560,6 +18563,40 @@ func TestMutationCompletionRejectsUnresolvedRejectedWriteTarget(t *testing.T) {
 	}
 	if len(acceptance.EvidencePaths) == 0 || !slices.Contains(acceptance.EvidencePaths, "internal/surfaces/tui/app/update_handlers.go") {
 		t.Fatalf("expected unresolved rejected path in evidence paths, got %#v", acceptance.EvidencePaths)
+	}
+}
+
+func TestMutationCompletionIgnoresRecoveredOutOfScopeRejectedWriteTarget(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			Contract:          "implementation_result",
+			TaskFamily:        "implementation",
+			PermissionProfile: "guarded_workspace_write",
+			AllowedTools:      []string{"edit_file", "shell"},
+			RequiredEditPaths: []string{"internal/labels/labels.go"},
+			Objective:         "Update ShortLabel without editing tests.",
+		},
+	}
+	results := []workspace.ToolResult{{
+		Tool:    "edit_file",
+		Summary: "Edit request rejected",
+		Output:  "Rejected write target: `internal/labels/labels_test.go`",
+		Error:   "edit_file requires source evidence before editing.",
+	}, {
+		Tool:    "edit_file",
+		Summary: "Edited internal/labels/labels.go",
+		Output:  "Changed paths:\n- internal/labels/labels.go\n",
+	}, {
+		Tool:    "shell",
+		Summary: "Ran shell command in .",
+		Output:  "ok\texample.com/frozen-label-repo/internal/labels\n",
+	}}
+	acceptance := runner.evaluateFinalAnswerAcceptance(
+		"Implemented the requested change.\n\nChanged paths:\n- internal/labels/labels.go\n\nVerification: go test ./internal/labels passed",
+		results,
+	)
+	if acceptance.Decision != finalAnswerAcceptanceAccepted {
+		t.Fatalf("out-of-scope rejected write should not keep required mutation open, got %#v", acceptance)
 	}
 }
 

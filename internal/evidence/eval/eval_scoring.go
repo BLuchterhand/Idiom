@@ -1172,7 +1172,7 @@ func Evaluate(logPath string, records []Record, scenario Scenario) Report {
 		// Match either a type:"message" role (runner-emitted RunEvents) or a
 		// top-level record type (orchestrator-emitted events such as
 		// idiom.plan_execute.preflight_failed). One field, two valid sources.
-		if metrics.MessageRoles[trimmed] == 0 && metrics.RecordTypes[trimmed] == 0 {
+		if !runEventObserved(metrics, trimmed) {
 			addFinding("required run event %q was not observed in log", trimmed)
 		}
 	}
@@ -1669,6 +1669,27 @@ func containsPhase(phases []PhaseSnapshot, expected PhaseExpectation) bool {
 		return true
 	}
 	return false
+}
+
+func runEventObserved(metrics Metrics, required string) bool {
+	if metrics.MessageRoles[required] > 0 || metrics.RecordTypes[required] > 0 {
+		return true
+	}
+	for _, alias := range runEventAliases(required) {
+		if metrics.MessageRoles[alias] > 0 || metrics.RecordTypes[alias] > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func runEventAliases(required string) []string {
+	switch required {
+	case "idiom.feature_planner.atom_completed":
+		return []string{"idiom.feature_planner.atom_source_satisfied"}
+	default:
+		return nil
+	}
 }
 
 func parseRoutePlan(content string) RoutePlanSnapshot {

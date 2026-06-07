@@ -1,10 +1,9 @@
 package workspace
 
 import (
-	"encoding/json"
-	"regexp"
 	"strings"
 
+	"idiom/internal/capabilities/workspace/toolpolicy"
 	"idiom/internal/platform/config"
 )
 
@@ -13,13 +12,13 @@ import (
 // allow/ask/deny decisions. See docs/opencode-fixes-design.md §6.
 
 // ToolRuleDecision is the outcome of a tool-rule lookup.
-type ToolRuleDecision string
+type ToolRuleDecision = toolpolicy.Decision
 
 const (
-	ToolRuleAllow ToolRuleDecision = "allow"
-	ToolRuleAsk   ToolRuleDecision = "ask"
-	ToolRuleDeny  ToolRuleDecision = "deny"
-	ToolRuleNone  ToolRuleDecision = ""
+	ToolRuleAllow = toolpolicy.Allow
+	ToolRuleAsk   = toolpolicy.Ask
+	ToolRuleDeny  = toolpolicy.Deny
+	ToolRuleNone  = toolpolicy.None
 )
 
 // ToolRule is a single `pattern → decision` entry. Patterns are glob-style:
@@ -29,10 +28,7 @@ const (
 //   - for path-class tools (edit_file, write_file, append_file, read_file),
 //     the pattern is matched against the request's path using `filepath.Match`
 //     extended to accept `**` as a recursive glob.
-type ToolRule struct {
-	Pattern  string           `json:"pattern"`
-	Decision ToolRuleDecision `json:"decision"`
-}
+type ToolRule = toolpolicy.Rule
 
 // SetPermissionRules installs the active Mode's permission ruleset. Called
 // at session startup (from New) and when the user switches Mode via
@@ -122,171 +118,17 @@ func convertConfiguredToolRules(configRules map[string][]config.ToolRule) map[st
 // against the catch-all key `mcp:*`. This lets users write a single
 // "every MCP tool asks" rule without enumerating each server.
 func MatchToolRule(tool string, req ToolRequest, rules map[string][]ToolRule) ToolRuleDecision {
-	if len(rules) == 0 {
-		return ToolRuleNone
-	}
-	if decision := matchToolRuleByKey(tool, req, rules, tool); decision != ToolRuleNone {
-		return decision
-	}
-	if strings.HasPrefix(tool, "mcp:") && tool != "mcp:*" {
-		if decision := matchToolRuleByKey(tool, req, rules, "mcp:*"); decision != ToolRuleNone {
-			return decision
-		}
-	}
-	return ToolRuleNone
-}
-
-// matchToolRuleByKey looks up rules under the given key and applies the
-// pattern matcher. tool is still the original tool name — used by the
-// pattern matcher to pick shell vs. path semantics.
-func matchToolRuleByKey(tool string, req ToolRequest, rules map[string][]ToolRule, key string) ToolRuleDecision {
-	toolRules, ok := rules[key]
-	if !ok || len(toolRules) == 0 {
-		return ToolRuleNone
-	}
-	target := extractToolRuleTarget(tool, req)
-	for _, rule := range toolRules {
-		if matchToolRulePattern(tool, rule.Pattern, target) {
-			if rule.Decision == ToolRuleNone {
-				return ToolRuleAllow
-			}
-			return rule.Decision
-		}
-	}
-	return ToolRuleNone
+	return toolpolicy.Match(tool, toolPolicyRequest(req), rules)
 }
 
 func extractToolRuleTarget(tool string, req ToolRequest) string {
-	switch {
-	case tool == "shell" || tool == "bash":
-		return strings.TrimSpace(req.Command)
-	case strings.HasPrefix(tool, "mcp:"):
-		// MCP tools have arbitrary args; we cannot type-match. Use the
-		// most human-meaningful field present — `query` for search-shaped
-		// tools, `url` for fetch-shaped ones — so users can still write
-		// patterns like "https://github.com/*" or "go 1.24*".
-		if q := stringFieldFromRawJSON(req.Args, "query"); q != "" {
-			return q
-		}
-		if u := stringFieldFromRawJSON(req.Args, "url"); u != "" {
-			return u
-		}
-		return ""
-	default:
-		return strings.TrimSpace(req.Path)
-	}
+	return toolpolicy.ExtractTarget(tool, toolPolicyRequest(req))
 }
 
-// stringFieldFromRawJSON extracts one top-level string field from raw
-// JSON bytes without unmarshaling the whole blob into a typed struct.
-// Returns "" when the field is missing, non-string, or the bytes are
-// not a JSON object.
-func stringFieldFromRawJSON(raw json.RawMessage, key string) string {
-	if len(raw) == 0 {
-		return ""
+func toolPolicyRequest(req ToolRequest) toolpolicy.Request {
+	return toolpolicy.Request{
+		Command: req.Command,
+		Path:    req.Path,
+		Args:    req.Args,
 	}
-	var probe map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &probe); err != nil {
-		return ""
-	}
-	rawVal, ok := probe[key]
-	if !ok {
-		return ""
-	}
-	var s string
-	if err := json.Unmarshal(rawVal, &s); err != nil {
-		return ""
-	}
-	return s
-}
-
-func matchToolRulePattern(tool string, pattern string, target string) bool {
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" || pattern == "*" {
-		return true
-	}
-	if target == "" {
-		return false
-	}
-	switch tool {
-	case "shell", "bash":
-		return matchShellRule(pattern, target)
-	default:
-		return matchPathRule(pattern, target)
-	}
-}
-
-// matchShellRule implements the simple "git *" / "rm -rf *" style prefix
-// match. A trailing "*" means "anything after this prefix".
-func matchShellRule(pattern string, command string) bool {
-	if strings.HasSuffix(pattern, "*") {
-		prefix := strings.TrimRight(strings.TrimSuffix(pattern, "*"), " ")
-		if prefix == "" {
-			return true
-		}
-		if command == prefix {
-			return true
-		}
-		if strings.HasPrefix(command, prefix+" ") {
-			return true
-		}
-		return false
-	}
-	return command == pattern
-}
-
-// matchPathRule supports `**` (any depth of path segments) and `*` (any
-// characters within a single segment) on path patterns. Matching is
-// case-insensitive and separator-normalized to forward slashes.
-func matchPathRule(pattern string, path string) bool {
-	pat := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(pattern), "\\", "/"))
-	tgt := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(path), "\\", "/"))
-	if pat == "" {
-		return false
-	}
-	regex := "^" + globToRegex(pat) + "$"
-	compiled, err := regexp.Compile(regex)
-	if err != nil {
-		return false
-	}
-	return compiled.MatchString(tgt)
-}
-
-// globToRegex converts a shell-style glob with `**` / `*` into an anchored
-// regex body. `**/` (or standalone `**`) matches any depth including zero;
-// `*` matches anything that isn't a path separator; `?` matches one non-
-// separator char; any other character is escaped literally.
-func globToRegex(pattern string) string {
-	var b strings.Builder
-	i := 0
-	for i < len(pattern) {
-		ch := pattern[i]
-		switch ch {
-		case '*':
-			if i+1 < len(pattern) && pattern[i+1] == '*' {
-				// Handle "**/" and plain "**".
-				if i+2 < len(pattern) && pattern[i+2] == '/' {
-					b.WriteString(`(?:.*/)?`)
-					i += 3
-					continue
-				}
-				b.WriteString(`.*`)
-				i += 2
-				continue
-			}
-			b.WriteString(`[^/]*`)
-			i++
-		case '?':
-			b.WriteString(`[^/]`)
-			i++
-		case '.', '+', '(', ')', '|', '^', '$', '{', '}', '[', ']', '\\':
-			b.WriteByte('\\')
-			b.WriteByte(ch)
-			i++
-		default:
-			b.WriteByte(ch)
-			i++
-		}
-	}
-	return b.String()
 }

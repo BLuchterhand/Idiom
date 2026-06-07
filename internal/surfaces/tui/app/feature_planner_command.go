@@ -363,6 +363,10 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	if result.ExitCode != 0 && featureplanner.CompletionFieldString(fields, "status") == "" {
 		fields["status"] = "failed"
 	}
+	if result.Completion != nil {
+		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(*result.Completion, result.CompletionPath))
+		return
+	}
 	overlayFeaturePlannerRecoverySidecarFields(fields, root, strings.TrimSpace(result.SessionID))
 	if strings.TrimSpace(root) == "" || (strings.TrimSpace(result.SessionID) == "" && strings.TrimSpace(result.ResumeStatePath) == "") {
 		return
@@ -371,12 +375,21 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	if stateID == "" {
 		stateID = strings.TrimSuffix(filepath.Base(filepath.ToSlash(strings.TrimSpace(result.ResumeStatePath))), ".json")
 	}
+	if record, completionPath, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, stateID); err == nil && found {
+		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(record, completionPath))
+		overlayFeaturePlannerRecoverySidecarFields(fields, root, stateID)
+		return
+	}
 	state, statePath, found, err := planexecute.TryLoadProgressState(root, stateID)
 	if err != nil || !found {
 		return
 	}
-	progressFields := planexecute.ProgressStateEventFields(state, statePath)
-	overlayFeaturePlannerPlanExecuteProgressFields(fields, progressFields)
+	if record, ok := planexecute.PlanExecuteTerminalCompletionRecordFromProgressState(state, planexecute.PlanExecuteTerminalCompletionInput{ProgressPath: statePath}); ok {
+		overlayFeaturePlannerPlanExecuteTerminalFields(fields, planexecute.PlanExecuteTerminalCompletionEventFields(record, ""))
+	} else {
+		progressFields := planexecute.ProgressStateEventFields(state, statePath)
+		overlayFeaturePlannerPlanExecuteProgressFields(fields, progressFields)
+	}
 	overlayFeaturePlannerRecoverySidecarFields(fields, root, stateID)
 }
 
@@ -409,6 +422,15 @@ func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progr
 	featureplanner.OverlayPlanExecuteCompletionFields(fields, progressFields)
 	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "changed_paths"} {
 		if value, ok := progressFields[key]; ok {
+			fields[key] = value
+		}
+	}
+}
+
+func overlayFeaturePlannerPlanExecuteTerminalFields(fields map[string]any, terminalFields map[string]any) {
+	featureplanner.OverlayPlanExecuteCompletionFields(fields, terminalFields)
+	for _, key := range []string{"required_edit_paths", "allowed_edit_paths", "write_allowed_paths", "changed_paths", "source_satisfied_evidence_paths", "completion_path"} {
+		if value, ok := terminalFields[key]; ok {
 			fields[key] = value
 		}
 	}

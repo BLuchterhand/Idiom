@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/failures"
 )
 

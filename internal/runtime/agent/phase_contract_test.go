@@ -7,7 +7,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
-	"idiom/internal/contracts/contractcompile"
+	"idiom/internal/contracts/compile"
 	"idiom/internal/runtime/workerruntime"
 )
 

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 const SchemaVersion = "idiom.edit_intent.v1"

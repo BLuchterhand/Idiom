@@ -6,6 +6,7 @@ import (
 
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/autonomy"
+	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -287,17 +288,7 @@ func quoteRecoveryCardValue(value string) string {
 }
 
 func uniqueRecoveryCardStrings(values []string) []string {
-	seen := make(map[string]bool, len(values))
-	var out []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		out = append(out, value)
-	}
-	return out
+	return stringset.Unique(values)
 }
 
 func recoveryCardInvariantID(input RecoveryCardInput) string {
@@ -509,28 +500,7 @@ func recoveryCardCallableTools(contract TurnPhaseContract, currentAllowedTools [
 }
 
 func removeRecoveryCardStrings(values []string, remove []string) []string {
-	if len(values) == 0 || len(remove) == 0 {
-		return values
-	}
-	removed := make(map[string]struct{}, len(remove))
-	for _, value := range remove {
-		value = strings.TrimSpace(value)
-		if value != "" {
-			removed[value] = struct{}{}
-		}
-	}
-	var out []string
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := removed[value]; ok {
-			continue
-		}
-		out = append(out, value)
-	}
-	return uniqueRecoveryCardStrings(out)
+	return stringset.Remove(values, remove)
 }
 
 func recoveryCardActionPolicyHasNoToolClasses(classes []string) bool {
@@ -712,11 +682,7 @@ func firstNonEmptyRecoveryCardStrings(groups ...[]string) []string {
 }
 
 func mergeRecoveryCardStrings(groups ...[]string) []string {
-	var merged []string
-	for _, group := range groups {
-		merged = append(merged, group...)
-	}
-	return uniqueRecoveryCardStrings(merged)
+	return stringset.Merge(groups...)
 }
 
 func slicesContainRecoveryCardString(values []string, needle string) bool {

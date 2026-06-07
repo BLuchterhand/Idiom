@@ -80,6 +80,10 @@ func TestEvidenceLedger_LooksUpSupportWithoutClaimExtraction(t *testing.T) {
 	if !ok || receipt.ID != "c1" {
 		t.Fatalf("FindAny CommandResult = (%#v, %v), want c1", receipt, ok)
 	}
+
+	if receipt, ok = ledger.FindTarget("internal/labels/labels.go", Packet); ok {
+		t.Fatalf("FindTarget with disallowed kind = (%#v, true), want false", receipt)
+	}
 }
 
 func TestGroundingValidator_AppliesSupportTierRules(t *testing.T) {
@@ -143,6 +147,32 @@ func TestGroundingValidator_AppliesSupportTierRules(t *testing.T) {
 	assertSupportedBy(t, validated[3], Change, "d1")
 }
 
+func TestGroundingValidator_SourceClaimRangeFallbacks(t *testing.T) {
+	validator := NewGroundingValidator([]EvidenceReceipt{
+		{ID: "s1", Kind: SymbolBody, Target: "internal/labels/labels.go", StartLine: 8, EndLine: 8},
+	})
+
+	notSource := AnswerClaim{
+		Text:     "internal/other/labels.go",
+		Kind:     Path,
+		Target:   "internal/other/labels.go",
+		Line:     8,
+		Severity: SeverityBlocking,
+	}
+	sourceWithoutCitation := AnswerClaim{
+		Text:     "definition location",
+		Kind:     SourceLocation,
+		Target:   "internal/labels/labels.go",
+		Line:     8,
+		Severity: SeverityBlocking,
+	}
+
+	if got := validator.ValidateClaim(notSource); got.Supported {
+		t.Fatalf("path claim should not be supported by a different target: %#v", got)
+	}
+	assertSupportedBy(t, validator.ValidateClaim(sourceWithoutCitation), SourceLocation, "s1")
+}
+
 func TestTargetNormalizer_PreservesLegacyCompatibility(t *testing.T) {
 	normalizer := TargetNormalizer{}
 	cases := []struct {
@@ -159,6 +189,11 @@ func TestTargetNormalizer_PreservesLegacyCompatibility(t *testing.T) {
 			name:   "preserve legacy leading slash after relative prefix",
 			target: "./internal/labels/labels.go",
 			want:   "/internal/labels/labels.go",
+		},
+		{
+			name:   "empty target",
+			target: " ,.; ",
+			want:   "",
 		},
 	}
 	for _, tt := range cases {

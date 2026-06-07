@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/workflows/featureplanner"
 	coreplanexecute "idiom/internal/workflows/planexecute"
 )
@@ -82,7 +82,8 @@ func sessionIDFromProgressPath(path string) string {
 }
 
 func terminalProgressForActiveRun(progress coreplanexecute.ProgressState, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
-	if !terminalProgressStatus(progress) {
+	record, ok := coreplanexecute.PlanExecuteTerminalCompletionRecordFromProgressState(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{})
+	if !ok {
 		return false
 	}
 	if startedAt := parseTime(run.StartedAt); !startedAt.IsZero() {
@@ -97,16 +98,15 @@ func terminalProgressForActiveRun(progress coreplanexecute.ProgressState, run fe
 	}
 	atomPaths := uniqueStrings(nil, atom.RequiredEditPaths...)
 	atomPaths = uniqueStrings(atomPaths, atom.AllowedEditPaths...)
-	progressPaths := uniqueStrings(nil, progress.RequiredEditPaths...)
-	progressPaths = uniqueStrings(progressPaths, progress.AllowedEditPaths...)
-	progressPaths = uniqueStrings(progressPaths, progress.ChangedPaths...)
-	return len(atomPaths) == 0 || stringSetsOverlap(atomPaths, progressPaths)
+	recordPaths := uniqueStrings(nil, record.RequiredEditPaths...)
+	recordPaths = uniqueStrings(recordPaths, record.AllowedEditPaths...)
+	recordPaths = uniqueStrings(recordPaths, record.ChangedPaths...)
+	recordPaths = uniqueStrings(recordPaths, record.SourceSatisfiedEvidencePaths...)
+	return len(atomPaths) == 0 || stringSetsOverlap(atomPaths, recordPaths)
 }
 
 func terminalCompletionForActiveRun(record coreplanexecute.PlanExecuteTerminalCompletionRecord, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
-	if !terminalCompletionClass(record.TerminalClass) {
-		return false
-	}
+	record = coreplanexecute.NormalizePlanExecuteTerminalCompletionRecord(record)
 	if startedAt := parseTime(run.StartedAt); !startedAt.IsZero() {
 		updatedAt := parseTime(record.TS)
 		if !updatedAt.IsZero() && updatedAt.Before(startedAt.Add(-1*time.Second)) {
@@ -120,24 +120,6 @@ func terminalCompletionForActiveRun(record coreplanexecute.PlanExecuteTerminalCo
 	recordPaths = uniqueStrings(recordPaths, record.ChangedPaths...)
 	recordPaths = uniqueStrings(recordPaths, record.SourceSatisfiedEvidencePaths...)
 	return len(atomPaths) == 0 || stringSetsOverlap(atomPaths, recordPaths)
-}
-
-func terminalCompletionClass(class coreplanexecute.PlanExecuteTerminalClass) bool {
-	switch class {
-	case coreplanexecute.PlanExecuteTerminalClassSuccess, coreplanexecute.PlanExecuteTerminalClassRecoveryRequired, coreplanexecute.PlanExecuteTerminalClassFailed:
-		return true
-	default:
-		return false
-	}
-}
-
-func terminalProgressStatus(progress coreplanexecute.ProgressState) bool {
-	switch strings.TrimSpace(progress.Status) {
-	case coreplanexecute.ProgressStatusCompleted, coreplanexecute.ProgressStatusFailed, coreplanexecute.ProgressStatusDegraded, coreplanexecute.ProgressStatusBlocked, coreplanexecute.ProgressStatusSkipped:
-		return true
-	default:
-		return false
-	}
 }
 
 func parseTime(value string) time.Time {
@@ -165,25 +147,33 @@ func encodeTerminalCompletion(record coreplanexecute.PlanExecuteTerminalCompleti
 }
 
 func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPath string) string {
-	fields := coreplanexecute.ProgressStateEventFields(progress, strings.TrimSpace(progressPath))
+	record, ok := coreplanexecute.PlanExecuteTerminalCompletionRecordFromProgressState(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
+		ProgressPath: strings.TrimSpace(progressPath),
+	})
+	if !ok {
+		fields := coreplanexecute.ProgressStateEventFields(progress, strings.TrimSpace(progressPath))
+		if fields == nil {
+			fields = map[string]any{}
+		}
+		return encodePlanExecuteCompletionFields(fields, progressPath, "durable_plan_execute_progress")
+	}
+	fields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, "")
 	if fields == nil {
 		fields = map[string]any{}
 	}
+	return encodePlanExecuteCompletionFields(fields, progressPath, "durable_plan_execute_progress")
+}
+
+func encodePlanExecuteCompletionFields(fields map[string]any, progressPath string, source string) string {
 	if strings.TrimSpace(progressPath) == "" {
 		progressPath = strings.TrimSpace(featureplanner.CompletionFieldString(fields, "state_path"))
 	}
 	delete(fields, "state_path")
 	fields["tool"] = featureplanner.ToolPlanExecuteComplete
 	fields["lane_family"] = "plan-execute"
-	fields["completion_source"] = "durable_plan_execute_progress"
+	fields["completion_source"] = source
 	if strings.TrimSpace(progressPath) != "" {
 		fields["progress_path"] = strings.TrimSpace(progressPath)
-	}
-	if featureplanner.CompletionFieldString(fields, "status") == "" {
-		fields["status"] = strings.TrimSpace(progress.Status)
-	}
-	if featureplanner.CompletionFieldString(fields, "phase") == "" {
-		fields["phase"] = strings.TrimSpace(progress.Phase)
 	}
 	body, _ := json.Marshal(fields)
 	return string(body)

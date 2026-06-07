@@ -8,6 +8,7 @@ import (
 	"idiom/internal/capabilities/workspace"
 	"idiom/internal/contracts/pathparse"
 	"idiom/internal/platform/util"
+	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -348,7 +349,7 @@ func (r *Runner) composedFinalAnswerFromEvidence(input FinalAnswerDecorateInput)
 			if cleaned, ok := cleanedSubstantiveFinalAnswer(answer); ok {
 				return cleaned, true
 			}
-			if (!finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer)) || questionPresentationBlock(input.Brief.Objective) != "" {
+			if !finalAnswerNeedsDecoration(answer) && !looksLikeGenericEvidenceComposerAnswer(answer) {
 				return answer, true
 			}
 		}
@@ -2271,8 +2272,5 @@ func routeSummaryFromToolOutput(output string) string {
 }
 
 func limitStrings(values []string, limit int) []string {
-	if limit <= 0 || len(values) <= limit {
-		return values
-	}
-	return values[:limit]
+	return stringset.Prefix(values, limit)
 }

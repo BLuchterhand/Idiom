@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 	"idiom/internal/platform/util"
 	"idiom/internal/workflows/refinescope"
 )

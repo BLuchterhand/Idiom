@@ -3,7 +3,7 @@ package featureplanner
 import (
 	"strings"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 // ProductWorkflowBrief carries the product-workflow evidence the planner

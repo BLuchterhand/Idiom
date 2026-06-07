@@ -5786,6 +5786,38 @@ func TestPlanExecuteSubmitReadyParseRecoveryBlocksFurtherReads(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteStringifiedSubmitPlanParseFailureEmitsRecoveryEventWithoutPrompt(t *testing.T) {
+	var events []RunEvent
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.go"},
+		},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	raw := `{"tool":"submit_plan","rationale":"Bad stringified edits.","edits":"not json"}`
+	parseErr := errors.New("json: cannot unmarshal string into Go struct field ToolRequest.edits of type []workspace.PlanEdit")
+	if prompt, ok := runner.planThenExecuteSubmitPlanParseRecoveryPrompt(raw, parseErr, nil); ok {
+		t.Fatalf("fixture should exercise event fallback without prompt injection, got %q", prompt)
+	}
+
+	runner.emitPlanExecuteSubmitPlanParseRecoveryEventForParseFailure(raw, parseErr)
+
+	for _, event := range events {
+		if event.Role == "plan_then_execute_submit_plan_parse_recovery" {
+			if strings.Contains(event.Content, "Do not call read/search/discovery") {
+				t.Fatalf("fallback event must not reuse submit-ready prompt directives, got %q", event.Content)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected plan_then_execute_submit_plan_parse_recovery event, got %#v", events)
+}
+
 func TestPlanExecuteTerminalTextualHistoryPrunesReadToolRequests(t *testing.T) {
 	messages := []llama.ChatMessage{
 		{Role: "system", Content: "base"},

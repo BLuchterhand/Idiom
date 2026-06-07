@@ -1,4 +1,4 @@
-package productworkflow
+package productworkflow_test
 
 import (
 	"encoding/json"
@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"idiom/internal/workflows/featureplanner"
+	. "idiom/internal/workflows/productworkflow"
 )
 
 func TestE2ECreateFullPipeline(t *testing.T) {

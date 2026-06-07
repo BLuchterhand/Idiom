@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"idiom/internal/capabilities/workspace"
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 func TestPromptScopeWrappersMatchPlanContract(t *testing.T) {

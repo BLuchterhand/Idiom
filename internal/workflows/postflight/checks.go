@@ -6,7 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 // Severity classifies how seriously a Finding should be treated.

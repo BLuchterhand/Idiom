@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plancontract"
+	plancontract "idiom/internal/contracts/plan"
 )
 
 type ParsedPlannerOutput struct {
@@ -385,10 +385,6 @@ func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context Standalone
 			path := plancontract.NormalizeScopePath(scopedPath)
 			if path == "" {
 				errs = append(errs, fmt.Errorf("atom %d test artifact path %q is not a valid repo-relative workspace path; use ask_planner_question for localization repair", i, scopedPath))
-				continue
-			}
-			if err := validateStandaloneWorkspacePath(root, context.Prompt, path); err != nil {
-				errs = append(errs, fmt.Errorf("atom %d test artifact path %q %w", i, path, err))
 			}
 		}
 	}

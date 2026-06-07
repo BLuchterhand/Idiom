@@ -53,6 +53,54 @@ func TestRecorderWritesProcessTelemetryAndRedactsSensitiveArgs(t *testing.T) {
 	}
 }
 
+func TestSanitizeArgsKeepsShortValuesAndRedactsLongValues(t *testing.T) {
+	longValue := strings.Repeat("x", 241)
+	got := sanitizeArgs([]string{
+		"",
+		"--config= config.json ",
+		"--description=" + longValue,
+		"--prompt=change the private thing",
+		"--task",
+		"write a detailed private brief",
+	})
+
+	rendered := toJSON(t, got)
+	if !strings.Contains(rendered, "--config=config.json") {
+		t.Fatalf("short non-sensitive flag value should be preserved: %s", rendered)
+	}
+	for _, forbidden := range []string{longValue, "change the private thing", "write a detailed private brief"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("sensitive or oversized arg leaked %q in %s", forbidden, rendered)
+		}
+	}
+	if strings.Count(rendered, "redacted len=") != 3 {
+		t.Fatalf("expected three redacted arg values, got %s", rendered)
+	}
+}
+
+func TestOpenUsesTelemetryDirEnvAndSanitizedCommandName(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("IDIOM_TELEMETRY_DIR", dir)
+
+	rec, err := Open(Options{Dir: filepath.Join(t.TempDir(), "ignored"), Command: "My Command!*"})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	if rec == nil {
+		t.Fatal("recorder disabled unexpectedly")
+	}
+	if err := rec.Close(0); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	if !strings.HasPrefix(rec.Path(), dir+string(os.PathSeparator)) {
+		t.Fatalf("expected telemetry path under env dir %q, got %q", dir, rec.Path())
+	}
+	if !strings.Contains(filepath.Base(rec.Path()), "my-command") {
+		t.Fatalf("expected sanitized command name in telemetry file, got %q", rec.Path())
+	}
+}
+
 // TestRecorderStampsVersionWhenSet verifies the Phase 9 debugging
 // affordance: when Options.Version is non-empty, both session_start
 // and process_start records carry the version field. Log readers can

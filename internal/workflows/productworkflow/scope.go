@@ -4,7 +4,7 @@ import (
 	"slices"
 	"strings"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 type ScopeGateInput struct {

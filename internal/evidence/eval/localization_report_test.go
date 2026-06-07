@@ -130,6 +130,32 @@ func TestBuildLocalizationUnifiedReportCombinesEvidenceSurfaces(t *testing.T) {
 	}
 }
 
+func TestEvaluateLocalizationUnifiedReportFileSetsWorkspaceRoot(t *testing.T) {
+	corpus := validLocalizationCorpusForTest()
+	path := filepath.Join(t.TempDir(), "corpus.json")
+	data, err := json.Marshal(corpus)
+	if err != nil {
+		t.Fatalf("marshal corpus: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	report, err := EvaluateLocalizationUnifiedReportFile(path, evalTestRepoRoot(t), LocalizationUnifiedReportOptions{
+		Benchmark: LocalizationBenchmarkOptions{TopK: []int{1}},
+		Now:       time.Date(2026, 5, 13, 19, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatalf("EvaluateLocalizationUnifiedReportFile: %v", err)
+	}
+	if report.Name != corpus.Name || report.Outcome.SampleCount != 1 {
+		t.Fatalf("unexpected report identity: %#v", report)
+	}
+	if !report.CacheFreshness.Available {
+		t.Fatalf("root argument should populate workspace-root-backed cache report: %#v", report.CacheFreshness)
+	}
+}
+
 func TestLocalizationUnifiedReportExplainsMissingCurrentCorpusClientSamples(t *testing.T) {
 	corpusPath := evalTestdataPath(t, "localization", "recent-implementation-corpus.json")
 	corpus, err := ReadLocalizationCorpus(corpusPath)

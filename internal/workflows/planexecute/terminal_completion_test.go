@@ -110,6 +110,75 @@ func TestNormalizePlanExecuteTerminalCompletionRecordDefaultsAndTrims(t *testing
 	}
 }
 
+func TestNormalizePlanExecuteTerminalCompletionRecordReclassifiesContradictions(t *testing.T) {
+	record := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		TerminalClass: PlanExecuteTerminalClassSuccess,
+		Outcome:       PlanExecuteTerminalOutcomeCompleted,
+		Status:        ProgressStatusCompleted,
+		FailureKind:   "review_model_error",
+		FailureReason: "review model returned invalid JSON",
+	})
+
+	if record.TerminalClass != PlanExecuteTerminalClassFailed || record.Outcome != PlanExecuteTerminalOutcomeFailed {
+		t.Fatalf("classification = class %q outcome %q, want failed/failed", record.TerminalClass, record.Outcome)
+	}
+}
+
+func TestPlanExecuteTerminalCompletionRecordFromFieldsNormalizesStatePath(t *testing.T) {
+	record := PlanExecuteTerminalCompletionRecordFromFields(map[string]any{
+		"state_path":            ".idiom/plan-execute/sessions/field-test.json",
+		"status":                "completed",
+		"review_status":         "skipped",
+		"review_repair_skipped": true,
+		"changed_paths":         []any{"pkg/feature.go", "pkg/feature.go"},
+	})
+
+	if record.ProgressPath != ".idiom/plan-execute/sessions/field-test.json" {
+		t.Fatalf("ProgressPath = %q, want state_path fallback", record.ProgressPath)
+	}
+	if record.TerminalClass != PlanExecuteTerminalClassSuccess || record.Outcome != PlanExecuteTerminalOutcomeReviewSkippedByDesign {
+		t.Fatalf("classification = class %q outcome %q, want skipped-by-design success", record.TerminalClass, record.Outcome)
+	}
+	if len(record.ChangedPaths) != 1 || record.ChangedPaths[0] != "pkg/feature.go" {
+		t.Fatalf("ChangedPaths = %#v, want deduped path", record.ChangedPaths)
+	}
+}
+
+func TestPlanExecuteTerminalCompletionRecordFromProgressStateRequiresTerminalState(t *testing.T) {
+	running := progressStateForTerminalCompletionTest(func(state *ProgressState) {
+		state.Status = ProgressStatusRunning
+		state.Phase = ProgressPhaseExecutor
+	})
+	if _, ok := PlanExecuteTerminalCompletionRecordFromProgressState(running, PlanExecuteTerminalCompletionInput{}); ok {
+		t.Fatalf("running progress must not synthesize terminal completion")
+	}
+
+	completed := progressStateForTerminalCompletionTest(func(state *ProgressState) {
+		state.Status = ProgressStatusCompleted
+		state.Phase = ProgressPhaseComplete
+	})
+	record, ok := PlanExecuteTerminalCompletionRecordFromProgressState(completed, PlanExecuteTerminalCompletionInput{ProgressPath: "progress.json"})
+	if !ok {
+		t.Fatalf("completed progress should synthesize terminal completion")
+	}
+	if record.ProgressPath != "progress.json" || record.TerminalClass != PlanExecuteTerminalClassSuccess {
+		t.Fatalf("record = %#v, want terminal success with progress path", record)
+	}
+}
+
+func TestNormalizePlanExecuteTerminalCompletionRecordKeepsDegradedOutcomeIdempotent(t *testing.T) {
+	record := NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{
+		Status:       ProgressStatusDegraded,
+		ReviewStatus: "degraded (review unavailable)",
+		FailureKind:  "review_repair_degraded",
+	})
+	record = NormalizePlanExecuteTerminalCompletionRecord(record)
+
+	if record.TerminalClass != PlanExecuteTerminalClassRecoveryRequired || record.Outcome != PlanExecuteTerminalOutcomeReviewDegraded {
+		t.Fatalf("degraded terminal record was not idempotent: %#v", record)
+	}
+}
+
 func TestSavePlanExecuteTerminalCompletionRecordRoundTrips(t *testing.T) {
 	root := t.TempDir()
 	record := NewPlanExecuteTerminalCompletionRecord(

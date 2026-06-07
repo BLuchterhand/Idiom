@@ -1,12 +1,10 @@
 package planexecute
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"maps"
-	"sort"
 	"strings"
 	"time"
 
@@ -126,93 +124,6 @@ func planExecutePathLooksLikeTest(path string) bool {
 
 func planExecuteScopeToBriefBody(prompt string, requiredEditPaths []string, allowedEditPaths []string) string {
 	return planexecute.AppendPlanExecuteScopeToBriefBody(prompt, requiredEditPaths, allowedEditPaths)
-}
-
-type planExecuteAutoExactPlanResult struct {
-	Submitted       bool
-	SourceSatisfied bool
-	Result          workspace.ToolResult
-	Reason          string
-	EditCount       int
-	AppliedCount    int
-	PendingCount    int
-	UnknownCount    int
-	AppliedPaths    []string
-	PendingPaths    []string
-	UnknownPaths    []string
-}
-
-func planExecuteTryAutoExactPlan(cfg config.Config, prompt string, requiredEditPaths []string) planExecuteAutoExactPlanResult {
-	edits, reason := planExecuteExactPlanEditsForWorkspace(prompt, requiredEditPaths, cfg.Workspace.Root)
-	if len(edits) == 0 {
-		return planExecuteAutoExactPlanResult{Reason: reason}
-	}
-	classified := planExecuteClassifyAutoExactPlanEdits(cfg.Workspace.Root, edits)
-	if classified.UnknownCount > 0 {
-		classified.Reason = "exact-anchor progress unknown for required path(s): " + strings.Join(classified.UnknownPaths, ", ")
-		classified.EditCount = len(edits)
-		return classified
-	}
-	if classified.PendingCount == 0 {
-		classified.SourceSatisfied = true
-		classified.Reason = "all exact-anchor edits already match the current workspace"
-		classified.EditCount = len(edits)
-		return classified
-	}
-	mgr := workspace.NewManager(cfg.Workspace)
-	result := mgr.Execute(context.Background(), workspace.ToolRequest{
-		Tool:      "submit_plan",
-		Rationale: "Deterministic exact-anchor plan synthesized from the Required Edits packet.",
-		Edits:     planExecutePendingAutoExactEdits(cfg.Workspace.Root, edits),
-	})
-	classified.Result = result
-	if strings.TrimSpace(result.Error) != "" {
-		classified.Reason = "exact-anchor auto-plan rejected by submit_plan validation"
-		classified.EditCount = classified.PendingCount
-		return classified
-	}
-	classified.Submitted = true
-	classified.EditCount = classified.PendingCount
-	if classified.AppliedCount > 0 {
-		classified.Reason = "already-applied exact edits skipped; pending exact edits submitted"
-	} else {
-		classified.Reason = "all required paths covered by parseable exact old_text/new_text pairs"
-	}
-	return classified
-}
-
-func planExecuteClassifyAutoExactPlanEdits(root string, edits []workspace.PlanEdit) planExecuteAutoExactPlanResult {
-	var result planExecuteAutoExactPlanResult
-	var appliedPaths []string
-	var pendingPaths []string
-	var unknownPaths []string
-	for _, edit := range edits {
-		status := planExecuteAutoExactEditStatus(root, edit)
-		path := normalizePlanExecutePath(edit.Path)
-		switch status {
-		case "applied":
-			result.AppliedCount++
-			appliedPaths = append(appliedPaths, path)
-		case "pending":
-			result.PendingCount++
-			pendingPaths = append(pendingPaths, path)
-		default:
-			result.UnknownCount++
-			unknownPaths = append(unknownPaths, path)
-		}
-	}
-	result.AppliedPaths = mergePlanExecutePaths(appliedPaths)
-	result.PendingPaths = mergePlanExecutePaths(pendingPaths)
-	result.UnknownPaths = mergePlanExecutePaths(unknownPaths)
-	return result
-}
-
-func planExecutePendingAutoExactEdits(root string, edits []workspace.PlanEdit) []workspace.PlanEdit {
-	return planexecute.PlanExecutePendingAutoExactEdits(root, edits)
-}
-
-func planExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string {
-	return planexecute.PlanExecuteAutoExactEditStatus(root, edit)
 }
 
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
@@ -358,23 +269,7 @@ func fromSharedReviewRepairEvidence(evidence planexecute.ReviewRepairEvidence) r
 }
 
 func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason string) string {
-	reason = strings.TrimSpace(reason)
-	if reason == "" {
-		reason = "phase evidence contradicted the pass decision"
-	}
-	return strings.Join([]string{
-		basePrompt,
-		"",
-		"## Rejected Previous Review Outcome",
-		"",
-		"The previous review-repair answer used `Decision: pass`, but the phase evidence rejected that pass decision: " + truncatePlanExecuteText(reason, 2000) + ".",
-		"",
-		"For this retry, `Decision: pass` is not an allowed terminal outcome. Choose exactly one visible outcome:",
-		"- Corrective plan: call `submit_plan` with only the executable corrective edits needed to resolve the rejected checklist item. The rationale must start with `Verification Checklist:`.",
-		"- Blocker: return `<<QUESTION>>:` with the exact failed checklist item if it cannot be repaired inside Allowed Repair Paths.",
-		"",
-		"Do not repeat `Decision: pass`. Do not add prose before or after the corrective plan or blocker.",
-	}, "\n")
+	return planexecute.PlanExecuteReviewRepairRejectedPassRetryPrompt(basePrompt, reason)
 }
 
 func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRepairBaseline) reviewRepairEvidence {
@@ -399,52 +294,19 @@ func planChangedPaths(plan workspace.PlanArtifact) []string {
 }
 
 func mergePlanExecutePaths(groups ...[]string) []string {
-	seen := make(map[string]struct{})
-	var out []string
-	for _, group := range groups {
-		for _, path := range group {
-			normalized := normalizePlanExecutePath(path)
-			if normalized == "" {
-				continue
-			}
-			if _, ok := seen[normalized]; ok {
-				continue
-			}
-			seen[normalized] = struct{}{}
-			out = append(out, normalized)
-		}
-	}
-	sort.Strings(out)
-	return out
+	return planexecute.MergePlanExecutePaths(groups...)
 }
 
 func reviewAnswerDeclaresBlocker(answer string) bool {
-	lower := strings.ToLower(answer)
-	return strings.Contains(answer, "<<QUESTION>>") || strings.Contains(lower, "decision: block") || strings.Contains(lower, "blocker")
+	return planexecute.ReviewAnswerDeclaresBlocker(answer)
 }
 
 func planExecuteAnswerDeclaresBlocker(answer string) bool {
-	answer = strings.TrimSpace(answer)
-	lower := strings.ToLower(answer)
-	return strings.Contains(answer, "<<QUESTION>>") ||
-		strings.Contains(lower, "decision: block") ||
-		strings.HasPrefix(lower, "blocker:") ||
-		strings.Contains(lower, "\nblocker:")
+	return planexecute.PlanExecuteAnswerDeclaresBlocker(answer)
 }
 
 func planExecuteBlockerSummary(answer string) string {
-	for _, raw := range strings.Split(answer, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" {
-			continue
-		}
-		const max = 240
-		if len(line) > max {
-			return line[:max] + "..."
-		}
-		return line
-	}
-	return "planner stopped with a blocker"
+	return planexecute.PlanExecuteBlockerSummary(answer)
 }
 
 func reviewAnswerPassContradictionReason(answer string) string {

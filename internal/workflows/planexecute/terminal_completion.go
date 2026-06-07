@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/plancontract"
+	"idiom/internal/contracts/plan"
 )
 
 const (
@@ -127,37 +127,40 @@ func NormalizePlanExecuteTerminalCompletionRecord(record PlanExecuteTerminalComp
 	record.WriteAllowedPaths = normalizePlanExecuteTerminalPaths(record.WriteAllowedPaths)
 	record.SourceSatisfiedEvidencePaths = normalizePlanExecuteTerminalPaths(record.SourceSatisfiedEvidencePaths)
 	record.ChangedPaths = normalizePlanExecuteTerminalPaths(record.ChangedPaths)
-	if record.Outcome == "" || record.TerminalClass == "" {
-		class, outcome := classifyPlanExecuteTerminalCompletion(record)
-		if record.TerminalClass == "" {
-			record.TerminalClass = class
-		}
-		if record.Outcome == "" {
-			record.Outcome = outcome
-		}
-	}
+	record.TerminalClass, record.Outcome = ClassifyPlanExecuteTerminalCompletion(record)
 	return record
 }
 
-func classifyPlanExecuteTerminalCompletion(record PlanExecuteTerminalCompletionRecord) (PlanExecuteTerminalClass, PlanExecuteTerminalOutcome) {
+func ClassifyPlanExecuteTerminalCompletion(record PlanExecuteTerminalCompletionRecord) (PlanExecuteTerminalClass, PlanExecuteTerminalOutcome) {
 	status := canonicalPlanExecuteTerminalToken(record.Status)
 	reviewStatus := canonicalPlanExecuteTerminalToken(record.ReviewStatus)
 	phase := canonicalPlanExecuteTerminalToken(record.Phase)
+	outcome := canonicalPlanExecuteTerminalToken(string(record.Outcome))
+	terminalClass := canonicalPlanExecuteTerminalClassToken(record.TerminalClass)
 
-	if record.Outcome == PlanExecuteTerminalOutcomeSourceSatisfied || status == "source-satisfied" {
-		return PlanExecuteTerminalClassSuccess, PlanExecuteTerminalOutcomeSourceSatisfied
+	if status == ProgressStatusFailed || strings.Contains(status, "failed") || terminalClass == string(PlanExecuteTerminalClassFailed) {
+		return PlanExecuteTerminalClassFailed, PlanExecuteTerminalOutcomeFailed
 	}
-	if status == ProgressStatusBlocked || reviewStatus == ProgressStatusBlocked || strings.Contains(status, "blocked") || strings.Contains(reviewStatus, "blocked") {
-		return PlanExecuteTerminalClassRecoveryRequired, PlanExecuteTerminalOutcomeBlocked
-	}
-	if status == ProgressStatusDegraded || strings.Contains(reviewStatus, "degraded") {
+	if status == ProgressStatusDegraded || strings.Contains(reviewStatus, "degraded") || strings.Contains(outcome, "degraded") {
 		return PlanExecuteTerminalClassRecoveryRequired, PlanExecuteTerminalOutcomeReviewDegraded
 	}
-	if record.ExitCode != 0 || record.FailureKind != "" || record.FailureReason != "" || status == ProgressStatusFailed || strings.Contains(status, "failed") {
+	if terminalClass == "recovery-required" || status == ProgressStatusBlocked || reviewStatus == ProgressStatusBlocked || strings.Contains(status, "blocked") || strings.Contains(reviewStatus, "blocked") || strings.Contains(outcome, "blocked") {
+		return PlanExecuteTerminalClassRecoveryRequired, PlanExecuteTerminalOutcomeBlocked
+	}
+	if status == ProgressStatusRunning || phase == ProgressStatusRunning || reviewStatus == ProgressStatusRunning {
+		return PlanExecuteTerminalClassRecoveryRequired, PlanExecuteTerminalOutcomeBlocked
+	}
+	if record.ExitCode != 0 || record.FailureKind != "" || record.FailureReason != "" || strings.Contains(outcome, "failed") || strings.Contains(outcome, "failure") {
 		return PlanExecuteTerminalClassFailed, PlanExecuteTerminalOutcomeFailed
+	}
+	if outcome == "source-satisfied" || status == "source-satisfied" {
+		return PlanExecuteTerminalClassSuccess, PlanExecuteTerminalOutcomeSourceSatisfied
 	}
 	if record.ReviewRepairSkipped || reviewStatus == ProgressStatusSkipped {
 		return PlanExecuteTerminalClassSuccess, PlanExecuteTerminalOutcomeReviewSkippedByDesign
+	}
+	if terminalClass == string(PlanExecuteTerminalClassSuccess) {
+		return PlanExecuteTerminalClassSuccess, firstPlanExecuteTerminalOutcome(record.Outcome, PlanExecuteTerminalOutcomeCompleted)
 	}
 	if status == ProgressStatusCompleted || status == ProgressPhaseComplete || phase == ProgressPhaseComplete {
 		return PlanExecuteTerminalClassSuccess, PlanExecuteTerminalOutcomeCompleted
@@ -165,13 +168,63 @@ func classifyPlanExecuteTerminalCompletion(record PlanExecuteTerminalCompletionR
 	return PlanExecuteTerminalClassRecoveryRequired, PlanExecuteTerminalOutcomeBlocked
 }
 
+func PlanExecuteTerminalCompletionRecordFromFields(fields map[string]any) PlanExecuteTerminalCompletionRecord {
+	if fields == nil {
+		return NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{})
+	}
+	body, err := json.Marshal(fields)
+	if err != nil {
+		return NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{})
+	}
+	var record PlanExecuteTerminalCompletionRecord
+	if err := json.Unmarshal(body, &record); err != nil {
+		return NormalizePlanExecuteTerminalCompletionRecord(PlanExecuteTerminalCompletionRecord{})
+	}
+	if strings.TrimSpace(record.ProgressPath) == "" {
+		record.ProgressPath = planExecuteTerminalFieldString(fields, "state_path")
+	}
+	return NormalizePlanExecuteTerminalCompletionRecord(record)
+}
+
+func ProgressStateHasTerminalCompletion(state ProgressState) bool {
+	status := canonicalPlanExecuteTerminalToken(state.Status)
+	phase := canonicalPlanExecuteTerminalToken(state.Phase)
+	reviewStatus := canonicalPlanExecuteTerminalToken(state.Review.Status)
+	if phase == ProgressPhaseComplete {
+		return true
+	}
+	switch status {
+	case ProgressStatusCompleted, ProgressStatusFailed, ProgressStatusDegraded, ProgressStatusBlocked, ProgressStatusSkipped:
+		return true
+	}
+	switch reviewStatus {
+	case ProgressStatusCompleted, ProgressStatusFailed, ProgressStatusDegraded, ProgressStatusBlocked, ProgressStatusSkipped:
+		return true
+	default:
+		return false
+	}
+}
+
+func PlanExecuteTerminalCompletionRecordFromProgressState(state ProgressState, input PlanExecuteTerminalCompletionInput) (PlanExecuteTerminalCompletionRecord, bool) {
+	if !ProgressStateHasTerminalCompletion(state) {
+		return PlanExecuteTerminalCompletionRecord{}, false
+	}
+	return NewPlanExecuteTerminalCompletionRecord(state, input), true
+}
+
 func canonicalPlanExecuteTerminalToken(value string) string {
 	value = strings.TrimSpace(strings.ToLower(value))
 	value = strings.ReplaceAll(value, "_", "-")
-	if value == "complete" {
+	switch value {
+	case "complete", "success", "successful", "succeeded":
 		return ProgressStatusCompleted
+	default:
+		return value
 	}
-	return value
+}
+
+func canonicalPlanExecuteTerminalClassToken(value PlanExecuteTerminalClass) string {
+	return strings.ReplaceAll(strings.TrimSpace(strings.ToLower(string(value))), "_", "-")
 }
 
 func normalizePlanExecuteTerminalPaths(values []string) []string {
@@ -183,6 +236,21 @@ func firstPlanExecuteTerminalString(value string, fallback string) string {
 		return strings.TrimSpace(value)
 	}
 	return fallback
+}
+
+func firstPlanExecuteTerminalOutcome(value PlanExecuteTerminalOutcome, fallback PlanExecuteTerminalOutcome) PlanExecuteTerminalOutcome {
+	if strings.TrimSpace(string(value)) != "" {
+		return PlanExecuteTerminalOutcome(strings.TrimSpace(string(value)))
+	}
+	return fallback
+}
+
+func planExecuteTerminalFieldString(fields map[string]any, key string) string {
+	value, ok := fields[key]
+	if !ok || value == nil {
+		return ""
+	}
+	return strings.TrimSpace(fmt.Sprint(value))
 }
 
 func SavePlanExecuteTerminalCompletionRecord(root string, record PlanExecuteTerminalCompletionRecord) (string, error) {

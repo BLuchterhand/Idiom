@@ -113,6 +113,63 @@ func TestDebugLoggerFullModePreservesPromptAndToolPayloads(t *testing.T) {
 	}
 }
 
+func TestDebugLoggerModeAndWrapperRecords(t *testing.T) {
+	logger, err := NewDebugLogger(DebugLoggerOptions{
+		Dir:           t.TempDir(),
+		Mode:          DebugLogModeFull,
+		WorkspaceRoot: "/tmp/workspace",
+	})
+	if err != nil {
+		t.Fatalf("NewDebugLogger: %v", err)
+	}
+	defer logger.Close()
+
+	if logger.Mode() != DebugLogModeFull {
+		t.Fatalf("Mode = %q, want full", logger.Mode())
+	}
+	logger.SetMode("")
+	if logger.Mode() != DebugLogModeRedacted {
+		t.Fatalf("empty SetMode should reset to redacted, got %q", logger.Mode())
+	}
+	logger.SetMode(DebugLogModeFull)
+
+	if err := logger.LogContext([]string{"base.md"}, "system prompt", "normal", "medium"); err != nil {
+		t.Fatalf("LogContext: %v", err)
+	}
+	if err := logger.LogToolResult(2, "main", "read_file", "Read /tmp/workspace/main.go", ""); err != nil {
+		t.Fatalf("LogToolResult: %v", err)
+	}
+	if err := logger.LogInputSubmission("hello"); err != nil {
+		t.Fatalf("LogInputSubmission: %v", err)
+	}
+	if err := logger.LogError("runner", "failed"); err != nil {
+		t.Fatalf("LogError: %v", err)
+	}
+	if err := logger.LogServer(true, "model", true, ""); err != nil {
+		t.Fatalf("LogServer: %v", err)
+	}
+	if err := logger.LogArtifact("report", "/tmp/workspace/report.json"); err != nil {
+		t.Fatalf("LogArtifact: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	records := readDebugLogRecords(t, logger.Path())
+	wantTypes := []string{"context_update", "tool_result", "input_submission", "error", "server", "artifact"}
+	if len(records) != len(wantTypes) {
+		t.Fatalf("records length = %d, want %d: %#v", len(records), len(wantTypes), records)
+	}
+	for i, want := range wantTypes {
+		if records[i]["type"] != want {
+			t.Fatalf("record %d type = %#v, want %q in %#v", i, records[i]["type"], want, records)
+		}
+	}
+	if records[0]["system_prompt"] != "system prompt" {
+		t.Fatalf("full mode LogContext should preserve prompt: %#v", records[0])
+	}
+}
+
 func TestDebugLoggerLogsPhaseEvents(t *testing.T) {
 	dir := t.TempDir()
 	logger, err := NewDebugLogger(DebugLoggerOptions{

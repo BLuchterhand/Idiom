@@ -87,6 +87,26 @@ func TestEvaluateLocalizationCorpusReportsMissingExpectedPath(t *testing.T) {
 	}
 }
 
+func TestEvaluateLocalizationCorpusFileWithOptionsLoadsAndLints(t *testing.T) {
+	corpus := validLocalizationCorpusForTest()
+	path := filepath.Join(t.TempDir(), "corpus.json")
+	data, err := json.Marshal(corpus)
+	if err != nil {
+		t.Fatalf("marshal corpus: %v", err)
+	}
+	if err := os.WriteFile(path, data, 0o644); err != nil {
+		t.Fatalf("write corpus: %v", err)
+	}
+
+	report, err := EvaluateLocalizationCorpusFileWithOptions(path, evalTestRepoRoot(t), LocalizationBenchmarkOptions{TopK: []int{1}})
+	if err != nil {
+		t.Fatalf("EvaluateLocalizationCorpusFileWithOptions: %v", err)
+	}
+	if !report.Passed || report.TotalTasks != 1 || len(report.Benchmark.TopKEditPathCoverage) != 1 {
+		t.Fatalf("unexpected corpus report: %#v", report)
+	}
+}
+
 func TestLocalizationBenchmarkMetricsUseExpectedAnchors(t *testing.T) {
 	corpus := validLocalizationCorpusForTest()
 	corpus.Tasks = []LocalizationCorpusTask{
@@ -178,6 +198,28 @@ func TestLocalizationBenchmarkReportsCompetitiveConditions(t *testing.T) {
 	}
 	if strings.Contains(strings.Join(report.Benchmark.MissingInputs, ","), "competitive") {
 		t.Fatalf("complete competitive conditions should not be reported missing, got %#v", report.Benchmark.MissingInputs)
+	}
+}
+
+func TestLocalizationCompetitiveBaselineIDHelpers(t *testing.T) {
+	all := LocalizationCompetitiveBaselineIDs()
+	external := RequiredLocalizationExternalCompetitiveBaselineIDs()
+	if len(all) == 0 {
+		t.Fatal("expected competitive baseline IDs")
+	}
+	if len(external) == 0 {
+		t.Fatal("expected external competitive baseline IDs")
+	}
+	for _, want := range []string{"raw_search_read", "context_pack", "aider_repo_map"} {
+		if !containsStringFold(all, want) {
+			t.Fatalf("expected %q in all baseline IDs: %#v", want, all)
+		}
+	}
+	if !containsStringFold(external, "aider_repo_map") {
+		t.Fatalf("expected aider_repo_map to be an external baseline: %#v", external)
+	}
+	if containsStringFold(external, "context_pack") {
+		t.Fatalf("context_pack is internal and should not be required external baseline: %#v", external)
 	}
 }
 

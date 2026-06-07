@@ -16,6 +16,39 @@ import (
 	"idiom/internal/workflows/recovery"
 )
 
+func TestSanitizeProductEvidenceTelemetryArgsRedactsPathFlags(t *testing.T) {
+	got := SanitizeProductEvidenceTelemetryArgs([]string{
+		"--project-root", "/private/repo",
+		"--output=/tmp/product.json",
+		"--benchmark-report", "",
+		"--mode", "summary",
+	})
+	rendered := strings.Join(got, " ")
+
+	for _, forbidden := range []string{"/private/repo", "/tmp/product.json"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("path flag leaked %q in %#v", forbidden, got)
+		}
+	}
+	if !strings.Contains(rendered, "<redacted_product_evidence_path id=") || !strings.Contains(rendered, "--benchmark-report <empty>") {
+		t.Fatalf("expected redacted product evidence path args, got %#v", got)
+	}
+	if !strings.Contains(rendered, "--mode summary") {
+		t.Fatalf("non-path flags should be preserved, got %#v", got)
+	}
+}
+
+func TestP98RequiredMCPParityReadinessFieldsReturnsCopy(t *testing.T) {
+	fields := P98RequiredMCPParityReadinessFields()
+	if len(fields) == 0 {
+		t.Fatal("expected P9.8 readiness fields")
+	}
+	fields[0] = "mutated"
+	if got := P98RequiredMCPParityReadinessFields()[0]; got == "mutated" {
+		t.Fatal("P98RequiredMCPParityReadinessFields should return a defensive copy")
+	}
+}
+
 func TestP711ProductEvidenceExportCompletenessPrivacyAndClassCoverage(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)

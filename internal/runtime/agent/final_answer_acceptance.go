@@ -1,10 +1,10 @@
 package agent
 
 import (
-	"sort"
 	"strings"
 
 	"idiom/internal/capabilities/workspace"
+	"idiom/internal/runtime/agent/stringset"
 	"idiom/internal/runtime/workerruntime"
 )
 
@@ -59,7 +59,7 @@ func (r *Runner) evaluateFinalAnswerAcceptance(answer string, results []workspac
 		if missing := missingRequiredEditPaths(r.RuntimeBrief.RequiredEditPaths, changedPathsFromToolResults(results)); len(missing) > 0 {
 			return reject("required_edit_paths_remaining", "required_edit_paths_remaining")
 		}
-		if missing := unresolvedRejectedMutationPaths(results); len(missing) > 0 {
+		if missing := unresolvedRejectedMutationPaths(results, r.RuntimeBrief.RequiredEditPaths); len(missing) > 0 {
 			acceptance.EvidencePaths = mergeRunnerStateStrings(acceptance.EvidencePaths, missing)
 			return reject("rejected_mutation_paths_remaining", "rejected_mutation_paths_remaining")
 		}
@@ -274,26 +274,9 @@ func finalAnswerAcceptanceEventFields(acceptance finalAnswerAcceptance) map[stri
 }
 
 func uniqueSortedStrings(values []string) []string {
-	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" {
-			continue
-		}
-		if _, ok := seen[value]; ok {
-			continue
-		}
-		seen[value] = struct{}{}
-		out = append(out, value)
-	}
-	sort.Strings(out)
-	return out
+	return stringset.Sorted(values)
 }
 
 func cappedStrings(values []string, limit int) []string {
-	if limit <= 0 || len(values) <= limit {
-		return append([]string(nil), values...)
-	}
-	return append([]string(nil), values[:limit]...)
+	return stringset.Cap(values, limit)
 }

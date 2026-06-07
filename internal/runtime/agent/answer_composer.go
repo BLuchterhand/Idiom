@@ -49,10 +49,6 @@ func composeGenericEvidenceAnswer(question string, paths []string, lines []strin
 	return strings.TrimSpace(b.String())
 }
 
-func questionPresentationBlock(question string) string {
-	return ""
-}
-
 func decoratedDiscoveryFindingLines(summaries []delegatedDiscoverySummary, limit int) []string {
 	raw := delegatedDiscoveryFindingLines(summaries, limit)
 	lines := make([]string, 0, len(raw))

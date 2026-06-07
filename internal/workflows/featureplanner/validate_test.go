@@ -683,6 +683,23 @@ func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreat
 	}
 }
 
+func TestValidatePlanStandaloneWorkspaceContextDoesNotExistenceGateTDDMetadata(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "internal/labels/labels.go"), "package labels\n")
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go"}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"internal/workflows/productworkflow/coverage_gate_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"internal/workflows/productworkflow/coverage_gate_test.go"}
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot: root,
+		Prompt:        "Plan the remaining TDD expansion atom. Do not edit files.",
+	}); err != nil {
+		t.Fatalf("standalone validation should not require TDD artifact metadata to exist in target workspace: %v", err)
+	}
+}
+
 func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
 	root := t.TempDir()
 	plan := validPlan()

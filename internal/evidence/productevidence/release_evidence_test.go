@@ -14,6 +14,28 @@ import (
 	"idiom/internal/runtime/localops"
 )
 
+func TestSanitizeReleaseEvidenceTelemetryArgsRedactsPathFlags(t *testing.T) {
+	got := SanitizeReleaseEvidenceTelemetryArgs([]string{
+		"--project-root=/private/repo",
+		"--baseline-dir", "/private/baseline",
+		"--sidecar-smoke", "",
+		"--mode", "summary",
+	})
+	rendered := strings.Join(got, " ")
+
+	for _, forbidden := range []string{"/private/repo", "/private/baseline"} {
+		if strings.Contains(rendered, forbidden) {
+			t.Fatalf("path flag leaked %q in %#v", forbidden, got)
+		}
+	}
+	if !strings.Contains(rendered, "<redacted_release_evidence_path id=") || !strings.Contains(rendered, "--sidecar-smoke <empty>") {
+		t.Fatalf("expected redacted release evidence path args, got %#v", got)
+	}
+	if !strings.Contains(rendered, "--mode summary") {
+		t.Fatalf("non-path flags should be preserved, got %#v", got)
+	}
+}
+
 func TestP91ReleaseEvidenceBundleIncludesRequiredSectionsAndClassifications(t *testing.T) {
 	root := t.TempDir()
 	stageP711ProductEvidenceFixtures(t, root)
@@ -874,4 +896,823 @@ func releaseEvidenceP912Statuses(value any) []string {
 		}
 	}
 	return statuses
+}
+
+// --- Utility function unit tests ---
+
+func TestReleaseEvidenceSliceContains(t *testing.T) {
+	tests := []struct {
+		name   string
+		values []string
+		target string
+		want   bool
+	}{
+		{"found", []string{"a", "b", "c"}, "b", true},
+		{"not found", []string{"a", "b", "c"}, "d", false},
+		{"empty slice", nil, "a", false},
+		{"exact match only", []string{"abc"}, "ab", false},
+		{"first element", []string{"first", "second"}, "first", true},
+		{"last element", []string{"first", "second"}, "second", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := releaseEvidenceSliceContains(tt.values, tt.target)
+			if got != tt.want {
+				t.Fatalf("releaseEvidenceSliceContains(%#v, %q) = %v, want %v", tt.values, tt.target, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestReleaseCommandsMatch(t *testing.T) {
+	tests := []struct {
+		actual   string
+		expected string
+		want     bool
+	}{
+		{"idiom tool context_status", "idiom tool context_status", true},
+		{"idiom tool context_status", "context_status", true},
+		{"context_status", "idiom tool context_status", true},
+		{"different", "other", false},
+		{"UPPER", "upper", true},
+		{"  padded  ", "padded", true},
+	}
+	for _, tt := range tests {
+		got := releaseCommandsMatch(tt.actual, tt.expected)
+		if got != tt.want {
+			t.Fatalf("releaseCommandsMatch(%q, %q) = %v, want %v", tt.actual, tt.expected, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseMetadataValue(t *testing.T) {
+	tests := []struct {
+		input string
+		want  string
+	}{
+		{" simple ", "simple"},
+		{"`quoted`", "quoted"},
+		{"  `backtick`  ", "backtick"},
+		{" plain ", "plain"},
+		{"", ""},
+	}
+	for _, tt := range tests {
+		got := releaseMetadataValue(tt.input)
+		if got != tt.want {
+			t.Fatalf("releaseMetadataValue(%q) = %q, want %q", tt.input, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseStatusFromExit(t *testing.T) {
+	tests := []struct {
+		exit    string
+		blocker string
+		want    string
+	}{
+		{"0", "", "pass"},
+		{"1", "", "fail"},
+		{"", "", "partial"},
+		{"0", "blocked reason", "blocked"},
+		{"1", "safety", "blocked"},
+	}
+	for _, tt := range tests {
+		got := releaseStatusFromExit(tt.exit, tt.blocker)
+		if got != tt.want {
+			t.Fatalf("releaseStatusFromExit(%q, %q) = %q, want %q", tt.exit, tt.blocker, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseArtifactKind(t *testing.T) {
+	tests := []struct {
+		name string
+		want string
+	}{
+		{"something.stdout.json", "stdout_json"},
+		{"something.stderr.txt", "stderr_text"},
+		{"config.json", "json"},
+		{"readme.txt", "text"},
+		{"unknown.bin", "artifact"},
+	}
+	for _, tt := range tests {
+		got := releaseArtifactKind(tt.name)
+		if got != tt.want {
+			t.Fatalf("releaseArtifactKind(%q) = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseSafeCommand(t *testing.T) {
+	t.Run("empty returns empty", func(t *testing.T) {
+		got := releaseSafeCommand("")
+		if got != "" {
+			t.Fatalf("expected empty, got %q", got)
+		}
+	})
+
+	t.Run("safe command passes through", func(t *testing.T) {
+		got := releaseSafeCommand("idiom tool context_status")
+		if got != "idiom tool context_status" {
+			t.Fatalf("expected unchanged safe command, got %q", got)
+		}
+	})
+
+	t.Run("multiline command is redacted to command_id", func(t *testing.T) {
+		got := releaseSafeCommand("idiom tool\nevil")
+		if !strings.HasPrefix(got, "command_id:") {
+			t.Fatalf("expected command_id prefix for multiline, got %q", got)
+		}
+	})
+}
+
+func TestReleaseProductSignal(t *testing.T) {
+	signals := []productEvidenceSignalSummary{
+		{ID: "activation", Status: "pass"},
+		{ID: "retained_use", Status: "partial"},
+	}
+
+	t.Run("found signal", func(t *testing.T) {
+		got := releaseProductSignal(signals, "activation")
+		if got.Status != "pass" {
+			t.Fatalf("expected pass signal, got %#v", got)
+		}
+	})
+
+	t.Run("missing signal returns empty", func(t *testing.T) {
+		got := releaseProductSignal(signals, "missing")
+		if got.ID != "" {
+			t.Fatalf("expected empty signal for missing ID, got %#v", got)
+		}
+	})
+
+	t.Run("empty list returns empty", func(t *testing.T) {
+		got := releaseProductSignal(nil, "any")
+		if got.ID != "" {
+			t.Fatalf("expected empty signal, got %#v", got)
+		}
+	})
+}
+
+func TestReleaseSafeToken(t *testing.T) {
+	t.Run("integer string returns the integer", func(t *testing.T) {
+		got := releaseSafeToken("42")
+		if got != "42" {
+			t.Fatalf("expected '42', got %q", got)
+		}
+	})
+
+	t.Run("negative integer passes through as int", func(t *testing.T) {
+		got := releaseSafeToken("-1")
+		if got != "-1" {
+			t.Fatalf("expected '-1', got %q", got)
+		}
+	})
+
+	t.Run("non-integer is safe-tokened", func(t *testing.T) {
+		got := releaseSafeToken("some value")
+		if got == "some value" {
+			t.Fatalf("non-integer should be safe-tokened, got %q", got)
+		}
+	})
+}
+
+func TestReleaseEvidenceCompactBlockers(t *testing.T) {
+	t.Run("empty returns empty", func(t *testing.T) {
+		got := releaseEvidenceCompactBlockers(nil)
+		if len(got) != 0 {
+			t.Fatalf("expected empty, got %#v", got)
+		}
+	})
+
+	t.Run("unique entries preserved", func(t *testing.T) {
+		blockers := []releaseEvidenceBlocker{
+			{Section: "s1", Reason: "r1"},
+			{Section: "s2", Reason: "r2"},
+		}
+		got := releaseEvidenceCompactBlockers(blockers)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 unique entries, got %d", len(got))
+		}
+	})
+
+	t.Run("duplicates removed", func(t *testing.T) {
+		blockers := []releaseEvidenceBlocker{
+			{Section: "s1", Reason: "r1", Evidence: "e1"},
+			{Section: "s1", Reason: "r1", Evidence: "e1"},
+			{Section: "s2", Reason: "r2"},
+		}
+		got := releaseEvidenceCompactBlockers(blockers)
+		if len(got) != 2 {
+			t.Fatalf("expected 2 after dedup, got %d: %#v", len(got), got)
+		}
+	})
+}
+
+func TestReleaseEvidencePath(t *testing.T) {
+	root := t.TempDir()
+
+	t.Run("empty path returns empty ref", func(t *testing.T) {
+		ref := releaseEvidencePath(root, "")
+		if ref.PathID != "" {
+			t.Fatalf("expected empty path ref, got %#v", ref)
+		}
+	})
+
+	t.Run("non-empty path gets PathID", func(t *testing.T) {
+		ref := releaseEvidencePath(root, "/some/path")
+		if ref.PathID == "" {
+			t.Fatal("expected non-empty PathID")
+		}
+	})
+
+	t.Run("path under root gets relative path", func(t *testing.T) {
+		subPath := filepath.Join(root, "subdir", "file.json")
+		if err := os.MkdirAll(filepath.Dir(subPath), 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(subPath, []byte("{}"), 0o644); err != nil {
+			t.Fatalf("write file: %v", err)
+		}
+		ref := releaseEvidencePath(root, subPath)
+		if ref.RelativePath == "" {
+			t.Fatalf("expected relative path for path under root, got %#v", ref)
+		}
+		if filepath.IsAbs(ref.RelativePath) {
+			t.Fatalf("relative path should not be absolute: %q", ref.RelativePath)
+		}
+	})
+}
+
+func TestReleaseEvidencePathFlag(t *testing.T) {
+	tests := []struct {
+		flag string
+		want bool
+	}{
+		{"--project-root", true},
+		{"--output", true},
+		{"--baseline-dir", true},
+		{"--current-dir", true},
+		{"--local-ops-report", true},
+		{"--validation-records", true},
+		{"--benchmark-report", true},
+		{"--sidecar-smoke", true},
+		{"--mode", false},
+		{"--help", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := releaseEvidencePathFlag(tt.flag)
+		if got != tt.want {
+			t.Fatalf("releaseEvidencePathFlag(%q) = %v, want %v", tt.flag, got, tt.want)
+		}
+	}
+}
+
+func TestRedactedReleaseEvidencePathArg(t *testing.T) {
+	t.Run("empty returns <empty>", func(t *testing.T) {
+		got := redactedReleaseEvidencePathArg("")
+		if got != "<empty>" {
+			t.Fatalf("expected <empty>, got %q", got)
+		}
+	})
+
+	t.Run("path gets redacted with stable id", func(t *testing.T) {
+		got := redactedReleaseEvidencePathArg("/private/data")
+		if !strings.HasPrefix(got, "<redacted_release_evidence_path id=") {
+			t.Fatalf("expected redacted prefix, got %q", got)
+		}
+		if strings.Contains(got, "/private/data") {
+			t.Fatalf("raw path must not appear: %q", got)
+		}
+	})
+}
+
+func TestReleaseActivationApprovedEnvironmentClass(t *testing.T) {
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{"clean-install", true},
+		{"clean-setup", true},
+		{"source-build", false},
+		{"", false},
+		{"unknown", false},
+	}
+	for _, tt := range tests {
+		got := releaseActivationApprovedEnvironmentClass(tt.value)
+		if got != tt.want {
+			t.Fatalf("releaseActivationApprovedEnvironmentClass(%q) = %v, want %v", tt.value, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseActivationFailureReasonExplicit(t *testing.T) {
+	noFailure := localops.ActivationFailureReason{
+		Status:       "none",
+		PrimaryClass: "none",
+		Reason:       "",
+		RetryAllowed: false,
+	}
+	if !releaseActivationFailureReasonExplicit(noFailure) {
+		t.Fatal("explicit 'no failure' should return true")
+	}
+
+	withStatus := localops.ActivationFailureReason{Status: "failed"}
+	if releaseActivationFailureReasonExplicit(withStatus) {
+		t.Fatal("non-none status should return false")
+	}
+
+	withRetry := localops.ActivationFailureReason{
+		Status:       "none",
+		PrimaryClass: "none",
+		RetryAllowed: true,
+	}
+	if releaseActivationFailureReasonExplicit(withRetry) {
+		t.Fatal("retry allowed should return false")
+	}
+}
+
+func TestReleaseActivationDocsGapExplicit(t *testing.T) {
+	t.Run("none status without recorded gap", func(t *testing.T) {
+		gap := localops.ActivationDocsGap{
+			Status:      "none",
+			GapRecorded: false,
+		}
+		if !releaseActivationDocsGapExplicit(gap) {
+			t.Fatal("none status without gap should return true")
+		}
+	})
+
+	t.Run("none status with recorded gap is invalid", func(t *testing.T) {
+		gap := localops.ActivationDocsGap{
+			Status:      "none",
+			GapRecorded: true,
+		}
+		if releaseActivationDocsGapExplicit(gap) {
+			t.Fatal("none + recorded gap should return false")
+		}
+	})
+
+	t.Run("recorded status with all fields", func(t *testing.T) {
+		gap := localops.ActivationDocsGap{
+			Status:          "recorded",
+			GapRecorded:     true,
+			DocPath:         "docs/gap.md",
+			CommandLabel:    "test",
+			ExpectedOutput:  "output",
+			ActualOutput:    "actual",
+			Severity:        "low",
+			BlockedActivation: false,
+		}
+		if !releaseActivationDocsGapExplicit(gap) {
+			t.Fatal("fully explicit recorded gap should return true")
+		}
+	})
+
+	t.Run("recorded status with blocked activation is invalid", func(t *testing.T) {
+		gap := localops.ActivationDocsGap{
+			Status:           "recorded",
+			GapRecorded:      true,
+			DocPath:          "docs/gap.md",
+			CommandLabel:     "test",
+			ExpectedOutput:   "output",
+			ActualOutput:     "actual",
+			Severity:         "low",
+			BlockedActivation: true,
+		}
+		if releaseActivationDocsGapExplicit(gap) {
+			t.Fatal("recorded + blocked should return false")
+		}
+	})
+
+	t.Run("unknown status returns false", func(t *testing.T) {
+		gap := localops.ActivationDocsGap{Status: "unknown"}
+		if releaseActivationDocsGapExplicit(gap) {
+			t.Fatal("unknown status should return false")
+		}
+	})
+}
+
+func TestReleaseActivationAbsentLocalState(t *testing.T) {
+	tests := []struct {
+		mode      string
+		remaining string
+		want      bool
+	}{
+		{"remove-local-state", "comprehension_state_absent", true},
+		{"uninstall", "local_state_absent", true},
+		{"clean-uninstall", "state_absent", true},
+		{"remove-local-state", "context_graph_retained_by_policy", false},
+		{"retain-artifacts", "comprehension_state_absent", false},
+		{"", "", false},
+	}
+	for _, tt := range tests {
+		got := releaseActivationAbsentLocalState(tt.mode, tt.remaining)
+		if got != tt.want {
+			t.Fatalf("releaseActivationAbsentLocalState(%q, %q) = %v, want %v", tt.mode, tt.remaining, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseActivationReviewedRetainedStatePolicy(t *testing.T) {
+	tests := []struct {
+		policy string
+		want   bool
+	}{
+		{"reviewed_retained_state_policy", true},
+		{"reviewed_context_graph_retention_policy", true},
+		{"reviewed_local_state_retention_policy", true},
+		{"unreviewed", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		got := releaseActivationReviewedRetainedStatePolicy(tt.policy)
+		if got != tt.want {
+			t.Fatalf("releaseActivationReviewedRetainedStatePolicy(%q) = %v, want %v", tt.policy, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseClientReadinessStatus(t *testing.T) {
+	t.Run("pass with no missing stays pass", func(t *testing.T) {
+		got := releaseClientReadinessStatus("pass", nil)
+		if got != "pass" {
+			t.Fatalf("expected pass, got %q", got)
+		}
+	})
+
+	t.Run("pass with missing evidence downgrades to needs_evidence", func(t *testing.T) {
+		got := releaseClientReadinessStatus("pass", []string{"missing_proof"})
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence, got %q", got)
+		}
+	})
+
+	t.Run("blocked stays blocked", func(t *testing.T) {
+		got := releaseClientReadinessStatus("blocked", []string{"missing"})
+		if got != "blocked" {
+			t.Fatalf("expected blocked, got %q", got)
+		}
+	})
+}
+
+func TestReleaseDeltaStatus(t *testing.T) {
+	// releaseDeltaStatus uses the evidence-status vocabulary ("present"/"needs_evidence"),
+	// not direction labels. "Delta" refers to the domain concept (baseline vs current
+	// comparison), but the status field reports whether the comparison evidence itself is
+	// present (both values non-zero) or needs evidence (either value is zero/missing).
+	// This is consistent with the rest of the evidence report's status vocabulary.
+	tests := []struct {
+		baseline int
+		current  int
+		want     string
+	}{
+		{5, 5, "present"},
+		{5, 6, "present"},
+		{5, 4, "present"},
+		{0, 5, "needs_evidence"},
+		{5, 0, "needs_evidence"},
+		{0, 0, "needs_evidence"},
+	}
+	for _, tt := range tests {
+		got := releaseDeltaStatus(tt.baseline, tt.current)
+		if got != tt.want {
+			t.Fatalf("releaseDeltaStatus(%d, %d) = %q, want %q", tt.baseline, tt.current, got, tt.want)
+		}
+	}
+}
+
+func TestReleaseBenchmarkSectionStatus(t *testing.T) {
+	// Section-level blockers cause "partial", not "blocked". The top-level
+	// releaseEvidenceStatus reserves "blocked" for fundamental validity failures
+	// (privacy violations, malformed artifacts). Section-level evidence gaps
+	// (missing benchmarks, incomplete data) are "partial" — evidence present but
+	// insufficient to close the gate. This is consistent across all sections.
+	t.Run("present with pass and no blockers", func(t *testing.T) {
+		got := releaseBenchmarkSectionStatus(true, "pass", nil)
+		if got != "pass" {
+			t.Fatalf("expected pass, got %q", got)
+		}
+	})
+
+	t.Run("present with non-pass returns partial", func(t *testing.T) {
+		got := releaseBenchmarkSectionStatus(true, "fail", nil)
+		if got != "partial" {
+			t.Fatalf("expected partial for non-pass local-ops, got %q", got)
+		}
+	})
+
+	t.Run("not present", func(t *testing.T) {
+		got := releaseBenchmarkSectionStatus(false, "", nil)
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence, got %q", got)
+		}
+	})
+
+	t.Run("blockers cause partial not blocked", func(t *testing.T) {
+		blockers := []releaseEvidenceBlocker{{Section: "benchmark", Reason: "missing"}}
+		got := releaseBenchmarkSectionStatus(true, "pass", blockers)
+		if got != "partial" {
+			t.Fatalf("expected partial with blockers, got %q", got)
+		}
+	})
+}
+
+func TestReleaseArchitecturePrimitives(t *testing.T) {
+	t.Run("finance includes protected_path_posture", func(t *testing.T) {
+		got := releaseArchitecturePrimitives("finance")
+		if !releaseEvidenceSliceContains(got, "protected_path_posture") {
+			t.Fatalf("finance missing protected_path_posture: %#v", got)
+		}
+		if !releaseEvidenceSliceContains(got, "control_mapping") {
+			t.Fatalf("finance missing control_mapping: %#v", got)
+		}
+	})
+
+	t.Run("tooling-vendor includes schema_parity", func(t *testing.T) {
+		got := releaseArchitecturePrimitives("tooling-vendor")
+		if !releaseEvidenceSliceContains(got, "schema_parity") {
+			t.Fatalf("tooling-vendor missing schema_parity: %#v", got)
+		}
+	})
+
+	t.Run("local-model includes degraded_mode_reporting", func(t *testing.T) {
+		got := releaseArchitecturePrimitives("local-model")
+		if !releaseEvidenceSliceContains(got, "degraded_mode_reporting") {
+			t.Fatalf("local-model missing degraded_mode_reporting: %#v", got)
+		}
+	})
+
+	t.Run("enterprise-saas defaults to context_freshness", func(t *testing.T) {
+		got := releaseArchitecturePrimitives("enterprise-saas")
+		if !releaseEvidenceSliceContains(got, "context_freshness") {
+			t.Fatalf("enterprise-saas missing context_freshness: %#v", got)
+		}
+	})
+
+	t.Run("all classes contain common primitives", func(t *testing.T) {
+		for _, class := range []string{"finance", "healthcare", "public-sector", "enterprise-saas", "tooling-vendor", "local-model", "open-source"} {
+			got := releaseArchitecturePrimitives(class)
+			for _, common := range []string{"local_sidecar_contract", "metadata_only_evidence", "profile_gates", "redaction_contract", "reviewable_artifacts"} {
+				if !releaseEvidenceSliceContains(got, common) {
+					t.Fatalf("class %q missing common primitive %q: %#v", class, common, got)
+				}
+			}
+		}
+	})
+}
+
+func TestReleaseP912ReadinessStatus(t *testing.T) {
+	t.Run("no clients is needs_evidence", func(t *testing.T) {
+		got := releaseP912ReadinessStatus(nil, "evidence_present")
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence, got %q", got)
+		}
+	})
+
+	t.Run("P9.11 not present is needs_evidence", func(t *testing.T) {
+		clients := []releaseEvidenceClientReadiness{{Status: "pass"}}
+		got := releaseP912ReadinessStatus(clients, "needs_evidence")
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence, got %q", got)
+		}
+	})
+
+	t.Run("client with non-pass status fails", func(t *testing.T) {
+		clients := []releaseEvidenceClientReadiness{
+			{Status: "pass"},
+			{Status: "needs_evidence"},
+		}
+		got := releaseP912ReadinessStatus(clients, "evidence_present")
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence for non-pass client, got %q", got)
+		}
+	})
+
+	t.Run("client with missing evidence fails", func(t *testing.T) {
+		clients := []releaseEvidenceClientReadiness{
+			{Status: "pass", MissingEvidence: []string{"missing"}},
+		}
+		got := releaseP912ReadinessStatus(clients, "evidence_present")
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence for missing evidence, got %q", got)
+		}
+	})
+
+	t.Run("all clients pass and P9.11 present succeeds", func(t *testing.T) {
+		clients := []releaseEvidenceClientReadiness{
+			{Status: "pass"},
+			{Status: "pass"},
+		}
+		got := releaseP912ReadinessStatus(clients, "evidence_present")
+		if got != "evidence_present" {
+			t.Fatalf("expected evidence_present, got %q", got)
+		}
+	})
+}
+
+func TestP96ActivationStatusFromBlockers(t *testing.T) {
+	// Three states modeled by this function:
+	//   "pass"    — no blockers; used by buildReleaseActivationSection for the
+	//               activation section's own status.
+	//   "blocked" — one of three specific privacy/redaction/smoke-failure reasons
+	//               match; these are hard blockers that invalidate the evidence.
+	//   "needs_evidence" — other blockers exist but aren't privacy-level;
+	//               the evidence is incomplete but not fundamentally invalid.
+	// Generic (non-specific) blocker reasons intentionally stay "needs_evidence"
+	// rather than "blocked" — only the three enumerated privacy/safety reasons
+	// warrant blocking.
+	t.Run("no blockers is pass", func(t *testing.T) {
+		got := p96ActivationStatusFromBlockers(nil)
+		if got != "pass" {
+			t.Fatalf("expected pass, got %q", got)
+		}
+	})
+
+	t.Run("specific blocker reasons cause blocked", func(t *testing.T) {
+		reasons := []string{
+			"privacy-safe activation evidence failed",
+			"privacy/redaction status is not release-safe",
+			"quickstart activation smoke did not pass",
+		}
+		for _, reason := range reasons {
+			blockers := []releaseEvidenceBlocker{{Reason: reason}}
+			got := p96ActivationStatusFromBlockers(blockers)
+			if got != "blocked" {
+				t.Fatalf("expected blocked for reason %q, got %q", reason, got)
+			}
+		}
+	})
+
+	t.Run("generic blocker reason is needs_evidence", func(t *testing.T) {
+		blockers := []releaseEvidenceBlocker{{Section: "activation", Reason: "incomplete"}}
+		got := p96ActivationStatusFromBlockers(blockers)
+		if got != "needs_evidence" {
+			t.Fatalf("expected needs_evidence for generic blocker, got %q", got)
+		}
+	})
+}
+
+func TestReleaseEvidenceBuildInfoWithDeps(t *testing.T) {
+	deps := Dependencies{
+		Version: "1.0.0",
+		Commit:  "abc123",
+		Date:    "2026-05-15",
+	}
+
+	info := releaseEvidenceBuildInfoWithDeps(deps)
+	if info.Version != "1.0.0" {
+		t.Fatalf("version: got %q, want 1.0.0", info.Version)
+	}
+	if info.Commit != "abc123" {
+		t.Fatalf("commit: got %q, want abc123", info.Commit)
+	}
+	if info.Date != "2026-05-15" {
+		t.Fatalf("date: got %q, want 2026-05-15", info.Date)
+	}
+	if info.Go == "" || info.OSArch == "" {
+		t.Fatalf("Go/OSArch should be auto-populated: %#v", info)
+	}
+}
+
+func TestReleaseEvidenceHash(t *testing.T) {
+	bundle1 := releaseEvidenceBundle{
+		SchemaVersion: releaseEvidenceSchemaVersion,
+		Status:        "pass",
+	}
+	bundle2 := releaseEvidenceBundle{
+		SchemaVersion: releaseEvidenceSchemaVersion,
+		Status:        "pass",
+	}
+	hash1 := releaseEvidenceHash(bundle1)
+	hash2 := releaseEvidenceHash(bundle2)
+	if hash1 != hash2 {
+		t.Fatalf("identical bundles should produce same hash: %q vs %q", hash1, hash2)
+	}
+	if hash1 == "" {
+		t.Fatal("hash should not be empty")
+	}
+}
+
+func TestReleaseP96GateLinkage(t *testing.T) {
+	t.Run("pass activation closes gate", func(t *testing.T) {
+		row := productEvidenceReleaseGateLinkage{Gate: "P9.6", Status: "needs_evidence"}
+		activation := releaseEvidenceActivationSection{Status: "pass"}
+		result := releaseP96GateLinkage(row, activation)
+		if result.Status != "evidence_present" {
+			t.Fatalf("expected evidence_present, got %q", result.Status)
+		}
+	})
+
+	t.Run("blocked activation blocks gate", func(t *testing.T) {
+		row := productEvidenceReleaseGateLinkage{Gate: "P9.6", Status: "needs_evidence"}
+		activation := releaseEvidenceActivationSection{Status: "blocked"}
+		result := releaseP96GateLinkage(row, activation)
+		if result.Status != "blocked" {
+			t.Fatalf("expected blocked, got %q", result.Status)
+		}
+	})
+
+	t.Run("other activation status needs evidence", func(t *testing.T) {
+		row := productEvidenceReleaseGateLinkage{Gate: "P9.6", Status: "needs_evidence"}
+		activation := releaseEvidenceActivationSection{Status: "partial"}
+		result := releaseP96GateLinkage(row, activation)
+		if result.Status != "needs_evidence" {
+			t.Fatalf("expected needs_evidence, got %q", result.Status)
+		}
+	})
+}
+
+func TestReleaseP912GateLinkage(t *testing.T) {
+	t.Run("already evidence_present with matching release status stays", func(t *testing.T) {
+		row := productEvidenceReleaseGateLinkage{
+			Gate:    "P9.12",
+			Status:  "evidence_present",
+			Counts:  map[string]int{},
+			Blockers: nil,
+		}
+		result := releaseP912GateLinkage(row, "evidence_present")
+		if result.Status != "evidence_present" {
+			t.Fatalf("expected evidence_present, got %q", result.Status)
+		}
+	})
+
+	t.Run("evidence_present with needs_evidence release downgrades", func(t *testing.T) {
+		row := productEvidenceReleaseGateLinkage{
+			Gate:    "P9.12",
+			Status:  "evidence_present",
+			Counts:  map[string]int{},
+			Blockers: nil,
+		}
+		result := releaseP912GateLinkage(row, "needs_evidence")
+		if result.Status != "needs_evidence" {
+			t.Fatalf("expected needs_evidence, got %q", result.Status)
+		}
+		if result.Counts["release_client_readiness_blockers"] != 1 {
+			t.Fatalf("expected release_client_readiness_blockers count, got %#v", result.Counts)
+		}
+	})
+
+	t.Run("non evidence_present row remains unchanged", func(t *testing.T) {
+		row := productEvidenceReleaseGateLinkage{
+			Gate:   "P9.12",
+			Status: "needs_evidence",
+			Counts: map[string]int{},
+		}
+		result := releaseP912GateLinkage(row, "evidence_present")
+		if result.Status != "needs_evidence" {
+			t.Fatalf("expected needs_evidence to stay, got %q", result.Status)
+		}
+	})
+}
+
+func TestReleaseEvidenceDeltas(t *testing.T) {
+	baseline := releaseEvidenceInputBundle{
+		CommandCount:  4,
+		ArtifactCount: 8,
+	}
+	current := releaseEvidenceInputBundle{
+		CommandCount:  7,
+		ArtifactCount: 8,
+	}
+
+	deltas := releaseEvidenceDeltas(baseline, current)
+	if len(deltas) != 2 {
+		t.Fatalf("expected 2 deltas, got %d", len(deltas))
+	}
+
+	commandDelta := deltas[0]
+	if commandDelta.Metric != "command_count" || commandDelta.Baseline != 4 || commandDelta.Current != 7 || commandDelta.Status != "present" {
+		t.Fatalf("unexpected command delta: %#v", commandDelta)
+	}
+
+	artifactDelta := deltas[1]
+	if artifactDelta.Metric != "artifact_count" || artifactDelta.Baseline != 8 || artifactDelta.Current != 8 || artifactDelta.Status != "present" {
+		t.Fatalf("unexpected artifact delta: %#v", artifactDelta)
+	}
+}
+
+func TestReleaseGateLinkageByGate(t *testing.T) {
+	rows := []productEvidenceReleaseGateLinkage{
+		{Gate: "P9.6", Status: "evidence_present"},
+		{Gate: "P9.7", Status: "needs_evidence"},
+	}
+
+	t.Run("found gate returns match", func(t *testing.T) {
+		got := releaseGateLinkageByGate(rows, "P9.6")
+		if got.Status != "evidence_present" {
+			t.Fatalf("expected evidence_present, got %#v", got)
+		}
+	})
+
+	t.Run("missing gate returns needs_evidence default", func(t *testing.T) {
+		got := releaseGateLinkageByGate(rows, "P9.99")
+		if got.Status != "needs_evidence" {
+			t.Fatalf("expected needs_evidence default, got %#v", got)
+		}
+		if len(got.Blockers) == 0 || !strings.Contains(got.Blockers[0], "P9.99") {
+			t.Fatalf("expected blocker mentioning missing gate, got %#v", got.Blockers)
+		}
+	})
 }

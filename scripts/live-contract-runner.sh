@@ -587,6 +587,7 @@ PY
 task_timeout="${IDIOM_SWE_TASK_TIMEOUT:-240}"
 (
   cd "$run_dir"
+  export IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW="${IDIOM_PLAN_EXECUTE_DETERMINISTIC_CLEAN_REVIEW:-true}"
   if [[ "$runner_mode" == "tui" ]]; then
     IDIOM_QUEUE_SOCKET="$queue_socket" IDIOM_TELEMETRY_DIR="$telemetry_dir" python3 - "$idiom_bin" "$config_path" "$prompt_file" "$task_timeout" "$turns_json" "$turn_count" <<'PY'
 import os
