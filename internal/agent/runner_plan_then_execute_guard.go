@@ -1303,7 +1303,7 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 	if hasRange && hasTotal && end >= total {
 		return true
 	}
-	return planThenExecuteReadFileCoversRejectedSyntaxLine(workspace.ToolRequest{
+	if planThenExecuteReadFileCoversRejectedSyntaxLine(workspace.ToolRequest{
 		Tool: "read_file",
 		Path: path,
 		StartLine: func() int {
@@ -1311,7 +1311,10 @@ func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path str
 			return start
 		}(),
 		EndLine: end,
-	}, path, results)
+	}, path, results) {
+		return true
+	}
+	return hasRange
 }
 
 func successfulSourceBodyReadPathBefore(results []workspace.ToolResult, index int, path string) bool {

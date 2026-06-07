@@ -135,7 +135,8 @@ func synthesizeNoToolsFallbackAnswer(agentName string, brief workerruntime.Worke
 }
 
 func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (string, bool) {
-	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily {
+	brief, ok := planThenExecuteFallbackBrief(brief, results)
+	if !ok {
 		return "", false
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -157,6 +158,39 @@ func synthesizePlanThenExecutePlannerFallbackAnswer(brief workerruntime.WorkerRu
 			"Remaining source paths:\n" + bulletList(mapKeys(unread))), true
 	}
 	return "", false
+}
+
+func planThenExecuteFallbackBrief(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) (workerruntime.WorkerRuntimeBrief, bool) {
+	if strings.TrimSpace(brief.TaskFamily) == PlanThenExecutePlannerTaskFamily {
+		return brief, true
+	}
+	if !planThenExecuteFallbackEvidenceSeen(brief, results) {
+		return brief, false
+	}
+	copy := brief
+	copy.TaskFamily = PlanThenExecutePlannerTaskFamily
+	return copy, true
+}
+
+func planThenExecuteFallbackEvidenceSeen(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {
+	switch strings.ToLower(strings.TrimSpace(brief.Contract)) {
+	case "plan_then_execute", "plan-execute":
+		return true
+	}
+	for _, result := range results {
+		tool := strings.TrimSpace(result.Tool)
+		if tool != "submit_plan" {
+			continue
+		}
+		text := strings.ToLower(strings.Join([]string{result.Summary, result.Error}, "\n"))
+		if strings.Contains(text, "source_satisfied_paths") ||
+			strings.Contains(text, "required edit path") ||
+			strings.Contains(text, "bounded source-body refresh") ||
+			strings.Contains(text, "plan-execute") {
+			return true
+		}
+	}
+	return false
 }
 
 func bulletList(values []string) string {

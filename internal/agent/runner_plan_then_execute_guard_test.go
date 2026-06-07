@@ -6354,12 +6354,105 @@ func TestPlanExecuteRejectedOldTextKeepsCppRawRangeInAnchorRefresh(t *testing.T)
 		rejected,
 		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)"},
 	}
-	if !planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
-		t.Fatal("raw C++ source windows must not close a stale old_text anchor rejection")
+	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+		t.Fatal("bounded non-header C++ source windows should close a stale old_text anchor rejection")
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
-	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
-		t.Fatalf("Mode after raw range = %q, want anchor refresh", state.Mode)
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("Mode after bounded C++ range = %q, want submit correction/ready state; state=%+v", state.Mode, state)
+	}
+}
+
+func TestPlanExecuteInvalidAnchorFallbackKeepsWeakRefreshPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/simulation/production/production_execution.cpp"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		rejected,
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("<<QUESTION>>: blocked", results)
+	if !ok {
+		t.Fatal("weak stale-anchor evidence should still produce a deterministic refresh request")
+	}
+	if req.Tool != "read_file" || req.Path != "native/src/simulation/production/production_execution.cpp" || req.StartLine <= 0 || req.EndLine < req.StartLine {
+		t.Fatalf("unexpected refresh request: %#v", req)
+	}
+
+	results = append(results, workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)",
+	})
+	if req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest("<<QUESTION>>: blocked", results); ok {
+		t.Fatalf("bounded non-header C++ refresh should close the deterministic refresh path, got %#v", req)
+	}
+}
+
+func TestPlanExecuteMissingGroundingRefreshCompletesAfterBoundedReads(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/simulation/production/production_execution.cpp",
+			"native/tests/test_quality_inventory_bindings.cpp",
+		},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: edit paths lack source grounding",
+		Error:   "submit_plan edits for plan-execute planner atoms must be grounded before executor handoff; missing source-body evidence for `native/src/simulation/production/production_execution.cpp`; missing source-body evidence for `native/tests/test_quality_inventory_bindings.cpp`.",
+	}
+	results := []workspace.ToolResult{
+		rejected,
+	}
+	paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, 0)
+	assertEqualSet(t, paths, []string{
+		"native/src/simulation/production/production_execution.cpp",
+		"native/tests/test_quality_inventory_bindings.cpp",
+	})
+
+	results = append(results,
+		workspace.ToolResult{Tool: "read_file", Summary: "Read f1 native/src/simulation/production/production_execution.cpp lines 181-260 (total lines: 1593)"},
+		workspace.ToolResult{Tool: "read_file", Summary: "Read f2 native/tests/test_quality_inventory_bindings.cpp lines 1-160 (total lines: 260)"},
+	)
+	if paths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, 0); len(paths) != 0 {
+		t.Fatalf("bounded reads should close missing-grounding refresh paths, got %#v", paths)
+	}
+	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "native/src/core/colony_sim.h",
+		StartLine: 1,
+		EndLine:   80,
+	}, brief, results); !reject || summary != "Corrected submit_plan required" || strings.Contains(errorText, "still needs bounded source-body refresh") {
+		t.Fatalf("post-refresh discovery should require submit correction without stale refresh paths, reject=%v summary=%q error=%q", reject, summary, errorText)
+	}
+}
+
+func TestPlanExecuteRejectedOldTextAllowsRoutedRefreshAfterWeakRead(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/simulation/production/production_execution.cpp"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		rejected,
 	}
 	refreshReq := workspace.ToolRequest{
 		Tool:       "code_navigate",

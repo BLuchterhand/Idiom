@@ -15495,7 +15495,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 	if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok && state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		for _, path := range state.RefreshPaths {
 			normalized := normalizeRunnerPath(path)
-			if normalized == "" || successfulSourceEvidencePathAfter(results, rejectedAt, normalized) {
+			if normalized == "" {
 				continue
 			}
 			start, end := planThenExecuteAnchorRefreshFallbackRange(normalized, results, rejected)

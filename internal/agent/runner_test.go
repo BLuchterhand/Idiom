@@ -12836,6 +12836,68 @@ func TestPlanThenExecuteFallbackPreservesAnchorRefreshContract(t *testing.T) {
 	}
 }
 
+func TestPlanThenExecuteFallbackInfersPlannerContractFromTranscript(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        "implementation",
+		Contract:          "implementation_result",
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read a.txt lines 1-10 (total lines: 10)"},
+		{Tool: "read_file", Summary: "Read b.txt lines 1-10 (total lines: 10)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `a.txt: old_text not found in current source`, `b.txt: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read a.txt lines 2-4 (total lines: 10)"},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic plan-execute fallback inferred from transcript")
+	}
+	for _, want := range []string{"Plan-execute anchor refresh is still required", "b.txt"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("inferred plan-execute fallback missing %q:\n%s", want, answer)
+		}
+	}
+	if strings.Contains(answer, "- a.txt") {
+		t.Fatalf("already refreshed path should not remain in anchor-refresh fallback:\n%s", answer)
+	}
+	if strings.Contains(answer, "Implementation incomplete") || strings.Contains(answer, "Changed paths: none") {
+		t.Fatalf("transcript-inferred plan-execute fallback must not use direct implementation blocker:\n%s", answer)
+	}
+}
+
+func TestPlanThenExecuteFallbackDoesNotInferFromReadOutputOnly(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:           "implementation",
+		Contract:             "implementation_result",
+		PermissionProfile:    "guarded_workspace_write",
+		VerificationContract: "tests_passed_or_failed_or_skipped_with_blocker",
+		RequiredEditPaths:    []string{"internal/agent/runner_fallback.go"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "read_file",
+			Summary: "Read internal/agent/runner_fallback.go lines 1-120 (total lines: 260)",
+			Output:  "submit_plan source_satisfied_paths required edit path bounded source-body refresh",
+		},
+	}
+
+	answer, ok := deterministicNoToolsAnswer("main", brief, results)
+	if !ok {
+		t.Fatal("expected deterministic mutation fallback")
+	}
+	if !strings.Contains(answer, "<<QUESTION>>: Implementation incomplete") {
+		t.Fatalf("ordinary implementation task should keep mutation fallback, got:\n%s", answer)
+	}
+	if strings.Contains(answer, "Plan-execute") {
+		t.Fatalf("read output alone must not infer plan-execute fallback:\n%s", answer)
+	}
+}
+
 func TestPlanThenExecuteFallbackPreservesSubmitCorrectionContract(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
