@@ -1249,7 +1249,7 @@ func TestApplyImplementorOutputRejectsDegradedPlanExecuteReview(t *testing.T) {
 
 	events := ApplyImplementorOutput(&state, atom, `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"degraded","phase":"review_repair","review_status":"degraded","progress_path":".idiom/plan-execute/session/state.json","summary":"review repair degraded"}`)
 
-	assertRejectedPlanExecuteCompletion(t, state, atom, events, "ambiguous nested plan-execute status \"degraded\"")
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "nested plan-execute status is not success-shaped")
 	if got := fmt.Sprint(events[0].Fields["nested_status"]); got != "degraded" {
 		t.Fatalf("nested_status = %q, want degraded", got)
 	}

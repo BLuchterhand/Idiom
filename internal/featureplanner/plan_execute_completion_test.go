@@ -33,6 +33,16 @@ func TestPlanExecuteCompletionTerminalClass(t *testing.T) {
 			want:   PlanExecuteTerminalBlocked,
 		},
 		{
+			name:   "failure details override success terminal class",
+			fields: map[string]any{"terminal_class": "success", "status": "completed", "failure_kind": "review_model_error"},
+			want:   PlanExecuteTerminalBlocked,
+		},
+		{
+			name:   "degraded outcome overrides success terminal class",
+			fields: map[string]any{"terminal_class": "success", "status": "completed", "outcome": "review_degraded"},
+			want:   PlanExecuteTerminalBlocked,
+		},
+		{
 			name:   "ambiguous status",
 			fields: map[string]any{"status": "ambiguous"},
 			want:   PlanExecuteTerminalBlocked,
@@ -71,6 +81,18 @@ func TestPlanExecuteCompletionTerminalDecisionReasons(t *testing.T) {
 			fields:     map[string]any{"status": "completed", "phase": "running"},
 			wantClass:  PlanExecuteTerminalBlocked,
 			wantReason: "nested plan-execute status is not success-shaped",
+		},
+		{
+			name:       "failure details block success terminal class",
+			fields:     map[string]any{"terminal_class": "success", "status": "completed", "failure_reason": "review repair failed"},
+			wantClass:  PlanExecuteTerminalBlocked,
+			wantReason: "nested plan-execute reported failure details",
+		},
+		{
+			name:       "skipped status blocks success terminal class without marker",
+			fields:     map[string]any{"terminal_class": "success", "status": "skipped"},
+			wantClass:  PlanExecuteTerminalBlocked,
+			wantReason: "nested plan-execute skipped status is not explicitly marked as review-repair skipped by design",
 		},
 		{
 			name:      "skipped review with explicit marker succeeds",
