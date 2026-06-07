@@ -202,6 +202,145 @@ func TestSubmitPlanUnsupportedProofClaimsIgnoreProseFiles(t *testing.T) {
 	}
 }
 
+func TestSubmitPlanRejectsSourceLineRangeExpansionWithoutSelectedAnchor(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/colony_sim.h", strings.Join([]string{
+		"struct ColonySim {",
+		"};",
+		"",
+		"inline godot::Array ColonySim::gd_get_build_catalog() const {",
+		"    godot::Array result;",
+		"}",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "insert inventory quality fields",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/colony_sim.h",
+			StartLine: 4,
+			EndLine:   4,
+			Content: strings.Join([]string{
+				"    d[\"quality_skill_contribution\"] = quality_skill_contribution;",
+				"    d[\"quality_material_contribution\"] = quality_material_contribution;",
+				"    d[\"quality_workspace_contribution\"] = quality_workspace_contribution;",
+				"",
+			}, "\n"),
+			Purpose: "insert fields after quality_name",
+		}},
+	})
+	if result.Error == "" {
+		t.Fatalf("expected unanchored source line-range expansion to be rejected")
+	}
+	for _, want := range []string{"expands the selected range", "does not preserve any selected anchor line", "old_text/new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("rejected submit_plan should not persist last.plan.json; stat err=%v", err)
+	}
+}
+
+func TestSubmitPlanRejectsGoLineRangeExpansionWithoutSelectedAnchorAfterSyntaxPreflight(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "pkg/feature.go", strings.Join([]string{
+		"package pkg",
+		"",
+		"func existing() int { return 1 }",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add replacement helpers",
+		Edits: []PlanEdit{{
+			Path:      "pkg/feature.go",
+			StartLine: 3,
+			EndLine:   3,
+			Content: strings.Join([]string{
+				"func added() int { return 2 }",
+				"func more() int { return 3 }",
+				"",
+			}, "\n"),
+			Purpose: "replace helper with two helpers",
+		}},
+	})
+	if result.Error == "" {
+		t.Fatalf("expected syntactically valid unanchored Go expansion to be rejected")
+	}
+	for _, want := range []string{"expands the selected range", "does not preserve any selected anchor line", "old_text/new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
+	}
+	if strings.Contains(result.Error, "preflight syntax validation failed") {
+		t.Fatalf("test fixture should pass syntax preflight before anchor guard rejects it: %s", result.Error)
+	}
+}
+
+func TestSubmitPlanRejectsContentOnlyDuplicateExistingSourceBlock(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/core/constants/environment.h", strings.Join([]string{
+		"inline constexpr float QUALITY_NORMAL_THRESHOLD = 0.50f;",
+		"",
+		"// Quality Score",
+		"inline constexpr float QUALITY_SCORE_COMPONENT_WEIGHT = 0.50f;",
+		"struct QualityScoreBreakdown {",
+		"    float raw_score = 0.0f;",
+		"};",
+		"",
+	}, "\n"))
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "add quality score helpers",
+		Edits: []PlanEdit{{
+			Path:      "native/src/core/constants/environment.h",
+			StartLine: 2,
+			EndLine:   2,
+			Content: strings.Join([]string{
+				"// Quality Score",
+				"inline constexpr float QUALITY_SCORE_COMPONENT_WEIGHT = 0.50f;",
+				"struct QualityScoreBreakdown {",
+				"    float raw_score = 0.0f;",
+				"};",
+				"",
+			}, "\n"),
+			Purpose: "add quality score structures",
+		}},
+	})
+	if result.Error == "" {
+		t.Fatalf("expected duplicate existing source block to be rejected")
+	}
+	for _, want := range []string{"duplicate an existing source block", "source_satisfied_paths", "old_text/new_text"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("expected submit_plan rejection to mention %q, got: %s", want, result.Error)
+		}
+	}
+}
+
+func TestSubmitPlanAllowsSourceLineRangeReplacementWithoutGrowth(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "native/src/sim.cpp", "int value() {\n    return 1;\n}\n")
+
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "replace return value",
+		Edits: []PlanEdit{{
+			Path:      "native/src/sim.cpp",
+			StartLine: 2,
+			EndLine:   2,
+			Content:   "    return 2;",
+			Purpose:   "replace return value",
+		}},
+	})
+	if strings.TrimSpace(result.Error) != "" {
+		t.Fatalf("ordinary same-size source line-range replacement should remain valid: %s", result.Error)
+	}
+}
+
 func submitPlanTestAnyOfRequires(anyOf []map[string][]string, fields ...string) bool {
 	for _, clause := range anyOf {
 		required := clause["required"]

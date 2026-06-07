@@ -847,6 +847,9 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 				}
 				return fmt.Errorf("%w: %s", ErrPlanSubmissionRejected, errorText)
 			}
+			if err := validateContentOnlyPlanEditAgainstCurrentSource(path, string(body), edit); err != nil {
+				return err
+			}
 		} else {
 			return fmt.Errorf("edit would not change %s; %s", edit.Path, submitPlanNoOpEditGuidanceForPath(edit.Path))
 		}
@@ -925,9 +928,82 @@ func (m *Manager) validatePlanEditSequenceAgainstWorkspace(edits []PlanEdit) err
 			}
 			return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, errorText)
 		}
+		if strings.TrimSpace(edit.OldText) == "" {
+			if err := validateContentOnlyPlanEditAgainstCurrentSource(path, string(body), edit); err != nil {
+				return fmt.Errorf("edits[%d]: after applying prior plan edits, %s", i, err.Error())
+			}
+		}
 		projected[path] = []byte(updated)
 	}
 	return nil
+}
+
+func validateContentOnlyPlanEditAgainstCurrentSource(path string, current string, edit PlanEdit) error {
+	if !isSourceLikePath(path) || strings.TrimSpace(current) == "" || strings.TrimSpace(edit.OldText) != "" {
+		return nil
+	}
+	if edit.StartLine > 0 || edit.EndLine > 0 {
+		if err := validateSourceLineRangePlanEdit(path, current, edit); err != nil {
+			return err
+		}
+	}
+	if (edit.StartLine > 0 || edit.InsertAfterLine > 0) && sourceEditContentDuplicatesExistingBlock(current, edit) {
+		return fmt.Errorf("content-only edit would duplicate an existing source block in %s; remove this edit and use source_satisfied_paths if the requested final state already exists, or submit an old_text/new_text edit anchored to the current source", filepath.ToSlash(path))
+	}
+	return nil
+}
+
+func validateSourceLineRangePlanEdit(path string, current string, edit PlanEdit) error {
+	if strings.TrimSpace(edit.Content) == "" {
+		return nil
+	}
+	spans := lineSpans(current)
+	if len(spans) == 0 || edit.StartLine <= 0 || edit.EndLine < edit.StartLine ||
+		edit.StartLine > len(spans) || edit.EndLine > len(spans) {
+		return nil
+	}
+	startOffset := spans[edit.StartLine-1].start
+	endOffset := spans[edit.EndLine-1].end
+	selected := current[startOffset:endOffset]
+	if lineRangeReplacementDuplicatesPrecedingContext(current, spans, edit.StartLine, edit.Content) {
+		return fmt.Errorf("line-range replacement for %s lines %d-%d appears to duplicate context immediately before the selected range; use old_text/new_text with a unique current-source anchor for insertions", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+	}
+	selectedLines := normalizedNonEmptyLines(selected)
+	replacementLines := normalizedNonEmptyLines(edit.Content)
+	if len(selectedLines) == 0 || len(replacementLines) <= len(selectedLines) {
+		return nil
+	}
+	for _, selectedLine := range selectedLines {
+		for _, replacementLine := range replacementLines {
+			if selectedLine == replacementLine {
+				return nil
+			}
+		}
+	}
+	return fmt.Errorf("source line-range edit for %s lines %d-%d expands the selected range but does not preserve any selected anchor line; for insertions, use old_text/new_text or replace the anchor line(s) with unchanged anchor line(s) plus new content", filepath.ToSlash(path), edit.StartLine, edit.EndLine)
+}
+
+func sourceEditContentDuplicatesExistingBlock(current string, edit PlanEdit) bool {
+	content := strings.TrimSpace(edit.Content)
+	if content == "" || len(normalizedNonEmptyLines(content)) < 2 {
+		return false
+	}
+	search := current
+	if edit.StartLine > 0 || edit.EndLine > 0 {
+		spans := lineSpans(current)
+		if len(spans) > 0 && edit.StartLine > 0 {
+			endLine := edit.EndLine
+			if endLine == 0 {
+				endLine = edit.StartLine
+			}
+			if endLine >= edit.StartLine && edit.StartLine <= len(spans) && endLine <= len(spans) {
+				startOffset := spans[edit.StartLine-1].start
+				endOffset := spans[endLine-1].end
+				search = current[:startOffset] + current[endOffset:]
+			}
+		}
+	}
+	return strings.Contains(search, content)
 }
 
 func (m *Manager) repairPlanArtifactOldTextAnchors(artifact *PlanArtifact) {
