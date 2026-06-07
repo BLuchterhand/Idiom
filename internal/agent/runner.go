@@ -3327,7 +3327,7 @@ func (r *Runner) Run(
 			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
 			rejectedAt := len(collectedResults) - 1
 			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, result, rejectedAt)
-			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required edit path. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
+			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request whose coverage includes every required edit path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
 			eventRole := "plan_then_execute_submit_plan_required"
 			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, collectedResults) {
 				prompt = RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
@@ -8427,7 +8427,7 @@ func planThenExecuteRejectedSubmitPlanDraftEvidence(req workspace.ToolRequest, r
 	var b strings.Builder
 	b.WriteString(planThenExecuteRejectedSubmitPlanDraftEvidencePrefix)
 	b.WriteString("\n\nFactual evidence from the previous `submit_plan` request. The harness rejected that request; no plan artifact was created.\n")
-	if brief := strings.TrimSpace(lastSubmitPlanRejectionBrief(result)); brief != "" {
+	if brief := strings.TrimSpace(lastSubmitPlanCorrectionRejectionBrief(result)); brief != "" {
 		b.WriteString("\n")
 		b.WriteString(brief)
 		b.WriteString("\n")
@@ -9531,7 +9531,11 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 			}
 			correction := planThenExecuteSubmitPlanVisibleJSONInstruction()
 			if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-				correction = lastSubmitPlanRejectionBrief(rejected) + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejected)
+				correctionBrief := lastSubmitPlanRejectionBrief(rejected)
+				if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
+					correctionBrief = lastSubmitPlanCorrectionRejectionBrief(rejected)
+				}
+				correction = correctionBrief + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejected)
 			}
 			if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
 				return fmt.Sprintf("The completion gate rejected a final answer before the corrected plan-submission contract (`submit_plan`) produced a valid artifact for required edit path(s): %s. Previous rejected submit_plan drafts do not count as coverage. Every required path already has source-body evidence, so read/search/discovery tools are hidden now and must not be called. Your next visible message must be exactly one parser-readable `submit_plan` request covering every remaining required path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not reply in prose. %s For a new file or whole-file write use explicit replacement edit shapes: `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`.", strings.Join(missing, ", "), correction), true, true
@@ -13390,7 +13394,7 @@ func planThenExecuteNativeSubmitPlanCorrectionPrompt(brief workerruntime.WorkerR
 	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
 	var b strings.Builder
 	b.WriteString("The previous native `submit_plan` tool call was rejected before it became a valid plan artifact. ")
-	b.WriteString(lastSubmitPlanRejectionBrief(result))
+	b.WriteString(lastSubmitPlanCorrectionRejectionBrief(result))
 	if details := planThenExecuteNativeSubmitPlanCorrectionDetails(brief, result); details != "" {
 		b.WriteString(details)
 		b.WriteString(" ")
@@ -13927,7 +13931,11 @@ func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results [
 	if r.planThenExecutePlannerPhase() {
 		correction := ""
 		if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-			correction = " Previous rejected submit_plan drafts do not count as coverage. " + lastSubmitPlanRejectionBrief(rejected) + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejected)
+			correctionBrief := lastSubmitPlanRejectionBrief(rejected)
+			if submitCorrection {
+				correctionBrief = lastSubmitPlanCorrectionRejectionBrief(rejected)
+			}
+			correction = " Previous rejected submit_plan drafts do not count as coverage. " + correctionBrief + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejected)
 		}
 		if submitCorrection {
 			return workspace.ToolResult{
@@ -14050,7 +14058,7 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace
 		return planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, *lastResult), true
 	}
 	prompt := "The last request repeated the same invalid `submit_plan`; it was not executed again. " +
-		lastSubmitPlanRejectionBrief(*lastResult) +
+		lastSubmitPlanCorrectionRejectionBrief(*lastResult) +
 		"Submit a corrected parser-readable `submit_plan` now covering every required_edit_path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose. " +
 		planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, *lastResult)
 	return prompt, true
@@ -14062,7 +14070,7 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(r
 	}
 	reason := ""
 	if lastResult != nil {
-		reason = lastSubmitPlanRejectionBrief(*lastResult)
+		reason = lastSubmitPlanCorrectionRejectionBrief(*lastResult)
 	}
 	return "Repeated invalid submit_plan rejected",
 		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan` covering every required_edit_path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool.",

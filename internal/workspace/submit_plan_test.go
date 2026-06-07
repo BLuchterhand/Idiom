@@ -1752,7 +1752,7 @@ func TestSubmitPlanRejectsNoOpSubstringEditBeforeWritingArtifact(t *testing.T) {
 	if strings.TrimSpace(result.Error) == "" {
 		t.Fatalf("no-op substring edit should be rejected")
 	}
-	for _, want := range []string{"old_text and new_text are identical", "Decision: source-satisfied"} {
+	for _, want := range []string{"old_text and new_text are identical", "source_satisfied_paths", "Decision: source-satisfied"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op rejection should include %q, got %q", want, result.Error)
 		}
@@ -1815,7 +1815,7 @@ func TestSubmitPlanRejectsNoOpRangeEditBeforeWritingArtifact(t *testing.T) {
 	if !strings.Contains(result.Error, "edit would not change x.txt") {
 		t.Fatalf("no-op range rejection should name unchanged edit, got %q", result.Error)
 	}
-	for _, want := range []string{"Decision: source-satisfied"} {
+	for _, want := range []string{"source_satisfied_paths", "Decision: source-satisfied"} {
 		if !strings.Contains(result.Error, want) {
 			t.Fatalf("no-op range rejection should include %q, got %q", want, result.Error)
 		}

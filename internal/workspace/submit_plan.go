@@ -143,7 +143,7 @@ const PlanEditAnchorProvenanceSchemaVersion = "idiom.plan_edit_anchor.v1"
 
 const planInlineTextSpillThreshold = 4096
 
-const submitPlanNoOpEditGuidance = "submit real edits, or answer `Decision: source-satisfied` with current-state evidence when no changes are needed"
+const submitPlanNoOpEditGuidance = "answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits"
 
 // submitPlan persists the planner's edit-plan artifact to disk and
 // returns the path so the caller (orchestrator) can find and execute

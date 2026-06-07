@@ -449,7 +449,7 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
 		contract.RequiredNext = []string{"corrected submit_plan covering every required_edit_path with real executable edits or source_satisfied_paths for paths already at final state"}
-		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "Decision: source-satisfied after an incomplete submit_plan", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
+		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 		contract.TerminalOutcomes = []string{"submit_plan"}
 	}
 	contract.ActionPolicy = TurnActionClassPolicy{

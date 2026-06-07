@@ -10357,6 +10357,29 @@ func TestPlanExecuteRejectedSubmitPlanDraftEvidencePreservesFailingBody(t *testi
 	}
 }
 
+func TestPlanExecuteRejectedSubmitPlanDraftEvidenceSanitizesNoopGuidance(t *testing.T) {
+	prompt := planThenExecuteRejectedSubmitPlanDraftEvidence(workspace.ToolRequest{
+		Tool: "submit_plan",
+		Edits: []workspace.PlanEdit{{
+			Path:    "b.txt",
+			OldText: "before\n",
+			NewText: "before\n",
+			Purpose: "no-op edit",
+		}},
+	}, workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: edit would not change b.txt; answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits",
+	})
+
+	if strings.Contains(prompt, "Decision: source-satisfied") {
+		t.Fatalf("rejected draft evidence should not replay terminal source-satisfied in submit-correction stack:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "source_satisfied_paths") || !strings.Contains(prompt, "submit real edits") {
+		t.Fatalf("rejected draft evidence should preserve corrected submit_plan alternatives:\n%s", prompt)
+	}
+}
+
 func TestPlanExecuteSubmitPlanRejectionBriefPreservesTailGuidance(t *testing.T) {
 	longPrefix := strings.Repeat("planned content around syntax error ", 30)
 	brief := lastSubmitPlanRejectionBrief(workspace.ToolResult{
@@ -10371,6 +10394,20 @@ func TestPlanExecuteSubmitPlanRejectionBriefPreservesTailGuidance(t *testing.T) 
 	}
 	if len(brief) > 820 {
 		t.Fatalf("brief should remain bounded, got %d chars:\n%s", len(brief), brief)
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionRejectionBriefRemovesTerminalSourceSatisfied(t *testing.T) {
+	brief := lastSubmitPlanCorrectionRejectionBrief(workspace.ToolResult{
+		Tool:  "submit_plan",
+		Error: "edits[1]: edit would not change b.txt; answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits",
+	})
+
+	if strings.Contains(brief, "Decision: source-satisfied") {
+		t.Fatalf("submit-correction brief must not advertise terminal source-satisfied:\n%s", brief)
+	}
+	if !strings.Contains(brief, "source_satisfied_paths") || !strings.Contains(brief, "submit real edits") {
+		t.Fatalf("submit-correction brief should preserve submit_plan alternatives:\n%s", brief)
 	}
 }
 
@@ -11083,6 +11120,64 @@ func TestPlanExecuteSubmitCorrectionTerminalBriefIsSubmitPlanOnly(t *testing.T) 
 		if strings.Contains(joinedNext, forbidden) || strings.Contains(strings.Join(brief.InvalidActions, "\n"), "final answer before submit_plan succeeds unless it is a source-satisfied closeout") {
 			t.Fatalf("submit-correction terminal brief retained stale next/invalid guidance %q: next=%#v invalid=%#v", forbidden, brief.RequiredNext, brief.InvalidActions)
 		}
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionChecklistNamesNoopSourceSatisfiedPaths(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	result := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[1]: edit would not change b.txt; answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits",
+	}
+
+	checklist := planThenExecuteSubmitPlanCorrectionChecklist(brief, result)
+	if !strings.Contains(checklist, "a.txt=must-keep-valid-coverage") {
+		t.Fatalf("checklist should preserve valid prior coverage for unaffected path:\n%s", checklist)
+	}
+	if !strings.Contains(checklist, "b.txt=use-source_satisfied_paths-if-current-state-is-final-or-submit-real-edit") {
+		t.Fatalf("checklist should steer no-op path to source_satisfied_paths or a real edit:\n%s", checklist)
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionChecklistParsesSequenceNoopPath(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	result := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[1]: edit would not change b.txt after applying prior plan edits; answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits",
+	}
+
+	checklist := planThenExecuteSubmitPlanCorrectionChecklist(brief, result)
+	if strings.Contains(checklist, "after applying prior plan edits") {
+		t.Fatalf("checklist parsed extra prose as path:\n%s", checklist)
+	}
+	if !strings.Contains(checklist, "b.txt=use-source_satisfied_paths-if-current-state-is-final-or-submit-real-edit") {
+		t.Fatalf("checklist should identify no-op path from sequence preflight:\n%s", checklist)
+	}
+}
+
+func TestPlanExecuteSubmitCorrectionChecklistCoversPathlessNoop(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"a.txt", "b.txt"},
+	}
+	result := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected",
+		Error:   "edits[0]: old_text and new_text are identical; answer `Decision: source-satisfied`, use `source_satisfied_paths` for mixed coverage, or submit real edits",
+	}
+
+	checklist := planThenExecuteSubmitPlanCorrectionChecklist(brief, result)
+	if !strings.Contains(checklist, "a.txt=must-have-real-edit-or-source_satisfied_paths-entry-no-noop") ||
+		!strings.Contains(checklist, "b.txt=must-have-real-edit-or-source_satisfied_paths-entry-no-noop") {
+		t.Fatalf("pathless no-op should force every required path away from no-op edits:\n%s", checklist)
 	}
 }
 
