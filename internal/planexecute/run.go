@@ -28,6 +28,7 @@ const (
 	RunFailureSourceSanityFailed                 = "source_sanity_failed"
 	RunFailureSourceSatisfiedUnsupportedEvidence = "source_satisfied_unsupported_evidence"
 	RunFailureVerificationRequired               = "verification_failed"
+	RunFailureMissingEditPathWithoutNewFileAuth  = "missing_edit_path_without_new_file_authorization"
 )
 
 func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry.Recorder, stdout io.Writer, stderr io.Writer) RunResult {
@@ -453,6 +454,32 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 	}
 	if emitPhase != nil {
 		emitPhase("planning", fmt.Sprintf("Plan created with %d edit(s)", len(plan.Edits)))
+	}
+	if mismatch := preflightPlanMissingPathAuthorization(cfg.Workspace.Root, prompt, plan); mismatch != nil {
+		emitPlanExecuteJSONEvent(stdout, opts.JSONEvents, "planner_plan_rejected", map[string]any{
+			"path":   planPath,
+			"reason": mismatch.Reason,
+			"edit":   mismatch.Path,
+		})
+		progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, ReviewRepairBaseline{})
+		progress.Status = ProgressStatusFailed
+		progress.FailureKind = RunFailureMissingEditPathWithoutNewFileAuth
+		progress.FailureReason = sanitizeProgressReason(mismatch.Reason)
+		if savedPath, saveErr := saveRunProgressState(cfg.Workspace.Root, &progress, opts.JSONEvents, stdout, "resume_state_saved"); saveErr != nil {
+			if savedPath != "" {
+				progressPath = savedPath
+			}
+			fmt.Fprintln(stderr, saveErr)
+		}
+		fmt.Fprintln(stderr, mismatch.Reason)
+		return RunResult{
+			ExitCode:        1,
+			SessionID:       sessionID,
+			ResumeStatePath: progressPath,
+			FailureKind:     progress.FailureKind,
+			FailureReason:   sanitizeProgressReason(mismatch.Reason),
+			PlannerAnswer:   answer,
+		}
 	}
 	reviewBaseline := CaptureReviewRepairBaseline(cfg.Workspace.Root, changedPaths)
 	progress.MarkPlanLoaded(cfg.Workspace.Root, planPath, plan, reviewBaseline)

@@ -1151,6 +1151,58 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 	}
 }
 
+func TestRunRejectsMissingEditPathWithoutNewFileAuthorizationBeforeWrites(t *testing.T) {
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Workspace.Root = root
+	cfg.Workspace.CWD = root
+	cfg.Workspace.EnableWrites = true
+	var stdout, stderr bytes.Buffer
+
+	missingPath := "project/scripts/economy/score_breakdown.gd"
+	result := Run(cfg, Options{
+		Prompt:           "Update the existing masterwork tooltip to use current contributor fields if needed.",
+		JSONEvents:       true,
+		SkipReviewRepair: true,
+		RequiredEditPaths: MultiFlag{
+			missingPath,
+		},
+	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
+			t.Fatalf("unexpected task family %q", opts.TaskFamily)
+		}
+		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{{
+			Path:       missingPath,
+			OldText:    "",
+			NewText:    "extends RefCounted\n",
+			ReplaceAll: true,
+			Purpose:    "invented helper path",
+		}}, "invented missing helper")
+		return "submitted invented helper path", nil
+	}, nil, &stdout, &stderr)
+
+	if result.ExitCode != 1 {
+		t.Fatalf("expected missing edit path rejection, got code=%d stdout=%s stderr=%s", result.ExitCode, stdout.String(), stderr.String())
+	}
+	if result.FailureKind != "missing_edit_path_without_new_file_authorization" {
+		t.Fatalf("unexpected failure kind: %#v", result)
+	}
+	if !strings.Contains(stderr.String(), "missing edit path") && !strings.Contains(stderr.String(), "new-file authorization") {
+		t.Fatalf("stderr should explain missing-path/new-file rejection, got %s", stderr.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(missingPath))); !os.IsNotExist(err) {
+		t.Fatalf("missing path must not be created, stat err=%v", err)
+	}
+	events := planExecuteJSONEventsForRunTest(t, stdout.String())
+	event, ok := planExecuteEventByTypeForRunTest(events, "idiom.plan_execute.planner_plan_rejected")
+	if !ok {
+		t.Fatalf("expected planner_plan_rejected event, got %s", stdout.String())
+	}
+	if event["reason"] != "plan would create missing edit path without new-file authorization" {
+		t.Fatalf("unexpected rejection event: %#v", event)
+	}
+}
+
 func TestRunExecutorPhaseRejectsPlanOutsideWriteEnvelopeBeforeWrites(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "approved.txt"), []byte("approved\n"), 0o644); err != nil {

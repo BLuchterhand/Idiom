@@ -226,7 +226,7 @@ func planExecutePlannerSystemAddendumWithObligations(requiredEditPaths []string,
 		"Treat the brief body and any preloaded Context Pack below as the planner target packet.",
 		"",
 		"Visible response protocol — choose exactly one action per turn:",
-		"1. If a required_edit_path does not exist on disk, it is a new file — do not attempt to read or search for it. Its source-body obligation is satisfied immediately. Proceed directly to a terminal outcome: submit_plan using replace_all:true and new_text, Decision: source-satisfied, or <<QUESTION>>:.",
+		"1. If a required_edit_path does not exist on disk, treat it as a new file only when the brief explicitly authorizes new-file/full-body/create work. Without that authorization, do not invent the path; answer `<<QUESTION>>:` with the missing-path localization blocker.",
 		"2. If an existing required_edit_path has not produced source-body evidence in this planner turn, call exactly one source-read tool for that path. Use `read_file`; if it redirects to an outline, follow with `code_navigate` `read_symbol` or bounded `read_file` with `start_line`/`end_line`. Do not narrate the read.",
 		"3. Once every existing required_edit_path has satisfied its source-body obligation, call `history_range` or `history_symbol` for each selected existing edit path that still lacks required git history evidence, only when the active runtime contract requires git history evidence. Do not perform additional source reads in that phase. After history evidence is present for every selected existing edit path, the next visible action must be exactly one terminal outcome: `submit_plan`, `Decision: source-satisfied`, or `<<QUESTION>>:`.",
 		fmt.Sprintf("4. If the requested final state is already present, answer `Decision: source-satisfied` and cite current-state evidence for every required path. Do not use unsupported inference language such as %s; if any acceptance criterion is only inferred, submit a grounded plan or answer `<<QUESTION>>:` with the blocker.", planExecuteSourceSatisfiedUnsupportedEvidenceMarkerListForPrompt()),
@@ -2520,6 +2520,34 @@ func preflightPlanRequiredEditPaths(required []string, plan workspace.PlanArtifa
 			Index:  -1,
 			Path:   path,
 			Reason: "plan does not include an edit for this required_edit_paths entry",
+		}
+	}
+	return nil
+}
+
+func preflightPlanMissingPathAuthorization(root string, prompt string, plan workspace.PlanArtifact) *PlanEditPreflightMismatch {
+	for i, edit := range plan.Edits {
+		path := normalizePlanExecutePath(edit.Path)
+		if path == "" {
+			continue
+		}
+		if planExecuteNewFileAuthorizedForPath(prompt, path) {
+			continue
+		}
+		abs := filepath.Join(root, filepath.FromSlash(path))
+		if _, err := os.Stat(abs); err != nil {
+			if os.IsNotExist(err) {
+				return &PlanEditPreflightMismatch{
+					Index:  i,
+					Path:   path,
+					Reason: "plan would create missing edit path without new-file authorization",
+				}
+			}
+			return &PlanEditPreflightMismatch{
+				Index:  i,
+				Path:   path,
+				Reason: "could not stat edit path before write: " + err.Error(),
+			}
 		}
 	}
 	return nil

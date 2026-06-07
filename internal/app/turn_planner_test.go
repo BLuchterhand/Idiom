@@ -3881,6 +3881,12 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 		if err := os.MkdirAll(filepath.Dir(outAbs), 0o755); err != nil {
 			return implementationDispatchPlanDocumentRefineResult{OriginalPath: doc.Path, OutputPath: outRel, ExitCode: 1, Err: err}
 		}
+		change := "Apply this atom's design-doc slice."
+		currentState := "`" + target + "` exists in the test fixture workspace."
+		if target == "pkg/c.go" {
+			change = "Create this atom's design-doc slice as a new file."
+			currentState = "`" + target + "` is a new file target in the test fixture workspace."
+		}
 		refinedBody := strings.Join([]string{
 			"# Refined Atom",
 			"",
@@ -3890,11 +3896,11 @@ func TestRunPromptOnceAtomizesDesignDocRefinesAtomsAndDispatchesPlanExecute(t *t
 			"",
 			"| File | Change |",
 			"|---|---|",
-			"| " + target + " | Apply this atom's design-doc slice. |",
+			"| " + target + " | " + change + " |",
 			"",
 			"## Verified Current State",
 			"",
-			"`" + target + "` exists in the test fixture workspace.",
+			currentState,
 			"",
 			"## Required Behavior",
 			"",
