@@ -12,6 +12,10 @@ type ImplementationHandoff struct {
 	TaskID               string
 	EffortRoot           string
 	ArtifactRootPath     string
+	StatusBucket         string
+	CurrentPhase         string
+	CurrentState         string
+	NextValidActions     []string
 	CoverageTier         string
 	CoverageGatePassed   bool
 	CoverageBlockers     []string
@@ -112,6 +116,10 @@ func BuildImplementationHandoff(input BriefGenerationInput) ImplementationHandof
 		TaskID:               firstNonEmptyHandoffString(input.WorkflowState.TaskID, input.TDD.TaskID, input.PRD.FrontMatter.TaskID, input.CoverageEvaluation.TaskID),
 		EffortRoot:           strings.TrimSpace(input.EffortRoot),
 		ArtifactRootPath:     firstNonEmptyHandoffString(input.ArtifactRootPath, input.EffortRoot),
+		StatusBucket:         strings.TrimSpace(input.WorkflowState.StatusBucket),
+		CurrentPhase:         strings.TrimSpace(input.WorkflowState.CurrentPhase),
+		CurrentState:         strings.TrimSpace(input.WorkflowState.CurrentState),
+		NextValidActions:     append([]string{}, input.WorkflowState.NextValidActions...),
 		CoverageTier:         coverageTier,
 		CoverageGatePassed:   strings.EqualFold(strings.TrimSpace(input.CoverageEvaluation.Status), "pass"),
 		CoverageBlockers:     coverageBlockerMessages(input.CoverageEvaluation),

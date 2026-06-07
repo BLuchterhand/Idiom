@@ -9,6 +9,10 @@ type ProductWorkflowBrief struct {
 	EffortID                  string                `json:"effort_id"`
 	TaskID                    string                `json:"task_id"`
 	EffortRoot                string                `json:"effort_root"`
+	StatusBucket              string                `json:"status_bucket,omitempty"`
+	CurrentPhase              string                `json:"current_phase,omitempty"`
+	CurrentState              string                `json:"current_state,omitempty"`
+	NextValidActions          []string              `json:"next_valid_actions,omitempty"`
 	PRDRequirements           []PRDRequirementBrief `json:"prd_requirements"`
 	AcceptedADRIDs            []string              `json:"accepted_adr_ids"`
 	AcceptedADRPaths          []string              `json:"accepted_adr_paths"`
@@ -47,6 +51,9 @@ type TDDObligationBrief struct {
 }
 
 func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
+	if brief.IsClosedSourceSatisfied() {
+		return false
+	}
 	if len(brief.Blockers) > 0 {
 		return false
 	}
@@ -54,6 +61,12 @@ func (brief ProductWorkflowBrief) AllowsFeaturePlanDispatch() bool {
 		return true
 	}
 	return brief.coveragePendingImplementationVerification()
+}
+
+func (brief ProductWorkflowBrief) IsClosedSourceSatisfied() bool {
+	return strings.EqualFold(strings.TrimSpace(brief.StatusBucket), "closed") &&
+		(strings.EqualFold(strings.TrimSpace(brief.CurrentState), "closed") ||
+			strings.Contains(strings.ToLower(strings.TrimSpace(brief.CurrentPhase)), "source-satisfied"))
 }
 
 func (brief ProductWorkflowBrief) coveragePendingImplementationVerification() bool {

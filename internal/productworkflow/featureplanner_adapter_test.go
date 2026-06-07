@@ -12,6 +12,12 @@ func TestFeaturePlannerBriefFromImplementationHandoffCarriesGrounding(t *testing
 	if brief.EffortID != handoff.EffortID || brief.TaskID != handoff.TaskID {
 		t.Fatalf("brief identity mismatch: brief=%+v handoff=%+v", brief, handoff)
 	}
+	if brief.StatusBucket != handoff.StatusBucket || brief.CurrentPhase != handoff.CurrentPhase || brief.CurrentState != handoff.CurrentState {
+		t.Fatalf("brief workflow state mismatch: brief=%+v handoff=%+v", brief, handoff)
+	}
+	if len(brief.NextValidActions) != len(handoff.NextValidActions) {
+		t.Fatalf("brief next valid actions mismatch: brief=%+v handoff=%+v", brief, handoff)
+	}
 	if len(brief.FilesToModify) == 0 {
 		t.Fatalf("expected files_to_modify from handoff, got %+v", brief)
 	}

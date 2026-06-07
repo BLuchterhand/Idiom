@@ -378,6 +378,66 @@ func TestDefaultHeadlessFeaturePlannerRequiresExplicitProductContext(t *testing.
 	}
 }
 
+func TestDefaultHeadlessFeaturePlannerClosedSourceSatisfiedSkipsDispatch(t *testing.T) {
+	root := t.TempDir()
+	effortRoot := filepath.Join(root, "effort")
+	writeFeaturePlannerResumeEffort(t, effortRoot, "closed-effort")
+	workflowState, err := productworkflow.LoadWorkflowState(effortRoot)
+	if err != nil {
+		t.Fatalf("load workflow state: %v", err)
+	}
+	workflowState.StatusBucket = "closed"
+	workflowState.CurrentPhase = "source-satisfied-closeout"
+	workflowState.CurrentState = "closed"
+	workflowState.NextValidActions = []string{"inspect_closed_effort"}
+	writeFeaturePlannerJSON(t, filepath.Join(effortRoot, "workflow_state.json"), workflowState)
+
+	originalModelTurn := runFeaturePlannerModelTurn
+	originalPlanExecute := runFeaturePlannerPlanExecute
+	t.Cleanup(func() {
+		runFeaturePlannerModelTurn = originalModelTurn
+		runFeaturePlannerPlanExecute = originalPlanExecute
+	})
+	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, _ string, _ io.Writer) (string, error) {
+		t.Fatal("closed/source-satisfied product effort must not call planner model")
+		return "", nil
+	}
+	runFeaturePlannerPlanExecute = func(_ context.Context, _ featurePlannerRequest, _ string, _ io.Writer) (string, error) {
+		t.Fatal("closed/source-satisfied product effort must not dispatch plan-execute")
+		return "", nil
+	}
+
+	var stdout bytes.Buffer
+	result, err := defaultHeadlessFeaturePlanner(context.Background(), featurePlannerRequest{
+		Config:                config.Config{Workspace: config.Workspace{Root: root}},
+		Prompt:                "dispatch original closed atom",
+		SessionID:             "closed-source-satisfied",
+		EffortRoot:            effortRoot,
+		EffortID:              "closed-effort",
+		MaxPlanningIterations: 3,
+		JSONEvents:            true,
+	}, &stdout)
+	if err != nil {
+		t.Fatalf("closed source-satisfied run: %v", err)
+	}
+	if result.Fields["status"] != featureplanner.FeatureStateSourceSatisfied {
+		t.Fatalf("expected source-satisfied result fields, got %#v", result.Fields)
+	}
+	if !strings.Contains(result.Answer, "source-satisfied") {
+		t.Fatalf("answer should report source-satisfied state, got %q", result.Answer)
+	}
+	if !strings.Contains(stdout.String(), "product_source_satisfied") {
+		t.Fatalf("expected product_source_satisfied event, stdout=%s", stdout.String())
+	}
+	state, _, err := featureplanner.LoadState(root, "closed-source-satisfied")
+	if err != nil {
+		t.Fatalf("load saved state: %v", err)
+	}
+	if state.Status != featureplanner.FeatureStateSourceSatisfied || state.EffortID != "closed-effort" || state.EffortRoot != effortRoot {
+		t.Fatalf("unexpected saved state: %#v", state)
+	}
+}
+
 func TestDefaultHeadlessFeaturePlannerResumeUsesSavedProductContext(t *testing.T) {
 	root := t.TempDir()
 	effortRoot := filepath.Join(root, "effort")

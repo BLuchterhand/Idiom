@@ -19,6 +19,18 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 	}
 }
 
+func TestValidateDurableStateTreatsSourceSatisfiedAsTerminal(t *testing.T) {
+	state := NewState("source-satisfied-session", "already done", "", 3, time.Unix(1, 0).UTC())
+	state.Status = FeatureStateSourceSatisfied
+	state.PlanningLoop.State = FeatureStateSourceSatisfied
+	state.OpenQuestions = []PlannerQuestion{{ID: "q-1", Status: "open", QuestionSummary: "stale question"}}
+
+	err := ValidateDurableState(state)
+	if err == nil || !strings.Contains(err.Error(), "terminal feature state has open planner questions") {
+		t.Fatalf("source-satisfied state should reject terminal-incompatible open questions, got %v", err)
+	}
+}
+
 func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
 	plan := validPlan()
 	plan.SDDContract.PRDRequirementRefs = []string{"REQ-404"}

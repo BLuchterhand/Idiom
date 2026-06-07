@@ -43,6 +43,13 @@ func Replay(initial FeatureState, events []Event) (ReplayBundle, error) {
 			markReplayAtomState(&state, event.AtomID, AtomStateComplete)
 		case "idiom.feature_planner.atom_source_satisfied":
 			markReplayAtomState(&state, event.AtomID, AtomStateSourceSatisfied)
+		case "idiom.feature_planner.product_source_satisfied":
+			state.Status = FeatureStateSourceSatisfied
+			state.PlanningLoop.State = FeatureStateSourceSatisfied
+			state.Blockers = nil
+			state.OpenQuestions = nil
+			state.PlanningLoop.OpenQuestionIDs = nil
+			state.OpenRecoveryPackets = nil
 		case "idiom.feature.atom_started":
 			state.Status = firstNonEmpty(event.FeatureTo, FeatureStateDispatching)
 			markReplayAtomState(&state, event.AtomID, firstNonEmpty(event.AtomTo, AtomStateDispatching))

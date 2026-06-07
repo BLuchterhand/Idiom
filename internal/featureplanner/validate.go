@@ -926,7 +926,7 @@ func MissingPreDispatchPlanTDD(atom FeatureAtomPlan) []string {
 
 func isTerminalFeatureState(status string) bool {
 	switch status {
-	case FeatureStateReleased, FeatureStateClosedWithRisk, FeatureStateCanceled, FeatureStateComplete:
+	case FeatureStateReleased, FeatureStateClosedWithRisk, FeatureStateCanceled, FeatureStateComplete, FeatureStateSourceSatisfied:
 		return true
 	default:
 		return false

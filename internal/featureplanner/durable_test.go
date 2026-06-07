@@ -217,6 +217,45 @@ func TestReplayAppliesFeaturePlannerDispatchAndCompletionDeltas(t *testing.T) {
 	}
 }
 
+func TestReplayAppliesProductSourceSatisfiedCloseout(t *testing.T) {
+	state := durableState()
+	state.Status = FeatureStateDispatching
+	state.PlanningLoop.State = FeatureStateDispatching
+	state.OpenQuestions = []PlannerQuestion{{ID: "q-1", Status: "open", QuestionSummary: "stale question"}}
+	state.PlanningLoop.OpenQuestionIDs = []string{"q-1"}
+	state.OpenRecoveryPackets = []string{"recovery.json"}
+	state.ActiveRuns = []ActiveRun{{
+		RunID:         "run-1",
+		AtomID:        "atom-1",
+		LaneSessionID: "lane-1",
+		State:         "running",
+	}}
+
+	bundle, err := Replay(state, []Event{{
+		SchemaVersion: FeatureEventSchemaVersion,
+		EventID:       "evt-product-source-satisfied",
+		Type:          "idiom.feature_planner.product_source_satisfied",
+		SessionID:     "session",
+		FeatureTo:     FeatureStateSourceSatisfied,
+		ActiveRunDeltas: []ActiveRunDelta{{
+			Op:            "fold_terminal",
+			AtomID:        "atom-1",
+			LaneSessionID: "lane-1",
+			BeforeState:   "running",
+			AfterState:    FeatureStateSourceSatisfied,
+		}},
+	}})
+	if err != nil {
+		t.Fatalf("replay failed: %v", err)
+	}
+	if bundle.State.Status != FeatureStateSourceSatisfied || bundle.State.PlanningLoop.State != FeatureStateSourceSatisfied {
+		t.Fatalf("expected source-satisfied replay state, got status=%q loop=%q", bundle.State.Status, bundle.State.PlanningLoop.State)
+	}
+	if len(bundle.State.ActiveRuns) != 0 || len(bundle.State.OpenQuestions) != 0 || len(bundle.State.OpenRecoveryPackets) != 0 || len(bundle.State.PlanningLoop.OpenQuestionIDs) != 0 {
+		t.Fatalf("source-satisfied replay should clear terminal-incompatible work: %#v", bundle.State)
+	}
+}
+
 func TestReplayRejectsMismatchedAtomDeltaFromState(t *testing.T) {
 	state := durableState()
 	state.Status = FeatureStateDispatching
