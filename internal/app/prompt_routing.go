@@ -115,7 +115,7 @@ func (m *Model) recordPromptRouteWithoutExecution(prompt string, plan promptExec
 func mutationRouteConfirmationQuestion(plan promptExecutionPlan) string {
 	command := "/implement"
 	lane := "implement"
-	if strings.TrimSpace(plan.route.Family) == agent.PlanThenExecutePlannerTaskFamily {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
 		command = "/plan-execute"
 		lane = "plan-execute"
 	}
@@ -129,7 +129,7 @@ func (m *Model) applyDirectImplementationPromptRoute(ctx context.Context, prompt
 	if !isImplementationLikeFamily(plan.route.Family) {
 		return func() {}
 	}
-	if strings.TrimSpace(plan.route.Family) == agent.PlanThenExecutePlannerTaskFamily {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(plan.route.Family) {
 		return func() {}
 	}
 	return m.applyExecutorPromptRoute(ctx, "implementation direct runner", false)
@@ -287,7 +287,7 @@ func routePathLooksLikeGDScript(path string) bool {
 func (m *Model) planExecuteCommandExecutionPlan(objective string) promptExecutionPlan {
 	mode := agent.BuildMode()
 	route := normalizeTurnRoutePlan(turnRoutePlan{
-		Family:      agent.PlanThenExecutePlannerTaskFamily,
+		Family:      string(workerruntime.TaskFamilyPlanThenExecutePlanner),
 		Reason:      "typed_plan_execute_command",
 		RouteSource: routeSourceTypedCommand,
 	}, mode)
@@ -403,7 +403,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 		brief.Objective = strings.TrimSpace(prompt)
 	}
 	mentionedPaths := pathparse.MentionedWorkspacePaths(prompt)
-	if isImplementationLikeFamily(route.Family) && route.Family != agent.PlanThenExecutePlannerTaskFamily {
+	if isImplementationLikeFamily(route.Family) && !workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 		brief.EvidencePaths = appendUniqueBriefStrings(brief.EvidencePaths, mentionedPaths...)
 	} else {
 		brief.TargetRefs = appendUniqueBriefStrings(brief.TargetRefs, mentionedPaths...)
@@ -448,7 +448,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "required_edit_paths_define_write_scope")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "required_edit_paths_covered_or_blocked")
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_paths_satisfied")
-		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
+		if workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 			brief.RequiredNext = appendUniqueBriefStrings(brief.RequiredNext,
 				"for existing required paths, satisfy source-body obligations before submit_plan unless the packet is exact-plan-ready/source-satisfied; then call submit_plan, answer Decision: source-satisfied with per-path evidence, or report <<QUESTION>>",
 			)
@@ -470,7 +470,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 		brief.ReadinessGate = appendUniqueBriefStrings(brief.ReadinessGate, "required_edit_snippets_satisfied")
 		brief.FinalCritic = appendUniqueBriefStrings(brief.FinalCritic, "required_edit_snippets_reported")
 	}
-	if useTypedPlanExecuteScope && route.Family == agent.PlanThenExecutePlannerTaskFamily {
+	if useTypedPlanExecuteScope && workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 		brief = runtimeBriefWithPlanExecuteEditSetObligations(brief, scopeContract.EditSetObligations)
 	}
 	if len(m.forcedReadinessOpenObligations) > 0 {
@@ -512,7 +512,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions,
 			"build_or_test_shell",
 		)
-		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
+		if workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 			brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions,
 				"source_sanity_in_planner_phase",
 			)
@@ -528,7 +528,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 	if useTypedPlanExecuteScope && isImplementationLikeFamily(route.Family) && len(brief.RequiredEditSnippets) > 0 {
 		brief.Constraints = appendUniqueBriefStrings(brief.Constraints, "exact_anchor_implementation")
 		brief.RequiredEvidence = appendUniqueBriefStrings(brief.RequiredEvidence, "exact_edit_anchor")
-		if route.Family == agent.PlanThenExecutePlannerTaskFamily {
+		if workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 			brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "preserve_exact_anchor_snippets_in_submit_plan_before_broad_discovery")
 			brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_exact_anchor_plan_attempt")
 		} else {
@@ -541,7 +541,7 @@ func (m *Model) runtimeBriefForRouteMode(route turnRoutePlan, mode agent.Mode, p
 		brief.SearchPolicy = appendUniqueBriefStrings(brief.SearchPolicy, "attempt_exact_anchor_edit_before_broad_discovery")
 		brief.InvalidActions = appendUniqueBriefStrings(brief.InvalidActions, "broad_read_before_first_edit_attempt")
 	}
-	if route.Family == agent.PlanThenExecutePlannerTaskFamily && !m.workspaceHasGitMetadata() {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) && !m.workspaceHasGitMetadata() {
 		brief = runtimeBriefWithoutGitHistoryRequirement(brief)
 	}
 	return brief
@@ -626,7 +626,7 @@ func runtimeBriefHasNonPromptEditSetObligation(obligations planexecute.EditSetOb
 }
 
 func (m *Model) planExecuteRuntimeScopeContract(route turnRoutePlan) (planexecute.PlanScopeContract, bool) {
-	if m == nil || !m.planExecuteActive || strings.TrimSpace(route.Family) != agent.PlanThenExecutePlannerTaskFamily {
+	if m == nil || !m.planExecuteActive || !workerruntime.TaskFamilyIsPlanThenExecutePlanner(route.Family) {
 		return planexecute.PlanScopeContract{}, false
 	}
 	contract := m.planExecuteScopeContract.Normalized()
@@ -1384,7 +1384,7 @@ func tuneChatOptionsForPlan(opts llama.ChatOptions, plan promptExecutionPlan) ll
 	profile := strings.TrimSpace(plan.runtimeBrief.PermissionProfile)
 	contract := strings.TrimSpace(plan.runtimeBrief.Contract)
 	taskFamily := strings.TrimSpace(plan.runtimeBrief.TaskFamily)
-	if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(taskFamily) {
 		opts = tuneChatOptionsForDeterministicState(opts, 0)
 		if !opts.ModelThinkingFloor {
 			thinkingOff := false

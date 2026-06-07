@@ -67,54 +67,6 @@ func adaptPromptRunner(promptRun cmdruntime.PromptRunner) planexecute.PromptRunn
 	}
 }
 
-func toSharedReviewRepairBaseline(baseline reviewRepairBaseline) planexecute.ReviewRepairBaseline {
-	return baseline
-}
-
-func fromSharedReviewRepairBaseline(baseline planexecute.ReviewRepairBaseline) reviewRepairBaseline {
-	return baseline
-}
-
-func toSharedExecutorPhaseReport(report executorPhaseReport) planexecute.ExecutorPhaseReport {
-	return report
-}
-
-func fromSharedExecutorPhaseReport(report planexecute.ExecutorPhaseReport) executorPhaseReport {
-	return report
-}
-
-func toSharedPhaseEvidenceChecks(checks []phaseEvidenceCheck) []planexecute.PhaseEvidenceCheck {
-	return checks
-}
-
-func fromSharedPhaseEvidenceChecks(checks []planexecute.PhaseEvidenceCheck) []phaseEvidenceCheck {
-	return checks
-}
-
-func toSharedReviewRepairPhaseReport(report reviewRepairPhaseReport) planexecute.ReviewRepairPhaseReport {
-	return report
-}
-
-func fromSharedReviewRepairPhaseReport(report planexecute.ReviewRepairPhaseReport) reviewRepairPhaseReport {
-	return report
-}
-
-func toSharedReviewRepairBaselinePtr(baseline *reviewRepairBaseline) *planexecute.ReviewRepairBaseline {
-	if baseline == nil {
-		return nil
-	}
-	shared := toSharedReviewRepairBaseline(*baseline)
-	return &shared
-}
-
-func toSharedExecutorHandoffPacket(handoff executorHandoffPacket) planexecute.ExecutorHandoffPacket {
-	return handoff
-}
-
-func fromSharedExecutorHandoffPacket(handoff planexecute.ExecutorHandoffPacket) executorHandoffPacket {
-	return handoff
-}
-
 func parsePlanExecuteOptions(args []string, stderr io.Writer) (planExecuteOptions, error) {
 	return planexecute.ParseOptions(args, stderr)
 }
@@ -326,7 +278,7 @@ const (
 type executorHandoffPacket = planexecute.ExecutorHandoffPacket
 
 func classifyExecutorHandoffPacket(root string, plan workspace.PlanArtifact) executorHandoffPacket {
-	return fromSharedExecutorHandoffPacket(planexecute.ClassifyExecutorHandoffPacket(root, plan))
+	return planexecute.ClassifyExecutorHandoffPacket(root, plan)
 }
 
 type reviewRepairPhaseReport = planexecute.ReviewRepairPhaseReport
@@ -365,14 +317,14 @@ func runReviewRepairPhase(
 		originalPrompt,
 		plan,
 		requiredEditPaths,
-		toSharedReviewRepairBaselinePtr(baseline),
-		toSharedExecutorPhaseReport(executorReport),
+		baseline,
+		executorReport,
 		opts,
 		stdout,
 		adaptPromptRunner(promptRun),
 		rec,
 	)
-	return fromSharedReviewRepairPhaseReport(report), err
+	return report, err
 }
 
 func planExecuteReviewRepairPrompt(originalPrompt string, plan workspace.PlanArtifact, changedPaths []string, allowedRepairPaths []string, evidence reviewRepairEvidence) string {
@@ -426,12 +378,7 @@ func planExecuteReviewRepairRejectedPassRetryPrompt(basePrompt string, reason st
 }
 
 func collectReviewRepairEvidence(root string, paths []string, baseline *reviewRepairBaseline) reviewRepairEvidence {
-	var sharedBaseline *planexecute.ReviewRepairBaseline
-	if baseline != nil {
-		converted := toSharedReviewRepairBaseline(*baseline)
-		sharedBaseline = &converted
-	}
-	return fromSharedReviewRepairEvidence(planexecute.CollectReviewRepairEvidence(root, paths, sharedBaseline))
+	return fromSharedReviewRepairEvidence(planexecute.CollectReviewRepairEvidence(root, paths, baseline))
 }
 
 func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence reviewRepairEvidence) (patchHygieneAutoRepairReport, error) {
@@ -444,7 +391,7 @@ func autoRepairReviewPatchHygiene(root string, changedPaths []string, evidence r
 }
 
 func captureReviewRepairBaseline(root string, paths []string) reviewRepairBaseline {
-	return fromSharedReviewRepairBaseline(planexecute.CaptureReviewRepairBaseline(root, paths))
+	return planexecute.CaptureReviewRepairBaseline(root, paths)
 }
 
 func planChangedPaths(plan workspace.PlanArtifact) []string {
@@ -524,17 +471,17 @@ func runExecutorPhaseScoped(cfg config.Config, plan workspace.PlanArtifact, requ
 
 func runExecutorPhaseScopedWithVerification(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationCommands []string, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
 	shared, err := planexecute.RunExecutorPhaseScopedWithVerification(cfg, plan, requiredEditPaths, allowedEditPaths, verificationCommands, jsonEvents, stdout, progress...)
-	return fromSharedExecutorPhaseReport(shared), err
+	return shared, err
 }
 
 func runExecutorPhaseScopedWithVerificationPlan(cfg config.Config, plan workspace.PlanArtifact, requiredEditPaths []string, allowedEditPaths []string, verificationPlan planexecute.VerificationPlan, jsonEvents bool, stdout io.Writer, progress ...planexecute.EditProgressFunc) (executorPhaseReport, error) {
 	shared, err := planexecute.RunExecutorPhaseScopedWithVerificationPlan(cfg, plan, requiredEditPaths, allowedEditPaths, verificationPlan, jsonEvents, stdout, progress...)
-	return fromSharedExecutorPhaseReport(shared), err
+	return shared, err
 }
 
 func runPlanExecuteVerificationPlan(root string, plan planexecute.VerificationPlan, jsonEvents bool, stdout io.Writer) (int, []phaseEvidenceCheck, error) {
 	checked, evidence, err := planexecute.RunVerificationPlan(root, plan, jsonEvents, stdout)
-	return checked, fromSharedPhaseEvidenceChecks(evidence), err
+	return checked, evidence, err
 }
 
 // planEditPreflightMismatch describes the first edit whose old_text

@@ -14,6 +14,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/productworkflow"
 )
 
@@ -136,7 +137,7 @@ func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testi
 	planExecuteCalls := 0
 	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, _ string, taskFamily string, _ io.Writer) (string, error) {
 		modelCalls++
-		if taskFamily != "feature_planner_planner" {
+		if taskFamily != string(workerruntime.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatalf("feature-planner execution must not use direct model task family %q", taskFamily)
 		}
 		return featurePlannerPlanExecuteDispatchPlanJSON(), nil
@@ -233,17 +234,17 @@ func TestFeaturePlannerPlanExecuteCompletionFieldsMarksReviewDegradedWithoutStat
 	}
 }
 
-func TestDefaultFeaturePlannerPlanExecuteReturnsTypedSkippedReviewCompletion(t *testing.T) {
+func TestDefaultFeaturePlannerPlanExecuteReturnsTypedReviewedCompletion(t *testing.T) {
 	req := featurePlannerRequest{
 		ConfigPath: "config.json",
 		SessionID:  "feature-session",
 		Deps: Dependencies{
 			RunPlanExecute: func(args []string, stdout io.Writer, _ io.Writer) int {
-				if !testContainsString(args, "-skip-review-repair") {
-					t.Fatalf("expected explicit skipped review flag, args=%+v", args)
+				if testContainsString(args, "-skip-review-repair") {
+					t.Fatalf("feature-planner atom dispatch must not bypass plan-execute review-repair, args=%+v", args)
 				}
 				_, _ = stdout.Write([]byte(strings.Join([]string{
-					`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"skipped","state_path":".idiom/plan-execute/session/state.json"}`,
+					`{"type":"idiom.plan_execute.resume_state_saved","phase":"complete","status":"completed","review_status":"passed","state_path":".idiom/plan-execute/session/state.json"}`,
 					`{"type":"message","content":"done"}`,
 				}, "\n")))
 				return 0
@@ -262,11 +263,14 @@ func TestDefaultFeaturePlannerPlanExecuteReturnsTypedSkippedReviewCompletion(t *
 	if got := fmt.Sprint(envelope["status"]); got != "completed" {
 		t.Fatalf("status = %q, want completed; envelope=%+v", got, envelope)
 	}
-	if got := fmt.Sprint(envelope["review_status"]); got != "skipped" {
-		t.Fatalf("review_status = %q, want skipped; envelope=%+v", got, envelope)
+	if got := fmt.Sprint(envelope["review_status"]); got != "passed" {
+		t.Fatalf("review_status = %q, want passed; envelope=%+v", got, envelope)
 	}
-	if got := envelope["review_repair_skipped"]; got != true {
-		t.Fatalf("review_repair_skipped = %v, want true; envelope=%+v", got, envelope)
+	if _, ok := envelope["review_repair_skipped"]; ok {
+		t.Fatalf("headless feature-planner must not synthesize skipped review evidence; envelope=%+v", envelope)
+	}
+	if got := fmt.Sprint(envelope["completion_source"]); got != "headless_plan_execute_returned" {
+		t.Fatalf("completion_source = %q, want headless_plan_execute_returned; envelope=%+v", got, envelope)
 	}
 }
 
@@ -453,7 +457,7 @@ func TestDefaultHeadlessFeaturePlannerResumeUsesSavedProductContext(t *testing.T
 	modelCalls := 0
 	var resumedPrompt string
 	runFeaturePlannerModelTurn = func(_ featurePlannerRequest, prompt string, taskFamily string, _ io.Writer) (string, error) {
-		if taskFamily != "feature_planner_planner" {
+		if taskFamily != string(workerruntime.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatalf("unexpected task family %q", taskFamily)
 		}
 		modelCalls++

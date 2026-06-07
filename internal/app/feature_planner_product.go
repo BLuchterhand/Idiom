@@ -13,6 +13,7 @@ import (
 
 	"idiom/internal/featureplanner"
 	"idiom/internal/featureplannerproduct"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/productworkflow"
 )
@@ -277,7 +278,7 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 	implementorBlocked := false
 	if state.Status == featureplanner.FeatureStateDispatching {
 		events = append(events, featureplanner.DispatchReadyAtoms(&state, 0, func(prompt string, taskFamily string) (string, error) {
-			if taskFamily == "feature_planner_implementor" {
+			if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 				if implementorBlocked {
 					return encodeFeaturePlannerSiblingDispatchPaused(), nil
 				}
@@ -990,7 +991,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 		ProductWorkflowBrief:  brief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
 	}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == "feature_planner_implementor" {
+		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			if implementorBlocked {
 				return encodeFeaturePlannerSiblingDispatchPaused(), nil
 			}

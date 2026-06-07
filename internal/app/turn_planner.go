@@ -31,6 +31,37 @@ type turnRoutePlan struct {
 	RouteSource        routeSource `json:"-"`
 }
 
+func routeClassifierFamilyEnumSentence() string {
+	return routeClassifierFamilyEnumList() + "."
+}
+
+func routeClassifierFamilyEnumList() string {
+	return strings.Join([]string{
+		"conversation",
+		"debug_logs",
+		"verification_only",
+		"locate",
+		"locate_then_implement",
+		"explore_then_implement",
+		"investigate_then_implement",
+		"review_then_implement",
+		"security_review",
+		"performance_review",
+		"architecture",
+		"architecture_then_implement",
+		"implementation",
+		string(workerruntime.TaskFamilyPlanThenExecutePlanner),
+		"test_authoring",
+		"config_edit",
+		"script_edit",
+		"gdscript_edit",
+		"docs_edit",
+		"prompt_edit_security",
+		"failure_injection",
+		"multi_turn_state",
+	}, ", ")
+}
+
 func (m *Model) classifyTurnRoute(ctx context.Context, prompt string, mode agent.Mode) turnRoutePlan {
 	prompt = strings.TrimSpace(prompt)
 	if prompt == "" {
@@ -66,7 +97,7 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"You classify coding-agent turns into one workflow family before execution.",
 				"Return strict JSON only.",
 				"Choose the best family from this enum:",
-				"conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
+				routeClassifierFamilyEnumSentence(),
 				"Also return initial_lane, optional followup_lane, reason, contract, optional thoroughness, requested_outcome, write_intent, read_only_constraint, evidence_intent, continuation_target, and reason_codes.",
 				"Use coarse OpenCode-shaped routing: conversation for normal question-answer turns, read-only investigation, verification-only, locate, architecture/review analysis, or implementation. The loop will enforce permissions later.",
 				"Classify the requested outcome first. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate.",
@@ -79,11 +110,11 @@ func (m *Model) classifyTurnRouteWithModel(ctx context.Context, prompt string, m
 				"Prefer verification_only for requests to run checks/tests and report results without editing.",
 				"Prefer locate for finding where something is, and locate_then_implement when the user wants to find then change it.",
 				"Prefer implementation-like families when the user gives a directive to perform file changes, tests, docs, config, scripts, prompts, or repairs.",
-				"Prefer plan_then_execute_planner when the requested outcome is to dispatch a durable implementation atom or brief through the plan-execute workflow, where valid terminal outcomes include a submit_plan artifact, source-satisfied closeout, or typed blocker before execution.",
+				fmt.Sprintf("Prefer %s when the requested outcome is to dispatch a durable implementation atom or brief through the plan-execute workflow, where valid terminal outcomes include a submit_plan artifact, source-satisfied closeout, or typed blocker before execution.", workerruntime.TaskFamilyPlanThenExecutePlanner),
 				"Question-shaped wording is not a lane signal by itself. Classify by requested outcome: a polite request such as 'can you implement/fix/update/add...' is implementation when it asks the agent to perform the change now; a deliberative question such as 'can we/should we/how would we...' stays conversation when it asks about whether or how to change.",
 				"Do not let can/could/would/should/how/what/why/whether/explain wording override an explicit implementation directive.",
 				"After a completed implementation, do not keep a sticky implementation state. Route the new prompt from its requested_outcome: 'what did you change?' => answer/read-only; 'why did it fail?' => diagnose/read-only; 'it still goes off-screen, fix it' or 'that did not fix it' => change_workspace/prior_change/write_intent=yes unless a read-only constraint is present.",
-				"Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => plan_then_execute_planner; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.",
+				fmt.Sprintf("Semantic examples, not trigger terms: 'Can you implement this feature: docs/tdd-feature.md' => implementation; 'Can you send this product workflow atom through the TUI plan-execute flow?' => %s; 'Can we shorten this label?' => conversation; 'Shorten this label.' => implementation; 'I want to test the implementation lane.' => conversation.", workerruntime.TaskFamilyPlanThenExecutePlanner),
 				"Prefer gdscript_edit for edits limited to .gd GDScript files.",
 				"Prefer architecture for broad design, boundary, cross-component assessment, or repo-internal subsystem explanations where the answer depends on harness/tool/control-flow implementation evidence. Use conversation for ordinary explanation-only questions that do not need repository architecture evidence.",
 				"Prefer conversation for deliberative design or planning questions such as 'can you help me work out a design', 'how should we design', 'let's figure out how to build', or 'design a plan for' — these are about shaping ideas, not performing file changes. Only route to implementation or plan-execute families when the user gives an explicit directive to create or modify files now.",
@@ -175,7 +206,7 @@ func (m *Model) repairTurnRouteClassification(ctx context.Context, client llama.
 			Content: strings.Join([]string{
 				"You repair a coding-agent route classifier response.",
 				"Return strict JSON only. Do not solve the user's task.",
-				"Choose family from: conversation, debug_logs, verification_only, locate, locate_then_implement, explore_then_implement, investigate_then_implement, review_then_implement, security_review, performance_review, architecture, architecture_then_implement, implementation, plan_then_execute_planner, test_authoring, config_edit, script_edit, gdscript_edit, docs_edit, prompt_edit_security, failure_injection, multi_turn_state.",
+				"Choose family from: " + routeClassifierFamilyEnumList() + ".",
 				"Use contracts from: direct_answer, grounded_explanation, locate_targets, review_findings, architecture_assessment, implementation_result.",
 				"Use lanes from: main, explore, verification, locate, review, architecture, implement.",
 				"Include requested_outcome, write_intent, read_only_constraint, evidence_intent, continuation_target, and reason_codes. requested_outcome enum: answer, diagnose, change_workspace, diagnose_then_change, verify, plan, review, locate. write_intent enum: yes, no, ambiguous. evidence_intent enum: generic, relation_trace, refactor. continuation_target enum: prior_change, current_prompt_only, none. Use conversation for read-only diagnosis and log inspection; do not route normal user prompts to debug_logs.",
@@ -366,7 +397,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 	plan.RouteSource = source
 	switch plan.Family {
 	case "plan_execute", "plan_execute_planner", "plan_then_execute":
-		plan.Family = agent.PlanThenExecutePlannerTaskFamily
+		plan.Family = string(workerruntime.TaskFamilyPlanThenExecutePlanner)
 	}
 	if plan.Family == "" {
 		plan.Family = familyForRouteOutcome(plan.RequestedOutcome, plan.WriteIntent)
@@ -442,7 +473,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
 		plan.Reason = util.FirstNonEmpty(plan.Reason, "direct_implementation")
-	case agent.PlanThenExecutePlannerTaskFamily:
+	case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 		// Planner phase of `idiom plan-execute`. Same lane shape as
 		// implementation (write-capable contract, single turn) but the
 		// only exposed write tool is submit_plan; per-edit writes are
@@ -453,8 +484,8 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.InitialLane = "implement"
 		plan.FollowupLane = ""
 		plan.Contract = "implementation_result"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "plan_then_execute_planner")
-	case "plan_then_execute_review_repair":
+		plan.Reason = util.FirstNonEmpty(plan.Reason, string(workerruntime.TaskFamilyPlanThenExecutePlanner))
+	case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 		// Post-executor review phase for `idiom plan-execute`. This is
 		// review-shaped, not implementation-shaped: the model may close
 		// with a checklist-backed pass, or use submit_plan only for
@@ -462,7 +493,7 @@ func normalizeTurnRoutePlan(plan turnRoutePlan, mode agent.Mode) turnRoutePlan {
 		plan.InitialLane = "review"
 		plan.FollowupLane = ""
 		plan.Contract = "review_findings"
-		plan.Reason = util.FirstNonEmpty(plan.Reason, "plan_then_execute_review_repair")
+		plan.Reason = util.FirstNonEmpty(plan.Reason, string(workerruntime.TaskFamilyPlanThenExecuteReview))
 	case "multi_turn_state":
 		plan.Family = "conversation"
 		plan.InitialLane = "main"
@@ -820,7 +851,7 @@ func normalizeRouteOutcome(value string) string {
 		return "diagnose_then_change"
 	case "verify", "verification", "verification_only", "test":
 		return "verify"
-	case "plan", "planner", "plan_then_execute", "plan_then_execute_planner":
+	case "plan", "planner", "plan_then_execute", string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 		return "plan"
 	case "review", "security_review", "performance_review", "architecture":
 		return "review"
@@ -900,7 +931,7 @@ func familyForRouteOutcome(outcome, writeIntent string) string {
 	case "verify":
 		return "verification_only"
 	case "plan":
-		return agent.PlanThenExecutePlannerTaskFamily
+		return string(workerruntime.TaskFamilyPlanThenExecutePlanner)
 	case "review":
 		return "security_review"
 	case "locate":
@@ -945,7 +976,7 @@ func isImplementationLikeFamily(family string) bool {
 		"investigate_then_implement",
 		"review_then_implement",
 		"architecture_then_implement",
-		"plan_then_execute_planner":
+		string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 		return true
 	default:
 		return false

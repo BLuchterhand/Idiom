@@ -96,6 +96,32 @@ func TestRuntimeContractForTaskFamilyUsesSharedProfiles(t *testing.T) {
 		}
 	})
 
+	t.Run("feature planner planner", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(string(TaskFamilyFeaturePlannerPlanner))
+		if spec.TaskFamily != TaskFamilyFeaturePlannerPlanner || spec.Contract != ContractFeaturePlan {
+			t.Fatalf("feature planner planner must be first-class, got %#v", spec)
+		}
+		if spec.PermissionProfile != PermissionConversationOnly || spec.ToolProfile != CapabilityConversationReadOnly {
+			t.Fatalf("feature planner planner should be JSON-only/no-tool model turn, got %#v", spec)
+		}
+		if !runtimeLabelContains(spec.RequiredEvidence, string(RequiredEvidenceFeaturePlanOrPlannerQuestion)) {
+			t.Fatalf("feature planner planner missing feature-plan evidence requirement, got %#v", spec.RequiredEvidence)
+		}
+	})
+
+	t.Run("feature planner implementor", func(t *testing.T) {
+		spec := RuntimeContractForTaskFamily(string(TaskFamilyFeaturePlannerImplementor))
+		if spec.TaskFamily != TaskFamilyFeaturePlannerImplementor || spec.Contract != ContractImplementationResult {
+			t.Fatalf("feature planner implementor must be first-class, got %#v", spec)
+		}
+		if spec.ToolProfile != CapabilityPlanSubmissionPlanner {
+			t.Fatalf("feature planner implementor should route through plan-execute submission, got %#v", spec)
+		}
+		if !runtimeLabelContains(spec.RequiredEvidence, string(RequiredEvidencePlanExecuteCompletion)) {
+			t.Fatalf("feature planner implementor missing plan-execute completion evidence, got %#v", spec.RequiredEvidence)
+		}
+	})
+
 	t.Run("unknown family", func(t *testing.T) {
 		spec := RuntimeContractForTaskFamily("unknown_family")
 		if spec.TaskFamily != TaskFamilyConversation || spec.Contract != ContractDirectAnswer {

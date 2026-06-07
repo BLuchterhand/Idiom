@@ -18,6 +18,7 @@ import (
 
 	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/mcp"
 	"idiom/internal/planexecute"
@@ -1461,7 +1462,7 @@ func (m *Model) SetForcedTaskFamily(family string) {
 	// the manager flag here, where forced family is set.
 	if m.workspace != nil {
 		switch m.forcedTaskFamily {
-		case "plan_then_execute_planner", "plan_then_execute_review_repair":
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner), string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			m.workspace.SetPlanThenExecutePlannerMode(true)
 		default:
 			m.workspace.SetPlanThenExecutePlannerMode(false)

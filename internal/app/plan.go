@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/util"
 )
 
@@ -432,7 +433,7 @@ func (m *Model) planPanelAutoShowNeeded() bool {
 		return false
 	}
 	family := strings.TrimSpace(m.forcedTaskFamily)
-	isPlanExecute := family == "plan_then_execute_planner" || family == "plan_then_execute_review_repair"
+	isPlanExecute := workerruntime.TaskFamilyIsPlanThenExecutePlanner(family) || workerruntime.TaskFamilyIsPlanThenExecuteReview(family)
 	content := m.loadPlanContent()
 	if strings.TrimSpace(content) == "" {
 		return false

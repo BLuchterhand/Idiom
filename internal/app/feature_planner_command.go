@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"idiom/internal/featureplanner"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
 )
@@ -52,7 +53,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		ProductWorkflowBrief:  productBrief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
 	}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == "feature_planner_implementor" {
+		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope)
 		}
 		return m.runFeaturePlannerTUITurn(ctx, prompt, taskFamily)
@@ -165,7 +166,7 @@ func (m *Model) runFeaturePlannerTUITurn(ctx context.Context, prompt string, tas
 	opts := m.chatOptions()
 	thinking := false
 	opts.EnableThinking = &thinking
-	opts.ResponseFormatJSON = taskFamily == "feature_planner_planner"
+	opts.ResponseFormatJSON = workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily)
 	opts.MaxTokens = 16384
 	answer, err := m.client.CompleteChat(ctx, []llama.ChatMessage{{Role: "user", Content: prompt}}, opts)
 	if err != nil {

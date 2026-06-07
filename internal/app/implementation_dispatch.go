@@ -17,6 +17,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
 	"idiom/internal/workspace"
@@ -77,12 +78,7 @@ var implementationDispatchPlanDocumentPreflightRunner = defaultImplementationDis
 var implementationDispatchPlanDocumentRefineRunner = defaultImplementationDispatchPlanDocumentRefine
 
 func isPlanExecuteInternalFamily(family string) bool {
-	switch strings.TrimSpace(family) {
-	case agent.PlanThenExecutePlannerTaskFamily, agent.PlanThenExecuteReviewRepairTaskFamily:
-		return true
-	default:
-		return false
-	}
+	return workerruntime.TaskFamilyIsPlanThenExecutePlanner(family) || workerruntime.TaskFamilyIsPlanThenExecuteReview(family)
 }
 
 func implementationDispatchHasPlanExecuteHandoff(prompt string, plan promptExecutionPlan, cfg config.Config) bool {
@@ -3094,7 +3090,7 @@ func (m *Model) newPlanExecutePromptRunner(ctx context.Context) planexecute.Prom
 }
 
 func (m *Model) applyPlanExecutePromptRunnerRoute(ctx context.Context, opts planexecute.RunOptions) func() {
-	if strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
 		return func() {}
 	}
 	return m.applyExecutorPromptRoute(ctx, "plan-execute in-process runner", opts.UseActiveModel)
@@ -3174,7 +3170,7 @@ func (m *Model) applyPlanExecutePromptRunnerState(cfg config.Config, opts planex
 	priorPlanExecuteScopeContract := m.planExecuteScopeContract
 	priorPlanExecuteWriteEnvelope := append([]string(nil), m.planExecuteWriteEnvelope...)
 	disableThinking := priorDisableThinkingOverride || opts.DisableThinking ||
-		(strings.TrimSpace(opts.TaskFamily) == agent.PlanThenExecutePlannerTaskFamily && m.shouldDisableThinkingForPlanExecutePlanner())
+		(workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) && m.shouldDisableThinkingForPlanExecutePlanner())
 	m.planExecuteActive = true
 	m.planExecuteScopeContract = opts.ScopeContract.Normalized()
 	m.cfg.Workspace.SessionID = cfg.Workspace.SessionID

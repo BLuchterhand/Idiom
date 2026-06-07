@@ -173,7 +173,33 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopRequiredEvidenceSatisfied, StopBudgetExhaustedWithUncertainty},
 			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "required_evidence_cited"},
 		}
-	case "plan_then_execute_planner":
+	case string(TaskFamilyFeaturePlannerPlanner):
+		return RuntimeContractSpec{
+			TaskFamily:           TaskFamilyFeaturePlannerPlanner,
+			Contract:             ContractFeaturePlan,
+			PermissionProfile:    PermissionConversationOnly,
+			ToolProfile:          CapabilityConversationReadOnly,
+			ForbiddenTools:       append(append(workspace.WorkspaceWriteToolNames(), "task", "shell", "submit_plan"), readOnlyDiscoveryToolNames()...),
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidenceFeaturePlanOrPlannerQuestion},
+			ReadinessGate:        []ReadinessGateID{ReadinessFeaturePlanOrPlannerQuestion},
+			VerificationContract: VerificationNotRequiredNonExecutable,
+			StopConditions:       []StopConditionID{StopFeaturePlanReturnedOrQuestion, StopBlockedByMissingInformation},
+			FinalCritic:          []FinalCriticID{"feature_plan_schema_or_planner_question", "no_tool_calls"},
+		}
+	case string(TaskFamilyFeaturePlannerImplementor):
+		return RuntimeContractSpec{
+			TaskFamily:           TaskFamilyFeaturePlannerImplementor,
+			Contract:             ContractImplementationResult,
+			PermissionProfile:    PermissionGuardedWorkspaceWrite,
+			ToolProfile:          CapabilityPlanSubmissionPlanner,
+			RequiredEvidence:     []EvidenceRequirementID{RequiredEvidencePlanExecuteCompletion},
+			ReadinessGate:        []ReadinessGateID{ReadinessPlanExecuteCompletion},
+			SearchPolicy:         []SearchPolicyID{"dispatch_atom_through_plan_execute", "preserve_required_edit_paths", "return_typed_plan_execute_completion"},
+			VerificationContract: VerificationNotRequiredTextMutation,
+			StopConditions:       []StopConditionID{StopPlanExecuteCompletionReturned, StopBlockedByMissingPermissionOrInformation},
+			FinalCritic:          []FinalCriticID{"plan_execute_completion_reported"},
+		}
+	case string(TaskFamilyPlanThenExecutePlanner):
 		// Planner phase of `idiom plan-execute`. The model has read
 		// access plus the submit_plan tool; per-edit writes are
 		// runtime-rejected by the runner's plan-then-execute write
@@ -196,7 +222,7 @@ func RuntimeContractForTaskFamily(family string) RuntimeContractSpec {
 			StopConditions:       []StopConditionID{StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker, StopBlockedByMissingPermissionOrInformation},
 			FinalCritic:          []FinalCriticID{"answers_actual_user_request", "submit_plan_called", "source_satisfied_or_blocker_only_with_per_path_evidence"},
 		}
-	case "plan_then_execute_review_repair":
+	case string(TaskFamilyPlanThenExecuteReview):
 		// Action-capable review for plan-execute. This lane receives
 		// executor diff/evidence and may submit a corrective plan, but
 		// a clean review closes with a direct checklist-backed pass. Keep

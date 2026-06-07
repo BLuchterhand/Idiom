@@ -20,6 +20,7 @@ import (
 
 	"idiom/internal/app"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
 	"idiom/internal/telemetry"
@@ -212,7 +213,7 @@ func RunPromptOnce(cfg config.Config, prompt string, opts RunOptions, stdout io.
 	model.SetMaxTokensOverride(opts.MaxTokensOverride)
 	model.SetDisableThinkingOverride(opts.DisableThinking)
 	model.SetForcedReadinessOpenObligations(opts.ReviewRepairOpenObligations)
-	if strings.TrimSpace(opts.TaskFamily) == "plan_then_execute_planner" {
+	if workerruntime.TaskFamilyIsPlanThenExecutePlanner(opts.TaskFamily) {
 		model.SetPlanExecuteScopeContract(opts.ScopeContract)
 	}
 	LogModelSessionLink(opts.Telemetry, "prompt", model.DebugLogPath())

@@ -1,0 +1,37 @@
+package taskfamily
+
+type ID string
+
+const (
+	ArtifactFinalAnswer       ID = "artifact_final_answer"
+	ArtifactDistiller         ID = "artifact_distiller"
+	Conversation              ID = "conversation"
+	DebugLogs                 ID = "debug_logs"
+	VerificationOnly          ID = "verification_only"
+	Locate                    ID = "locate"
+	LocateThenImplement       ID = "locate_then_implement"
+	ExploreThenImplement      ID = "explore_then_implement"
+	InvestigateThenImplement  ID = "investigate_then_implement"
+	ReviewThenImplement       ID = "review_then_implement"
+	ArchitectureThenImplement ID = "architecture_then_implement"
+	SecurityReview            ID = "security_review"
+	PerformanceReview         ID = "performance_review"
+	Architecture              ID = "architecture"
+	FeaturePlannerPlanner     ID = "feature_planner_planner"
+	FeaturePlannerImplementor ID = "feature_planner_implementor"
+	PlanThenExecutePlanner    ID = "plan_then_execute_planner"
+	PlanThenExecuteReview     ID = "plan_then_execute_review_repair"
+	Implementation            ID = "implementation"
+	TestAuthoring             ID = "test_authoring"
+	ConfigEdit                ID = "config_edit"
+	ScriptEdit                ID = "script_edit"
+	GDScriptEdit              ID = "gdscript_edit"
+	DocsEdit                  ID = "docs_edit"
+	PromptEditSecurity        ID = "prompt_edit_security"
+	FailureInjection          ID = "failure_injection"
+	DirectQuestion            ID = "direct_question"
+	DirectAnswer              ID = "direct_answer"
+	DelegatedIsolatedImpl     ID = "delegated_isolated_implementation"
+	DelegatedReadOnly         ID = "delegated_read_only"
+	ImplementationRepair      ID = "implementation_repair"
+)

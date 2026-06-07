@@ -17,6 +17,7 @@ import (
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
 	"idiom/internal/featureplannerproduct"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/productworkflow"
 	"idiom/internal/telemetry"
@@ -199,7 +200,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  pwBrief,
 	}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == "feature_planner_implementor" {
+		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
 		}
 		return runFeaturePlannerModelTurn(req, prompt, taskFamily, stdout)
@@ -316,7 +317,7 @@ func defaultFeaturePlannerModelTurn(req featurePlannerRequest, prompt string, ta
 		RepetitionPenalty:  req.Config.Chat.RepetitionPenalty,
 		EnableThinking:     &thinking,
 		MaxTokens:          16384,
-		ResponseFormatJSON: taskFamily == "feature_planner_planner",
+		ResponseFormatJSON: workerruntime.TaskFamilyIsFeaturePlannerPlanner(taskFamily),
 	})
 	if err != nil {
 		return "", err
@@ -353,7 +354,6 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 		"-config", configPath,
 		"-prompt-file", promptPath,
 		"-json",
-		"-skip-review-repair",
 	}, &planStdout, &planStderr)
 	if req.JSONEvents && stdout != nil {
 		_, _ = io.Copy(stdout, bytes.NewReader(planStdout.Bytes()))
@@ -362,9 +362,8 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	completion["tool"] = featureplanner.ToolPlanExecuteComplete
 	completion["lane_family"] = "plan-execute"
 	completion["summary"] = strings.TrimSpace(planStdout.String())
-	completion["review_repair_skipped"] = true
 	if featureplanner.CompletionFieldString(completion, "completion_source") == "" {
-		completion["completion_source"] = "headless_skip_review_repair"
+		completion["completion_source"] = "headless_plan_execute_returned"
 	}
 	if code != 0 {
 		completion["status"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "status"), "failed")

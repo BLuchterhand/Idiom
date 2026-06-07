@@ -12,6 +12,7 @@ import (
 	"idiom/internal/agent"
 	"idiom/internal/app"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/telemetry"
 	"idiom/internal/workspace"
 )
@@ -171,7 +172,8 @@ func selectedProbes(modeFlag string) []probeCase {
 		return []probeCase{buildCase, planCase}
 	}
 	implement := makeCases("implement", "implementation", "implementation")
-	planExecute := makeCases("plan-execute", "plan_then_execute_planner", "plan_then_execute_planner")
+	planExecuteFamily := string(workerruntime.TaskFamilyPlanThenExecutePlanner)
+	planExecute := makeCases("plan-execute", planExecuteFamily, planExecuteFamily)
 	switch strings.TrimSpace(strings.ToLower(modeFlag)) {
 	case "implement":
 		return implement

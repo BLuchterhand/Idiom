@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"idiom/internal/autonomy"
+	"idiom/internal/taskfamily"
 	"idiom/internal/util"
 )
 
@@ -1715,7 +1716,7 @@ func routePlanFromWriterRouteDecision(data map[string]any) RoutePlanSnapshot {
 		InitialLane: taskFamily,
 	}
 	switch taskFamily {
-	case "plan_then_execute_planner":
+	case string(taskfamily.PlanThenExecutePlanner):
 		plan.Reason = "plan_then_execute_request"
 		plan.Contract = "implementation_result"
 	case "plan_then_execute_executor":

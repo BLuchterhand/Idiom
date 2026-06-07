@@ -191,7 +191,7 @@ type profileSpec struct {
 
 var profileSpecs = []profileSpec{
 	{name: "discovery", taskFamily: "architecture", needsContext: true},
-	{name: "plan", taskFamily: "plan_then_execute_planner", requiredRoles: []string{backends.RolePlanner, backends.RoleExecutor}, needsContext: true},
+	{name: "plan", taskFamily: string(workerruntime.TaskFamilyPlanThenExecutePlanner), requiredRoles: []string{backends.RolePlanner, backends.RoleExecutor}, needsContext: true},
 	{name: "implement", taskFamily: "implementation", requiredRoles: []string{backends.RoleExecutor}, needsContext: true},
 	{name: "eval", taskFamily: "verification_only", requiredRoles: []string{backends.RoleExecutor}},
 	{name: "sidecar", taskFamily: "debug_logs", requiredRoles: []string{backends.RoleClassifier}},

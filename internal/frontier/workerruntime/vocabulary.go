@@ -1,9 +1,13 @@
 package workerruntime
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/taskfamily"
+)
 
 type RoleName string
-type TaskFamilyID string
+type TaskFamilyID = taskfamily.ID
 type RuntimeContractID string
 type PermissionProfileID string
 type EvidenceRequirementID string
@@ -22,35 +26,37 @@ const (
 )
 
 const (
-	TaskFamilyArtifactFinalAnswer       TaskFamilyID = "artifact_final_answer"
-	TaskFamilyArtifactDistiller         TaskFamilyID = "artifact_distiller"
-	TaskFamilyConversation              TaskFamilyID = "conversation"
-	TaskFamilyDebugLogs                 TaskFamilyID = "debug_logs"
-	TaskFamilyVerificationOnly          TaskFamilyID = "verification_only"
-	TaskFamilyLocate                    TaskFamilyID = "locate"
-	TaskFamilyLocateThenImplement       TaskFamilyID = "locate_then_implement"
-	TaskFamilyExploreThenImplement      TaskFamilyID = "explore_then_implement"
-	TaskFamilyInvestigateThenImplement  TaskFamilyID = "investigate_then_implement"
-	TaskFamilyReviewThenImplement       TaskFamilyID = "review_then_implement"
-	TaskFamilyArchitectureThenImplement TaskFamilyID = "architecture_then_implement"
-	TaskFamilySecurityReview            TaskFamilyID = "security_review"
-	TaskFamilyPerformanceReview         TaskFamilyID = "performance_review"
-	TaskFamilyArchitecture              TaskFamilyID = "architecture"
-	TaskFamilyPlanThenExecutePlanner    TaskFamilyID = "plan_then_execute_planner"
-	TaskFamilyPlanThenExecuteReview     TaskFamilyID = "plan_then_execute_review_repair"
-	TaskFamilyImplementation            TaskFamilyID = "implementation"
-	TaskFamilyTestAuthoring             TaskFamilyID = "test_authoring"
-	TaskFamilyConfigEdit                TaskFamilyID = "config_edit"
-	TaskFamilyScriptEdit                TaskFamilyID = "script_edit"
-	TaskFamilyGDScriptEdit              TaskFamilyID = "gdscript_edit"
-	TaskFamilyDocsEdit                  TaskFamilyID = "docs_edit"
-	TaskFamilyPromptEditSecurity        TaskFamilyID = "prompt_edit_security"
-	TaskFamilyFailureInjection          TaskFamilyID = "failure_injection"
-	TaskFamilyDirectQuestion            TaskFamilyID = "direct_question"
-	TaskFamilyDirectAnswer              TaskFamilyID = "direct_answer"
-	TaskFamilyDelegatedIsolatedImpl     TaskFamilyID = "delegated_isolated_implementation"
-	TaskFamilyDelegatedReadOnly         TaskFamilyID = "delegated_read_only"
-	TaskFamilyImplementationRepair      TaskFamilyID = "implementation_repair"
+	TaskFamilyArtifactFinalAnswer       TaskFamilyID = taskfamily.ArtifactFinalAnswer
+	TaskFamilyArtifactDistiller         TaskFamilyID = taskfamily.ArtifactDistiller
+	TaskFamilyConversation              TaskFamilyID = taskfamily.Conversation
+	TaskFamilyDebugLogs                 TaskFamilyID = taskfamily.DebugLogs
+	TaskFamilyVerificationOnly          TaskFamilyID = taskfamily.VerificationOnly
+	TaskFamilyLocate                    TaskFamilyID = taskfamily.Locate
+	TaskFamilyLocateThenImplement       TaskFamilyID = taskfamily.LocateThenImplement
+	TaskFamilyExploreThenImplement      TaskFamilyID = taskfamily.ExploreThenImplement
+	TaskFamilyInvestigateThenImplement  TaskFamilyID = taskfamily.InvestigateThenImplement
+	TaskFamilyReviewThenImplement       TaskFamilyID = taskfamily.ReviewThenImplement
+	TaskFamilyArchitectureThenImplement TaskFamilyID = taskfamily.ArchitectureThenImplement
+	TaskFamilySecurityReview            TaskFamilyID = taskfamily.SecurityReview
+	TaskFamilyPerformanceReview         TaskFamilyID = taskfamily.PerformanceReview
+	TaskFamilyArchitecture              TaskFamilyID = taskfamily.Architecture
+	TaskFamilyFeaturePlannerPlanner     TaskFamilyID = taskfamily.FeaturePlannerPlanner
+	TaskFamilyFeaturePlannerImplementor TaskFamilyID = taskfamily.FeaturePlannerImplementor
+	TaskFamilyPlanThenExecutePlanner    TaskFamilyID = taskfamily.PlanThenExecutePlanner
+	TaskFamilyPlanThenExecuteReview     TaskFamilyID = taskfamily.PlanThenExecuteReview
+	TaskFamilyImplementation            TaskFamilyID = taskfamily.Implementation
+	TaskFamilyTestAuthoring             TaskFamilyID = taskfamily.TestAuthoring
+	TaskFamilyConfigEdit                TaskFamilyID = taskfamily.ConfigEdit
+	TaskFamilyScriptEdit                TaskFamilyID = taskfamily.ScriptEdit
+	TaskFamilyGDScriptEdit              TaskFamilyID = taskfamily.GDScriptEdit
+	TaskFamilyDocsEdit                  TaskFamilyID = taskfamily.DocsEdit
+	TaskFamilyPromptEditSecurity        TaskFamilyID = taskfamily.PromptEditSecurity
+	TaskFamilyFailureInjection          TaskFamilyID = taskfamily.FailureInjection
+	TaskFamilyDirectQuestion            TaskFamilyID = taskfamily.DirectQuestion
+	TaskFamilyDirectAnswer              TaskFamilyID = taskfamily.DirectAnswer
+	TaskFamilyDelegatedIsolatedImpl     TaskFamilyID = taskfamily.DelegatedIsolatedImpl
+	TaskFamilyDelegatedReadOnly         TaskFamilyID = taskfamily.DelegatedReadOnly
+	TaskFamilyImplementationRepair      TaskFamilyID = taskfamily.ImplementationRepair
 )
 
 const (
@@ -59,6 +65,7 @@ const (
 	ContractDirectAnswer         RuntimeContractID = "direct_answer"
 	ContractGroundedExplanation  RuntimeContractID = "grounded_explanation"
 	ContractLocateTargets        RuntimeContractID = "locate_targets"
+	ContractFeaturePlan          RuntimeContractID = "feature_plan"
 	ContractImplementationResult RuntimeContractID = "implementation_result"
 	ContractReviewFindings       RuntimeContractID = "review_findings"
 	ContractArchitecture         RuntimeContractID = "architecture_assessment"
@@ -104,6 +111,8 @@ const (
 	RequiredEvidenceArchitectureBoundaryEvidence     EvidenceRequirementID = "architecture_boundary_evidence"
 	RequiredEvidenceConfidence                       EvidenceRequirementID = "confidence"
 	RequiredEvidencePlanSubmittedOrSourceSatisfied   EvidenceRequirementID = "plan_submitted_or_source_satisfied_or_blocker"
+	RequiredEvidenceFeaturePlanOrPlannerQuestion     EvidenceRequirementID = "feature_plan_or_planner_question"
+	RequiredEvidencePlanExecuteCompletion            EvidenceRequirementID = "plan_execute_completion"
 	RequiredEvidenceVerificationChecklist            EvidenceRequirementID = "verification_checklist"
 	RequiredEvidenceDecisionPassOrCorrectivePlan     EvidenceRequirementID = "decision_pass_or_corrective_plan_or_blocker"
 	RequiredEvidenceChangedPathsOrNoopReasonRepair   EvidenceRequirementID = "repair_changed_paths_or_blocker"
@@ -126,6 +135,8 @@ const (
 	ReadinessBoundedFindingsOrNoFindingSupported      ReadinessGateID = "bounded_findings_or_no_finding_supported"
 	ReadinessArchitectureBoundarySupportedOrUncertain ReadinessGateID = "architecture_boundary_evidence_supported_or_uncertainty_declared"
 	ReadinessSubmitPlanOrSourceSatisfiedOrBlocker     ReadinessGateID = "submit_plan_or_source_satisfied_or_blocker_reported"
+	ReadinessFeaturePlanOrPlannerQuestion             ReadinessGateID = "feature_plan_or_planner_question_reported"
+	ReadinessPlanExecuteCompletion                    ReadinessGateID = "plan_execute_completion_reported"
 	ReadinessVerificationChecklistCompleted           ReadinessGateID = "verification_checklist_completed"
 	ReadinessDecisionPassOrCorrectivePlanOrBlocker    ReadinessGateID = "decision_pass_or_corrective_plan_or_blocker"
 	ReadinessNativeSubmitPlanToolCallRequired         ReadinessGateID = "native_submit_plan_tool_call_required"
@@ -155,6 +166,8 @@ const (
 	StopBlockedWithFailedVerificationOrScope         StopConditionID = "blocked_with_failed_verification_or_scope"
 	StopBudgetExhaustedWithUncertainty               StopConditionID = "budget_exhausted_with_uncertainty_declared"
 	StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker StopConditionID = "submit_plan_returned_ok_or_source_satisfied_or_blocker_reported"
+	StopFeaturePlanReturnedOrQuestion                StopConditionID = "feature_plan_returned_or_planner_question"
+	StopPlanExecuteCompletionReturned                StopConditionID = "plan_execute_completion_returned"
 	StopDecisionPassWithChecklist                    StopConditionID = "decision_pass_with_checklist"
 	StopSubmitPlanCorrectiveEditsOrBlocker           StopConditionID = "submit_plan_corrective_edits_or_blocker"
 	StopImplementationVerifiedOrFailureReported      StopConditionID = "implementation_verified_or_failure_reported"
@@ -274,6 +287,14 @@ func TaskFamilyIsPlanThenExecutePlanner(value string) bool {
 
 func TaskFamilyIsPlanThenExecuteReview(value string) bool {
 	return TaskFamilyMatches(value, TaskFamilyPlanThenExecuteReview)
+}
+
+func TaskFamilyIsFeaturePlannerPlanner(value string) bool {
+	return TaskFamilyMatches(value, TaskFamilyFeaturePlannerPlanner)
+}
+
+func TaskFamilyIsFeaturePlannerImplementor(value string) bool {
+	return TaskFamilyMatches(value, TaskFamilyFeaturePlannerImplementor)
 }
 
 func TaskFamilyIsArchitecture(value string) bool {

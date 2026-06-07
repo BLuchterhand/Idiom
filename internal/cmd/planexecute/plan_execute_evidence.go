@@ -548,7 +548,7 @@ func phaseEvidenceTelemetryTestCommands(tests []phaseEvidenceTest, limit int) []
 }
 
 func phaseEvidenceTelemetryChecks(checks []phaseEvidenceCheck, limit int) []map[string]string {
-	return planexecute.PhaseEvidenceTelemetryChecks(toSharedPhaseEvidenceChecks(checks), limit)
+	return planexecute.PhaseEvidenceTelemetryChecks(checks, limit)
 }
 
 func cappedStrings(values []string, limit int) []string {

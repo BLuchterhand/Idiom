@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"idiom/internal/agent"
 	"idiom/internal/backends"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/writerroute"
 )
 
@@ -25,12 +25,12 @@ func (m *Model) writerRouteDecisionForPrompt(prompt string, plan promptExecution
 	if routeRequiresMutationConfirmation(plan) {
 		lane = "main"
 		reasonCodes = []string{"route.mutation_confirmation_required"}
-	} else if taskFamily == agent.PlanThenExecutePlannerTaskFamily {
+	} else if workerruntime.TaskFamilyIsPlanThenExecutePlanner(taskFamily) {
 		mode = writerroute.ModePlanSubmission
 		lane = "plan-execute"
 		reasonCodes = []string{"route.plan_execute_planner"}
 		verificationOwner = "planner_owned"
-	} else if taskFamily == agent.PlanThenExecuteReviewRepairTaskFamily {
+	} else if workerruntime.TaskFamilyIsPlanThenExecuteReview(taskFamily) {
 		mode = writerroute.ModePlanSubmission
 		lane = "plan-execute"
 		reasonCodes = []string{"route.plan_execute_review_repair"}

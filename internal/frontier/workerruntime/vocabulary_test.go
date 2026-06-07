@@ -34,6 +34,24 @@ func TestRuntimeContractSpecUsesTypedVocabularyAndRendersBriefStrings(t *testing
 	}
 }
 
+func TestFeaturePlannerTaskFamiliesUseTypedVocabulary(t *testing.T) {
+	planner := RuntimeContractForTaskFamily(string(TaskFamilyFeaturePlannerPlanner))
+	if planner.TaskFamily != TaskFamilyFeaturePlannerPlanner {
+		t.Fatalf("planner TaskFamily = %q, want %q", planner.TaskFamily, TaskFamilyFeaturePlannerPlanner)
+	}
+	if !TaskFamilyIsFeaturePlannerPlanner(string(TaskFamilyFeaturePlannerPlanner)) {
+		t.Fatalf("feature planner planner helper should match canonical family")
+	}
+
+	implementor := RuntimeContractForTaskFamily(string(TaskFamilyFeaturePlannerImplementor))
+	if implementor.TaskFamily != TaskFamilyFeaturePlannerImplementor {
+		t.Fatalf("implementor TaskFamily = %q, want %q", implementor.TaskFamily, TaskFamilyFeaturePlannerImplementor)
+	}
+	if !TaskFamilyIsFeaturePlannerImplementor(string(TaskFamilyFeaturePlannerImplementor)) {
+		t.Fatalf("feature planner implementor helper should match canonical family")
+	}
+}
+
 func TestRoleSpecUsesTypedVocabularyAndRendersBriefStrings(t *testing.T) {
 	spec := RoleSpecFor("workbranch_write")
 	if spec.Name != RoleChildWrite {
