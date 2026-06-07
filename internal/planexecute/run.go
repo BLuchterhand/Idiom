@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/agent"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/plancontract"
 	"idiom/internal/recovery"
 	"idiom/internal/telemetry"
@@ -242,7 +242,7 @@ func Run(cfg config.Config, opts Options, promptRun PromptRunner, rec *telemetry
 		answer, err = promptRun(cfg, plannerPrompt, RunOptions{
 			JSONEvents:               opts.JSONEvents,
 			Resume:                   opts.Resume,
-			TaskFamily:               agent.PlanThenExecutePlannerTaskFamily,
+			TaskFamily:               string(workerruntime.TaskFamilyPlanThenExecutePlanner),
 			PlannerOwnedVerification: true,
 			MaxTokensOverride:        plannerMaxTokens,
 			DisableThinking:          opts.DisableThinking,

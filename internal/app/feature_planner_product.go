@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"idiom/internal/featureplanner"
+	"idiom/internal/featureplannerproduct"
 	"idiom/internal/llama"
 	"idiom/internal/productworkflow"
 )
@@ -320,7 +321,7 @@ func loadDirectFeaturePlannerProductBrief(effortRoot string) (*featureplanner.Pr
 	if err != nil {
 		return nil, fmt.Errorf("load product workflow implementation handoff: %w", err)
 	}
-	return productworkflow.FeaturePlannerBriefFromImplementationHandoff(handoff), nil
+	return featureplannerproduct.BriefFromImplementationHandoff(handoff), nil
 }
 
 // buildPRDFormatRepairPrompt creates a prompt asking the model to fix

@@ -1,8 +1,10 @@
 package agent
 
+import "idiom/internal/plancontract"
+
 const (
 	planExecuteTerminalSubmitPlan      = "submit_plan"
-	planExecuteTerminalSourceSatisfied = "Decision: source-satisfied"
+	planExecuteTerminalSourceSatisfied = plancontract.SourceSatisfiedDecision
 	planExecuteTerminalQuestion        = "<<QUESTION>>:"
 )
 

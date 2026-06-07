@@ -132,7 +132,8 @@ func PlanExecuteAutoExactEditStatus(root string, edit workspace.PlanEdit) string
 func planExecuteAutoSourceSatisfiedAnswer(requiredEditPaths []string) string {
 	paths := planExecuteUniqueRequiredPaths(requiredEditPaths)
 	var b strings.Builder
-	b.WriteString("Decision: source-satisfied\n")
+	b.WriteString(plancontract.SourceSatisfiedDecision)
+	b.WriteByte('\n')
 	b.WriteString("The requested final state is already present in the current workspace for every required edit path.")
 	if len(paths) > 0 {
 		b.WriteString("\n\nRequired edit paths:\n")

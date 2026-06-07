@@ -1,7 +1,6 @@
 package implement
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -16,7 +15,7 @@ import (
 	"idiom/internal/cmd/telemetry"
 	toolcmd "idiom/internal/cmd/tool"
 	"idiom/internal/config"
-	"idiom/internal/runner"
+	"idiom/internal/queueadmission"
 	"idiom/internal/telemetry"
 	"idiom/internal/writerroute"
 )
@@ -123,67 +122,19 @@ func implementWriterRouteVerificationOwner(opts implementOptions) string {
 	return "executor"
 }
 
-// implementAcquireQueueSlot mirrors planExecuteAcquireQueueSlot —
-// see that helper for the full contract. Resolves a pool from the
-// configured model alias (or IDIOM_QUEUE_POOL override) and acquires
-// from the daemon at IDIOM_QUEUE_SOCKET / DefaultSocketPath() when
-// reachable. Returns a no-op release on daemon absence.
+// implementAcquireQueueSlot wraps the shared queue admission contract with
+// implement-specific labels and event names.
 func implementAcquireQueueSlot(cfg config.Config, sessionID string, stdout io.Writer, stderr io.Writer, jsonEvents bool, rec *telemetry.Recorder) func() {
-	pool := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_POOL"))
-	if pool == "" {
-		pool = runner.PoolForModelAlias(cfg.LlamaServer.Model)
-	}
-	if pool == "" {
-		logImplementQueueTelemetry(rec, stdout, jsonEvents, "disabled", "", 0, "pool_disabled", false)
-		return func() {}
-	}
-	socket := strings.TrimSpace(os.Getenv("IDIOM_QUEUE_SOCKET"))
 	label := "implement:" + sessionID
 	client := fmt.Sprintf("idiom-implement/%d", os.Getpid())
-	startedAt := time.Now()
-	result := runner.MaybeAcquireWithResult(context.Background(), socket, pool, label, client, stderr)
-	waitMillis := time.Since(startedAt).Milliseconds()
-	if result.Err != nil {
-		fmt.Fprintf(stderr, "[idiom queue %s] acquire failed: %v — proceeding un-gated\n", pool, result.Err)
-	}
-	state := string(result.State)
-	if state == "" {
-		state = "error"
-	}
-	reason := result.Reason
-	degraded := state == "unavailable" || state == "degraded" || state == "error"
-	logImplementQueueTelemetry(rec, stdout, jsonEvents, state, pool, waitMillis, reason, degraded)
-	if result.Release == nil {
-		return func() {}
-	}
-	return result.Release
-}
-
-func logImplementQueueTelemetry(rec *telemetry.Recorder, stdout io.Writer, jsonEvents bool, state string, pool string, waitMillis int64, reason string, degraded bool) {
-	fields := map[string]any{
-		"state":        state,
-		"pool":         pool,
-		"wait_ms":      waitMillis,
-		"degraded":     degraded,
-		"reason_class": queueReasonClass(reason),
-	}
-	emitImplementJSONEvent(stdout, jsonEvents, implementQueueEventName(state), fields)
-	toolcmd.LogCLIPhase(rec, "implement_queue", fields)
-}
-
-func implementQueueEventName(state string) string {
-	switch state {
-	case "acquired":
-		return "queue_acquired"
-	case "unavailable":
-		return "queue_unavailable"
-	case "disabled":
-		return "queue_disabled"
-	case "degraded":
-		return "queue_degraded"
-	default:
-		return "queue_error"
-	}
+	return queueadmission.Acquire(cfg, queueadmission.Options{
+		Command:        "implement",
+		EventPrefix:    "idiom.implement",
+		TelemetryEvent: "implement_queue",
+		Label:          label,
+		Client:         client,
+		JSONEvents:     jsonEvents,
+	}, rec, stdout, stderr)
 }
 
 func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType string, fields map[string]any) {
@@ -202,28 +153,6 @@ func emitImplementJSONEvent(stdout io.Writer, jsonEvents bool, eventType string,
 		return
 	}
 	fmt.Fprintln(stdout, string(body))
-}
-
-func queueReasonClass(reason string) string {
-	reason = strings.ToLower(strings.TrimSpace(reason))
-	switch {
-	case reason == "":
-		return ""
-	case strings.Contains(reason, "pool_disabled"):
-		return "pool_disabled"
-	case strings.Contains(reason, "nested_same_pool"):
-		return "nested_same_pool"
-	case strings.Contains(reason, "nested_cross_pool"):
-		return "nested_cross_pool"
-	case strings.Contains(reason, "unknown pool"):
-		return "unknown_pool"
-	case strings.Contains(reason, "daemon_unreachable"), strings.Contains(reason, "unreachable"), strings.Contains(reason, "connection refused"):
-		return "daemon_unreachable"
-	case strings.Contains(reason, "context canceled"), strings.Contains(reason, "deadline"):
-		return "timeout_or_canceled"
-	default:
-		return "queue_error"
-	}
 }
 
 func parseImplementOptions(args []string, stderr io.Writer) (implementOptions, error) {

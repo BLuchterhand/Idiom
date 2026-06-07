@@ -19,12 +19,12 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/agent"
 	"idiom/internal/autonomy"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/failures"
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/plancontract"
 	"idiom/internal/telemetry"
 	"idiom/internal/util"
@@ -1000,7 +1000,7 @@ func RunReviewRepairPhase(
 	for attempt := 0; ; attempt++ {
 		answer, err := promptRun(reviewCfg, prompt, RunOptions{
 			JSONEvents:                  opts.JSONEvents,
-			TaskFamily:                  agent.PlanThenExecuteReviewRepairTaskFamily,
+			TaskFamily:                  string(workerruntime.TaskFamilyPlanThenExecuteReview),
 			PlannerOwnedVerification:    true,
 			MaxTokensOverride:           reviewMaxTokens,
 			DisableThinking:             true,

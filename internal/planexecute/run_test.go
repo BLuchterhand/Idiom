@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"idiom/internal/agent"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/recovery"
 	"idiom/internal/workspace"
 )
@@ -566,7 +566,7 @@ func TestRunPlannerBlockedProgressEventCarriesTerminalFailureFields(t *testing.T
 		RequiredEditPaths: []string{"target.txt"},
 		JSONEvents:        true,
 	}, func(_ config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
-		if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
 		return "<<QUESTION>>: target.txt: required source evidence is unavailable.", nil
@@ -649,12 +649,12 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 		JSONEvents: true,
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
-		case agent.PlanThenExecutePlannerTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
 			}, "change a.txt")
 			return "submitted plan", nil
-		case agent.PlanThenExecuteReviewRepairTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "Decision: pass\nNo checklist.", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -699,7 +699,7 @@ func TestRunPersistsProgressAndResumeRunsReviewRepairOnly(t *testing.T) {
 		Prompt: prompt,
 		Resume: first.SessionID,
 	}, func(_ config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
-		if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 			t.Fatalf("resume must not rerun planner/executor model phase, got task family %q", opts.TaskFamily)
 		}
 		reviewCalls++
@@ -738,12 +738,12 @@ func TestRunPersistsReviewRepairQuestionAsBlockedProgress(t *testing.T) {
 		JSONEvents: true,
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
-		case agent.PlanThenExecutePlannerTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "a.txt", OldText: "old\n", NewText: "new\n", Purpose: "apply requested text"},
 			}, "change a.txt")
 			return "submitted plan", nil
-		case agent.PlanThenExecuteReviewRepairTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "<<QUESTION>>: a.txt review found behavior outside the allowed repair scope.", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -786,12 +786,12 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 		JSONEvents: true,
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
-		case agent.PlanThenExecutePlannerTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{Path: "feature_test.go", OldText: "func TestFeature(t *testing.T) {}\n", NewText: "func TestFeature(t *testing.T) {\n\tt.Helper()\n}\n", Purpose: "add coverage detail"},
 			}, "test-only coverage plan")
 			return "submitted test-only plan", nil
-		case agent.PlanThenExecuteReviewRepairTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "Decision: pass\nNo checklist.", nil
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -818,7 +818,7 @@ func TestRunResumeReviewRepairUsesPersistedTypedEditSetObligations(t *testing.T)
 		Resume:     first.SessionID,
 		JSONEvents: true,
 	}, func(_ config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
-		if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 			t.Fatalf("resume must run review-repair only, got %q", opts.TaskFamily)
 		}
 		resumedPrompt = prompt
@@ -861,7 +861,7 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 		JSONEvents: true,
 	}, func(cfg config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
-		case agent.PlanThenExecutePlannerTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{
 					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
@@ -871,7 +871,7 @@ func TestRunContinuesReviewRepairAfterSourceSanityFailure(t *testing.T) {
 				},
 			}, "update Value with a compile defect")
 			return "submitted plan", nil
-		case agent.PlanThenExecuteReviewRepairTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			reviewCalled = true
 			if !strings.Contains(prompt, "source_sanity_failed:pkg/feature.go") {
 				t.Fatalf("review prompt should expose failed source_sanity obligation, got:\n%s", prompt)
@@ -944,7 +944,7 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 		JSONEvents: true,
 	}, func(cfg config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
-		case agent.PlanThenExecutePlannerTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{
 					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
@@ -954,7 +954,7 @@ func TestRunContinuesReviewRepairAfterRequestedVerificationFailure(t *testing.T)
 				},
 			}, "change Value behavior")
 			return "submitted plan", nil
-		case agent.PlanThenExecuteReviewRepairTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			reviewCalled = true
 			if !strings.Contains(prompt, "verification_failed:"+command) {
 				t.Fatalf("review prompt should expose failed requested verification obligation, got:\n%s", prompt)
@@ -1018,7 +1018,7 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 		JSONEvents: true,
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
 		switch opts.TaskFamily {
-		case agent.PlanThenExecutePlannerTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
 				{
 					Path:    filepath.ToSlash(filepath.Join("pkg", "feature.go")),
@@ -1028,7 +1028,7 @@ func TestRunKeepsSourceSanityFailureWhenReviewRepairUnavailable(t *testing.T) {
 				},
 			}, "update Value with a compile defect")
 			return "submitted plan", nil
-		case agent.PlanThenExecuteReviewRepairTaskFamily:
+		case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 			return "", errors.New("review model unavailable")
 		default:
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -1075,7 +1075,7 @@ func TestRunRejectsInitialPlanWhenRequestedTestEditMissingBeforeWrites(t *testin
 		SkipReviewRepair:   true,
 		EditSetObligations: EditSetObligations{}.With(EditSetObligationKindTestEdit, "test"),
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
-		if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
 		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
@@ -1123,7 +1123,7 @@ func TestRunRejectsInitialPlanWhenRequestedImplementationEditMissingBeforeWrites
 		SkipReviewRepair:   true,
 		EditSetObligations: EditSetObligations{}.With(EditSetObligationKindImplementationEdit, "test"),
 	}, func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
-		if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+		if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 			t.Fatalf("unexpected task family %q", opts.TaskFamily)
 		}
 		writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{
@@ -1317,7 +1317,7 @@ func TestRunReviewRepairPhaseForcesVisibleTerminalContract(t *testing.T) {
 	if report.Status != "pass (no corrective edits)" {
 		t.Fatalf("unexpected report: %#v", report)
 	}
-	if gotOpts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+	if gotOpts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 		t.Fatalf("review-repair should use review-repair task family, got %q", gotOpts.TaskFamily)
 	}
 	if !gotOpts.DisableThinking {
@@ -1556,7 +1556,7 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 		&stdout,
 		func(cfg config.Config, prompt string, opts RunOptions, _ io.Writer) (string, error) {
 			attempts++
-			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
 			if attempts == 1 {
@@ -1622,7 +1622,7 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 		},
 		&stdout,
 		func(cfg config.Config, _ string, opts RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
 			writeRunTestPlanViaSubmitPlan(t, cfg, []workspace.PlanEdit{

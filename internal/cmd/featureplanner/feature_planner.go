@@ -16,6 +16,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
+	"idiom/internal/featureplannerproduct"
 	"idiom/internal/llama"
 	"idiom/internal/productworkflow"
 	"idiom/internal/telemetry"
@@ -161,7 +162,7 @@ func loadProductWorkflowBrief(effortRoot string) (*featureplanner.ProductWorkflo
 	if err != nil {
 		return nil, err
 	}
-	return productworkflow.FeaturePlannerBriefFromImplementationHandoff(handoff), nil
+	return featureplannerproduct.BriefFromImplementationHandoff(handoff), nil
 }
 
 func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerRequest, stdout io.Writer) (featurePlannerResult, error) {

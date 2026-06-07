@@ -13,12 +13,13 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"idiom/internal/agent"
 	"idiom/internal/app"
 	"idiom/internal/cmd/runtime"
 	"idiom/internal/comprehension"
 	"idiom/internal/config"
 	"idiom/internal/frontier/pathparse"
+	"idiom/internal/frontier/workerruntime"
+	"idiom/internal/plancontract"
 	"idiom/internal/planexecute"
 	"idiom/internal/workspace"
 )
@@ -91,7 +92,7 @@ func TestRunPlanExecuteMainDelegatesPlannerOptionsAndModelOverride(t *testing.T)
 	if !gotOpts.JSONEvents || !gotOpts.DisableThinking {
 		t.Fatalf("planner options should forward json/no-thinking flags, got %#v", gotOpts)
 	}
-	if gotOpts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily || !gotOpts.PlannerOwnedVerification {
+	if gotOpts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) || !gotOpts.PlannerOwnedVerification {
 		t.Fatalf("planner options should carry plan-execute planner contract, got %#v", gotOpts)
 	}
 	if gotOpts.MaxTokensOverride != 3072 {
@@ -242,7 +243,7 @@ func TestRunPlanExecuteMainJSONEmitsWriterRouteDecision(t *testing.T) {
 	if event["writer_mode"] != "plan_submission" || event["lane"] != "plan-execute" || event["verification_owner"] != "planner_owned" {
 		t.Fatalf("unexpected direct plan-execute route event: %#v", event)
 	}
-	if event["task_family"] != agent.PlanThenExecutePlannerTaskFamily {
+	if event["task_family"] != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 		t.Fatalf("direct plan-execute route event should carry task_family, got %#v", event)
 	}
 	if event["cost_tier"] != "local_first" || event["review_policy"] != "local_first" {
@@ -406,7 +407,7 @@ func TestPlanExecuteSourceSatisfiedUsesNamedAllowedEvidenceOnly(t *testing.T) {
 	if len(paths) != 1 || paths[0] != "pkg/feature.go" {
 		t.Fatalf("allowed scope must not become source-satisfied coverage obligations, got %#v", paths)
 	}
-	if !agent.PlanThenExecuteSourceSatisfiedAnswerCoversPaths(answer, paths) {
+	if !plancontract.SourceSatisfiedAnswerCoversPaths(answer, paths) {
 		t.Fatalf("source-satisfied answer should cover named allowed evidence path")
 	}
 }
@@ -1078,7 +1079,7 @@ func TestRunPlanExecuteMainDoesNotInferTestEditObligationBeforeWrites(t *testing
 		&stdout,
 		&stderr,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
 			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
@@ -1123,7 +1124,7 @@ func TestRunPlanExecuteMainDoesNotInferImplementationObligationBeforeWrites(t *t
 		&stdout,
 		&stderr,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != agent.PlanThenExecutePlannerTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecutePlanner) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
 			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
@@ -2423,7 +2424,7 @@ func TestRunReviewRepairPhaseRetriesContradictoryPassIntoCorrectivePlan(t *testi
 		&stdout,
 		func(cfg config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			attempts++
-			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
 			if attempts == 1 {
@@ -2492,7 +2493,7 @@ func TestRunReviewRepairPhaseRejectsCorrectivePlanWhenRequestedTestEditStillMiss
 		},
 		&stdout,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
 			}
 			writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
@@ -2635,7 +2636,7 @@ func TestRunReviewRepairPhaseUsesReviewRepairTaskFamilyForPass(t *testing.T) {
 	if report.Status != "pass (no corrective edits)" {
 		t.Fatalf("unexpected report: %#v", report)
 	}
-	if gotTaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+	if gotTaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 		t.Fatalf("review-repair should use review-repair task family, got %q", gotTaskFamily)
 	}
 	if !gotDisableThinking {
@@ -2673,7 +2674,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 		&firstStderr,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			switch opts.TaskFamily {
-			case agent.PlanThenExecutePlannerTaskFamily:
+			case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 				plannerSessionID = cfg.Workspace.SessionID
 				writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
 					SchemaVersion: workspace.PlanArtifactSchemaVersion,
@@ -2685,7 +2686,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 					},
 				})
 				return "submitted plan", nil
-			case agent.PlanThenExecuteReviewRepairTaskFamily:
+			case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 				return "Decision: pass\nNo checklist.", nil
 			default:
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -2712,7 +2713,7 @@ func TestRunPlanExecuteMainResumeRerunsReviewRepairOnly(t *testing.T) {
 		&resumedStdout,
 		&resumedStderr,
 		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("resume should run review-repair only, got task family %q", opts.TaskFamily)
 			}
 			reviewCalls++
@@ -2750,7 +2751,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 		&firstStderr,
 		func(cfg config.Config, _ string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
 			switch opts.TaskFamily {
-			case agent.PlanThenExecutePlannerTaskFamily:
+			case string(workerruntime.TaskFamilyPlanThenExecutePlanner):
 				plannerSessionID = cfg.Workspace.SessionID
 				writePlanExecuteTestArtifact(t, cfg.Workspace.Root, cfg.Workspace.SessionID, workspace.PlanArtifact{
 					SchemaVersion: workspace.PlanArtifactSchemaVersion,
@@ -2762,7 +2763,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 					},
 				})
 				return "submitted test-only plan", nil
-			case agent.PlanThenExecuteReviewRepairTaskFamily:
+			case string(workerruntime.TaskFamilyPlanThenExecuteReview):
 				return "Decision: pass\nNo checklist.", nil
 			default:
 				t.Fatalf("unexpected task family %q", opts.TaskFamily)
@@ -2789,7 +2790,7 @@ func TestRunPlanExecuteMainResumeUsesPersistedTypedEditSetObligations(t *testing
 		&resumedStdout,
 		&resumedStderr,
 		func(_ config.Config, prompt string, opts cmdruntime.RunOptions, _ io.Writer) (string, error) {
-			if opts.TaskFamily != agent.PlanThenExecuteReviewRepairTaskFamily {
+			if opts.TaskFamily != string(workerruntime.TaskFamilyPlanThenExecuteReview) {
 				t.Fatalf("resume should run review-repair only, got task family %q", opts.TaskFamily)
 			}
 			resumedPrompt = prompt

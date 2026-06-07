@@ -2,12 +2,10 @@ package productworkflow
 
 import (
 	"encoding/json"
-	"idiom/internal/featureplanner"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 func TestBuildImplementationHandoffUsesGeneratedDispatchSemantics(t *testing.T) {
@@ -100,17 +98,8 @@ func TestBuildImplementationHandoffAllowsPendingTDDEvidenceFeaturePlannerDispatc
 		t.Fatalf("TDD-only pending evidence must not become a generic product blocker: %#v", handoff.Blockers)
 	}
 
-	brief := FeaturePlannerBriefFromImplementationHandoff(handoff)
-	if !brief.AllowsFeaturePlanDispatch() {
-		t.Fatalf("typed TDD-only pending evidence should allow feature-planner dispatch: %#v", brief)
-	}
-	state := featureplanner.NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
-	prompt := featureplanner.BuildPlannerPrompt("build feature", state, brief)
-	if !strings.Contains(prompt, "Required submit_feature_plan shape") {
-		t.Fatalf("prompt should expose submit_feature_plan for pending TDD evidence:\n%s", prompt)
-	}
-	if strings.Contains(prompt, "Do not produce a feature plan") {
-		t.Fatalf("prompt must not block planning for TDD-only pending evidence:\n%s", prompt)
+	if len(handoff.TDDObligations) != 1 || handoff.TDDObligations[0].Status != "planned" {
+		t.Fatalf("handoff should preserve implementation-pending TDD obligation state: %#v", handoff.TDDObligations)
 	}
 }
 

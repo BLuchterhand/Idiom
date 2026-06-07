@@ -7,6 +7,8 @@ import (
 	"idiom/internal/frontier/pathparse"
 )
 
+const SourceSatisfiedDecision = "Decision: source-satisfied"
+
 func SourceSatisfiedAnswerCoversPaths(answer string, requiredPaths []string) bool {
 	if len(sourceSatisfiedPathSet(requiredPaths)) == 0 || !SourceSatisfiedAnswerIntent(answer) {
 		return false
@@ -56,7 +58,7 @@ func SourceSatisfiedAnswerIntent(answer string) bool {
 		firstLine = firstLine[:idx]
 	}
 	firstLine = strings.ToLower(strings.TrimSpace(firstLine))
-	if firstLine != "decision: source-satisfied" && firstLine != "decision: source satisfied" {
+	if firstLine != strings.ToLower(SourceSatisfiedDecision) && firstLine != "decision: source satisfied" {
 		return false
 	}
 	lower := strings.ToLower(trimmed)

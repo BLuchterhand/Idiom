@@ -1,8 +1,11 @@
-package productworkflow
+package featureplannerproduct
 
-import "idiom/internal/featureplanner"
+import (
+	"idiom/internal/featureplanner"
+	"idiom/internal/productworkflow"
+)
 
-func FeaturePlannerBriefFromImplementationHandoff(handoff ImplementationHandoff) *featureplanner.ProductWorkflowBrief {
+func BriefFromImplementationHandoff(handoff productworkflow.ImplementationHandoff) *featureplanner.ProductWorkflowBrief {
 	brief := &featureplanner.ProductWorkflowBrief{
 		EffortID:                  handoff.EffortID,
 		TaskID:                    handoff.TaskID,

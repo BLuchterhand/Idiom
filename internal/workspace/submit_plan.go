@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"idiom/internal/failures"
+	"idiom/internal/plancontract"
 )
 
 const (
@@ -146,9 +147,9 @@ const planInlineTextSpillThreshold = 4096
 func submitPlanNoOpEditGuidanceForPath(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "remove any no-op edit object; use top-level `source_satisfied_paths` for already-final paths, submit real edits, or answer `Decision: source-satisfied` if every required path is final"
+		return "remove any no-op edit object; use top-level `source_satisfied_paths` for already-final paths, submit real edits, or answer `" + plancontract.SourceSatisfiedDecision + "` if every required path is final"
 	}
-	return fmt.Sprintf("for %s: remove no-op edit; use `source_satisfied_paths`: [%q] if final; use `Decision: source-satisfied` only if all paths are final; else submit real edit", path, path)
+	return fmt.Sprintf("for %s: remove no-op edit; use `source_satisfied_paths`: [%q] if final; use `%s` only if all paths are final; else submit real edit", path, path, plancontract.SourceSatisfiedDecision)
 }
 
 // submitPlan persists the planner's edit-plan artifact to disk and
@@ -158,10 +159,11 @@ func submitPlanNoOpEditGuidanceForPath(path string) string {
 func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 	if req.PlanArtifact == nil && len(req.Edits) == 0 {
 		if SubmitPlanRequestClaimsSourceSatisfied(req) {
+			errorMessage := fmt.Sprintf("submit_plan cannot carry a source-satisfied/no-op closeout. Answer `%s` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.", plancontract.SourceSatisfiedDecision)
 			result := toolInvalidArgumentResult(
 				"submit_plan",
 				"submit_plan rejected: source-satisfied terminal shape required",
-				"submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+				errorMessage,
 			)
 			result.Code = SubmitPlanSourceSatisfiedTerminalRequiredCode
 			return result
@@ -182,7 +184,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		result := withToolFailure(ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: source-satisfied rationale",
-			Error:   "submit_plan rationale says the requested final state is already present or that edits are placeholders. Do not submit verification/placeholder edits; answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact blocker.",
+			Error:   fmt.Sprintf("submit_plan rationale says the requested final state is already present or that edits are placeholders. Do not submit verification/placeholder edits; answer `%s` with per-path current-state evidence, or answer <<QUESTION>> with the exact blocker.", plancontract.SourceSatisfiedDecision),
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 		result.Code = SubmitPlanSourceSatisfiedTerminalRequiredCode
 		return result
@@ -202,7 +204,7 @@ func (m *Manager) submitPlan(req ToolRequest) ToolResult {
 		return withToolFailure(ToolResult{
 			Tool:    "submit_plan",
 			Summary: "submit_plan rejected: verification-only edits",
-			Error:   "submit_plan edits describe verification/checking work rather than state mutation. If the files already satisfy the task, answer `Decision: source-satisfied`; otherwise submit only real corrective edits or answer <<QUESTION>> with the exact blocker.",
+			Error:   fmt.Sprintf("submit_plan edits describe verification/checking work rather than state mutation. If the files already satisfy the task, answer `%s`; otherwise submit only real corrective edits or answer <<QUESTION>> with the exact blocker.", plancontract.SourceSatisfiedDecision),
 		}, failures.FailedPrecondition, reasonPlanSubmissionRejected)
 	}
 	for i, edit := range validationArtifact.Edits {
@@ -865,7 +867,7 @@ func (m *Manager) validatePlanEditAgainstWorkspace(edit PlanEdit) error {
 			return fmt.Errorf("old_text did not appear in %s, but a case-insensitive match exists; preserve exact casing from the file or use start_line/end_line+content", edit.Path)
 		}
 		if planEditReplacementAlreadyPresent(current, edit) {
-			return fmt.Errorf("old_text did not appear in %s, but the replacement text already appears in the file; if every required edit is already present, close the planner phase with `Decision: source-satisfied` and per-path current-state evidence instead of submitting stale edits", edit.Path)
+			return fmt.Errorf("old_text did not appear in %s, but the replacement text already appears in the file; if every required edit is already present, close the planner phase with `%s` and per-path current-state evidence instead of submitting stale edits", edit.Path, plancontract.SourceSatisfiedDecision)
 		}
 		return fmt.Errorf("old_text did not appear in %s; copy the exact substring from the file or use start_line/end_line+content", edit.Path)
 	}

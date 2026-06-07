@@ -3,9 +3,9 @@ package planexecute
 import (
 	"strings"
 
-	"idiom/internal/agent"
 	"idiom/internal/backends"
 	"idiom/internal/config"
+	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/writerroute"
 )
 
@@ -22,7 +22,7 @@ func planExecuteWriterRouteDecision(cfg config.Config, requiredEditPaths []strin
 		VerificationOwner: "planner_owned",
 		RequiredEditPaths: requiredEditPaths,
 		ReasonCodes:       []string{"route.multi_file_plan_execute"},
-		TaskFamily:        agent.PlanThenExecutePlannerTaskFamily,
+		TaskFamily:        string(workerruntime.TaskFamilyPlanThenExecutePlanner),
 	})
 }
 
