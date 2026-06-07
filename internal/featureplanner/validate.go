@@ -74,6 +74,9 @@ func ValidateSourceSatisfiedCloseout(closeout SourceSatisfiedCloseout) error {
 	if len(nonEmptyFeaturePlannerStrings(closeout.EvidencePaths)) == 0 {
 		errs = append(errs, errors.New("source_satisfied missing evidence_paths"))
 	}
+	if len(nonEmptySourceSatisfiedAnchors(closeout.Anchors)) == 0 {
+		errs = append(errs, errors.New("source_satisfied missing anchors"))
+	}
 	return errors.Join(errs...)
 }
 
@@ -103,6 +106,32 @@ func ValidateSourceSatisfiedWorkspaceContext(closeout SourceSatisfiedCloseout, w
 				continue
 			}
 			errs = append(errs, fmt.Errorf("source_satisfied evidence path %q unavailable: %w", path, err))
+		}
+	}
+	for _, anchor := range nonEmptySourceSatisfiedAnchors(closeout.Anchors) {
+		path := strings.TrimSpace(anchor.Path)
+		text := strings.TrimSpace(anchor.Text)
+		if filepath.IsAbs(path) {
+			errs = append(errs, fmt.Errorf("source_satisfied anchor path %q must be repo-relative", path))
+			continue
+		}
+		clean := filepath.Clean(filepath.FromSlash(path))
+		full := filepath.Join(workspaceRoot, clean)
+		if rel, err := filepath.Rel(workspaceRoot, full); err != nil || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+			errs = append(errs, fmt.Errorf("source_satisfied anchor path %q escapes workspace", path))
+			continue
+		}
+		body, err := os.ReadFile(full)
+		if err != nil {
+			if os.IsNotExist(err) {
+				errs = append(errs, fmt.Errorf("source_satisfied anchor path %q does not exist", path))
+				continue
+			}
+			errs = append(errs, fmt.Errorf("source_satisfied anchor path %q unavailable: %w", path, err))
+			continue
+		}
+		if !strings.Contains(string(body), text) {
+			errs = append(errs, fmt.Errorf("source_satisfied anchor text not found in %q", path))
 		}
 	}
 	return errors.Join(errs...)
@@ -845,6 +874,9 @@ func ApplyPlannerOutput(state *FeatureState, parsed ParsedPlannerOutput, now tim
 		if len(closeout.TestPaths) > 0 {
 			fields["test_paths"] = closeout.TestPaths
 		}
+		if len(closeout.Anchors) > 0 {
+			fields["anchors"] = closeout.Anchors
+		}
 		return []Event{{Type: EventPlannerSourceSatisfied, SessionID: state.SessionID, FeatureTo: FeatureStateSourceSatisfied, Message: closeout.Summary, Fields: fields}}
 	case ToolSubmitFeaturePlan:
 		hydrateDurablePlanDefaults(&parsed.Plan, state, now)
@@ -892,7 +924,24 @@ func normalizeSourceSatisfiedCloseout(closeout SourceSatisfiedCloseout) SourceSa
 	closeout.Reason = strings.TrimSpace(closeout.Reason)
 	closeout.EvidencePaths = nonEmptyFeaturePlannerStrings(closeout.EvidencePaths)
 	closeout.TestPaths = nonEmptyFeaturePlannerStrings(closeout.TestPaths)
+	closeout.Anchors = nonEmptySourceSatisfiedAnchors(closeout.Anchors)
 	return closeout
+}
+
+func nonEmptySourceSatisfiedAnchors(values []SourceSatisfiedAnchor) []SourceSatisfiedAnchor {
+	if len(values) == 0 {
+		return nil
+	}
+	out := make([]SourceSatisfiedAnchor, 0, len(values))
+	for _, value := range values {
+		value.Path = strings.TrimSpace(value.Path)
+		value.Text = strings.TrimSpace(value.Text)
+		if value.Path == "" || value.Text == "" {
+			continue
+		}
+		out = append(out, value)
+	}
+	return out
 }
 
 func recordTDDPreExecutionEvidence(state *FeatureState, now time.Time) []Event {

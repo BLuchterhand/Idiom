@@ -163,11 +163,17 @@ type FeaturePlan struct {
 }
 
 type SourceSatisfiedCloseout struct {
-	Tool          string   `json:"tool,omitempty"`
-	Summary       string   `json:"summary"`
-	Reason        string   `json:"reason,omitempty"`
-	EvidencePaths []string `json:"evidence_paths"`
-	TestPaths     []string `json:"test_paths,omitempty"`
+	Tool          string                  `json:"tool,omitempty"`
+	Summary       string                  `json:"summary"`
+	Reason        string                  `json:"reason,omitempty"`
+	EvidencePaths []string                `json:"evidence_paths"`
+	TestPaths     []string                `json:"test_paths,omitempty"`
+	Anchors       []SourceSatisfiedAnchor `json:"anchors"`
+}
+
+type SourceSatisfiedAnchor struct {
+	Path string `json:"path"`
+	Text string `json:"text"`
 }
 
 type SourceTask struct {
