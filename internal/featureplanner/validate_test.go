@@ -23,6 +23,14 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 	}
 }
 
+func TestValidatePlanAcceptsProductSDDRefs(t *testing.T) {
+	plan := validProductContextPlan()
+
+	if err := ValidatePlan(plan); err != nil {
+		t.Fatalf("product PRD/ADR refs should satisfy the generic SDD contract: %v", err)
+	}
+}
+
 func TestValidateDurableStateTreatsSourceSatisfiedAsTerminal(t *testing.T) {
 	state := NewState("source-satisfied-session", "already done", "", 3, time.Unix(1, 0).UTC())
 	state.Status = FeatureStateSourceSatisfied
@@ -198,6 +206,61 @@ func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *test
 	if containsString(normalized.Atoms[0].AllowedEditPaths, "internal/labels/labels_test.go") {
 		t.Fatalf("promoted TDD edit path must not remain optional allowed scope: %#v", normalized.Atoms[0].AllowedEditPaths)
 	}
+}
+
+func TestValidateProductPlanUsesExplicitWorkspaceRootForPackageGrounding(t *testing.T) {
+	root, plan, brief := workspaceRootProductPlanFixture(t)
+
+	if err := ValidatePlanProductWorkflowContextWithWorkspace(plan, brief, root); err != nil {
+		t.Fatalf("explicit workspace root should ground sibling package scope: %v", err)
+	}
+	normalized := NormalizePlanProductWorkflowContextWithWorkspace(plan, brief, root)
+	if !containsString(normalized.Atoms[0].AllowedEditPaths, "pkg/generated_helper.go") {
+		t.Fatalf("expected sibling package scope to remain allowed, got %#v", normalized.Atoms[0].AllowedEditPaths)
+	}
+}
+
+func TestRunProductPlanUsesWorkspaceRootForPackageGrounding(t *testing.T) {
+	root, plan, brief := workspaceRootProductPlanFixture(t)
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+
+	result, err := Run(state, RunOptions{
+		Prompt:               "build feature",
+		ProductWorkflowBrief: &brief,
+		WorkspaceRoot:        root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+			return testPlanExecuteCompletedJSON(), nil
+		}
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v events=%+v", result.State.Status, result.State.Blockers, result.Events)
+	}
+}
+
+func workspaceRootProductPlanFixture(t *testing.T) (string, FeaturePlan, ProductWorkflowBrief) {
+	t.Helper()
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "pkg/feature.go"), "package pkg\n")
+	mkdirAndWriteFile(t, filepath.Join(root, "pkg/feature_test.go"), "package pkg\n")
+	plan := validProductContextPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"pkg/feature.go", "pkg/feature_test.go"}
+	plan.Atoms[0].AllowedEditPaths = []string{"pkg/generated_helper.go"}
+	plan.Atoms[0].TestFirst.Commands = []string{"go test ./pkg"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/feature_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestCommands = []string{"go test ./pkg"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/feature_test.go"}
+	plan.TDDContract.Obligations[0].Command = "go test ./pkg"
+	brief := validProductWorkflowBrief()
+	brief.FilesToModify = []string{"pkg/feature.go", "pkg/feature_test.go"}
+	brief.ContextEvidencePaths = []string{"pkg/feature.go"}
+	brief.Tests = []string{"go test ./pkg"}
+	brief.TDDObligations[0].Command = "go test ./pkg"
+	return root, plan, brief
 }
 
 func TestValidateProductPlanRequiresFilesToModifyCoverageAcrossAtoms(t *testing.T) {

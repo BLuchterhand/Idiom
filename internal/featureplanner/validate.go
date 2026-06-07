@@ -163,7 +163,7 @@ func ValidatePlan(plan FeaturePlan) error {
 	if plan.CoverageGateResult != nil && plan.CoverageGateResult.Status != "pass" {
 		errs = append(errs, errors.New("feature plan blocked: upstream coverage gate has not passed"))
 	}
-	if len(plan.SDDContract.Refs) == 0 && len(plan.SDDContract.Acceptance) == 0 {
+	if !sddContractHasEvidence(plan.SDDContract) {
 		errs = append(errs, errors.New("feature plan missing SDD refs or acceptance criteria"))
 	}
 	require(&errs, plan.TDDContract.CoverageTier, "feature plan missing tdd_contract.coverage_tier")
@@ -205,7 +205,7 @@ func ValidatePlan(plan FeaturePlan) error {
 		if len(atom.RequiredEditPaths) == 0 && len(atom.AllowedEditPaths) == 0 && !atom.ImplementationRequired {
 			errs = append(errs, fmt.Errorf("%s missing edit scope or source-satisfied marker", prefix))
 		}
-		if len(atom.SDDRefs) == 0 && len(plan.SDDContract.Refs) > 0 {
+		if len(atom.SDDRefs) == 0 && sddContractHasEvidence(plan.SDDContract) {
 			errs = append(errs, fmt.Errorf("%s missing sdd_refs", prefix))
 		}
 		if !atom.TestFirst.BaselineRequired {
@@ -231,6 +231,13 @@ func ValidatePlan(plan FeaturePlan) error {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
+}
+
+func sddContractHasEvidence(contract SDDContract) bool {
+	return len(nonEmptyFeaturePlannerStrings(contract.Refs)) > 0 ||
+		len(nonEmptyFeaturePlannerStrings(contract.Acceptance)) > 0 ||
+		len(nonEmptyFeaturePlannerStrings(contract.PRDRequirementRefs)) > 0 ||
+		len(nonEmptyFeaturePlannerStrings(contract.ADRRefs)) > 0
 }
 
 func ValidateDurablePlan(plan FeaturePlan) error {
@@ -266,9 +273,13 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 }
 
 func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) error {
+	return ValidatePlanProductWorkflowContextWithWorkspace(plan, brief, "")
+}
+
+func ValidatePlanProductWorkflowContextWithWorkspace(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) error {
 	var errs []error
 	errs = append(errs, validatePlanCoversFilesToModify(plan, brief)...)
-	plan = NormalizePlanProductWorkflowContext(plan, brief)
+	plan = NormalizePlanProductWorkflowContextWithWorkspace(plan, brief, workspaceRoot)
 	allowDispatch := brief.AllowsFeaturePlanDispatch()
 	if !allowDispatch {
 		errs = append(errs, errors.New("feature plan submitted while product workflow coverage gate is blocked"))
@@ -284,7 +295,7 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 	adrIDs := stringSet(brief.AcceptedADRIDs)
 	tddIDs := stringSetFromTDDObligations(brief.TDDObligations)
 	productTDD := tddObligationsByID(brief.TDDObligations)
-	repoGrounding := newRepoGrounding(brief)
+	repoGrounding := newRepoGrounding(brief, workspaceRoot)
 
 	if len(prdIDs) > 0 {
 		if len(plan.SDDContract.PRDRequirementRefs) == 0 {
@@ -411,7 +422,11 @@ func validateStandaloneWorkspacePath(root string, prompt string, path string) er
 }
 
 func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) FeaturePlan {
-	grounding := newRepoGrounding(brief)
+	return NormalizePlanProductWorkflowContextWithWorkspace(plan, brief, "")
+}
+
+func NormalizePlanProductWorkflowContextWithWorkspace(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) FeaturePlan {
+	grounding := newRepoGrounding(brief, workspaceRoot)
 	for i := range plan.Atoms {
 		atom := &plan.Atoms[i]
 		required := normalizeEditScopeList(atom.RequiredEditPaths)
@@ -498,30 +513,22 @@ func validatePlanCoversFilesToModify(plan FeaturePlan, brief ProductWorkflowBrie
 }
 
 func normalizeEditScopeList(paths []string) []string {
-	var out []string
-	seen := map[string]bool{}
-	for _, raw := range paths {
-		path := normalizeWorkspacePath(raw)
-		if path == "" || seen[path] {
-			continue
-		}
-		seen[path] = true
-		out = append(out, path)
-	}
-	return out
+	return plancontract.UniqueScopePaths(paths)
 }
 
 type productRepoGrounding struct {
+	workspaceRoot             string
 	filesToModify             map[string]bool
 	authorizedNewPackageRoots map[string]bool
 	packageRoots              map[string]bool
 	hasLocalization           bool
 }
 
-func newRepoGrounding(brief ProductWorkflowBrief) productRepoGrounding {
+func newRepoGrounding(brief ProductWorkflowBrief, workspaceRoot string) productRepoGrounding {
 	grounding := productRepoGrounding{
-		filesToModify:             normalizedStringSet(brief.FilesToModify),
-		authorizedNewPackageRoots: normalizedStringSet(brief.AuthorizedNewPackageRoots),
+		workspaceRoot:             strings.TrimSpace(workspaceRoot),
+		filesToModify:             normalizedPathSet(brief.FilesToModify),
+		authorizedNewPackageRoots: normalizedPathSet(brief.AuthorizedNewPackageRoots),
 		packageRoots:              map[string]bool{},
 	}
 	grounding.hasLocalization = len(grounding.filesToModify) > 0 || len(grounding.authorizedNewPackageRoots) > 0
@@ -536,7 +543,7 @@ func (g *productRepoGrounding) addExistingPackageRoot(path string) {
 	if dir == "" || dir == "." {
 		return
 	}
-	if existingPackageDir(dir) {
+	if existingPackageDir(g.workspaceRoot, dir) {
 		g.packageRoots[dir] = true
 	}
 }
@@ -544,7 +551,7 @@ func (g *productRepoGrounding) addExistingPackageRoot(path string) {
 func (g productRepoGrounding) validateAtomEditScope(atomIndex int, atom FeatureAtomPlan) []error {
 	var errs []error
 	for _, scopedPath := range append(normalizedStringList(atom.RequiredEditPaths), normalizedStringList(atom.AllowedEditPaths)...) {
-		if normalizeWorkspacePath(scopedPath) == "" {
+		if plancontract.NormalizeScopePath(scopedPath) == "" {
 			errs = append(errs, fmt.Errorf("atom %d edit path %q is not a valid repo-relative workspace path; use ask_planner_question for planning repair", atomIndex, scopedPath))
 			continue
 		}
@@ -564,7 +571,7 @@ func (g productRepoGrounding) validateAtomTestArtifactScope(atomIndex int, atom 
 	var errs []error
 	paths := normalizedStringList(append(atom.TestFirst.TestArtifactPaths, atom.PlannedTDDSnapshot.TestArtifactPaths...))
 	for _, scopedPath := range paths {
-		if normalizeWorkspacePath(scopedPath) == "" {
+		if plancontract.NormalizeScopePath(scopedPath) == "" {
 			errs = append(errs, fmt.Errorf("atom %d test artifact path %q is not a valid repo-relative workspace path; use ask_planner_question for planning repair", atomIndex, scopedPath))
 			continue
 		}
@@ -581,7 +588,7 @@ func (g productRepoGrounding) validateAtomTestArtifactScope(atomIndex int, atom 
 }
 
 func (g productRepoGrounding) pathGrounded(path string) bool {
-	path = normalizeWorkspacePath(path)
+	path = plancontract.NormalizeScopePath(path)
 	if path == "" {
 		return false
 	}
@@ -655,8 +662,8 @@ func tddObligationsByID(obligations []TDDObligationBrief) map[string]TDDObligati
 	return out
 }
 
-func existingPackageDir(dir string) bool {
-	entries, err := os.ReadDir(repoRelativePath(dir))
+func existingPackageDir(workspaceRoot string, dir string) bool {
+	entries, err := os.ReadDir(repoRelativePath(workspaceRoot, dir))
 	if err != nil {
 		return false
 	}
@@ -672,8 +679,11 @@ func existingPackageDir(dir string) bool {
 	return false
 }
 
-func repoRelativePath(path string) string {
+func repoRelativePath(workspaceRoot string, path string) string {
 	path = filepath.FromSlash(path)
+	if strings.TrimSpace(workspaceRoot) != "" {
+		return filepath.Join(workspaceRoot, path)
+	}
 	dir, err := os.Getwd()
 	if err != nil {
 		return path
@@ -691,37 +701,20 @@ func repoRelativePath(path string) string {
 }
 
 func normalizedPathDir(path string) string {
-	path = normalizeWorkspacePath(path)
+	path = plancontract.NormalizeScopePath(path)
 	if path == "" {
 		return ""
 	}
 	return filepath.ToSlash(filepath.Dir(filepath.FromSlash(path)))
 }
 
-func normalizeWorkspacePath(path string) string {
-	path = strings.TrimSpace(filepath.ToSlash(path))
-	if path == "" || filepath.IsAbs(path) {
-		return ""
-	}
-	for _, part := range strings.Split(path, "/") {
-		if part == ".." {
-			return ""
-		}
-	}
-	clean := filepath.ToSlash(filepath.Clean(filepath.FromSlash(path)))
-	if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-		return ""
-	}
-	return clean
-}
-
 func pathWithinAnyRoot(path string, roots map[string]bool) bool {
-	path = normalizeWorkspacePath(path)
+	path = plancontract.NormalizeScopePath(path)
 	if path == "" {
 		return false
 	}
 	for root := range roots {
-		root = strings.TrimRight(normalizeWorkspacePath(root), "/")
+		root = strings.TrimRight(plancontract.NormalizeScopePath(root), "/")
 		if root == "" {
 			continue
 		}
@@ -758,6 +751,14 @@ func stringSetFromTDDObligations(obligations []TDDObligationBrief) map[string]bo
 		if id := strings.TrimSpace(obligation.ID); id != "" {
 			out[id] = true
 		}
+	}
+	return out
+}
+
+func normalizedPathSet(paths []string) map[string]bool {
+	out := map[string]bool{}
+	for _, path := range plancontract.UniqueScopePaths(paths) {
+		out[path] = true
 	}
 	return out
 }

@@ -91,7 +91,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	}
 	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief != nil {
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
-		if err := ValidatePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief); err != nil {
+		if err := ValidatePlanProductWorkflowContextWithWorkspace(parsed.Plan, *opts.ProductWorkflowBrief, opts.WorkspaceRoot); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
@@ -100,7 +100,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 				Events: []Event{{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
 			}, nil
 		}
-		parsed.Plan = NormalizePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief)
+		parsed.Plan = NormalizePlanProductWorkflowContextWithWorkspace(parsed.Plan, *opts.ProductWorkflowBrief, opts.WorkspaceRoot)
 	}
 	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief == nil {
 		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
