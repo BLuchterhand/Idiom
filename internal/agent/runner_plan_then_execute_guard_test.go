@@ -4876,6 +4876,83 @@ func TestPlanExecuteSubmitCorrectionSubmitPlanOnlySurfaceRejectsStaleExits(t *te
 	}
 }
 
+func TestPlanExecuteLiveInvalidAnchorSequenceKeepsAnchorRefreshSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{
+			"native/src/core/colony_sim.h",
+			"native/tests/test_quality_inventory_bindings.cpp",
+		},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim.h lines 1-100 (total lines: 2001)"},
+		{Tool: "read_file", Summary: "Read f7 native/tests/test_quality_inventory_bindings.cpp lines 1-100 (total lines: 355)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; invalid edit anchor(s): `native/src/core/colony_sim.h: old_text not found in current source`, `native/tests/test_quality_inventory_bindings.cpp: old_text not found in current source`.",
+		},
+		{Tool: "read_file", Summary: "Read f3 native/src/core/colony_sim.h lines 1540-1620 (total lines: 2001)"},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("Mode = %q, want anchor refresh; state=%#v", state.Mode, state)
+	}
+	if !slices.Contains(state.RefreshPaths, "native/tests/test_quality_inventory_bindings.cpp") {
+		t.Fatalf("remaining refresh paths should include test file, got %#v", state.RefreshPaths)
+	}
+	if planThenExecuteSubmitPlanOnlyReady(brief, results) {
+		t.Fatal("open anchor refresh must not be classified as submit-plan-only ready")
+	}
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(
+		llama.ChatOptions{
+			Tools: []llama.Tool{
+				{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+				{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+				{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			},
+			ToolChoice: "auto",
+		},
+		brief,
+		results,
+		true,
+	)
+	if opts.ToolChoice != "required" || chatOptionsExposeTool(opts, "submit_plan") || !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") {
+		t.Fatalf("open anchor refresh must expose only read refresh tools, got choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
+	}
+	runner := &Runner{RuntimeBrief: brief}
+	rejection, ok := runner.planThenExecuteAnchorRefreshWriteOnlyRejection(
+		workspace.ToolRequest{Tool: "read_file", Path: "native/tests/test_quality_inventory_bindings.cpp", StartLine: 1, EndLine: 200},
+		results,
+	)
+	if !ok {
+		t.Fatal("Runner.Run write-only recovery branch should preserve open anchor-refresh state")
+	}
+	joined := rejection.Summary + "\n" + rejection.Error
+	for _, want := range []string{
+		"Bounded submit_plan anchor refresh required",
+		"anchor-refresh mode is still open",
+		"native/tests/test_quality_inventory_bindings.cpp",
+		"Do not call `submit_plan`",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("write-only anchor-refresh rejection missing %q:\n%s", want, joined)
+		}
+	}
+	for _, forbidden := range []string{
+		"plan-execute planner is source-ready",
+		"waiting for a visible `submit_plan`",
+		"next visible action must be a parser-readable `submit_plan`",
+	} {
+		if strings.Contains(joined, forbidden) {
+			t.Fatalf("write-only anchor-refresh rejection kept stale submit-ready text %q:\n%s", forbidden, joined)
+		}
+	}
+}
+
 func TestPlanExecuteCandidateReadyTerminalPromptIncludesSubmitSkeleton(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,

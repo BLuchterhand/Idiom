@@ -1533,6 +1533,15 @@ func (r *Runner) Run(
 			}
 			if r.planThenExecutePlannerPhase() {
 				if !recoveryReadAllowanceGrantedThisRequest {
+					if result, ok := r.planThenExecuteAnchorRefreshWriteOnlyRejection(req, collectedResults); ok {
+						controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
+						refreshPlanThenExecuteTerminalSurface("anchor_refresh_recovery")
+						turnMessages = append(turnMessages, llama.ChatMessage{Role: "system", Content: result.Error})
+						opts = planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, r.RuntimeBrief, collectedResults, terminalSubmitPlanNativeTools())
+						syncPlanThenExecuteRecoveryAllowedTools()
+						r.emitEvent(RunEvent{Role: "plan_then_execute_anchor_refresh_required", Content: result.Error})
+						continue
+					}
 					refreshNote := ""
 					if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(collectedResults); ok {
 						refreshNote = " " + planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, rejected, rejectedAt)
@@ -11613,6 +11622,22 @@ func (r *Runner) planThenExecuteRequiredSourceFollowupRedirect(results []workspa
 		return workspace.ToolRequest{}, false
 	}
 	return redirected, true
+}
+
+func (r *Runner) planThenExecuteAnchorRefreshWriteOnlyRejection(req workspace.ToolRequest, results []workspace.ToolResult) (workspace.ToolResult, bool) {
+	if r == nil || !r.planThenExecutePlannerPhase() {
+		return workspace.ToolResult{}, false
+	}
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh || len(state.RefreshPaths) == 0 {
+		return workspace.ToolResult{}, false
+	}
+	targets := strings.Join(nonEmptyRunnerStrings(state.RefreshPaths, 4), ", ")
+	return workspace.ToolResult{
+		Tool:    req.Tool,
+		Summary: "Bounded submit_plan anchor refresh required",
+		Error:   fmt.Sprintf("%s is not available in its requested form while plan-execute anchor-refresh mode is still open for: %s. Issue exactly one bounded source-body request for a remaining refresh path: `read_file` with explicit `start_line`/`end_line`, or `%s` with %s plus `pattern`. Do not call `submit_plan` until that refresh returns.", strings.TrimSpace(req.Tool), targets, workspace.CodeNavigateToolName, workspace.CodeNavigateSourceBodyCapabilityPhrase()),
+	}, true
 }
 
 func planThenExecuteInvalidAnchorRefreshAllowed(req workspace.ToolRequest, target string, results []workspace.ToolResult) bool {
