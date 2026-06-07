@@ -60,7 +60,7 @@ func TestValidatePlanProductWorkflowContextRejectsUnknownRefs(t *testing.T) {
 		FilesToModify:      []string{"internal/labels/labels.go"},
 	}
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected product context validation error")
 	}
@@ -77,7 +77,7 @@ func TestValidatePlanProductWorkflowContextAllowsPendingTDDVerificationDispatch(
 	brief.CoverageGatePassed = false
 	brief.CoverageBlockers = []string{"expected all 1 TDD obligations to have verification evidence"}
 
-	if err := ValidatePlanProductWorkflowContext(plan, brief); err != nil {
+	if err := ValidatePlanProductWorkflowContext(plan, brief, ""); err != nil {
 		t.Fatalf("pending TDD verification evidence should not block implementation dispatch: %v", err)
 	}
 }
@@ -88,7 +88,7 @@ func TestValidatePlanProductWorkflowContextRejectsNonTDDCoverageBlocker(t *testi
 	brief.CoverageGatePassed = false
 	brief.CoverageBlockers = []string{"expected EARS requirements to map to evidence"}
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected non-TDD coverage blocker to reject feature plan")
 	}
@@ -148,8 +148,8 @@ func TestNormalizeProductPlanRemovesContextOnlyDocsFromAllowedEditScope(t *testi
 	brief.AcceptedADRPaths = []string{"adrs/ADR-draft.md"}
 	brief.FilesToModify = append(brief.FilesToModify, "internal/labels/labels_extra.go")
 
-	normalized := NormalizePlanProductWorkflowContext(plan, brief)
-	if err := ValidatePlanProductWorkflowContext(normalized, brief); err != nil {
+	normalized := NormalizePlanProductWorkflowContext(plan, brief, "")
+	if err := ValidatePlanProductWorkflowContext(normalized, brief, ""); err != nil {
 		t.Fatalf("normalized plan should validate: %v", err)
 	}
 	allowed := normalized.Atoms[0].AllowedEditPaths
@@ -178,7 +178,7 @@ func TestValidateProductPlanRejectsContextEvidenceAsEditScope(t *testing.T) {
 	brief.FilesToModify = []string{"internal/labels/labels.go"}
 	brief.ContextEvidencePaths = []string{"internal/context/context.go"}
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected context evidence path in edit scope to reject product plan")
 	}
@@ -193,8 +193,8 @@ func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *test
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
 	brief := validProductWorkflowBrief()
 
-	normalized := NormalizePlanProductWorkflowContext(plan, brief)
-	if err := ValidatePlanProductWorkflowContext(normalized, brief); err != nil {
+	normalized := NormalizePlanProductWorkflowContext(plan, brief, "")
+	if err := ValidatePlanProductWorkflowContext(normalized, brief, ""); err != nil {
 		t.Fatalf("normalized plan should validate: %v", err)
 	}
 	required := normalized.Atoms[0].RequiredEditPaths
@@ -211,10 +211,10 @@ func TestNormalizeProductPlanPromotesGroundedTDDArtifactsToRequiredScope(t *test
 func TestValidateProductPlanUsesExplicitWorkspaceRootForPackageGrounding(t *testing.T) {
 	root, plan, brief := workspaceRootProductPlanFixture(t)
 
-	if err := ValidatePlanProductWorkflowContextWithWorkspace(plan, brief, root); err != nil {
+	if err := ValidatePlanProductWorkflowContext(plan, brief, root); err != nil {
 		t.Fatalf("explicit workspace root should ground sibling package scope: %v", err)
 	}
-	normalized := NormalizePlanProductWorkflowContextWithWorkspace(plan, brief, root)
+	normalized := NormalizePlanProductWorkflowContext(plan, brief, root)
 	if !containsString(normalized.Atoms[0].AllowedEditPaths, "pkg/generated_helper.go") {
 		t.Fatalf("expected sibling package scope to remain allowed, got %#v", normalized.Atoms[0].AllowedEditPaths)
 	}
@@ -272,7 +272,7 @@ func TestValidateProductPlanRequiresFilesToModifyCoverageAcrossAtoms(t *testing.
 	brief := validProductWorkflowBrief()
 	brief.FilesToModify = append(brief.FilesToModify, "internal/labels/labels_extra.go")
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected missing Files to modify coverage to reject product plan")
 	}
@@ -288,7 +288,7 @@ func TestValidateProductPlanRejectsDemotedFilesToModifyBeforeNormalization(t *te
 	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
 	brief := validProductWorkflowBrief()
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected demoted Files to modify path to reject product plan")
 	}
@@ -307,7 +307,7 @@ func TestValidateProductPlanRejectsFilesToModifyAllowedInAnotherAtom(t *testing.
 	plan.Atoms = append(plan.Atoms, second)
 	brief := validProductWorkflowBrief()
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected Files to modify path in allowed scope to reject product plan")
 	}
@@ -633,7 +633,7 @@ func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *tes
 	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"path_test.go"}
 	brief := validProductWorkflowBrief()
 
-	err := ValidatePlanProductWorkflowContext(plan, brief)
+	err := ValidatePlanProductWorkflowContext(plan, brief, "")
 	if err == nil {
 		t.Fatal("expected ungrounded test artifact validation error")
 	}

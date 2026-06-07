@@ -110,9 +110,9 @@ func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 
 func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testing.T) {
 	brief := &featureplanner.ProductWorkflowBrief{
-		FilesToModify:             []string{"native/src/core/colony_sim.h"},
+		FilesToModify:             []string{"./native/src/core/colony_sim.h", "native/src/core/colony_sim.h"},
 		ContextEvidencePaths:      []string{"docs/product-workflows/efforts/started/native-quality/prd.md"},
-		AuthorizedNewPackageRoots: []string{"native/tests/generated"},
+		AuthorizedNewPackageRoots: []string{"./native/tests/generated/", "../outside"},
 	}
 
 	got := featureplanner.ProductWriteEnvelopePaths(brief)
@@ -123,6 +123,11 @@ func TestFeaturePlannerProductWriteEnvelopeExcludesContextEvidencePaths(t *testi
 	}
 	if slices.Contains(got, "docs/product-workflows/efforts/started/native-quality/prd.md") {
 		t.Fatalf("context evidence path must not become write authority: %#v", got)
+	}
+	for _, forbidden := range []string{"./native/src/core/colony_sim.h", "../outside/**"} {
+		if slices.Contains(got, forbidden) {
+			t.Fatalf("write envelope should normalize or drop invalid path %q: %#v", forbidden, got)
+		}
 	}
 }
 

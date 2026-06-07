@@ -260,13 +260,13 @@ func (m *Model) runDirectFeaturePlannerPlanFromDraft(ctx context.Context, rawPla
 		events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: briefErr.Error()})
 	} else if parsed.Kind == featureplanner.ToolSubmitFeaturePlan && brief != nil {
 		workspaceRoot := m.projectRoot()
-		if err := featureplanner.ValidatePlanProductWorkflowContextWithWorkspace(parsed.Plan, *brief, workspaceRoot); err != nil {
+		if err := featureplanner.ValidatePlanProductWorkflowContext(parsed.Plan, *brief, workspaceRoot); err != nil {
 			state.Status = featureplanner.FeatureStatePlanningRepair
 			state.PlanningLoop.State = featureplanner.FeatureStatePlanningRepair
 			state.Blockers = append(state.Blockers, err.Error())
 			events = append(events, featureplanner.Event{Type: "idiom.feature_planner.product_context_blocked", SessionID: state.SessionID, Message: err.Error()})
 		} else {
-			parsed.Plan = featureplanner.NormalizePlanProductWorkflowContextWithWorkspace(parsed.Plan, *brief, workspaceRoot)
+			parsed.Plan = featureplanner.NormalizePlanProductWorkflowContext(parsed.Plan, *brief, workspaceRoot)
 			events = featureplanner.ApplyPlannerOutput(&state, parsed, time.Now().UTC())
 		}
 	} else {

@@ -1,6 +1,10 @@
 package featureplanner
 
-import "strings"
+import (
+	"strings"
+
+	"idiom/internal/plancontract"
+)
 
 // ProductWorkflowBrief carries the product-workflow evidence the planner
 // needs to produce a grounded feature plan. The CLI layer populates it
@@ -37,11 +41,15 @@ func ProductWriteEnvelopePaths(brief *ProductWorkflowBrief) []string {
 	if brief == nil {
 		return nil
 	}
-	paths := append([]string(nil), brief.FilesToModify...)
-	for _, root := range normalizedStringList(brief.AuthorizedNewPackageRoots) {
-		paths = append(paths, strings.TrimSuffix(root, "/")+"/**")
+	paths := plancontract.UniqueScopePaths(brief.FilesToModify)
+	for _, rawRoot := range brief.AuthorizedNewPackageRoots {
+		root := plancontract.NormalizeScopePath(strings.TrimSuffix(strings.TrimSpace(rawRoot), "/"))
+		if root == "" {
+			continue
+		}
+		paths = append(paths, root+"/**")
 	}
-	return normalizedStringList(paths)
+	return plancontract.UniqueScopePaths(paths)
 }
 
 type PRDRequirementBrief struct {

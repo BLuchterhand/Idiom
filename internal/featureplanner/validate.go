@@ -272,14 +272,10 @@ func ValidateDurablePlan(plan FeaturePlan) error {
 	return errors.Join(errs...)
 }
 
-func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) error {
-	return ValidatePlanProductWorkflowContextWithWorkspace(plan, brief, "")
-}
-
-func ValidatePlanProductWorkflowContextWithWorkspace(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) error {
+func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) error {
 	var errs []error
 	errs = append(errs, validatePlanCoversFilesToModify(plan, brief)...)
-	plan = NormalizePlanProductWorkflowContextWithWorkspace(plan, brief, workspaceRoot)
+	plan = NormalizePlanProductWorkflowContext(plan, brief, workspaceRoot)
 	allowDispatch := brief.AllowsFeaturePlanDispatch()
 	if !allowDispatch {
 		errs = append(errs, errors.New("feature plan submitted while product workflow coverage gate is blocked"))
@@ -421,11 +417,7 @@ func validateStandaloneWorkspacePath(root string, prompt string, path string) er
 	return nil
 }
 
-func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) FeaturePlan {
-	return NormalizePlanProductWorkflowContextWithWorkspace(plan, brief, "")
-}
-
-func NormalizePlanProductWorkflowContextWithWorkspace(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) FeaturePlan {
+func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief, workspaceRoot string) FeaturePlan {
 	grounding := newRepoGrounding(brief, workspaceRoot)
 	for i := range plan.Atoms {
 		atom := &plan.Atoms[i]
