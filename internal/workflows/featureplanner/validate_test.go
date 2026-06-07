@@ -23,6 +23,21 @@ func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
 	}
 }
 
+func TestValidatePlanRequiresTDDArtifactPathsInRequiredEditScope(t *testing.T) {
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"internal/labels/labels.go"}
+	plan.Atoms[0].AllowedEditPaths = []string{"internal/labels/labels_test.go"}
+
+	err := ValidatePlan(plan)
+	if err == nil {
+		t.Fatal("expected demoted TDD test artifact path to reject feature plan")
+	}
+	if !strings.Contains(err.Error(), "internal/labels/labels_test.go") ||
+		!strings.Contains(err.Error(), "must be covered by atom.required_edit_paths") {
+		t.Fatalf("validation error should identify demoted TDD test path, got %v", err)
+	}
+}
+
 func TestValidatePlanAcceptsProductSDDRefs(t *testing.T) {
 	plan := validProductContextPlan()
 
@@ -395,6 +410,7 @@ func TestBuildPlannerPromptStandaloneUsesLanguageNeutralPlaceholders(t *testing.
 	for _, want := range []string{
 		`required_before to the scalar string "implementation"`,
 		"planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs",
+		"include every test_first.test_artifact_paths entry in required_edit_paths",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("standalone prompt missing schema invariant %q:\n%s", want, prompt)
@@ -1073,7 +1089,7 @@ func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) 
 	second := plan.Atoms[0]
 	second.ID = "atom-2"
 	second.AtomID = "atom-2"
-	second.RequiredEditPaths = []string{"internal/labels/labels2.go"}
+	second.RequiredEditPaths = []string{"internal/labels/labels2.go", "internal/labels/labels_test.go"}
 	second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
 	second.TestFirst.CoverageGateEventID = "evt-tdd-2"
 	second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"
@@ -1114,7 +1130,7 @@ func TestDispatchStopsAfterPreDispatchTDDBlocker(t *testing.T) {
 	second := plan.Atoms[0]
 	second.ID = "atom-2"
 	second.AtomID = "atom-2"
-	second.RequiredEditPaths = []string{"internal/labels/labels2.go"}
+	second.RequiredEditPaths = []string{"internal/labels/labels2.go", "internal/labels/labels_test.go"}
 	second.TestFirst.PreExecutionEventIDs = []string{"evt-tdd-2"}
 	second.TestFirst.CoverageGateEventID = "evt-tdd-2"
 	second.PlannedTDDSnapshot.SnapshotID = "snap-tdd-2"

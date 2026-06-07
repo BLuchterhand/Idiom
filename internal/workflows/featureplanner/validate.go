@@ -217,6 +217,12 @@ func ValidatePlan(plan FeaturePlan) error {
 		if len(atom.TestFirst.ObligationRefs) == 0 {
 			errs = append(errs, fmt.Errorf("%s missing test_first.obligation_refs", prefix))
 		}
+		requiredPathSet := normalizedStringSet(atom.RequiredEditPaths)
+		for _, path := range requiredTDDTestArtifactPaths(atom) {
+			if !requiredPathSet[path] {
+				errs = append(errs, fmt.Errorf("%s required TDD test artifact path %q must be covered by atom.required_edit_paths, not omitted or demoted to allowed_edit_paths", prefix, path))
+			}
+		}
 		for _, ref := range atom.TestFirst.ObligationRefs {
 			ref = strings.TrimSpace(ref)
 			if ref == "" {
@@ -459,6 +465,10 @@ func productAtomRequiredEditPaths(plan FeaturePlan, brief ProductWorkflowBrief, 
 }
 
 func productAtomRequiredTestArtifactPaths(atom FeatureAtomPlan) []string {
+	return requiredTDDTestArtifactPaths(atom)
+}
+
+func requiredTDDTestArtifactPaths(atom FeatureAtomPlan) []string {
 	var paths []string
 	if atom.TestFirst.BaselineRequired ||
 		len(atom.TestFirst.ObligationRefs) > 0 ||
