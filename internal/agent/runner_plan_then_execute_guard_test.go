@@ -1340,17 +1340,25 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 	if !reject {
 		t.Fatal("post-submit-plan recovery search should be rejected")
 	}
-	if summary != "Corrected submit_plan required" {
+	if summary != "Bounded submit_plan anchor refresh required" {
 		t.Fatalf("unexpected summary: %q", summary)
 	}
-	if !strings.Contains(errorText, "previous `submit_plan` was rejected before it became a valid plan artifact") || !strings.Contains(errorText, "only remaining read exception") {
-		t.Fatalf("rejection should point back to corrected submit_plan, got %q", errorText)
+	if !strings.Contains(errorText, "previous `submit_plan` was rejected before it became a valid plan artifact") || !strings.Contains(errorText, "cmd/idiom/product_workflow.go") {
+		t.Fatalf("rejection should point to the remaining stale anchor refresh, got %q", errorText)
 	}
-	if !strings.Contains(errorText, "source-body obligation") || !strings.Contains(errorText, "`edits[]` coverage") {
-		t.Fatalf("rejection should distinguish source evidence from plan coverage, got %q", errorText)
+	if strings.Contains(errorText, "corrected parser-readable `submit_plan`") {
+		t.Fatalf("rejection must not require submit_plan while an anchor refresh remains, got %q", errorText)
 	}
 	if !strings.Contains(errorText, "Last submit_plan rejection:") || !strings.Contains(errorText, "missing required edit path") {
 		t.Fatalf("rejection should preserve exact submit_plan failure details, got %q", errorText)
+	}
+	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
+	if !ok {
+		t.Fatal("fixture should include a rejected submit_plan")
+	}
+	refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
+	if len(refreshPaths) != 1 || refreshPaths[0] != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("refreshPaths = %#v, want only remaining invalid-anchor path", refreshPaths)
 	}
 	_, _, reject = planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool: "read_file",
@@ -1438,6 +1446,163 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 	}
 	if strings.Contains(errorText, "Do not answer <<QUESTION>>") && !strings.Contains(errorText, "submit corrected edits now") {
 		t.Fatalf("submit-correction refresh note must not reopen blocker/question exits, got %q", errorText)
+	}
+}
+
+func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrection(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go", "internal/productworkflow/coverage_gate.go"},
+		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read EvaluateCoverageGate in internal/productworkflow/coverage_gate.go lines 1-120\n\n1:func EvaluateCoverageGate() {}\n",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "missing required edit path(s): `internal/productworkflow/coverage_gate.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("Mode = %q, want anchor refresh", state.Mode)
+	}
+	if len(state.RefreshPaths) != 1 || state.RefreshPaths[0] != "cmd/idiom/product_workflow.go" {
+		t.Fatalf("RefreshPaths = %#v, want only invalid-anchor path", state.RefreshPaths)
+	}
+	if !slices.Contains(state.CallableTools, "read_file") || !slices.Contains(state.CallableTools, "code_navigate") || slices.Contains(state.CallableTools, "submit_plan") {
+		t.Fatalf("anchor refresh callable tools should be read-only refresh tools, got %#v", state.CallableTools)
+	}
+	if slices.Contains(state.TerminalOptions, "submit_plan") || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
+		t.Fatalf("anchor refresh must not allow terminal submit_plan, terminal=%#v", state.TerminalOptions)
+	}
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+		ToolTransportMode: "textual",
+	})
+	if contract.PhaseID != turnPhaseStaleAnchorRefresh ||
+		!slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionRead) ||
+		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan) {
+		t.Fatalf("contract should advertise anchor-refresh read actions only, phase=%q actions=%#v", contract.PhaseID, contract.ActionPolicy.AllowedActionClasses)
+	}
+
+	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read cmd/idiom/product_workflow.go lines 1515-1640",
+	})
+	state = DerivePlanExecutePlanningState(brief, withRefresh, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
+		t.Fatalf("Mode after refresh = %q, want submit correction", state.Mode)
+	}
+	if !slices.Contains(state.CallableTools, "submit_plan") || slices.Contains(state.CallableTools, "read_file") {
+		t.Fatalf("submit correction callable tools should be submit_plan only, got %#v", state.CallableTools)
+	}
+}
+
+func TestPlanThenExecutePostReadinessAnchorRefreshWinsOverPendingHistory(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+		},
+	}
+
+	_, _, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 1515,
+		EndLine:   1640,
+	}, brief, results)
+	if reject {
+		t.Fatal("bounded anchor refresh should remain allowed even while git history is pending")
+	}
+
+	summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "history_range",
+		Path:      "cmd/idiom/product_workflow.go",
+		StartLine: 1,
+		EndLine:   100,
+	}, brief, results)
+	if !reject {
+		t.Fatal("history request should be rejected while anchor refresh remains")
+	}
+	if summary != "Bounded submit_plan anchor refresh required" {
+		t.Fatalf("summary = %q, want anchor refresh", summary)
+	}
+	if !strings.Contains(errorText, "cmd/idiom/product_workflow.go") || strings.Contains(errorText, "Git history evidence required") {
+		t.Fatalf("history request should preserve anchor-refresh guidance, got %q", errorText)
+	}
+}
+
+func TestPlanThenExecutePostReadinessRecoveryKeepsHistoryToolsAfterAnchorRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		RequiredEditPaths: []string{"cmd/idiom/product_workflow.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+	}
+	results := []workspace.ToolResult{
+		{
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n\n1515:func runProductTDD() {}\n",
+		},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
+		},
+		{
+			Tool:    "read_file",
+			Summary: "Read cmd/idiom/product_workflow.go lines 1515-1640",
+		},
+	}
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeHistoryPending {
+		t.Fatalf("Mode after anchor refresh = %q, want history pending", state.Mode)
+	}
+	opts := planThenExecutePostReadinessRecoveryChatOptionsForBackend(llama.ChatOptions{
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "history_range"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "history_symbol"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, true)
+	if opts.ToolChoice != "required" {
+		t.Fatalf("ToolChoice = %q, want required", opts.ToolChoice)
+	}
+	if len(opts.Tools) != 2 ||
+		!chatOptionsExposeTool(opts, "history_range") ||
+		!chatOptionsExposeTool(opts, "history_symbol") ||
+		chatOptionsExposeTool(opts, "submit_plan") {
+		t.Fatalf("history-pending recovery should expose only history tools, got %#v", opts.Tools)
 	}
 }
 

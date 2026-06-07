@@ -947,17 +947,6 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 	if len(planThenExecuteUnreadRequiredPaths(brief, results)) > 0 {
 		return "", "", false
 	}
-	if pendingHistory := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pendingHistory) > 0 {
-		if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
-			return "", "", false
-		}
-		return "Git history evidence required",
-			"every required_edit_path has satisfied its source-body obligation, but git history evidence is still required before submit_plan. Do not perform additional source reads or search. Call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ", answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
-			true
-	}
-	if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
-		return "", "", false
-	}
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 		invalidAnchorPaths := submitPlanInvalidAnchorPaths(rejected)
 		missingPlanPaths := submitPlanMissingRequiredPaths(rejected)
@@ -980,10 +969,34 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			!successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, target) {
 			return "", "", false
 		}
+		if refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt); len(refreshPaths) > 0 {
+			return "Bounded submit_plan anchor refresh required",
+				"the previous `submit_plan` was rejected before it became a valid plan artifact, and the corrected plan still needs bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(refreshPaths, 4), ", ") + ". " + lastSubmitPlanRejectionBrief(rejected) + "Use exactly one bounded `read_file` with `start_line`/`end_line` or `" + workspace.CodeNavigateToolName + "` with " + workspace.CodeNavigateSourceBodyCapabilityPhrase() + " for one of those paths. Do not call `submit_plan` until the remaining anchor refresh returns.",
+				true
+		}
+		if pendingHistory := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pendingHistory) > 0 {
+			if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
+				return "", "", false
+			}
+			return "Git history evidence required",
+				"the rejected `submit_plan` anchor refresh is complete, but git history evidence is still required before corrected submit_plan. Do not perform additional source reads or search. Call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ".",
+				true
+		}
 		refreshNote := planThenExecutePostSubmitRejectionRefreshNote(brief, results, rejected, rejectedAt)
 		return "Corrected submit_plan required",
 			"every required_edit_path has satisfied its source-body obligation, but the previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(rejected) + "Submit a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required_edit_path with valid anchors or line ranges from existing source-body evidence. Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(brief, rejected) + " " + refreshNote,
 			true
+	}
+	if pendingHistory := planThenExecuteHistoryPendingPaths(brief, results, nil); len(pendingHistory) > 0 {
+		if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
+			return "", "", false
+		}
+		return "Git history evidence required",
+			"every required_edit_path has satisfied its source-body obligation, but git history evidence is still required before submit_plan. Do not perform additional source reads or search. Call " + planExecuteHistoryPendingToolListForPrompt() + " for the intended logic in: " + strings.Join(nonEmptyRunnerStrings(pendingHistory, 4), ", ") + ", answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker.",
+			true
+	}
+	if planThenExecutePostSourceHistoryRequestAllowed(req, brief, results) {
+		return "", "", false
 	}
 	return "Plan submission required",
 		"every required_edit_path has satisfied its source-body obligation. Do not use more read/search discovery. Submit one parser-readable `submit_plan` request whose `edits[]` coverage includes every required path, answer `Decision: source-satisfied` with per-path current-state evidence, or answer <<QUESTION>> with the exact path-specific blocker. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),

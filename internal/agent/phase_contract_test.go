@@ -460,6 +460,73 @@ func TestDeriveTurnPhaseContractStaleAnchorRefreshWinsOverUnreadRequiredSource(t
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
 }
 
+func TestPlanExecutePlanningStateAnchorRefreshWinsOverCandidateReadyAndHistory(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "history_range", "history_symbol", "submit_plan"},
+		RequiredEditPaths: []string{"a.go"},
+		RequiredEvidence:  []string{requiredEvidenceGitHistoryRationale},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "history_range", Summary: "Read git history for a.go lines 1-10", Output: "commit abc123\n\n    explain current behavior"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must cover every required_edit_paths entry with a real edit or source_satisfied_paths entry; invalid edit anchor(s): `a.go: old_text not found in current source`.",
+		},
+		{
+			Tool:    "read_file",
+			Code:    planThenExecuteResultCandidateSourceReady,
+			Summary: "Candidate source already ready",
+			Error:   "terminal planner recovery active",
+		},
+	}
+
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("mode = %q, want anchor_refresh", state.Mode)
+	}
+	assertEqualSet(t, state.ParserVisibleTools, []string{"read_file", "code_navigate"})
+	if slices.Contains(state.ParserVisibleTools, "submit_plan") {
+		t.Fatalf("anchor-refresh state must not expose submit_plan: %#v", state.ParserVisibleTools)
+	}
+
+	withoutHistory := []workspace.ToolResult{results[0], results[2]}
+	state = DerivePlanExecutePlanningState(brief, withoutHistory, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("mode with pending history = %q, want anchor_refresh", state.Mode)
+	}
+	assertEqualSet(t, state.ParserVisibleTools, []string{"read_file", "code_navigate"})
+	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "read_file",
+		Path:      "a.go",
+		StartLine: 1,
+		EndLine:   10,
+	}, brief, withoutHistory); reject {
+		t.Fatalf("pending history must not block bounded anchor refresh, got %q: %s", summary, errorText)
+	}
+
+	withRefresh := append(append([]workspace.ToolResult(nil), withoutHistory...), workspace.ToolResult{
+		Tool:    "read_file",
+		Summary: "Read a.go lines 1-10 (total lines: 10)",
+		Output:  "1:package a\n",
+	})
+	state = DerivePlanExecutePlanningState(brief, withRefresh, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeHistoryPending {
+		t.Fatalf("mode after anchor refresh with pending history = %q, want history_pending", state.Mode)
+	}
+	if summary, errorText, reject := planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
+		Tool:      "history_range",
+		Path:      "a.go",
+		StartLine: 1,
+		EndLine:   10,
+	}, brief, withRefresh); reject {
+		t.Fatalf("post-refresh pending history request should be allowed, got %q: %s", summary, errorText)
+	}
+}
+
 func TestDeriveTurnPhaseContractGroundingRejectedPlanUsesSourceRefresh(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

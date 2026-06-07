@@ -139,7 +139,8 @@ func (r *Runner) supportsTerminalSubmitPlanNativeTools(results []workspace.ToolR
 	if r == nil || r.Client == nil {
 		return true
 	}
-	if r.planThenExecutePlannerPhase() && planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if r.planThenExecutePlannerPhase() && state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		return false
 	}
 	return r.Client.SupportsNativeTools()
@@ -363,16 +364,22 @@ func (r *Runner) Run(
 			!terminalSubmitPlanNativeTools() &&
 			r.planThenExecutePlannerPhase() &&
 			len(opts.Tools) == 0 {
-			if planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults) {
+			state := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+			if state.Mode == PlanExecutePlanningModeAnchorRefresh {
 				currentAllowedTools = append(currentAllowedTools[:0], planThenExecuteAnchorRefreshToolNames()...)
-			} else if planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, collectedResults) {
+			} else if state.Mode == PlanExecutePlanningModeHistoryPending {
+				currentAllowedTools = append(currentAllowedTools[:0], planExecuteHistoryPendingToolNames()...)
+			} else if state.Mode == PlanExecutePlanningModeSubmitReady ||
+				state.Mode == PlanExecutePlanningModeSubmitCorrection ||
+				planThenExecuteTerminalSubmitPlanAllowed(r.RuntimeBrief, collectedResults) {
 				currentAllowedTools = append(currentAllowedTools[:0], "submit_plan")
 			}
 			setCurrentAllowedTools(currentAllowedTools)
 		}
 	}
 	refreshPlanThenExecuteTerminalSurface := func(reason string) {
-		if planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults) {
+		state := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
+		if state.Mode == PlanExecutePlanningModeAnchorRefresh {
 			r.refreshPlanThenExecuteAnchorRefreshSurface(&turnMessages, collectedResults, reason)
 			return
 		}
@@ -3300,11 +3307,12 @@ func (r *Runner) Run(
 			continue
 		}
 		if r.planThenExecutePlannerPhase() && planThenExecuteSubmitPlanRejectedForCorrection(req, result) {
+			recoveryState := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 			if planThenExecuteSubmitPlanGroundingRejectedResult(result) {
 				replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
 				eventRole := "plan_then_execute_grounding_required"
 				prompt := RenderPlanExecuteRecoveryPlan(planThenExecuteGroundingRequiredRecoveryPlan())
-				if planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults) {
+				if recoveryState.Mode == PlanExecutePlanningModeAnchorRefresh {
 					rejectedAt := len(collectedResults) - 1
 					prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, collectedResults, result, rejectedAt)
 					eventRole = "plan_then_execute_anchor_refresh_required"
@@ -3319,14 +3327,13 @@ func (r *Runner) Run(
 			}
 			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
 			rejectedAt := len(collectedResults) - 1
-			needsAnchorRefresh := planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults)
 			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, result, rejectedAt)
 			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required edit path. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
 			eventRole := "plan_then_execute_submit_plan_required"
 			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, collectedResults) {
 				prompt = RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
 				eventRole = "plan_then_execute_empty_submit_plan_recovery"
-			} else if needsAnchorRefresh {
+			} else if recoveryState.Mode == PlanExecutePlanningModeAnchorRefresh {
 				prompt = planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(r.RuntimeBrief, collectedResults, result, rejectedAt)
 				eventRole = "plan_then_execute_anchor_refresh_required"
 			} else if terminalSubmitPlanNativeTools() {
@@ -3369,8 +3376,9 @@ func (r *Runner) Run(
 			planThenExecuteReadinessNudged &&
 			strings.TrimSpace(result.Tool) != "submit_plan" &&
 			successfulSubmitPlanResultCount(collectedResults) == 0 {
+			recoveryState := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
 			if rejectedResult, _, rejected := lastRejectedSubmitPlanCoverageResult(collectedResults); rejected &&
-				!planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, collectedResults) &&
+				recoveryState.Mode != PlanExecutePlanningModeAnchorRefresh &&
 				len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults)) == 0 {
 				planThenExecuteCorrectionAfterRefreshNudged = true
 				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. The next visible action must be a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required edit path. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
@@ -4758,8 +4766,9 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 			}, brief.SearchPolicy)
 			return brief
 		}
-		if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok && planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
-			refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
+		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
+			refreshPaths := state.RefreshPaths
 			next := "the invalid-anchor required path"
 			if len(refreshPaths) > 0 {
 				next = refreshPaths[0]
@@ -7795,14 +7804,14 @@ func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *
 }
 
 func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.ChatMessage, results []workspace.ToolResult, reason string) {
-	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil || !planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
+	if r == nil || !r.planThenExecutePlannerPhase() || messages == nil {
 		return
 	}
-	rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results)
-	if !ok {
+	stateProjection := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if stateProjection.Mode != PlanExecutePlanningModeAnchorRefresh || len(stateProjection.RefreshPaths) == 0 {
 		return
 	}
-	refreshPaths := planThenExecuteRejectedPlanRefreshPaths(r.RuntimeBrief, results, rejected, rejectedAt)
+	refreshPaths := stateProjection.RefreshPaths
 	pruned, droppedActions, droppedScaffolding := prunePlanThenExecuteTerminalTextualMessages(*messages)
 	brief := runnerBriefWithPhaseHints(r.RuntimeBrief, results)
 	state := workerruntime.RunState{
@@ -9424,8 +9433,9 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 	}
 	if missing := r.remainingRequiredEditPaths(results); len(missing) > 0 {
 		if r.planThenExecutePlannerPhase() {
-			if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok && planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
-				refreshPaths := planThenExecuteRejectedPlanRefreshPaths(r.RuntimeBrief, results, rejected, rejectedAt)
+			state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+			if state.Mode == PlanExecutePlanningModeAnchorRefresh && len(state.RefreshPaths) > 0 {
+				refreshPaths := state.RefreshPaths
 				target := "the rejected required path"
 				if len(refreshPaths) > 0 {
 					target = strings.Join(refreshPaths, ", ")
@@ -13471,7 +13481,8 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 	if planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
 		return planThenExecuteUnscopedEmptySubmitPlanRecoveryChatOptions(opts)
 	}
-	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		opts = forceVisibleActionChatOptions(opts)
 		refreshTools := planThenExecuteAnchorRefreshToolNames()
 		if chatOptionsExposeAnyTool(opts, refreshTools...) {
@@ -13484,6 +13495,21 @@ func planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts llama.ChatOp
 			opts.ResponseFormatJSON = false
 		}
 		opts = planExecuteSetExactMaxTokens(opts, planThenExecuteAnchorRefreshMaxTokens)
+		return opts
+	}
+	if state.Mode == PlanExecutePlanningModeHistoryPending {
+		opts = forceVisibleActionChatOptions(opts)
+		historyTools := planExecuteHistoryPendingToolNames()
+		if chatOptionsExposeAnyTool(opts, historyTools...) {
+			opts.Tools = filterChatOptionsTools(opts.Tools, historyTools...)
+			opts.ToolChoice = "required"
+		} else {
+			opts.Tools = nil
+			opts.ToolChoice = ""
+			opts.ForceNativeTools = false
+			opts.ResponseFormatJSON = false
+		}
+		opts = planExecuteSetExactMaxTokens(opts, 1024)
 		return opts
 	}
 	if len(planThenExecuteRequiredCoveragePaths(brief.RequiredEditPaths, "")) == 0 {
@@ -13564,6 +13590,9 @@ func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBr
 			if successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, path) {
 				continue
 			}
+		} else if _, missing := missingPaths[path]; missing &&
+			successfulSourceBodyReadPathBefore(results, rejectedAt, path) {
+			continue
 		} else if successfulSourceEvidencePathAfter(results, rejectedAt, path) {
 			continue
 		}
@@ -13888,7 +13917,8 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace
 	if !planThenExecuteSubmitPlanRejectedForCorrection(req, *lastResult) {
 		return "", false
 	}
-	if planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		return "", false
 	}
 	if nativeSubmitPlan {
@@ -15284,18 +15314,20 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 		}
 	}
 	if rejectedAt < 0 {
+		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 		if rejected, fallbackRejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok &&
 			submitPlanRejectionHasInvalidAnchor(rejected) &&
 			len(submitPlanSyntaxValidationPaths(rejected)) > 0 &&
-			planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
+			state.Mode == PlanExecutePlanningModeAnchorRefresh {
 			rejectedAt = fallbackRejectedAt
 		}
 	}
 	if rejectedAt < 0 {
 		return workspace.ToolRequest{}, "", false
 	}
-	if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok && planThenExecuteRejectedPlanNeedsSourceRefresh(r.RuntimeBrief, results) {
-		for _, path := range planThenExecuteRejectedPlanRefreshPaths(r.RuntimeBrief, results, rejected, rejectedAt) {
+	state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok && state.Mode == PlanExecutePlanningModeAnchorRefresh {
+		for _, path := range state.RefreshPaths {
 			normalized := normalizeRunnerPath(path)
 			if normalized == "" || successfulSourceEvidencePathAfter(results, rejectedAt, normalized) {
 				continue

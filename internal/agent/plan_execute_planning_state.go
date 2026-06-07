@@ -17,6 +17,7 @@ const (
 	PlanExecutePlanningModeOpenCandidate    PlanExecutePlanningMode = "open_candidate"
 	PlanExecutePlanningModeAllowedCandidate PlanExecutePlanningMode = "allowed_candidate"
 	PlanExecutePlanningModeHistoryPending   PlanExecutePlanningMode = "history_pending"
+	PlanExecutePlanningModeAnchorRefresh    PlanExecutePlanningMode = "anchor_refresh"
 	PlanExecutePlanningModeSubmitReady      PlanExecutePlanningMode = "submit_ready"
 	PlanExecutePlanningModeSubmitCorrection PlanExecutePlanningMode = "submit_correction"
 	PlanExecutePlanningModeReviewRepair     PlanExecutePlanningMode = "review_repair"
@@ -60,6 +61,7 @@ type PlanExecutePlanningState struct {
 	AllowedCandidatePaths  []string
 	EvidencePaths          []string
 	SelectedEditPaths      []string
+	RefreshPaths           []string
 	TerminalOptions        []string
 	LowValueActions        []string
 	ParserVisibleTools     []string
@@ -113,8 +115,13 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	state.TerminalOptions = []string{"source_satisfied", "blocker"}
 	unscopedEmptySubmitRecovery := planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results)
 	candidateReadyRejection := planThenExecuteCandidateSourceReadyRejectionSeen(results) && !unscopedEmptySubmitRecovery
+	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
+		state.RefreshPaths = planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt)
+	}
 
 	switch {
+	case len(state.RefreshPaths) > 0:
+		state.Mode = PlanExecutePlanningModeAnchorRefresh
 	case candidateReadyRejection:
 		state.Mode = PlanExecutePlanningModeSubmitReady
 	case planThenExecuteRejectedPlanCorrectionOnly(brief, results):
@@ -142,7 +149,7 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	}
 
 	state.SelectedEditPaths = planThenExecuteSelectedEditPaths(brief, results, state)
-	if !unscopedEmptySubmitRecovery && planThenExecuteHistoryPendingEligible(brief, results, state) {
+	if len(state.RefreshPaths) == 0 && !unscopedEmptySubmitRecovery && planThenExecuteHistoryPendingEligible(brief, results, state) {
 		if pending := planThenExecuteHistoryPendingPaths(brief, results, state.SelectedEditPaths); len(pending) > 0 {
 			state.Mode = PlanExecutePlanningModeHistoryPending
 			state.SelectedEditPaths = pending
@@ -151,7 +158,9 @@ func DerivePlanExecutePlanningState(brief workerruntime.WorkerRuntimeBrief, resu
 	if state.Mode == PlanExecutePlanningModeSubmitReady ||
 		state.Mode == PlanExecutePlanningModeSubmitCorrection ||
 		unscopedEmptySubmitRecovery ||
-		(state.Mode != PlanExecutePlanningModeHistoryPending && len(state.SelectedEditPaths) > 0) {
+		(state.Mode != PlanExecutePlanningModeHistoryPending &&
+			state.Mode != PlanExecutePlanningModeAnchorRefresh &&
+			len(state.SelectedEditPaths) > 0) {
 		state.TerminalOptions = append(state.TerminalOptions, "submit_plan")
 	}
 	state.TerminalOptions = uniquePhaseStrings(state.TerminalOptions)
@@ -202,6 +211,15 @@ func (state *PlanExecutePlanningState) applyProjection(transport PlanExecutePlan
 		state.CallableTools = planExecuteHistoryPendingToolNames()
 		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
 		state.InvalidActionClasses = []string{actionSearch, actionVerify, actionPerEditWrite, actionGenericProbe}
+		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	case PlanExecutePlanningModeAnchorRefresh:
+		state.PhaseID = turnPhaseStaleAnchorRefresh
+		state.Phase = "anchor_refresh"
+		state.DerivationReason = "rejected_submit_plan_needs_source_refresh"
+		state.ParserVisibleTools = planThenExecuteAnchorRefreshToolNames()
+		state.CallableTools = planThenExecuteAnchorRefreshToolNames()
+		state.AllowedActionClasses = []string{actionRead, actionSourceSatisfied, actionBlocker}
+		state.InvalidActionClasses = []string{actionSubmitPlan, actionSearch, actionPerEditWrite}
 		state.TerminalResponseShapes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
 	case PlanExecutePlanningModeSubmitReady, PlanExecutePlanningModeSubmitCorrection:
 		state.PhaseID = turnPhaseSubmitReadyTextual

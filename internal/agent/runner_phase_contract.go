@@ -255,7 +255,8 @@ func runnerTurnPhaseTransportMode(opts llama.ChatOptions, supportsNativeTools bo
 }
 
 func runnerTurnPhaseParserContract(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, supportsNativeTools bool) string {
-	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode == PlanExecutePlanningModeAnchorRefresh {
 		return "source_refresh"
 	}
 	if opts.ResponseFormatJSON {
