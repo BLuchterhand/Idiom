@@ -90,6 +90,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		}, nil
 	}
 	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief != nil {
+		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
 		if err := ValidatePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief); err != nil {
 			state.Status = FeatureStatePlanningRepair
 			state.PlanningLoop.State = FeatureStatePlanningRepair
@@ -102,6 +103,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 		parsed.Plan = NormalizePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief)
 	}
 	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief == nil {
+		PreserveSourceSatisfiedGate(&parsed.Plan, opts.Prompt)
 		if err := ValidatePlanStandaloneWorkspaceContext(parsed.Plan, StandaloneWorkspaceContext{
 			WorkspaceRoot: opts.WorkspaceRoot,
 			Prompt:        opts.Prompt,

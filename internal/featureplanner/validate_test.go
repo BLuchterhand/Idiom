@@ -525,6 +525,45 @@ func TestRunRejectsSourceSatisfiedMissingAnchorText(t *testing.T) {
 	}
 }
 
+func TestRunPreservesSourceSatisfiedGateInDispatchedAtomPrompt(t *testing.T) {
+	root := t.TempDir()
+	mkdirAndWriteFile(t, filepath.Join(root, "scripts/ui/ui_helpers.gd"), "Quality contributors:\n")
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"scripts/ui/ui_helpers.gd"}
+	plan.Atoms[0].AllowedEditPaths = nil
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"scripts/ui/ui_helpers.gd"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"scripts/ui/ui_helpers.gd"}
+	plan.Atoms[0].Prompt = "Implement score breakdown logic in the item tooltip helper."
+	state := NewState("session", "check first", "", 3, time.Unix(1, 0).UTC())
+	var implementorPrompt string
+
+	result, err := Run(state, RunOptions{
+		Prompt:                "Please first check whether the existing areas already satisfy the atom. If it is already satisfied, report source-satisfied and do not edit.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(prompt string, taskFamily string) (string, error) {
+		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+			implementorPrompt = prompt
+			return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`, nil
+		}
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStateComplete {
+		t.Fatalf("state.Status = %q, want complete; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	for _, want := range []string{"Before editing, verify", "Decision: source-satisfied", "do not edit"} {
+		if !strings.Contains(implementorPrompt, want) {
+			t.Fatalf("implementor prompt missing preserved gate %q:\n%s", want, implementorPrompt)
+		}
+	}
+	if !strings.Contains(result.State.Atoms[0].Prompt, "Decision: source-satisfied") {
+		t.Fatalf("persisted atom prompt did not preserve source-satisfied gate: %q", result.State.Atoms[0].Prompt)
+	}
+}
+
 func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *testing.T) {
 	plan := validProductContextPlan()
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"path_test.go"}

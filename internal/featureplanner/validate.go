@@ -944,6 +944,36 @@ func nonEmptySourceSatisfiedAnchors(values []SourceSatisfiedAnchor) []SourceSati
 	return out
 }
 
+func PreserveSourceSatisfiedGate(plan *FeaturePlan, prompt string) {
+	if plan == nil || !promptRequiresSourceSatisfiedGate(prompt) {
+		return
+	}
+	for i := range plan.Atoms {
+		atomPrompt := strings.TrimSpace(plan.Atoms[i].Prompt)
+		if promptCarriesSourceSatisfiedGate(atomPrompt) {
+			continue
+		}
+		prefix := "Before editing, verify whether the current source/test evidence already satisfies the request. If it does, report Decision: source-satisfied with current-state anchors and do not edit. Only implement if that verification proves a real gap."
+		if atomPrompt == "" {
+			plan.Atoms[i].Prompt = prefix
+			continue
+		}
+		plan.Atoms[i].Prompt = prefix + "\n\n" + atomPrompt
+	}
+}
+
+func promptRequiresSourceSatisfiedGate(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "source-satisfied") &&
+		(strings.Contains(lower, "do not edit") || strings.Contains(lower, "don't edit") || strings.Contains(lower, "already satisfied"))
+}
+
+func promptCarriesSourceSatisfiedGate(prompt string) bool {
+	lower := strings.ToLower(prompt)
+	return strings.Contains(lower, "source-satisfied") &&
+		(strings.Contains(lower, "do not edit") || strings.Contains(lower, "don't edit"))
+}
+
 func recordTDDPreExecutionEvidence(state *FeatureState, now time.Time) []Event {
 	if state == nil {
 		return nil
