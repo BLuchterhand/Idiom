@@ -352,6 +352,19 @@ func TestParsePlannerOutputCoercesScalarAcceptanceString(t *testing.T) {
 	}
 }
 
+func TestParsePlannerOutputAcceptsQuestionAlias(t *testing.T) {
+	parsed, err := ParsePlannerOutput(`{"tool":"ask_planner_question","question":"Which source paths should be used for the tooltip?"}`)
+	if err != nil {
+		t.Fatalf("ParsePlannerOutput returned error: %v", err)
+	}
+	if parsed.Kind != ToolAskPlannerQuestion {
+		t.Fatalf("kind = %q, want ask_planner_question", parsed.Kind)
+	}
+	if parsed.Question.QuestionSummary != "Which source paths should be used for the tooltip?" {
+		t.Fatalf("question summary not populated from alias: %+v", parsed.Question)
+	}
+}
+
 func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *testing.T) {
 	plan := validProductContextPlan()
 	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"path_test.go"}
@@ -485,6 +498,10 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 	for _, want := range []string{
 		`return the FeaturePlan object itself`,
 		`Do not nest the plan under a plan, payload, arguments, or input field`,
+		`"tool":"ask_planner_question"`,
+		`"question_summary"`,
+		`"blocking_claim"`,
+		`"requested_decision"`,
 		`do not return both arrays empty`,
 		`"tool":"submit_feature_plan"`,
 		`"top_level_scope"`,
@@ -494,6 +511,33 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("planner prompt missing %q:\n%s", want, prompt)
 		}
+	}
+}
+
+func TestRunOpensNormalizedPlannerQuestionFromQuestionAlias(t *testing.T) {
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{Prompt: "build feature", MaxPlanningIterations: 3}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily != string(taskfamily.FeaturePlannerPlanner) {
+			t.Fatalf("task family = %q, want planner", taskFamily)
+		}
+		return `{"tool":"ask_planner_question","question":"Please provide tooltip source paths."}`, nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStatePlanningQuestion {
+		t.Fatalf("state.Status = %q, want planning-question; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.State.OpenQuestions) != 1 {
+		t.Fatalf("open questions = %+v", result.State.OpenQuestions)
+	}
+	question := result.State.OpenQuestions[0]
+	if question.QuestionSummary != "Please provide tooltip source paths." ||
+		question.BlockingClaim == "" ||
+		question.RequestedDecision == "" ||
+		question.AuthorityRequired == "" ||
+		question.RequiredBefore == "" {
+		t.Fatalf("question was not normalized: %+v", question)
 	}
 }
 

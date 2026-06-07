@@ -128,6 +128,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 	b.WriteString("You are the feature planner. Produce exactly one JSON object.\n")
 	b.WriteString("Valid tools: submit_feature_plan or ask_planner_question.\n")
 	b.WriteString("For submit_feature_plan, return the FeaturePlan object itself with tool=\"submit_feature_plan\" at the top level. Do not nest the plan under a plan, payload, arguments, or input field.\n")
+	b.WriteString("For ask_planner_question, return {\"tool\":\"ask_planner_question\",\"question_summary\":\"...\",\"blocking_claim\":\"what blocks a safe plan\",\"requested_decision\":\"exact operator/source decision needed\",\"question_kind\":\"external_answer_required\",\"authority_required\":\"operator_approval\",\"required_before\":\"plan_approval\"}. Do not use a bare question field.\n")
 	b.WriteString("Every atom must name at least one concrete required_edit_paths or allowed_edit_paths entry. A no-mutation planning test still names the intended source or test paths as allowed scope; do not return both arrays empty.\n")
 
 	if brief != nil {

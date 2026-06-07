@@ -52,11 +52,28 @@ func ParsePlannerOutput(raw string) (ParsedPlannerOutput, error) {
 		if err := json.Unmarshal([]byte(trimmed), &question); err != nil {
 			return ParsedPlannerOutput{}, fmt.Errorf("decode ask_planner_question: %w", err)
 		}
+		question = plannerQuestionFromAliasFields(trimmed, question)
 		question.Status = "open"
 		return ParsedPlannerOutput{Kind: ToolAskPlannerQuestion, Question: question, Raw: trimmed}, nil
 	default:
 		return ParsedPlannerOutput{}, fmt.Errorf("unsupported feature planner tool %q", envelope.Tool)
 	}
+}
+
+func plannerQuestionFromAliasFields(raw string, question PlannerQuestion) PlannerQuestion {
+	if strings.TrimSpace(question.QuestionSummary) != "" {
+		return question
+	}
+	var aliases struct {
+		Question string `json:"question"`
+		Summary  string `json:"summary"`
+		Message  string `json:"message"`
+	}
+	if err := json.Unmarshal([]byte(raw), &aliases); err != nil {
+		return question
+	}
+	question.QuestionSummary = firstNonEmptyTrimmed(aliases.Question, aliases.Summary, aliases.Message)
+	return question
 }
 
 func ValidatePlan(plan FeaturePlan) error {
