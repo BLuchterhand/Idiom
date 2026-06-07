@@ -50,6 +50,39 @@ func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot
 	}
 }
 
+func TestFeaturePlannerTUIDirectPlanValidatesBeforeProductNormalization(t *testing.T) {
+	projectRoot := t.TempDir()
+	effortRel := filepath.Join("docs", "product-workflows", "efforts", "started", "native-quality")
+	effortRoot := filepath.Join(projectRoot, effortRel)
+	writeNativeQualityEffort(t, effortRoot)
+
+	m := &Model{
+		client: &scriptedLLMClient{responses: []string{featurePlannerCommandDemotedFilesPlanJSON(t)}},
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	answer, err := m.runFeaturePlannerCommandOnce(context.Background(), "Continue existing effort at "+filepath.ToSlash(effortRel)+".")
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	for _, want := range []string{
+		"feature-planner: " + featureplanner.FeatureStatePlanningRepair,
+		"native/tests/test_quality_inventory_bindings.cpp",
+		"not omitted or demoted to allowed_edit_paths",
+	} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("expected answer to contain %q, got:\n%s", want, answer)
+		}
+	}
+	if m.lastPlanExecuteRunResult != nil {
+		t.Fatalf("plan-execute should not be dispatched after raw product scope rejection")
+	}
+}
+
 func TestFeaturePlannerTUITurnRetriesEmptyPlannerResponse(t *testing.T) {
 	client := &scriptedLLMClient{
 		responses:     []string{"", `{"tool":"submit_feature_plan","summary":"ok"}`},
@@ -345,14 +378,24 @@ func writeNativeQualityEffort(t *testing.T, effortRoot string) {
 		}},
 	})
 	records := []productworkflow.ImplementationLedgerRecord{{
-		RecordType:           "atom_planned",
-		TaskID:               "mwe-1.3b-native-quality",
-		EffortID:             "native-quality",
-		Timestamp:            "2026-06-05T00:04:00Z",
-		ComplexityTier:       "C1",
-		ContextPackID:        "native-pack",
-		Scope:                &productworkflow.AtomScope{ExpectedFiles: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"}},
+		RecordType:     "atom_planned",
+		TaskID:         "mwe-1.3b-native-quality",
+		EffortID:       "native-quality",
+		Timestamp:      "2026-06-05T00:04:00Z",
+		ComplexityTier: "C1",
+		ContextPackID:  "native-pack",
+		Implementor:    &productworkflow.ImplementorAssignment{ID: "impl-native", Runtime: "idiom", Model: "qwen", Command: "idiom lane plan-execute"},
+		Reviewer:       &productworkflow.ReviewerAssignment{ID: "review-native", Runtime: "codex", Model: "gpt-5", ReasoningEffort: "medium"},
+		Scope: &productworkflow.AtomScope{
+			ExpectedFiles:     []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"},
+			ForbiddenPatterns: []string{"docs/product-workflows/**"},
+		},
 		RequiredVerification: []string{"bin/colony_tests -ts=quality_inventory_bindings"},
+		ReportPaths: &productworkflow.ReportPaths{
+			Implementation: "reports/mwe-1.3b-implementation.json",
+			Review:         "reports/mwe-1.3b-review.json",
+			Investigation:  "reports/mwe-1.3b-investigation.json",
+		},
 	}, {
 		RecordType:              "verification_completed",
 		TaskID:                  "mwe-1.3b-native-quality",
@@ -425,9 +468,84 @@ func featurePlannerCommandBadGoPlanJSON(t *testing.T) string {
 			Prompt: "Implement the binding in Go.",
 		}},
 	}
+	return featurePlannerCommandPlanJSON(t, plan)
+}
+
+func featurePlannerCommandDemotedFilesPlanJSON(t *testing.T) string {
+	t.Helper()
+	plan := featurePlannerCommandNativePlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"native/src/core/colony_sim.h"}
+	plan.Atoms[0].AllowedEditPaths = []string{"native/tests/test_quality_inventory_bindings.cpp"}
+	return featurePlannerCommandPlanJSON(t, plan)
+}
+
+func featurePlannerCommandNativePlan() featureplanner.FeaturePlan {
+	return featureplanner.FeaturePlan{
+		Tool:          featureplanner.ToolSubmitFeaturePlan,
+		SchemaVersion: featureplanner.FeaturePlanSchemaVersion,
+		FeatureID:     "feature-qcb",
+		SourceTask:    featureplanner.SourceTask{Kind: "operator_prompt", Summary: "native quality contributor breakdown"},
+		Summary:       "Expose quality contributor breakdown.",
+		TopLevelScope: featureplanner.TopLevelScope{
+			Objective:       "Expose quality contributor breakdown.",
+			SuccessCriteria: []string{"Contributor rows are visible."},
+		},
+		SDDContract: featureplanner.SDDContract{
+			PRDRequirementRefs: []string{"REQ-NATIVE"},
+			ADRRefs:            []string{"ADR-NATIVE"},
+			Acceptance:         []string{"Contributor rows are visible."},
+		},
+		TDDContract: featureplanner.TDDContract{
+			CoverageTier:                 "unit",
+			RequiredBeforeImplementation: true,
+			Obligations: []featureplanner.TDDObligation{{
+				ID:             "TDD-NATIVE",
+				Behavior:       "Quality contributor rows render.",
+				Command:        "bin/colony_tests -ts=quality_inventory_bindings",
+				RequiredBefore: "implementation",
+			}},
+		},
+		Atoms: []featureplanner.FeatureAtomPlan{featurePlannerCommandNativeAtom()},
+	}
+}
+
+func featurePlannerCommandNativeAtom() featureplanner.FeatureAtomPlan {
+	return featureplanner.FeatureAtomPlan{
+		SchemaVersion:     featureplanner.FeatureAtomSchemaVersion,
+		ID:                "atom-qcb-native",
+		Title:             "Expose native quality contributors",
+		Summary:           "Adds native contributor rows.",
+		RequiredEditPaths: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"},
+		SDDRefs:           []string{"REQ-NATIVE", "ADR-NATIVE"},
+		TDDObligations:    []string{"TDD-NATIVE"},
+		RequiredTests:     []string{"bin/colony_tests -ts=quality_inventory_bindings"},
+		TestFirst: featureplanner.TestFirstPlan{
+			ObligationRefs:             []string{"TDD-NATIVE"},
+			Commands:                   []string{"bin/colony_tests -ts=quality_inventory_bindings"},
+			BaselineRequired:           true,
+			TestArtifactPaths:          []string{"native/tests/test_quality_inventory_bindings.cpp"},
+			PreExecutionEventIDs:       []string{"evt-tdd-native"},
+			ExpectedPreExecutionResult: "red-confirmed",
+			CoverageGateEventID:        "evt-tdd-native",
+		},
+		PlannedTDDSnapshot: featureplanner.PlannedTDDSnapshot{
+			SnapshotID:                   "snap-qcb-native",
+			SnapshotDigest:               "sha256:test",
+			ObligationIDs:                []string{"TDD-NATIVE"},
+			TestCommands:                 []string{"bin/colony_tests -ts=quality_inventory_bindings"},
+			TestArtifactPaths:            []string{"native/tests/test_quality_inventory_bindings.cpp"},
+			ExpectedPreExecutionResults:  []string{"red-confirmed"},
+			CreatedBeforeDispatchEventID: "evt-tdd-native",
+		},
+		Prompt: "Implement the native quality contributor rows.",
+	}
+}
+
+func featurePlannerCommandPlanJSON(t *testing.T, plan featureplanner.FeaturePlan) string {
+	t.Helper()
 	data, err := json.Marshal(plan)
 	if err != nil {
-		t.Fatalf("marshal bad plan: %v", err)
+		t.Fatalf("marshal feature plan: %v", err)
 	}
 	return string(data)
 }
