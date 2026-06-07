@@ -10847,6 +10847,26 @@ func TestPlanExecuteSourceSatisfiedSubmitPlanRejectionDoesNotEnterSubmitCorrecti
 	if !runner.planThenExecuteSourceSatisfiedAnswerCovers(answer, results) {
 		t.Fatal("explicit source-satisfied answer should remain available after typed terminal-shape rejection")
 	}
+
+	afterNoopRejection := append([]workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{Tool: "read_file", Summary: "Read f2 b.go lines 1-10 (total lines: 10)", Output: "1:package b\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected",
+			Error:   "edits[0]: edit would not change a.go; submit real edits, or answer `Decision: source-satisfied` with current-state evidence when no changes are needed",
+		},
+	}, results[2])
+	state := DerivePlanExecutePlanningState(brief, afterNoopRejection, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeSubmitReady {
+		t.Fatalf("mode after source-satisfied rejection following no-op = %q, want submit_ready", state.Mode)
+	}
+	if planThenExecuteSubmitCorrectionActive(brief, afterNoopRejection) {
+		t.Fatal("source-satisfied terminal-shape rejection after no-op should exit submit-correction mode")
+	}
+	if !slices.Contains(state.TerminalResponseShapes, "Decision: source-satisfied") {
+		t.Fatalf("source-satisfied answer shape should be restored: %#v", state.TerminalResponseShapes)
+	}
 }
 
 func TestPlanExecuteSourceSatisfiedRationaleRejectionDoesNotEnterSubmitCorrection(t *testing.T) {
@@ -12636,6 +12656,77 @@ func TestPlanExecuteRunnerRedirectsEmptySubmitPlanSourceSatisfiedToTerminalAnswe
 	}
 	if !sawTerminalRedirect {
 		t.Fatal("source-satisfied submit_plan rejection should trigger terminal-shape recovery")
+	}
+	for _, want := range []string{"Decision: source-satisfied", "a.txt"} {
+		if !strings.Contains(answer, want) {
+			t.Fatalf("answer missing %q:\n%s", want, answer)
+		}
+	}
+}
+
+func TestPlanExecuteRunnerRedirectsSourceSatisfiedAfterNoopSubmitPlan(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	replies := []string{
+		`{"tool":"read_file","path":"a.txt","start_line":1,"end_line":1}`,
+		`{"tool":"submit_plan","rationale":"No-op mistake for already-satisfied path.","edits":[{"path":"a.txt","old_text":"before\n","new_text":"before\n","purpose":"leave existing behavior"}]}`,
+		`{"tool":"submit_plan","decision":"source-satisfied","rationale":"The current source already contains the requested final state and is source-satisfied; no changes are needed.","edits":[]}`,
+		"Decision: source-satisfied\n- a.txt: current source already contains the requested final state.",
+	}
+	var requests int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if requests >= len(replies) {
+			t.Fatalf("unexpected extra chat request")
+		}
+		reply := replies[requests]
+		requests++
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"choices": []map[string]any{{
+				"message": map[string]string{"content": reply},
+			}},
+		})
+	}))
+	defer server.Close()
+
+	var sawTerminalRedirect bool
+	runner := &Runner{
+		Client: llama.NewClient(server.URL, time.Second),
+		Workspace: workspace.NewManager(config.Workspace{
+			Root:         root,
+			CWD:          root,
+			EnableWrites: true,
+		}),
+		Policy: RunPolicy{MaxToolSteps: 8, MaxNoProgressTurns: 8},
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Contract:          "implementation_result",
+			PermissionProfile: "guarded_workspace_write",
+			RequiredEditPaths: []string{"a.txt"},
+		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "plan_then_execute_source_satisfied_terminal_required" {
+				sawTerminalRedirect = true
+			}
+		},
+	}
+	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan edits"}}, llama.ChatOptions{
+		MaxTokens: 2048,
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if requests != len(replies) {
+		t.Fatalf("runner should require an explicit terminal answer after source-satisfied submit_plan, got %d request(s)", requests)
+	}
+	if !sawTerminalRedirect {
+		t.Fatal("source-satisfied submit_plan rejection should trigger terminal-shape recovery after no-op submit_plan")
 	}
 	for _, want := range []string{"Decision: source-satisfied", "a.txt"} {
 		if !strings.Contains(answer, want) {

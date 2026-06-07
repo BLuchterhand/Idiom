@@ -13467,10 +13467,28 @@ func planThenExecuteRejectedPlanCorrectionOnly(brief workerruntime.WorkerRuntime
 	if _, _, ok := lastRejectedSubmitPlanCoverageResult(results); !ok {
 		return false
 	}
+	if planThenExecuteSourceSatisfiedRejectionAfterCoverageRejection(results) {
+		return false
+	}
 	if planThenExecuteUnscopedEmptySubmitPlanRejected(brief, results) {
 		return false
 	}
 	return !planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results)
+}
+
+func planThenExecuteSourceSatisfiedRejectionAfterCoverageRejection(results []workspace.ToolResult) bool {
+	lastCoverage := -1
+	lastSourceSatisfied := -1
+	for i, result := range results {
+		if planThenExecuteSourceSatisfiedSubmitPlanRejectedResult(result) {
+			lastSourceSatisfied = i
+			continue
+		}
+		if planThenExecuteSubmitPlanRejectedResult(result) {
+			lastCoverage = i
+		}
+	}
+	return lastCoverage >= 0 && lastSourceSatisfied > lastCoverage
 }
 
 func planThenExecutePostReadinessRecoveryChatOptions(opts llama.ChatOptions, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) llama.ChatOptions {
