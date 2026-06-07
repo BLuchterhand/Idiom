@@ -4369,7 +4369,7 @@ func (r *Runner) emitNextActionState(step int, reason string, req workspace.Tool
 		if strings.TrimSpace(result.Error) != "" {
 			card := BuildRecoveryCard(RecoveryCardInput{
 				PhaseContract:       phaseContract,
-				CurrentAllowedTools: r.currentAllowedTools,
+				CurrentAllowedTools: effectiveRecoveryCardAllowedTools(r.currentAllowedTools, brief, results, phaseContract),
 				RejectedRequest:     req,
 				RejectedResult:      result,
 				EvidenceRefs:        state.EvidencePaths,
@@ -5460,7 +5460,7 @@ func buildRunnerNextActionStateWithAllowedToolsAndContract(agent string, step in
 	if strings.TrimSpace(result.Error) != "" {
 		state.RecoveryCard = RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
 			PhaseContract:       phaseContract,
-			CurrentAllowedTools: currentAllowedTools,
+			CurrentAllowedTools: effectiveRecoveryCardAllowedTools(currentAllowedTools, brief, results, phaseContract),
 			RejectedRequest:     req,
 			RejectedResult:      result,
 			EvidenceRefs:        state.EvidencePaths,
@@ -5611,6 +5611,27 @@ func buildRunnerFailureFeedbackPacketWithAllowedTools(agent string, step int, re
 		packet.StateSummary = runnerStateSummary(state)
 	}
 	return packet
+}
+
+func effectiveRecoveryCardAllowedTools(currentAllowedTools []string, brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult, contract TurnPhaseContract) []string {
+	if planThenExecutePlannerBrief(brief) {
+		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		if len(uniquePhaseStrings(state.CallableTools)) > 0 {
+			return state.CallableTools
+		}
+	}
+	tools := runnerPlanExecuteTextualAllowedTools(currentAllowedTools, brief, results)
+	if len(uniquePhaseStrings(tools)) > 0 {
+		return tools
+	}
+	tools = uniquePhaseStrings(currentAllowedTools)
+	if len(tools) > 0 {
+		return tools
+	}
+	return firstNonEmptyRecoveryCardStrings(
+		contract.ActionPolicy.CallableToolNames,
+		contract.AllowedTools,
+	)
 }
 
 func reviewRepairTerminalOutcomeRequiredState(brief workerruntime.WorkerRuntimeBrief, result workspace.ToolResult) bool {
@@ -11605,7 +11626,7 @@ func planThenExecuteInvalidAnchorRefreshAllowed(req workspace.ToolRequest, targe
 	}
 	return submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
 		planThenExecuteInvalidAnchorRefreshRequestAllowed(req, target, results) &&
-		!successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, target)
+		!successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target)
 }
 
 const planThenExecuteReadySourceRefreshLimit = 4
@@ -13687,7 +13708,7 @@ func planThenExecuteRejectedPlanNeedsSourceRefresh(brief workerruntime.WorkerRun
 			continue
 		}
 		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[normalized]; invalid {
-			if !successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, normalized) {
+			if !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, normalized) {
 				return true
 			}
 			continue
@@ -13718,7 +13739,7 @@ func planThenExecuteRejectedPlanRefreshPaths(brief workerruntime.WorkerRuntimeBr
 			continue
 		}
 		if _, invalid := submitPlanInvalidAnchorPaths(rejected)[path]; invalid {
-			if successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, path) {
+			if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
 				continue
 			}
 		} else if _, missing := missingPaths[path]; missing &&

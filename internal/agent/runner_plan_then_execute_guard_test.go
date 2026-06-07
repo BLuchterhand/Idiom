@@ -1453,8 +1453,9 @@ func TestPlanThenExecutePostReadinessDiscoveryRejectsAfterBadSubmitPlan(t *testi
 		t.Fatal("one bounded read_file on a missing required plan path with only outline evidence should be allowed")
 	}
 	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read cmd/idiom/product_workflow.go lines 1515-1640",
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
 	})
 	_, errorText, reject = planThenExecutePostReadinessDiscoveryRejection(workspace.ToolRequest{
 		Tool:      "read_file",
@@ -1533,8 +1534,9 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 	}
 
 	withRefresh := append(append([]workspace.ToolResult(nil), results...), workspace.ToolResult{
-		Tool:    "read_file",
-		Summary: "Read cmd/idiom/product_workflow.go lines 1515-1640",
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via go_read_symbol",
+		Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
 	})
 	state = DerivePlanExecutePlanningState(brief, withRefresh, PlanExecutePlanningTransport{TextualToolParser: true})
 	if state.Mode != PlanExecutePlanningModeSubmitCorrection {
@@ -1611,8 +1613,9 @@ func TestPlanThenExecutePostReadinessRecoveryKeepsHistoryToolsAfterAnchorRefresh
 			Error:   "invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`.",
 		},
 		{
-			Tool:    "read_file",
-			Summary: "Read cmd/idiom/product_workflow.go lines 1515-1640",
+			Tool:    "code_navigate",
+			Summary: "Code navigation routed read_symbol via go_read_symbol",
+			Output:  "route_summary: Read runProductTDD in cmd/idiom/product_workflow.go lines 1515-1640\n1515:func runProductTDD() {}",
 		},
 	}
 	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -5862,7 +5865,7 @@ func TestPlanExecuteRejectedPlanCorrectionUsesLargeBudgetForFourExistingFiles(t 
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read EvaluateCoverageGate in internal/productworkflow/coverage_gate.go lines 1-120"},
 		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read TestCoverageGate in internal/productworkflow/coverage_gate_test.go lines 1-80"},
 		{Tool: "submit_plan", Summary: "submit_plan rejected: required edit path coverage mismatch", Error: "missing required edit path(s): `cmd/idiom/product_workflow_test.go`, `internal/productworkflow/coverage_gate.go`, `internal/productworkflow/coverage_gate_test.go`; invalid edit anchor(s): `cmd/idiom/product_workflow.go: old_text not found in current source`; placeholder edit body path(s): `cmd/idiom/product_workflow.go: old_text contains placeholder marker \"... existing code ...\"`"},
-		{Tool: "read_file", Summary: "Read f2 cmd/idiom/product_workflow.go lines 1396-1671"},
+		{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "Read runProductTDD in cmd/idiom/product_workflow.go lines 1396-1671"},
 	})
 
 	if opts.MaxTokens != 16384 {
@@ -6287,6 +6290,53 @@ func TestPlanExecuteRejectedOldTextRequiresAnchorReadyRefresh(t *testing.T) {
 	results = append(results, workspace.ToolResult{Tool: "code_navigate", Summary: "Code navigation routed read_symbol via go_read_symbol", Output: "route_summary: Read TestProductLintFailsOnInvalidTDDCoverageTier in cmd/idiom/product_workflow_test.go lines 5300-5360\n5300:func TestProductLintFailsOnInvalidTDDCoverageTier(t *testing.T) {}"})
 	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
 		t.Fatal("symbol/body source refresh should close stale-anchor refresh requirement")
+	}
+}
+
+func TestPlanExecuteRejectedOldTextKeepsCppRawRangeInAnchorRefresh(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/simulation/production/production_execution.cpp"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		rejected,
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 181-360 (total lines: 1593)"},
+	}
+	if !planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+		t.Fatal("raw C++ source windows must not close a stale old_text anchor rejection")
+	}
+	state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+	if state.Mode != PlanExecutePlanningModeAnchorRefresh {
+		t.Fatalf("Mode after raw range = %q, want anchor refresh", state.Mode)
+	}
+	refreshReq := workspace.ToolRequest{
+		Tool:       "code_navigate",
+		Path:       "native/src/simulation/production/production_execution.cpp",
+		Capability: "read_symbol",
+		Pattern:    "apply_quality_record",
+	}
+	if _, _, reject := planThenExecutePostReadinessDiscoveryRejection(refreshReq, brief, results); reject {
+		t.Fatal("routed symbol/body refresh must remain allowed after a raw range leaves the stale anchor unresolved")
+	}
+	if !planThenExecuteRejectedPlanSourceRefreshAllowedForScope(refreshReq, brief.RequiredEditPaths, results) {
+		t.Fatal("source-refresh allowance must permit routed symbol/body refresh after a raw range")
+	}
+
+	results = append(results, workspace.ToolResult{
+		Tool:    "code_navigate",
+		Summary: "Code navigation routed read_symbol via cpp_read_symbol",
+		Output:  "route_summary: Read apply_quality_record in native/src/simulation/production/production_execution.cpp lines 181-260\n181:void apply_quality_record() {}",
+	})
+	if planThenExecuteRejectedPlanNeedsSourceRefresh(brief, results) {
+		t.Fatal("routed symbol/body evidence should close stale-anchor refresh")
 	}
 }
 

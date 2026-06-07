@@ -19740,6 +19740,88 @@ func TestRejectedToolResultMessageIncludesRecoveryFeedback(t *testing.T) {
 	}
 }
 
+func TestPlanExecuteAnchorRefreshRecoveryCardAdvertisesDerivedReadTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/simulation/production/production_execution.cpp"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		rejected,
+	}
+
+	state := buildRunnerNextActionStateWithAllowedTools("main", 2, "tool_result", workspace.ToolRequest{Tool: "submit_plan"}, rejected, results, false, brief, []string{"submit_plan"})
+	if !strings.Contains(state.RecoveryCard, "currently callable tools:") ||
+		!strings.Contains(state.RecoveryCard, "read_file") ||
+		!strings.Contains(state.RecoveryCard, "code_navigate") {
+		t.Fatalf("anchor-refresh recovery card should advertise derived read tools, got:\n%s", state.RecoveryCard)
+	}
+	if strings.Contains(state.RecoveryCard, "currently callable tools: none") ||
+		strings.Contains(state.RecoveryCard, "currently callable tools: submit_plan") {
+		t.Fatalf("anchor-refresh recovery card advertised stale callable tools, got:\n%s", state.RecoveryCard)
+	}
+}
+
+func TestPlanExecuteAnchorRefreshAutonomyRecoveryCardAdvertisesDerivedReadTools(t *testing.T) {
+	var events []RunEvent
+	brief := workerruntime.WorkerRuntimeBrief{
+		Lane:              "main",
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/simulation/production/production_execution.cpp"},
+	}
+	rejected := workspace.ToolResult{
+		Tool:    "submit_plan",
+		Summary: "submit_plan rejected: required edit path coverage mismatch",
+		Error:   "invalid edit anchor(s): `native/src/simulation/production/production_execution.cpp: old_text not found in current source`.",
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f5 native/src/simulation/production/production_execution.cpp lines 1-180 (total lines: 1593)"},
+		rejected,
+	}
+	runner := &Runner{
+		AgentName:           "main",
+		RuntimeBrief:        brief,
+		currentAllowedTools: []string{"submit_plan"},
+		OnEvent: func(event RunEvent) {
+			events = append(events, event)
+		},
+	}
+	runner.activeAutonomy = newRunnerAutonomyRecorder(runner, RunPolicy{}, brief, results)
+	if runner.activeAutonomy == nil {
+		t.Fatal("expected autonomy recorder")
+	}
+
+	runner.emitNextActionState(2, "tool_result", workspace.ToolRequest{Tool: "submit_plan"}, rejected, results, false)
+	autonomyEvents := decodeRunnerAutonomyEventsForTest(t, events)
+	for _, event := range autonomyEvents {
+		if event.Lifecycle == nil {
+			continue
+		}
+		for _, surface := range event.Lifecycle.SurfaceSummaries {
+			if surface.SurfaceID != "recovery_card" {
+				continue
+			}
+			if !slices.Contains(surface.CallableTools, "read_file") ||
+				!slices.Contains(surface.CallableTools, "code_navigate") ||
+				slices.Contains(surface.CallableTools, "submit_plan") {
+				t.Fatalf("autonomy recovery card callable tools = %#v, want read_file/code_navigate only", surface.CallableTools)
+			}
+			return
+		}
+	}
+	t.Fatalf("expected autonomy recovery_card surface, events=%#v", autonomyEvents)
+}
+
 func assertRecoveryCardEvent(t *testing.T, events []RunEvent, invariantID string, summary string) {
 	t.Helper()
 	cardsByRole := recoveryCardsByRole(t, events)

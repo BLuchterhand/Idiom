@@ -768,7 +768,7 @@ func planThenExecuteRequiredPathDiscoveryRejection(req workspace.ToolRequest, br
 			}
 			if submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
 				planThenExecuteInvalidAnchorRefreshRequestAllowed(req, target, results) &&
-				!successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, target) {
+				!successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target) {
 				return "", "", false
 			}
 			next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
@@ -983,7 +983,7 @@ func planThenExecutePostReadinessDiscoveryRejection(req workspace.ToolRequest, b
 			inRequiredScope &&
 			submitPlanInvalidAnchorPathsAllowsRead(invalidAnchorPaths, target) &&
 			planThenExecuteInvalidAnchorRefreshRequestAllowed(req, target, results) &&
-			!successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, target) {
+			!successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target) {
 			return "", "", false
 		}
 		if refreshPaths := planThenExecuteRejectedPlanRefreshPaths(brief, results, rejected, rejectedAt); len(refreshPaths) > 0 {
@@ -1045,7 +1045,7 @@ func planThenExecutePostSubmitRejectionRefreshNote(brief workerruntime.WorkerRun
 		if path == "" {
 			continue
 		}
-		if _, invalid := invalidAnchorPaths[path]; invalid && !successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, path) {
+		if _, invalid := invalidAnchorPaths[path]; invalid && !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
 			refreshable = append(refreshable, path)
 			continue
 		}
@@ -1082,7 +1082,7 @@ func planThenExecuteRejectedPlanSourceRefreshAllowedForScope(req workspace.ToolR
 		return false
 	}
 	if _, invalidAnchor := submitPlanInvalidAnchorPaths(rejected)[target]; invalidAnchor {
-		if successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, target) {
+		if successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, target) {
 			return false
 		}
 	} else if successfulSourceEvidencePathAfter(results, rejectedAt, target) {
@@ -1294,6 +1294,43 @@ func successfulAnchorReadySourceEvidencePathAfter(results []workspace.ToolResult
 		}
 	}
 	return false
+}
+
+func successfulInvalidAnchorCorrectionEvidencePathAfter(results []workspace.ToolResult, index int, path string) bool {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return false
+	}
+	for i := index + 1; i < len(results); i++ {
+		if invalidAnchorCorrectionEvidenceResult(results[i], path, results[:i+1]) {
+			return true
+		}
+	}
+	return false
+}
+
+func invalidAnchorCorrectionEvidenceResult(result workspace.ToolResult, path string, results []workspace.ToolResult) bool {
+	evidence := planThenExecuteToolResultSourceEvidence(result, path)
+	if evidence.Level != planThenExecuteEvidenceAnchorReady {
+		return false
+	}
+	if strings.TrimSpace(result.Tool) != "read_file" {
+		return true
+	}
+	_, end, hasRange := planThenExecuteReadSummaryLineRange(result.Summary)
+	total, hasTotal := planThenExecuteReadSummaryTotalLines(result.Summary)
+	if hasRange && hasTotal && end >= total {
+		return true
+	}
+	return planThenExecuteReadFileCoversRejectedSyntaxLine(workspace.ToolRequest{
+		Tool: "read_file",
+		Path: path,
+		StartLine: func() int {
+			start, _, _ := planThenExecuteReadSummaryLineRange(result.Summary)
+			return start
+		}(),
+		EndLine: end,
+	}, path, results)
 }
 
 func successfulSourceBodyReadPathBefore(results []workspace.ToolResult, index int, path string) bool {
@@ -1534,7 +1571,7 @@ func planThenExecuteRequiredPathState(brief workerruntime.WorkerRuntimeBrief, re
 		return planThenExecuteRequiredPathBlocked
 	}
 	if rejected, rejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
-		if _, stale := submitPlanInvalidAnchorPaths(rejected)[path]; stale && !successfulAnchorReadySourceEvidencePathAfter(results, rejectedAt, path) {
+		if _, stale := submitPlanInvalidAnchorPaths(rejected)[path]; stale && !successfulInvalidAnchorCorrectionEvidencePathAfter(results, rejectedAt, path) {
 			return planThenExecuteRequiredPathStaleAnchor
 		}
 	}

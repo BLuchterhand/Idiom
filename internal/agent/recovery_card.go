@@ -116,7 +116,7 @@ func (r *Runner) renderRecoveryCardForRejectedAction(req workspace.ToolRequest, 
 	})
 	return RenderRecoveryCard(BuildRecoveryCard(RecoveryCardInput{
 		PhaseContract:               contract,
-		CurrentAllowedTools:         currentAllowedTools,
+		CurrentAllowedTools:         effectiveRecoveryCardAllowedTools(currentAllowedTools, brief, results, contract),
 		RejectedRequest:             req,
 		RejectedResult:              result,
 		EvidenceRefs:                runnerEvidencePathsForBrief(brief, results, 6),
