@@ -16,7 +16,7 @@ import (
 
 	"idiom/internal/config"
 	"idiom/internal/featureplanner"
-	"idiom/internal/featureplannerplanexecute"
+	planexecuteadapter "idiom/internal/featureplanner/adapters/planexecute"
 	"idiom/internal/featureplannerproduct"
 	"idiom/internal/featureplannerruntime"
 	"idiom/internal/frontier/workerruntime"
@@ -207,7 +207,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		ProductWorkflowBrief:  pwBrief,
 		WorkspaceRoot:         req.Config.Workspace.Root,
 		ReconcileActiveRuns: func(state *featureplanner.FeatureState) []featureplanner.Event {
-			return featureplannerplanexecute.ReconcileActiveRuns(state, req.Config.Workspace.Root)
+			return planexecuteadapter.ReconcileActiveRuns(state, req.Config.Workspace.Root)
 		},
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {

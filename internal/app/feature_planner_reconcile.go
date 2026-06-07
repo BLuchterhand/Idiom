@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"idiom/internal/featureplanner"
-	"idiom/internal/featureplannerplanexecute"
+	planexecuteadapter "idiom/internal/featureplanner/adapters/planexecute"
 )
 
 func (m *Model) reconcileFeaturePlannerActivePlanExecuteRuns(state *featureplanner.FeatureState) []featureplanner.Event {
@@ -15,5 +15,5 @@ func (m *Model) reconcileFeaturePlannerActivePlanExecuteRuns(state *featureplann
 	if root == "" {
 		root = strings.TrimSpace(m.cfg.Workspace.Root)
 	}
-	return featureplannerplanexecute.ReconcileActiveRuns(state, root)
+	return planexecuteadapter.ReconcileActiveRuns(state, root)
 }

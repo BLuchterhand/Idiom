@@ -1,4 +1,4 @@
-package featureplannerplanexecute
+package planexecute
 
 import (
 	"encoding/json"
@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"idiom/internal/featureplanner"
-	"idiom/internal/planexecute"
+	coreplanexecute "idiom/internal/planexecute"
 )
 
 func ReconcileActiveRuns(state *featureplanner.FeatureState, root string) []featureplanner.Event {
@@ -47,11 +47,11 @@ func atomForActiveRun(state *featureplanner.FeatureState, run featureplanner.Act
 
 func findTerminalCompletionForActiveRun(root string, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) (string, bool) {
 	for _, sessionID := range progressSessionCandidates(run) {
-		record, completionPath, found, err := planexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
+		record, completionPath, found, err := coreplanexecute.TryLoadPlanExecuteTerminalCompletionRecord(root, sessionID)
 		if err == nil && found && terminalCompletionForActiveRun(record, run, atom) {
 			return encodeTerminalCompletion(record, completionPath), true
 		}
-		state, relPath, found, err := planexecute.TryLoadProgressState(root, sessionID)
+		state, relPath, found, err := coreplanexecute.TryLoadProgressState(root, sessionID)
 		if err == nil && found && terminalProgressForActiveRun(state, run, atom) {
 			return encodeProgressCompletion(state, relPath), true
 		}
@@ -80,7 +80,7 @@ func sessionIDFromProgressPath(path string) string {
 	return base
 }
 
-func terminalProgressForActiveRun(progress planexecute.ProgressState, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
+func terminalProgressForActiveRun(progress coreplanexecute.ProgressState, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
 	if !terminalProgressStatus(progress) {
 		return false
 	}
@@ -102,7 +102,7 @@ func terminalProgressForActiveRun(progress planexecute.ProgressState, run featur
 	return len(atomPaths) == 0 || stringSetsOverlap(atomPaths, progressPaths)
 }
 
-func terminalCompletionForActiveRun(record planexecute.PlanExecuteTerminalCompletionRecord, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
+func terminalCompletionForActiveRun(record coreplanexecute.PlanExecuteTerminalCompletionRecord, run featureplanner.ActiveRun, atom featureplanner.FeatureAtomState) bool {
 	if !terminalCompletionClass(record.TerminalClass) {
 		return false
 	}
@@ -121,18 +121,18 @@ func terminalCompletionForActiveRun(record planexecute.PlanExecuteTerminalComple
 	return len(atomPaths) == 0 || stringSetsOverlap(atomPaths, recordPaths)
 }
 
-func terminalCompletionClass(class planexecute.PlanExecuteTerminalClass) bool {
+func terminalCompletionClass(class coreplanexecute.PlanExecuteTerminalClass) bool {
 	switch class {
-	case planexecute.PlanExecuteTerminalClassSuccess, planexecute.PlanExecuteTerminalClassRecoveryRequired, planexecute.PlanExecuteTerminalClassFailed:
+	case coreplanexecute.PlanExecuteTerminalClassSuccess, coreplanexecute.PlanExecuteTerminalClassRecoveryRequired, coreplanexecute.PlanExecuteTerminalClassFailed:
 		return true
 	default:
 		return false
 	}
 }
 
-func terminalProgressStatus(progress planexecute.ProgressState) bool {
+func terminalProgressStatus(progress coreplanexecute.ProgressState) bool {
 	switch strings.TrimSpace(progress.Status) {
-	case planexecute.ProgressStatusCompleted, planexecute.ProgressStatusFailed, planexecute.ProgressStatusDegraded, planexecute.ProgressStatusBlocked, planexecute.ProgressStatusSkipped:
+	case coreplanexecute.ProgressStatusCompleted, coreplanexecute.ProgressStatusFailed, coreplanexecute.ProgressStatusDegraded, coreplanexecute.ProgressStatusBlocked, coreplanexecute.ProgressStatusSkipped:
 		return true
 	default:
 		return false
@@ -151,8 +151,8 @@ func parseTime(value string) time.Time {
 	return parsed
 }
 
-func encodeTerminalCompletion(record planexecute.PlanExecuteTerminalCompletionRecord, completionPath string) string {
-	fields := planexecute.PlanExecuteTerminalCompletionEventFields(record, completionPath)
+func encodeTerminalCompletion(record coreplanexecute.PlanExecuteTerminalCompletionRecord, completionPath string) string {
+	fields := coreplanexecute.PlanExecuteTerminalCompletionEventFields(record, completionPath)
 	if fields == nil {
 		fields = map[string]any{}
 	}
@@ -163,8 +163,8 @@ func encodeTerminalCompletion(record planexecute.PlanExecuteTerminalCompletionRe
 	return string(body)
 }
 
-func encodeProgressCompletion(progress planexecute.ProgressState, progressPath string) string {
-	fields := planexecute.ProgressStateEventFields(progress, strings.TrimSpace(progressPath))
+func encodeProgressCompletion(progress coreplanexecute.ProgressState, progressPath string) string {
+	fields := coreplanexecute.ProgressStateEventFields(progress, strings.TrimSpace(progressPath))
 	if fields == nil {
 		fields = map[string]any{}
 	}

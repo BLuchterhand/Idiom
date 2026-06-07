@@ -1,24 +1,24 @@
-package featureplannerplanexecute
+package planexecute
 
 import (
 	"testing"
 	"time"
 
 	"idiom/internal/featureplanner"
-	"idiom/internal/planexecute"
+	coreplanexecute "idiom/internal/planexecute"
 )
 
 func TestReconcileActiveRunsFoldsBoundTerminalCompletion(t *testing.T) {
 	root := t.TempDir()
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
-	progress := planexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
-	progress.Phase = planexecute.ProgressPhaseComplete
-	progress.Status = planexecute.ProgressStatusCompleted
-	record := planexecute.NewPlanExecuteTerminalCompletionRecord(progress, planexecute.PlanExecuteTerminalCompletionInput{
+	progress := coreplanexecute.NewProgressState("atom-1-run-1", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+	progress.Phase = coreplanexecute.ProgressPhaseComplete
+	progress.Status = coreplanexecute.ProgressStatusCompleted
+	record := coreplanexecute.NewPlanExecuteTerminalCompletionRecord(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
 		ProgressPath: ".idiom/plan-execute/sessions/atom-1-run-1.json",
 		CompletedAt:  time.Now().UTC(),
 	})
-	if _, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, record); err != nil {
+	if _, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, record); err != nil {
 		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
 	}
 
@@ -38,14 +38,14 @@ func TestReconcileActiveRunsFoldsBoundTerminalCompletion(t *testing.T) {
 func TestReconcileActiveRunsIgnoresUnboundOverlappingTerminalCompletion(t *testing.T) {
 	root := t.TempDir()
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
-	progress := planexecute.NewProgressState("other-run", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
-	progress.Phase = planexecute.ProgressPhaseComplete
-	progress.Status = planexecute.ProgressStatusCompleted
-	record := planexecute.NewPlanExecuteTerminalCompletionRecord(progress, planexecute.PlanExecuteTerminalCompletionInput{
+	progress := coreplanexecute.NewProgressState("other-run", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+	progress.Phase = coreplanexecute.ProgressPhaseComplete
+	progress.Status = coreplanexecute.ProgressStatusCompleted
+	record := coreplanexecute.NewPlanExecuteTerminalCompletionRecord(progress, coreplanexecute.PlanExecuteTerminalCompletionInput{
 		ProgressPath: ".idiom/plan-execute/sessions/other-run.json",
 		CompletedAt:  time.Now().UTC(),
 	})
-	if _, err := planexecute.SavePlanExecuteTerminalCompletionRecord(root, record); err != nil {
+	if _, err := coreplanexecute.SavePlanExecuteTerminalCompletionRecord(root, record); err != nil {
 		t.Fatalf("SavePlanExecuteTerminalCompletionRecord: %v", err)
 	}
 
@@ -65,10 +65,10 @@ func TestReconcileActiveRunsIgnoresUnboundOverlappingTerminalCompletion(t *testi
 func TestReconcileActiveRunsIgnoresUnboundOverlappingTerminalProgress(t *testing.T) {
 	root := t.TempDir()
 	state := featureStateWithActivePlanExecuteRunForTest("atom-1-run-1")
-	progress := planexecute.NewProgressState("generated-session", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
-	progress.Phase = planexecute.ProgressPhaseComplete
-	progress.Status = planexecute.ProgressStatusCompleted
-	if _, err := planexecute.SaveProgressState(root, &progress); err != nil {
+	progress := coreplanexecute.NewProgressState("generated-session", "prompt", "", []string{"pkg/feature.go"}, nil, time.Now().UTC())
+	progress.Phase = coreplanexecute.ProgressPhaseComplete
+	progress.Status = coreplanexecute.ProgressStatusCompleted
+	if _, err := coreplanexecute.SaveProgressState(root, &progress); err != nil {
 		t.Fatalf("SaveProgressState: %v", err)
 	}
 
