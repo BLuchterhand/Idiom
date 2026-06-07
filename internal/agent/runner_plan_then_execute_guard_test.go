@@ -6630,6 +6630,46 @@ func TestPlanExecuteSourceRefreshRecoveryClearsStaleSubmitOnlySurface(t *testing
 	}
 }
 
+func TestPlanExecuteCompletionGateRecoveryPreservesAnchorRefreshTools(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim.h lines 1-80 (total lines: 120)"},
+		{Tool: "read_file", Summary: "Read f2 native/tests/test_quality_inventory_bindings.cpp lines 1-180 (total lines: 355)"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: required edit path coverage mismatch",
+			Error:   "submit_plan must cover every required_edit_paths entry; missing required edit path(s): `native/src/core/colony_sim.h`; invalid edit anchor(s): `native/tests/test_quality_inventory_bindings.cpp: old_text not found in current source`.",
+		},
+		{
+			Tool:    "completion_gate",
+			Summary: "Plan-execute completion gate rejected final answer",
+			Error:   "plan-execute planner phase requires a successful submit_plan tool result before final answer",
+		},
+	}
+	opts := completionGateRecoveryChatOptionsForBackend(llama.ChatOptions{
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
+		},
+		ToolChoice: "auto",
+	}, brief, results, true)
+	if opts.ForceNativeTools || opts.ResponseFormatJSON {
+		t.Fatalf("anchor-refresh completion recovery should keep normal source-refresh transport, got force=%v json=%v", opts.ForceNativeTools, opts.ResponseFormatJSON)
+	}
+	if !chatOptionsExposeTool(opts, "read_file") || !chatOptionsExposeTool(opts, "code_navigate") || chatOptionsExposeTool(opts, "submit_plan") || opts.ToolChoice != "required" {
+		t.Fatalf("completion-gate recovery must preserve anchor-refresh tools only, got choice=%q tools=%#v", opts.ToolChoice, opts.Tools)
+	}
+	if opts.MaxTokens != planThenExecuteAnchorRefreshMaxTokens {
+		t.Fatalf("completion-gate anchor refresh should clamp retry budget to %d tokens, got %d", planThenExecuteAnchorRefreshMaxTokens, opts.MaxTokens)
+	}
+}
+
 func TestPlanExecutePostReadinessRecoveryAllowsCandidateAnchorRefresh(t *testing.T) {
 	thinkingOn := true
 	brief := workerruntime.WorkerRuntimeBrief{

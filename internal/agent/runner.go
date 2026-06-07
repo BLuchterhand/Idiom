@@ -13140,6 +13140,10 @@ func completionGateRecoveryChatOptionsForBackend(opts llama.ChatOptions, brief w
 		return opts
 	}
 	if planThenExecutePlannerBrief(brief) {
+		state := DerivePlanExecutePlanningState(brief, results, PlanExecutePlanningTransport{SupportsNativeTools: supportsNativeTools, TextualToolParser: !supportsNativeTools})
+		if state.Mode == PlanExecutePlanningModeAnchorRefresh || state.Mode == PlanExecutePlanningModeHistoryPending {
+			return planThenExecutePostReadinessRecoveryChatOptionsForBackend(opts, brief, results, supportsNativeTools)
+		}
 		return planThenExecuteCandidatePostReadChatOptionsForBackend(opts, brief, results, supportsNativeTools)
 	}
 	if strings.TrimSpace(brief.TaskFamily) != PlanThenExecutePlannerTaskFamily &&
