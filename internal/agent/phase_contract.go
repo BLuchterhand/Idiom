@@ -500,11 +500,12 @@ func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContrac
 	contract.Phase = firstPhaseString(state.Phase, "anchor_refresh")
 	contract.DerivationReason = firstPhaseString(state.DerivationReason, "rejected_submit_plan_needs_source_refresh")
 	contract.AllowedTools = filterPhaseTools(baseTools, state.CallableTools...)
-	contract.RequiredNext = []string{"bounded source-body refresh for the stale or missing anchor, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.RequiredNext = []string{"bounded source-body refresh for the stale or missing anchor before any terminal planner outcome"}
 	if len(state.RefreshPaths) > 0 {
 		contract.RequiredNext = []string{"bounded source-body refresh for: " + strings.Join(nonEmptyRunnerStrings(state.RefreshPaths, 4), ", ") + "; do not submit_plan until that refresh returns"}
 	}
-	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
+	contract.InvalidNext = []string{"submit_plan before bounded anchor refresh", "Decision: source-satisfied or <<QUESTION>> before bounded anchor refresh", "broad search", "per-edit write in planner phase"}
+	contract.StopConditions = []string{"bounded_source_refresh_returned"}
 	contract.TerminalOutcomes = append([]string(nil), state.TerminalResponseShapes...)
 	contract.ActionPolicy = TurnActionClassPolicy{
 		AllowedActionClasses:   append([]string(nil), state.AllowedActionClasses...),

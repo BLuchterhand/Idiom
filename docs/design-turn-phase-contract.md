@@ -350,7 +350,7 @@ class.
 | plan-execute required-source | `read`, `source_satisfied` only with current-state evidence for every required path, `blocker` | `submit_plan`, `per_edit_write`, broad `search` |
 | plan-execute submit-ready native-required | callable `submit_plan`; `source_satisfied` and `blocker` are valid terminal exceptions only after transition to textual/completion-gate recovery | `read`, `search`, `verify`, `per_edit_write`, `generic_probe`, `prose_final`, non-tool prose while `ToolChoice=required` |
 | plan-execute submit-ready textual/correction | `submit_plan`, `source_satisfied`, `blocker` | `read`, `search`, `verify`, `per_edit_write`, `generic_probe`, `prose_final` |
-| plan-execute stale-anchor refresh | bounded `read`, `blocker` | `submit_plan`, broad `search`, `per_edit_write` |
+| plan-execute stale-anchor refresh | bounded `read` | `submit_plan`, `source_satisfied`, `blocker`, broad `search`, `per_edit_write` |
 | malformed submit-plan recovery after source-ready | `submit_plan`, `source_satisfied`, `blocker` | `read`, `search`, `per_edit_write`, `prose_final` |
 | review-repair terminal | `review_pass`, `submit_plan`, `blocker` | `read`, `search`, `verify`, `generic_probe`, `prose_final` |
 | implementation write-ready | scoped `per_edit_write`, `blocker` | broad `search`, unrelated `per_edit_write`, `generic_probe` |
@@ -362,8 +362,9 @@ action classes small enough that every new class has a clear contract meaning.
 
 Submit-ready and stale-anchor refresh must remain distinct phases. A rejected
 plan with stale or missing anchors enters an anchor-refresh phase that exposes
-only bounded source-body refresh and blocker outcomes. It is not an exception to
-terminal submit-ready; it is a different phase with a different contract.
+only bounded source-body refresh while concrete refresh paths are known. It is
+not an exception to terminal submit-ready; it is a different phase with a
+different contract.
 
 ## Runtime Call Compatibility
 

@@ -413,6 +413,7 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 			PermissionProfile: "guarded_workspace_write",
 			AllowedTools:      []string{"read_file", "code_navigate", "search_content", "submit_plan"},
 			RequiredEditPaths: []string{"a.go"},
+			StopConditions:    []string{"submit_plan_returned", "source_satisfied_reported", "path_specific_blocker_reported"},
 		},
 		Results: []workspace.ToolResult{
 			{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)"},
@@ -428,11 +429,19 @@ func TestDeriveTurnPhaseContractStaleAnchorRefresh(t *testing.T) {
 		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseStaleAnchorRefresh)
 	}
 	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionRead)
-	assertContains(t, contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied)
 	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
-	assertContains(t, contract.TerminalOutcomes, "Decision: source-satisfied")
-	assertContains(t, contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied")
-	assertContains(t, contract.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSourceSatisfied)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionBlocker)
+	if slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionSourceSatisfied) ||
+		slices.Contains(contract.ActionPolicy.AllowedActionClasses, actionBlocker) ||
+		slices.Contains(contract.TerminalOutcomes, "Decision: source-satisfied") ||
+		slices.Contains(contract.StopConditions, "source_satisfied_reported") ||
+		slices.Contains(contract.StopConditions, "path_specific_blocker_reported") ||
+		slices.Contains(contract.ActionPolicy.TerminalResponseShapes, "Decision: source-satisfied") ||
+		slices.Contains(contract.RuntimeCall.ExpressibleActionClasses, actionSourceSatisfied) {
+		t.Fatalf("anchor refresh must be read-only, contract=%#v", contract)
+	}
+	assertEqualSet(t, contract.StopConditions, []string{"bounded_source_refresh_returned"})
 	assertEqualSet(t, contract.AllowedTools, []string{"read_file", "code_navigate"})
 }
 

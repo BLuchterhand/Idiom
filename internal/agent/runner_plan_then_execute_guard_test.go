@@ -545,6 +545,42 @@ func TestDeterministicPlanExecuteGroundingRecoveryDoesNotStealTerminalReply(t *t
 	}
 }
 
+func TestDeterministicPlanExecuteAnchorRefreshOverridesTerminalReply(t *testing.T) {
+	runner := &Runner{
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			Objective:         "retry rejected plan with refreshed anchors",
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+		},
+	}
+	req, _, ok := runner.deterministicPlanExecuteGroundingRecoveryRequest(
+		"<<QUESTION>>: exact blocker: a.txt and b.txt cannot be updated from the rejected submit_plan evidence.",
+		[]workspace.ToolResult{
+			{
+				Tool:    "read_file",
+				Summary: "Read f1 a.txt lines 80-120 (total lines: 120)",
+				Output:  "80:before\n120:end\n",
+			},
+			{
+				Tool:    "read_file",
+				Summary: "Read f2 b.txt lines 1-20 (total lines: 20)",
+				Output:  "1:before\n20:end\n",
+			},
+			{
+				Tool:    "submit_plan",
+				Summary: "submit_plan rejected: required edit path coverage mismatch",
+				Error:   "submit_plan must use edits[] for changed required paths and top-level source_satisfied_paths for already-final required paths; missing required edit path(s): `b.txt`; invalid edit anchor(s): `a.txt: old_text not found in current source`.",
+			},
+		},
+	)
+	if !ok {
+		t.Fatal("anchor-refresh terminal-shaped replies must still trigger deterministic source refresh")
+	}
+	if req.Tool != "read_file" || req.Path != "a.txt" || req.StartLine != 80 || req.EndLine != 120 {
+		t.Fatalf("expected bounded reread of prior invalid-anchor range, got %#v", req)
+	}
+}
+
 func TestPlanThenExecuteSubmitPlanCoverageGuardRejectsPlaceholderBodiesWithTypedPath(t *testing.T) {
 	runner := &Runner{
 		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
@@ -1516,6 +1552,11 @@ func TestPlanThenExecutePlanningStateTransitionsFromAnchorRefreshToSubmitCorrect
 	}
 	if !slices.Contains(state.CallableTools, "read_file") || !slices.Contains(state.CallableTools, "code_navigate") || slices.Contains(state.CallableTools, "submit_plan") {
 		t.Fatalf("anchor refresh callable tools should be read-only refresh tools, got %#v", state.CallableTools)
+	}
+	if !slices.Equal(state.AllowedActionClasses, []string{actionRead}) ||
+		slices.Contains(state.TerminalResponseShapes, "Decision: source-satisfied") ||
+		slices.Contains(state.TerminalResponseShapes, "<<QUESTION>>:") {
+		t.Fatalf("anchor refresh should advertise read-only action classes, actions=%#v terminal=%#v", state.AllowedActionClasses, state.TerminalResponseShapes)
 	}
 	if slices.Contains(state.TerminalOptions, "submit_plan") || planThenExecuteTerminalSubmitPlanAllowed(brief, results) {
 		t.Fatalf("anchor refresh must not allow terminal submit_plan, terminal=%#v", state.TerminalOptions)
@@ -14038,7 +14079,7 @@ func TestPlanExecuteCandidateRejectedPlanDoesNotAcceptGenericBlockedProse(t *tes
 		"<<QUESTION>>: exact blocker: current source anchor for a.txt could not be recovered after the rejected submit_plan.",
 	}
 	var requests int
-	var sawCompletionRejection bool
+	var sawDeterministicRefresh bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests >= len(replies) {
 			t.Fatalf("unexpected extra chat request")
@@ -14067,6 +14108,11 @@ func TestPlanExecuteCandidateRejectedPlanDoesNotAcceptGenericBlockedProse(t *tes
 			PermissionProfile: "guarded_workspace_write",
 			AllowedEditPaths:  []string{"a.txt"},
 		},
+		OnEvent: func(event RunEvent) {
+			if event.Role == "completion_recovery_auto_grounding" {
+				sawDeterministicRefresh = true
+			}
+		},
 	}
 	answer, err := runner.Run(context.Background(), []llama.ChatMessage{{Role: "user", Content: "plan candidate edit"}}, llama.ChatOptions{
 		MaxTokens: 2048,
@@ -14075,19 +14121,15 @@ func TestPlanExecuteCandidateRejectedPlanDoesNotAcceptGenericBlockedProse(t *tes
 			{Type: "function", Function: llama.ToolFunction{Name: "submit_plan"}},
 		},
 		ToolChoice: "auto",
-	}, nil, nil, func(event ToolResultEvent) {
-		if event.Result.Tool == "completion_gate" && strings.Contains(event.Result.Summary, "Plan-execute completion gate rejected final answer") {
-			sawCompletionRejection = true
-		}
-	})
+	}, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("Run: %v", err)
 	}
 	if requests != len(replies) {
 		t.Fatalf("generic blocked prose should have been rejected and retried, got %d request(s)", requests)
 	}
-	if !sawCompletionRejection {
-		t.Fatal("expected completion gate rejection for generic blocked prose")
+	if !sawDeterministicRefresh {
+		t.Fatal("expected generic blocked prose to trigger deterministic anchor refresh")
 	}
 	if !strings.Contains(answer, "exact blocker") {
 		t.Fatalf("expected final typed blocker, got:\n%s", answer)
@@ -14302,10 +14344,13 @@ func TestPlanExecuteRecoveryForcesAnchorRefreshAfterInvalidSubmitPlan(t *testing
 		recoveryText.WriteString(message.Content)
 		recoveryText.WriteString("\n")
 	}
-	for _, want := range []string{"anchor-refresh phase", "bounded source-body request for one of those paths", "Do not call `submit_plan` again until the bounded refresh returns"} {
+	for _, want := range []string{"anchor-refresh phase", "bounded source-body request for one of those paths", "Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`"} {
 		if !strings.Contains(recoveryText.String(), want) {
 			t.Fatalf("anchor recovery request missing %q:\n%s", want, recoveryText.String())
 		}
+	}
+	if strings.Contains(recoveryText.String(), "path_specific_blocker_reported") {
+		t.Fatalf("anchor recovery request must not advertise blocker stop condition:\n%s", recoveryText.String())
 	}
 	if strings.Contains(recoveryText.String(), "The next visible action must be a corrected parser-readable `submit_plan` request") {
 		t.Fatalf("anchor recovery request must not also demand corrected submit_plan before refresh:\n%s", recoveryText.String())

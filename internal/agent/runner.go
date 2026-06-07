@@ -4773,12 +4773,12 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 				next = refreshPaths[0]
 			}
 			brief.RequiredNext = mergeRunnerStateStrings([]string{
-				fmt.Sprintf("refresh bounded source-body evidence for %s before corrected submit_plan; then submit a corrected plan using anchors copied from the refreshed source, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker", next),
+				fmt.Sprintf("refresh bounded source-body evidence for %s before corrected submit_plan; then submit a corrected plan using anchors copied from the refreshed source", next),
 			}, rejectRunnerStateStrings(brief.RequiredNext, planThenExecuteSubmitReadySourceHint))
 			brief.Constraints = mergeRunnerStateStrings([]string{"plan_then_execute_submit_anchor_refresh_required"}, brief.Constraints)
 			brief.InvalidActions = mergeRunnerStateStrings([]string{
 				"corrected submit_plan before refreshing the stale or missing edit anchor",
-				"final answer before submit_plan succeeds unless it is a source-satisfied closeout with current-state evidence for every required path",
+				"final answer, Decision: source-satisfied, or <<QUESTION>> before bounded anchor refresh returns",
 				"per-edit write tool in plan-execute planner phase",
 				"shell/git/source-sanity verification in plan-execute planner phase",
 				"open-ended read/search/discovery outside the invalid-anchor source refresh",
@@ -7919,7 +7919,7 @@ func (r *Runner) refreshPlanThenExecuteAnchorRefreshSurface(messages *[]llama.Ch
 		RequiredTools:     planThenExecuteAnchorRefreshToolNames(),
 		ReadinessGate:     []string{"bounded_anchor_refresh_before_corrected_submit_plan"},
 		SearchPolicy:      append([]string(nil), brief.SearchPolicy...),
-		StopConditions:    []string{"bounded_source_refresh_returned", "path_specific_blocker_reported"},
+		StopConditions:    []string{"bounded_source_refresh_returned"},
 		FinalCritic:       []string{"refresh_targets_rejected_anchor_path", "no unrelated discovery"},
 		NextActions:       append([]string(nil), brief.RequiredNext...),
 		InvalidActions:    append([]string(nil), brief.InvalidActions...),
@@ -9536,7 +9536,7 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 				return strings.Join([]string{
 					"The completion gate rejected a final answer after `submit_plan` was rejected for stale or missing edit anchors.",
 					"This is an anchor-refresh phase. Read/search/discovery is allowed only for one bounded source-body refresh on: " + target + ".",
-					"Your next visible message must be exactly one parser-readable bounded `read_file` or `code_navigate` source-body request for one of those paths, or `<<QUESTION>>:` with the exact path-specific blocker. Do not call `submit_plan` again until the bounded refresh returns.",
+					"Your next visible message must be exactly one parser-readable bounded `read_file` or `code_navigate` source-body request for one of those paths. Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
 				}, "\n\n"), false, true
 			}
 			if nudge := planThenExecuteUnreadRequiredSourceNudge(r.RuntimeBrief, results); nudge != "" {
@@ -13776,7 +13776,7 @@ func planThenExecuteAnchorRefreshAfterRejectedSubmitPlanPrompt(brief workerrunti
 		"This is an anchor-refresh phase, not a submit-plan phase. The corrected plan cannot be valid until source evidence is refreshed for: " + target + ".",
 		"Your next visible message must be exactly one parser-readable bounded source-body request for one of those paths. For symbol reads, use " + workspace.CodeNavigateCapabilityInstruction(workspace.CapReadSymbol) + ", a real path from the rejection/current evidence, and a real declaration pattern from current evidence. Or use `read_file` with explicit `start_line`/`end_line` only when that exact range comes from current source evidence.",
 		"For large Go/source files, raw `read_file` windows are refresh evidence but are not enough to close an invalid-anchor correction; prefer the symbol/body route for the declaration you intend to edit.",
-		"Do not call `submit_plan` again until the bounded refresh returns. If no bounded refresh can be formed, answer `<<QUESTION>>:` with the exact path-specific blocker.",
+		"Do not call `submit_plan` again, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or reply in prose until the bounded refresh returns.",
 	}, "\n\n")
 }
 
@@ -13936,13 +13936,26 @@ func filterChatOptionsTools(tools []llama.Tool, names ...string) []llama.Tool {
 func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results []workspace.ToolResult) (workspace.ToolResult, bool) {
 	missing := r.remainingRequiredEditPaths(results)
 	submitCorrection := r.planThenExecutePlannerPhase() && planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results)
-	if len(missing) == 0 || (!submitCorrection && requiredPathBlockerAnswerCovers(reply, missing)) {
+	anchorRefreshState := PlanExecutePlanningState{}
+	anchorRefresh := false
+	if r.planThenExecutePlannerPhase() {
+		anchorRefreshState = DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		anchorRefresh = anchorRefreshState.Mode == PlanExecutePlanningModeAnchorRefresh && len(anchorRefreshState.RefreshPaths) > 0
+	}
+	if len(missing) == 0 || (!submitCorrection && !anchorRefresh && requiredPathBlockerAnswerCovers(reply, missing)) {
 		return workspace.ToolResult{}, false
 	}
-	if r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(reply, results) {
+	if !anchorRefresh && r.planThenExecutePlannerPhase() && r.planThenExecuteSourceSatisfiedAnswerCovers(reply, results) {
 		return workspace.ToolResult{}, false
 	}
 	if r.planThenExecutePlannerPhase() {
+		if anchorRefresh {
+			return workspace.ToolResult{
+				Tool:    "completion_gate",
+				Summary: "Completion gate rejected anchor-refresh final answer",
+				Error:   "bounded source-body refresh remains required for rejected submit_plan anchor path(s): " + quotedRunnerStrings(anchorRefreshState.RefreshPaths) + ". Final answers, `Decision: source-satisfied`, and `<<QUESTION>>:` do not satisfy this phase while a concrete refresh path is available. Issue exactly one bounded `read_file` or `code_navigate` source-body request for one refresh path before corrected `submit_plan`.",
+			}, true
+		}
 		correction := ""
 		if rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results); ok {
 			correctionBrief := lastSubmitPlanRejectionBrief(rejected)
@@ -15451,7 +15464,14 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 		return workspace.ToolRequest{}, "", false
 	}
 	if planThenExecuteTerminalReplyShape(reply) {
-		return workspace.ToolRequest{}, "", false
+		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
+		if state.Mode != PlanExecutePlanningModeAnchorRefresh || len(state.RefreshPaths) == 0 {
+			return workspace.ToolRequest{}, "", false
+		}
+		rejected, _, ok := lastRejectedSubmitPlanCoverageResult(results)
+		if !ok || !submitPlanRejectionHasInvalidAnchor(rejected) {
+			return workspace.ToolRequest{}, "", false
+		}
 	}
 	rejectedAt := -1
 	for i := len(results) - 1; i >= 0; i-- {
@@ -15464,7 +15484,6 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 		state := DerivePlanExecutePlanningState(r.RuntimeBrief, results, PlanExecutePlanningTransport{TextualToolParser: true})
 		if rejected, fallbackRejectedAt, ok := lastRejectedSubmitPlanCoverageResult(results); ok &&
 			submitPlanRejectionHasInvalidAnchor(rejected) &&
-			len(submitPlanSyntaxValidationPaths(rejected)) > 0 &&
 			state.Mode == PlanExecutePlanningModeAnchorRefresh {
 			rejectedAt = fallbackRejectedAt
 		}
@@ -15479,14 +15498,7 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 			if normalized == "" || successfulSourceEvidencePathAfter(results, rejectedAt, normalized) {
 				continue
 			}
-			start, end := 1, 180
-			if line, ok := submitPlanSyntaxValidationLineForPath(rejected, normalized); ok {
-				start = line - 40
-				if start < 1 {
-					start = 1
-				}
-				end = line + 40
-			}
+			start, end := planThenExecuteAnchorRefreshFallbackRange(normalized, results, rejected)
 			req := workspace.ToolRequest{
 				Tool:            "read_file",
 				Path:            normalized,
@@ -15540,6 +15552,32 @@ func (r *Runner) deterministicPlanExecuteGroundingRecoveryRequest(reply string, 
 		return req, marshalToolRequestRaw(req), true
 	}
 	return workspace.ToolRequest{}, "", false
+}
+
+func planThenExecuteAnchorRefreshFallbackRange(path string, results []workspace.ToolResult, rejected workspace.ToolResult) (int, int) {
+	path = normalizeRunnerPath(path)
+	if path == "" {
+		return 1, 180
+	}
+	if line, ok := submitPlanSyntaxValidationLineForPath(rejected, path); ok {
+		start := line - 40
+		if start < 1 {
+			start = 1
+		}
+		return start, line + 40
+	}
+	ranges := readRangesForPathFromResults(results, path)
+	for i := len(ranges) - 1; i >= 0; i-- {
+		if ranges[i].start <= 0 || ranges[i].end < ranges[i].start {
+			continue
+		}
+		end := ranges[i].end
+		if ranges[i].total > 0 && end > ranges[i].total {
+			end = ranges[i].total
+		}
+		return ranges[i].start, end
+	}
+	return 1, 180
 }
 
 func (r *Runner) deterministicPlanExecuteSourceSatisfiedEvidenceRead(reply string, results []workspace.ToolResult) (workspace.ToolRequest, string, bool) {
