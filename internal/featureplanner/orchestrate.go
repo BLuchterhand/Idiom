@@ -477,32 +477,7 @@ func ApplyImplementorOutput(state *FeatureState, atom *FeatureAtomState, raw str
 	if claimsUnverifiedEditOrTestEvidence(trimmed) {
 		return rejectUnverifiedCompletion(state, atom, "implementor claimed edit/test evidence that was not observed by the feature-planner harness")
 	}
-	atomFrom := atom.State
-	atom.State = AtomStateComplete
-	atom.CompletedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	foldActiveRun(state, atom.ID, atom.LastRunID)
-	state.Continuation.CompletedAtoms = appendUnique(state.Continuation.CompletedAtoms, atom.ID)
-	featureTo := state.Status
-	if allAtomsTerminal(state.Atoms) && state.Status != FeatureStatePlanningQuestion {
-		state.Status = FeatureStateComplete
-		featureTo = FeatureStateComplete
-	}
-	return []Event{{
-		Type:       "idiom.feature_planner.atom_completed",
-		SessionID:  state.SessionID,
-		FeatureTo:  featureTo,
-		AtomID:     atom.ID,
-		AtomFrom:   atomFrom,
-		AtomTo:     AtomStateComplete,
-		AtomDeltas: []AtomDelta{{Op: "update", AtomID: atom.ID, AtomFrom: atomFrom, AtomTo: AtomStateComplete}},
-		ActiveRunDeltas: []ActiveRunDelta{{
-			Op:            "fold_terminal",
-			AtomID:        atom.ID,
-			LaneSessionID: atom.LastRunID,
-			BeforeState:   "running",
-			AfterState:    AtomStateComplete,
-		}},
-	}}
+	return rejectUnverifiedCompletion(state, atom, fmt.Sprintf("implementor returned raw text without typed %q plan-execute completion evidence", ToolPlanExecuteComplete))
 }
 
 func openImplementorPlannerQuestion(state *FeatureState, atom *FeatureAtomState, question PlannerQuestion) []Event {
