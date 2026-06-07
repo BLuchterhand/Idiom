@@ -5,10 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"path/filepath"
+	"idiom/internal/plancontract"
 )
 
 type ParsedPlannerOutput struct {
@@ -255,6 +256,64 @@ func ValidatePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowB
 		}
 	}
 	return errors.Join(errs...)
+}
+
+type StandaloneWorkspaceContext struct {
+	WorkspaceRoot string
+	Prompt        string
+}
+
+func ValidatePlanStandaloneWorkspaceContext(plan FeaturePlan, context StandaloneWorkspaceContext) error {
+	root := strings.TrimSpace(context.WorkspaceRoot)
+	if root == "" {
+		return nil
+	}
+	var errs []error
+	for i, atom := range plan.Atoms {
+		for _, scopedPath := range standaloneAtomWorkspaceScopePaths(atom) {
+			path := plancontract.NormalizeScopePath(scopedPath)
+			if path == "" {
+				errs = append(errs, fmt.Errorf("atom %d edit path %q is not a valid repo-relative workspace path; use ask_planner_question for localization repair", i, scopedPath))
+				continue
+			}
+			if err := validateStandaloneWorkspacePath(root, context.Prompt, path); err != nil {
+				errs = append(errs, fmt.Errorf("atom %d edit path %q %w", i, path, err))
+			}
+		}
+		for _, scopedPath := range standaloneAtomTestArtifactPaths(atom) {
+			path := plancontract.NormalizeScopePath(scopedPath)
+			if path == "" {
+				errs = append(errs, fmt.Errorf("atom %d test artifact path %q is not a valid repo-relative workspace path; use ask_planner_question for localization repair", i, scopedPath))
+				continue
+			}
+			if err := validateStandaloneWorkspacePath(root, context.Prompt, path); err != nil {
+				errs = append(errs, fmt.Errorf("atom %d test artifact path %q %w", i, path, err))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func standaloneAtomWorkspaceScopePaths(atom FeatureAtomPlan) []string {
+	return append(append([]string(nil), atom.RequiredEditPaths...), atom.AllowedEditPaths...)
+}
+
+func standaloneAtomTestArtifactPaths(atom FeatureAtomPlan) []string {
+	return append(append([]string(nil), atom.TestFirst.TestArtifactPaths...), atom.PlannedTDDSnapshot.TestArtifactPaths...)
+}
+
+func validateStandaloneWorkspacePath(root string, prompt string, path string) error {
+	if plancontract.NewFileAuthorizedForPath(prompt, path) {
+		return nil
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
+	if _, err := os.Stat(abs); err != nil {
+		if os.IsNotExist(err) {
+			return errors.New("is missing from the workspace and is not authorized as a new file; use ask_planner_question or source-satisfied evidence with existing paths instead of inventing paths")
+		}
+		return fmt.Errorf("could not be statted before dispatch: %w", err)
+	}
+	return nil
 }
 
 func NormalizePlanProductWorkflowContext(plan FeaturePlan, brief ProductWorkflowBrief) FeaturePlan {

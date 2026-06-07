@@ -235,6 +235,16 @@ func TestClassifyPlanExecuteFailureRecognizesBudgetExhaustion(t *testing.T) {
 	}
 }
 
+func TestClassifyPlanExecuteFailureRecognizesMissingPathAuthorization(t *testing.T) {
+	got := ClassifyPlanExecuteFailure("missing_edit_path_without_new_file_authorization", "plan would create missing edit path without new-file authorization", "")
+	if got != FailureClassPlanInvalid {
+		t.Fatalf("class=%q", got)
+	}
+	if action := nextActionForFailureClass(got); action != NextActionReviewDecomposition {
+		t.Fatalf("next action=%q", action)
+	}
+}
+
 func TestClassifyPlanExecuteFailureRecognizesScopeTooLarge(t *testing.T) {
 	tests := []struct {
 		name              string

@@ -49,6 +49,73 @@ func TestFeaturePlannerTUIDirectCommandUsesProductContextFromMentionedEffortRoot
 	}
 }
 
+func TestFeaturePlannerTUIDirectCommandSkipsClosedSourceSatisfiedEffort(t *testing.T) {
+	projectRoot := t.TempDir()
+	effortRel := filepath.Join("docs", "product-workflows", "efforts", "started", "native-quality")
+	effortRoot := filepath.Join(projectRoot, effortRel)
+	writeNativeQualityEffort(t, effortRoot)
+	workflowState, err := productworkflow.LoadWorkflowState(effortRoot)
+	if err != nil {
+		t.Fatalf("load workflow state: %v", err)
+	}
+	workflowState.StatusBucket = "closed"
+	workflowState.CurrentPhase = "source-satisfied-closeout"
+	workflowState.CurrentState = "closed"
+	workflowState.NextValidActions = []string{"inspect_closed_effort"}
+	writeFeaturePlannerCommandJSON(t, filepath.Join(effortRoot, "workflow_state.json"), workflowState)
+
+	m := &Model{
+		client: &scriptedLLMClient{},
+		cfg: config.Config{
+			Chat:      config.Chat{ProjectRoot: projectRoot},
+			Workspace: config.Workspace{Root: projectRoot, CWD: projectRoot},
+		},
+		workspace: workspace.NewManager(config.Workspace{Root: projectRoot, CWD: projectRoot}),
+	}
+
+	answer, err := m.runFeaturePlannerCommandOnce(context.Background(), "Continue existing effort at "+filepath.ToSlash(effortRel)+".")
+	if err != nil {
+		t.Fatalf("runFeaturePlannerCommandOnce: %v", err)
+	}
+	if !strings.Contains(answer, "feature-planner: "+featureplanner.FeatureStateSourceSatisfied) {
+		t.Fatalf("expected source-satisfied answer, got:\n%s", answer)
+	}
+	if m.lastPlanExecuteRunResult != nil {
+		t.Fatalf("plan-execute should not be dispatched for closed/source-satisfied effort")
+	}
+	statePath := featurePlannerCommandAnswerStatePath(answer)
+	if statePath == "" {
+		t.Fatalf("answer missing state path:\n%s", answer)
+	}
+	state := loadFeaturePlannerCommandStateFile(t, filepath.Join(projectRoot, filepath.FromSlash(statePath)))
+	if state.Status != featureplanner.FeatureStateSourceSatisfied || state.EffortID != "native-quality" {
+		t.Fatalf("unexpected saved state: %#v", state)
+	}
+}
+
+func featurePlannerCommandAnswerStatePath(answer string) string {
+	for _, line := range strings.Split(answer, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "state:") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "state:"))
+		}
+	}
+	return ""
+}
+
+func loadFeaturePlannerCommandStateFile(t *testing.T, path string) featureplanner.FeatureState {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read saved feature planner state: %v", err)
+	}
+	var state featureplanner.FeatureState
+	if err := json.Unmarshal(body, &state); err != nil {
+		t.Fatalf("decode saved feature planner state: %v", err)
+	}
+	return state
+}
+
 func TestSanitizeEffortSlug(t *testing.T) {
 	tests := []struct {
 		input    string

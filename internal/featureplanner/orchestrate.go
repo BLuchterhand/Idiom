@@ -21,6 +21,7 @@ type RunOptions struct {
 	Now                   time.Time
 	ProductWorkflowBrief  *ProductWorkflowBrief
 	ReconcileActiveRuns   func(state *FeatureState) []Event
+	WorkspaceRoot         string
 }
 
 type RunResult struct {
@@ -98,6 +99,20 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 			}, nil
 		}
 		parsed.Plan = NormalizePlanProductWorkflowContext(parsed.Plan, *opts.ProductWorkflowBrief)
+	}
+	if parsed.Kind == ToolSubmitFeaturePlan && opts.ProductWorkflowBrief == nil {
+		if err := ValidatePlanStandaloneWorkspaceContext(parsed.Plan, StandaloneWorkspaceContext{
+			WorkspaceRoot: opts.WorkspaceRoot,
+			Prompt:        opts.Prompt,
+		}); err != nil {
+			state.Status = FeatureStatePlanningRepair
+			state.PlanningLoop.State = FeatureStatePlanningRepair
+			state.Blockers = append(state.Blockers, err.Error())
+			return RunResult{
+				State:  state,
+				Events: []Event{{Type: "idiom.feature_planner.standalone_context_blocked", SessionID: state.SessionID, Message: err.Error()}},
+			}, nil
+		}
 	}
 	events = append(events, ApplyPlannerOutput(&state, parsed, opts.Now)...)
 	if state.Status != FeatureStateDispatching {
@@ -210,6 +225,7 @@ func BuildPlannerPrompt(userPrompt string, state FeatureState, brief *ProductWor
 		b.WriteString("For each atom, planned_tdd_snapshot.obligation_ids must exactly match test_first.obligation_refs, planned_tdd_snapshot.test_commands must exactly match test_first.commands, and planned_tdd_snapshot.test_artifact_paths must exactly match test_first.test_artifact_paths.\n")
 		b.WriteString("No upstream design docs are available. Use acceptance criteria strings in sdd_contract.acceptance instead of file paths.\n")
 		b.WriteString("Do NOT invent file paths like docs/path.md — acceptance criteria strings are valid and preferred when no docs exist.\n")
+		b.WriteString("Standalone workspace grounding is enforced: required_edit_paths, allowed_edit_paths, and test artifact paths must be existing repo-relative paths unless the user explicitly authorizes new-file/full-body/create work. Generic add language only authorizes missing test-like paths when the user asks to add tests. If you cannot localize existing paths, use ask_planner_question instead of inventing paths.\n")
 	}
 
 	b.WriteString("Before any atom can be dispatched, every atom must carry SDD refs and test_first commands tied to TDD obligations required_before implementation.\n")
@@ -524,6 +540,10 @@ type implementorOutputEnvelope struct {
 	ReviewStatus        string                       `json:"review_status"`
 	FailureKind         string                       `json:"failure_kind"`
 	FailureReason       string                       `json:"failure_reason"`
+	FailureID           string                       `json:"failure_id"`
+	RecordPath          string                       `json:"record_path"`
+	PacketPath          string                       `json:"packet_path"`
+	NextAction          string                       `json:"next_valid_action"`
 	CompletionSource    string                       `json:"completion_source"`
 	ReviewRepairSkipped bool                         `json:"review_repair_skipped"`
 	PlanExecute         *nestedPlanExecuteCompletion `json:"plan_execute,omitempty"`
@@ -541,6 +561,10 @@ type nestedPlanExecuteCompletion struct {
 	ReviewStatus        string `json:"review_status"`
 	FailureKind         string `json:"failure_kind"`
 	FailureReason       string `json:"failure_reason"`
+	FailureID           string `json:"failure_id"`
+	RecordPath          string `json:"record_path"`
+	PacketPath          string `json:"packet_path"`
+	NextAction          string `json:"next_valid_action"`
 	CompletionSource    string `json:"completion_source"`
 	ReviewRepairSkipped bool   `json:"review_repair_skipped"`
 }
@@ -554,6 +578,10 @@ type planExecuteCompletion struct {
 	ReviewStatus        string
 	FailureKind         string
 	FailureReason       string
+	FailureID           string
+	RecordPath          string
+	PacketPath          string
+	NextAction          string
 	CompletionSource    string
 	ReviewRepairSkipped bool
 }
@@ -581,6 +609,10 @@ func (completion *planExecuteCompletion) overlay(nested nestedPlanExecuteComplet
 			ReviewStatus:        nested.ReviewStatus,
 			FailureKind:         nested.FailureKind,
 			FailureReason:       nested.FailureReason,
+			FailureID:           nested.FailureID,
+			RecordPath:          nested.RecordPath,
+			PacketPath:          nested.PacketPath,
+			NextAction:          nested.NextAction,
 			CompletionSource:    nested.CompletionSource,
 			ReviewRepairSkipped: nested.ReviewRepairSkipped,
 		},
@@ -600,6 +632,10 @@ func (completion planExecuteCompletion) normalized() planExecuteCompletion {
 	completion.ReviewStatus = strings.TrimSpace(completion.ReviewStatus)
 	completion.FailureKind = strings.TrimSpace(completion.FailureKind)
 	completion.FailureReason = strings.TrimSpace(completion.FailureReason)
+	completion.FailureID = strings.TrimSpace(completion.FailureID)
+	completion.RecordPath = strings.TrimSpace(completion.RecordPath)
+	completion.PacketPath = strings.TrimSpace(completion.PacketPath)
+	completion.NextAction = strings.TrimSpace(completion.NextAction)
 	completion.CompletionSource = strings.TrimSpace(completion.CompletionSource)
 	return completion
 }
@@ -614,6 +650,10 @@ func planExecuteCompletionSummaryFromEnvelope(envelope implementorOutputEnvelope
 		ReviewStatus:        envelope.ReviewStatus,
 		FailureKind:         envelope.FailureKind,
 		FailureReason:       envelope.FailureReason,
+		FailureID:           envelope.FailureID,
+		RecordPath:          envelope.RecordPath,
+		PacketPath:          envelope.PacketPath,
+		NextAction:          envelope.NextAction,
 		CompletionSource:    envelope.CompletionSource,
 		ReviewRepairSkipped: envelope.ReviewRepairSkipped,
 	}
@@ -629,6 +669,10 @@ func (completion planExecuteCompletion) summary() PlanExecuteCompletionSummary {
 		ReviewStatus:        completion.ReviewStatus,
 		FailureKind:         completion.FailureKind,
 		FailureReason:       completion.FailureReason,
+		FailureID:           completion.FailureID,
+		RecordPath:          completion.RecordPath,
+		PacketPath:          completion.PacketPath,
+		NextAction:          completion.NextAction,
 		CompletionSource:    completion.CompletionSource,
 		ReviewRepairSkipped: completion.ReviewRepairSkipped,
 	}
@@ -644,6 +688,10 @@ func planExecuteCompletionFromSummary(summary PlanExecuteCompletionSummary) plan
 		ReviewStatus:        summary.ReviewStatus,
 		FailureKind:         summary.FailureKind,
 		FailureReason:       summary.FailureReason,
+		FailureID:           summary.FailureID,
+		RecordPath:          summary.RecordPath,
+		PacketPath:          summary.PacketPath,
+		NextAction:          summary.NextAction,
 		CompletionSource:    summary.CompletionSource,
 		ReviewRepairSkipped: summary.ReviewRepairSkipped,
 	}.normalized()
@@ -745,6 +793,9 @@ func recoverAtom(state *FeatureState, atom *FeatureAtomState, reason string, res
 	if fields == nil {
 		fields = map[string]any{}
 	}
+	if packetPath := CompletionFieldString(fields, "packet_path"); packetPath != "" {
+		state.OpenRecoveryPackets = appendUnique(state.OpenRecoveryPackets, packetPath)
+	}
 	return []Event{{
 		Type:        eventType,
 		SessionID:   state.SessionID,
@@ -782,6 +833,18 @@ func planExecuteCompletionFields(completion planExecuteCompletion) map[string]an
 	}
 	if completion.FailureReason != "" {
 		fields["nested_failure_reason"] = completion.FailureReason
+	}
+	if completion.FailureID != "" {
+		fields["failure_id"] = completion.FailureID
+	}
+	if completion.RecordPath != "" {
+		fields["record_path"] = completion.RecordPath
+	}
+	if completion.PacketPath != "" {
+		fields["packet_path"] = completion.PacketPath
+	}
+	if completion.NextAction != "" {
+		fields["next_valid_action"] = completion.NextAction
 	}
 	if completion.ProgressPath != "" {
 		fields["progress_path"] = completion.ProgressPath

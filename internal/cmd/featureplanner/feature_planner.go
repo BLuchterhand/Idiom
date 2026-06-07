@@ -199,6 +199,7 @@ func defaultHeadlessFeaturePlanner(ctx context.Context, req featurePlannerReques
 		ResumeAnswer:          resumeAnswer,
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  pwBrief,
+		WorkspaceRoot:         req.Config.Workspace.Root,
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return runFeaturePlannerPlanExecute(ctx, req, prompt, stdout)
@@ -367,7 +368,10 @@ func defaultFeaturePlannerPlanExecute(_ context.Context, req featurePlannerReque
 	}
 	if code != 0 {
 		completion["status"] = featureplanner.FirstNonEmptyString(featureplanner.CompletionFieldString(completion, "status"), "failed")
-		completion["failure_reason"] = strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String())))
+		completion["failure_reason"] = featureplanner.FirstNonEmptyString(
+			featureplanner.CompletionFieldString(completion, "failure_reason"),
+			strings.TrimSpace(fmt.Sprintf("plan-execute atom dispatch failed with exit %d: %s", code, strings.TrimSpace(planStderr.String()))),
+		)
 		return encodeHeadlessPlanExecuteCompletion(req, stdout, completion)
 	}
 	if featureplanner.CompletionFieldString(completion, "status") == "" {

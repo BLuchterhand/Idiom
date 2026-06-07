@@ -3,6 +3,8 @@ package featureplanner
 import (
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -362,6 +364,118 @@ func TestValidatePlanProductWorkflowContextRejectsUngroundedTestArtifacts(t *tes
 	}
 	if !strings.Contains(err.Error(), "test artifact path") || !strings.Contains(err.Error(), "path_test.go") {
 		t.Fatalf("validation error should identify ungrounded test artifact path, got %v", err)
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextRejectsMissingInventedPaths(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"src/ui/economy_masterwork_tooltip.gd"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
+	mkdirAndWriteFile(t, filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
+
+	err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot: root,
+		Prompt:        "Add score breakdown to the existing tooltip.",
+	})
+	if err == nil {
+		t.Fatal("expected missing standalone path validation error")
+	}
+	for _, want := range []string{
+		"src/ui/economy_masterwork_tooltip.gd",
+		"missing from the workspace",
+		"not authorized as a new file",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("validation error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestValidatePlanStandaloneWorkspaceContextAllowsExplicitNewFileAndTestCreation(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"pkg/new_helper.go"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"pkg/new_helper_test.go"}
+
+	if err := ValidatePlanStandaloneWorkspaceContext(plan, StandaloneWorkspaceContext{
+		WorkspaceRoot: root,
+		Prompt:        "Create a new helper with the following content and add regression tests.",
+	}); err != nil {
+		t.Fatalf("explicit new-file/test prompt should be allowed, got %v", err)
+	}
+}
+
+func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
+	root := t.TempDir()
+	plan := validPlan()
+	plan.Atoms[0].RequiredEditPaths = []string{"project/scripts/economy/score_breakdown.gd"}
+	plan.Atoms[0].AllowedEditPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
+	plan.Atoms[0].TestFirst.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
+	plan.Atoms[0].PlannedTDDSnapshot.TestArtifactPaths = []string{"tests/e2e/suites/ui_overhaul_suite.gd"}
+	mkdirAndWriteFile(t, filepath.Join(root, "tests/e2e/suites/ui_overhaul_suite.gd"), "extends RefCounted\n")
+
+	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
+	result, err := Run(state, RunOptions{
+		Prompt:                "Add score breakdown to the existing tooltip.",
+		MaxPlanningIterations: 3,
+		WorkspaceRoot:         root,
+	}, func(_ string, taskFamily string) (string, error) {
+		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+			t.Fatal("standalone workspace validation must block before dispatch")
+		}
+		return mustPlanJSON(t, plan), nil
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.State.Status != FeatureStatePlanningRepair {
+		t.Fatalf("state.Status = %q, want planning-repair; blockers=%+v", result.State.Status, result.State.Blockers)
+	}
+	if len(result.State.Atoms) != 0 {
+		t.Fatalf("invalid standalone plan should not compile atoms: %+v", result.State.Atoms)
+	}
+	if len(result.Events) != 1 || result.Events[0].Type != "idiom.feature_planner.standalone_context_blocked" {
+		t.Fatalf("expected standalone context blocked event, got %+v", result.Events)
+	}
+	if !strings.Contains(strings.Join(result.State.Blockers, "\n"), "project/scripts/economy/score_breakdown.gd") {
+		t.Fatalf("blocker should name invented path: %+v", result.State.Blockers)
+	}
+}
+
+func TestApplyImplementorOutputPreservesRecoveryPacketForMissingPathFailure(t *testing.T) {
+	state, atom := implementingAtomForCompletionTest(t)
+
+	events := ApplyImplementorOutput(&state, atom, `{
+		"tool":"plan_execute_completed",
+		"lane_family":"plan-execute",
+		"status":"failed",
+		"phase":"planning",
+		"failure_kind":"missing_edit_path_without_new_file_authorization",
+		"failure_reason":"plan would create missing edit path without new-file authorization",
+		"failure_id":"failure-123",
+		"record_path":".idiom/recovery/failures/failure-123.json",
+		"packet_path":".idiom/recovery/packets/failure-123.json",
+		"next_valid_action":"review_decomposition",
+		"progress_path":".idiom/plan-execute/sessions/pe.json"
+	}`)
+
+	assertRejectedPlanExecuteCompletion(t, state, atom, events, "missing_edit_path_without_new_file_authorization")
+	if !containsString(state.OpenRecoveryPackets, ".idiom/recovery/packets/failure-123.json") {
+		t.Fatalf("recovery packet path was not retained: %+v", state.OpenRecoveryPackets)
+	}
+	fields := events[0].Fields
+	for key, want := range map[string]any{
+		"failure_id":        "failure-123",
+		"record_path":       ".idiom/recovery/failures/failure-123.json",
+		"packet_path":       ".idiom/recovery/packets/failure-123.json",
+		"next_valid_action": "review_decomposition",
+	} {
+		if got := fields[key]; got != want {
+			t.Fatalf("event field %s = %#v, want %#v; fields=%+v", key, got, want, fields)
+		}
 	}
 }
 
@@ -1303,6 +1417,16 @@ func mustPlanJSON(t *testing.T, plan FeaturePlan) string {
 
 func testPlanExecuteCompletedJSON() string {
 	return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","phase":"complete","review_status":"completed","completion_source":"test"}`
+}
+
+func mkdirAndWriteFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", filepath.Dir(path), err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }
 
 func validProductContextPlan() FeaturePlan {

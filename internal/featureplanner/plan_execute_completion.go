@@ -46,6 +46,10 @@ type planExecuteCompletionRecord struct {
 	ReviewSkipped bool     `json:"review_repair_skipped"`
 	FailureKind   string   `json:"failure_kind"`
 	FailureReason string   `json:"failure_reason"`
+	FailureID     string   `json:"failure_id"`
+	RecordPath    string   `json:"record_path"`
+	PacketPath    string   `json:"packet_path"`
+	NextAction    string   `json:"next_valid_action"`
 	ReasonClass   string   `json:"reason_class"`
 	StopReason    string   `json:"stop_reason"`
 	ChangedPaths  []string `json:"changed_paths"`
@@ -60,6 +64,10 @@ type PlanExecuteCompletionSummary struct {
 	ReviewStatus        string
 	FailureKind         string
 	FailureReason       string
+	FailureID           string
+	RecordPath          string
+	PacketPath          string
+	NextAction          string
 	CompletionSource    string
 	ReviewRepairSkipped bool
 	ChangedPaths        []string
@@ -82,6 +90,10 @@ func PlanExecuteCompletionSummaryFromFields(fields map[string]any) PlanExecuteCo
 		ReviewStatus:        CompletionFieldString(fields, "review_status"),
 		FailureKind:         CompletionFieldString(fields, "failure_kind"),
 		FailureReason:       CompletionFieldString(fields, "failure_reason"),
+		FailureID:           CompletionFieldString(fields, "failure_id"),
+		RecordPath:          CompletionFieldString(fields, "record_path"),
+		PacketPath:          CompletionFieldString(fields, "packet_path"),
+		NextAction:          CompletionFieldString(fields, "next_valid_action"),
 		CompletionSource:    CompletionFieldString(fields, "completion_source"),
 		ReviewRepairSkipped: completionFieldBool(fields, "review_repair_skipped"),
 		ChangedPaths:        completionFieldStringSlice(fields, "changed_paths"),
@@ -145,6 +157,10 @@ func OverlayPlanExecuteCompletionFields(fields map[string]any, candidateFields m
 		"review_status",
 		"failure_kind",
 		"failure_reason",
+		"failure_id",
+		"record_path",
+		"packet_path",
+		"next_valid_action",
 		"progress_path",
 		"review_repair_skipped",
 		"changed_paths",
@@ -186,6 +202,18 @@ func (summary PlanExecuteCompletionSummary) Fields() map[string]any {
 	if summary.FailureReason != "" {
 		fields["failure_reason"] = summary.FailureReason
 	}
+	if summary.FailureID != "" {
+		fields["failure_id"] = summary.FailureID
+	}
+	if summary.RecordPath != "" {
+		fields["record_path"] = summary.RecordPath
+	}
+	if summary.PacketPath != "" {
+		fields["packet_path"] = summary.PacketPath
+	}
+	if summary.NextAction != "" {
+		fields["next_valid_action"] = summary.NextAction
+	}
 	if summary.CompletionSource != "" {
 		fields["completion_source"] = summary.CompletionSource
 	}
@@ -207,6 +235,10 @@ func planExecuteCompletionSummaryFromRecord(record planExecuteCompletionRecord) 
 		ReviewRepairSkipped: record.ReviewSkipped,
 		FailureKind:         FirstNonEmptyString(record.FailureKind, record.ReasonClass),
 		FailureReason:       record.FailureReason,
+		FailureID:           record.FailureID,
+		RecordPath:          record.RecordPath,
+		PacketPath:          record.PacketPath,
+		NextAction:          record.NextAction,
 		ChangedPaths:        append([]string(nil), record.ChangedPaths...),
 	}
 	if ts := strings.TrimSpace(record.TS); ts != "" {
@@ -237,12 +269,33 @@ func (summary PlanExecuteCompletionSummary) normalized() PlanExecuteCompletionSu
 	summary.ReviewStatus = strings.TrimSpace(summary.ReviewStatus)
 	summary.FailureKind = strings.TrimSpace(summary.FailureKind)
 	summary.FailureReason = strings.TrimSpace(summary.FailureReason)
+	summary.FailureID = strings.TrimSpace(summary.FailureID)
+	summary.RecordPath = strings.TrimSpace(summary.RecordPath)
+	summary.PacketPath = strings.TrimSpace(summary.PacketPath)
+	summary.NextAction = strings.TrimSpace(summary.NextAction)
 	summary.CompletionSource = strings.TrimSpace(summary.CompletionSource)
 	summary.ChangedPaths = normalizeCompletionStringList(summary.ChangedPaths)
 	return summary
 }
 
 func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecuteCompletionSummary) PlanExecuteCompletionSummary {
+	if summary.Status == "" {
+		summary.Status = other.Status
+	}
+	if summary.Phase == "" {
+		summary.Phase = other.Phase
+	}
+	if summary.ReviewStatus == "" {
+		summary.ReviewStatus = other.ReviewStatus
+	}
+	if summary.hasFailureOutcome() {
+		if summary.FailureKind == "" {
+			summary.FailureKind = other.FailureKind
+		}
+		if summary.FailureReason == "" {
+			summary.FailureReason = other.FailureReason
+		}
+	}
 	if summary.LaneFamily == "" {
 		summary.LaneFamily = other.LaneFamily
 	}
@@ -254,6 +307,18 @@ func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecu
 	}
 	if summary.ProgressPath == "" {
 		summary.ProgressPath = other.ProgressPath
+	}
+	if summary.FailureID == "" {
+		summary.FailureID = other.FailureID
+	}
+	if summary.RecordPath == "" {
+		summary.RecordPath = other.RecordPath
+	}
+	if summary.PacketPath == "" {
+		summary.PacketPath = other.PacketPath
+	}
+	if summary.NextAction == "" {
+		summary.NextAction = other.NextAction
 	}
 	if len(summary.ChangedPaths) == 0 {
 		summary.ChangedPaths = append([]string(nil), other.ChangedPaths...)
@@ -271,6 +336,10 @@ func (summary PlanExecuteCompletionSummary) hasConcreteCompletionState() bool {
 		summary.ReviewStatus != "" ||
 		summary.FailureKind != "" ||
 		summary.FailureReason != "" ||
+		summary.FailureID != "" ||
+		summary.RecordPath != "" ||
+		summary.PacketPath != "" ||
+		summary.NextAction != "" ||
 		summary.ReviewRepairSkipped ||
 		len(summary.ChangedPaths) > 0
 }
@@ -299,6 +368,9 @@ func (summary PlanExecuteCompletionSummary) completionSpecificityScore() int {
 	}
 	if summary.ProgressPath != "" {
 		score += 5
+	}
+	if summary.PacketPath != "" || summary.RecordPath != "" {
+		score += 4
 	}
 	if len(summary.ChangedPaths) > 0 {
 		score += 3

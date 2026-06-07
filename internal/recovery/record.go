@@ -273,6 +273,8 @@ func ClassifyPlanExecuteFailure(kind string, reason string, reviewReasonClass st
 		return FailureClassPlannerFailed
 	case "planner_blocked":
 		return FailureClassPlannerBlocked
+	case "missing_edit_path_without_new_file_authorization":
+		return FailureClassPlanInvalid
 	case "plan_artifact_missing":
 		return FailureClassPlanMissing
 	case "plan_artifact_invalid":

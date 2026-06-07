@@ -990,6 +990,7 @@ func (m *Model) synthesizeTDDAndRunPlanner(effortRoot string) (string, featurepl
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  brief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
+		WorkspaceRoot:         m.projectRoot(),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			if implementorBlocked {

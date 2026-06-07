@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"idiom/internal/frontier/workerruntime"
 	"idiom/internal/llama"
 	"idiom/internal/planexecute"
+	"idiom/internal/recovery"
 )
 
 func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective string) (string, error) {
@@ -43,6 +45,9 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	m.logMessage("idiom.feature_planner.start", objective)
 	if productBrief != nil {
 		m.logMessage("idiom.feature_planner.product_context", fmt.Sprintf("effort_id=%s effort_root=%s", productBrief.EffortID, effortRoot))
+		if productBrief.IsClosedSourceSatisfied() {
+			return m.closeFeaturePlannerTUISourceSatisfied(state, *productBrief)
+		}
 	}
 
 	writeEnvelope := featurePlannerProductWriteEnvelope(productBrief)
@@ -52,6 +57,7 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 		Now:                   time.Now().UTC(),
 		ProductWorkflowBrief:  productBrief,
 		ReconcileActiveRuns:   m.reconcileFeaturePlannerActivePlanExecuteRuns,
+		WorkspaceRoot:         m.projectRoot(),
 	}, func(prompt string, taskFamily string) (string, error) {
 		if workerruntime.TaskFamilyIsFeaturePlannerImplementor(taskFamily) {
 			return m.runFeaturePlannerAtomPlanExecuteWithWriteEnvelope(ctx, prompt, writeEnvelope)
@@ -78,6 +84,25 @@ func (m *Model) runFeaturePlannerCommandOnce(ctx context.Context, objective stri
 	}
 	answer := formatFeaturePlannerTUIAnswer(result.State, statePath)
 	m.logMessage(featurePlannerTUITerminalRole(result.State.Status), answer)
+	return m.finishPromptOnceReply(answer), nil
+}
+
+func (m *Model) closeFeaturePlannerTUISourceSatisfied(state featureplanner.FeatureState, brief featureplanner.ProductWorkflowBrief) (string, error) {
+	state, event := featureplanner.ProductSourceSatisfiedCloseout(state, brief, brief.EffortID)
+	m.logFeaturePlannerEvent(event)
+	eventsPath, err := featureplanner.AppendEvents(m.projectRoot(), state.SessionID, []featureplanner.Event{event})
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	state.EventsPath = eventsPath
+	statePath, err := featureplanner.SaveState(m.projectRoot(), &state)
+	if err != nil {
+		m.emitJSONError("run_failed", err.Error())
+		return "", err
+	}
+	answer := formatFeaturePlannerTUIAnswer(state, statePath)
+	m.logMessage(featurePlannerTUITerminalRole(state.Status), answer)
 	return m.finishPromptOnceReply(answer), nil
 }
 
@@ -355,6 +380,7 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	if result.ExitCode != 0 && featureplanner.CompletionFieldString(fields, "status") == "" {
 		fields["status"] = "failed"
 	}
+	overlayFeaturePlannerRecoverySidecarFields(fields, root, strings.TrimSpace(result.SessionID))
 	if strings.TrimSpace(root) == "" || (strings.TrimSpace(result.SessionID) == "" && strings.TrimSpace(result.ResumeStatePath) == "") {
 		return
 	}
@@ -368,6 +394,32 @@ func overlayFeaturePlannerPlanExecuteRunResult(fields map[string]any, root strin
 	}
 	progressFields := planexecute.ProgressStateEventFields(state, statePath)
 	overlayFeaturePlannerPlanExecuteProgressFields(fields, progressFields)
+	overlayFeaturePlannerRecoverySidecarFields(fields, root, stateID)
+}
+
+func overlayFeaturePlannerRecoverySidecarFields(fields map[string]any, root string, sessionID string) {
+	if fields == nil || strings.TrimSpace(root) == "" || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	record, recordPath, found, err := recovery.TryLoadFailureRecordForSession(root, sessionID)
+	if err != nil || !found {
+		return
+	}
+	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, "failure_id") == "" {
+		fields["failure_id"] = strings.TrimSpace(record.FailureID)
+	}
+	if strings.TrimSpace(recordPath) != "" && featureplanner.CompletionFieldString(fields, "record_path") == "" {
+		fields["record_path"] = strings.TrimSpace(recordPath)
+	}
+	packetPath := filepath.ToSlash(filepath.Join(".idiom", "recovery", strings.TrimSpace(record.FailureID), "packet.json"))
+	if strings.TrimSpace(record.FailureID) != "" && featureplanner.CompletionFieldString(fields, "packet_path") == "" {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(packetPath))); err == nil {
+			fields["packet_path"] = packetPath
+		}
+	}
+	if strings.TrimSpace(record.NextAction) != "" && featureplanner.CompletionFieldString(fields, "next_valid_action") == "" {
+		fields["next_valid_action"] = strings.TrimSpace(record.NextAction)
+	}
 }
 
 func overlayFeaturePlannerPlanExecuteProgressFields(fields map[string]any, progressFields map[string]any) {

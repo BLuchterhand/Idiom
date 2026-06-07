@@ -109,6 +109,29 @@ func TestPlanExecuteCompletionFieldsPrefersLaterConcreteReviewRepairState(t *tes
 	}
 }
 
+func TestPlanExecuteCompletionFieldsPreservesRecoverySidecarMetadata(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.resume_state_saved","ts":"2026-06-07T12:00:00Z","state_path":".idiom/plan-execute/sessions/pe.json","phase":"planning","status":"failed","failure_kind":"missing_edit_path_without_new_file_authorization","failure_reason":"plan would create missing edit path without new-file authorization"}`,
+		`{"type":"idiom.plan_execute.recovery_failure_record_written","ts":"2026-06-07T12:00:01Z","failure_id":"failure-123","failure_kind":"missing_edit_path_without_new_file_authorization","record_path":".idiom/recovery/failures/failure-123.json","next_valid_action":"review_decomposition"}`,
+		`{"type":"idiom.plan_execute.recovery_decomposition_packet_written","ts":"2026-06-07T12:00:02Z","failure_id":"failure-123","packet_path":".idiom/recovery/packets/failure-123.json","next_valid_action":"review_decomposition"}`,
+	}, "\n")
+
+	fields := PlanExecuteCompletionFields(output)
+
+	for key, want := range map[string]string{
+		"status":            "failed",
+		"failure_kind":      "missing_edit_path_without_new_file_authorization",
+		"failure_id":        "failure-123",
+		"record_path":       ".idiom/recovery/failures/failure-123.json",
+		"packet_path":       ".idiom/recovery/packets/failure-123.json",
+		"next_valid_action": "review_decomposition",
+	} {
+		if got := fmt.Sprint(fields[key]); got != want {
+			t.Fatalf("%s = %q, want %q; fields=%+v", key, got, want, fields)
+		}
+	}
+}
+
 func TestPlanExecuteCompletionFieldsLaterCompletedStateClearsEarlierFailure(t *testing.T) {
 	output := strings.Join([]string{
 		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/fallback.json","phase":"planning","status":"failed","failure_kind":"plan_artifact_missing","failure_reason":"planning/no plan artifact"}`,

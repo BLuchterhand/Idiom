@@ -125,6 +125,8 @@ func TestFeaturePlannerMainDispatchesThroughAdapter(t *testing.T) {
 func TestDefaultHeadlessFeaturePlannerDispatchesAtomsThroughPlanExecute(t *testing.T) {
 	root := t.TempDir()
 	configPath := writeMainConfigRoot(t, root)
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "docs", "feature-planner-plan-execute.txt"), "existing feature planner dispatch doc\n")
+	writeFeaturePlannerFixtureFile(t, filepath.Join(root, "cmd", "idiom", "feature_planner_test.go"), "package idiom\n")
 
 	originalModelTurn := runFeaturePlannerModelTurn
 	originalPlanExecute := runFeaturePlannerPlanExecute
@@ -656,6 +658,16 @@ func writeMainConfigRoot(t *testing.T, root string) string {
 		t.Fatalf("write config: %v", err)
 	}
 	return path
+}
+
+func writeFeaturePlannerFixtureFile(t *testing.T, path string, content string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir fixture dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write fixture file: %v", err)
+	}
 }
 
 func TestFeaturePlanner_ProductWorkflowIntegration_BuildBrief(t *testing.T) {
