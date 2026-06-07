@@ -361,7 +361,6 @@ func (r *Runner) Run(
 	syncPlanThenExecuteRecoveryAllowedTools := func() {
 		syncCurrentAllowedToolsFromOptions()
 		if !opts.ForceNativeTools &&
-			!terminalSubmitPlanNativeTools() &&
 			r.planThenExecutePlannerPhase() &&
 			len(opts.Tools) == 0 {
 			state := DerivePlanExecutePlanningState(r.RuntimeBrief, collectedResults, PlanExecutePlanningTransport{TextualToolParser: true})
@@ -13788,7 +13787,14 @@ func planThenExecuteRequiredWriteOnlyRecoveryChatOptionsForBackend(opts llama.Ch
 }
 
 func planThenExecuteSubmitPlanTerminalChatOptions(opts llama.ChatOptions, supportsNativeTools bool) llama.ChatOptions {
-	return planExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
+	opts = planExecuteSubmitPlanTerminalChatOptions(opts, supportsNativeTools)
+	if supportsNativeTools && !chatOptionsExposeTool(opts, "submit_plan") {
+		opts.Tools = nil
+		opts.ToolChoice = ""
+		opts.ForceNativeTools = false
+		opts.ResponseFormatJSON = true
+	}
+	return opts
 }
 
 func planThenExecuteTerminalSubmitPlanAllowed(brief workerruntime.WorkerRuntimeBrief, results []workspace.ToolResult) bool {

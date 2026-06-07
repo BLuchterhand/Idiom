@@ -6595,6 +6595,37 @@ func TestPlanExecuteTerminalNativeSubmitPlanDoesNotClampAnchorRefresh(t *testing
 	}
 }
 
+func TestPlanExecuteSubmitReadyClearsStaleReadOnlyToolSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		Contract:          "implementation_result",
+		PermissionProfile: "guarded_workspace_write",
+		RequiredEditPaths: []string{"native/src/core/colony_sim.h", "native/tests/test_quality_inventory_bindings.cpp"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 native/src/core/colony_sim.h lines 1-80 (total lines: 120)"},
+		{Tool: "read_file", Summary: "Read f2 native/tests/test_quality_inventory_bindings.cpp lines 1-180 (total lines: 355)"},
+		{Tool: "history_range", Summary: "Read git history for native/src/core/colony_sim.h lines 1-80"},
+		{Tool: "history_range", Summary: "Read git history for native/tests/test_quality_inventory_bindings.cpp lines 1-180"},
+	}
+	if planThenExecuteReadyToSubmitNudge(brief, results) == "" {
+		t.Fatal("test setup must be terminal submit-ready")
+	}
+	opts := planThenExecuteReadyToSubmitChatOptionsForBackend(llama.ChatOptions{
+		Tools: []llama.Tool{
+			{Type: "function", Function: llama.ToolFunction{Name: "read_file"}},
+			{Type: "function", Function: llama.ToolFunction{Name: "code_navigate"}},
+		},
+		ToolChoice: "required",
+	}, brief, results, true)
+	if chatOptionsExposeTool(opts, "read_file") || chatOptionsExposeTool(opts, "code_navigate") || opts.ToolChoice != "" || opts.ForceNativeTools || !opts.ResponseFormatJSON {
+		t.Fatalf("submit-ready textual fallback must clear stale read tools, got force=%v json=%v choice=%q tools=%#v", opts.ForceNativeTools, opts.ResponseFormatJSON, opts.ToolChoice, opts.Tools)
+	}
+	if opts.MaxTokens != planThenExecuteRecoveryTokenLimit(brief, results) {
+		t.Fatalf("submit-ready textual fallback should keep terminal synthesis budget, got %d", opts.MaxTokens)
+	}
+}
+
 func TestPlanExecuteSourceRefreshRecoveryClearsStaleSubmitOnlySurface(t *testing.T) {
 	brief := workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
