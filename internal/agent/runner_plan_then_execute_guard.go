@@ -603,6 +603,7 @@ func (r *Runner) missingSubmitPlanRequiredEditSnippets(req workspace.ToolRequest
 		root = strings.TrimSpace(r.Workspace.Root())
 	}
 	projectedContent := projectedPlanContentByPath(root, planThenExecuteEffectiveSubmitPlanEdits(req))
+	addSourceSatisfiedPlanProjectionBases(root, projectedContent, planThenExecuteEffectiveSubmitPlanSourceSatisfiedPaths(req))
 	var missing []string
 	for i, snippet := range brief.RequiredEditSnippets {
 		candidates := requiredEditSnippetCandidatePaths(snippet, brief.RequiredEditPaths, planned)
@@ -631,6 +632,22 @@ func projectedPlanContentByPath(root string, edits []workspace.PlanEdit) map[str
 		out[path] = applyPlanProjectionEdit(content, edit)
 	}
 	return out
+}
+
+func addSourceSatisfiedPlanProjectionBases(root string, projectedContent map[string]string, paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	for _, rawPath := range paths {
+		path := normalizeRunnerPath(rawPath)
+		if path == "" {
+			continue
+		}
+		if _, alreadyProjected := projectedContent[path]; alreadyProjected {
+			continue
+		}
+		projectedContent[path] = readPlanProjectionBase(root, path)
+	}
 }
 
 func planThenExecuteEffectiveSubmitPlanEdits(req workspace.ToolRequest) []workspace.PlanEdit {

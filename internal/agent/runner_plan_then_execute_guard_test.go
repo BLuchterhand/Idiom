@@ -13366,6 +13366,102 @@ func TestPlanExecuteSubmitPlanCoverageAcceptsArtifactSourceSatisfiedPaths(t *tes
 	}
 }
 
+func TestPlanExecuteSubmitPlanCoverageAcceptsSourceSatisfiedRequiredSnippet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{Path: "b.txt", Content: "already final"},
+			},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:                 "submit_plan",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before\n", NewText: "after\n", Purpose: "replace a fixture"},
+		},
+	}
+
+	if result := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(req); result.Intercepted {
+		t.Fatalf("source_satisfied_paths should satisfy required snippet coverage from current source, got %#v", result.Result)
+	}
+}
+
+func TestPlanExecuteSubmitPlanCoverageAcceptsArtifactSourceSatisfiedRequiredSnippet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("already final\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{Path: "b.txt", Content: "already final"},
+			},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool: "submit_plan",
+		PlanArtifact: &workspace.PlanArtifact{
+			Paths: workspace.PlanArtifactPaths{SourceSatisfied: []string{"b.txt"}},
+			Edits: []workspace.PlanEdit{
+				{Path: "a.txt", OldText: "before\n", NewText: "after\n", Purpose: "replace a fixture"},
+			},
+		},
+	}
+
+	if result := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(req); result.Intercepted {
+		t.Fatalf("artifact source_satisfied paths should satisfy required snippet coverage from current source, got %#v", result.Result)
+	}
+}
+
+func TestPlanExecuteSubmitPlanCoverageRejectsSourceSatisfiedMissingRequiredSnippet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "a.txt"), []byte("before\n"), 0o644); err != nil {
+		t.Fatalf("write a.txt: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "b.txt"), []byte("not final\n"), 0o644); err != nil {
+		t.Fatalf("write b.txt: %v", err)
+	}
+	runner := &Runner{
+		Workspace: workspace.NewManager(config.Workspace{Root: root, CWD: root}),
+		RuntimeBrief: workerruntime.WorkerRuntimeBrief{
+			TaskFamily:        PlanThenExecutePlannerTaskFamily,
+			RequiredEditPaths: []string{"a.txt", "b.txt"},
+			RequiredEditSnippets: []workerruntime.RequiredEditSnippet{
+				{ID: "b_final", Path: "b.txt", Content: "already final"},
+			},
+		},
+	}
+	req := workspace.ToolRequest{
+		Tool:                 "submit_plan",
+		SourceSatisfiedPaths: []string{"b.txt"},
+		Edits: []workspace.PlanEdit{
+			{Path: "a.txt", OldText: "before\n", NewText: "after\n", Purpose: "replace a fixture"},
+		},
+	}
+
+	result := runner.preflightPlanThenExecuteSubmitPlanCoverageGuard(req)
+	if !result.Intercepted || !strings.Contains(result.Result.Error, "missing required edit snippet(s): `b_final`") {
+		t.Fatalf("expected missing required snippet rejection, got %#v", result)
+	}
+}
+
 func TestPlanExecuteSubmitPlanCoverageRejectsOutOfScopeSourceSatisfiedPaths(t *testing.T) {
 	runner := &Runner{RuntimeBrief: workerruntime.WorkerRuntimeBrief{
 		TaskFamily:        PlanThenExecutePlannerTaskFamily,
