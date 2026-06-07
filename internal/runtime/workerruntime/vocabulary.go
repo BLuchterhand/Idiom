@@ -3,11 +3,11 @@ package workerruntime
 import (
 	"strings"
 
-	"idiom/internal/contracts/taskfamily"
+	"idiom/internal/contracts/autonomy"
 )
 
 type RoleName string
-type TaskFamilyID = taskfamily.ID
+type TaskFamilyID = autonomy.TaskFamilyID
 type RuntimeContractID string
 type PermissionProfileID string
 type EvidenceRequirementID string
@@ -26,37 +26,37 @@ const (
 )
 
 const (
-	TaskFamilyArtifactFinalAnswer       TaskFamilyID = taskfamily.ArtifactFinalAnswer
-	TaskFamilyArtifactDistiller         TaskFamilyID = taskfamily.ArtifactDistiller
-	TaskFamilyConversation              TaskFamilyID = taskfamily.Conversation
-	TaskFamilyDebugLogs                 TaskFamilyID = taskfamily.DebugLogs
-	TaskFamilyVerificationOnly          TaskFamilyID = taskfamily.VerificationOnly
-	TaskFamilyLocate                    TaskFamilyID = taskfamily.Locate
-	TaskFamilyLocateThenImplement       TaskFamilyID = taskfamily.LocateThenImplement
-	TaskFamilyExploreThenImplement      TaskFamilyID = taskfamily.ExploreThenImplement
-	TaskFamilyInvestigateThenImplement  TaskFamilyID = taskfamily.InvestigateThenImplement
-	TaskFamilyReviewThenImplement       TaskFamilyID = taskfamily.ReviewThenImplement
-	TaskFamilyArchitectureThenImplement TaskFamilyID = taskfamily.ArchitectureThenImplement
-	TaskFamilySecurityReview            TaskFamilyID = taskfamily.SecurityReview
-	TaskFamilyPerformanceReview         TaskFamilyID = taskfamily.PerformanceReview
-	TaskFamilyArchitecture              TaskFamilyID = taskfamily.Architecture
-	TaskFamilyFeaturePlannerPlanner     TaskFamilyID = taskfamily.FeaturePlannerPlanner
-	TaskFamilyFeaturePlannerImplementor TaskFamilyID = taskfamily.FeaturePlannerImplementor
-	TaskFamilyPlanThenExecutePlanner    TaskFamilyID = taskfamily.PlanThenExecutePlanner
-	TaskFamilyPlanThenExecuteReview     TaskFamilyID = taskfamily.PlanThenExecuteReview
-	TaskFamilyImplementation            TaskFamilyID = taskfamily.Implementation
-	TaskFamilyTestAuthoring             TaskFamilyID = taskfamily.TestAuthoring
-	TaskFamilyConfigEdit                TaskFamilyID = taskfamily.ConfigEdit
-	TaskFamilyScriptEdit                TaskFamilyID = taskfamily.ScriptEdit
-	TaskFamilyGDScriptEdit              TaskFamilyID = taskfamily.GDScriptEdit
-	TaskFamilyDocsEdit                  TaskFamilyID = taskfamily.DocsEdit
-	TaskFamilyPromptEditSecurity        TaskFamilyID = taskfamily.PromptEditSecurity
-	TaskFamilyFailureInjection          TaskFamilyID = taskfamily.FailureInjection
-	TaskFamilyDirectQuestion            TaskFamilyID = taskfamily.DirectQuestion
-	TaskFamilyDirectAnswer              TaskFamilyID = taskfamily.DirectAnswer
-	TaskFamilyDelegatedIsolatedImpl     TaskFamilyID = taskfamily.DelegatedIsolatedImpl
-	TaskFamilyDelegatedReadOnly         TaskFamilyID = taskfamily.DelegatedReadOnly
-	TaskFamilyImplementationRepair      TaskFamilyID = taskfamily.ImplementationRepair
+	TaskFamilyArtifactFinalAnswer       TaskFamilyID = autonomy.TaskFamilyArtifactFinalAnswer
+	TaskFamilyArtifactDistiller         TaskFamilyID = autonomy.TaskFamilyArtifactDistiller
+	TaskFamilyConversation              TaskFamilyID = autonomy.TaskFamilyConversation
+	TaskFamilyDebugLogs                 TaskFamilyID = autonomy.TaskFamilyDebugLogs
+	TaskFamilyVerificationOnly          TaskFamilyID = autonomy.TaskFamilyVerificationOnly
+	TaskFamilyLocate                    TaskFamilyID = autonomy.TaskFamilyLocate
+	TaskFamilyLocateThenImplement       TaskFamilyID = autonomy.TaskFamilyLocateThenImplement
+	TaskFamilyExploreThenImplement      TaskFamilyID = autonomy.TaskFamilyExploreThenImplement
+	TaskFamilyInvestigateThenImplement  TaskFamilyID = autonomy.TaskFamilyInvestigateThenImplement
+	TaskFamilyReviewThenImplement       TaskFamilyID = autonomy.TaskFamilyReviewThenImplement
+	TaskFamilyArchitectureThenImplement TaskFamilyID = autonomy.TaskFamilyArchitectureThenImplement
+	TaskFamilySecurityReview            TaskFamilyID = autonomy.TaskFamilySecurityReview
+	TaskFamilyPerformanceReview         TaskFamilyID = autonomy.TaskFamilyPerformanceReview
+	TaskFamilyArchitecture              TaskFamilyID = autonomy.TaskFamilyArchitecture
+	TaskFamilyFeaturePlannerPlanner     TaskFamilyID = autonomy.TaskFamilyFeaturePlannerPlanner
+	TaskFamilyFeaturePlannerImplementor TaskFamilyID = autonomy.TaskFamilyFeaturePlannerImplementor
+	TaskFamilyPlanThenExecutePlanner    TaskFamilyID = autonomy.TaskFamilyPlanThenExecutePlanner
+	TaskFamilyPlanThenExecuteReview     TaskFamilyID = autonomy.TaskFamilyPlanThenExecuteReview
+	TaskFamilyImplementation            TaskFamilyID = autonomy.TaskFamilyImplementation
+	TaskFamilyTestAuthoring             TaskFamilyID = autonomy.TaskFamilyTestAuthoring
+	TaskFamilyConfigEdit                TaskFamilyID = autonomy.TaskFamilyConfigEdit
+	TaskFamilyScriptEdit                TaskFamilyID = autonomy.TaskFamilyScriptEdit
+	TaskFamilyGDScriptEdit              TaskFamilyID = autonomy.TaskFamilyGDScriptEdit
+	TaskFamilyDocsEdit                  TaskFamilyID = autonomy.TaskFamilyDocsEdit
+	TaskFamilyPromptEditSecurity        TaskFamilyID = autonomy.TaskFamilyPromptEditSecurity
+	TaskFamilyFailureInjection          TaskFamilyID = autonomy.TaskFamilyFailureInjection
+	TaskFamilyDirectQuestion            TaskFamilyID = autonomy.TaskFamilyDirectQuestion
+	TaskFamilyDirectAnswer              TaskFamilyID = autonomy.TaskFamilyDirectAnswer
+	TaskFamilyDelegatedIsolatedImpl     TaskFamilyID = autonomy.TaskFamilyDelegatedIsolatedImpl
+	TaskFamilyDelegatedReadOnly         TaskFamilyID = autonomy.TaskFamilyDelegatedReadOnly
+	TaskFamilyImplementationRepair      TaskFamilyID = autonomy.TaskFamilyImplementationRepair
 )
 
 const (

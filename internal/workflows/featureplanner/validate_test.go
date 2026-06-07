@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"idiom/internal/contracts/taskfamily"
+	"idiom/internal/contracts/autonomy"
 )
 
 func TestValidatePlanRequiresTDDBeforeImplementation(t *testing.T) {
@@ -119,7 +119,7 @@ func TestRunRejectsProductPlanWithUnknownArtifactRefs(t *testing.T) {
 	}
 
 	result, err := Run(state, RunOptions{Prompt: "build feature", ProductWorkflowBrief: brief}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerPlanner) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatalf("implementor must not run after product context rejection")
 		}
 		return mustPlanJSON(t, plan), nil
@@ -229,7 +229,7 @@ func TestRunProductPlanUsesWorkspaceRootForPackageGrounding(t *testing.T) {
 		ProductWorkflowBrief: &brief,
 		WorkspaceRoot:        root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			return testPlanExecuteCompletedJSON(), nil
 		}
 		return mustPlanJSON(t, plan), nil
@@ -492,7 +492,7 @@ func TestRunSourceSatisfiedCloseoutSkipsAtomDispatch(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatal("source-satisfied planner closeout must not dispatch an atom")
 		}
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"],"test_paths":["tests/e2e/suites/ui_overhaul_suite.gd"],"anchors":[{"path":"scripts/ui/ui_helpers.gd","text":"Quality contributors:"},{"path":"tests/e2e/suites/ui_overhaul_suite.gd","text":"extends RefCounted"}]}`, nil
@@ -520,7 +520,7 @@ func TestRunRejectsSourceSatisfiedMissingWorkspaceEvidence(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
 		}
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["missing.gd"],"anchors":[{"path":"missing.gd","text":"Quality contributors:"}]}`, nil
@@ -546,7 +546,7 @@ func TestRunRejectsSourceSatisfiedWithoutAnchors(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
 		}
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"]}`, nil
@@ -572,7 +572,7 @@ func TestRunRejectsSourceSatisfiedMissingAnchorText(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatal("invalid source-satisfied closeout must not dispatch an atom")
 		}
 		return `{"tool":"source_satisfied","summary":"already present","evidence_paths":["scripts/ui/ui_helpers.gd"],"anchors":[{"path":"scripts/ui/ui_helpers.gd","text":"Quality contributors:"}]}`, nil
@@ -605,7 +605,7 @@ func TestRunPreservesSourceSatisfiedGateInDispatchedAtomPrompt(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			implementorPrompt = prompt
 			return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"source-satisfied","phase":"complete","progress_path":".idiom/plan-execute/session/state.json"}`, nil
 		}
@@ -698,7 +698,7 @@ func TestRunRejectsStandaloneMissingWorkspacePathBeforeDispatch(t *testing.T) {
 		MaxPlanningIterations: 3,
 		WorkspaceRoot:         root,
 	}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatal("standalone workspace validation must block before dispatch")
 		}
 		return mustPlanJSON(t, plan), nil
@@ -779,7 +779,7 @@ func TestBuildPlannerPromptAdvertisesFlatSubmitFeaturePlanSchema(t *testing.T) {
 func TestRunOpensNormalizedPlannerQuestionFromQuestionAlias(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	result, err := Run(state, RunOptions{Prompt: "build feature", MaxPlanningIterations: 3}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerPlanner) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatalf("task family = %q, want planner", taskFamily)
 		}
 		return `{"tool":"ask_planner_question","question":"Please provide tooltip source paths."}`, nil
@@ -859,9 +859,9 @@ func TestRunDispatchesAtomAfterAcceptedTDDPlan(t *testing.T) {
 	result, err := Run(state, RunOptions{Prompt: "build feature", MaxPlanningIterations: 3}, func(prompt string, taskFamily string) (string, error) {
 		calls++
 		switch taskFamily {
-		case string(taskfamily.FeaturePlannerPlanner):
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, validPlan()), nil
-		case string(taskfamily.FeaturePlannerImplementor):
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			return testPlanExecuteCompletedJSON(), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)
@@ -890,7 +890,7 @@ func TestDispatchRecordsPlanExecuteLaneFamily(t *testing.T) {
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
 		return `{"tool":"plan_execute_completed","lane_family":"plan-execute","status":"completed","summary":"go test ./internal/workflows/featureplanner passed"}`, nil
@@ -947,7 +947,7 @@ func TestDispatchRejectsRawSourceSatisfiedWithoutTypedPlanExecuteEvidence(t *tes
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
 		return "Decision: source-satisfied\n- internal/feature.go: already implemented.", nil
@@ -972,7 +972,7 @@ func TestDispatchRejectsRawProseWithoutTypedPlanExecuteEvidence(t *testing.T) {
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
 		return "Implemented atom.", nil
@@ -997,7 +997,7 @@ func TestDispatchRejectsUnsupportedImplementorJSONTool(t *testing.T) {
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
 		return `{"tool":"plan_execute_complete","summary":"atom implemented"}`, nil
@@ -1032,7 +1032,7 @@ func TestDispatchRejectsMalformedOrEmptyImplementorJSON(t *testing.T) {
 			ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 			events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-				if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+				if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 					t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 				}
 				return tt.raw, nil
@@ -1069,7 +1069,7 @@ func TestDispatchStopsAfterBlockedAtomWithoutSyntheticSiblingRuns(t *testing.T) 
 
 	var implementorCalls int
 	events := DispatchReadyAtoms(&state, 5, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
 		implementorCalls++
@@ -1136,7 +1136,7 @@ func TestDispatchDoesNotCompletePlanExecuteQuestion(t *testing.T) {
 	ApplyPlannerOutput(&state, ParsedPlannerOutput{Kind: ToolSubmitFeaturePlan, Plan: validPlan()}, time.Unix(2, 0).UTC())
 
 	events := DispatchReadyAtoms(&state, 1, func(_ string, taskFamily string) (string, error) {
-		if taskFamily != string(taskfamily.FeaturePlannerImplementor) {
+		if taskFamily != string(autonomy.TaskFamilyFeaturePlannerImplementor) {
 			t.Fatalf("task family = %q, want feature_planner_implementor callback", taskFamily)
 		}
 		return `{"tool":"question_for_planner","lane_family":"plan-execute","question_summary":"Plan-execute could not produce a plan artifact.","blocking_claim":"plan-execute did not complete the atom implementation contract"}`, nil
@@ -1276,7 +1276,7 @@ func TestValidateDurablePlanRejectsInvalidDependencies(t *testing.T) {
 func TestRunKeepsImplementorQuestionAsPlannerRepairState(t *testing.T) {
 	state := NewState("session", "build feature", "", 3, time.Unix(1, 0).UTC())
 	result, err := Run(state, RunOptions{Prompt: "build feature", MaxPlanningIterations: 3}, func(prompt string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerPlanner) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			return mustPlanJSON(t, validPlan()), nil
 		}
 		return `{"tool":"question_for_planner","question_summary":"Which label text should win?","blocking_claim":"ambiguous target"}`, nil
@@ -1644,7 +1644,7 @@ func TestRunResumesDispatchingStateWithoutReplacingPlan(t *testing.T) {
 	state.Atoms[0].State = AtomStateQueued
 
 	result, err := Run(state, RunOptions{Prompt: "resume", MaxPlanningIterations: 3}, func(_ string, taskFamily string) (string, error) {
-		if taskFamily == string(taskfamily.FeaturePlannerPlanner) {
+		if taskFamily == string(autonomy.TaskFamilyFeaturePlannerPlanner) {
 			t.Fatal("resume from dispatching must not ask planner for a fresh plan")
 		}
 		return testPlanExecuteCompletedJSON(), nil
@@ -1708,9 +1708,9 @@ func TestRunAcceptsTypedAnswerForRequiredAuthority(t *testing.T) {
 
 	result, err := Run(state, RunOptions{Prompt: "continue", ResumeAnswer: typedAnswer}, func(_ string, taskFamily string) (string, error) {
 		switch taskFamily {
-		case string(taskfamily.FeaturePlannerPlanner):
+		case string(autonomy.TaskFamilyFeaturePlannerPlanner):
 			return mustPlanJSON(t, validPlan()), nil
-		case string(taskfamily.FeaturePlannerImplementor):
+		case string(autonomy.TaskFamilyFeaturePlannerImplementor):
 			return testPlanExecuteCompletedJSON(), nil
 		default:
 			t.Fatalf("unexpected task family %q", taskFamily)

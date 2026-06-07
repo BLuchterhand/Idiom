@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"idiom/internal/contracts/taskfamily"
+	"idiom/internal/contracts/autonomy"
 )
 
 type PromptRunner func(prompt string, taskFamily string) (string, error)
@@ -73,7 +73,7 @@ func Run(state FeatureState, opts RunOptions, runner PromptRunner) (RunResult, e
 	}
 
 	plannerPrompt := BuildPlannerPrompt(opts.Prompt, state, opts.ProductWorkflowBrief)
-	answer, err := runner(plannerPrompt, string(taskfamily.FeaturePlannerPlanner))
+	answer, err := runner(plannerPrompt, string(autonomy.TaskFamilyFeaturePlannerPlanner))
 	if err != nil {
 		state.Status = FeatureStateFailed
 		state.LastError = err.Error()
@@ -334,7 +334,7 @@ func DispatchReadyAtoms(state *FeatureState, maxAtoms int, runner PromptRunner) 
 			}},
 			Fields: map[string]any{"run_id": runID},
 		})
-		answer, err := runner(BuildImplementorPrompt(*atom, state.Plan), string(taskfamily.FeaturePlannerImplementor))
+		answer, err := runner(BuildImplementorPrompt(*atom, state.Plan), string(autonomy.TaskFamilyFeaturePlannerImplementor))
 		if err != nil {
 			atomFrom := atom.State
 			atom.State = AtomStateFailed
