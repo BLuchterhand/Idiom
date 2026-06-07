@@ -580,6 +580,46 @@ func TestPlanExecuteRecoverySurfaceAnchorRefreshWinsOverSourceSatisfiedTerminal(
 	assertNotContains(t, contract.ActionPolicy.AllowedActionClasses, actionSubmitPlan)
 }
 
+func TestDeriveTurnPhaseContractSourceSatisfiedTerminalSurface(t *testing.T) {
+	brief := workerruntime.WorkerRuntimeBrief{
+		TaskFamily:        PlanThenExecutePlannerTaskFamily,
+		PermissionProfile: "guarded_workspace_write",
+		AllowedTools:      []string{"read_file", "code_navigate", "submit_plan"},
+		RequiredEditPaths: []string{"a.go"},
+	}
+	results := []workspace.ToolResult{
+		{Tool: "read_file", Summary: "Read f1 a.go lines 1-10 (total lines: 10)", Output: "1:package a\n"},
+		{
+			Tool:    "submit_plan",
+			Summary: "submit_plan rejected: source-satisfied terminal shape required",
+			Error:   "submit_plan cannot carry a source-satisfied/no-op closeout. Answer `Decision: source-satisfied` with per-path current-state evidence, submit real edits, or answer <<QUESTION>> with the exact blocker.",
+			Code:    workspace.SubmitPlanSourceSatisfiedTerminalRequiredCode,
+		},
+	}
+
+	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
+		Brief:             brief,
+		Results:           results,
+		BaseAllowedTools:  brief.AllowedTools,
+		TextualToolParser: true,
+	})
+
+	if contract.PhaseID != turnPhaseSourceSatisfiedTerminal {
+		t.Fatalf("PhaseID = %q, want %q", contract.PhaseID, turnPhaseSourceSatisfiedTerminal)
+	}
+	if len(contract.AllowedTools) != 0 || len(contract.ActionPolicy.CallableToolNames) != 0 {
+		t.Fatalf("source-satisfied terminal surface must expose no tools, got allowed=%#v callable=%#v", contract.AllowedTools, contract.ActionPolicy.CallableToolNames)
+	}
+	assertEqualSet(t, contract.ActionPolicy.AllowedActionClasses, []string{actionSourceSatisfied, actionBlocker})
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionSubmitPlan)
+	assertContains(t, contract.ActionPolicy.InvalidActionClasses, actionRead)
+	assertEqualSet(t, contract.ActionPolicy.TerminalResponseShapes, []string{"Decision: source-satisfied", "<<QUESTION>>:"})
+	assertEqualSet(t, contract.RuntimeCall.ExpressibleActionClasses, []string{actionSourceSatisfied, actionBlocker})
+	if contract.RuntimeCall.ParserContract != "source_satisfied_terminal" {
+		t.Fatalf("ParserContract = %q, want source_satisfied_terminal", contract.RuntimeCall.ParserContract)
+	}
+}
+
 func TestDeriveTurnPhaseContractGroundingRejectedPlanUsesSourceRefresh(t *testing.T) {
 	contract := deriveTurnPhaseContract(TurnPhaseContractInput{
 		Brief: workerruntime.WorkerRuntimeBrief{

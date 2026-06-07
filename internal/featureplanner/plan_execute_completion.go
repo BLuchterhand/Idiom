@@ -252,6 +252,12 @@ func (summary PlanExecuteCompletionSummary) withInheritedContext(other PlanExecu
 	if summary.CompletionSource == "" {
 		summary.CompletionSource = other.CompletionSource
 	}
+	if summary.ProgressPath == "" {
+		summary.ProgressPath = other.ProgressPath
+	}
+	if len(summary.ChangedPaths) == 0 {
+		summary.ChangedPaths = append([]string(nil), other.ChangedPaths...)
+	}
 	if planExecuteCompletionStatusSkipped(summary.Status) || planExecuteCompletionStatusSkipped(summary.ReviewStatus) {
 		summary.ReviewRepairSkipped = summary.ReviewRepairSkipped || other.ReviewRepairSkipped
 	}

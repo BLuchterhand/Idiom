@@ -41,7 +41,7 @@ func TestValidateSourceSatisfiedPathCoverageRejectsPendingPartialApproval(t *tes
 	got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
 		RequiredPaths:        []string{"a.go"},
 		SourceSatisfiedPaths: []string{"a.go"},
-		Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: "harness_observed_current_state"}},
+		Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: "harness_observed_source"}},
 		ApprovedPaths:        []string{"b.go"},
 		PendingPaths:         []string{"a.go"},
 		RequireEvidence:      true,
@@ -51,5 +51,19 @@ func TestValidateSourceSatisfiedPathCoverageRejectsPendingPartialApproval(t *tes
 	}
 	if got[0].Code != "pending_approval" || got[1].Code != "outside_approved_scope" {
 		t.Fatalf("unexpected violation ordering/content: %#v", got)
+	}
+}
+
+func TestValidateSourceSatisfiedPathCoverageRejectsNonCanonicalEvidenceKinds(t *testing.T) {
+	for _, kind := range []string{"source", "read_file", "harness_observed_current_state", "verified_current_state", "verified_current_source"} {
+		got := ValidateSourceSatisfiedPathCoverage(SourceSatisfiedPathCoverageInput{
+			RequiredPaths:        []string{"a.go"},
+			SourceSatisfiedPaths: []string{"a.go"},
+			Evidence:             []SourceSatisfiedEvidenceRef{{Path: "a.go", Kind: kind}},
+			RequireEvidence:      true,
+		})
+		if len(got) != 1 || got[0].Code != "missing_current_state_evidence" {
+			t.Fatalf("kind %q should not satisfy source-satisfied evidence, got %#v", kind, got)
+		}
 	}
 }

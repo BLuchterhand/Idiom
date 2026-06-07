@@ -160,3 +160,23 @@ func TestOverlayPlanExecuteCompletionFieldsNestedFailureOverridesWrapperComplete
 		t.Fatalf("terminal class = %q, want blocked; fields=%+v", got, fields)
 	}
 }
+
+func TestPlanExecuteCompletionFieldsDegradedInheritsEarlierProgressPath(t *testing.T) {
+	output := strings.Join([]string{
+		`{"type":"idiom.plan_execute.resume_state_saved","state_path":".idiom/plan-execute/sessions/active.json","phase":"executor","status":"running","changed_paths":["internal/app/feature.go"]}`,
+		`{"type":"idiom.plan_execute.review_repair_degraded","phase":"review_repair","status":"degraded","review_status":"degraded","failure_kind":"review_model_error","failure_reason":"review model returned invalid JSON"}`,
+	}, "\n")
+
+	fields := PlanExecuteCompletionFields(output)
+
+	if got := fmt.Sprint(fields["progress_path"]); got != ".idiom/plan-execute/sessions/active.json" {
+		t.Fatalf("progress_path = %q, want inherited path; fields=%+v", got, fields)
+	}
+	changed, _ := fields["changed_paths"].([]string)
+	if len(changed) != 1 || changed[0] != "internal/app/feature.go" {
+		t.Fatalf("changed_paths = %#v, want inherited changed path; fields=%+v", fields["changed_paths"], fields)
+	}
+	if got := fmt.Sprint(fields["failure_kind"]); got != "review_model_error" {
+		t.Fatalf("failure_kind = %q, want review_model_error; fields=%+v", got, fields)
+	}
+}

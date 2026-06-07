@@ -108,8 +108,7 @@ func sourceSatisfiedEvidenceKindProvesCurrentState(kind string) bool {
 	kind = strings.ToLower(strings.TrimSpace(kind))
 	kind = strings.ReplaceAll(kind, "-", "_")
 	switch kind {
-	case "harness_observed_source", "harness_observed_current_state",
-		"verified_current_source", "verified_current_state":
+	case "harness_observed_source":
 		return true
 	default:
 		return false

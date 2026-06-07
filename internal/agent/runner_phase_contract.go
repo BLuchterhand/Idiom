@@ -149,6 +149,7 @@ func turnPhaseContractTerminalOutcomesDriveNextActions(contract TurnPhaseContrac
 	}
 	phaseID := strings.TrimSpace(contract.PhaseID)
 	return strings.Contains(phaseID, "submit_ready") ||
+		strings.Contains(phaseID, "source_satisfied_terminal") ||
 		strings.Contains(phaseID, "review_repair") ||
 		strings.Contains(phaseID, "final")
 }

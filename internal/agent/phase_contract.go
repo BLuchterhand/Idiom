@@ -18,6 +18,7 @@ const (
 	turnPhaseHistoryPending              = "plan_execute.history_pending"
 	turnPhaseSubmitReadyNativeRequired   = "plan_execute.submit_ready.native_required"
 	turnPhaseSubmitReadyTextual          = "plan_execute.submit_ready.textual"
+	turnPhaseSourceSatisfiedTerminal     = "plan_execute.source_satisfied_terminal"
 	turnPhaseMalformedSubmitPlanRecovery = "plan_execute.malformed_submit_plan_recovery"
 	turnPhaseStaleAnchorRefresh          = "plan_execute.stale_anchor_refresh"
 	turnPhaseReviewRepairTerminal        = "plan_execute.review_repair_terminal"
@@ -323,6 +324,8 @@ func applyTurnPhase(contract *TurnPhaseContract, input TurnPhaseContractInput, b
 		applyStaleAnchorRefresh(contract, input, baseTools, planningState)
 	case recoverySurface.Kind == PlanExecuteRecoverySurfaceHistoryPending:
 		applyHistoryPending(contract, baseTools, planningState)
+	case recoverySurface.Kind == PlanExecuteRecoverySurfaceSourceSatisfiedTerminal:
+		applySourceSatisfiedTerminal(contract, planningState)
 	case recoverySurface.Kind == PlanExecuteRecoverySurfaceSubmitCorrection:
 		applySubmitReady(contract, input, baseTools, planningState)
 	case planThenExecuteSubmitReadyParseFailureSeen(brief, input.Results):
@@ -490,6 +493,32 @@ func applyMalformedSubmitPlanRecovery(contract *TurnPhaseContract, input TurnPha
 	contract.RuntimeCall.ResponseFormat = firstPhaseString(input.ResponseFormat, "json")
 	contract.RuntimeCall.ExpectedVisibleOutput = "visible_text_tool_request"
 	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSubmitPlan, actionSourceSatisfied, actionBlocker}
+}
+
+func applySourceSatisfiedTerminal(contract *TurnPhaseContract, state PlanExecutePlanningState) {
+	contract.PhaseID = turnPhaseSourceSatisfiedTerminal
+	contract.Phase = "source_satisfied_terminal"
+	contract.DerivationReason = "plan_execute_source_satisfied_terminal_required"
+	contract.AllowedTools = nil
+	contract.RequiredNext = []string{"visible Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.InvalidNext = []string{"submit_plan after source-satisfied/no-op submit_plan rejection", "read/search/source-refresh after source-satisfied terminal recovery", "per-edit write in planner phase", "verify in planner phase", "prose-only final answer without Decision or <<QUESTION>>"}
+	contract.TerminalOutcomes = []string{"Decision: source-satisfied", "<<QUESTION>>:"}
+	contract.ActionPolicy = TurnActionClassPolicy{
+		AllowedActionClasses:   []string{actionSourceSatisfied, actionBlocker},
+		InvalidActionClasses:   []string{actionSubmitPlan, actionRead, actionSearch, actionPerEditWrite, actionVerify, actionGenericProbe, actionProseFinal},
+		TerminalResponseShapes: []string{"Decision: source-satisfied", "<<QUESTION>>:"},
+		CallableToolNames:      nil,
+	}
+	if len(state.TerminalResponseShapes) > 0 {
+		contract.ActionPolicy.TerminalResponseShapes = filterPhaseTerminalShapes(state.TerminalResponseShapes, "Decision: source-satisfied", "<<QUESTION>>:")
+		contract.TerminalOutcomes = append([]string(nil), contract.ActionPolicy.TerminalResponseShapes...)
+	}
+	contract.RuntimeCall.ParserContract = "source_satisfied_terminal"
+	contract.RuntimeCall.ResponseFormat = ""
+	contract.RuntimeCall.ToolChoice = ""
+	contract.RuntimeCall.ToolTransportMode = "none"
+	contract.RuntimeCall.ExpectedVisibleOutput = "visible_terminal_outcome"
+	contract.RuntimeCall.ExpressibleActionClasses = []string{actionSourceSatisfied, actionBlocker}
 }
 
 func applyStaleAnchorRefresh(contract *TurnPhaseContract, input TurnPhaseContractInput, baseTools []string, state PlanExecutePlanningState) {
@@ -1141,6 +1170,27 @@ func filterPhaseTools(tools []string, allowed ...string) []string {
 		tool = strings.TrimSpace(tool)
 		if _, ok := allowedSet[tool]; ok {
 			out = append(out, tool)
+		}
+	}
+	return uniquePhaseStrings(out)
+}
+
+func filterPhaseTerminalShapes(values []string, allowed ...string) []string {
+	if len(values) == 0 || len(allowed) == 0 {
+		return nil
+	}
+	allowedSet := make(map[string]struct{}, len(allowed))
+	for _, value := range allowed {
+		value = strings.TrimSpace(value)
+		if value != "" {
+			allowedSet[value] = struct{}{}
+		}
+	}
+	var out []string
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if _, ok := allowedSet[value]; ok {
+			out = append(out, value)
 		}
 	}
 	return uniquePhaseStrings(out)
