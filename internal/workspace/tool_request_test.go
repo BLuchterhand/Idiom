@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -882,6 +883,61 @@ func TestDecodeToolRequestJSONRepairsObjectEvidenceForSubmitPlan(t *testing.T) {
 	}
 	if len(req.Evidence) != 1 || !strings.Contains(req.Evidence[0], "native/tests/test_quality_inventory_bindings.cpp") {
 		t.Fatalf("object evidence should be preserved as compact evidence text, got %#v", req.Evidence)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsStructuredSourceSatisfiedPaths(t *testing.T) {
+	payload := []byte(`{"tool":"submit_plan","rationale":"mixed plan","source_satisfied_paths":[{"path":"b.txt","evidence":"current source already final"},{"file":"c.txt"}],"edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace fixture"}]}`)
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should repair structured source_satisfied_paths: %v", err)
+	}
+	if req.Tool != "submit_plan" || len(req.Edits) != 1 {
+		t.Fatalf("unexpected repaired submit_plan request: %#v", req)
+	}
+	if got, want := req.SourceSatisfiedPaths, []string{"b.txt", "c.txt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("source_satisfied_paths = %#v, want %#v", got, want)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsObjectSourceSatisfiedPaths(t *testing.T) {
+	payload := []byte(`{"tool":"submit_plan","rationale":"mixed plan","source_satisfied_paths":{"b.txt":"current source already final","c.txt":"current source already final"},"edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace fixture"}]}`)
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should repair object source_satisfied_paths: %v", err)
+	}
+	if got, want := req.SourceSatisfiedPaths, []string{"b.txt", "c.txt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("source_satisfied_paths = %#v, want %#v", got, want)
+	}
+}
+
+func TestDecodeToolRequestJSONRejectsMetadataOnlySourceSatisfiedPathObjects(t *testing.T) {
+	payload := []byte(`{"tool":"submit_plan","rationale":"mixed plan","source_satisfied_paths":[{"evidence":"current source already final"}],"edits":[{"path":"a.txt","old_text":"old","new_text":"new","purpose":"replace fixture"}]}`)
+	_, err := DecodeToolRequestJSON(payload)
+	if err == nil || !strings.Contains(err.Error(), "source_satisfied_paths") {
+		t.Fatalf("metadata-only source_satisfied_paths object should remain a decode error, got %v", err)
+	}
+}
+
+func TestDecodeToolRequestJSONRepairsStringifiedSourceSatisfiedPathsWithTrailingProse(t *testing.T) {
+	inner := `["b.txt"]
+
+These are already final.`
+	payload, err := json.Marshal(map[string]any{
+		"tool":                   "submit_plan",
+		"rationale":              "mixed plan",
+		"source_satisfied_paths": inner,
+		"edits":                  []map[string]any{{"path": "a.txt", "old_text": "old", "new_text": "new", "purpose": "replace fixture"}},
+	})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	req, err := DecodeToolRequestJSON(payload)
+	if err != nil {
+		t.Fatalf("DecodeToolRequestJSON should repair stringified source_satisfied_paths: %v", err)
+	}
+	if got, want := req.SourceSatisfiedPaths, []string{"b.txt"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("source_satisfied_paths = %#v, want %#v", got, want)
 	}
 }
 

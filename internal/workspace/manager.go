@@ -1481,7 +1481,7 @@ func stringifiedStructuredToolFields(payload []byte) map[string]string {
 	out := make(map[string]string)
 	for _, field := range []string{
 		"edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths",
-		"declarations", "moves", "todos", "items", "plan_artifact",
+		"source_satisfied_paths", "declarations", "moves", "todos", "items", "plan_artifact",
 	} {
 		raw, ok := obj[field]
 		if !ok {
@@ -1507,6 +1507,9 @@ func toolRequestLostStringifiedStructuredField(req ToolRequest, fields map[strin
 	}
 	if _, ok := fields["required_edit_paths"]; ok && len(req.RequiredEditPaths) == 0 {
 		return !stringifiedStructuredFieldRepresentsEmptyValue("required_edit_paths", fields["required_edit_paths"])
+	}
+	if _, ok := fields["source_satisfied_paths"]; ok && len(req.SourceSatisfiedPaths) == 0 {
+		return !stringifiedStructuredFieldRepresentsEmptyValue("source_satisfied_paths", fields["source_satisfied_paths"])
 	}
 	if _, ok := fields["forbidden_paths"]; ok && len(req.ForbiddenPaths) == 0 {
 		return !stringifiedStructuredFieldRepresentsEmptyValue("forbidden_paths", fields["forbidden_paths"])
@@ -1541,7 +1544,7 @@ func stringifiedStructuredFieldRepresentsEmptyValue(field string, value string) 
 			return false
 		}
 		return len(obj) == 0
-	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
 		var arr []json.RawMessage
 		if err := json.Unmarshal([]byte(value), &arr); err != nil {
 			return false
@@ -1609,6 +1612,7 @@ func repairToolRequestJSONPayload(payload []byte) ([]byte, bool) {
 			repairRawJSONControlChars,
 			repairStringifiedJSONToolFields,
 			repairObjectEvidenceToolField,
+			repairSourceSatisfiedPathsToolField,
 			repairSingletonArrayToolFields,
 			repairStringArrayToolFields,
 			repairNumericStringToolFields,
@@ -1672,7 +1676,7 @@ func repairStringifiedJSONToolFields(payload []byte) ([]byte, bool) {
 	repaired := false
 	for _, field := range []string{
 		"edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths",
-		"declarations", "moves", "todos", "items", "plan_artifact",
+		"source_satisfied_paths", "declarations", "moves", "todos", "items", "plan_artifact",
 	} {
 		raw, ok := obj[field]
 		if !ok {
@@ -1739,6 +1743,135 @@ func repairObjectEvidenceToolField(payload []byte) ([]byte, bool) {
 	return out, true
 }
 
+func repairSourceSatisfiedPathsToolField(payload []byte) ([]byte, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &obj); err != nil {
+		return nil, false
+	}
+	raw, ok := obj["source_satisfied_paths"]
+	if !ok {
+		return nil, false
+	}
+	paths, ok := decodeSourceSatisfiedPathsField(raw, true)
+	if !ok {
+		return nil, false
+	}
+	encoded, err := json.Marshal(paths)
+	if err != nil {
+		return nil, false
+	}
+	obj["source_satisfied_paths"] = encoded
+	out, err := json.Marshal(obj)
+	if err != nil {
+		return nil, false
+	}
+	return out, true
+}
+
+func decodeSourceSatisfiedPathsField(raw json.RawMessage, allowPathKeyedObject bool) ([]string, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, false
+	}
+	var paths []string
+	switch trimmed[0] {
+	case '"':
+		var value string
+		if err := json.Unmarshal(trimmed, &value); err != nil {
+			return nil, false
+		}
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return nil, false
+		}
+		return []string{value}, true
+	case '{':
+		return decodeSourceSatisfiedPathsObject(trimmed, allowPathKeyedObject)
+	case '[':
+		var items []json.RawMessage
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			return nil, false
+		}
+		for _, item := range items {
+			itemPaths, ok := decodeSourceSatisfiedPathsField(item, false)
+			if !ok {
+				return nil, false
+			}
+			paths = append(paths, itemPaths...)
+		}
+	default:
+		return nil, false
+	}
+	paths = compactNonEmptyStrings(paths)
+	if len(paths) == 0 {
+		return nil, false
+	}
+	return paths, true
+}
+
+func decodeSourceSatisfiedPathsObject(raw json.RawMessage, allowPathKeyedObject bool) ([]string, bool) {
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, false
+	}
+	for _, key := range []string{"path", "file"} {
+		if value, ok := decodeStringObjectField(obj, key); ok {
+			return []string{value}, true
+		}
+	}
+	for _, key := range []string{"paths", "files", "source_satisfied_paths"} {
+		if rawPaths, ok := obj[key]; ok {
+			return decodeSourceSatisfiedPathsField(rawPaths, true)
+		}
+	}
+	if !allowPathKeyedObject {
+		return nil, false
+	}
+	paths := make([]string, 0, len(obj))
+	for key := range obj {
+		key = strings.TrimSpace(key)
+		if key != "" {
+			paths = append(paths, key)
+		}
+	}
+	paths = compactNonEmptyStrings(paths)
+	if len(paths) == 0 {
+		return nil, false
+	}
+	sort.Strings(paths)
+	return paths, true
+}
+
+func decodeStringObjectField(obj map[string]json.RawMessage, key string) (string, bool) {
+	raw, ok := obj[key]
+	if !ok {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	value = strings.TrimSpace(value)
+	return value, value != ""
+}
+
+func compactNonEmptyStrings(values []string) []string {
+	out := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, ok := seen[value]; ok {
+			continue
+		}
+		seen[value] = struct{}{}
+		out = append(out, value)
+	}
+	return out
+}
+
 func stringifiedStructuredFieldHasTopLevelJSONStart(field string, value string) bool {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -1747,7 +1880,7 @@ func stringifiedStructuredFieldHasTopLevelJSONStart(field string, value string) 
 	switch field {
 	case "plan_artifact":
 		return value[0] == '{'
-	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
 		return value[0] == '[' || value[0] == '{'
 	default:
 		return false
@@ -1763,7 +1896,7 @@ func extractLeadingStringifiedJSONToolFieldValue(field string, value string) (js
 	switch field {
 	case "plan_artifact":
 		allowedStarts = "{"
-	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
 		allowedStarts = "[{"
 	default:
 		return nil, false
@@ -1796,7 +1929,7 @@ func extractStringifiedJSONToolFieldValue(field string, value string) (json.RawM
 	switch field {
 	case "plan_artifact":
 		return extractBalancedJSONToolValue(value, "{")
-	case "edits", "evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
+	case "edits", "evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations", "moves", "todos", "items":
 		return extractBalancedJSONToolValue(value, "[{")
 	default:
 		return nil, false
@@ -1971,7 +2104,7 @@ func repairStringArrayToolFields(payload []byte) ([]byte, bool) {
 		return nil, false
 	}
 	repaired := false
-	for _, field := range []string{"evidence", "required_tests", "required_edit_paths", "forbidden_paths", "declarations"} {
+	for _, field := range []string{"evidence", "required_tests", "required_edit_paths", "source_satisfied_paths", "forbidden_paths", "declarations"} {
 		raw, ok := obj[field]
 		if !ok {
 			continue
