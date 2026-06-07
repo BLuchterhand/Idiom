@@ -1360,6 +1360,35 @@ func TestPlanArtifactInvalidEditShapeErrorKeepsFullGuidance(t *testing.T) {
 	if !strings.Contains(message, "replace_all=true with new_text and empty old_text") {
 		t.Fatalf("invalid edit shape guidance missing whole-file shape, got %q", message)
 	}
+	for _, want := range []string{"source_satisfied_paths", "remove it from edits[]"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("invalid edit shape guidance missing source-satisfied coverage hint %q, got %q", want, message)
+		}
+	}
+}
+
+func TestSubmitPlanInvalidEditShapePointsSourceSatisfiedPathToTopLevelCoverage(t *testing.T) {
+	mgr, root := newSubmitPlanTestManager(t)
+	writeSubmitPlanFixture(t, root, "x.txt", "already final\n")
+	result := mgr.Execute(context.Background(), ToolRequest{
+		Tool:      "submit_plan",
+		Rationale: "x.txt already contains the requested final state; y.txt still needs an edit.",
+		Edits: []PlanEdit{
+			{Path: "x.txt", Purpose: "already source satisfied"},
+			{Path: "y.txt", OldText: "before", NewText: "after", Purpose: "real edit"},
+		},
+	})
+	if strings.TrimSpace(result.Error) == "" {
+		t.Fatalf("invalid source-satisfied edit object should be rejected")
+	}
+	for _, want := range []string{"source_satisfied_paths", "remove it from edits[]"} {
+		if !strings.Contains(result.Error, want) {
+			t.Fatalf("submit_plan invalid shape should steer source-satisfied paths to top-level coverage %q, got %q", want, result.Error)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(root, ".idiom", "plans", "last.plan.json")); !os.IsNotExist(err) {
+		t.Fatalf("submit_plan should reject before writing an artifact; stat err=%v", err)
+	}
 }
 
 func TestLoadPlanArtifactAcceptsLegacyV1AndSynthesizesDurableFields(t *testing.T) {

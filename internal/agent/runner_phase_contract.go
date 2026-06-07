@@ -61,7 +61,7 @@ func applyTurnPhaseContractToNextActionState(state runnerNextActionState, contra
 	} else if turnPhaseContractTerminalOutcomesDriveNextActions(contract) {
 		state.NextValidActions = append([]string(nil), contract.TerminalOutcomes...)
 		if containsPhaseString(contract.TerminalOutcomes, actionSubmitPlan) {
-			state.NextValidActions = []string{"submit_plan covering every required_edit_path with real edits or source_satisfied_paths entries, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+			state.NextValidActions = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 		}
 	}
 	if len(contract.InvalidNext) > 0 {

@@ -921,7 +921,7 @@ func sanitizePlanArtifactErrorDetail(value string) string {
 	switch {
 	case strings.Contains(lower, "insert_after_line content exceeds inline submit_plan limit"):
 		return sanitizePlanArtifactVisibleText(value, 600)
-	case strings.Contains(lower, "requires one edit shape"):
+	case strings.Contains(lower, "requires one edit shape"), strings.Contains(lower, "requires one executable edit shape"):
 		return sanitizePlanArtifactVisibleText(value, 600)
 	case strings.Contains(lower, "path"):
 		return sanitizePlanArtifactVisibleText(value, 160)

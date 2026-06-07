@@ -1540,7 +1540,7 @@ func (r *Runner) Run(
 					result := workspace.ToolResult{
 						Tool:    req.Tool,
 						Summary: "Plan-execute submit_plan required",
-						Error:   fmt.Sprintf("%s is not available while plan-execute planner recovery is waiting for a visible `submit_plan`. The next visible action must be a parser-readable `submit_plan` covering every required_edit_path with real edits or source_satisfied_paths entries.%s", strings.TrimSpace(req.Tool), refreshNote),
+						Error:   fmt.Sprintf("%s is not available while plan-execute planner recovery is waiting for a visible `submit_plan`. The next visible action must be a parser-readable `submit_plan`. %s%s", strings.TrimSpace(req.Tool), planThenExecuteSubmitPlanCoverageSentence(), refreshNote),
 					}
 					controller.recordRejectedResult(stepNumber, activeToolCall, req, result, "tool_rejected")
 					refreshPlanThenExecuteTerminalSurface("submit_plan_recovery")
@@ -3327,7 +3327,7 @@ func (r *Runner) Run(
 			replacePlanThenExecuteRejectedSubmitPlanDraftEvidence(&turnMessages, req, result)
 			rejectedAt := len(collectedResults) - 1
 			refreshNote := planThenExecutePostSubmitRejectionRefreshNote(r.RuntimeBrief, collectedResults, result, rejectedAt)
-			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request whose coverage includes every required edit path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
+			prompt := "The previous `submit_plan` was rejected before it became a valid plan artifact. " + lastSubmitPlanCorrectionRejectionBrief(result) + "The next visible action must be a corrected parser-readable `submit_plan` request. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, result) + " " + refreshNote
 			eventRole := "plan_then_execute_submit_plan_required"
 			if planThenExecuteUnscopedEmptySubmitPlanRejected(r.RuntimeBrief, collectedResults) {
 				prompt = RenderPlanExecuteRecoveryPlan(planThenExecuteUnscopedEmptySubmitPlanRecoveryPlan())
@@ -3380,7 +3380,7 @@ func (r *Runner) Run(
 				recoveryState.Mode != PlanExecutePlanningModeAnchorRefresh &&
 				len(planThenExecuteUnreadRequiredPaths(r.RuntimeBrief, collectedResults)) == 0 {
 				planThenExecuteCorrectionAfterRefreshNudged = true
-				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. The next visible action must be a corrected parser-readable `submit_plan` request whose `edits[]` coverage includes every required edit path. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
+				prompt := "The bounded source refresh after the rejected `submit_plan` is complete. The next visible action must be a corrected parser-readable `submit_plan` request. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not call read/search/discovery in submit-correction mode. " + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejectedResult)
 				refreshPlanThenExecuteTerminalSurface("submit_plan_after_refresh")
 				if terminalSubmitPlanNativeTools() {
 					prompt = planThenExecuteNativeSubmitPlanCorrectionPrompt(r.RuntimeBrief, rejectedResult)
@@ -4744,9 +4744,9 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 		}
 		if len(unread) > 0 {
 			next := firstPlanThenExecuteUnreadRequiredPath(brief.RequiredEditPaths, unread)
-			readInstruction := "read the next unread required_edit_path with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan covering every required path with real edits or source_satisfied_paths entries, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker"
+			readInstruction := "read the next unread required_edit_path with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker"
 			if next != "" {
-				readInstruction = fmt.Sprintf("read required_edit_path %s with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan covering every required path with real edits or source_satisfied_paths entries, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker", next)
+				readInstruction = fmt.Sprintf("read required_edit_path %s with source-body evidence before submit_plan; after every existing required_edit_path has satisfied its source-body obligation, submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker", next)
 			}
 			brief.RequiredNext = mergeRunnerStateStrings([]string{readInstruction}, brief.RequiredNext)
 			brief.InvalidActions = mergeRunnerStateStrings([]string{
@@ -4791,7 +4791,7 @@ func runnerBriefWithRequiredEditPathHints(brief workerruntime.WorkerRuntimeBrief
 			return brief
 		}
 		brief.RequiredNext = mergeRunnerStateStrings([]string{
-			"submit_plan covering every required_edit_paths entry with a real edit or source_satisfied_paths entry, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker",
+			"submit_plan using edits[] for changed paths and top-level source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path evidence, or <<QUESTION>> with the exact path-specific blocker",
 		}, rejectRunnerStateStrings(brief.RequiredNext, planThenExecuteSubmitReadySourceHint))
 		brief.Constraints = mergeRunnerStateStrings([]string{"plan_then_execute_submit_plan_ready"}, brief.Constraints)
 		brief.InvalidActions = mergeRunnerStateStrings([]string{
@@ -7723,11 +7723,11 @@ func (r *Runner) refreshPlanThenExecuteTerminalToolSurface(messages *[]llama.Cha
 		surfaceTitle = "# Terminal Plan-Execute Native Tool Surface"
 		terminalState.ReadinessGate = []string{"native_submit_plan_tool_call_required"}
 		terminalState.StopConditions = []string{"submit_plan_returned_ok", "submit_plan_rejected_with_blocker"}
-		terminalState.FinalCritic = []string{"submit_plan_called", "edits_cover_required_paths"}
-		terminalState.NextActions = []string{"call native submit_plan covering every required_edit_path with real edits or source_satisfied_paths entries"}
+		terminalState.FinalCritic = []string{"submit_plan_called", "edits_or_source_satisfied_paths_cover_required_paths"}
+		terminalState.NextActions = []string{"call native submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		renderedState = workerruntime.RenderStepInstruction(workerruntime.StepInstruction{
 			CurrentState: terminalState,
-			Directive:    "Use this current-state packet for the next action. Plan-execute source obligations are closed and this request exposes exactly one native tool: submit_plan. Call native submit_plan now with complete executable final edit bodies. Do not read, search, shell, verify, use per-edit write tools, or answer in prose.",
+			Directive:    "Use this current-state packet for the next action. Plan-execute source obligations are closed and this request exposes exactly one native tool: submit_plan. Call native submit_plan now. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not read, search, shell, verify, use per-edit write tools, or answer in prose.",
 		})
 		actionInstruction = "Native `submit_plan` is the only exposed tool in this request. Use the `submit_plan` tool call now; do not answer in prose."
 	}
@@ -7843,8 +7843,8 @@ func (r *Runner) refreshPlanThenExecuteTerminalTextualFallbackSurface(messages *
 		ReadinessGate:     []string{"visible_textual_submit_plan_json_required"},
 		SearchPolicy:      []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"},
 		StopConditions:    []string{"submit_plan_returned_ok", "submit_plan_rejected_with_blocker"},
-		FinalCritic:       []string{"submit_plan_called", "edits_cover_required_paths"},
-		NextActions:       []string{"emit exactly one visible submit_plan JSON object covering every required_edit_path with real edits or source_satisfied_paths entries"},
+		FinalCritic:       []string{"submit_plan_called", "edits_or_source_satisfied_paths_cover_required_paths"},
+		NextActions:       []string{"emit exactly one visible submit_plan JSON object using edits[] for changed paths and source_satisfied_paths for already-final paths"},
 		InvalidActions:    append([]string(nil), terminalBrief.InvalidActions...),
 		Readiness:         terminalBrief.Readiness,
 	}
@@ -7947,11 +7947,11 @@ func (r *Runner) planThenExecuteTerminalToolBrief(results []workspace.ToolResult
 	brief.SearchPolicy = []string{"no read/search/discovery action is valid after submit_plan readiness before the first terminal outcome"}
 	if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
 		brief.Constraints = mergeRunnerStateStrings(brief.Constraints, []string{"plan_then_execute_submit_correction_only"})
-		brief.RequiredNext = []string{"corrected submit_plan covering every required_edit_path with real executable edits or source_satisfied_paths for paths already at final state"}
+		brief.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		brief.InvalidActions = []string{"read/search/source-refresh after submit_plan correction is ready", "Decision: source-satisfied after an incomplete submit_plan", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 		brief.ReadinessGate = []string{"submit_plan_correction_required"}
 		brief.StopConditions = []string{"submit_plan_returned_ok"}
-		brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "edits_cover_required_paths"}
+		brief.FinalCritic = []string{"answers_actual_user_request", "submit_plan_called", "edits_or_source_satisfied_paths_cover_required_paths"}
 	} else {
 		brief.ReadinessGate = mergeRunnerStateStrings([]string{string(workerruntime.ReadinessSubmitPlanOrSourceSatisfiedOrBlocker)}, brief.ReadinessGate)
 		brief.StopConditions = mergeRunnerStateStrings([]string{string(workerruntime.StopSubmitPlanReturnedOrSourceSatisfiedOrBlocker), string(workerruntime.StopBlockedByMissingPermissionOrInformation)}, brief.StopConditions)
@@ -8086,6 +8086,8 @@ func planThenExecuteNativeSubmitPlanSkeleton(entries []planThenExecuteSubmitPlan
 	b.WriteString(planThenExecuteCurrentSubmitPlanSkeletonPrefix)
 	b.WriteString("\n\nNative `submit_plan` tool-argument shape. Fill these arguments in the tool call; do not answer with this template as prose.\n\n")
 	b.WriteString("rationale: write one concrete sentence explaining why the edit set satisfies the request.\n")
+	b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+	b.WriteString("\n")
 	b.WriteString("edits:\n")
 	for _, entry := range entries {
 		b.WriteString("- path: ")
@@ -8125,7 +8127,9 @@ func planThenExecuteNativeSubmitPlanSkeleton(entries []planThenExecuteSubmitPlan
 func planThenExecuteTextualSubmitPlanSkeleton(entries []planThenExecuteSubmitPlanSkeletonEntry) string {
 	var b strings.Builder
 	b.WriteString(planThenExecuteCurrentSubmitPlanSkeletonPrefix)
-	b.WriteString("\n\nParser-readable submit_plan contract. Emit exactly one visible JSON object with top-level `tool:\"submit_plan\"`, `rationale`, and an `edits` array. The JSON must contain real values only; do not copy placeholders, ellipses, or schema examples.\n\n")
+	b.WriteString("\n\nParser-readable submit_plan contract. Emit exactly one visible JSON object with top-level `tool:\"submit_plan\"`, `rationale`, and an `edits` array. The JSON must contain real values only; do not copy placeholders, ellipses, or schema examples. ")
+	b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+	b.WriteString("\n\n")
 	for _, entry := range entries {
 		b.WriteString("- required edit path: ")
 		b.WriteString(entry.Path)
@@ -9347,7 +9351,7 @@ func escalateCompletionGateMessage(base string, priorRejections int) string {
 
 func planThenExecuteMissingSubmitPlanError(requiredEditPaths []string) string {
 	if len(requiredEditPaths) > 0 {
-		return "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Call `submit_plan` covering every required_edit_paths entry with real edits or source_satisfied_paths entries, answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker."
+		return "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names every required path and cites current-state evidence. Call `submit_plan`: " + planThenExecuteSubmitPlanCoverageSentence() + " Or answer `Decision: source-satisfied`, or answer with <<QUESTION>> naming the exact path-specific blocker."
 	}
 	return "plan-execute planner phase requires a successful submit_plan tool result before final answer, or a source-satisfied answer that names the relevant path(s) and cites current-state evidence. Call `submit_plan` for the needed candidate/allowed edit path(s), answer `Decision: source-satisfied`, or answer with `<<QUESTION>>:` naming the exact blocker."
 }
@@ -9538,9 +9542,9 @@ func (r *Runner) completionGateRecoveryPrompt(results []workspace.ToolResult) (p
 				correction = correctionBrief + planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, rejected)
 			}
 			if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
-				return fmt.Sprintf("The completion gate rejected a final answer before the corrected plan-submission contract (`submit_plan`) produced a valid artifact for required edit path(s): %s. Previous rejected submit_plan drafts do not count as coverage. Every required path already has source-body evidence, so read/search/discovery tools are hidden now and must not be called. Your next visible message must be exactly one parser-readable `submit_plan` request covering every remaining required path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not reply in prose. %s For a new file or whole-file write use explicit replacement edit shapes: `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`.", strings.Join(missing, ", "), correction), true, true
+				return fmt.Sprintf("The completion gate rejected a final answer before the corrected plan-submission contract (`submit_plan`) produced a valid artifact for required edit path(s): %s. Previous rejected submit_plan drafts do not count as coverage. Every required path already has source-body evidence, so read/search/discovery tools are hidden now and must not be called. Your next visible message must be exactly one parser-readable `submit_plan` request. %s Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not reply in prose. %s For a new file or whole-file write use explicit replacement edit shapes: `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`.", strings.Join(missing, ", "), planThenExecuteSubmitPlanCoverageSentence(), correction), true, true
 			}
-			return fmt.Sprintf("The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) produced a valid artifact for required edit path(s): %s. Previous rejected submit_plan drafts do not count as coverage. Every required path already has source-body evidence, so read/search/discovery tools are hidden now and must not be called. Your next visible message must be exactly one parser-readable action, not the same prose. Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. If the gathered evidence supports the requested changes, your next response must be a parser-readable `submit_plan` request, not prose, covering every remaining required path with real edits or source_satisfied_paths entries. %s For a new file or whole-file write use explicit replacement edit shapes: `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`. If a required missing source/test path has only behavior/helper requirements and no substantial inline body or explicit replacement shape, answer with <<QUESTION>> naming the missing body evidence. The other valid outcome is `Decision: source-satisfied` naming every path plus current-state evidence if the requested final state is already present. Do not call read_file, search_content, context_pack, context_query, code_navigate, or any other discovery tool.", strings.Join(missing, ", "), correction), true, true
+			return fmt.Sprintf("The completion gate rejected a final answer before the plan-submission contract (`submit_plan`) produced a valid artifact for required edit path(s): %s. Previous rejected submit_plan drafts do not count as coverage. Every required path already has source-body evidence, so read/search/discovery tools are hidden now and must not be called. Your next visible message must be exactly one parser-readable action, not the same prose. Actions written only in hidden reasoning are ignored by the tool parser and do not satisfy this contract. If the gathered evidence supports the requested changes, your next response must be a parser-readable `submit_plan` request, not prose. %s %s For a new file or whole-file write use explicit replacement edit shapes: `replace_all:true` with empty `old_text`, `new_text` as the full file body, and a one-sentence `purpose`. If a required missing source/test path has only behavior/helper requirements and no substantial inline body or explicit replacement shape, answer with <<QUESTION>> naming the missing body evidence. The other valid outcome is `Decision: source-satisfied` naming every path plus current-state evidence if the requested final state is already present. Do not call read_file, search_content, context_pack, context_query, code_navigate, or any other discovery tool.", strings.Join(missing, ", "), planThenExecuteSubmitPlanCoverageSentence(), correction), true, true
 		}
 		if briefIsScratchpadDeliverableLane(r.RuntimeBrief) {
 			return fmt.Sprintf("The completion gate rejected a final answer while non-source deliverable path(s) remain unwritten: %s. The deliverable-write contract requires full corrected content with gathered evidence plus any missing, stale, ambiguous, or out-of-scope source fact recorded as `Source verification pending:` or `## Scope Correction Required`. Answer with <<QUESTION>> only if the deliverable cannot be written from the gathered evidence plus recorded uncertainty.", strings.Join(missing, ", ")), false, true
@@ -11720,18 +11724,18 @@ func (r *Runner) planThenExecuteSubmitPlanOnlySurfaceRejection(req workspace.Too
 	if planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
 		prompt := strings.Join([]string{
 			"Plan-execute submit-correction mode is now the only allowed planner action. Every required_edit_path already has source-body evidence, and the previous `submit_plan` was rejected before it became a valid plan artifact.",
-			"The next visible action must be exactly one parser-readable `submit_plan` JSON object covering every required_edit_path with either a real executable edit or a source_satisfied_paths entry for a path already at final state. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
+			"The next visible action must be exactly one parser-readable `submit_plan` JSON object. " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
 			"Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not describe the correction in prose.",
 		}, "\n")
-		return "Corrected submit_plan required", fmt.Sprintf("%s is not available because plan-execute submit-correction mode exposes only `submit_plan`. Emit one parser-readable `submit_plan` JSON object with one real edit or source_satisfied_paths entry per required path now; no terminal source-satisfied/question/prose fallback is valid in this state.", tool), prompt, true
+		return "Corrected submit_plan required", fmt.Sprintf("%s is not available because plan-execute submit-correction mode exposes only `submit_plan`. Emit one parser-readable `submit_plan` JSON object now. %s No terminal source-satisfied/question/prose fallback is valid in this state.", tool, planThenExecuteSubmitPlanCoverageSentence()), prompt, true
 	}
 	prompt := strings.Join([]string{
 		"Plan-execute submit_plan is now the only allowed planner action. Every required_edit_path already has anchor-ready source evidence, so read/search/source-refresh tools are closed for this planner turn.",
-		"The next visible action must be a parser-readable `submit_plan` JSON object covering every required_edit_path with either a real executable edit or a source_satisfied_paths entry for a path already at final state. " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
+		"The next visible action must be a parser-readable `submit_plan` JSON object. " + planThenExecuteSubmitPlanCoverageSentence() + " " + planThenExecuteSubmitPlanVisibleJSONInstruction(),
 		"Do not call `read_file`, `code_navigate`, search, shell, git, source-sanity, or per-edit write tools in this state. The rejected request will not become available again in this planner phase.",
 		"Only use `Decision: source-satisfied` if every required path already contains the requested final state and you cite per-path current-state evidence. Only use `<<QUESTION>>:` if one exact path-specific blocker prevents drafting any `submit_plan` edit.",
 	}, "\n")
-	return "Plan-execute submit_plan required", fmt.Sprintf("%s is not available because the plan-execute planner is source-ready and exposes only `submit_plan`. Emit a parser-readable `submit_plan` JSON object with one real edit or source_satisfied_paths entry per required path now. Use `Decision: source-satisfied` or `<<QUESTION>>:` only for a true terminal exception; do not request another source read.", tool), prompt, true
+	return "Plan-execute submit_plan required", fmt.Sprintf("%s is not available because the plan-execute planner is source-ready and exposes only `submit_plan`. Emit a parser-readable `submit_plan` JSON object now. %s Use `Decision: source-satisfied` or `<<QUESTION>>:` only for a true terminal exception; do not request another source read.", tool, planThenExecuteSubmitPlanCoverageSentence()), prompt, true
 }
 
 func planThenExecuteRequiredSourceRequestAdvances(req workspace.ToolRequest, path string, evidence planThenExecuteSourceEvidence, results []workspace.ToolResult) bool {
@@ -12277,7 +12281,7 @@ func (r *Runner) planThenExecuteSubmitReadyTerminalPrompt(errorText string, resu
 	if r != nil && planThenExecuteSubmitCorrectionActive(r.RuntimeBrief, results) {
 		parts := []string{
 			strings.TrimSpace(errorText),
-			"The previous read/search request was rejected because plan-execute submit-correction mode is already ready. Do not read, search, inspect, verify, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or describe the plan in prose. The next visible action must be exactly one parser-readable `submit_plan` covering every required_edit_path with real edits or source_satisfied_paths entries.",
+			"The previous read/search request was rejected because plan-execute submit-correction mode is already ready. Do not read, search, inspect, verify, answer `Decision: source-satisfied`, answer `<<QUESTION>>:`, or describe the plan in prose. The next visible action must be exactly one parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence(),
 			planThenExecuteTerminalSubmitPlanSkeleton(r.RuntimeBrief, results, native),
 			"Fill the skeleton with real source text from the reads already in this turn. Do not copy placeholders and do not request another tool.",
 		}
@@ -12460,7 +12464,7 @@ func (r *Runner) planThenExecuteLoopBudgetRecoveryPrompt(req workspace.ToolReque
 		lead := fmt.Sprintf("The repeated %s request hit the loop budget: %s. Submit-correction mode is already ready; do not call more read, search, navigation, or verification tools.", tool, reason)
 		parts := []string{
 			lead,
-			"The next visible action must be exactly one parser-readable `submit_plan` covering every required_edit_path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not report the loop-budget recovery itself as the blocker.",
+			"The next visible action must be exactly one parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, and do not report the loop-budget recovery itself as the blocker.",
 			planThenExecuteTerminalSubmitPlanSkeletonNoMoreTools(r.RuntimeBrief, results, nativeSubmitPlan),
 			"Fill the skeleton with real source text from the reads already in this turn. Do not copy placeholders, do not request another tool, and do not describe the plan in prose outside the parser-readable action.",
 		}
@@ -12524,7 +12528,7 @@ func (r *Runner) planThenExecuteIgnoredLoopBudgetRecoveryPrompt(req workspace.To
 		lead := fmt.Sprintf("The planner repeated %s after a loop-budget recovery: %s. Submit-correction mode is already ready; repeating the same request is not progress.", tool, reason)
 		parts := []string{
 			lead,
-			"Read/search/navigation tools are disabled for this recovery turn. The next visible action must be exactly one parser-readable `submit_plan` covering every required_edit_path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied` and do not answer `<<QUESTION>>:`.",
+			"Read/search/navigation tools are disabled for this recovery turn. The next visible action must be exactly one parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied` and do not answer `<<QUESTION>>:`.",
 			planThenExecuteTerminalSubmitPlanSkeletonNoMoreTools(r.RuntimeBrief, results, nativeSubmitPlan),
 			"Fill the skeleton with real source text from the evidence already gathered. Do not request another tool, do not copy placeholders, and do not describe the plan in prose outside the parser-readable action.",
 		}
@@ -13381,7 +13385,9 @@ func planThenExecuteNativeSubmitPlanNudge(brief workerruntime.WorkerRuntimeBrief
 	required := nonEmptyRunnerStrings(brief.RequiredEditPaths, 12)
 	var b strings.Builder
 	b.WriteString("PLANNER READINESS REACHED: every required_edit_path has anchor-ready source evidence in this turn.\n\n")
-	b.WriteString("This backend now exposes only the native `submit_plan` tool for the terminal planner action. Call `submit_plan` now with one real edit or source_satisfied_paths entry for every required_edit_path. Do not answer in prose.")
+	b.WriteString("This backend now exposes only the native `submit_plan` tool for the terminal planner action. Call `submit_plan` now. ")
+	b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+	b.WriteString(" Do not answer in prose.")
 	if len(required) > 0 {
 		b.WriteString("\n\nRequired edit paths: ")
 		b.WriteString(strings.Join(required, ", "))
@@ -13400,7 +13406,9 @@ func planThenExecuteNativeSubmitPlanCorrectionPrompt(brief workerruntime.WorkerR
 		b.WriteString(" ")
 	}
 	b.WriteString("Call native `submit_plan` again now. ")
-	b.WriteString("The next tool call must cover every required_edit_path with real executable edits or source_satisfied_paths for paths already at final state. Do not answer in prose, and do not call read/search/discovery, shell, verification, or per-edit write tools.")
+	b.WriteString("The next tool call must be a corrected `submit_plan`. ")
+	b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+	b.WriteString(" Do not answer in prose, and do not call read/search/discovery, shell, verification, or per-edit write tools.")
 	if len(required) > 0 {
 		b.WriteString("\n\nRequired edit paths: ")
 		b.WriteString(strings.Join(required, ", "))
@@ -13424,7 +13432,8 @@ func (r *Runner) planThenExecuteNativeSubmitPlanNoCallFallbackPrompt(modelErr er
 	required := nonEmptyRunnerStrings(r.RuntimeBrief.RequiredEditPaths, 12)
 	var b strings.Builder
 	b.WriteString("Native submit_plan tool-call transport failed before the model produced a tool call. For this one recovery retry, native tools are disabled and the textual tool parser is active.\n\n")
-	b.WriteString("Emit exactly one visible JSON object for `submit_plan` now. Do not write prose before or after it. Cover every required_edit_path with real executable edits or source_satisfied_paths for paths already at final state.")
+	b.WriteString("Emit exactly one visible JSON object for `submit_plan` now. Do not write prose before or after it. ")
+	b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
 	if len(required) > 0 {
 		b.WriteString("\n\nRequired edit paths: ")
 		b.WriteString(strings.Join(required, ", "))
@@ -13941,13 +13950,13 @@ func (r *Runner) requiredPathCompletionRecoveryRejection(reply string, results [
 			return workspace.ToolResult{
 				Tool:    "completion_gate",
 				Summary: "Completion gate rejected non-submit_plan correction",
-				Error:   "required edit path(s) remain uncovered by corrected submit_plan: " + quotedRunnerStrings(missing) + "." + correction + " Submit-correction mode has exactly one valid outcome: parser-readable submit_plan with one real edit or source_satisfied_paths entry per remaining required path. Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not reply in prose.",
+				Error:   "required edit path(s) remain uncovered by corrected submit_plan: " + quotedRunnerStrings(missing) + "." + correction + " Submit-correction mode has exactly one valid outcome: parser-readable submit_plan. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not reply in prose.",
 			}, true
 		}
 		return workspace.ToolResult{
 			Tool:    "completion_gate",
 			Summary: "Completion gate rejected non-specific submit_plan blocker",
-			Error:   "required edit path(s) remain uncovered by submit_plan: " + quotedRunnerStrings(missing) + "." + correction + " After completion-gate recovery, the required contract outcome is submit_plan with one real edit or source_satisfied_paths entry per remaining required path, `Decision: source-satisfied` with current-state evidence for every remaining required path, or <<QUESTION>> with one path-specific blocker reason for every remaining required path.",
+			Error:   "required edit path(s) remain uncovered by submit_plan: " + quotedRunnerStrings(missing) + "." + correction + " After completion-gate recovery, the required contract outcome is submit_plan (" + planThenExecuteSubmitPlanCoverageSentence() + "), `Decision: source-satisfied` with current-state evidence for every remaining required path, or <<QUESTION>> with one path-specific blocker reason for every remaining required path.",
 		}, true
 	}
 	return workspace.ToolResult{
@@ -14059,7 +14068,7 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionPrompt(req workspace
 	}
 	prompt := "The last request repeated the same invalid `submit_plan`; it was not executed again. " +
 		lastSubmitPlanCorrectionRejectionBrief(*lastResult) +
-		"Submit a corrected parser-readable `submit_plan` now covering every required_edit_path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose. " +
+		"Submit a corrected parser-readable `submit_plan` now. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not read/search/discovery again, and do not reply in prose. " +
 		planThenExecuteSubmitPlanCorrectionInstructionForBrief(r.RuntimeBrief, *lastResult)
 	return prompt, true
 }
@@ -14073,7 +14082,7 @@ func (r *Runner) planThenExecuteRepeatedSubmitPlanCorrectionExhaustedRejection(r
 		reason = lastSubmitPlanCorrectionRejectionBrief(*lastResult)
 	}
 	return "Repeated invalid submit_plan rejected",
-		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan` covering every required_edit_path with real edits or source_satisfied_paths entries. Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool.",
+		"this exact invalid `submit_plan` was repeated after submit-correction prompts. " + reason + "The only valid next action is a corrected parser-readable `submit_plan`. " + planThenExecuteSubmitPlanCoverageSentence() + " Do not answer `Decision: source-satisfied`, do not answer `<<QUESTION>>:`, do not call read/search/discovery, and do not choose a different tool.",
 		true
 }
 
@@ -19321,7 +19330,7 @@ func (r *Runner) finalAnswerBlockerErrorText(kind string, reason string, answer 
 			} else {
 				base += "(see required_edit_paths in the brief)"
 			}
-			base += ". Submit real edits or source_satisfied_paths entries for every remaining required path, or report a concrete blocker per skipped path with <<QUESTION>>:."
+			base += ". Submit a parser-readable submit_plan using edits[] for changed paths and top-level source_satisfied_paths for already-final paths, or report a concrete blocker per skipped path with <<QUESTION>>:."
 			return base
 		}
 		base := "the implementation contract is not fulfilled. The final answer claimed completion, but the harness has no successful write tool result for the following required edit path(s): "
@@ -22870,10 +22879,14 @@ func missingRequiredEditPathsRecoveryNudge(in recoveryNudgeInputs) (string, bool
 		b.WriteString(strings.Join(missing, ", "))
 		b.WriteString(".\n")
 		if planThenExecuteSubmitCorrectionActive(in.brief, in.results) {
-			b.WriteString("Do not answer with partial findings. Submit-correction mode has exactly one valid outcome: parser-readable `submit_plan` with real edits or source_satisfied_paths entries for every remaining required path. Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not repeat the rejected tool call.\n")
+			b.WriteString("Do not answer with partial findings. Submit-correction mode has exactly one valid outcome: parser-readable `submit_plan`. ")
+			b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+			b.WriteString(" Do not answer `Decision: source-satisfied`, do not answer <<QUESTION>>, and do not repeat the rejected tool call.\n")
 			return b.String(), true
 		}
-		b.WriteString("Do not answer with partial findings. Required outcomes are `submit_plan` with real edits or source_satisfied_paths entries for every remaining required path, `Decision: source-satisfied` with current-state evidence for every remaining path, or <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
+		b.WriteString("Do not answer with partial findings. Required outcomes are `submit_plan` (")
+		b.WriteString(planThenExecuteSubmitPlanCoverageSentence())
+		b.WriteString("), `Decision: source-satisfied` with current-state evidence for every remaining path, or <<QUESTION>> naming the exact blocker for each remaining path. Do not repeat the rejected tool call.\n")
 		return b.String(), true
 	}
 	b.WriteString("Recovery nudge — this implementation turn still has required edit path(s) without a successful write: ")

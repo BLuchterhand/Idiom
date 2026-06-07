@@ -444,11 +444,11 @@ func applySubmitReady(contract *TurnPhaseContract, input TurnPhaseContractInput,
 	contract.Phase = firstPhaseString(state.Phase, "submit_ready_textual")
 	contract.DerivationReason = firstPhaseString(state.DerivationReason, "plan_execute_source_ready")
 	contract.AllowedTools = filterPhaseTools(baseTools, state.ParserVisibleTools...)
-	contract.RequiredNext = []string{"submit_plan covering every required_edit_path with real edits or source_satisfied_paths entries, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.RequiredNext = []string{"submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.InvalidNext = []string{"read/search/source-refresh after plan-execute submit_plan readiness", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 	contract.TerminalOutcomes = []string{"submit_plan", "Decision: source-satisfied", "<<QUESTION>>:"}
 	if state.Mode == PlanExecutePlanningModeSubmitCorrection {
-		contract.RequiredNext = []string{"corrected submit_plan covering every required_edit_path with real executable edits or source_satisfied_paths for paths already at final state"}
+		contract.RequiredNext = []string{"corrected submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths"}
 		contract.InvalidNext = []string{"read/search/source-refresh after submit_plan correction is ready", "terminal Decision: source-satisfied after an incomplete submit_plan; use submit_plan.source_satisfied_paths for already-final paths instead", "<<QUESTION>> after source evidence is sufficient for correction", "verify in planner phase", "per-edit write in planner phase", "prose-only final answer"}
 		contract.TerminalOutcomes = []string{"submit_plan"}
 	}
@@ -483,7 +483,7 @@ func applyMalformedSubmitPlanRecovery(contract *TurnPhaseContract, input TurnPha
 	contract.PhaseID = turnPhaseMalformedSubmitPlanRecovery
 	contract.Phase = "malformed_submit_plan_recovery"
 	contract.DerivationReason = "submit_ready_parse_failure"
-	contract.RequiredNext = []string{"parser-readable submit_plan covering every required_edit_path with real edits or source_satisfied_paths entries, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
+	contract.RequiredNext = []string{"parser-readable submit_plan using edits[] for changed paths and source_satisfied_paths for already-final paths, Decision: source-satisfied with per-path current-state evidence, or <<QUESTION>> with the exact blocker"}
 	contract.RuntimeCall.ToolTransportMode = firstPhaseString(input.ToolTransportMode, "textual")
 	contract.RuntimeCall.ParserContract = firstPhaseString(input.ParserContract, "submit_plan_json")
 	contract.RuntimeCall.ResponseFormat = firstPhaseString(input.ResponseFormat, "json")

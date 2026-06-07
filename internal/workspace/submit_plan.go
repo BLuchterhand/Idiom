@@ -323,7 +323,7 @@ func validatePlanEdit(edit PlanEdit) error {
 		return fmt.Errorf("line-range edits require non-empty content; to delete text, use old_text with empty new_text instead")
 	}
 	if !hasSubstring && !hasRange && !hasInsert && !hasReplace {
-		return fmt.Errorf("requires one edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content for replacement, insert_after_line+non-empty content for insertion, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref except insert_after_line")
+		return fmt.Errorf("requires one executable edit shape: old_text with new_text (new_text may be empty to delete old_text), start_line+end_line+non-empty content for replacement, insert_after_line+non-empty content for insertion, or replace_all=true with new_text and empty old_text for whole-file/new-file writes; large new_text/content may be represented by new_text_ref/content_ref except insert_after_line. If this path is already at the requested final state, remove it from edits[] and put the path in top-level source_satisfied_paths instead of using an edit object")
 	}
 	if hasSubstring && strings.TrimSpace(edit.NewTextRef) == "" && edit.OldText == edit.NewText {
 		return fmt.Errorf("old_text and new_text are identical; %s", submitPlanNoOpEditGuidance)
